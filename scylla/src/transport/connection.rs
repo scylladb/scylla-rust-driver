@@ -30,7 +30,7 @@ use tokio_openssl::SslStream;
 pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
-use crate::errors::{
+use crate::transport::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
     QueryError, RequestError, ResponseParseError, TranslationError, UserRequestError,
@@ -2709,7 +2709,7 @@ mod tests {
     #[ntest::timeout(20000)]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_is_closed_on_no_response_to_keepalives() {
-        use crate::errors::BrokenConnectionErrorKind;
+        use crate::transport::errors::BrokenConnectionErrorKind;
 
         setup_tracing();
 

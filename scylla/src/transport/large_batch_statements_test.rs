@@ -1,9 +1,9 @@
 use assert_matches::assert_matches;
 
 use crate::batch::BatchType;
-use crate::errors::{BadQuery, QueryError};
 use crate::query::Query;
 use crate::test_utils::setup_tracing;
+use crate::transport::errors::{BadQuery, QueryError};
 use crate::{
     batch::Batch,
     test_utils::{create_new_session_builder, unique_keyspace_name},

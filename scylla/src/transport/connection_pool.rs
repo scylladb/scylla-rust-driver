@@ -1,8 +1,10 @@
 #[cfg(feature = "cloud")]
 use crate::cloud::set_ssl_config_for_scylla_cloud_host;
 
-use crate::errors::{BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, QueryError};
 use crate::routing::{Shard, ShardCount, Sharder};
+use crate::transport::errors::{
+    BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, QueryError,
+};
 use crate::transport::{
     connection,
     connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName},

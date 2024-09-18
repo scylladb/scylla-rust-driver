@@ -7,7 +7,7 @@ use super::Compression;
 
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
-use crate::errors::NewSessionError;
+use crate::transport::errors::NewSessionError;
 #[cfg(feature = "cloud")]
 use crate::ExecutionProfile;
 

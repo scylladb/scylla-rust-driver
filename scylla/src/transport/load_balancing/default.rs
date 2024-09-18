@@ -3,8 +3,8 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
-    errors::QueryError,
     routing::{Shard, Token},
+    transport::errors::QueryError,
     transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
 };
 use itertools::{Either, Itertools};
@@ -2550,9 +2550,9 @@ mod latency_awareness {
     use uuid::Uuid;
 
     use crate::{
-        errors::{DbError, QueryError},
         load_balancing::NodeRef,
         routing::Shard,
+        transport::errors::{DbError, QueryError},
         transport::node::Node,
     };
     use std::{

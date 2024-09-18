@@ -4,8 +4,8 @@
 
 use super::{cluster::ClusterData, NodeRef};
 use crate::{
-    errors::QueryError,
     routing::{Shard, Token},
+    transport::errors::QueryError,
 };
 use scylla_cql::frame::{response::result::TableSpec, types};
 

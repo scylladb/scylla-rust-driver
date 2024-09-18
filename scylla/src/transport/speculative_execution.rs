@@ -5,7 +5,7 @@ use futures::{
 use std::{future::Future, sync::Arc, time::Duration};
 use tracing::{trace_span, warn, Instrument};
 
-use crate::errors::QueryError;
+use crate::transport::errors::QueryError;
 
 use super::metrics::Metrics;
 

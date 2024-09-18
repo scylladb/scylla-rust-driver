@@ -20,7 +20,7 @@ use scylla::ExecutionProfile;
 use scylla::QueryResult;
 use scylla::Session;
 
-use scylla::errors::QueryError;
+use scylla::transport::errors::QueryError;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule,
     ShardAwareness, TargetShard, WorkerError,

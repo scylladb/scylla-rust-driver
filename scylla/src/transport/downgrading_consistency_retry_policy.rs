@@ -2,8 +2,8 @@ use scylla_cql::Consistency;
 use tracing::debug;
 
 use crate::{
-    errors::{DbError, QueryError, WriteType},
     retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession},
+    transport::errors::{DbError, QueryError, WriteType},
 };
 
 /// Downgrading consistency retry policy - retries with lower consistency level if it knows\
@@ -185,8 +185,8 @@ mod tests {
 
     use bytes::Bytes;
 
-    use crate::errors::BadQuery;
     use crate::test_utils::setup_tracing;
+    use crate::transport::errors::BadQuery;
 
     use super::*;
 

@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use futures::TryStreamExt;
-use scylla::errors::QueryError;
+use scylla::transport::errors::QueryError;
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;

@@ -7,7 +7,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::{errors::QueryError, retry_policy::RetryDecision};
+use crate::{retry_policy::RetryDecision, transport::errors::QueryError};
 use chrono::{DateTime, Utc};
 
 use tracing::warn;
@@ -455,10 +455,10 @@ mod tests {
     };
 
     use crate::{
-        errors::{DbError, QueryError},
         query::Query,
         retry_policy::RetryDecision,
         test_utils::setup_tracing,
+        transport::errors::{DbError, QueryError},
         utils::test_utils::unique_keyspace_name,
     };
 

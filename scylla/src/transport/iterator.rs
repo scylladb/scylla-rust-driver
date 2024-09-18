@@ -19,7 +19,6 @@ use super::execution_profile::ExecutionProfileInner;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
-use crate::errors::{QueryError, UserRequestError};
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row, Rows},
@@ -29,6 +28,7 @@ use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::statement::{Consistency, PagingState, SerialConsistency};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
+use crate::transport::errors::{QueryError, UserRequestError};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
@@ -416,7 +416,7 @@ mod checked_channel_sender {
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
-    use crate::errors::QueryError;
+    use crate::transport::errors::QueryError;
 
     use super::ReceivedPage;
 

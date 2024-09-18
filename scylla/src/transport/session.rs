@@ -5,10 +5,10 @@ use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 
-pub use crate::errors::TranslationError;
-use crate::errors::{BadQuery, NewSessionError, QueryError, UserRequestError};
 use crate::history;
 use crate::history::HistoryListener;
+pub use crate::transport::errors::TranslationError;
+use crate::transport::errors::{BadQuery, NewSessionError, QueryError, UserRequestError};
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;

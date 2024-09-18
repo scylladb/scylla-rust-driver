@@ -13,12 +13,12 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::{PageSize, StatementConfig};
-use crate::errors::{BadQuery, QueryError};
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
 use crate::routing::Token;
+use crate::transport::errors::{BadQuery, QueryError};
 use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 

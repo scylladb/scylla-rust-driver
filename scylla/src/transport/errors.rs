@@ -668,7 +668,7 @@ pub(crate) enum ResponseParseError {
 mod tests {
     use scylla_cql::Consistency;
 
-    use crate::errors::{DbError, QueryError, WriteType};
+    use crate::transport::errors::{DbError, QueryError, WriteType};
 
     #[test]
     fn write_type_from_str() {
