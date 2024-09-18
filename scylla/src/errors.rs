@@ -514,7 +514,7 @@ impl From<ResponseParseError> for RequestError {
 /// An error type returned from `Connection::parse_response`.
 /// This is driver's internal type.
 #[derive(Error, Debug)]
-pub enum ResponseParseError {
+pub(crate) enum ResponseParseError {
     #[error(transparent)]
     FrameError(#[from] FrameError),
     #[error(transparent)]
