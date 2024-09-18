@@ -6,7 +6,7 @@ use std::{
 };
 
 use scylla_cql::{
-    errors::{CqlResponseKind, DbError},
+    errors::DbError,
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
@@ -14,6 +14,7 @@ use scylla_cql::{
             CqlSupportedParseError, FrameError, ParseError,
         },
         request::CqlRequestKind,
+        response::CqlResponseKind,
         value::SerializeValuesError,
     },
     types::{

@@ -10,12 +10,42 @@ use std::sync::Arc;
 pub use error::Error;
 pub use supported::Supported;
 
-use crate::errors::CqlResponseKind;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::response::result::ResultMetadata;
 use crate::frame::TryFromPrimitiveError;
 
 use super::frame_errors::CqlResponseParseError;
+
+/// Possible CQL responses received from the server
+#[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
+pub enum CqlResponseKind {
+    Error,
+    Ready,
+    Authenticate,
+    Supported,
+    Result,
+    Event,
+    AuthChallenge,
+    AuthSuccess,
+}
+
+impl std::fmt::Display for CqlResponseKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind_str = match self {
+            CqlResponseKind::Error => "ERROR",
+            CqlResponseKind::Ready => "READY",
+            CqlResponseKind::Authenticate => "AUTHENTICATE",
+            CqlResponseKind::Supported => "SUPPORTED",
+            CqlResponseKind::Result => "RESULT",
+            CqlResponseKind::Event => "EVENT",
+            CqlResponseKind::AuthChallenge => "AUTH_CHALLENGE",
+            CqlResponseKind::AuthSuccess => "AUTH_SUCCESS",
+        };
+
+        f.write_str(kind_str)
+    }
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
