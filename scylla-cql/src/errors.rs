@@ -439,37 +439,6 @@ pub enum ResponseParseError {
     CqlResponseParseError(#[from] CqlResponseParseError),
 }
 
-/// An error that occurred when performing a request.
-///
-/// Possible error kinds:
-/// - Connection is broken
-/// - Response's frame header deserialization error
-/// - CQL response (frame body) deserialization error
-/// - Driver was unable to allocate a stream id for a request
-///
-/// This error type is only destined to narrow the return error type
-/// of some functions that would previously return [`crate::errors::QueryError`].
-#[derive(Error, Debug)]
-pub enum RequestError {
-    #[error(transparent)]
-    FrameError(#[from] FrameError),
-    #[error(transparent)]
-    CqlResponseParseError(#[from] CqlResponseParseError),
-    #[error(transparent)]
-    BrokenConnection(#[from] BrokenConnectionError),
-    #[error("Unable to allocate a stream id")]
-    UnableToAllocStreamId,
-}
-
-impl From<ResponseParseError> for RequestError {
-    fn from(value: ResponseParseError) -> Self {
-        match value {
-            ResponseParseError::FrameError(e) => e.into(),
-            ResponseParseError::CqlResponseParseError(e) => e.into(),
-        }
-    }
-}
-
 impl std::fmt::Display for WriteType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)

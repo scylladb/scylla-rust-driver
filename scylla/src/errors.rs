@@ -3,7 +3,7 @@ use std::{io::ErrorKind, net::IpAddr, sync::Arc};
 use scylla_cql::{
     errors::{
         BadKeyspaceName, BadQuery, BrokenConnectionError, CqlEventHandlingError, CqlRequestKind,
-        CqlResponseKind, DbError, RequestError, TranslationError,
+        CqlResponseKind, DbError, ResponseParseError, TranslationError,
     },
     frame::{
         frame_errors::{
@@ -443,6 +443,35 @@ impl From<RequestError> for UserRequestError {
             },
             RequestError::BrokenConnection(e) => e.into(),
             RequestError::UnableToAllocStreamId => UserRequestError::UnableToAllocStreamId,
+        }
+    }
+}
+
+/// An error that occurred when performing a request.
+///
+/// Possible error kinds:
+/// - Connection is broken
+/// - Response's frame header deserialization error
+/// - CQL response (frame body) deserialization error
+/// - Driver was unable to allocate a stream id for a request
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum RequestError {
+    #[error(transparent)]
+    FrameError(#[from] FrameError),
+    #[error(transparent)]
+    CqlResponseParseError(#[from] CqlResponseParseError),
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
+    #[error("Unable to allocate a stream id")]
+    UnableToAllocStreamId,
+}
+
+impl From<ResponseParseError> for RequestError {
+    fn from(value: ResponseParseError) -> Self {
+        match value {
+            ResponseParseError::FrameError(e) => e.into(),
+            ResponseParseError::CqlResponseParseError(e) => e.into(),
         }
     }
 }

@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::{
-    BrokenConnectionError, CqlEventHandlingError, CqlRequestKind, RequestError, ResponseParseError,
+    BrokenConnectionError, CqlEventHandlingError, CqlRequestKind, ResponseParseError,
     TranslationError,
 };
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
@@ -35,7 +35,7 @@ pub(crate) use ssl_config::SslConfig;
 use crate::authentication::AuthenticatorProvider;
 use crate::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionSetupRequestError,
-    ConnectionSetupRequestErrorKind, QueryError, UserRequestError,
+    ConnectionSetupRequestErrorKind, QueryError, RequestError, UserRequestError,
 };
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
