@@ -1,4 +1,4 @@
-//! This module contains various errors which can be returned by `scylla::Session`
+//! This module contains various errors which can be returned by [`Session`](crate::transport::session::Session).
 
 // Re-export DbError type and types that it depends on
 // so they can be found in `scylla::errors`.
