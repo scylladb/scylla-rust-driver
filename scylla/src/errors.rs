@@ -243,7 +243,7 @@ pub enum NewSessionError {
 ///
 /// requests.
 #[derive(Error, Debug)]
-pub enum UserRequestError {
+pub(crate) enum UserRequestError {
     #[error("Database returned an error: {0}, Error message: {1}")]
     DbError(DbError, String),
     #[error(transparent)]
