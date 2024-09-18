@@ -354,6 +354,10 @@ impl ConnectionSetupRequestError {
             error,
         }
     }
+
+    pub fn get_error(&self) -> &ConnectionSetupRequestErrorKind {
+        &self.error
+    }
 }
 
 /// A reason why connection was broken.
