@@ -2,11 +2,13 @@ use std::sync::Arc;
 
 use scylla_cql::{
     errors::{
-        BadKeyspaceName, BadQuery, BrokenConnectionError, ConnectionPoolError, DbError,
-        UserRequestError,
+        BadKeyspaceName, BadQuery, BrokenConnectionError, ConnectionPoolError, CqlResponseKind,
+        DbError, RequestError,
     },
     frame::{
-        frame_errors::{CqlErrorParseError, CqlResultParseError, FrameError, ParseError},
+        frame_errors::{
+            CqlErrorParseError, CqlResponseParseError, CqlResultParseError, FrameError, ParseError,
+        },
         value::SerializeValuesError,
     },
     types::{
@@ -231,6 +233,58 @@ pub enum NewSessionError {
     /// during `Session` creation.
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
+}
+
+/// An error type that occurred when executing one of:
+/// - QUERY
+/// - PREPARE
+/// - EXECUTE
+/// - BATCH
+///
+/// requests.
+#[derive(Error, Debug)]
+pub enum UserRequestError {
+    #[error("Database returned an error: {0}, Error message: {1}")]
+    DbError(DbError, String),
+    #[error(transparent)]
+    CqlResultParseError(#[from] CqlResultParseError),
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
+    #[error(
+        "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
+    )]
+    UnexpectedResponse(CqlResponseKind),
+    #[error(transparent)]
+    BrokenConnectionError(#[from] BrokenConnectionError),
+    #[error(transparent)]
+    FrameError(#[from] FrameError),
+    #[error("Unable to allocate stream id")]
+    UnableToAllocStreamId,
+    #[error("Prepared statement Id changed, md5 sum should stay the same")]
+    RepreparedIdChanged,
+}
+
+impl From<response::error::Error> for UserRequestError {
+    fn from(value: response::error::Error) -> Self {
+        UserRequestError::DbError(value.error, value.reason)
+    }
+}
+
+impl From<RequestError> for UserRequestError {
+    fn from(value: RequestError) -> Self {
+        match value {
+            RequestError::FrameError(e) => e.into(),
+            RequestError::CqlResponseParseError(e) => match e {
+                // Only possible responses are RESULT and ERROR. If we failed parsing
+                // other response, treat it as unexpected response.
+                CqlResponseParseError::CqlErrorParseError(e) => e.into(),
+                CqlResponseParseError::CqlResultParseError(e) => e.into(),
+                _ => UserRequestError::UnexpectedResponse(e.to_response_kind()),
+            },
+            RequestError::BrokenConnection(e) => e.into(),
+            RequestError::UnableToAllocStreamId => UserRequestError::UnableToAllocStreamId,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::Stream;
-use scylla_cql::errors::UserRequestError;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::result::Result;
@@ -20,7 +19,7 @@ use super::execution_profile::ExecutionProfileInner;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
-use crate::errors::QueryError;
+use crate::errors::{QueryError, UserRequestError};
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row, Rows},

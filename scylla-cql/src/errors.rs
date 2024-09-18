@@ -2,11 +2,10 @@
 
 use crate::frame::frame_errors::{
     CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
-    CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlResultParseError,
-    CqlSupportedParseError, FrameError,
+    CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlSupportedParseError,
+    FrameError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
-use crate::frame::response;
 use crate::frame::value::SerializeValuesError;
 use crate::types::serialize::SerializationError;
 use crate::Consistency;
@@ -16,35 +15,6 @@ use std::io::ErrorKind;
 use std::net::IpAddr;
 use std::sync::Arc;
 use thiserror::Error;
-
-/// An error type that occurred when executing one of:
-/// - QUERY
-/// - PREPARE
-/// - EXECUTE
-/// - BATCH
-///
-/// requests.
-#[derive(Error, Debug)]
-pub enum UserRequestError {
-    #[error("Database returned an error: {0}, Error message: {1}")]
-    DbError(DbError, String),
-    #[error(transparent)]
-    CqlResultParseError(#[from] CqlResultParseError),
-    #[error("Failed to deserialize ERROR response: {0}")]
-    CqlErrorParseError(#[from] CqlErrorParseError),
-    #[error(
-        "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
-    )]
-    UnexpectedResponse(CqlResponseKind),
-    #[error(transparent)]
-    BrokenConnectionError(#[from] BrokenConnectionError),
-    #[error(transparent)]
-    FrameError(#[from] FrameError),
-    #[error("Unable to allocate stream id")]
-    UnableToAllocStreamId,
-    #[error("Prepared statement Id changed, md5 sum should stay the same")]
-    RepreparedIdChanged,
-}
 
 /// An error sent from the database in response to a query
 /// as described in the [specification](https://github.com/apache/cassandra/blob/5ed5e84613ef0e9664a774493db7d2604e3596e0/doc/native_protocol_v4.spec#L1029)\
@@ -636,29 +606,6 @@ pub enum RequestError {
     BrokenConnection(#[from] BrokenConnectionError),
     #[error("Unable to allocate a stream id")]
     UnableToAllocStreamId,
-}
-
-impl From<response::error::Error> for UserRequestError {
-    fn from(value: response::error::Error) -> Self {
-        UserRequestError::DbError(value.error, value.reason)
-    }
-}
-
-impl From<RequestError> for UserRequestError {
-    fn from(value: RequestError) -> Self {
-        match value {
-            RequestError::FrameError(e) => e.into(),
-            RequestError::CqlResponseParseError(e) => match e {
-                // Only possible responses are RESULT and ERROR. If we failed parsing
-                // other response, treat it as unexpected response.
-                CqlResponseParseError::CqlErrorParseError(e) => e.into(),
-                CqlResponseParseError::CqlResultParseError(e) => e.into(),
-                _ => UserRequestError::UnexpectedResponse(e.to_response_kind()),
-            },
-            RequestError::BrokenConnection(e) => e.into(),
-            RequestError::UnableToAllocStreamId => UserRequestError::UnableToAllocStreamId,
-        }
-    }
 }
 
 impl From<BrokenConnectionErrorKind> for BrokenConnectionError {
