@@ -72,9 +72,11 @@ pub enum QueryError {
     #[error("Timeout Error")]
     TimeoutError,
 
+    /// A connection has been broken during query execution.
     #[error(transparent)]
     BrokenConnection(#[from] BrokenConnectionError),
 
+    /// Driver was unable to allocate a stream id to execute a query on.
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
@@ -225,9 +227,11 @@ pub enum NewSessionError {
     #[error("Timeout Error")]
     TimeoutError,
 
+    /// A connection has been broken during query execution.
     #[error(transparent)]
     BrokenConnection(#[from] BrokenConnectionError),
 
+    /// Driver was unable to allocate a stream id to execute a query on.
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
@@ -288,12 +292,17 @@ pub enum BadKeyspaceName {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ConnectionPoolError {
+    /// A connection pool is broken. Includes an error of a last connection.
     #[error("The pool is broken; Last connection failed with: {last_connection_error}")]
     Broken {
         last_connection_error: ConnectionError,
     },
+
+    /// A connection pool is still being initialized.
     #[error("Pool is still being initialized")]
     Initializing,
+
+    /// A corresponding node was disabled by a host filter.
     #[error("The node has been disabled by a host filter")]
     NodeDisabledByHostFilter,
 }
@@ -304,16 +313,27 @@ pub enum ConnectionPoolError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ConnectionError {
+    /// Provided connect timeout elapsed.
     #[error("Connect timeout elapsed")]
     ConnectTimeout,
+
+    /// Input/Output error occurred.
     #[error(transparent)]
     IoError(Arc<std::io::Error>),
+
+    /// Driver was unable to find a free source port for given shard.
     #[error("Could not find free source port for shard {0}")]
     NoSourcePortForShard(u32),
+
+    /// Failed to translate an address before establishing a connection.
     #[error("Address translation failed: {0}")]
     TranslationError(#[from] TranslationError),
+
+    /// A connection has been broken after being established.
     #[error(transparent)]
     BrokenConnection(#[from] BrokenConnectionError),
+
+    /// A request required to initialize a connection failed.
     #[error(transparent)]
     ConnectionSetupRequestError(#[from] ConnectionSetupRequestError),
 }
@@ -345,8 +365,11 @@ impl ConnectionError {
 #[non_exhaustive]
 #[derive(Debug, Clone, Error)]
 pub enum TranslationError {
+    /// Driver failed to find a translation rule for a provided address.
     #[error("No rule for address {0}")]
     NoRuleForAddress(SocketAddr),
+
+    /// A translation rule for a provided address was found, but the translated address was invalid.
     #[error("Failed to parse translated address: {translated_addr_str}, reason: {reason}")]
     InvalidAddressInRule {
         translated_addr_str: &'static str,
@@ -367,32 +390,61 @@ pub struct ConnectionSetupRequestError {
 #[non_exhaustive]
 pub enum ConnectionSetupRequestErrorKind {
     // TODO: Make FrameError clonable.
+    /// An error occurred when parsing response frame header.
     #[error(transparent)]
     FrameError(Arc<FrameError>),
+
+    /// Driver was unable to allocate a stream id to execute a setup request on.
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
+
+    /// A connection was broken during setup request execution.
     #[error(transparent)]
     BrokenConnection(#[from] BrokenConnectionError),
+
+    /// Received a server error in response to connection setup request.
     #[error("Database returned an error: {0}, Error message: {1}")]
     DbError(DbError, String),
+
+    /// Received an unexpected response from the server.
     #[error("Received unexpected response from the server: {0}")]
     UnexpectedResponse(CqlResponseKind),
+
+    /// Received a response to OPTIONS request, but failed to deserialize its body.
     #[error("Failed to deserialize SUPPORTED response: {0}")]
     CqlSupportedParseError(#[from] CqlSupportedParseError),
+
+    /// Received an AUTHENTICATE response, but failed to deserialize its body.
     #[error("Failed to deserialize AUTHENTICATE response: {0}")]
     CqlAuthenticateParseError(#[from] CqlAuthenticateParseError),
+
+    /// Received an AUTH_SUCCESS response, but failed to deserialize its body.
     #[error("Failed to deserialize AUTH_SUCCESS response: {0}")]
     CqlAuthSuccessParseError(#[from] CqlAuthSuccessParseError),
+
+    /// Received an AUTH_CHALLENGE response, but failed to deserialize its body.
     #[error("Failed to deserialize AUTH_CHALLENGE response: {0}")]
     CqlAuthChallengeParseError(#[from] CqlAuthChallengeParseError),
+
+    /// Received server ERROR response, but failed to deserialize its body.
     #[error("Failed to deserialize ERROR response: {0}")]
     CqlErrorParseError(#[from] CqlErrorParseError),
+
+    /// An error returned by [`AuthenticatorProvider::start_authentication_session`](crate::authentication::AuthenticatorProvider::start_authentication_session).
     #[error("Failed to start client's auth session: {0}")]
     StartAuthSessionError(AuthError),
+
+    /// An error returned by [`AuthenticatorSession::evaluate_challenge`](crate::authentication::AuthenticatorSession::evaluate_challenge).
     #[error("Failed to evaluate auth challenge on client side: {0}")]
     AuthChallengeEvaluationError(AuthError),
+
+    /// An error returned by [`AuthenticatorSession::success`](crate::authentication::AuthenticatorSession::success).
     #[error("Failed to finish auth challenge on client side: {0}")]
     AuthFinishError(AuthError),
+
+    /// User did not provide authentication while the cluster requires it.
+    /// See [`SessionBuilder::user`](crate::transport::session_builder::SessionBuilder::user)
+    /// and/or [`SessionBuilder::authenticator_provider`](crate::transport::session_builder::SessionBuilder::authenticator_provider).
     #[error("Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials or SessionBuilder::authenticator_provider to provide custom authenticator")]
     MissingAuthentication,
 }
@@ -443,20 +495,36 @@ impl BrokenConnectionError {
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum BrokenConnectionErrorKind {
+    /// Driver sent a keepalive request to the database, but the request timed out.
     #[error("Timed out while waiting for response to keepalive request on connection to node {0}")]
     KeepaliveTimeout(IpAddr),
+
+    /// Driver sent a keepalive request to the database, but request execution failed.
     #[error("Failed to execute keepalive query: {0}")]
     KeepaliveQueryError(RequestError),
+
+    /// Failed to deserialize response frame header.
     #[error("Failed to deserialize frame: {0}")]
     FrameError(FrameError),
+
+    /// Failed to handle a CQL event (server response received on stream -1).
     #[error("Failed to handle server event: {0}")]
     CqlEventHandlingError(#[from] CqlEventHandlingError),
+
+    /// Received a server frame with unexpected stream id.
     #[error("Received a server frame with unexpected stream id: {0}")]
     UnexpectedStreamId(i16),
+
+    /// IO error - server failed to write data to the socket.
     #[error("Failed to write data: {0}")]
     WriteError(std::io::Error),
+
+    /// Maximum number of orphaned streams exceeded.
     #[error("Too many orphaned stream ids: {0}")]
     TooManyOrphanedStreamIds(u16),
+
+    /// Failed to send data via tokio channel. This implies
+    /// that connection was probably already broken for some other reason.
     #[error(
         "Failed to send/receive data needed to perform a request via tokio channel.
         It implies that other half of the channel has been dropped.
@@ -480,12 +548,20 @@ impl From<BrokenConnectionErrorKind> for BrokenConnectionError {
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum CqlEventHandlingError {
+    /// Received an EVENT server response, but failed to deserialize it.
     #[error("Failed to deserialize EVENT response: {0}")]
     CqlEventParseError(#[from] CqlEventParseError),
+
+    /// Received an unexpected response on stream -1.
     #[error("Received unexpected server response on stream -1: {0}. Expected EVENT response")]
     UnexpectedResponse(CqlResponseKind),
+
+    /// Failed to deserialize a header of frame received on stream -1.
     #[error("Failed to deserialize a header of frame received on stream -1: {0}")]
     FrameError(#[from] FrameError),
+
+    /// Driver failed to send event data between the internal tasks.
+    /// It implies that connection was broken for some reason.
     #[error("Failed to send event info via channel. The channel is probably closed, which is caused by connection being broken")]
     SendError,
 }
@@ -552,12 +628,19 @@ impl From<RequestError> for UserRequestError {
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum RequestError {
+    /// Failed to deserialize response frame header.
     #[error(transparent)]
     FrameError(#[from] FrameError),
+
+    /// Failed to deserialize a CQL response (frame body).
     #[error(transparent)]
     CqlResponseParseError(#[from] CqlResponseParseError),
+
+    /// A connection was broken during request execution.
     #[error(transparent)]
     BrokenConnection(#[from] BrokenConnectionError),
+
+    /// Driver was unable to allocate a stream id to execute a request on.
     #[error("Unable to allocate a stream id")]
     UnableToAllocStreamId,
 }
