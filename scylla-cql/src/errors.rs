@@ -507,21 +507,6 @@ impl ConnectionSetupRequestError {
     }
 }
 
-/// An error that occurred when selecting a node connection
-/// to perform a request on.
-#[derive(Error, Debug, Clone)]
-#[non_exhaustive]
-pub enum ConnectionPoolError {
-    #[error("The pool is broken; Last connection failed with: {last_connection_error}")]
-    Broken {
-        last_connection_error: ConnectionError,
-    },
-    #[error("Pool is still being initialized")]
-    Initializing,
-    #[error("The node has been disabled by a host filter")]
-    NodeDisabledByHostFilter,
-}
-
 #[derive(Error, Debug, Clone)]
 #[error("Connection broken, reason: {0}")]
 pub struct BrokenConnectionError(Arc<dyn Error + Sync + Send>);

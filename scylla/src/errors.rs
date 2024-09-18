@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use scylla_cql::{
     errors::{
-        BadKeyspaceName, BadQuery, BrokenConnectionError, ConnectionPoolError, CqlResponseKind,
+        BadKeyspaceName, BadQuery, BrokenConnectionError, ConnectionError, CqlResponseKind,
         DbError, RequestError,
     },
     frame::{
@@ -233,6 +233,21 @@ pub enum NewSessionError {
     /// during `Session` creation.
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
+}
+
+/// An error that occurred when selecting a node connection
+/// to perform a request on.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ConnectionPoolError {
+    #[error("The pool is broken; Last connection failed with: {last_connection_error}")]
+    Broken {
+        last_connection_error: ConnectionError,
+    },
+    #[error("Pool is still being initialized")]
+    Initializing,
+    #[error("The node has been disabled by a host filter")]
+    NodeDisabledByHostFilter,
 }
 
 /// An error type that occurred when executing one of:

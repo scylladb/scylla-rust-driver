@@ -1,9 +1,8 @@
-use scylla_cql::errors::ConnectionPoolError;
 use tokio::net::lookup_host;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::errors::QueryError;
+use crate::errors::{ConnectionPoolError, QueryError};
 /// Node represents a cluster node along with it's data and connections
 use crate::routing::{Shard, Sharder};
 use crate::transport::connection::Connection;
