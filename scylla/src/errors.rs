@@ -1,3 +1,5 @@
+//! This module contains various errors which can be returned by `scylla::Session`
+
 use std::{
     error::Error,
     io::ErrorKind,
