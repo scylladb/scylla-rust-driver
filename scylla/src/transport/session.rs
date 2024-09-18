@@ -76,7 +76,7 @@ pub use crate::transport::connection_pool::PoolSize;
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
-use scylla_cql::errors::BadQuery;
+use scylla_cql::errors::{BadQuery, UserRequestError};
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
@@ -774,6 +774,7 @@ impl Session {
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
+                                .map_err(Into::into)
                         } else {
                             let prepared = connection.prepare(query_ref).await?;
                             let serialized = prepared.serialize_values(values_ref)?;
@@ -789,6 +790,7 @@ impl Session {
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
+                                .map_err(Into::into)
                         }
                     }
                 },
@@ -975,7 +977,7 @@ impl Session {
 
         // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
         // returns either an error or an iterator with at least one connection, so there will be at least one result.
-        let first_ok: Result<PreparedStatement, QueryError> =
+        let first_ok: Result<PreparedStatement, UserRequestError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
         let mut prepared: PreparedStatement = first_ok?;
 
@@ -1227,6 +1229,7 @@ impl Session {
                             )
                             .await
                             .and_then(QueryResponse::into_non_error_query_response)
+                            .map_err(Into::into)
                     }
                 },
                 &span,
@@ -1873,7 +1876,7 @@ impl Session {
                             error = %e,
                             "Choosing connection failed"
                         );
-                        last_error = Some(e);
+                        last_error = Some(e.into());
                         // Broken connection doesn't count as a failed query, don't log in metrics
                         continue 'nodes_in_plan;
                     }

@@ -1,9 +1,15 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use scylla_cql::errors::TranslationError;
+use scylla_cql::errors::{
+    BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError, ConnectionSetupRequestError,
+    ConnectionSetupRequestErrorKind, CqlEventHandlingError, CqlRequestKind, RequestError,
+    ResponseParseError, TranslationError, UserRequestError,
+};
+use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
+use scylla_cql::frame::response::{self, error};
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
 use scylla_cql::types::serialize::raw_batch::RawBatchValuesAdapter;
@@ -31,7 +37,6 @@ use crate::authentication::AuthenticatorProvider;
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
-use std::io::ErrorKind;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -112,7 +117,7 @@ impl RouterHandle {
         request: &impl SerializableRequest,
         compression: Option<Compression>,
         tracing: bool,
-    ) -> Result<TaskResponse, QueryError> {
+    ) -> Result<TaskResponse, RequestError> {
         let serialized_request = SerializedRequest::make(request, compression, tracing)?;
         let request_id = self.allocate_request_id();
 
@@ -133,18 +138,12 @@ impl RouterHandle {
                 response_handler,
             })
             .await
-            .map_err(|_| {
-                QueryError::IoError(Arc::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    "Connection broken",
-                )))
+            .map_err(|_| -> BrokenConnectionError {
+                BrokenConnectionErrorKind::ChannelError.into()
             })?;
 
-        let task_response = receiver.await.map_err(|_| {
-            QueryError::IoError(Arc::new(std::io::Error::new(
-                ErrorKind::Other,
-                "Connection broken",
-            )))
+        let task_response = receiver.await.map_err(|_| -> BrokenConnectionError {
+            BrokenConnectionErrorKind::ChannelError.into()
         })?;
 
         // Response was successfully received, so it's time to disable
@@ -165,7 +164,7 @@ pub(crate) struct ConnectionFeatures {
 type RequestId = u64;
 
 struct ResponseHandler {
-    response_sender: oneshot::Sender<Result<TaskResponse, QueryError>>,
+    response_sender: oneshot::Sender<Result<TaskResponse, RequestError>>,
     request_id: RequestId,
 }
 
@@ -229,7 +228,9 @@ pub(crate) struct NonErrorQueryResponse {
 }
 
 impl QueryResponse {
-    pub(crate) fn into_non_error_query_response(self) -> Result<NonErrorQueryResponse, QueryError> {
+    pub(crate) fn into_non_error_query_response(
+        self,
+    ) -> Result<NonErrorQueryResponse, UserRequestError> {
         Ok(NonErrorQueryResponse {
             response: self.response.into_non_error_response()?,
             tracing_id: self.tracing_id,
@@ -239,7 +240,7 @@ impl QueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         self.into_non_error_query_response()?
             .into_query_result_and_paging_state()
     }
@@ -266,7 +267,7 @@ impl NonErrorQueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         let (rows, paging_state, metadata, serialized_size) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
@@ -276,8 +277,8 @@ impl NonErrorQueryResponse {
             ),
             NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages, None, 0),
             _ => {
-                return Err(QueryError::ProtocolError(
-                    "Unexpected server response, expected Result or Error",
+                return Err(UserRequestError::UnexpectedResponse(
+                    self.response.to_response_kind(),
                 ))
             }
         };
@@ -307,6 +308,17 @@ impl NonErrorQueryResponse {
         Ok(result)
     }
 }
+
+pub(crate) enum NonErrorStartupResponse {
+    Ready,
+    Authenticate(response::authenticate::Authenticate),
+}
+
+pub(crate) enum NonErrorAuthResponse {
+    AuthChallenge(response::authenticate::AuthChallenge),
+    AuthSuccess(response::authenticate::AuthSuccess),
+}
+
 #[cfg(feature = "ssl")]
 mod ssl_config {
     use openssl::{
@@ -625,7 +637,7 @@ impl ConnectionConfig {
 }
 
 // Used to listen for fatal error in connection
-pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
+pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<ConnectionError>;
 
 impl Connection {
     // Returns new connection and ErrorReceiver which can be used to wait for a fatal error
@@ -635,7 +647,7 @@ impl Connection {
         addr: SocketAddr,
         source_port: Option<u16>,
         config: ConnectionConfig,
-    ) -> Result<(Self, ErrorReceiver), QueryError> {
+    ) -> Result<(Self, ErrorReceiver), ConnectionError> {
         let stream_connector = match source_port {
             Some(p) => {
                 tokio::time::timeout(config.connect_timeout, connect_with_source_port(addr, p))
@@ -646,7 +658,7 @@ impl Connection {
         let stream = match stream_connector {
             Ok(stream) => stream?,
             Err(_) => {
-                return Err(QueryError::TimeoutError);
+                return Err(ConnectionError::ConnectTimeout);
             }
         };
         stream.set_nodelay(config.tcp_nodelay)?;
@@ -744,21 +756,103 @@ impl Connection {
     pub(crate) async fn startup(
         &self,
         options: HashMap<Cow<'_, str>, Cow<'_, str>>,
-    ) -> Result<Response, QueryError> {
-        Ok(self
+    ) -> Result<NonErrorStartupResponse, ConnectionSetupRequestError> {
+        let err = |kind: ConnectionSetupRequestErrorKind| {
+            ConnectionSetupRequestError::new(CqlRequestKind::Startup, kind)
+        };
+
+        let req_result = self
             .send_request(&request::Startup { options }, false, false, None)
-            .await?
-            .response)
+            .await;
+
+        // Extract the response to STARTUP request and tidy up the errors.
+        let response = match req_result {
+            Ok(r) => match r.response {
+                Response::Ready => NonErrorStartupResponse::Ready,
+                Response::Authenticate(auth) => NonErrorStartupResponse::Authenticate(auth),
+                Response::Error(Error { error, reason }) => {
+                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                }
+                _ => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                        r.response.to_response_kind(),
+                    )))
+                }
+            },
+            Err(e) => match e {
+                RequestError::FrameError(e) => return Err(err(e.into())),
+                RequestError::CqlResponseParseError(e) => match e {
+                    // Parsing of READY response cannot fail, since its body is empty.
+                    // Remaining valid responses are AUTHENTICATE and ERROR.
+                    CqlResponseParseError::CqlAuthenticateParseError(e) => {
+                        return Err(err(e.into()))
+                    }
+                    CqlResponseParseError::CqlErrorParseError(e) => return Err(err(e.into())),
+                    _ => {
+                        return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                            e.to_response_kind(),
+                        )))
+                    }
+                },
+                RequestError::BrokenConnection(e) => return Err(err(e.into())),
+                RequestError::UnableToAllocStreamId => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                }
+            },
+        };
+
+        Ok(response)
     }
 
-    pub(crate) async fn get_options(&self) -> Result<Response, QueryError> {
-        Ok(self
+    pub(crate) async fn get_options(
+        &self,
+    ) -> Result<response::Supported, ConnectionSetupRequestError> {
+        let err = |kind: ConnectionSetupRequestErrorKind| {
+            ConnectionSetupRequestError::new(CqlRequestKind::Options, kind)
+        };
+
+        let req_result = self
             .send_request(&request::Options {}, false, false, None)
-            .await?
-            .response)
+            .await;
+
+        // Extract the supported options and tidy up the errors.
+        let supported = match req_result {
+            Ok(r) => match r.response {
+                Response::Supported(supported) => supported,
+                Response::Error(Error { error, reason }) => {
+                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                }
+                _ => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                        r.response.to_response_kind(),
+                    )))
+                }
+            },
+            Err(e) => match e {
+                RequestError::FrameError(e) => return Err(err(e.into())),
+                RequestError::CqlResponseParseError(e) => match e {
+                    CqlResponseParseError::CqlSupportedParseError(e) => return Err(err(e.into())),
+                    CqlResponseParseError::CqlErrorParseError(e) => return Err(err(e.into())),
+                    _ => {
+                        return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                            e.to_response_kind(),
+                        )))
+                    }
+                },
+                RequestError::BrokenConnection(e) => return Err(err(e.into())),
+                RequestError::UnableToAllocStreamId => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                }
+            },
+        };
+
+        Ok(supported)
     }
 
-    pub(crate) async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
+    pub(crate) async fn prepare(
+        &self,
+        query: &Query,
+    ) -> Result<PreparedStatement, UserRequestError> {
         let query_response = self
             .send_request(
                 &request::Prepare {
@@ -771,7 +865,9 @@ impl Connection {
             .await?;
 
         let mut prepared_statement = match query_response.response {
-            Response::Error(err) => return Err(err.into()),
+            Response::Error(error::Error { error, reason }) => {
+                return Err(UserRequestError::DbError(error, reason))
+            }
             Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
                 p.id,
                 self.features
@@ -784,8 +880,8 @@ impl Connection {
                 query.config.clone(),
             ),
             _ => {
-                return Err(QueryError::ProtocolError(
-                    "PREPARE: Unexpected server response",
+                return Err(UserRequestError::UnexpectedResponse(
+                    query_response.response.to_response_kind(),
                 ))
             }
         };
@@ -800,15 +896,13 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         previous_prepared: &PreparedStatement,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), UserRequestError> {
         let reprepare_query: Query = query.into();
         let reprepared = self.prepare(&reprepare_query).await?;
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
         if reprepared.get_id() != previous_prepared.get_id() {
-            Err(QueryError::ProtocolError(
-                "Prepared statement Id changed, md5 sum should stay the same",
-            ))
+            Err(UserRequestError::RepreparedIdChanged)
         } else {
             Ok(())
         }
@@ -817,9 +911,57 @@ impl Connection {
     pub(crate) async fn authenticate_response(
         &self,
         response: Option<Vec<u8>>,
-    ) -> Result<QueryResponse, QueryError> {
-        self.send_request(&request::AuthResponse { response }, false, false, None)
-            .await
+    ) -> Result<NonErrorAuthResponse, ConnectionSetupRequestError> {
+        let err = |kind: ConnectionSetupRequestErrorKind| {
+            ConnectionSetupRequestError::new(CqlRequestKind::AuthResponse, kind)
+        };
+
+        let req_result = self
+            .send_request(&request::AuthResponse { response }, false, false, None)
+            .await;
+
+        // Extract non-error response to AUTH_RESPONSE request and tidy up errors.
+        let response = match req_result {
+            Ok(r) => match r.response {
+                Response::AuthSuccess(auth_success) => {
+                    NonErrorAuthResponse::AuthSuccess(auth_success)
+                }
+                Response::AuthChallenge(auth_challenge) => {
+                    NonErrorAuthResponse::AuthChallenge(auth_challenge)
+                }
+                Response::Error(Error { error, reason }) => {
+                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                }
+                _ => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                        r.response.to_response_kind(),
+                    )))
+                }
+            },
+            Err(e) => match e {
+                RequestError::FrameError(e) => return Err(err(e.into())),
+                RequestError::CqlResponseParseError(e) => match e {
+                    CqlResponseParseError::CqlAuthSuccessParseError(e) => {
+                        return Err(err(e.into()))
+                    }
+                    CqlResponseParseError::CqlAuthChallengeParseError(e) => {
+                        return Err(err(e.into()))
+                    }
+                    CqlResponseParseError::CqlErrorParseError(e) => return Err(err(e.into())),
+                    _ => {
+                        return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                            e.to_response_kind(),
+                        )))
+                    }
+                },
+                RequestError::BrokenConnection(e) => return Err(err(e.into())),
+                RequestError::UnableToAllocStreamId => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                }
+            },
+        };
+
+        Ok(response)
     }
 
     #[allow(dead_code)]
@@ -827,7 +969,7 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         let query: Query = query.into();
 
         // This method is used only for driver internal queries, so no need to consult execution profile here.
@@ -852,7 +994,7 @@ impl Connection {
         paging_state: PagingState,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         let query: Query = query.into();
         let page_size = query.get_validated_page_size();
 
@@ -877,6 +1019,7 @@ impl Connection {
 
         self.query_raw_unpaged(&query, PagingState::start())
             .await
+            .map_err(Into::into)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -884,7 +1027,7 @@ impl Connection {
         &self,
         query: &Query,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, UserRequestError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_raw_with_consistency(
             query,
@@ -905,7 +1048,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, UserRequestError> {
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
             parameters: query::QueryParameters {
@@ -919,8 +1062,11 @@ impl Connection {
             },
         };
 
-        self.send_request(&query_frame, true, query.config.tracing, None)
-            .await
+        let response = self
+            .send_request(&query_frame, true, query.config.tracing, None)
+            .await?;
+
+        Ok(response)
     }
 
     #[allow(dead_code)]
@@ -932,6 +1078,7 @@ impl Connection {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values, PagingState::start())
             .await
+            .map_err(Into::into)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -941,7 +1088,7 @@ impl Connection {
         prepared: &PreparedStatement,
         values: SerializedValues,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, UserRequestError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
             prepared,
@@ -964,7 +1111,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, UserRequestError> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
@@ -1117,7 +1264,8 @@ impl Connection {
         loop {
             let query_response = self
                 .send_request(&batch_frame, true, batch.config.tracing, None)
-                .await?;
+                .await
+                .map_err(UserRequestError::from)?;
 
             return match query_response.response {
                 Response::Error(err) => match err.error {
@@ -1231,21 +1379,40 @@ impl Connection {
     async fn register(
         &self,
         event_types_to_register_for: Vec<EventType>,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), ConnectionSetupRequestError> {
+        let err = |kind: ConnectionSetupRequestErrorKind| {
+            ConnectionSetupRequestError::new(CqlRequestKind::Register, kind)
+        };
+
         let register_frame = register::Register {
             event_types_to_register_for,
         };
 
-        match self
-            .send_request(&register_frame, true, false, None)
-            .await?
-            .response
-        {
-            Response::Ready => Ok(()),
-            Response::Error(err) => Err(err.into()),
-            _ => Err(QueryError::ProtocolError(
-                "Unexpected response to REGISTER message",
-            )),
+        // Extract the response and tidy up the errors.
+        match self.send_request(&register_frame, true, false, None).await {
+            Ok(r) => match r.response {
+                Response::Ready => Ok(()),
+                Response::Error(Error { error, reason }) => {
+                    Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                }
+                _ => Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                    r.response.to_response_kind(),
+                ))),
+            },
+            Err(e) => match e {
+                RequestError::FrameError(e) => Err(err(e.into())),
+                RequestError::CqlResponseParseError(e) => match e {
+                    // Parsing the READY response cannot fail. Only remaining valid response is ERROR.
+                    CqlResponseParseError::CqlErrorParseError(e) => Err(err(e.into())),
+                    _ => Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                        e.to_response_kind(),
+                    ))),
+                },
+                RequestError::BrokenConnection(e) => Err(err(e.into())),
+                RequestError::UnableToAllocStreamId => {
+                    Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                }
+            },
         }
     }
 
@@ -1274,7 +1441,7 @@ impl Connection {
         compress: bool,
         tracing: bool,
         cached_metadata: Option<&Arc<ResultMetadata>>,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, RequestError> {
         let compression = if compress {
             self.config.compression
         } else {
@@ -1286,12 +1453,14 @@ impl Connection {
             .send_request(request, compression, tracing)
             .await?;
 
-        Self::parse_response(
+        let response = Self::parse_response(
             task_response,
             self.config.compression,
             &self.features.protocol_features,
             cached_metadata,
-        )
+        )?;
+
+        Ok(response)
     }
 
     fn parse_response(
@@ -1299,7 +1468,7 @@ impl Connection {
         compression: Option<Compression>,
         features: &ProtocolFeatures,
         cached_metadata: Option<&Arc<ResultMetadata>>,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, ResponseParseError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
             compression,
@@ -1332,7 +1501,7 @@ impl Connection {
         config: ConnectionConfig,
         stream: TcpStream,
         receiver: mpsc::Receiver<Task>,
-        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+        error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
         node_address: IpAddr,
@@ -1375,7 +1544,7 @@ impl Connection {
         config: ConnectionConfig,
         stream: (impl AsyncRead + AsyncWrite),
         receiver: mpsc::Receiver<Task>,
-        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+        error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
         node_address: IpAddr,
@@ -1419,7 +1588,7 @@ impl Connection {
 
         let result = futures::try_join!(r, w, o, k);
 
-        let error: QueryError = match result {
+        let error: BrokenConnectionError = match result {
             Ok(_) => return, // Connection was dropped, we can return
             Err(err) => err,
         };
@@ -1430,20 +1599,22 @@ impl Connection {
 
         for (_, handler) in response_handlers {
             // Ignore sending error, request was dropped
-            let _ = handler.response_sender.send(Err(error.clone()));
+            let _ = handler.response_sender.send(Err(error.clone().into()));
         }
 
         // If someone is listening for connection errors notify them
-        let _ = error_sender.send(error);
+        let _ = error_sender.send(error.into());
     }
 
     async fn reader(
         mut read_half: (impl AsyncRead + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         config: ConnectionConfig,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), BrokenConnectionError> {
         loop {
-            let (params, opcode, body) = frame::read_response_frame(&mut read_half).await?;
+            let (params, opcode, body) = frame::read_response_frame(&mut read_half)
+                .await
+                .map_err(BrokenConnectionErrorKind::FrameError)?;
             let response = TaskResponse {
                 params,
                 opcode,
@@ -1459,7 +1630,9 @@ impl Connection {
                 }
                 Ordering::Equal => {
                     if let Some(event_sender) = config.event_sender.as_ref() {
-                        Self::handle_event(response, config.compression, event_sender).await?;
+                        Self::handle_event(response, config.compression, event_sender)
+                            .await
+                            .map_err(BrokenConnectionErrorKind::CqlEventHandlingError)?
                     }
                     continue;
                 }
@@ -1488,9 +1661,7 @@ impl Connection {
                         "Received response with unexpected StreamId {}",
                         params.stream
                     );
-                    return Err(QueryError::ProtocolError(
-                        "Received response with unexpected StreamId",
-                    ));
+                    return Err(BrokenConnectionErrorKind::UnexpectedStreamId(params.stream).into());
                 }
                 Orphaned => {
                     // Do nothing, handler was freed because this stream_id has
@@ -1513,7 +1684,7 @@ impl Connection {
                 error!("Could not allocate stream id");
                 let _ = response_handler
                     .response_sender
-                    .send(Err(QueryError::UnableToAllocStreamId));
+                    .send(Err(RequestError::UnableToAllocStreamId));
                 None
             }
         }
@@ -1524,7 +1695,7 @@ impl Connection {
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
         enable_write_coalescing: bool,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), BrokenConnectionError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
         // and the whole worker will be stopped
@@ -1537,7 +1708,10 @@ impl Connection {
                 let req_data: &[u8] = req.get_data();
                 total_sent += req_data.len();
                 num_requests += 1;
-                write_half.write_all(req_data).await?;
+                write_half
+                    .write_all(req_data)
+                    .await
+                    .map_err(BrokenConnectionErrorKind::WriteError)?;
                 task = match task_receiver.try_recv() {
                     Ok(t) => t,
                     Err(_) if enable_write_coalescing => {
@@ -1554,7 +1728,10 @@ impl Connection {
                 }
             }
             trace!("Sending {} requests; {} bytes", num_requests, total_sent);
-            write_half.flush().await?;
+            write_half
+                .flush()
+                .await
+                .map_err(BrokenConnectionErrorKind::WriteError)?;
         }
 
         Ok(())
@@ -1567,7 +1744,7 @@ impl Connection {
     async fn orphaner(
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut orphan_receiver: mpsc::UnboundedReceiver<RequestId>,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), BrokenConnectionError> {
         let mut interval = tokio::time::interval(OLD_AGE_ORPHAN_THRESHOLD);
         loop {
             tokio::select! {
@@ -1581,7 +1758,7 @@ impl Connection {
                             "Too many old orphaned stream ids: {}",
                             old_orphan_count,
                         );
-                        return Err(QueryError::TooManyOrphanedStreamIds(old_orphan_count as u16))
+                        return Err(BrokenConnectionErrorKind::TooManyOrphanedStreamIds(old_orphan_count as u16).into())
                     }
                 }
                 Some(request_id) = orphan_receiver.recv() => {
@@ -1604,12 +1781,15 @@ impl Connection {
         keepalive_interval: Option<Duration>,
         keepalive_timeout: Option<Duration>,
         node_address: IpAddr, // This address is only used to enrich the log messages
-    ) -> Result<(), QueryError> {
-        async fn issue_keepalive_query(router_handle: &RouterHandle) -> Result<(), QueryError> {
+    ) -> Result<(), BrokenConnectionError> {
+        async fn issue_keepalive_query(
+            router_handle: &RouterHandle,
+        ) -> Result<(), BrokenConnectionError> {
             router_handle
                 .send_request(&Options, None, false)
                 .await
                 .map(|_| ())
+                .map_err(|q_err| BrokenConnectionErrorKind::KeepaliveQueryError(q_err).into())
         }
 
         if let Some(keepalive_interval) = keepalive_interval {
@@ -1631,13 +1811,9 @@ impl Connection {
                                 "Timed out while waiting for response to keepalive request on connection to node {}",
                                 node_address
                             );
-                            return Err(QueryError::IoError(Arc::new(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                format!(
-                                    "Timed out while waiting for response to keepalive request on connection to node {}",
-                                        node_address
-                                )
-                            ))));
+                            return Err(
+                                BrokenConnectionErrorKind::KeepaliveTimeout(node_address).into()
+                            );
                         }
                     }
                 } else {
@@ -1661,7 +1837,7 @@ impl Connection {
         task_response: TaskResponse,
         compression: Option<Compression>,
         event_sender: &mpsc::Sender<Event>,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), CqlEventHandlingError> {
         // Protocol features are negotiated during connection handshake.
         // However, the router is already created and sent to a different tokio
         // task before the handshake begins, therefore it's hard to cleanly
@@ -1673,21 +1849,34 @@ impl Connection {
         // future implementers.
         let features = ProtocolFeatures::default(); // TODO: Use the right features
 
-        let response = Self::parse_response(task_response, compression, &features, None)?.response;
-        let event = match response {
-            Response::Event(e) => e,
-            _ => {
-                warn!("Expected to receive Event response, got {:?}", response);
-                return Ok(());
-            }
+        let event = match Self::parse_response(task_response, compression, &features, None) {
+            Ok(r) => match r.response {
+                Response::Event(event) => event,
+                _ => {
+                    error!("Expected to receive Event response, got {:?}", r.response);
+                    return Err(CqlEventHandlingError::UnexpectedResponse(
+                        r.response.to_response_kind(),
+                    ));
+                }
+            },
+            Err(e) => match e {
+                ResponseParseError::FrameError(e) => return Err(e.into()),
+                ResponseParseError::CqlResponseParseError(e) => match e {
+                    CqlResponseParseError::CqlEventParseError(e) => return Err(e.into()),
+                    // Received a response other than EVENT, but failed to deserialize it.
+                    _ => {
+                        return Err(CqlEventHandlingError::UnexpectedResponse(
+                            e.to_response_kind(),
+                        ))
+                    }
+                },
+            },
         };
 
-        event_sender.send(event).await.map_err(|_| {
-            QueryError::IoError(Arc::new(std::io::Error::new(
-                ErrorKind::Other,
-                "Connection broken",
-            )))
-        })
+        event_sender
+            .send(event)
+            .await
+            .map_err(|_| CqlEventHandlingError::SendError)
     }
 
     pub(crate) fn get_shard_info(&self) -> &Option<ShardInfo> {
@@ -1781,7 +1970,7 @@ pub(crate) async fn open_connection(
     endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
     config: &ConnectionConfig,
-) -> Result<(Connection, ErrorReceiver), QueryError> {
+) -> Result<(Connection, ErrorReceiver), ConnectionError> {
     /* Translate the address, if applicable. */
     let addr = maybe_translated_addr(endpoint, config.address_translator.as_deref()).await?;
 
@@ -1792,21 +1981,11 @@ pub(crate) async fn open_connection(
     /* Perform OPTIONS/SUPPORTED/STARTUP handshake. */
 
     // Get OPTIONS SUPPORTED by the cluster.
-    let options_result = connection.get_options().await?;
+    let mut supported = connection.get_options().await?;
 
     let shard_aware_port_key = match config.is_ssl() {
         true => options::SCYLLA_SHARD_AWARE_PORT_SSL,
         false => options::SCYLLA_SHARD_AWARE_PORT,
-    };
-
-    let mut supported = match options_result {
-        Response::Supported(supported) => supported,
-        Response::Error(Error { error, reason }) => return Err(QueryError::DbError(error, reason)),
-        _ => {
-            return Err(QueryError::ProtocolError(
-                "Wrong response to OPTIONS message was received",
-            ));
-        }
     };
 
     // If this is ScyllaDB that we connected to, we received sharding information.
@@ -1868,17 +2047,11 @@ pub(crate) async fn open_connection(
     }
 
     /* Send the STARTUP frame with all the requested options. */
-    let result = connection.startup(options).await?;
-    match result {
-        Response::Ready => {}
-        Response::Authenticate(authenticate) => {
+    let startup_result = connection.startup(options).await?;
+    match startup_result {
+        NonErrorStartupResponse::Ready => {}
+        NonErrorStartupResponse::Authenticate(authenticate) => {
             perform_authenticate(&mut connection, &authenticate).await?;
-        }
-        Response::Error(Error { error, reason }) => return Err(QueryError::DbError(error, reason)),
-        _ => {
-            return Err(QueryError::ProtocolError(
-                "Unexpected response to STARTUP message",
-            ))
         }
     }
 
@@ -1898,7 +2071,11 @@ pub(crate) async fn open_connection(
 async fn perform_authenticate(
     connection: &mut Connection,
     authenticate: &Authenticate,
-) -> Result<(), QueryError> {
+) -> Result<(), ConnectionSetupRequestError> {
+    let err = |kind: ConnectionSetupRequestErrorKind| {
+        ConnectionSetupRequestError::new(CqlRequestKind::AuthResponse, kind)
+    };
+
     let authenticator = &authenticate.authenticator_name as &str;
 
     match connection.config.authenticator {
@@ -1906,43 +2083,35 @@ async fn perform_authenticate(
             let (mut response, mut auth_session) = authenticator_provider
                 .start_authentication_session(authenticator)
                 .await
-                .map_err(QueryError::InvalidMessage)?;
+                .map_err(|e| err(ConnectionSetupRequestErrorKind::StartAuthSessionError(e)))?;
 
             loop {
-                match connection
-                    .authenticate_response(response)
-                    .await?.response
-                {
-                    Response::AuthChallenge(challenge) => {
+                match connection.authenticate_response(response).await? {
+                    NonErrorAuthResponse::AuthChallenge(challenge) => {
                         response = auth_session
-                            .evaluate_challenge(
-                                challenge.authenticate_message.as_deref(),
-                            )
+                            .evaluate_challenge(challenge.authenticate_message.as_deref())
                             .await
-                            .map_err(QueryError::InvalidMessage)?;
+                            .map_err(|e| {
+                                err(
+                                    ConnectionSetupRequestErrorKind::AuthChallengeEvaluationError(
+                                        e,
+                                    ),
+                                )
+                            })?;
                     }
-                    Response::AuthSuccess(success) => {
+                    NonErrorAuthResponse::AuthSuccess(success) => {
                         auth_session
                             .success(success.success_message.as_deref())
                             .await
-                            .map_err(QueryError::InvalidMessage)?;
+                            .map_err(|e| {
+                                err(ConnectionSetupRequestErrorKind::AuthFinishError(e))
+                            })?;
                         break;
-                    }
-                    Response::Error(err) => {
-                        return Err(err.into());
-                    }
-                    _ => {
-                        return Err(QueryError::ProtocolError(
-                            "Unexpected response to Authenticate Response message",
-                        ))
                     }
                 }
             }
-        },
-        None => return Err(QueryError::InvalidMessage(
-            "Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials \
-                    or SessionBuilder::authenticator_provider to provide custom authenticator".to_string(),
-        )),
+        }
+        None => return Err(err(ConnectionSetupRequestErrorKind::MissingAuthentication)),
     }
 
     Ok(())
@@ -2192,7 +2361,6 @@ impl VerifiedKeyspaceName {
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use scylla_cql::errors::QueryError;
     use scylla_cql::frame::protocol_features::{
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };
@@ -2541,6 +2709,8 @@ mod tests {
     #[ntest::timeout(20000)]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_is_closed_on_no_response_to_keepalives() {
+        use scylla_cql::errors::BrokenConnectionErrorKind;
+
         setup_tracing();
 
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
@@ -2602,7 +2772,13 @@ mod tests {
         // Wait until keepaliver gots impatient and terminates router.
         // Then, the error from keepaliver will be propagated to the error receiver.
         let err = error_receiver.await.unwrap();
-        assert_matches!(err, QueryError::IoError(_));
+        let err_inner: &BrokenConnectionErrorKind = match err {
+            crate::transport::connection::ConnectionError::BrokenConnection(ref e) => {
+                e.get_inner().downcast_ref().unwrap()
+            }
+            _ => panic!("Bad error type. Expected keepalive timeout."),
+        };
+        assert_matches!(err_inner, BrokenConnectionErrorKind::KeepaliveTimeout(_));
 
         // As the router is invalidated, all further queries should immediately
         // return error.

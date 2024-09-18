@@ -10,7 +10,7 @@ use std::sync::Arc;
 pub use error::Error;
 pub use supported::Supported;
 
-use crate::errors::QueryError;
+use crate::errors::{CqlResponseKind, UserRequestError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::response::result::ResultMetadata;
 use crate::frame::TryFromPrimitiveError;
@@ -64,6 +64,19 @@ pub enum Response {
 }
 
 impl Response {
+    pub fn to_response_kind(&self) -> CqlResponseKind {
+        match self {
+            Response::Error(_) => CqlResponseKind::Error,
+            Response::Ready => CqlResponseKind::Ready,
+            Response::Result(_) => CqlResponseKind::Result,
+            Response::Authenticate(_) => CqlResponseKind::Authenticate,
+            Response::AuthSuccess(_) => CqlResponseKind::AuthSuccess,
+            Response::AuthChallenge(_) => CqlResponseKind::AuthChallenge,
+            Response::Supported(_) => CqlResponseKind::Supported,
+            Response::Event(_) => CqlResponseKind::Event,
+        }
+    }
+
     pub fn deserialize(
         features: &ProtocolFeatures,
         opcode: ResponseOpcode,
@@ -93,9 +106,11 @@ impl Response {
         Ok(response)
     }
 
-    pub fn into_non_error_response(self) -> Result<NonErrorResponse, QueryError> {
-        Ok(match self {
-            Response::Error(err) => return Err(QueryError::from(err)),
+    pub fn into_non_error_response(self) -> Result<NonErrorResponse, UserRequestError> {
+        let non_error_response = match self {
+            Response::Error(error::Error { error, reason }) => {
+                return Err(UserRequestError::DbError(error, reason))
+            }
             Response::Ready => NonErrorResponse::Ready,
             Response::Result(res) => NonErrorResponse::Result(res),
             Response::Authenticate(auth) => NonErrorResponse::Authenticate(auth),
@@ -103,7 +118,9 @@ impl Response {
             Response::AuthChallenge(auth_chal) => NonErrorResponse::AuthChallenge(auth_chal),
             Response::Supported(sup) => NonErrorResponse::Supported(sup),
             Response::Event(eve) => NonErrorResponse::Event(eve),
-        })
+        };
+
+        Ok(non_error_response)
     }
 }
 
@@ -117,4 +134,18 @@ pub enum NonErrorResponse {
     AuthChallenge(authenticate::AuthChallenge),
     Supported(Supported),
     Event(event::Event),
+}
+
+impl NonErrorResponse {
+    pub fn to_response_kind(&self) -> CqlResponseKind {
+        match self {
+            NonErrorResponse::Ready => CqlResponseKind::Ready,
+            NonErrorResponse::Result(_) => CqlResponseKind::Result,
+            NonErrorResponse::Authenticate(_) => CqlResponseKind::Authenticate,
+            NonErrorResponse::AuthSuccess(_) => CqlResponseKind::AuthSuccess,
+            NonErrorResponse::AuthChallenge(_) => CqlResponseKind::AuthChallenge,
+            NonErrorResponse::Supported(_) => CqlResponseKind::Supported,
+            NonErrorResponse::Event(_) => CqlResponseKind::Event,
+        }
+    }
 }

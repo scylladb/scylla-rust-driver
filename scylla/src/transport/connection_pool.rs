@@ -19,8 +19,8 @@ use super::NodeAddr;
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
 use rand::Rng;
+use scylla_cql::errors::{BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError};
 use std::convert::TryInto;
-use std::io::ErrorKind;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
@@ -79,7 +79,7 @@ enum MaybePoolConnections {
     // The pool is empty because either initial filling failed or all connections
     // became broken; will be asynchronously refilled. Contains an error
     // from the last connection attempt.
-    Broken(QueryError),
+    Broken(ConnectionError),
 
     // The pool has some connections which are usable (or will be removed soon)
     Ready(PoolConnections),
@@ -234,7 +234,10 @@ impl NodeConnectionPool {
         .unwrap_or(None)
     }
 
-    pub(crate) fn connection_for_shard(&self, shard: Shard) -> Result<Arc<Connection>, QueryError> {
+    pub(crate) fn connection_for_shard(
+        &self,
+        shard: Shard,
+    ) -> Result<Arc<Connection>, ConnectionPoolError> {
         trace!(shard = shard, "Selecting connection for shard");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
@@ -257,7 +260,7 @@ impl NodeConnectionPool {
         })
     }
 
-    pub(crate) fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
+    pub(crate) fn random_connection(&self) -> Result<Arc<Connection>, ConnectionPoolError> {
         trace!("Selecting random connection");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
@@ -341,7 +344,9 @@ impl NodeConnectionPool {
         }
     }
 
-    pub(crate) fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
+    pub(crate) fn get_working_connections(
+        &self,
+    ) -> Result<Vec<Arc<Connection>>, ConnectionPoolError> {
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => conns.clone(),
             PoolConnections::Sharded { connections, .. } => {
@@ -370,25 +375,17 @@ impl NodeConnectionPool {
         }
     }
 
-    fn with_connections<T>(&self, f: impl FnOnce(&PoolConnections) -> T) -> Result<T, QueryError> {
+    fn with_connections<T>(
+        &self,
+        f: impl FnOnce(&PoolConnections) -> T,
+    ) -> Result<T, ConnectionPoolError> {
         let conns = self.conns.load_full();
         match &*conns {
             MaybePoolConnections::Ready(pool_connections) => Ok(f(pool_connections)),
-            MaybePoolConnections::Broken(err) => {
-                Err(QueryError::IoError(Arc::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    format!(
-                        "No connections in the pool; last connection failed with: {}",
-                        err
-                    ),
-                ))))
-            }
-            MaybePoolConnections::Initializing => {
-                Err(QueryError::IoError(Arc::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    "No connections in the pool, pool is still being initialized",
-                ))))
-            }
+            MaybePoolConnections::Broken(err) => Err(ConnectionPoolError::Broken {
+                last_connection_error: err.clone(),
+            }),
+            MaybePoolConnections::Initializing => Err(ConnectionPoolError::Initializing),
         }
     }
 }
@@ -989,7 +986,7 @@ impl PoolRefiller {
     // Updates `shared_conns` based on `conns`.
     // `last_error` must not be `None` if there is a possibility of the pool
     // being empty.
-    fn update_shared_conns(&mut self, last_error: Option<QueryError>) {
+    fn update_shared_conns(&mut self, last_error: Option<ConnectionError>) {
         let new_conns = if !self.has_connections() {
             Arc::new(MaybePoolConnections::Broken(last_error.unwrap()))
         } else {
@@ -1015,7 +1012,7 @@ impl PoolRefiller {
 
     // Removes given connection from the pool. It looks both into active
     // connections and excess connections.
-    fn remove_connection(&mut self, connection: Arc<Connection>, last_error: QueryError) {
+    fn remove_connection(&mut self, connection: Arc<Connection>, last_error: ConnectionError) {
         let ptr = Arc::as_ptr(&connection);
 
         let maybe_remove_in_vec = |v: &mut Vec<Arc<Connection>>| -> bool {
@@ -1204,7 +1201,7 @@ impl PoolRefiller {
 
 struct BrokenConnectionEvent {
     connection: Weak<Connection>,
-    error: QueryError,
+    error: ConnectionError,
 }
 
 async fn wait_for_error(
@@ -1214,16 +1211,13 @@ async fn wait_for_error(
     BrokenConnectionEvent {
         connection,
         error: error_receiver.await.unwrap_or_else(|_| {
-            QueryError::IoError(Arc::new(std::io::Error::new(
-                ErrorKind::Other,
-                "Connection broken",
-            )))
+            ConnectionError::BrokenConnection(BrokenConnectionErrorKind::ChannelError.into())
         }),
     }
 }
 
 struct OpenedConnectionEvent {
-    result: Result<(Connection, ErrorReceiver), QueryError>,
+    result: Result<(Connection, ErrorReceiver), ConnectionError>,
     requested_shard: Option<Shard>,
     keyspace_name: Option<VerifiedKeyspaceName>,
 }
@@ -1233,7 +1227,7 @@ async fn open_connection_to_shard_aware_port(
     shard: Shard,
     sharder: Sharder,
     connection_config: &ConnectionConfig,
-) -> Result<(Connection, ErrorReceiver), QueryError> {
+) -> Result<(Connection, ErrorReceiver), ConnectionError> {
     // Create iterator over all possible source ports for this shard
     let source_port_iter = sharder.iter_source_ports_for_shard(shard);
 
@@ -1248,10 +1242,7 @@ async fn open_connection_to_shard_aware_port(
     }
 
     // Tried all source ports for that shard, give up
-    Err(QueryError::IoError(Arc::new(std::io::Error::new(
-        std::io::ErrorKind::AddrInUse,
-        "Could not find free source port for shard",
-    ))))
+    Err(ConnectionError::NoSourcePortForShard(shard))
 }
 
 #[cfg(test)]

@@ -1,13 +1,19 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
-use crate::frame::frame_errors::{CqlResponseParseError, FrameError, ParseError};
+use crate::frame::frame_errors::{
+    CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
+    CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlResultParseError,
+    CqlSupportedParseError, FrameError, ParseError,
+};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
 use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use crate::types::serialize::SerializationError;
 use crate::Consistency;
 use bytes::Bytes;
+use std::error::Error;
 use std::io::ErrorKind;
+use std::net::IpAddr;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -22,13 +28,21 @@ pub enum QueryError {
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
 
-    /// Failed to deserialize a CQL response from the server.
+    /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
-    CqlResponseParseError(#[from] CqlResponseParseError),
+    CqlResultParseError(#[from] CqlResultParseError),
+
+    /// Received an ERROR server response, but failed to deserialize it.
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
 
     /// Input/Output error has occurred, connection broken etc.
     #[error("IO Error: {0}")]
     IoError(Arc<std::io::Error>),
+
+    /// Selected node's connection pool is in invalid state.
+    #[error("No connections in the pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
 
     /// Unexpected message received
     #[error("Protocol Error: {0}")]
@@ -45,16 +59,44 @@ pub enum QueryError {
     #[error("Too many orphaned stream ids: {0}")]
     TooManyOrphanedStreamIds(u16),
 
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
+
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
     /// Client timeout occurred before any response arrived
     #[error("Request timeout: {0}")]
     RequestTimeout(String),
+}
 
-    /// Address translation failed
-    #[error("Address translation failed: {0}")]
-    TranslationError(#[from] TranslationError),
+/// An error type that occurred when executing one of:
+/// - QUERY
+/// - PREPARE
+/// - EXECUTE
+/// - BATCH
+///
+/// requests.
+#[derive(Error, Debug)]
+pub enum UserRequestError {
+    #[error("Database returned an error: {0}, Error message: {1}")]
+    DbError(DbError, String),
+    #[error(transparent)]
+    CqlResultParseError(#[from] CqlResultParseError),
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
+    #[error(
+        "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
+    )]
+    UnexpectedResponse(CqlResponseKind),
+    #[error(transparent)]
+    BrokenConnectionError(#[from] BrokenConnectionError),
+    #[error(transparent)]
+    FrameError(#[from] FrameError),
+    #[error("Unable to allocate stream id")]
+    UnableToAllocStreamId,
+    #[error("Prepared statement Id changed, md5 sum should stay the same")]
+    RepreparedIdChanged,
 }
 
 /// An error sent from the database in response to a query
@@ -338,6 +380,37 @@ pub enum WriteType {
     Other(String),
 }
 
+/// Possible requests sent by the client.
+#[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
+pub enum CqlRequestKind {
+    Startup,
+    AuthResponse,
+    Options,
+    Query,
+    Prepare,
+    Execute,
+    Batch,
+    Register,
+}
+
+impl std::fmt::Display for CqlRequestKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind_str = match self {
+            CqlRequestKind::Startup => "STARTUP",
+            CqlRequestKind::AuthResponse => "AUTH_RESPONSE",
+            CqlRequestKind::Options => "OPTIONS",
+            CqlRequestKind::Query => "QUERY",
+            CqlRequestKind::Prepare => "PREPARE",
+            CqlRequestKind::Execute => "EXECUTE",
+            CqlRequestKind::Batch => "BATCH",
+            CqlRequestKind::Register => "REGISTER",
+        };
+
+        f.write_str(kind_str)
+    }
+}
+
 /// Error caused by caller creating an invalid query
 #[derive(Error, Debug, Clone)]
 #[error("Invalid query passed to Session")]
@@ -366,6 +439,37 @@ pub enum BadQuery {
     Other(String),
 }
 
+/// Possible CQL responses received from the server
+#[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
+pub enum CqlResponseKind {
+    Error,
+    Ready,
+    Authenticate,
+    Supported,
+    Result,
+    Event,
+    AuthChallenge,
+    AuthSuccess,
+}
+
+impl std::fmt::Display for CqlResponseKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind_str = match self {
+            CqlResponseKind::Error => "ERROR",
+            CqlResponseKind::Ready => "READY",
+            CqlResponseKind::Authenticate => "AUTHENTICATE",
+            CqlResponseKind::Supported => "SUPPORTED",
+            CqlResponseKind::Result => "RESULT",
+            CqlResponseKind::Event => "EVENT",
+            CqlResponseKind::AuthChallenge => "AUTH_CHALLENGE",
+            CqlResponseKind::AuthSuccess => "AUTH_SUCCESS",
+        };
+
+        f.write_str(kind_str)
+    }
+}
+
 /// Error that occurred during session creation
 #[derive(Error, Debug, Clone)]
 pub enum NewSessionError {
@@ -386,13 +490,21 @@ pub enum NewSessionError {
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
 
-    /// Failed to deserialize a CQL response from the server.
+    /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
-    CqlResponseParseError(#[from] CqlResponseParseError),
+    CqlResultParseError(#[from] CqlResultParseError),
+
+    /// Received an ERROR server response, but failed to deserialize it.
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
 
     /// Input/Output error has occurred, connection broken etc.
     #[error("IO Error: {0}")]
     IoError(Arc<std::io::Error>),
+
+    /// Selected node's connection pool is in invalid state.
+    #[error("No connections in the pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
 
     /// Unexpected message received
     #[error("Protocol Error: {0}")]
@@ -409,6 +521,9 @@ pub enum NewSessionError {
     #[error("Too many orphaned stream ids: {0}")]
     TooManyOrphanedStreamIds(u16),
 
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
+
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
@@ -416,10 +531,6 @@ pub enum NewSessionError {
     /// during `Session` creation.
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
-
-    /// Address translation failed
-    #[error("Address translation failed: {0}")]
-    TranslationError(#[from] TranslationError),
 }
 
 /// Invalid keyspace name given to `Session::use_keyspace()`
@@ -438,15 +549,246 @@ pub enum BadKeyspaceName {
     IllegalCharacter(String, char),
 }
 
-impl std::fmt::Display for WriteType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+// FIXME: this should be moved to scylla crate.
+/// An error that appeared on a connection level.
+/// It indicated that connection can no longer be used
+/// and should be dropped.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ConnectionError {
+    #[error("Connect timeout elapsed")]
+    ConnectTimeout,
+    #[error(transparent)]
+    IoError(Arc<std::io::Error>),
+    #[error("Could not find free source port for shard {0}")]
+    NoSourcePortForShard(u32),
+    #[error("Address translation failed: {0}")]
+    TranslationError(#[from] TranslationError),
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
+    #[error(transparent)]
+    ConnectionSetupRequestError(#[from] ConnectionSetupRequestError),
+}
+
+impl From<std::io::Error> for ConnectionError {
+    fn from(value: std::io::Error) -> Self {
+        ConnectionError::IoError(Arc::new(value))
     }
 }
 
-impl From<std::io::Error> for QueryError {
-    fn from(io_error: std::io::Error) -> QueryError {
-        QueryError::IoError(Arc::new(io_error))
+impl ConnectionError {
+    /// Checks if this error indicates that a chosen source port/address cannot be bound.
+    /// This is caused by one of the following:
+    /// - The source address is already used by another socket,
+    /// - The source address is reserved and the process does not have sufficient privileges to use it.
+    pub fn is_address_unavailable_for_use(&self) -> bool {
+        if let ConnectionError::IoError(io_error) = self {
+            match io_error.kind() {
+                ErrorKind::AddrInUse | ErrorKind::PermissionDenied => return true,
+                _ => {}
+            }
+        }
+
+        false
+    }
+}
+
+/// An error that occurred during connection setup request execution.
+/// It indicates that request needed to initiate a connection failed.
+#[derive(Error, Debug, Clone)]
+#[error("Failed to perform a connection setup request. Request: {request_kind}, reason: {error}")]
+pub struct ConnectionSetupRequestError {
+    request_kind: CqlRequestKind,
+    error: ConnectionSetupRequestErrorKind,
+}
+
+type AuthError = String;
+
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ConnectionSetupRequestErrorKind {
+    // TODO: Make FrameError clonable.
+    #[error(transparent)]
+    FrameError(Arc<FrameError>),
+    #[error("Unable to allocate stream id")]
+    UnableToAllocStreamId,
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
+    #[error("Database returned an error: {0}, Error message: {1}")]
+    DbError(DbError, String),
+    #[error("Received unexpected response from the server: {0}")]
+    UnexpectedResponse(CqlResponseKind),
+    #[error("Failed to deserialize SUPPORTED response: {0}")]
+    CqlSupportedParseError(#[from] CqlSupportedParseError),
+    #[error("Failed to deserialize AUTHENTICATE response: {0}")]
+    CqlAuthenticateParseError(#[from] CqlAuthenticateParseError),
+    #[error("Failed to deserialize AUTH_SUCCESS response: {0}")]
+    CqlAuthSuccessParseError(#[from] CqlAuthSuccessParseError),
+    #[error("Failed to deserialize AUTH_CHALLENGE response: {0}")]
+    CqlAuthChallengeParseError(#[from] CqlAuthChallengeParseError),
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
+    #[error("Failed to start client's auth session: {0}")]
+    StartAuthSessionError(AuthError),
+    #[error("Failed to evaluate auth challenge on client side: {0}")]
+    AuthChallengeEvaluationError(AuthError),
+    #[error("Failed to finish auth challenge on client side: {0}")]
+    AuthFinishError(AuthError),
+    #[error("Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials or SessionBuilder::authenticator_provider to provide custom authenticator")]
+    MissingAuthentication,
+}
+
+impl From<FrameError> for ConnectionSetupRequestErrorKind {
+    fn from(value: FrameError) -> Self {
+        ConnectionSetupRequestErrorKind::FrameError(Arc::new(value))
+    }
+}
+
+impl ConnectionSetupRequestError {
+    pub fn new(request_kind: CqlRequestKind, error: ConnectionSetupRequestErrorKind) -> Self {
+        ConnectionSetupRequestError {
+            request_kind,
+            error,
+        }
+    }
+}
+
+/// An error that occurred when selecting a node connection
+/// to perform a request on.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ConnectionPoolError {
+    #[error("The pool is broken; Last connection failed with: {last_connection_error}")]
+    Broken {
+        last_connection_error: ConnectionError,
+    },
+    #[error("Pool is still being initialized")]
+    Initializing,
+    #[error("The node has been disabled by a host filter")]
+    NodeDisabledByHostFilter,
+}
+
+#[derive(Error, Debug, Clone)]
+#[error("Connection broken, reason: {0}")]
+pub struct BrokenConnectionError(Arc<dyn Error + Sync + Send>);
+
+impl BrokenConnectionError {
+    pub fn get_inner(&self) -> &Arc<dyn Error + Sync + Send> {
+        &self.0
+    }
+}
+
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum BrokenConnectionErrorKind {
+    #[error("Timed out while waiting for response to keepalive request on connection to node {0}")]
+    KeepaliveTimeout(IpAddr),
+    #[error("Failed to execute keepalive query: {0}")]
+    KeepaliveQueryError(RequestError),
+    #[error("Failed to deserialize frame: {0}")]
+    FrameError(FrameError),
+    #[error("Failed to handle server event: {0}")]
+    CqlEventHandlingError(#[from] CqlEventHandlingError),
+    #[error("Received a server frame with unexpected stream id: {0}")]
+    UnexpectedStreamId(i16),
+    #[error("Failed to write data: {0}")]
+    WriteError(std::io::Error),
+    #[error("Too many orphaned stream ids: {0}")]
+    TooManyOrphanedStreamIds(u16),
+    #[error(
+        "Failed to send/receive data needed to perform a request via tokio channel.
+        It implies that other half of the channel has been dropped.
+        The connection was already broken for some other reason."
+    )]
+    ChannelError,
+}
+
+/// Failed to handle a CQL event received on a stream -1.
+/// Possible error kinds are:
+/// - failed to deserialize response's frame header
+/// - failed to deserialize CQL event response
+/// - received invalid server response
+/// - failed to send an event info via channel (connection is probably broken)
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum CqlEventHandlingError {
+    #[error("Failed to deserialize EVENT response: {0}")]
+    CqlEventParseError(#[from] CqlEventParseError),
+    #[error("Received unexpected server response on stream -1: {0}. Expected EVENT response")]
+    UnexpectedResponse(CqlResponseKind),
+    #[error("Failed to deserialize a header of frame received on stream -1: {0}")]
+    FrameError(#[from] FrameError),
+    #[error("Failed to send event info via channel. The channel is probably closed, which is caused by connection being broken")]
+    SendError,
+}
+
+/// An error type returned from Connection::parse_response.
+/// This is driver's internal type.
+#[derive(Error, Debug)]
+pub enum ResponseParseError {
+    #[error(transparent)]
+    FrameError(#[from] FrameError),
+    #[error(transparent)]
+    CqlResponseParseError(#[from] CqlResponseParseError),
+}
+
+/// An error that occurred when performing a request.
+///
+/// Possible error kinds:
+/// - Connection is broken
+/// - Response's frame header deserialization error
+/// - CQL response (frame body) deserialization error
+/// - Driver was unable to allocate a stream id for a request
+///
+/// This error type is only destined to narrow the return error type
+/// of some functions that would previously return [`crate::errors::QueryError`].
+#[derive(Error, Debug)]
+pub enum RequestError {
+    #[error(transparent)]
+    FrameError(#[from] FrameError),
+    #[error(transparent)]
+    CqlResponseParseError(#[from] CqlResponseParseError),
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
+    #[error("Unable to allocate a stream id")]
+    UnableToAllocStreamId,
+}
+
+impl From<RequestError> for UserRequestError {
+    fn from(value: RequestError) -> Self {
+        match value {
+            RequestError::FrameError(e) => e.into(),
+            RequestError::CqlResponseParseError(e) => match e {
+                // Only possible responses are RESULT and ERROR. If we failed parsing
+                // other response, treat it as unexpected response.
+                CqlResponseParseError::CqlErrorParseError(e) => e.into(),
+                CqlResponseParseError::CqlResultParseError(e) => e.into(),
+                _ => UserRequestError::UnexpectedResponse(e.to_response_kind()),
+            },
+            RequestError::BrokenConnection(e) => e.into(),
+            RequestError::UnableToAllocStreamId => UserRequestError::UnableToAllocStreamId,
+        }
+    }
+}
+
+impl From<BrokenConnectionErrorKind> for BrokenConnectionError {
+    fn from(value: BrokenConnectionErrorKind) -> Self {
+        BrokenConnectionError(Arc::new(value))
+    }
+}
+
+impl From<ResponseParseError> for RequestError {
+    fn from(value: ResponseParseError) -> Self {
+        match value {
+            ResponseParseError::FrameError(e) => e.into(),
+            ResponseParseError::CqlResponseParseError(e) => e.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for WriteType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 
@@ -492,6 +834,26 @@ impl From<tokio::time::error::Elapsed> for QueryError {
     }
 }
 
+impl From<UserRequestError> for QueryError {
+    fn from(value: UserRequestError) -> Self {
+        match value {
+            UserRequestError::DbError(err, msg) => QueryError::DbError(err, msg),
+            UserRequestError::CqlResultParseError(e) => e.into(),
+            UserRequestError::CqlErrorParseError(e) => e.into(),
+            UserRequestError::BrokenConnectionError(e) => e.into(),
+            UserRequestError::UnexpectedResponse(_) => {
+                // FIXME: make it typed. It needs to wait for ProtocolError refactor.
+                QueryError::ProtocolError("Received unexpected response from the server. Expected RESULT or ERROR response.")
+            }
+            UserRequestError::FrameError(e) => e.into(),
+            UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
+            UserRequestError::RepreparedIdChanged => QueryError::ProtocolError(
+                "Prepared statement Id changed, md5 sum should stay the same",
+            ),
+        }
+    }
+}
+
 impl From<std::io::Error> for NewSessionError {
     fn from(io_error: std::io::Error) -> NewSessionError {
         NewSessionError::IoError(Arc::new(io_error))
@@ -503,17 +865,19 @@ impl From<QueryError> for NewSessionError {
         match query_error {
             QueryError::DbError(e, msg) => NewSessionError::DbError(e, msg),
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
-            QueryError::CqlResponseParseError(e) => NewSessionError::CqlResponseParseError(e),
+            QueryError::CqlResultParseError(e) => NewSessionError::CqlResultParseError(e),
+            QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
             QueryError::IoError(e) => NewSessionError::IoError(e),
+            QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
             QueryError::TimeoutError => NewSessionError::TimeoutError,
             QueryError::TooManyOrphanedStreamIds(ids) => {
                 NewSessionError::TooManyOrphanedStreamIds(ids)
             }
+            QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
             QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
-            QueryError::TranslationError(e) => NewSessionError::TranslationError(e),
         }
     }
 }
@@ -521,23 +885,6 @@ impl From<QueryError> for NewSessionError {
 impl From<BadKeyspaceName> for QueryError {
     fn from(keyspace_err: BadKeyspaceName) -> QueryError {
         QueryError::BadQuery(BadQuery::BadKeyspaceName(keyspace_err))
-    }
-}
-
-impl QueryError {
-    /// Checks if this error indicates that a chosen source port/address cannot be bound.
-    /// This is caused by one of the following:
-    /// - The source address is already used by another socket,
-    /// - The source address is reserved and the process does not have sufficient privileges to use it.
-    pub fn is_address_unavailable_for_use(&self) -> bool {
-        if let QueryError::IoError(io_error) = self {
-            match io_error.kind() {
-                ErrorKind::AddrInUse | ErrorKind::PermissionDenied => return true,
-                _ => {}
-            }
-        }
-
-        false
     }
 }
 

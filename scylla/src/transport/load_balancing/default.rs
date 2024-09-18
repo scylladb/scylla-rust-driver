@@ -2837,18 +2837,20 @@ mod latency_awareness {
             match error {
                 // "fast" errors, i.e. ones that are returned quickly after the query begins
                 QueryError::BadQuery(_)
+                | QueryError::BrokenConnection(_)
+                | QueryError::ConnectionPoolError(_)
                 | QueryError::TooManyOrphanedStreamIds(_)
                 | QueryError::UnableToAllocStreamId
                 | QueryError::DbError(DbError::IsBootstrapping, _)
                 | QueryError::DbError(DbError::Unavailable { .. }, _)
                 | QueryError::DbError(DbError::Unprepared { .. }, _)
-                | QueryError::TranslationError(_)
                 | QueryError::DbError(DbError::Overloaded { .. }, _)
                 | QueryError::DbError(DbError::RateLimitReached { .. }, _) => false,
 
                 // "slow" errors, i.e. ones that are returned after considerable time of query being run
                 QueryError::DbError(_, _)
-                | QueryError::CqlResponseParseError(_)
+                | QueryError::CqlResultParseError(_)
+                | QueryError::CqlErrorParseError(_)
                 | QueryError::InvalidMessage(_)
                 | QueryError::IoError(_)
                 | QueryError::ProtocolError(_)

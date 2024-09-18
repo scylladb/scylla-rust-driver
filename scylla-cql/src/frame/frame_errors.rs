@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use super::TryFromPrimitiveError;
 use crate::cql_to_rust::CqlTypeError;
+use crate::errors::CqlResponseKind;
 use crate::frame::value::SerializeValuesError;
 use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use crate::types::serialize::SerializationError;
@@ -78,6 +79,20 @@ pub enum CqlResponseParseError {
     CqlResultParseError(#[from] CqlResultParseError),
 }
 
+impl CqlResponseParseError {
+    pub fn to_response_kind(&self) -> CqlResponseKind {
+        match self {
+            CqlResponseParseError::CqlErrorParseError(_) => CqlResponseKind::Error,
+            CqlResponseParseError::CqlAuthChallengeParseError(_) => CqlResponseKind::AuthChallenge,
+            CqlResponseParseError::CqlAuthSuccessParseError(_) => CqlResponseKind::AuthSuccess,
+            CqlResponseParseError::CqlAuthenticateParseError(_) => CqlResponseKind::Authenticate,
+            CqlResponseParseError::CqlSupportedParseError(_) => CqlResponseKind::Supported,
+            CqlResponseParseError::CqlEventParseError(_) => CqlResponseKind::Event,
+            CqlResponseParseError::CqlResultParseError(_) => CqlResponseKind::Result,
+        }
+    }
+}
+
 /// An error type returned when deserialization of ERROR response fails.
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
@@ -134,15 +149,15 @@ pub enum CqlResultParseError {
     ResultIdParseError(LowLevelDeserializationError),
     #[error("Unknown RESULT response id: {0}")]
     UnknownResultId(i32),
-    #[error("'Set_keyspace' response deserialization failed: {0}")]
+    #[error("RESULT:Set_keyspace response deserialization failed: {0}")]
     SetKeyspaceParseError(#[from] SetKeyspaceParseError),
     // This is an error returned during deserialization of
     // `RESULT::Schema_change` response, and not `EVENT` response.
-    #[error("'Schema_change' response deserialization failed: {0}")]
+    #[error("RESULT:Schema_change response deserialization failed: {0}")]
     SchemaChangeParseError(#[from] SchemaChangeEventParseError),
-    #[error("'Prepared' response deserialization failed: {0}")]
+    #[error("RESULT:Prepared response deserialization failed: {0}")]
     PreparedParseError(#[from] PreparedParseError),
-    #[error("'Rows' response deserialization failed: {0}")]
+    #[error("RESULT:Rows response deserialization failed: {0}")]
     RowsParseError(#[from] RowsParseError),
 }
 
