@@ -1,4 +1,9 @@
-use std::{error::Error, io::ErrorKind, net::IpAddr, sync::Arc};
+use std::{
+    error::Error,
+    io::ErrorKind,
+    net::{AddrParseError, IpAddr, SocketAddr},
+    sync::Arc,
+};
 
 use scylla_cql::{
     errors::{BadKeyspaceName, BadQuery, CqlRequestKind, CqlResponseKind, DbError},
@@ -293,13 +298,16 @@ impl ConnectionError {
 }
 
 /// Error caused by failed address translation done before establishing connection
-#[derive(Debug, Copy, Clone, Error)]
 #[non_exhaustive]
+#[derive(Debug, Clone, Error)]
 pub enum TranslationError {
-    #[error("No rule for address")]
-    NoRuleForAddress,
-    #[error("Invalid address in rule")]
-    InvalidAddressInRule,
+    #[error("No rule for address {0}")]
+    NoRuleForAddress(SocketAddr),
+    #[error("Failed to parse translated address: {translated_addr_str}, reason: {reason}")]
+    InvalidAddressInRule {
+        translated_addr_str: &'static str,
+        reason: AddrParseError,
+    },
 }
 
 /// An error that occurred during connection setup request execution.
