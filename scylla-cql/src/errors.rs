@@ -1,6 +1,5 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
-use crate::frame::frame_errors::{CqlResponseParseError, FrameError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
 use crate::types::serialize::SerializationError;
@@ -393,16 +392,6 @@ pub enum BadKeyspaceName {
     /// Illegal character - only alphanumeric and underscores allowed.
     #[error("Illegal character found: '{1}', only alphanumeric and underscores allowed. Bad keyspace name: '{0}'")]
     IllegalCharacter(String, char),
-}
-
-/// An error type returned from Connection::parse_response.
-/// This is driver's internal type.
-#[derive(Error, Debug)]
-pub enum ResponseParseError {
-    #[error(transparent)]
-    FrameError(#[from] FrameError),
-    #[error(transparent)]
-    CqlResponseParseError(#[from] CqlResponseParseError),
 }
 
 impl std::fmt::Display for WriteType {

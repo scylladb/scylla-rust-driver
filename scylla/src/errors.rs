@@ -2,8 +2,7 @@ use std::{error::Error, io::ErrorKind, net::IpAddr, sync::Arc};
 
 use scylla_cql::{
     errors::{
-        BadKeyspaceName, BadQuery, CqlRequestKind, CqlResponseKind, DbError, ResponseParseError,
-        TranslationError,
+        BadKeyspaceName, BadQuery, CqlRequestKind, CqlResponseKind, DbError, TranslationError,
     },
     frame::{
         frame_errors::{
@@ -510,6 +509,16 @@ impl From<ResponseParseError> for RequestError {
             ResponseParseError::CqlResponseParseError(e) => e.into(),
         }
     }
+}
+
+/// An error type returned from `Connection::parse_response`.
+/// This is driver's internal type.
+#[derive(Error, Debug)]
+pub enum ResponseParseError {
+    #[error(transparent)]
+    FrameError(#[from] FrameError),
+    #[error(transparent)]
+    CqlResponseParseError(#[from] CqlResponseParseError),
 }
 
 #[cfg(test)]

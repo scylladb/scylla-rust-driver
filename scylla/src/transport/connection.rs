@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use scylla_cql::errors::{CqlRequestKind, ResponseParseError, TranslationError};
+use scylla_cql::errors::{CqlRequestKind, TranslationError};
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
@@ -33,7 +33,7 @@ use crate::authentication::AuthenticatorProvider;
 use crate::errors::{
     BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError, ConnectionSetupRequestError,
     ConnectionSetupRequestErrorKind, CqlEventHandlingError, QueryError, RequestError,
-    UserRequestError,
+    ResponseParseError, UserRequestError,
 };
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
