@@ -6,7 +6,7 @@ use std::{
 };
 
 use scylla_cql::{
-    errors::{BadKeyspaceName, CqlRequestKind, CqlResponseKind, DbError},
+    errors::{CqlRequestKind, CqlResponseKind, DbError},
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
@@ -266,6 +266,23 @@ pub enum BadQuery {
     /// Other reasons of bad query
     #[error("{0}")]
     Other(String),
+}
+
+/// Invalid keyspace name given to `Session::use_keyspace()`
+#[derive(Debug, Error, Clone)]
+#[non_exhaustive]
+pub enum BadKeyspaceName {
+    /// Keyspace name is empty
+    #[error("Keyspace name is empty")]
+    Empty,
+
+    /// Keyspace name too long, must be up to 48 characters
+    #[error("Keyspace name too long, must be up to 48 characters, found {1} characters. Bad keyspace name: '{0}'")]
+    TooLong(String, usize),
+
+    /// Illegal character - only alphanumeric and underscores allowed.
+    #[error("Illegal character found: '{1}', only alphanumeric and underscores allowed. Bad keyspace name: '{0}'")]
+    IllegalCharacter(String, char),
 }
 
 /// An error that occurred when selecting a node connection

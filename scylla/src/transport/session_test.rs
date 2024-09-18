@@ -1,6 +1,6 @@
 use crate as scylla;
 use crate::batch::{Batch, BatchStatement};
-use crate::errors::{BadQuery, QueryError};
+use crate::errors::{BadKeyspaceName, BadQuery, QueryError};
 use crate::frame::response::result::Row;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -10,7 +10,7 @@ use crate::statement::Consistency;
 use crate::test_utils::{scylla_supports_tablets, setup_tracing};
 use crate::tracing::TracingInfo;
 use crate::transport::cluster::Datacenter;
-use crate::transport::errors::{BadKeyspaceName, DbError};
+use crate::transport::errors::DbError;
 use crate::transport::partitioner::{
     calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
 };

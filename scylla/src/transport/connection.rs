@@ -31,9 +31,9 @@ pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
 use crate::errors::{
-    BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError, ConnectionSetupRequestError,
-    ConnectionSetupRequestErrorKind, CqlEventHandlingError, QueryError, RequestError,
-    ResponseParseError, TranslationError, UserRequestError,
+    BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
+    ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError,
+    QueryError, RequestError, ResponseParseError, TranslationError, UserRequestError,
 };
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -46,7 +46,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{BadKeyspaceName, DbError};
+use super::errors::DbError;
 use super::iterator::RowIterator;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::SingleRowTypedError;

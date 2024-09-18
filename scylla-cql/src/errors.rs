@@ -339,22 +339,6 @@ impl std::fmt::Display for CqlResponseKind {
     }
 }
 
-/// Invalid keyspace name given to `Session::use_keyspace()`
-#[derive(Debug, Error, Clone)]
-pub enum BadKeyspaceName {
-    /// Keyspace name is empty
-    #[error("Keyspace name is empty")]
-    Empty,
-
-    /// Keyspace name too long, must be up to 48 characters
-    #[error("Keyspace name too long, must be up to 48 characters, found {1} characters. Bad keyspace name: '{0}'")]
-    TooLong(String, usize),
-
-    /// Illegal character - only alphanumeric and underscores allowed.
-    #[error("Illegal character found: '{1}', only alphanumeric and underscores allowed. Bad keyspace name: '{0}'")]
-    IllegalCharacter(String, char),
-}
-
 impl std::fmt::Display for WriteType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
