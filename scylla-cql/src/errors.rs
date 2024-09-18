@@ -1,10 +1,6 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
-use crate::frame::frame_errors::{
-    CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
-    CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlSupportedParseError,
-    FrameError,
-};
+use crate::frame::frame_errors::{CqlEventParseError, CqlResponseParseError, FrameError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
 use crate::types::serialize::SerializationError;
@@ -400,66 +396,6 @@ pub enum BadKeyspaceName {
     /// Illegal character - only alphanumeric and underscores allowed.
     #[error("Illegal character found: '{1}', only alphanumeric and underscores allowed. Bad keyspace name: '{0}'")]
     IllegalCharacter(String, char),
-}
-
-/// An error that occurred during connection setup request execution.
-/// It indicates that request needed to initiate a connection failed.
-#[derive(Error, Debug, Clone)]
-#[error("Failed to perform a connection setup request. Request: {request_kind}, reason: {error}")]
-pub struct ConnectionSetupRequestError {
-    request_kind: CqlRequestKind,
-    error: ConnectionSetupRequestErrorKind,
-}
-
-type AuthError = String;
-
-#[derive(Error, Debug, Clone)]
-#[non_exhaustive]
-pub enum ConnectionSetupRequestErrorKind {
-    // TODO: Make FrameError clonable.
-    #[error(transparent)]
-    FrameError(Arc<FrameError>),
-    #[error("Unable to allocate stream id")]
-    UnableToAllocStreamId,
-    #[error(transparent)]
-    BrokenConnection(#[from] BrokenConnectionError),
-    #[error("Database returned an error: {0}, Error message: {1}")]
-    DbError(DbError, String),
-    #[error("Received unexpected response from the server: {0}")]
-    UnexpectedResponse(CqlResponseKind),
-    #[error("Failed to deserialize SUPPORTED response: {0}")]
-    CqlSupportedParseError(#[from] CqlSupportedParseError),
-    #[error("Failed to deserialize AUTHENTICATE response: {0}")]
-    CqlAuthenticateParseError(#[from] CqlAuthenticateParseError),
-    #[error("Failed to deserialize AUTH_SUCCESS response: {0}")]
-    CqlAuthSuccessParseError(#[from] CqlAuthSuccessParseError),
-    #[error("Failed to deserialize AUTH_CHALLENGE response: {0}")]
-    CqlAuthChallengeParseError(#[from] CqlAuthChallengeParseError),
-    #[error("Failed to deserialize ERROR response: {0}")]
-    CqlErrorParseError(#[from] CqlErrorParseError),
-    #[error("Failed to start client's auth session: {0}")]
-    StartAuthSessionError(AuthError),
-    #[error("Failed to evaluate auth challenge on client side: {0}")]
-    AuthChallengeEvaluationError(AuthError),
-    #[error("Failed to finish auth challenge on client side: {0}")]
-    AuthFinishError(AuthError),
-    #[error("Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials or SessionBuilder::authenticator_provider to provide custom authenticator")]
-    MissingAuthentication,
-}
-
-impl From<FrameError> for ConnectionSetupRequestErrorKind {
-    fn from(value: FrameError) -> Self {
-        ConnectionSetupRequestErrorKind::FrameError(Arc::new(value))
-    }
-}
-
-impl ConnectionSetupRequestError {
-    pub fn new(request_kind: CqlRequestKind, error: ConnectionSetupRequestErrorKind) -> Self {
-        ConnectionSetupRequestError {
-            request_kind,
-            error,
-        }
-    }
 }
 
 #[derive(Error, Debug, Clone)]
