@@ -360,6 +360,12 @@ impl ConnectionSetupRequestError {
     }
 }
 
+/// An error indicating that a connection was broken.
+/// Possible error reasons:
+/// - keepalive query errors - driver failed to sent a keepalive query, or the query timed out
+/// - received a frame with unexpected stream id
+/// - failed to handle a server event (message received on stream -1)
+/// - some low-level IO errors - e.g. driver failed to write data via socket
 #[derive(Error, Debug, Clone)]
 #[error("Connection broken, reason: {0}")]
 pub struct BrokenConnectionError(Arc<dyn Error + Sync + Send>);
