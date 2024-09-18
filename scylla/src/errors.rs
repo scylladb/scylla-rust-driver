@@ -233,12 +233,6 @@ pub enum NewSessionError {
     RequestTimeout(String),
 }
 
-impl From<std::io::Error> for NewSessionError {
-    fn from(io_error: std::io::Error) -> NewSessionError {
-        NewSessionError::IoError(Arc::new(io_error))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use scylla_cql::{
