@@ -2,14 +2,14 @@ use std::{error::Error, io::ErrorKind, net::IpAddr, sync::Arc};
 
 use scylla_cql::{
     errors::{
-        BadKeyspaceName, BadQuery, CqlEventHandlingError, CqlRequestKind, CqlResponseKind, DbError,
-        ResponseParseError, TranslationError,
+        BadKeyspaceName, BadQuery, CqlRequestKind, CqlResponseKind, DbError, ResponseParseError,
+        TranslationError,
     },
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
-            CqlErrorParseError, CqlResponseParseError, CqlResultParseError, CqlSupportedParseError,
-            FrameError, ParseError,
+            CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlResultParseError,
+            CqlSupportedParseError, FrameError, ParseError,
         },
         value::SerializeValuesError,
     },
@@ -410,6 +410,25 @@ impl From<BrokenConnectionErrorKind> for BrokenConnectionError {
     fn from(value: BrokenConnectionErrorKind) -> Self {
         BrokenConnectionError(Arc::new(value))
     }
+}
+
+/// Failed to handle a CQL event received on a stream -1.
+/// Possible error kinds are:
+/// - failed to deserialize response's frame header
+/// - failed to deserialize CQL event response
+/// - received invalid server response
+/// - failed to send an event info via channel (connection is probably broken)
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum CqlEventHandlingError {
+    #[error("Failed to deserialize EVENT response: {0}")]
+    CqlEventParseError(#[from] CqlEventParseError),
+    #[error("Received unexpected server response on stream -1: {0}. Expected EVENT response")]
+    UnexpectedResponse(CqlResponseKind),
+    #[error("Failed to deserialize a header of frame received on stream -1: {0}")]
+    FrameError(#[from] FrameError),
+    #[error("Failed to send event info via channel. The channel is probably closed, which is caused by connection being broken")]
+    SendError,
 }
 
 /// An error type that occurred when executing one of:
