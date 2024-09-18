@@ -365,15 +365,16 @@ impl ConnectionSetupRequestError {
 pub struct BrokenConnectionError(Arc<dyn Error + Sync + Send>);
 
 impl BrokenConnectionError {
-    pub fn get_inner(&self) -> &Arc<dyn Error + Sync + Send> {
+    /// Retrieve an error reason.
+    pub fn get_reason(&self) -> &Arc<dyn Error + Sync + Send> {
         &self.0
     }
 }
 
 /// A reason why connection was broken.
 ///
-/// See [`BrokenConnectionError::get_inner()`].
-/// This type can be retrieved via Arc<dyn> downcasting.
+/// See [`BrokenConnectionError::get_reason()`].
+/// You can retrieve the actual type by downcasting `Arc<dyn Error>`.
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum BrokenConnectionErrorKind {
