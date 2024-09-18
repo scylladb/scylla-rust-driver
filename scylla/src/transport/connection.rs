@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use scylla_cql::errors::CqlRequestKind;
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::options::{self, Options};
+use scylla_cql::frame::request::CqlRequestKind;
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::response::{self, error};

@@ -277,37 +277,6 @@ pub enum WriteType {
     Other(String),
 }
 
-/// Possible requests sent by the client.
-#[derive(Debug, Copy, Clone)]
-#[non_exhaustive]
-pub enum CqlRequestKind {
-    Startup,
-    AuthResponse,
-    Options,
-    Query,
-    Prepare,
-    Execute,
-    Batch,
-    Register,
-}
-
-impl std::fmt::Display for CqlRequestKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let kind_str = match self {
-            CqlRequestKind::Startup => "STARTUP",
-            CqlRequestKind::AuthResponse => "AUTH_RESPONSE",
-            CqlRequestKind::Options => "OPTIONS",
-            CqlRequestKind::Query => "QUERY",
-            CqlRequestKind::Prepare => "PREPARE",
-            CqlRequestKind::Execute => "EXECUTE",
-            CqlRequestKind::Batch => "BATCH",
-            CqlRequestKind::Register => "REGISTER",
-        };
-
-        f.write_str(kind_str)
-    }
-}
-
 /// Possible CQL responses received from the server
 #[derive(Debug, Copy, Clone)]
 #[non_exhaustive]

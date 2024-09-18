@@ -6,13 +6,14 @@ use std::{
 };
 
 use scylla_cql::{
-    errors::{CqlRequestKind, CqlResponseKind, DbError},
+    errors::{CqlResponseKind, DbError},
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
             CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlResultParseError,
             CqlSupportedParseError, FrameError, ParseError,
         },
+        request::CqlRequestKind,
         value::SerializeValuesError,
     },
     types::{
