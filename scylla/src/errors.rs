@@ -345,7 +345,10 @@ impl From<FrameError> for ConnectionSetupRequestErrorKind {
 }
 
 impl ConnectionSetupRequestError {
-    pub fn new(request_kind: CqlRequestKind, error: ConnectionSetupRequestErrorKind) -> Self {
+    pub(crate) fn new(
+        request_kind: CqlRequestKind,
+        error: ConnectionSetupRequestErrorKind,
+    ) -> Self {
         ConnectionSetupRequestError {
             request_kind,
             error,
