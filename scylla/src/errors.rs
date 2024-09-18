@@ -1,9 +1,9 @@
-use std::{io::ErrorKind, net::IpAddr, sync::Arc};
+use std::{error::Error, io::ErrorKind, net::IpAddr, sync::Arc};
 
 use scylla_cql::{
     errors::{
-        BadKeyspaceName, BadQuery, BrokenConnectionError, CqlEventHandlingError, CqlRequestKind,
-        CqlResponseKind, DbError, ResponseParseError, TranslationError,
+        BadKeyspaceName, BadQuery, CqlEventHandlingError, CqlRequestKind, CqlResponseKind, DbError,
+        ResponseParseError, TranslationError,
     },
     frame::{
         frame_errors::{
@@ -357,6 +357,16 @@ impl ConnectionSetupRequestError {
 
     pub fn get_error(&self) -> &ConnectionSetupRequestErrorKind {
         &self.error
+    }
+}
+
+#[derive(Error, Debug, Clone)]
+#[error("Connection broken, reason: {0}")]
+pub struct BrokenConnectionError(Arc<dyn Error + Sync + Send>);
+
+impl BrokenConnectionError {
+    pub fn get_inner(&self) -> &Arc<dyn Error + Sync + Send> {
+        &self.0
     }
 }
 

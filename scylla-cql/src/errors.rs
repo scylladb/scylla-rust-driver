@@ -6,8 +6,6 @@ use crate::frame::value::SerializeValuesError;
 use crate::types::serialize::SerializationError;
 use crate::Consistency;
 use bytes::Bytes;
-use std::error::Error;
-use std::sync::Arc;
 use thiserror::Error;
 
 /// An error sent from the database in response to a query
@@ -395,19 +393,6 @@ pub enum BadKeyspaceName {
     /// Illegal character - only alphanumeric and underscores allowed.
     #[error("Illegal character found: '{1}', only alphanumeric and underscores allowed. Bad keyspace name: '{0}'")]
     IllegalCharacter(String, char),
-}
-
-#[derive(Error, Debug, Clone)]
-#[error("Connection broken, reason: {0}")]
-pub struct BrokenConnectionError(
-    // FIXME: remove pub
-    pub Arc<dyn Error + Sync + Send>,
-);
-
-impl BrokenConnectionError {
-    pub fn get_inner(&self) -> &Arc<dyn Error + Sync + Send> {
-        &self.0
-    }
 }
 
 /// Failed to handle a CQL event received on a stream -1.
