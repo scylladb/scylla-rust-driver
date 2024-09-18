@@ -187,8 +187,8 @@ mod tests {
     use std::{io::ErrorKind, sync::Arc};
 
     use bytes::Bytes;
-    use scylla_cql::errors::BadQuery;
 
+    use crate::errors::BadQuery;
     use crate::test_utils::setup_tracing;
 
     use super::*;

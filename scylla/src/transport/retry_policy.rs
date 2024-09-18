@@ -220,10 +220,10 @@ impl RetrySession for DefaultRetrySession {
 #[cfg(test)]
 mod tests {
     use super::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy};
-    use crate::errors::QueryError;
+    use crate::errors::{BadQuery, QueryError};
     use crate::statement::Consistency;
     use crate::test_utils::setup_tracing;
-    use crate::transport::errors::{BadQuery, DbError, WriteType};
+    use crate::transport::errors::{DbError, WriteType};
     use bytes::Bytes;
     use std::io::ErrorKind;
     use std::sync::Arc;

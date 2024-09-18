@@ -6,7 +6,7 @@ use crate::batch::batch_values;
 use crate::cloud::CloudConfig;
 
 pub use crate::errors::TranslationError;
-use crate::errors::{NewSessionError, QueryError, UserRequestError};
+use crate::errors::{BadQuery, NewSessionError, QueryError, UserRequestError};
 use crate::history;
 use crate::history::HistoryListener;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
@@ -76,7 +76,6 @@ pub use crate::transport::connection_pool::PoolSize;
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
-use scylla_cql::errors::BadQuery;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 

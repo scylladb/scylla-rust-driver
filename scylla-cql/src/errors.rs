@@ -1,8 +1,6 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
 use crate::frame::protocol_features::ProtocolFeatures;
-use crate::frame::value::SerializeValuesError;
-use crate::types::serialize::SerializationError;
 use crate::Consistency;
 use bytes::Bytes;
 use thiserror::Error;
@@ -308,34 +306,6 @@ impl std::fmt::Display for CqlRequestKind {
 
         f.write_str(kind_str)
     }
-}
-
-/// Error caused by caller creating an invalid query
-#[derive(Error, Debug, Clone)]
-#[error("Invalid query passed to Session")]
-pub enum BadQuery {
-    /// Failed to serialize values passed to a query - values too big
-    #[error("Serializing values failed: {0} ")]
-    SerializeValuesError(#[from] SerializeValuesError),
-
-    #[error("Serializing values failed: {0} ")]
-    SerializationError(#[from] SerializationError),
-
-    /// Serialized values are too long to compute partition key
-    #[error("Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}")]
-    ValuesTooLongForKey(usize, usize),
-
-    /// Passed invalid keyspace name to use
-    #[error("Passed invalid keyspace name to use: {0}")]
-    BadKeyspaceName(#[from] BadKeyspaceName),
-
-    /// Too many queries in the batch statement
-    #[error("Number of Queries in Batch Statement supplied is {0} which has exceeded the max value of 65,535")]
-    TooManyQueriesInBatchStatement(usize),
-
-    /// Other reasons of bad query
-    #[error("{0}")]
-    Other(String),
 }
 
 /// Possible CQL responses received from the server

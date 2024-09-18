@@ -1,9 +1,7 @@
 use assert_matches::assert_matches;
 
-use scylla_cql::errors::BadQuery;
-
 use crate::batch::BatchType;
-use crate::errors::QueryError;
+use crate::errors::{BadQuery, QueryError};
 use crate::query::Query;
 use crate::test_utils::setup_tracing;
 use crate::{

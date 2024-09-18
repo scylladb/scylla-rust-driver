@@ -6,7 +6,7 @@ use std::{
 };
 
 use scylla_cql::{
-    errors::{BadKeyspaceName, BadQuery, CqlRequestKind, CqlResponseKind, DbError},
+    errors::{BadKeyspaceName, CqlRequestKind, CqlResponseKind, DbError},
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
@@ -237,6 +237,35 @@ pub enum NewSessionError {
     /// during `Session` creation.
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
+}
+
+/// Error caused by caller creating an invalid query
+#[derive(Error, Debug, Clone)]
+#[error("Invalid query passed to Session")]
+#[non_exhaustive]
+pub enum BadQuery {
+    /// Failed to serialize values passed to a query - values too big
+    #[error("Serializing values failed: {0} ")]
+    SerializeValuesError(#[from] SerializeValuesError),
+
+    #[error("Serializing values failed: {0} ")]
+    SerializationError(#[from] SerializationError),
+
+    /// Serialized values are too long to compute partition key
+    #[error("Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}")]
+    ValuesTooLongForKey(usize, usize),
+
+    /// Passed invalid keyspace name to use
+    #[error("Passed invalid keyspace name to use: {0}")]
+    BadKeyspaceName(#[from] BadKeyspaceName),
+
+    /// Too many queries in the batch statement
+    #[error("Number of Queries in Batch Statement supplied is {0} which has exceeded the max value of 65,535")]
+    TooManyQueriesInBatchStatement(usize),
+
+    /// Other reasons of bad query
+    #[error("{0}")]
+    Other(String),
 }
 
 /// An error that occurred when selecting a node connection
