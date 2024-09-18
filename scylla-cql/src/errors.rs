@@ -247,15 +247,6 @@ impl DbError {
     }
 }
 
-/// Error caused by failed address translation done before establishing connection
-#[derive(Debug, Copy, Clone, Error)]
-pub enum TranslationError {
-    #[error("No rule for address")]
-    NoRuleForAddress,
-    #[error("Invalid address in rule")]
-    InvalidAddressInRule,
-}
-
 /// Type of the operation rejected by rate limiting
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OperationType {

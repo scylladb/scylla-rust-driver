@@ -5,6 +5,7 @@ use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 
+pub use crate::errors::TranslationError;
 use crate::errors::{NewSessionError, QueryError, UserRequestError};
 use crate::history;
 use crate::history::HistoryListener;
@@ -14,7 +15,6 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::{Either, Itertools};
-pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::batch::BatchValues;

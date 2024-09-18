@@ -1,9 +1,7 @@
 use std::{error::Error, io::ErrorKind, net::IpAddr, sync::Arc};
 
 use scylla_cql::{
-    errors::{
-        BadKeyspaceName, BadQuery, CqlRequestKind, CqlResponseKind, DbError, TranslationError,
-    },
+    errors::{BadKeyspaceName, BadQuery, CqlRequestKind, CqlResponseKind, DbError},
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
@@ -292,6 +290,16 @@ impl ConnectionError {
 
         false
     }
+}
+
+/// Error caused by failed address translation done before establishing connection
+#[derive(Debug, Copy, Clone, Error)]
+#[non_exhaustive]
+pub enum TranslationError {
+    #[error("No rule for address")]
+    NoRuleForAddress,
+    #[error("Invalid address in rule")]
+    InvalidAddressInRule,
 }
 
 /// An error that occurred during connection setup request execution.
