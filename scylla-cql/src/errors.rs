@@ -11,7 +11,6 @@ use crate::types::serialize::SerializationError;
 use crate::Consistency;
 use bytes::Bytes;
 use std::error::Error;
-use std::io::ErrorKind;
 use std::net::IpAddr;
 use std::sync::Arc;
 use thiserror::Error;
@@ -401,50 +400,6 @@ pub enum BadKeyspaceName {
     /// Illegal character - only alphanumeric and underscores allowed.
     #[error("Illegal character found: '{1}', only alphanumeric and underscores allowed. Bad keyspace name: '{0}'")]
     IllegalCharacter(String, char),
-}
-
-// FIXME: this should be moved to scylla crate.
-/// An error that appeared on a connection level.
-/// It indicated that connection can no longer be used
-/// and should be dropped.
-#[derive(Error, Debug, Clone)]
-#[non_exhaustive]
-pub enum ConnectionError {
-    #[error("Connect timeout elapsed")]
-    ConnectTimeout,
-    #[error(transparent)]
-    IoError(Arc<std::io::Error>),
-    #[error("Could not find free source port for shard {0}")]
-    NoSourcePortForShard(u32),
-    #[error("Address translation failed: {0}")]
-    TranslationError(#[from] TranslationError),
-    #[error(transparent)]
-    BrokenConnection(#[from] BrokenConnectionError),
-    #[error(transparent)]
-    ConnectionSetupRequestError(#[from] ConnectionSetupRequestError),
-}
-
-impl From<std::io::Error> for ConnectionError {
-    fn from(value: std::io::Error) -> Self {
-        ConnectionError::IoError(Arc::new(value))
-    }
-}
-
-impl ConnectionError {
-    /// Checks if this error indicates that a chosen source port/address cannot be bound.
-    /// This is caused by one of the following:
-    /// - The source address is already used by another socket,
-    /// - The source address is reserved and the process does not have sufficient privileges to use it.
-    pub fn is_address_unavailable_for_use(&self) -> bool {
-        if let ConnectionError::IoError(io_error) = self {
-            match io_error.kind() {
-                ErrorKind::AddrInUse | ErrorKind::PermissionDenied => return true,
-                _ => {}
-            }
-        }
-
-        false
-    }
 }
 
 /// An error that occurred during connection setup request execution.

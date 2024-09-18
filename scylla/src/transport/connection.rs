@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::{
-    BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError, ConnectionSetupRequestError,
+    BrokenConnectionError, BrokenConnectionErrorKind, ConnectionSetupRequestError,
     ConnectionSetupRequestErrorKind, CqlEventHandlingError, CqlRequestKind, RequestError,
     ResponseParseError, TranslationError,
 };
@@ -34,7 +34,7 @@ use tokio_openssl::SslStream;
 pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
-use crate::errors::{QueryError, UserRequestError};
+use crate::errors::{ConnectionError, QueryError, UserRequestError};
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
