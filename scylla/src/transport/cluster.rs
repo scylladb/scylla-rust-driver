@@ -1,4 +1,4 @@
-use crate::errors::QueryError;
+use crate::errors::{NewSessionError, QueryError};
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::prepared_statement::TokenCalculationError;
@@ -17,7 +17,7 @@ use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
-use scylla_cql::errors::{BadQuery, NewSessionError};
+use scylla_cql::errors::BadQuery;
 use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::collections::{HashMap, HashSet};

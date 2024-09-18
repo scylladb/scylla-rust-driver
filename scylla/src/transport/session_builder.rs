@@ -1,13 +1,13 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
 use super::connection::SelfIdentity;
-use super::errors::NewSessionError;
 use super::execution_profile::ExecutionProfileHandle;
 use super::session::{AddressTranslator, Session, SessionConfig};
 use super::Compression;
 
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
+use crate::errors::NewSessionError;
 #[cfg(feature = "cloud")]
 use crate::ExecutionProfile;
 

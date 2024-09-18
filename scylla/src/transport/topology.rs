@@ -1,4 +1,4 @@
-use crate::errors::QueryError;
+use crate::errors::{NewSessionError, QueryError};
 use crate::frame::response::event::Event;
 use crate::routing::Token;
 use crate::statement::query::Query;
@@ -14,7 +14,6 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
-use scylla_cql::errors::NewSessionError;
 use scylla_cql::frame::response::result::Row;
 use scylla_macros::FromRow;
 use std::borrow::BorrowMut;

@@ -416,69 +416,6 @@ impl std::fmt::Display for CqlResponseKind {
     }
 }
 
-/// Error that occurred during session creation
-#[derive(Error, Debug, Clone)]
-pub enum NewSessionError {
-    /// Failed to resolve hostname passed in Session creation
-    #[error("Couldn't resolve any hostname: {0:?}")]
-    FailedToResolveAnyHostname(Vec<String>),
-
-    /// List of known nodes passed to Session constructor is empty
-    /// There needs to be at least one node to connect to
-    #[error("Empty known nodes list")]
-    EmptyKnownNodesList,
-
-    /// Database sent a response containing some error with a message
-    #[error("Database returned an error: {0}, Error message: {1}")]
-    DbError(DbError, String),
-
-    /// Caller passed an invalid query
-    #[error(transparent)]
-    BadQuery(#[from] BadQuery),
-
-    /// Received a RESULT server response, but failed to deserialize it.
-    #[error(transparent)]
-    CqlResultParseError(#[from] CqlResultParseError),
-
-    /// Received an ERROR server response, but failed to deserialize it.
-    #[error("Failed to deserialize ERROR response: {0}")]
-    CqlErrorParseError(#[from] CqlErrorParseError),
-
-    /// Input/Output error has occurred, connection broken etc.
-    #[error("IO Error: {0}")]
-    IoError(Arc<std::io::Error>),
-
-    /// Selected node's connection pool is in invalid state.
-    #[error("No connections in the pool: {0}")]
-    ConnectionPoolError(#[from] ConnectionPoolError),
-
-    /// Unexpected message received
-    #[error("Protocol Error: {0}")]
-    ProtocolError(&'static str),
-
-    /// Invalid message received
-    #[error("Invalid message: {0}")]
-    InvalidMessage(String),
-
-    /// Timeout error has occurred, couldn't connect to node in time.
-    #[error("Timeout Error")]
-    TimeoutError,
-
-    #[error("Too many orphaned stream ids: {0}")]
-    TooManyOrphanedStreamIds(u16),
-
-    #[error(transparent)]
-    BrokenConnection(#[from] BrokenConnectionError),
-
-    #[error("Unable to allocate stream id")]
-    UnableToAllocStreamId,
-
-    /// Client timeout occurred before a response arrived for some query
-    /// during `Session` creation.
-    #[error("Client timeout: {0}")]
-    RequestTimeout(String),
-}
-
 /// Invalid keyspace name given to `Session::use_keyspace()`
 #[derive(Debug, Error, Clone)]
 pub enum BadKeyspaceName {
@@ -735,12 +672,6 @@ impl From<ResponseParseError> for RequestError {
 impl std::fmt::Display for WriteType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
-    }
-}
-
-impl From<std::io::Error> for NewSessionError {
-    fn from(io_error: std::io::Error) -> NewSessionError {
-        NewSessionError::IoError(Arc::new(io_error))
     }
 }
 
