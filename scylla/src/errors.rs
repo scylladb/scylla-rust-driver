@@ -72,9 +72,6 @@ pub enum QueryError {
     #[error("Timeout Error")]
     TimeoutError,
 
-    #[error("Too many orphaned stream ids: {0}")]
-    TooManyOrphanedStreamIds(u16),
-
     #[error(transparent)]
     BrokenConnection(#[from] BrokenConnectionError),
 
@@ -160,9 +157,6 @@ impl From<QueryError> for NewSessionError {
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
             QueryError::TimeoutError => NewSessionError::TimeoutError,
-            QueryError::TooManyOrphanedStreamIds(ids) => {
-                NewSessionError::TooManyOrphanedStreamIds(ids)
-            }
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
             QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
@@ -230,9 +224,6 @@ pub enum NewSessionError {
     /// Timeout error has occurred, couldn't connect to node in time.
     #[error("Timeout Error")]
     TimeoutError,
-
-    #[error("Too many orphaned stream ids: {0}")]
-    TooManyOrphanedStreamIds(u16),
 
     #[error(transparent)]
     BrokenConnection(#[from] BrokenConnectionError),

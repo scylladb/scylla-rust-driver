@@ -2843,7 +2843,6 @@ mod latency_awareness {
                 QueryError::BadQuery(_)
                 | QueryError::BrokenConnection(_)
                 | QueryError::ConnectionPoolError(_)
-                | QueryError::TooManyOrphanedStreamIds(_)
                 | QueryError::UnableToAllocStreamId
                 | QueryError::DbError(DbError::IsBootstrapping, _)
                 | QueryError::DbError(DbError::Unavailable { .. }, _)
