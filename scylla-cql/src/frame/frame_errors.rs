@@ -22,8 +22,6 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum FrameError {
     #[error(transparent)]
-    CqlRequestSerialization(#[from] CqlRequestSerializationError),
-    #[error(transparent)]
     Parse(#[from] ParseError),
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
@@ -39,8 +37,6 @@ pub enum FrameError {
     StdIoError(#[from] std::io::Error),
     #[error("Unrecognized opcode{0}")]
     TryFromPrimitiveError(#[from] TryFromPrimitiveError<u8>),
-    #[error("Snap compression error: {0}")]
-    SnapCompressError(Arc<dyn Error + Sync + Send>),
     #[error("Snap decompression error: {0}")]
     SnapDecompressError(Arc<dyn Error + Sync + Send>),
     #[error("Error decompressing lz4 data {0}")]
@@ -100,6 +96,10 @@ pub enum CqlRequestSerializationError {
     /// Failed to serialize QUERY request.
     #[error("Failed to serialize QUERY request: {0}")]
     QuerySerialization(#[from] QuerySerializationError),
+
+    /// Request body compression failed.
+    #[error("Snap compression error: {0}")]
+    SnapCompressError(Arc<dyn Error + Sync + Send>),
 }
 
 /// An error type returned when deserialization of CQL

@@ -780,6 +780,7 @@ impl Connection {
                 }
             },
             Err(e) => match e {
+                RequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
                 RequestError::FrameError(e) => return Err(err(e.into())),
                 RequestError::CqlResponseParseError(e) => match e {
                     // Parsing of READY response cannot fail, since its body is empty.
@@ -829,6 +830,7 @@ impl Connection {
                 }
             },
             Err(e) => match e {
+                RequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
                 RequestError::FrameError(e) => return Err(err(e.into())),
                 RequestError::CqlResponseParseError(e) => match e {
                     CqlResponseParseError::CqlSupportedParseError(e) => return Err(err(e.into())),
@@ -939,6 +941,7 @@ impl Connection {
                 }
             },
             Err(e) => match e {
+                RequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
                 RequestError::FrameError(e) => return Err(err(e.into())),
                 RequestError::CqlResponseParseError(e) => match e {
                     CqlResponseParseError::CqlAuthSuccessParseError(e) => {
@@ -1400,6 +1403,7 @@ impl Connection {
                 ))),
             },
             Err(e) => match e {
+                RequestError::CqlRequestSerialization(e) => Err(err(e.into())),
                 RequestError::FrameError(e) => Err(err(e.into())),
                 RequestError::CqlResponseParseError(e) => match e {
                     // Parsing the READY response cannot fail. Only remaining valid response is ERROR.

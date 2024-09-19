@@ -15,8 +15,9 @@ use scylla_cql::{
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
-            CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlResultParseError,
-            CqlSupportedParseError, FrameError, ParseError,
+            CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError,
+            CqlResponseParseError, CqlResultParseError, CqlSupportedParseError, FrameError,
+            ParseError,
         },
         request::CqlRequestKind,
         response::CqlResponseKind,
@@ -43,6 +44,10 @@ pub enum QueryError {
     /// Caller passed an invalid query
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
+
+    /// Failed to serialize CQL request.
+    #[error("Failed to serialize CQL request: {0}")]
+    CqlRequestSerialization(#[from] CqlRequestSerializationError),
 
     /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
@@ -126,6 +131,7 @@ impl From<tokio::time::error::Elapsed> for QueryError {
 impl From<UserRequestError> for QueryError {
     fn from(value: UserRequestError) -> Self {
         match value {
+            UserRequestError::CqlRequestSerialization(e) => e.into(),
             UserRequestError::DbError(err, msg) => QueryError::DbError(err, msg),
             UserRequestError::CqlResultParseError(e) => e.into(),
             UserRequestError::CqlErrorParseError(e) => e.into(),
@@ -148,6 +154,7 @@ impl From<QueryError> for NewSessionError {
         match query_error {
             QueryError::DbError(e, msg) => NewSessionError::DbError(e, msg),
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
+            QueryError::CqlRequestSerialization(e) => NewSessionError::CqlRequestSerialization(e),
             QueryError::CqlResultParseError(e) => NewSessionError::CqlResultParseError(e),
             QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
             QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
@@ -193,6 +200,10 @@ pub enum NewSessionError {
     /// Caller passed an invalid query
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
+
+    /// Failed to serialize CQL request.
+    #[error("Failed to serialize CQL request: {0}")]
+    CqlRequestSerialization(#[from] CqlRequestSerializationError),
 
     /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
@@ -380,6 +391,10 @@ pub struct ConnectionSetupRequestError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ConnectionSetupRequestErrorKind {
+    /// Failed to serialize CQL request.
+    #[error("Failed to serialize CQL request: {0}")]
+    CqlRequestSerialization(#[from] CqlRequestSerializationError),
+
     // TODO: Make FrameError clonable.
     /// An error occurred when parsing response frame header.
     #[error(transparent)]
@@ -566,6 +581,8 @@ pub enum CqlEventHandlingError {
 /// requests.
 #[derive(Error, Debug)]
 pub(crate) enum UserRequestError {
+    #[error("Failed to serialize CQL request: {0}")]
+    CqlRequestSerialization(#[from] CqlRequestSerializationError),
     #[error("Database returned an error: {0}, Error message: {1}")]
     DbError(DbError, String),
     #[error(transparent)]
@@ -595,6 +612,7 @@ impl From<response::error::Error> for UserRequestError {
 impl From<RequestError> for UserRequestError {
     fn from(value: RequestError) -> Self {
         match value {
+            RequestError::CqlRequestSerialization(e) => e.into(),
             RequestError::FrameError(e) => e.into(),
             RequestError::CqlResponseParseError(e) => match e {
                 // Only possible responses are RESULT and ERROR. If we failed parsing
@@ -619,6 +637,10 @@ impl From<RequestError> for UserRequestError {
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum RequestError {
+    /// Failed to serialize CQL request.
+    #[error("Failed to serialize CQL request: {0}")]
+    CqlRequestSerialization(#[from] CqlRequestSerializationError),
+
     /// Failed to deserialize response frame header.
     #[error(transparent)]
     FrameError(#[from] FrameError),
