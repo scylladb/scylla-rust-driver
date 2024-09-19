@@ -2855,7 +2855,6 @@ mod latency_awareness {
                 | QueryError::CqlResultParseError(_)
                 | QueryError::CqlErrorParseError(_)
                 | QueryError::InvalidMessage(_)
-                | QueryError::IoError(_)
                 | QueryError::ProtocolError(_)
                 | QueryError::TimeoutError
                 | QueryError::RequestTimeout(_) => true,

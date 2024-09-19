@@ -142,8 +142,7 @@ impl RetrySession for DefaultRetrySession {
         match query_info.error {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
-            QueryError::IoError(_)
-            | QueryError::BrokenConnection(_)
+            QueryError::BrokenConnection(_)
             | QueryError::ConnectionPoolError(_)
             | QueryError::DbError(DbError::Overloaded, _)
             | QueryError::DbError(DbError::ServerError, _)
@@ -228,8 +227,6 @@ mod tests {
     };
     use crate::transport::errors::{DbError, WriteType};
     use bytes::Bytes;
-    use std::io::ErrorKind;
-    use std::sync::Arc;
 
     fn make_query_info(error: &QueryError, is_idempotent: bool) -> QueryInfo<'_> {
         QueryInfo {
@@ -331,7 +328,6 @@ mod tests {
                 BrokenConnectionErrorKind::TooManyOrphanedStreamIds(5).into(),
             ),
             QueryError::ConnectionPoolError(ConnectionPoolError::Initializing),
-            QueryError::IoError(Arc::new(std::io::Error::new(ErrorKind::Other, "test"))),
         ];
 
         for error in idempotent_next_errors {

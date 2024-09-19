@@ -785,9 +785,9 @@ pub(crate) fn use_keyspace_result(
         match result {
             Ok(()) => was_ok = true,
             Err(err) => match err {
-                QueryError::IoError(_)
-                | QueryError::BrokenConnection(_)
-                | QueryError::ConnectionPoolError(_) => broken_conn_error = Some(err),
+                QueryError::BrokenConnection(_) | QueryError::ConnectionPoolError(_) => {
+                    broken_conn_error = Some(err)
+                }
                 _ => return Err(err),
             },
         }

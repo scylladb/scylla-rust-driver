@@ -94,8 +94,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
         match query_info.error {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
-            QueryError::IoError(_)
-            | QueryError::BrokenConnection(_)
+            QueryError::BrokenConnection(_)
             | QueryError::ConnectionPoolError(_)
             | QueryError::DbError(DbError::Overloaded, _)
             | QueryError::DbError(DbError::ServerError, _)
@@ -183,8 +182,6 @@ impl RetrySession for DowngradingConsistencyRetrySession {
 
 #[cfg(test)]
 mod tests {
-    use std::{io::ErrorKind, sync::Arc};
-
     use bytes::Bytes;
 
     use crate::test_utils::setup_tracing;
@@ -334,7 +331,6 @@ mod tests {
                 BrokenConnectionErrorKind::TooManyOrphanedStreamIds(5).into(),
             ),
             QueryError::ConnectionPoolError(ConnectionPoolError::Initializing),
-            QueryError::IoError(Arc::new(std::io::Error::new(ErrorKind::Other, "test"))),
         ];
 
         for &cl in CONSISTENCY_LEVELS {

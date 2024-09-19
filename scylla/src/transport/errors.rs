@@ -52,10 +52,6 @@ pub enum QueryError {
     #[error("Failed to deserialize ERROR response: {0}")]
     CqlErrorParseError(#[from] CqlErrorParseError),
 
-    /// Input/Output error has occurred, connection broken etc.
-    #[error("IO Error: {0}")]
-    IoError(Arc<std::io::Error>),
-
     /// Selected node's connection pool is in invalid state.
     #[error("No connections in the pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
@@ -154,7 +150,6 @@ impl From<QueryError> for NewSessionError {
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
             QueryError::CqlResultParseError(e) => NewSessionError::CqlResultParseError(e),
             QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
-            QueryError::IoError(e) => NewSessionError::IoError(e),
             QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
@@ -206,10 +201,6 @@ pub enum NewSessionError {
     /// Received an ERROR server response, but failed to deserialize it.
     #[error("Failed to deserialize ERROR response: {0}")]
     CqlErrorParseError(#[from] CqlErrorParseError),
-
-    /// Input/Output error has occurred, connection broken etc.
-    #[error("IO Error: {0}")]
-    IoError(Arc<std::io::Error>),
 
     /// Selected node's connection pool is in invalid state.
     #[error("No connections in the pool: {0}")]
