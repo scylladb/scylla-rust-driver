@@ -85,6 +85,8 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
 fn can_be_ignored<ResT>(result: &Result<ResT, QueryError>) -> bool {
     match result {
         Ok(_) => false,
+        Err(QueryError::BrokenConnection(_)) => true,
+        Err(QueryError::ConnectionPoolError(_)) => true,
         Err(QueryError::IoError(_)) => true,
         Err(QueryError::TimeoutError) => true,
         _ => false,
