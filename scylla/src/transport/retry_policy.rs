@@ -143,6 +143,8 @@ impl RetrySession for DefaultRetrySession {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
             QueryError::IoError(_)
+            | QueryError::BrokenConnection(_)
+            | QueryError::ConnectionPoolError(_)
             | QueryError::DbError(DbError::Overloaded, _)
             | QueryError::DbError(DbError::ServerError, _)
             | QueryError::DbError(DbError::TruncateError, _) => {
@@ -221,7 +223,9 @@ mod tests {
     use super::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy};
     use crate::statement::Consistency;
     use crate::test_utils::setup_tracing;
-    use crate::transport::errors::{BadQuery, QueryError};
+    use crate::transport::errors::{
+        BadQuery, BrokenConnectionErrorKind, ConnectionPoolError, QueryError,
+    };
     use crate::transport::errors::{DbError, WriteType};
     use bytes::Bytes;
     use std::io::ErrorKind;
@@ -323,6 +327,10 @@ mod tests {
             QueryError::DbError(DbError::Overloaded, String::new()),
             QueryError::DbError(DbError::TruncateError, String::new()),
             QueryError::DbError(DbError::ServerError, String::new()),
+            QueryError::BrokenConnection(
+                BrokenConnectionErrorKind::TooManyOrphanedStreamIds(5).into(),
+            ),
+            QueryError::ConnectionPoolError(ConnectionPoolError::Initializing),
             QueryError::IoError(Arc::new(std::io::Error::new(ErrorKind::Other, "test"))),
         ];
 
