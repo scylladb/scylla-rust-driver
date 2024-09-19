@@ -1618,7 +1618,7 @@ impl Connection {
         loop {
             let (params, opcode, body) = frame::read_response_frame(&mut read_half)
                 .await
-                .map_err(BrokenConnectionErrorKind::FrameError)?;
+                .map_err(BrokenConnectionErrorKind::FrameHeaderParseError)?;
             let response = TaskResponse {
                 params,
                 opcode,

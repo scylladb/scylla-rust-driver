@@ -1305,7 +1305,7 @@ mod tests {
     use bytes::{BufMut, BytesMut};
     use futures::future::{join, join3};
     use rand::RngCore;
-    use scylla_cql::frame::frame_errors::FrameError;
+    use scylla_cql::frame::frame_errors::FrameHeaderParseError;
     use scylla_cql::frame::types::write_string_multimap;
     use std::collections::HashMap;
     use std::mem;
@@ -1724,7 +1724,7 @@ mod tests {
             params: FrameParams,
             opcode: FrameOpcode,
             body: &Bytes,
-        ) -> Result<RequestFrame, FrameError> {
+        ) -> Result<RequestFrame, FrameHeaderParseError> {
             let (send_res, recv_res) = join(
                 write_frame(params, opcode, &body.clone(), driver),
                 read_request_frame(node),
@@ -1839,7 +1839,7 @@ mod tests {
             params: FrameParams,
             opcode: FrameOpcode,
             body: &Bytes,
-        ) -> Result<RequestFrame, FrameError> {
+        ) -> Result<RequestFrame, FrameHeaderParseError> {
             let (send_res, recv_res) = join(
                 write_frame(params, opcode, &body.clone(), driver),
                 read_request_frame(node),

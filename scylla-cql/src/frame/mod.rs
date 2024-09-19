@@ -11,7 +11,7 @@ mod value_tests;
 
 use crate::frame::frame_errors::FrameError;
 use bytes::{Buf, BufMut, Bytes};
-use frame_errors::CqlRequestSerializationError;
+use frame_errors::{CqlRequestSerializationError, FrameHeaderParseError};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
@@ -130,22 +130,22 @@ impl Default for FrameParams {
 
 pub async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<(FrameParams, ResponseOpcode, Bytes), FrameError> {
+) -> Result<(FrameParams, ResponseOpcode, Bytes), FrameHeaderParseError> {
     let mut raw_header = [0u8; HEADER_SIZE];
     reader
         .read_exact(&mut raw_header[..])
         .await
-        .map_err(FrameError::HeaderIoError)?;
+        .map_err(FrameHeaderParseError::HeaderIoError)?;
 
     let mut buf = &raw_header[..];
 
     // TODO: Validate version
     let version = buf.get_u8();
     if version & 0x80 != 0x80 {
-        return Err(FrameError::FrameFromClient);
+        return Err(FrameHeaderParseError::FrameFromClient);
     }
     if version & 0x7F != 0x04 {
-        return Err(FrameError::VersionNotSupported(version & 0x7f));
+        return Err(FrameHeaderParseError::VersionNotSupported(version & 0x7f));
     }
 
     let flags = buf.get_u8();
@@ -164,13 +164,12 @@ pub async fn read_response_frame(
 
     let mut raw_body = Vec::with_capacity(length).limit(length);
     while raw_body.has_remaining_mut() {
-        let n = reader
-            .read_buf(&mut raw_body)
-            .await
-            .map_err(|err| FrameError::BodyChunkIoError(raw_body.remaining_mut(), err))?;
+        let n = reader.read_buf(&mut raw_body).await.map_err(|err| {
+            FrameHeaderParseError::BodyChunkIoError(raw_body.remaining_mut(), err)
+        })?;
         if n == 0 {
             // EOF, too early
-            return Err(FrameError::ConnectionClosed(
+            return Err(FrameHeaderParseError::ConnectionClosed(
                 raw_body.remaining_mut(),
                 length,
             ));

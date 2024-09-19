@@ -29,24 +29,44 @@ pub enum FrameError {
     WarningsListParse(LowLevelDeserializationError),
     #[error("Malformed custom payload map: {0}")]
     CustomPayloadMapParse(LowLevelDeserializationError),
-    #[error("Received frame marked as coming from a client")]
-    FrameFromClient,
-    #[error("Received frame marked as coming from the server")]
-    FrameFromServer,
-    #[error("Received a frame from version {0}, but only 4 is supported")]
-    VersionNotSupported(u8),
-    #[error("Connection was closed before body was read: missing {0} out of {1}")]
-    ConnectionClosed(usize, usize),
-    #[error("Failed to read the frame header: {0}")]
-    HeaderIoError(std::io::Error),
-    #[error("Failed to read a chunk of response body. Expected {0} more bytes, error: {1}")]
-    BodyChunkIoError(usize, std::io::Error),
-    #[error("Unrecognized opcode{0}")]
-    TryFromPrimitiveError(#[from] TryFromPrimitiveError<u8>),
     #[error("Snap decompression error: {0}")]
     SnapDecompressError(Arc<dyn Error + Sync + Send>),
     #[error("Error decompressing lz4 data {0}")]
     Lz4DecompressError(#[from] lz4_flex::block::DecompressError),
+}
+
+/// An error that occurred during frame header deserialization.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum FrameHeaderParseError {
+    /// Failed to read the frame header from the socket.
+    #[error("Failed to read the frame header: {0}")]
+    HeaderIoError(std::io::Error),
+
+    /// Received a frame marked as coming from a client.
+    #[error("Received frame marked as coming from a client")]
+    FrameFromClient,
+
+    // FIXME: this should not belong here. User always expects a frame from server.
+    // This variant is only used in scylla-proxy - need to investigate it later.
+    #[error("Received frame marked as coming from the server")]
+    FrameFromServer,
+
+    /// Received a frame with unsupported version.
+    #[error("Received a frame from version {0}, but only 4 is supported")]
+    VersionNotSupported(u8),
+
+    /// Received unknown response opcode.
+    #[error("Unrecognized response opcode {0}")]
+    UnknownResponseOpcode(#[from] TryFromPrimitiveError<u8>),
+
+    /// Failed to read frame body from the socket.
+    #[error("Failed to read a chunk of response body. Expected {0} more bytes, error: {1}")]
+    BodyChunkIoError(usize, std::io::Error),
+
+    /// Connection was closed before whole frame was read.
+    #[error("Connection was closed before body was read: missing {0} out of {1}")]
+    ConnectionClosed(usize, usize),
 }
 
 #[derive(Error, Debug)]

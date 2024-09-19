@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use scylla_cql::frame::frame_errors::{FrameError, ParseError};
+use scylla_cql::frame::frame_errors::{FrameHeaderParseError, ParseError};
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::request::Request;
 pub use scylla_cql::frame::request::RequestOpcode;
@@ -250,20 +250,20 @@ pub(crate) async fn write_frame(
 pub(crate) async fn read_frame(
     reader: &mut (impl AsyncRead + Unpin),
     frame_type: FrameType,
-) -> Result<(FrameParams, FrameOpcode, Bytes), FrameError> {
+) -> Result<(FrameParams, FrameOpcode, Bytes), FrameHeaderParseError> {
     let mut raw_header = [0u8; HEADER_SIZE];
     reader
         .read_exact(&mut raw_header[..])
         .await
-        .map_err(FrameError::HeaderIoError)?;
+        .map_err(FrameHeaderParseError::HeaderIoError)?;
 
     let mut buf = &raw_header[..];
 
     let version = buf.get_u8();
     {
         let (err, valid_direction, direction_str) = match frame_type {
-            FrameType::Request => (FrameError::FrameFromServer, 0x00, "request"),
-            FrameType::Response => (FrameError::FrameFromClient, 0x80, "response"),
+            FrameType::Request => (FrameHeaderParseError::FrameFromServer, 0x00, "request"),
+            FrameType::Response => (FrameHeaderParseError::FrameFromClient, 0x80, "response"),
         };
         if version & 0x80 != valid_direction {
             return Err(err);
@@ -288,10 +288,12 @@ pub(crate) async fn read_frame(
 
     let opcode = match frame_type {
         FrameType::Request => FrameOpcode::Request(
-            RequestOpcode::try_from(buf.get_u8()).map_err(|_| FrameError::FrameFromServer)?,
+            RequestOpcode::try_from(buf.get_u8())
+                .map_err(|_| FrameHeaderParseError::FrameFromServer)?,
         ),
         FrameType::Response => FrameOpcode::Response(
-            ResponseOpcode::try_from(buf.get_u8()).map_err(|_| FrameError::FrameFromClient)?,
+            ResponseOpcode::try_from(buf.get_u8())
+                .map_err(|_| FrameHeaderParseError::FrameFromClient)?,
         ),
     };
 
@@ -303,10 +305,13 @@ pub(crate) async fn read_frame(
         let n = reader
             .read_buf(&mut body)
             .await
-            .map_err(|err| FrameError::BodyChunkIoError(body.remaining_mut(), err))?;
+            .map_err(|err| FrameHeaderParseError::BodyChunkIoError(body.remaining_mut(), err))?;
         if n == 0 {
             // EOF, too early
-            return Err(FrameError::ConnectionClosed(body.remaining_mut(), length));
+            return Err(FrameHeaderParseError::ConnectionClosed(
+                body.remaining_mut(),
+                length,
+            ));
         }
     }
 
@@ -315,7 +320,7 @@ pub(crate) async fn read_frame(
 
 pub(crate) async fn read_request_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<RequestFrame, FrameError> {
+) -> Result<RequestFrame, FrameHeaderParseError> {
     read_frame(reader, FrameType::Request)
         .await
         .map(|(params, opcode, body)| RequestFrame {
@@ -330,7 +335,7 @@ pub(crate) async fn read_request_frame(
 
 pub(crate) async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<ResponseFrame, FrameError> {
+) -> Result<ResponseFrame, FrameHeaderParseError> {
     read_frame(reader, FrameType::Response)
         .await
         .map(|(params, opcode, body)| ResponseFrame {

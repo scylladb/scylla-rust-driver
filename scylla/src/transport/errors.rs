@@ -17,7 +17,7 @@ use scylla_cql::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
             CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError,
             CqlResponseParseError, CqlResultParseError, CqlSupportedParseError, FrameError,
-            ParseError,
+            FrameHeaderParseError, ParseError,
         },
         request::CqlRequestKind,
         response::CqlResponseKind,
@@ -511,7 +511,7 @@ pub enum BrokenConnectionErrorKind {
 
     /// Failed to deserialize response frame header.
     #[error("Failed to deserialize frame: {0}")]
-    FrameError(FrameError),
+    FrameHeaderParseError(FrameHeaderParseError),
 
     /// Failed to handle a CQL event (server response received on stream -1).
     #[error("Failed to handle server event: {0}")]
