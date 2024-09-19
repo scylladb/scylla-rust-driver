@@ -9,14 +9,12 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::Stream;
-use scylla_cql::errors::UserRequestError;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use super::errors::QueryError;
 use super::execution_profile::ExecutionProfileInner;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
@@ -30,6 +28,7 @@ use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::statement::{Consistency, PagingState, SerialConsistency};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
+use crate::transport::errors::{QueryError, UserRequestError};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
@@ -409,16 +408,15 @@ impl RowIterator {
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_channel_sender {
-    use scylla_cql::{
-        errors::QueryError,
-        frame::{
-            request::query::PagingStateResponse,
-            response::result::{ResultMetadata, Rows},
-        },
+    use scylla_cql::frame::{
+        request::query::PagingStateResponse,
+        response::result::{ResultMetadata, Rows},
     };
     use std::{marker::PhantomData, sync::Arc};
     use tokio::sync::mpsc;
     use uuid::Uuid;
+
+    use crate::transport::errors::QueryError;
 
     use super::ReceivedPage;
 

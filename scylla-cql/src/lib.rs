@@ -1,4 +1,3 @@
-pub mod errors;
 pub mod frame;
 #[macro_use]
 pub mod macros {

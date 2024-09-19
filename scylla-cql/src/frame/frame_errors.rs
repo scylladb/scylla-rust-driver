@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
 use crate::cql_to_rust::CqlTypeError;
-use crate::errors::CqlResponseKind;
 use crate::frame::value::SerializeValuesError;
 use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use crate::types::serialize::SerializationError;

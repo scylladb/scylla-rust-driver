@@ -2,7 +2,9 @@
 use crate::cloud::set_ssl_config_for_scylla_cloud_host;
 
 use crate::routing::{Shard, ShardCount, Sharder};
-use crate::transport::errors::QueryError;
+use crate::transport::errors::{
+    BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, QueryError,
+};
 use crate::transport::{
     connection,
     connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName},
@@ -19,7 +21,6 @@ use super::NodeAddr;
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
 use rand::Rng;
-use scylla_cql::errors::{BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError};
 use std::convert::TryInto;
 use std::num::NonZeroUsize;
 use std::pin::Pin;

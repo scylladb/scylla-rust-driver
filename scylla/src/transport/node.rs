@@ -1,4 +1,3 @@
-use scylla_cql::errors::ConnectionPoolError;
 use tokio::net::lookup_host;
 use tracing::warn;
 use uuid::Uuid;
@@ -8,7 +7,7 @@ use crate::routing::{Shard, Sharder};
 use crate::transport::connection::Connection;
 use crate::transport::connection::VerifiedKeyspaceName;
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig};
-use crate::transport::errors::QueryError;
+use crate::transport::errors::{ConnectionPoolError, QueryError};
 
 use std::fmt::Display;
 use std::io;

@@ -2,12 +2,12 @@
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::prepared_statement::TokenCalculationError;
 use crate::routing::{Shard, Token};
+use crate::transport::errors::{BadQuery, NewSessionError, QueryError};
 use crate::transport::host_filter::HostFilter;
 use crate::transport::session::TABLET_CHANNEL_SIZE;
 use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},
     connection_pool::PoolConfig,
-    errors::QueryError,
     node::Node,
     partitioner::PartitionerName,
     topology::{Keyspace, Metadata, MetadataReader},
@@ -17,7 +17,6 @@ use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
-use scylla_cql::errors::{BadQuery, NewSessionError};
 use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::collections::{HashMap, HashSet};

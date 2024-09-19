@@ -7,13 +7,14 @@ use crate::cloud::CloudConfig;
 
 use crate::history;
 use crate::history::HistoryListener;
+pub use crate::transport::errors::TranslationError;
+use crate::transport::errors::{BadQuery, NewSessionError, QueryError, UserRequestError};
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::{Either, Itertools};
-pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::batch::BatchValues;
@@ -37,7 +38,6 @@ use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
-use super::errors::{NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
@@ -76,7 +76,6 @@ pub use crate::transport::connection_pool::PoolSize;
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
-use scylla_cql::errors::{BadQuery, UserRequestError};
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
@@ -114,7 +113,9 @@ impl AddressTranslator for HashMap<SocketAddr, SocketAddr> {
     ) -> Result<SocketAddr, TranslationError> {
         match self.get(&untranslated_peer.untranslated_address) {
             Some(&translated_addr) => Ok(translated_addr),
-            None => Err(TranslationError::NoRuleForAddress),
+            None => Err(TranslationError::NoRuleForAddress(
+                untranslated_peer.untranslated_address,
+            )),
         }
     }
 }
@@ -130,12 +131,18 @@ impl AddressTranslator for HashMap<&'static str, &'static str> {
         for (&rule_addr_str, &translated_addr_str) in self.iter() {
             if let Ok(rule_addr) = SocketAddr::from_str(rule_addr_str) {
                 if rule_addr == untranslated_peer.untranslated_address {
-                    return SocketAddr::from_str(translated_addr_str)
-                        .map_err(|_| TranslationError::InvalidAddressInRule);
+                    return SocketAddr::from_str(translated_addr_str).map_err(|reason| {
+                        TranslationError::InvalidAddressInRule {
+                            translated_addr_str,
+                            reason,
+                        }
+                    });
                 }
             }
         }
-        Err(TranslationError::NoRuleForAddress)
+        Err(TranslationError::NoRuleForAddress(
+            untranslated_peer.untranslated_address,
+        ))
     }
 }
 

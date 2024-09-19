@@ -221,7 +221,8 @@ mod tests {
     use super::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy};
     use crate::statement::Consistency;
     use crate::test_utils::setup_tracing;
-    use crate::transport::errors::{BadQuery, DbError, QueryError, WriteType};
+    use crate::transport::errors::{BadQuery, QueryError};
+    use crate::transport::errors::{DbError, WriteType};
     use bytes::Bytes;
     use std::io::ErrorKind;
     use std::sync::Arc;

@@ -1,12 +1,8 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use scylla_cql::errors::{
-    BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError, ConnectionSetupRequestError,
-    ConnectionSetupRequestErrorKind, CqlEventHandlingError, CqlRequestKind, RequestError,
-    ResponseParseError, TranslationError, UserRequestError,
-};
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::options::{self, Options};
+use scylla_cql::frame::request::CqlRequestKind;
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::response::{self, error};
@@ -34,6 +30,11 @@ use tokio_openssl::SslStream;
 pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
+use crate::transport::errors::{
+    BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
+    ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
+    QueryError, RequestError, ResponseParseError, TranslationError, UserRequestError,
+};
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
@@ -45,7 +46,6 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::SingleRowTypedError;
@@ -2709,7 +2709,7 @@ mod tests {
     #[ntest::timeout(20000)]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_is_closed_on_no_response_to_keepalives() {
-        use scylla_cql::errors::BrokenConnectionErrorKind;
+        use crate::transport::errors::BrokenConnectionErrorKind;
 
         setup_tracing();
 
@@ -2774,7 +2774,7 @@ mod tests {
         let err = error_receiver.await.unwrap();
         let err_inner: &BrokenConnectionErrorKind = match err {
             crate::transport::connection::ConnectionError::BrokenConnection(ref e) => {
-                e.get_inner().downcast_ref().unwrap()
+                e.get_reason().downcast_ref().unwrap()
             }
             _ => panic!("Bad error type. Expected keepalive timeout."),
         };

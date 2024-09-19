@@ -4,12 +4,12 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
     routing::{Shard, Token},
+    transport::errors::QueryError,
     transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 use rand_pcg::Pcg32;
-use scylla_cql::errors::QueryError;
 use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::Consistency;
@@ -2545,12 +2545,16 @@ mod tests {
 mod latency_awareness {
     use futures::{future::RemoteHandle, FutureExt};
     use itertools::Either;
-    use scylla_cql::errors::{DbError, QueryError};
     use tokio::time::{Duration, Instant};
     use tracing::{trace, warn};
     use uuid::Uuid;
 
-    use crate::{load_balancing::NodeRef, routing::Shard, transport::node::Node};
+    use crate::{
+        load_balancing::NodeRef,
+        routing::Shard,
+        transport::errors::{DbError, QueryError},
+        transport::node::Node,
+    };
     use std::{
         collections::HashMap,
         ops::Deref,
@@ -2839,7 +2843,6 @@ mod latency_awareness {
                 QueryError::BadQuery(_)
                 | QueryError::BrokenConnection(_)
                 | QueryError::ConnectionPoolError(_)
-                | QueryError::TooManyOrphanedStreamIds(_)
                 | QueryError::UnableToAllocStreamId
                 | QueryError::DbError(DbError::IsBootstrapping, _)
                 | QueryError::DbError(DbError::Unavailable { .. }, _)

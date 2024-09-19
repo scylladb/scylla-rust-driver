@@ -1,5 +1,4 @@
 use bytes::{Bytes, BytesMut};
-use scylla_cql::errors::{BadQuery, QueryError};
 use scylla_cql::frame::response::result::{
     ColumnSpec, PartitionKeyIndex, ResultMetadata, TableSpec,
 };
@@ -19,6 +18,7 @@ use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
 use crate::routing::Token;
+use crate::transport::errors::{BadQuery, QueryError};
 use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 

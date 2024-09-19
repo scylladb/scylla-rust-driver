@@ -2526,7 +2526,7 @@ async fn test_rate_limit_exceeded_exception() {
         }
     }
 
-    use scylla_cql::errors::OperationType;
+    use crate::transport::errors::OperationType;
 
     match maybe_err.expect("Rate limit error didn't occur") {
         QueryError::DbError(DbError::RateLimitReached { op_type, .. }, _) => {

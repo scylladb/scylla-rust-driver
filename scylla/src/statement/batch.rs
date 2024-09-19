@@ -210,7 +210,6 @@ impl<'a: 'b, 'b> From<&'a BatchStatement>
 }
 
 pub(crate) mod batch_values {
-    use scylla_cql::errors::QueryError;
     use scylla_cql::types::serialize::batch::BatchValues;
     use scylla_cql::types::serialize::batch::BatchValuesIterator;
     use scylla_cql::types::serialize::row::RowSerializationContext;
@@ -218,6 +217,7 @@ pub(crate) mod batch_values {
     use scylla_cql::types::serialize::{RowWriter, SerializationError};
 
     use crate::routing::Token;
+    use crate::transport::errors::QueryError;
 
     use super::BatchStatement;
 
