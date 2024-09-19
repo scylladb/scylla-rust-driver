@@ -9,9 +9,10 @@ pub mod value;
 #[cfg(test)]
 mod value_tests;
 
-use crate::frame::frame_errors::FrameError;
 use bytes::{Buf, BufMut, Bytes};
-use frame_errors::{CqlRequestSerializationError, FrameHeaderParseError};
+use frame_errors::{
+    CqlRequestSerializationError, FrameBodyExtensionsParseError, FrameHeaderParseError,
+};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
@@ -190,18 +191,19 @@ pub fn parse_response_body_extensions(
     flags: u8,
     compression: Option<Compression>,
     mut body: Bytes,
-) -> Result<ResponseBodyWithExtensions, FrameError> {
+) -> Result<ResponseBodyWithExtensions, FrameBodyExtensionsParseError> {
     if flags & FLAG_COMPRESSION != 0 {
         if let Some(compression) = compression {
             body = decompress(&body, compression)?.into();
         } else {
-            return Err(FrameError::NoCompressionNegotiated);
+            return Err(FrameBodyExtensionsParseError::NoCompressionNegotiated);
         }
     }
 
     let trace_id = if flags & FLAG_TRACING != 0 {
         let buf = &mut &*body;
-        let trace_id = types::read_uuid(buf).map_err(FrameError::TraceIdParse)?;
+        let trace_id =
+            types::read_uuid(buf).map_err(FrameBodyExtensionsParseError::TraceIdParse)?;
         body.advance(16);
         Some(trace_id)
     } else {
@@ -211,7 +213,8 @@ pub fn parse_response_body_extensions(
     let warnings = if flags & FLAG_WARNING != 0 {
         let body_len = body.len();
         let buf = &mut &*body;
-        let warnings = types::read_string_list(buf).map_err(FrameError::WarningsListParse)?;
+        let warnings = types::read_string_list(buf)
+            .map_err(FrameBodyExtensionsParseError::WarningsListParse)?;
         let buf_len = buf.len();
         body.advance(body_len - buf_len);
         warnings
@@ -222,7 +225,8 @@ pub fn parse_response_body_extensions(
     let custom_payload = if flags & FLAG_CUSTOM_PAYLOAD != 0 {
         let body_len = body.len();
         let buf = &mut &*body;
-        let payload_map = types::read_bytes_map(buf).map_err(FrameError::CustomPayloadMapParse)?;
+        let payload_map = types::read_bytes_map(buf)
+            .map_err(FrameBodyExtensionsParseError::CustomPayloadMapParse)?;
         let buf_len = buf.len();
         body.advance(body_len - buf_len);
         Some(payload_map)
@@ -264,7 +268,10 @@ fn compress_append(
     }
 }
 
-fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>, FrameError> {
+fn decompress(
+    mut comp_body: &[u8],
+    compression: Compression,
+) -> Result<Vec<u8>, FrameBodyExtensionsParseError> {
     match compression {
         Compression::Lz4 => {
             let uncomp_len = comp_body.get_u32() as usize;
@@ -273,7 +280,7 @@ fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>,
         }
         Compression::Snappy => snap::raw::Decoder::new()
             .decompress_vec(comp_body)
-            .map_err(|err| FrameError::SnapDecompressError(Arc::new(err))),
+            .map_err(|err| FrameBodyExtensionsParseError::SnapDecompressError(Arc::new(err))),
     }
 }
 

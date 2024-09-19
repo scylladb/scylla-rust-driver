@@ -19,18 +19,41 @@ use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use crate::types::serialize::SerializationError;
 use thiserror::Error;
 
+/// An error returned by `parse_response_body_extensions`.
+///
+/// It represents an error that occurred during deserialization of
+/// frame body extensions. These extensions include tracing id,
+/// warnings and custom payload.
+///
+/// Possible error kinds:
+/// - failed to decompress frame body (decompression is required for further deserialization)
+/// - failed to deserialize tracing id (body ext.)
+/// - failed to deserialize warnings list (body ext.)
+/// - failed to deserialize custom payload map (body ext.)
 #[derive(Error, Debug)]
-pub enum FrameError {
+#[non_exhaustive]
+pub enum FrameBodyExtensionsParseError {
+    /// Frame is compressed, but no compression was negotiated for the connection.
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
+
+    /// Failed to deserialize frame trace id.
     #[error("Malformed trace id: {0}")]
     TraceIdParse(LowLevelDeserializationError),
+
+    /// Failed to deserialize warnings attached to frame.
     #[error("Malformed warnings list: {0}")]
     WarningsListParse(LowLevelDeserializationError),
+
+    /// Failed to deserialize frame's custom payload.
     #[error("Malformed custom payload map: {0}")]
     CustomPayloadMapParse(LowLevelDeserializationError),
+
+    /// Failed to decompress frame body (snap).
     #[error("Snap decompression error: {0}")]
     SnapDecompressError(Arc<dyn Error + Sync + Send>),
+
+    /// Failed to decompress frame body (lz4).
     #[error("Error decompressing lz4 data {0}")]
     Lz4DecompressError(#[from] lz4_flex::block::DecompressError),
 }

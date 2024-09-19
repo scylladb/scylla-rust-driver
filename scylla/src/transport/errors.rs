@@ -16,8 +16,8 @@ use scylla_cql::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
             CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError,
-            CqlResponseParseError, CqlResultParseError, CqlSupportedParseError, FrameError,
-            FrameHeaderParseError, ParseError,
+            CqlResponseParseError, CqlResultParseError, CqlSupportedParseError,
+            FrameBodyExtensionsParseError, FrameHeaderParseError, ParseError,
         },
         request::CqlRequestKind,
         response::CqlResponseKind,
@@ -116,8 +116,8 @@ impl From<ParseError> for QueryError {
     }
 }
 
-impl From<FrameError> for QueryError {
-    fn from(frame_error: FrameError) -> QueryError {
+impl From<FrameBodyExtensionsParseError> for QueryError {
+    fn from(frame_error: FrameBodyExtensionsParseError) -> QueryError {
         QueryError::InvalidMessage(format!("Frame error: {}", frame_error))
     }
 }
@@ -140,7 +140,7 @@ impl From<UserRequestError> for QueryError {
                 // FIXME: make it typed. It needs to wait for ProtocolError refactor.
                 QueryError::ProtocolError("Received unexpected response from the server. Expected RESULT or ERROR response.")
             }
-            UserRequestError::FrameError(e) => e.into(),
+            UserRequestError::BodyExtensionsParseError(e) => e.into(),
             UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
             UserRequestError::RepreparedIdChanged => QueryError::ProtocolError(
                 "Prepared statement Id changed, md5 sum should stay the same",
@@ -395,10 +395,10 @@ pub enum ConnectionSetupRequestErrorKind {
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
 
-    // TODO: Make FrameError clonable.
-    /// An error occurred when parsing response frame header.
+    // TODO: Make FrameBodyExtensionsParseError clonable.
+    /// Failed to deserialize frame body extensions.
     #[error(transparent)]
-    FrameError(Arc<FrameError>),
+    BodyExtensionsParseError(Arc<FrameBodyExtensionsParseError>),
 
     /// Driver was unable to allocate a stream id to execute a setup request on.
     #[error("Unable to allocate stream id")]
@@ -455,9 +455,9 @@ pub enum ConnectionSetupRequestErrorKind {
     MissingAuthentication,
 }
 
-impl From<FrameError> for ConnectionSetupRequestErrorKind {
-    fn from(value: FrameError) -> Self {
-        ConnectionSetupRequestErrorKind::FrameError(Arc::new(value))
+impl From<FrameBodyExtensionsParseError> for ConnectionSetupRequestErrorKind {
+    fn from(value: FrameBodyExtensionsParseError) -> Self {
+        ConnectionSetupRequestErrorKind::BodyExtensionsParseError(Arc::new(value))
     }
 }
 
@@ -562,9 +562,9 @@ pub enum CqlEventHandlingError {
     #[error("Received unexpected server response on stream -1: {0}. Expected EVENT response")]
     UnexpectedResponse(CqlResponseKind),
 
-    /// Failed to deserialize a header of frame received on stream -1.
+    /// Failed to deserialize body extensions of frame received on stream -1.
     #[error("Failed to deserialize a header of frame received on stream -1: {0}")]
-    FrameError(#[from] FrameError),
+    BodyExtensionParseError(#[from] FrameBodyExtensionsParseError),
 
     /// Driver failed to send event data between the internal tasks.
     /// It implies that connection was broken for some reason.
@@ -596,7 +596,7 @@ pub(crate) enum UserRequestError {
     #[error(transparent)]
     BrokenConnectionError(#[from] BrokenConnectionError),
     #[error(transparent)]
-    FrameError(#[from] FrameError),
+    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
     #[error("Prepared statement Id changed, md5 sum should stay the same")]
@@ -613,7 +613,7 @@ impl From<RequestError> for UserRequestError {
     fn from(value: RequestError) -> Self {
         match value {
             RequestError::CqlRequestSerialization(e) => e.into(),
-            RequestError::FrameError(e) => e.into(),
+            RequestError::BodyExtensionsParseError(e) => e.into(),
             RequestError::CqlResponseParseError(e) => match e {
                 // Only possible responses are RESULT and ERROR. If we failed parsing
                 // other response, treat it as unexpected response.
@@ -641,9 +641,9 @@ pub enum RequestError {
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
 
-    /// Failed to deserialize response frame header.
+    /// Failed to deserialize frame body extensions.
     #[error(transparent)]
-    FrameError(#[from] FrameError),
+    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
 
     /// Failed to deserialize a CQL response (frame body).
     #[error(transparent)]
@@ -661,7 +661,7 @@ pub enum RequestError {
 impl From<ResponseParseError> for RequestError {
     fn from(value: ResponseParseError) -> Self {
         match value {
-            ResponseParseError::FrameError(e) => e.into(),
+            ResponseParseError::BodyExtensionsParseError(e) => e.into(),
             ResponseParseError::CqlResponseParseError(e) => e.into(),
         }
     }
@@ -672,7 +672,7 @@ impl From<ResponseParseError> for RequestError {
 #[derive(Error, Debug)]
 pub(crate) enum ResponseParseError {
     #[error(transparent)]
-    FrameError(#[from] FrameError),
+    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
     #[error(transparent)]
     CqlResponseParseError(#[from] CqlResponseParseError),
 }
