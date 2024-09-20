@@ -731,31 +731,7 @@ impl ClusterWorker {
         let use_keyspace_results: Vec<Result<(), QueryError>> =
             join_all(use_keyspace_futures).await;
 
-        // If there was at least one Ok and the rest were IoErrors we can return Ok
-        // keyspace name is correct and will be used on broken connection on the next reconnect
-
-        // If there were only IoErrors then return IoError
-        // If there was an error different than IoError return this error - something is wrong
-
-        let mut was_ok: bool = false;
-        let mut io_error: Option<Arc<std::io::Error>> = None;
-
-        for result in use_keyspace_results {
-            match result {
-                Ok(()) => was_ok = true,
-                Err(err) => match err {
-                    QueryError::IoError(io_err) => io_error = Some(io_err),
-                    _ => return Err(err),
-                },
-            }
-        }
-
-        if was_ok {
-            return Ok(());
-        }
-
-        // We can unwrap io_error because use_keyspace_futures must be nonempty
-        Err(QueryError::IoError(io_error.unwrap()))
+        use_keyspace_result(use_keyspace_results.into_iter())
     }
 
     async fn perform_refresh(&mut self) -> Result<(), QueryError> {
@@ -787,4 +763,40 @@ impl ClusterWorker {
     fn update_cluster_data(&mut self, new_cluster_data: Arc<ClusterData>) {
         self.cluster_data.store(new_cluster_data);
     }
+}
+
+/// Returns a result of use_keyspace operation, based on the query results
+/// returned from given node/connection.
+///
+/// This function assumes that `use_keyspace_results` iterator is NON-EMPTY!
+pub(crate) fn use_keyspace_result(
+    use_keyspace_results: impl Iterator<Item = Result<(), QueryError>>,
+) -> Result<(), QueryError> {
+    // If there was at least one Ok and the rest were broken connection errors we can return Ok
+    // keyspace name is correct and will be used on broken connection on the next reconnect
+
+    // If there were only broken connection errors then return broken connection error.
+    // If there was an error different than broken connection error return this error - something is wrong
+
+    let mut was_ok: bool = false;
+    let mut broken_conn_error: Option<QueryError> = None;
+
+    for result in use_keyspace_results {
+        match result {
+            Ok(()) => was_ok = true,
+            Err(err) => match err {
+                QueryError::BrokenConnection(_) | QueryError::ConnectionPoolError(_) => {
+                    broken_conn_error = Some(err)
+                }
+                _ => return Err(err),
+            },
+        }
+    }
+
+    if was_ok {
+        return Ok(());
+    }
+
+    // We can unwrap conn_broken_error because use_keyspace_results must be nonempty
+    Err(broken_conn_error.unwrap())
 }

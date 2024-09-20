@@ -1108,31 +1108,7 @@ impl PoolRefiller {
             .await
             .map_err(|_| QueryError::TimeoutError)?;
 
-            // If there was at least one Ok and the rest were IoErrors we can return Ok
-            // keyspace name is correct and will be used on broken connection on the next reconnect
-
-            // If there were only IoErrors then return IoError
-            // If there was an error different than IoError return this error - something is wrong
-
-            let mut was_ok: bool = false;
-            let mut io_error: Option<Arc<std::io::Error>> = None;
-
-            for result in use_keyspace_results {
-                match result {
-                    Ok(()) => was_ok = true,
-                    Err(err) => match err {
-                        QueryError::IoError(io_err) => io_error = Some(io_err),
-                        _ => return Err(err),
-                    },
-                }
-            }
-
-            if was_ok {
-                return Ok(());
-            }
-
-            // We can unwrap io_error because use_keyspace_futures must be nonempty
-            Err(QueryError::IoError(io_error.unwrap()))
+            super::cluster::use_keyspace_result(use_keyspace_results.into_iter())
         };
 
         tokio::task::spawn(async move {
