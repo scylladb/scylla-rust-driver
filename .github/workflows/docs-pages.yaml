@@ -6,7 +6,8 @@ on:
   push:
     branches:
       - main
-      - 'branch-**'
+    tags:
+      - 'v0.*'
     paths:
       - "docs/**"
   workflow_dispatch:
