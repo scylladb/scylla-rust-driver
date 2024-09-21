@@ -20,6 +20,7 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
 
                 quote_spanned! {field.span() =>
                     #field_name: {
+                        #[allow(clippy::expect_used)]
                         let (col_ix, col_value) = vals_iter
                             .next()
                             .expect("BUG: Size validated iterator did not contain the expected number of values"); 
@@ -44,6 +45,7 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
 
                 quote_spanned! {field.span() =>
                     {
+                        #[allow(clippy::expect_used)]
                         let (col_ix, col_value) = vals_iter
                             .next()
                             .expect("BUG: Size validated iterator did not contain the expected number of values"); 

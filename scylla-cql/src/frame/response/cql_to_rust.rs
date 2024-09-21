@@ -941,6 +941,11 @@ mod tests {
         );
     }
 
+    // Enabling `expect_used` clippy lint,
+    // validates that `derive(FromRow)` macro definition does do not violates such rule under the hood.
+    // Could be removed after such rule will be applied for the whole crate.
+    // <https://rust-lang.github.io/rust-clippy/master/index.html#/expect_used>
+    #[deny(clippy::expect_used)]
     #[test]
     fn struct_from_row() {
         #[derive(FromRow)]
