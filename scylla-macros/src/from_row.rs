@@ -69,13 +69,11 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
                 use #path::{CqlValue, FromCqlVal, FromRow, FromRowError};
                 use ::std::result::Result::{Ok, Err};
                 use ::std::convert::TryInto;
-                use ::std::clone::Clone;
-                use ::std::option::Option;
                 use ::std::iter::{Iterator, IntoIterator};
 
 
                 let row_columns_len = row.columns.len();
-                let mut row_columns: [Option<CqlValue>; #fields_count] = row.columns.try_into().map_err(|_| FromRowError::WrongRowSize {
+                let mut row_columns: [_; #fields_count] = row.columns.try_into().map_err(|_| FromRowError::WrongRowSize {
                     expected: #fields_count,
                         actual: row_columns_len,
                 })?;
