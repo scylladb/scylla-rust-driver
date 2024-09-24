@@ -252,6 +252,10 @@ pub enum ProtocolError {
     /// A protocol error appeared during schema version fetch.
     #[error("Schema version fetch protocol error: {0}")]
     SchemaVersionFetch(SingleRowTypedError),
+
+    /// A result with nonfinished paging state received for unpaged query.
+    #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
+    NonfinishedPagingState,
 }
 
 /// A protocol error that occurred during `USE KEYSPACE <>` request.

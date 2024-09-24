@@ -299,10 +299,11 @@ impl NonErrorQueryResponse {
         let (result, paging_state) = self.into_query_result_and_paging_state()?;
 
         if !paging_state.finished() {
-            let error_msg = "Internal driver API misuse or a server bug: nonfinished paging state\
-                             would be discarded by `NonErrorQueryResponse::into_query_result`";
-            error!(error_msg);
-            return Err(QueryError::ProtocolError(error_msg));
+            error!(
+                "Internal driver API misuse or a server bug: nonfinished paging state\
+                would be discarded by `NonErrorQueryResponse::into_query_result`"
+            );
+            return Err(ProtocolError::NonfinishedPagingState.into());
         }
 
         Ok(result)

@@ -8,7 +8,9 @@ use crate::cloud::CloudConfig;
 use crate::history;
 use crate::history::HistoryListener;
 pub use crate::transport::errors::TranslationError;
-use crate::transport::errors::{BadQuery, NewSessionError, QueryError, UserRequestError};
+use crate::transport::errors::{
+    BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
+};
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
@@ -644,9 +646,8 @@ impl Session {
             .query(&query, values, None, PagingState::start())
             .await?;
         if !paging_state_response.finished() {
-            let err_msg = "Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.";
-            error!(err_msg);
-            return Err(QueryError::ProtocolError(err_msg));
+            error!("Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
+            return Err(ProtocolError::NonfinishedPagingState.into());
         }
         Ok(result)
     }
@@ -1079,9 +1080,8 @@ impl Session {
             .execute(prepared, &serialized_values, None, PagingState::start())
             .await?;
         if !paging_state.finished() {
-            let err_msg = "Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.";
-            error!(err_msg);
-            return Err(QueryError::ProtocolError(err_msg));
+            error!("Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
+            return Err(ProtocolError::NonfinishedPagingState.into());
         }
         Ok(result)
     }
