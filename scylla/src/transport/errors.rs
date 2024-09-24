@@ -134,9 +134,16 @@ impl From<UserRequestError> for QueryError {
             }
             UserRequestError::BodyExtensionsParseError(e) => e.into(),
             UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
-            UserRequestError::RepreparedIdChanged => QueryError::ProtocolError(
-                "Prepared statement Id changed, md5 sum should stay the same",
-            ),
+            UserRequestError::RepreparedIdChanged {
+                statement,
+                expected_id,
+                reprepared_id,
+            } => ProtocolError::RepreparedIdChanged {
+                statement,
+                expected_id,
+                reprepared_id,
+            }
+            .into(),
         }
     }
 }
@@ -269,6 +276,17 @@ pub enum ProtocolError {
         "Prepared statement id mismatch between multiple connections - all result ids should be equal."
     )]
     PreparedStatementIdsMismatch,
+
+    /// Prepared statement id changed after repreparation.
+    #[error(
+        "Prepared statement id changed after repreparation; md5 sum (computed from the query string) should stay the same;\
+        Statement: \"{statement}\"; expected id: {expected_id:?}; reprepared id: {reprepared_id:?}"
+    )]
+    RepreparedIdChanged {
+        statement: String,
+        expected_id: Vec<u8>,
+        reprepared_id: Vec<u8>,
+    },
 
     /// USE KEYSPACE protocol error.
     #[error("USE KEYSPACE protocol error: {0}")]
@@ -645,8 +663,15 @@ pub(crate) enum UserRequestError {
     BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
-    #[error("Prepared statement Id changed, md5 sum should stay the same")]
-    RepreparedIdChanged,
+    #[error(
+        "Prepared statement id changed after repreparation; md5 sum (computed from the query string) should stay the same;\
+        Statement: \"{statement}\"; expected id: {expected_id:?}; reprepared id: {reprepared_id:?}"
+    )]
+    RepreparedIdChanged {
+        statement: String,
+        expected_id: Vec<u8>,
+        reprepared_id: Vec<u8>,
+    },
 }
 
 impl From<response::error::Error> for UserRequestError {

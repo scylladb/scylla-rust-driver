@@ -905,7 +905,11 @@ impl Connection {
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
         if reprepared.get_id() != previous_prepared.get_id() {
-            Err(UserRequestError::RepreparedIdChanged)
+            Err(UserRequestError::RepreparedIdChanged {
+                statement: reprepare_query.contents,
+                expected_id: previous_prepared.get_id().clone().into(),
+                reprepared_id: reprepared.get_id().clone().into(),
+            })
         } else {
             Ok(())
         }
