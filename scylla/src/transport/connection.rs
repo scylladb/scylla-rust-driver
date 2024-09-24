@@ -49,7 +49,6 @@ use std::{
 use super::errors::{ProtocolError, UseKeyspaceProtocolError};
 use super::iterator::RowIterator;
 use super::locator::tablets::{RawTablet, TabletParsingError};
-use super::query_result::SingleRowTypedError;
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
@@ -1443,17 +1442,7 @@ impl Connection {
             .query_unpaged(LOCAL_VERSION)
             .await?
             .single_row_typed()
-            .map_err(|err| match err {
-                SingleRowTypedError::RowsExpected(_) => {
-                    QueryError::ProtocolError("Version query returned not rows")
-                }
-                SingleRowTypedError::BadNumberOfRows(_) => {
-                    QueryError::ProtocolError("system.local query returned a wrong number of rows")
-                }
-                SingleRowTypedError::FromRowError(_) => {
-                    QueryError::ProtocolError("Row is not uuid type as it should be")
-                }
-            })?;
+            .map_err(ProtocolError::SchemaVersionFetch)?;
         Ok(version_id)
     }
 

@@ -30,6 +30,8 @@ use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
+use super::query_result::SingleRowTypedError;
+
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
@@ -246,6 +248,10 @@ pub enum ProtocolError {
     /// USE KEYSPACE protocol error.
     #[error("USE KEYSPACE protocol error: {0}")]
     UseKeyspace(#[from] UseKeyspaceProtocolError),
+
+    /// A protocol error appeared during schema version fetch.
+    #[error("Schema version fetch protocol error: {0}")]
+    SchemaVersionFetch(SingleRowTypedError),
 }
 
 /// A protocol error that occurred during `USE KEYSPACE <>` request.
