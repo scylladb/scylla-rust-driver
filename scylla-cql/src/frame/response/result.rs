@@ -472,15 +472,39 @@ impl CqlValue {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ColumnSpec {
-    pub(crate) table_spec: TableSpec<'static>,
-    pub(crate) name: String,
-    pub(crate) typ: ColumnType<'static>,
+pub struct ColumnSpec<'frame> {
+    pub(crate) table_spec: TableSpec<'frame>,
+    pub(crate) name: Cow<'frame, str>,
+    pub(crate) typ: ColumnType<'frame>,
 }
 
-impl ColumnSpec {
+impl ColumnSpec<'static> {
     #[inline]
-    pub fn table_spec(&self) -> &TableSpec<'static> {
+    pub fn owned(name: String, typ: ColumnType<'static>, table_spec: TableSpec<'static>) -> Self {
+        Self {
+            table_spec,
+            name: Cow::Owned(name),
+            typ,
+        }
+    }
+}
+
+impl<'frame> ColumnSpec<'frame> {
+    #[inline]
+    pub fn borrowed(
+        name: &'frame str,
+        typ: ColumnType<'frame>,
+        table_spec: TableSpec<'frame>,
+    ) -> Self {
+        Self {
+            table_spec,
+            name: Cow::Borrowed(name),
+            typ,
+        }
+    }
+
+    #[inline]
+    pub fn table_spec(&self) -> &TableSpec<'frame> {
         &self.table_spec
     }
 
@@ -490,31 +514,15 @@ impl ColumnSpec {
     }
 
     #[inline]
-    pub fn typ(&self) -> &ColumnType<'static> {
+    pub fn typ(&self) -> &ColumnType<'frame> {
         &self.typ
-    }
-}
-
-// Test utils for scylla crate.
-impl ColumnSpec {
-    #[doc(hidden)]
-    pub fn new_for_test(
-        table_spec: TableSpec<'static>,
-        name: String,
-        typ: ColumnType<'static>,
-    ) -> Self {
-        Self {
-            table_spec,
-            name,
-            typ,
-        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ResultMetadata {
     col_count: usize,
-    pub col_specs: Vec<ColumnSpec>,
+    pub col_specs: Vec<ColumnSpec<'static>>,
 }
 
 impl ResultMetadata {
@@ -528,7 +536,7 @@ impl ResultMetadata {
 
     #[inline]
     #[doc(hidden)]
-    pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec>) -> Self {
+    pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec<'static>>) -> Self {
         Self {
             col_count,
             col_specs,
@@ -551,7 +559,7 @@ pub struct PreparedMetadata {
     /// pk_indexes are sorted by `index` and can be reordered in partition key order
     /// using `sequence` field
     pub pk_indexes: Vec<PartitionKeyIndex>,
-    pub col_specs: Vec<ColumnSpec>,
+    pub col_specs: Vec<ColumnSpec<'static>>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -704,7 +712,7 @@ fn deser_col_specs(
     buf: &mut &[u8],
     global_table_spec: &Option<TableSpec<'static>>,
     col_count: usize,
-) -> StdResult<Vec<ColumnSpec>, ColumnSpecParseError> {
+) -> StdResult<Vec<ColumnSpec<'static>>, ColumnSpecParseError> {
     let mut col_specs = Vec::with_capacity(col_count);
     for col_idx in 0..col_count {
         let table_spec = if let Some(spec) = global_table_spec {
@@ -716,11 +724,7 @@ fn deser_col_specs(
             .map_err(|err| mk_col_spec_parse_error(col_idx, err))?
             .to_owned();
         let typ = deser_type_owned(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
-        col_specs.push(ColumnSpec {
-            table_spec,
-            name,
-            typ,
-        });
+        col_specs.push(ColumnSpec::owned(name, typ, table_spec));
     }
     Ok(col_specs)
 }

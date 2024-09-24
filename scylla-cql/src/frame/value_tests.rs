@@ -1079,11 +1079,11 @@ fn vec_value_list() {
     );
 }
 
-fn col_spec(name: &str, typ: ColumnType<'static>) -> ColumnSpec {
+fn col_spec<'a>(name: impl Into<Cow<'a, str>>, typ: ColumnType<'a>) -> ColumnSpec<'a> {
     ColumnSpec {
-        table_spec: TableSpec::owned("ks".to_string(), "tbl".to_string()),
-        name: name.to_string(),
+        name: name.into(),
         typ,
+        table_spec: TableSpec::borrowed("ks", "tbl"),
     }
 }
 
@@ -1134,7 +1134,7 @@ fn tuple_value_list() {
         let typs = expected
             .clone()
             .enumerate()
-            .map(|(i, _)| col_spec(&format!("col_{i}"), ColumnType::TinyInt))
+            .map(|(i, _)| col_spec(format!("col_{i}"), ColumnType::TinyInt))
             .collect::<Vec<_>>();
         let serialized = serialize_values(tuple, &typs);
         assert_eq!(serialized.len() as usize, expected.len());

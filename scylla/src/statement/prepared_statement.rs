@@ -513,13 +513,13 @@ impl From<SerializationError> for PartitionKeyError {
     }
 }
 
-pub(crate) type PartitionKeyValue<'ps> = (&'ps [u8], &'ps ColumnSpec);
+pub(crate) type PartitionKeyValue<'ps> = (&'ps [u8], &'ps ColumnSpec<'ps>);
 
 pub(crate) struct PartitionKey<'ps> {
     pk_values: SmallVec<[Option<PartitionKeyValue<'ps>>; PartitionKey::SMALLVEC_ON_STACK_SIZE]>,
 }
 
-impl<'ps> PartitionKey<'ps> {
+impl<'ps, 'spec: 'ps> PartitionKey<'ps> {
     const SMALLVEC_ON_STACK_SIZE: usize = 8;
 
     fn new(
@@ -620,7 +620,7 @@ mod tests {
         let col_specs: Vec<_> = cols
             .into_iter()
             .enumerate()
-            .map(|(i, typ)| ColumnSpec::new_for_test(table_spec.clone(), format!("col_{}", i), typ))
+            .map(|(i, typ)| ColumnSpec::owned(format!("col_{}", i), typ, table_spec.clone()))
             .collect();
         let mut pk_indexes = idx
             .into_iter()

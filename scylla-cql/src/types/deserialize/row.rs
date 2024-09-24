@@ -12,14 +12,14 @@ use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row};
 #[non_exhaustive]
 pub struct RawColumn<'frame> {
     pub index: usize,
-    pub spec: &'frame ColumnSpec,
+    pub spec: &'frame ColumnSpec<'frame>,
     pub slice: Option<FrameSlice<'frame>>,
 }
 
 /// Iterates over columns of a single row.
 #[derive(Clone, Debug)]
 pub struct ColumnIterator<'frame> {
-    specs: std::iter::Enumerate<std::slice::Iter<'frame, ColumnSpec>>,
+    specs: std::iter::Enumerate<std::slice::Iter<'frame, ColumnSpec<'frame>>>,
     slice: FrameSlice<'frame>,
 }
 

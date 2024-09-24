@@ -317,8 +317,7 @@ mod tests {
     fn make_test_metadata() -> ResultMetadata {
         let table_spec = TableSpec::borrowed("some_keyspace", "some_table");
 
-        let column_spec =
-            ColumnSpec::new_for_test(table_spec, "column0".to_owned(), ColumnType::Int);
+        let column_spec = ColumnSpec::borrowed("column0", ColumnType::Int, table_spec);
 
         ResultMetadata::new_for_test(1, vec![column_spec])
     }

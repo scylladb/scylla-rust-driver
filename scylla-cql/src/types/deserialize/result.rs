@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 /// Iterates over the whole result, returning rows.
 #[derive(Debug)]
 pub struct RowIterator<'frame> {
-    specs: &'frame [ColumnSpec],
+    specs: &'frame [ColumnSpec<'frame>],
     remaining: usize,
     slice: FrameSlice<'frame>,
 }

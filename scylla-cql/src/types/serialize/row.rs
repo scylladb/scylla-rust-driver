@@ -22,7 +22,7 @@ use super::{CellWriter, RowWriter, SerializationError};
 
 /// Contains information needed to serialize a row.
 pub struct RowSerializationContext<'a> {
-    pub(crate) columns: &'a [ColumnSpec],
+    pub(crate) columns: &'a [ColumnSpec<'a>],
 }
 
 impl<'a> RowSerializationContext<'a> {
@@ -868,12 +868,8 @@ mod tests {
     use assert_matches::assert_matches;
     use scylla_macros::SerializeRow;
 
-    fn col_spec(name: &str, typ: ColumnType<'static>) -> ColumnSpec {
-        ColumnSpec {
-            table_spec: TableSpec::owned("ks".to_string(), "tbl".to_string()),
-            name: name.to_string(),
-            typ,
-        }
+    fn col_spec<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+        ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
     }
 
     #[test]
@@ -990,12 +986,8 @@ mod tests {
         t.serialize(&ctx, &mut builder).unwrap_err()
     }
 
-    fn col(name: &str, typ: ColumnType<'static>) -> ColumnSpec {
-        ColumnSpec {
-            table_spec: TableSpec::owned("ks".to_string(), "tbl".to_string()),
-            name: name.to_string(),
-            typ,
-        }
+    fn col<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+        ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
     }
 
     #[test]
