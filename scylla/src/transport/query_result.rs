@@ -141,7 +141,7 @@ impl QueryResult {
     pub fn col_specs(&self) -> &[ColumnSpec] {
         self.metadata
             .as_ref()
-            .map(|metadata| metadata.col_specs.as_slice())
+            .map(|metadata| metadata.col_specs())
             .unwrap_or_default()
     }
 

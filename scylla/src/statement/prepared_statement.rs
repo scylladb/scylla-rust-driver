@@ -423,7 +423,7 @@ impl PreparedStatement {
 
     /// Access column specifications of the result set returned after the execution of this statement
     pub fn get_result_set_col_specs(&self) -> &[ColumnSpec] {
-        &self.shared.result_metadata.col_specs
+        self.shared.result_metadata.col_specs()
     }
 
     /// Get the name of the partitioner used for this statement.

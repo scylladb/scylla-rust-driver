@@ -522,7 +522,7 @@ impl<'frame> ColumnSpec<'frame> {
 #[derive(Debug, Clone)]
 pub struct ResultMetadata {
     col_count: usize,
-    pub col_specs: Vec<ColumnSpec<'static>>,
+    col_specs: Vec<ColumnSpec<'static>>,
 }
 
 impl ResultMetadata {
@@ -541,6 +541,16 @@ impl ResultMetadata {
             col_count,
             col_specs,
         }
+    }
+
+    #[inline]
+    pub fn col_count(&self) -> usize {
+        self.col_count
+    }
+
+    #[inline]
+    pub fn col_specs(&self) -> &[ColumnSpec] {
+        &self.col_specs
     }
 }
 
