@@ -52,6 +52,15 @@ pub enum QueryError {
     #[error(transparent)]
     BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
 
+    /// Load balancing policy returned an empty plan.
+    #[error(
+        "Load balancing policy returned an empty plan.\
+        First thing to investigate should be the logic of custom LBP implementation.\
+        If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
+        then this is most probably a driver bug!"
+    )]
+    EmptyPlan,
+
     /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
     CqlResultParseError(#[from] CqlResultParseError),
@@ -141,6 +150,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::CqlResultParseError(e) => NewSessionError::CqlResultParseError(e),
             QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
             QueryError::BodyExtensionsParseError(e) => NewSessionError::BodyExtensionsParseError(e),
+            QueryError::EmptyPlan => NewSessionError::EmptyPlan,
             QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::ProtocolErrorTyped(e) => NewSessionError::ProtocolErrorTyped(e),
@@ -189,6 +199,15 @@ pub enum NewSessionError {
     /// Failed to serialize CQL request.
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
+
+    /// Load balancing policy returned an empty plan.
+    #[error(
+        "Load balancing policy returned an empty plan.\
+        First thing to investigate should be the logic of custom LBP implementation.\
+        If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
+        then this is most probably a driver bug!"
+    )]
+    EmptyPlan,
 
     /// Failed to deserialize frame body extensions.
     #[error(transparent)]

@@ -2844,6 +2844,7 @@ mod latency_awareness {
                 | QueryError::CqlRequestSerialization(_)
                 | QueryError::BrokenConnection(_)
                 | QueryError::ConnectionPoolError(_)
+                | QueryError::EmptyPlan
                 | QueryError::UnableToAllocStreamId
                 | QueryError::DbError(DbError::IsBootstrapping, _)
                 | QueryError::DbError(DbError::Unavailable { .. }, _)

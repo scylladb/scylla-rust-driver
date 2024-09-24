@@ -1822,9 +1822,7 @@ impl Session {
                         },
                     )
                     .await
-                    .unwrap_or(Err(QueryError::ProtocolError(
-                        "Empty query plan - driver bug!",
-                    )))
+                    .unwrap_or(Err(QueryError::EmptyPlan))
                 }
             }
         };

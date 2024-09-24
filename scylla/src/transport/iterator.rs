@@ -511,8 +511,7 @@ where
         let query_plan =
             load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
-        let mut last_error: QueryError =
-            QueryError::ProtocolError("Empty query plan - driver bug!");
+        let mut last_error: QueryError = QueryError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
 
         self.log_query_start();
