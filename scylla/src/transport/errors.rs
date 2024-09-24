@@ -66,6 +66,10 @@ pub enum QueryError {
     #[error("Protocol Error: {0}")]
     ProtocolError(&'static str),
 
+    /// Protocol error.
+    #[error("Protocol error: {0}")]
+    ProtocolErrorTyped(#[from] ProtocolError),
+
     /// Invalid message received
     #[error("Invalid message: {0}")]
     InvalidMessage(String),
@@ -137,6 +141,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::BodyExtensionsParseError(e) => NewSessionError::BodyExtensionsParseError(e),
             QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
+            QueryError::ProtocolErrorTyped(e) => NewSessionError::ProtocolErrorTyped(e),
             QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
             QueryError::TimeoutError => NewSessionError::TimeoutError,
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
@@ -203,6 +208,10 @@ pub enum NewSessionError {
     #[error("Protocol Error: {0}")]
     ProtocolError(&'static str),
 
+    /// Protocol error.
+    #[error("Protocol error: {0}")]
+    ProtocolErrorTyped(#[from] ProtocolError),
+
     /// Invalid message received
     #[error("Invalid message: {0}")]
     InvalidMessage(String),
@@ -224,6 +233,16 @@ pub enum NewSessionError {
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
 }
+
+/// A protocol error.
+///
+/// It indicates an inconsistency between CQL protocol
+/// and server's behavior.
+/// In some cases, it could also represent a misuse
+/// of internal driver API - a driver bug.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ProtocolError {}
 
 /// Error caused by caller creating an invalid query
 #[derive(Error, Debug, Clone)]

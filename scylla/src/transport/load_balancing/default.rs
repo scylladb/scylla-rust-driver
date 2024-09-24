@@ -2858,6 +2858,7 @@ mod latency_awareness {
                 | QueryError::BodyExtensionsParseError(_)
                 | QueryError::InvalidMessage(_)
                 | QueryError::ProtocolError(_)
+                | QueryError::ProtocolErrorTyped(_)
                 | QueryError::TimeoutError
                 | QueryError::RequestTimeout(_) => true,
             }
