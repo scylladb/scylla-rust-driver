@@ -25,7 +25,7 @@ struct RawPreparedStatementData {
     id: Bytes,
     is_confirmed_lwt: bool,
     metadata: PreparedMetadata,
-    result_metadata: Arc<ResultMetadata>,
+    result_metadata: Arc<ResultMetadata<'static>>,
     partitioner_name: PartitionerName,
 }
 

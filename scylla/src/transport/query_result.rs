@@ -21,7 +21,7 @@ pub struct QueryResult {
     /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
     pub tracing_id: Option<Uuid>,
     /// Metadata returned along with this response.
-    pub(crate) metadata: Option<Arc<ResultMetadata>>,
+    pub(crate) metadata: Option<Arc<ResultMetadata<'static>>>,
     /// The original size of the serialized rows in request
     pub serialized_size: usize,
 }
@@ -314,7 +314,7 @@ mod tests {
         rows
     }
 
-    fn make_test_metadata() -> ResultMetadata {
+    fn make_test_metadata() -> ResultMetadata<'static> {
         let table_spec = TableSpec::borrowed("some_keyspace", "some_table");
 
         let column_spec = ColumnSpec::borrowed("column0", ColumnType::Int, table_spec);

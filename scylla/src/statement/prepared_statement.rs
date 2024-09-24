@@ -102,7 +102,7 @@ pub struct PreparedStatement {
 #[derive(Debug)]
 struct PreparedStatementSharedData {
     metadata: PreparedMetadata,
-    result_metadata: Arc<ResultMetadata>,
+    result_metadata: Arc<ResultMetadata<'static>>,
     statement: String,
 }
 
@@ -125,7 +125,7 @@ impl PreparedStatement {
         id: Bytes,
         is_lwt: bool,
         metadata: PreparedMetadata,
-        result_metadata: Arc<ResultMetadata>,
+        result_metadata: Arc<ResultMetadata<'static>>,
         statement: String,
         page_size: PageSize,
         config: StatementConfig,
@@ -417,7 +417,7 @@ impl PreparedStatement {
     }
 
     /// Access metadata about the result of prepared statement returned by the database
-    pub(crate) fn get_result_metadata(&self) -> &Arc<ResultMetadata> {
+    pub(crate) fn get_result_metadata(&self) -> &Arc<ResultMetadata<'static>> {
         &self.shared.result_metadata
     }
 

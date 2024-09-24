@@ -30,7 +30,7 @@ pub struct SetKeyspace {
 pub struct Prepared {
     pub id: Bytes,
     pub prepared_metadata: PreparedMetadata,
-    pub result_metadata: ResultMetadata,
+    pub result_metadata: ResultMetadata<'static>,
 }
 
 #[derive(Debug)]
@@ -520,12 +520,12 @@ impl<'frame> ColumnSpec<'frame> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ResultMetadata {
+pub struct ResultMetadata<'a> {
     col_count: usize,
-    col_specs: Vec<ColumnSpec<'static>>,
+    col_specs: Vec<ColumnSpec<'a>>,
 }
 
-impl ResultMetadata {
+impl<'a> ResultMetadata<'a> {
     #[inline]
     pub fn mock_empty() -> Self {
         Self {
@@ -586,7 +586,7 @@ impl Row {
 
 #[derive(Debug)]
 pub struct Rows {
-    pub metadata: Arc<ResultMetadata>,
+    pub metadata: Arc<ResultMetadata<'static>>,
     pub paging_state_response: PagingStateResponse,
     pub rows_count: usize,
     pub rows: Vec<Row>,
@@ -741,7 +741,7 @@ fn deser_col_specs(
 
 fn deser_result_metadata(
     buf: &mut &[u8],
-) -> StdResult<(ResultMetadata, PagingStateResponse), ResultMetadataParseError> {
+) -> StdResult<(ResultMetadata<'static>, PagingStateResponse), ResultMetadataParseError> {
     let flags = types::read_int(buf)
         .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
     let global_tables_spec = flags & 0x0001 != 0;
@@ -977,7 +977,7 @@ pub fn deser_cql_value(
 
 fn deser_rows(
     buf_bytes: Bytes,
-    cached_metadata: Option<&Arc<ResultMetadata>>,
+    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
 ) -> StdResult<Rows, RowsParseError> {
     let buf = &mut &*buf_bytes;
     let (server_metadata, paging_state_response) = deser_result_metadata(buf)?;
@@ -1060,7 +1060,7 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
 
 pub fn deserialize(
     buf_bytes: Bytes,
-    cached_metadata: Option<&Arc<ResultMetadata>>,
+    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
 ) -> StdResult<Result, CqlResultParseError> {
     let buf = &mut &*buf_bytes;
     use self::Result::*;

@@ -111,7 +111,7 @@ impl Response {
         features: &ProtocolFeatures,
         opcode: ResponseOpcode,
         buf_bytes: bytes::Bytes,
-        cached_metadata: Option<&Arc<ResultMetadata>>,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     ) -> Result<Response, CqlResponseParseError> {
         let buf = &mut &*buf_bytes;
         let response = match opcode {
