@@ -14,20 +14,18 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
     // Generates a token that sets the values of struct fields: field_type::from_cql(...)
     let (fill_struct_code, fields_count) = match struct_fields {
         crate::parser::StructFields::Named(fields) => {
-            let set_fields_code = fields.named.iter().map(|field| {
+            let set_fields_code = fields.named.iter().enumerate().map(|(col_ix, field)| {
                 let field_name = &field.ident;
                 let field_type = &field.ty;
 
                 quote_spanned! {field.span() =>
                     #field_name: {
-                        #[allow(clippy::expect_used)]
-                        let (col_ix, col_value) = vals_iter
-                            .next()
-                            .expect("BUG: Size validated iterator did not contain the expected number of values"); 
+                        // to avoid unnecessary copy `std::mem::take` is used
+                        let col_value = ::std::mem::take(&mut row_columns[#col_ix]);
                         <#field_type as FromCqlVal<::std::option::Option<CqlValue>>>::from_cql(col_value)
                             .map_err(|e| FromRowError::BadCqlVal {
                                 err: e,
-                                column: col_ix,
+                                column: #col_ix,
                             })?
                     },
                 }
@@ -40,20 +38,17 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
             (fill_struct_code, fields.named.len())
         }
         crate::parser::StructFields::Unnamed(fields) => {
-            let set_fields_code = fields.unnamed.iter().map(|field| {
+            let set_fields_code = fields.unnamed.iter().enumerate().map(|(col_ix, field)| {
                 let field_type = &field.ty;
 
                 quote_spanned! {field.span() =>
-                    {
-                        #[allow(clippy::expect_used)]
-                        let (col_ix, col_value) = vals_iter
-                            .next()
-                            .expect("BUG: Size validated iterator did not contain the expected number of values"); 
-
+                    {   
+                        // to avoid unnecessary copy `std::mem::take` is used
+                        let col_value = ::std::mem::take(&mut row_columns[#col_ix]);
                         <#field_type as FromCqlVal<::std::option::Option<CqlValue>>>::from_cql(col_value)
                             .map_err(|e| FromRowError::BadCqlVal {
                                 err: e,
-                                column: col_ix,
+                                column: #col_ix,
                             })?
                     },
                 }
@@ -73,15 +68,17 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
             -> ::std::result::Result<Self, #path::FromRowError> {
                 use #path::{CqlValue, FromCqlVal, FromRow, FromRowError};
                 use ::std::result::Result::{Ok, Err};
+                use ::std::convert::TryInto;
+                use ::std::clone::Clone;
+                use ::std::option::Option;
                 use ::std::iter::{Iterator, IntoIterator};
 
-                if #fields_count != row.columns.len() {
-                    return Err(FromRowError::WrongRowSize {
-                        expected: #fields_count,
-                        actual: row.columns.len(),
-                    });
-                }
-                let mut vals_iter = row.columns.into_iter().enumerate();
+
+                let row_columns_len = row.columns.len();
+                let mut row_columns: [Option<CqlValue>; #fields_count] = row.columns.try_into().map_err(|_| FromRowError::WrongRowSize {
+                    expected: #fields_count,
+                        actual: row_columns_len,
+                })?;
 
                 Ok(#struct_name #fill_struct_code)
             }
