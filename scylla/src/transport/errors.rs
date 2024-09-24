@@ -242,7 +242,24 @@ pub enum NewSessionError {
 /// of internal driver API - a driver bug.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-pub enum ProtocolError {}
+pub enum ProtocolError {
+    /// USE KEYSPACE protocol error.
+    #[error("USE KEYSPACE protocol error: {0}")]
+    UseKeyspace(#[from] UseKeyspaceProtocolError),
+}
+
+/// A protocol error that occurred during `USE KEYSPACE <>` request.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum UseKeyspaceProtocolError {
+    #[error("Keyspace name mismtach; expected: {expected_keyspace_name_lowercase}, received: {result_keyspace_name_lowercase}")]
+    KeyspaceNameMismatch {
+        expected_keyspace_name_lowercase: String,
+        result_keyspace_name_lowercase: String,
+    },
+    #[error("Received unexpected response: {0}. Expected RESULT:Set_keyspace")]
+    UnexpectedResponse(CqlResponseKind),
+}
 
 /// Error caused by caller creating an invalid query
 #[derive(Error, Debug, Clone)]

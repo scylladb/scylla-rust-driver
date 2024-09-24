@@ -46,6 +46,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
+use super::errors::{ProtocolError, UseKeyspaceProtocolError};
 use super::iterator::RowIterator;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::SingleRowTypedError;
@@ -1359,24 +1360,40 @@ impl Connection {
         };
 
         let query_response = self.query_raw_unpaged(&query, PagingState::start()).await?;
+        Self::verify_use_keyspace_result(keyspace_name, query_response)
+    }
 
+    fn verify_use_keyspace_result(
+        keyspace_name: &VerifiedKeyspaceName,
+        query_response: QueryResponse,
+    ) -> Result<(), QueryError> {
         match query_response.response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
                 if !set_keyspace
                     .keyspace_name
                     .eq_ignore_ascii_case(keyspace_name.as_str())
                 {
-                    return Err(QueryError::ProtocolError(
-                        "USE <keyspace_name> returned response with different keyspace name",
-                    ));
+                    let expected_keyspace_name_lowercase = keyspace_name.as_str().to_lowercase();
+                    let result_keyspace_name_lowercase = set_keyspace.keyspace_name.to_lowercase();
+
+                    return Err(ProtocolError::UseKeyspace(
+                        UseKeyspaceProtocolError::KeyspaceNameMismatch {
+                            expected_keyspace_name_lowercase,
+                            result_keyspace_name_lowercase,
+                        },
+                    )
+                    .into());
                 }
 
                 Ok(())
             }
             Response::Error(err) => Err(err.into()),
-            _ => Err(QueryError::ProtocolError(
-                "USE <keyspace_name> returned unexpected response",
-            )),
+            _ => Err(
+                ProtocolError::UseKeyspace(UseKeyspaceProtocolError::UnexpectedResponse(
+                    query_response.response.to_response_kind(),
+                ))
+                .into(),
+            ),
         }
     }
 
