@@ -992,9 +992,7 @@ impl Session {
         // Validate prepared ids equality
         for statement in results.flatten() {
             if prepared.get_id() != statement.get_id() {
-                return Err(QueryError::ProtocolError(
-                    "Prepared statement Ids differ, all should be equal",
-                ));
+                return Err(ProtocolError::PreparedStatementIdsMismatch.into());
             }
 
             // Collect all tracing ids from prepare() queries in the final result

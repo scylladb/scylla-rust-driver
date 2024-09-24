@@ -264,6 +264,12 @@ pub enum NewSessionError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ProtocolError {
+    /// Prepared statement id mismatch.
+    #[error(
+        "Prepared statement id mismatch between multiple connections - all result ids should be equal."
+    )]
+    PreparedStatementIdsMismatch,
+
     /// USE KEYSPACE protocol error.
     #[error("USE KEYSPACE protocol error: {0}")]
     UseKeyspace(#[from] UseKeyspaceProtocolError),
