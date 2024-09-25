@@ -185,7 +185,9 @@ mod tests {
     use bytes::Bytes;
 
     use crate::test_utils::setup_tracing;
-    use crate::transport::errors::{BadQuery, BrokenConnectionErrorKind, ConnectionPoolError};
+    use crate::transport::errors::{
+        BadQuery, BrokenConnectionErrorKind, ConnectionPoolError, ProtocolError,
+    };
 
     use super::*;
 
@@ -284,7 +286,7 @@ mod tests {
                 cl,
             );
             downgrading_consistency_policy_assert_never_retries(
-                QueryError::ProtocolError("test"),
+                ProtocolError::NonfinishedPagingState.into(),
                 cl,
             );
         }
