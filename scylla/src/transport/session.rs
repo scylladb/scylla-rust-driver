@@ -40,6 +40,7 @@ use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
+use super::errors::TracingProtocolError;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
@@ -1597,12 +1598,7 @@ impl Session {
             };
         }
 
-        Err(QueryError::ProtocolError(
-            "All tracing queries returned an empty result, \
-            maybe the trace information didn't propagate yet. \
-            Consider configuring Session with \
-            a longer fetch interval (tracing_info_fetch_interval)",
-        ))
+        Err(ProtocolError::Tracing(TracingProtocolError::EmptyResults).into())
     }
 
     /// Gets the name of the keyspace that is currently set, or `None` if no
@@ -1647,12 +1643,12 @@ impl Session {
         let maybe_tracing_info: Option<TracingInfo> = traces_session_res
             .maybe_first_row_typed()
             .map_err(|err| match err {
-                MaybeFirstRowTypedError::RowsExpected(_) => QueryError::ProtocolError(
-                    "Response to system_traces.sessions query was not Rows",
-                ),
-                MaybeFirstRowTypedError::FromRowError(_) => QueryError::ProtocolError(
-                    "Columns from system_traces.session have an unexpected type",
-                ),
+                MaybeFirstRowTypedError::RowsExpected(e) => {
+                    ProtocolError::Tracing(TracingProtocolError::TracesSessionNotRows(e))
+                }
+                MaybeFirstRowTypedError::FromRowError(e) => {
+                    ProtocolError::Tracing(TracingProtocolError::TracesSessionInvalidColumnType(e))
+                }
             })?;
 
         let mut tracing_info = match maybe_tracing_info {
@@ -1661,15 +1657,13 @@ impl Session {
         };
 
         // Get tracing events
-        let tracing_event_rows = traces_events_res.rows_typed().map_err(|_| {
-            QueryError::ProtocolError("Response to system_traces.events query was not Rows")
+        let tracing_event_rows = traces_events_res.rows_typed().map_err(|err| {
+            ProtocolError::Tracing(TracingProtocolError::TracesEventsNotRows(err))
         })?;
 
         for event in tracing_event_rows {
-            let tracing_event: TracingEvent = event.map_err(|_| {
-                QueryError::ProtocolError(
-                    "Columns from system_traces.events have an unexpected type",
-                )
+            let tracing_event: TracingEvent = event.map_err(|err| {
+                ProtocolError::Tracing(TracingProtocolError::TracesEventsInvalidColumnType(err))
             })?;
 
             tracing_info.events.push(tracing_event);

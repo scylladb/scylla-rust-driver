@@ -12,6 +12,7 @@ use std::{
 };
 
 use scylla_cql::{
+    cql_to_rust::FromRowError,
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
@@ -30,7 +31,7 @@ use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-use super::query_result::SingleRowTypedError;
+use super::query_result::{RowsExpectedError, SingleRowTypedError};
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
@@ -311,6 +312,10 @@ pub enum ProtocolError {
     /// Unable extract a partition key based on prepared statement's metadata.
     #[error("Unable extract a partition key based on prepared statement's metadata")]
     PartitionKeyExtraction,
+
+    /// A protocol error occurred during tracing info fetch.
+    #[error("Tracing info fetch protocol error: {0}")]
+    Tracing(#[from] TracingProtocolError),
 }
 
 /// A protocol error that occurred during `USE KEYSPACE <>` request.
@@ -324,6 +329,36 @@ pub enum UseKeyspaceProtocolError {
     },
     #[error("Received unexpected response: {0}. Expected RESULT:Set_keyspace")]
     UnexpectedResponse(CqlResponseKind),
+}
+
+/// A protocol error that occurred during tracing info fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum TracingProtocolError {
+    /// Response to system_traces.session is not RESULT:Rows.
+    #[error("Response to system_traces.session is not RESULT:Rows: {0}")]
+    TracesSessionNotRows(RowsExpectedError),
+
+    /// system_traces.session has invalid column type.
+    #[error("system_traces.session has invalid column type: {0}")]
+    TracesSessionInvalidColumnType(FromRowError),
+
+    /// Response to system_traces.events is not RESULT:Rows.
+    #[error("Response to system_traces.events is not RESULT:Rows: {0}")]
+    TracesEventsNotRows(RowsExpectedError),
+
+    /// system_traces.events has invalid column type.
+    #[error("system_traces.events has invalid column type: {0}")]
+    TracesEventsInvalidColumnType(FromRowError),
+
+    /// All tracing queries returned an empty result.
+    #[error(
+        "All tracing queries returned an empty result, \
+        maybe the trace information didn't propagate yet. \
+        Consider configuring Session with \
+        a longer fetch interval (tracing_info_fetch_interval)"
+    )]
+    EmptyResults,
 }
 
 /// Error caused by caller creating an invalid query
