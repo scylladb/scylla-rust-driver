@@ -70,6 +70,10 @@ pub enum QueryError {
     #[error("Failed to deserialize ERROR response: {0}")]
     CqlErrorParseError(#[from] CqlErrorParseError),
 
+    /// A metadata error occurred during schema agreement.
+    #[error("Cluster metadata fetch error occurred during automatic schema agreement: {0}")]
+    MetadataError(#[from] MetadataError),
+
     /// Selected node's connection pool is in invalid state.
     #[error("No connections in the pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
@@ -158,6 +162,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
             QueryError::BodyExtensionsParseError(e) => NewSessionError::BodyExtensionsParseError(e),
             QueryError::EmptyPlan => NewSessionError::EmptyPlan,
+            QueryError::MetadataError(e) => NewSessionError::MetadataError(e),
             QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::ProtocolErrorTyped(e) => NewSessionError::ProtocolErrorTyped(e),
@@ -219,6 +224,10 @@ pub enum NewSessionError {
     /// Failed to deserialize frame body extensions.
     #[error(transparent)]
     BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
+
+    /// Failed to perform initial cluster metadata fetch.
+    #[error("Failed to perform initial cluster metadata fetch: {0}")]
+    MetadataError(#[from] MetadataError),
 
     /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
@@ -370,6 +379,18 @@ pub enum TracingProtocolError {
     )]
     EmptyResults,
 }
+
+/// An error that occurred during cluster metadata fetch.
+///
+/// An error can occur during metadata fetch of:
+/// - peers
+/// - keyspaces
+/// - UDTs
+/// - tables
+/// - views
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum MetadataError {}
 
 /// Error caused by caller creating an invalid query
 #[derive(Error, Debug, Clone)]
