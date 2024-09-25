@@ -299,6 +299,14 @@ pub enum ProtocolError {
     /// A result with nonfinished paging state received for unpaged query.
     #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
     NonfinishedPagingState,
+
+    /// Failed to parse CQL type.
+    #[error("Failed to parse a CQL type '{typ}', at position {position}: {reason}")]
+    InvalidCqlType {
+        typ: String,
+        position: usize,
+        reason: String,
+    },
 }
 
 /// A protocol error that occurred during `USE KEYSPACE <>` request.

@@ -29,6 +29,7 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
+use super::errors::ProtocolError;
 use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
@@ -404,11 +405,12 @@ impl fmt::Display for InvalidCqlType {
 
 impl From<InvalidCqlType> for QueryError {
     fn from(e: InvalidCqlType) -> Self {
-        // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
-        QueryError::InvalidMessage(format!(
-            "error parsing type \"{:?}\" at position {}: {}",
-            e.type_, e.position, e.reason
-        ))
+        ProtocolError::InvalidCqlType {
+            typ: e.type_,
+            position: e.position,
+            reason: e.reason,
+        }
+        .into()
     }
 }
 
