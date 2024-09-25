@@ -1295,9 +1295,10 @@ impl Connection {
                     _ => Err(err.into()),
                 },
                 Response::Result(_) => Ok(query_response.into_query_result()?),
-                _ => Err(QueryError::ProtocolError(
-                    "BATCH: Unexpected server response",
-                )),
+                _ => Err(ProtocolError::UnexpectedResponse(
+                    query_response.response.to_response_kind(),
+                )
+                .into()),
             };
         }
     }

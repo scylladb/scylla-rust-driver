@@ -129,9 +129,8 @@ impl From<UserRequestError> for QueryError {
             UserRequestError::CqlResultParseError(e) => e.into(),
             UserRequestError::CqlErrorParseError(e) => e.into(),
             UserRequestError::BrokenConnectionError(e) => e.into(),
-            UserRequestError::UnexpectedResponse(_) => {
-                // FIXME: make it typed. It needs to wait for ProtocolError refactor.
-                QueryError::ProtocolError("Received unexpected response from the server. Expected RESULT or ERROR response.")
+            UserRequestError::UnexpectedResponse(response) => {
+                ProtocolError::UnexpectedResponse(response).into()
             }
             UserRequestError::BodyExtensionsParseError(e) => e.into(),
             UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
@@ -272,6 +271,12 @@ pub enum NewSessionError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ProtocolError {
+    /// Received an unexpected response when RESULT or ERROR was expected.
+    #[error(
+        "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
+    )]
+    UnexpectedResponse(CqlResponseKind),
+
     /// Prepared statement id mismatch.
     #[error(
         "Prepared statement id mismatch between multiple connections - all result ids should be equal."
