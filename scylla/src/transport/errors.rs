@@ -316,6 +316,11 @@ pub enum ProtocolError {
     /// A protocol error occurred during tracing info fetch.
     #[error("Tracing info fetch protocol error: {0}")]
     Tracing(#[from] TracingProtocolError),
+
+    /// Driver tried to reprepare a statement in the batch, but the reprepared
+    /// statement's id is not included in the batch.
+    #[error("Reprepared statement's id does not exist in the batch.")]
+    RepreparedIdMissingInBatch,
 }
 
 /// A protocol error that occurred during `USE KEYSPACE <>` request.

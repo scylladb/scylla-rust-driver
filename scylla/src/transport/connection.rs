@@ -1289,9 +1289,7 @@ impl Connection {
                             self.reprepare(p.get_statement(), p).await?;
                             continue;
                         } else {
-                            return Err(QueryError::ProtocolError(
-                                "The server returned a prepared statement Id that did not exist in the batch",
-                            ));
+                            return Err(ProtocolError::RepreparedIdMissingInBatch.into());
                         }
                     }
                     _ => Err(err.into()),
