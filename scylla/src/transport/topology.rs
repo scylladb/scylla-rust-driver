@@ -29,7 +29,7 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use super::errors::ProtocolError;
+use super::errors::{MetadataError, PeersMetadataError, ProtocolError};
 use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
@@ -752,16 +752,12 @@ async fn query_metadata(
 
     // There must be at least one peer
     if peers.is_empty() {
-        return Err(QueryError::ProtocolError(
-            "Bad Metadata: peers list is empty",
-        ));
+        return Err(MetadataError::Peers(PeersMetadataError::EmptyPeers).into());
     }
 
     // At least one peer has to have some tokens
     if peers.iter().all(|peer| peer.tokens.is_empty()) {
-        return Err(QueryError::ProtocolError(
-            "Bad Metadata: All peers have empty token list",
-        ));
+        return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists).into());
     }
 
     Ok(Metadata { peers, keyspaces })

@@ -390,7 +390,24 @@ pub enum TracingProtocolError {
 /// - views
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-pub enum MetadataError {}
+pub enum MetadataError {
+    /// Bad peers metadata.
+    #[error("Bad peers metadata: {0}")]
+    Peers(#[from] PeersMetadataError),
+}
+
+/// An error that occurred during peers metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum PeersMetadataError {
+    /// Empty peers list returned during peers metadata fetch.
+    #[error("Peers list is empty")]
+    EmptyPeers,
+
+    /// All peers have empty token lists.
+    #[error("All peers have empty token lists")]
+    EmptyTokenLists,
+}
 
 /// Error caused by caller creating an invalid query
 #[derive(Error, Debug, Clone)]
