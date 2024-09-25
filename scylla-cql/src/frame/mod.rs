@@ -275,7 +275,8 @@ fn decompress(
     match compression {
         Compression::Lz4 => {
             let uncomp_len = comp_body.get_u32() as usize;
-            let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)?;
+            let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)
+                .map_err(|err| FrameBodyExtensionsParseError::Lz4DecompressError(Arc::new(err)))?;
             Ok(uncomp_body)
         }
         Compression::Snappy => snap::raw::Decoder::new()

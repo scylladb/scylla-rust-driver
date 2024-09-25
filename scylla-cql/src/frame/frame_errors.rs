@@ -55,7 +55,7 @@ pub enum FrameBodyExtensionsParseError {
 
     /// Failed to decompress frame body (lz4).
     #[error("Error decompressing lz4 data {0}")]
-    Lz4DecompressError(#[from] lz4_flex::block::DecompressError),
+    Lz4DecompressError(Arc<dyn Error + Sync + Send>),
 }
 
 /// An error that occurred during frame header deserialization.
