@@ -8,6 +8,7 @@ use std::{
     error::Error,
     io::ErrorKind,
     net::{AddrParseError, IpAddr, SocketAddr},
+    num::ParseIntError,
     sync::Arc,
 };
 
@@ -420,6 +421,30 @@ pub enum KeyspacesMetadataError {
     /// system_schema.keyspaces has invalid column type.
     #[error("system_schema.keyspaces has invalid column type: {0}")]
     SchemaKeyspacesInvalidColumnType(FromRowError),
+
+    /// Bad keyspace replication strategy.
+    #[error("Bad keyspace <{keyspace}> replication strategy: {error}")]
+    Strategy {
+        keyspace: String,
+        error: KeyspaceStrategyError,
+    },
+}
+
+/// An error that occurred during specific keyspace's metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum KeyspaceStrategyError {
+    /// Keyspace strategy map missing a `class` field.
+    #[error("keyspace strategy definition is missing a 'class' field")]
+    MissingClassForStrategyDefinition,
+
+    /// Missing replication factor for SimpleStrategy.
+    #[error("Missing replication factor field for SimpleStrategy")]
+    MissingReplicationFactorForSimpleStrategy,
+
+    /// Replication factor could not be parsed as unsigned integer.
+    #[error("Failed to parse a replication factor as unsigned integer: {0}")]
+    ReplicationFactorParseError(ParseIntError),
 }
 
 /// Error caused by caller creating an invalid query

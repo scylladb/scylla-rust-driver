@@ -29,7 +29,9 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use super::errors::{KeyspacesMetadataError, MetadataError, PeersMetadataError, ProtocolError};
+use super::errors::{
+    KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError, ProtocolError,
+};
 use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
@@ -955,13 +957,18 @@ async fn query_keyspaces(
 
     rows.map(|row_result| {
         let row = row_result?;
-        let (keyspace_name, strategy_map) = row.into_typed().map_err(|err| {
+        let (keyspace_name, strategy_map) = row.into_typed::<(String, _)>().map_err(|err| {
             MetadataError::Keyspaces(KeyspacesMetadataError::SchemaKeyspacesInvalidColumnType(
                 err,
             ))
         })?;
 
-        let strategy: Strategy = strategy_from_string_map(strategy_map)?;
+        let strategy: Strategy = strategy_from_string_map(strategy_map).map_err(|error| {
+            MetadataError::Keyspaces(KeyspacesMetadataError::Strategy {
+                keyspace: keyspace_name.clone(),
+                error,
+            })
+        })?;
         let tables = all_tables.remove(&keyspace_name).unwrap_or_default();
         let views = all_views.remove(&keyspace_name).unwrap_or_default();
         let user_defined_types = all_user_defined_types
@@ -1690,25 +1697,19 @@ async fn query_table_partitioners(
 
 fn strategy_from_string_map(
     mut strategy_map: HashMap<String, String>,
-) -> Result<Strategy, QueryError> {
+) -> Result<Strategy, KeyspaceStrategyError> {
     let strategy_name: String = strategy_map
         .remove("class")
-        .ok_or(QueryError::ProtocolError(
-            "strategy map should have a 'class' field",
-        ))?;
+        .ok_or(KeyspaceStrategyError::MissingClassForStrategyDefinition)?;
 
     let strategy: Strategy = match strategy_name.as_str() {
         "org.apache.cassandra.locator.SimpleStrategy" | "SimpleStrategy" => {
-            let rep_factor_str: String =
-                strategy_map
-                    .remove("replication_factor")
-                    .ok_or(QueryError::ProtocolError(
-                        "SimpleStrategy in strategy map does not have a replication factor",
-                    ))?;
+            let rep_factor_str: String = strategy_map
+                .remove("replication_factor")
+                .ok_or(KeyspaceStrategyError::MissingReplicationFactorForSimpleStrategy)?;
 
-            let replication_factor: usize = usize::from_str(&rep_factor_str).map_err(|_| {
-                QueryError::ProtocolError("Could not parse replication factor as an integer")
-            })?;
+            let replication_factor: usize = usize::from_str(&rep_factor_str)
+                .map_err(KeyspaceStrategyError::ReplicationFactorParseError)?;
 
             Strategy::SimpleStrategy { replication_factor }
         }
