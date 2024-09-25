@@ -18,7 +18,7 @@ use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
 use crate::routing::Token;
-use crate::transport::errors::{BadQuery, QueryError};
+use crate::transport::errors::{BadQuery, ProtocolError, QueryError};
 use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 
@@ -241,7 +241,7 @@ impl PreparedStatement {
             self.extract_partition_key(serialized_values)
                 .map_err(|err| match err {
                     PartitionKeyExtractionError::NoPkIndexValue(_, _) => {
-                        QueryError::ProtocolError("No pk indexes - can't calculate token")
+                        ProtocolError::PartitionKeyExtraction
                     }
                 })?;
         let token = partition_key

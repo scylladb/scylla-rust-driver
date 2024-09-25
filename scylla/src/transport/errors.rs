@@ -307,6 +307,10 @@ pub enum ProtocolError {
         position: usize,
         reason: String,
     },
+
+    /// Unable extract a partition key based on prepared statement's metadata.
+    #[error("Unable extract a partition key based on prepared statement's metadata")]
+    PartitionKeyExtraction,
 }
 
 /// A protocol error that occurred during `USE KEYSPACE <>` request.
