@@ -29,7 +29,7 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use super::errors::{MetadataError, PeersMetadataError, ProtocolError};
+use super::errors::{KeyspacesMetadataError, MetadataError, PeersMetadataError, ProtocolError};
 use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
@@ -955,8 +955,10 @@ async fn query_keyspaces(
 
     rows.map(|row_result| {
         let row = row_result?;
-        let (keyspace_name, strategy_map) = row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system_schema.keyspaces has invalid column type")
+        let (keyspace_name, strategy_map) = row.into_typed().map_err(|err| {
+            MetadataError::Keyspaces(KeyspacesMetadataError::SchemaKeyspacesInvalidColumnType(
+                err,
+            ))
         })?;
 
         let strategy: Strategy = strategy_from_string_map(strategy_map)?;

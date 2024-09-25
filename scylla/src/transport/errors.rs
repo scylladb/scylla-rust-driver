@@ -394,6 +394,10 @@ pub enum MetadataError {
     /// Bad peers metadata.
     #[error("Bad peers metadata: {0}")]
     Peers(#[from] PeersMetadataError),
+
+    /// Bad keyspaces metadata.
+    #[error("Bad keyspaces metadata: {0}")]
+    Keyspaces(#[from] KeyspacesMetadataError),
 }
 
 /// An error that occurred during peers metadata fetch.
@@ -407,6 +411,15 @@ pub enum PeersMetadataError {
     /// All peers have empty token lists.
     #[error("All peers have empty token lists")]
     EmptyTokenLists,
+}
+
+/// An error that occurred during keyspaces metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum KeyspacesMetadataError {
+    /// system_schema.keyspaces has invalid column type.
+    #[error("system_schema.keyspaces has invalid column type: {0}")]
+    SchemaKeyspacesInvalidColumnType(FromRowError),
 }
 
 /// Error caused by caller creating an invalid query
