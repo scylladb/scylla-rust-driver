@@ -399,6 +399,10 @@ pub enum MetadataError {
     /// Bad keyspaces metadata.
     #[error("Bad keyspaces metadata: {0}")]
     Keyspaces(#[from] KeyspacesMetadataError),
+
+    /// Bad UDTs metadata.
+    #[error("Bad UDTs metadata: {0}")]
+    Udts(#[from] UdtMetadataError),
 }
 
 /// An error that occurred during peers metadata fetch.
@@ -450,6 +454,19 @@ pub enum KeyspaceStrategyError {
     /// Driver expects only 'class' and replication factor per dc ('dc': rf)
     #[error("Unexpected NetworkTopologyStrategy option: '{key}': '{value}'")]
     UnexpectedNetworkTopologyStrategyOption { key: String, value: String },
+}
+
+/// An error that occurred during UDTs metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum UdtMetadataError {
+    /// system_schema.types has invalid column type.
+    #[error("system_schema.types has invalid column type: {0}")]
+    SchemaTypesInvalidColumnType(FromRowError),
+
+    /// Circular UDT dependency detected.
+    #[error("Detected circular dependency between user defined types - toposort is impossible!")]
+    CircularTypeDependency,
 }
 
 /// Error caused by caller creating an invalid query

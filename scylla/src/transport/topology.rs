@@ -30,7 +30,8 @@ use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
 use super::errors::{
-    KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError, ProtocolError,
+    KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
+    ProtocolError, UdtMetadataError,
 };
 use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
@@ -1042,8 +1043,8 @@ async fn query_user_defined_types(
             let row = row_result?;
             let udt_row = row
                 .into_typed::<UdtRow>()
-                .map_err(|_| {
-                    QueryError::ProtocolError("system_schema.types has invalid column type")
+                .map_err(|err| {
+                    MetadataError::Udts(UdtMetadataError::SchemaTypesInvalidColumnType(err))
                 })?
                 .try_into()?;
 
@@ -1173,9 +1174,7 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), Quer
 
     if sorted.len() < indegs.len() {
         // Some UDTs could not become leaves in the graph, which implies cycles.
-        return Err(QueryError::ProtocolError(
-            "Invalid fetched User Defined Types definitions: circular type dependency detected. Topological sort is thus impossible."
-        ));
+        return Err(MetadataError::Udts(UdtMetadataError::CircularTypeDependency).into());
     }
 
     let owned_sorted = sorted.into_iter().cloned().collect::<Vec<_>>();
