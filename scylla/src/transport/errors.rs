@@ -79,10 +79,6 @@ pub enum QueryError {
     #[error("No connections in the pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
 
-    /// Unexpected message received
-    #[error("Protocol Error: {0}")]
-    ProtocolError(&'static str),
-
     /// Protocol error.
     #[error("Protocol error: {0}")]
     ProtocolErrorTyped(#[from] ProtocolError),
@@ -161,7 +157,6 @@ impl From<QueryError> for NewSessionError {
             QueryError::EmptyPlan => NewSessionError::EmptyPlan,
             QueryError::MetadataError(e) => NewSessionError::MetadataError(e),
             QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
-            QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::ProtocolErrorTyped(e) => NewSessionError::ProtocolErrorTyped(e),
             QueryError::TimeoutError => NewSessionError::TimeoutError,
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
@@ -236,10 +231,6 @@ pub enum NewSessionError {
     /// Selected node's connection pool is in invalid state.
     #[error("No connections in the pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
-
-    /// Unexpected message received
-    #[error("Protocol Error: {0}")]
-    ProtocolError(&'static str),
 
     /// Protocol error.
     #[error("Protocol error: {0}")]
