@@ -87,10 +87,6 @@ pub enum QueryError {
     #[error("Protocol error: {0}")]
     ProtocolErrorTyped(#[from] ProtocolError),
 
-    /// Invalid message received
-    #[error("Invalid message: {0}")]
-    InvalidMessage(String),
-
     /// Timeout error has occurred, function didn't complete in time.
     #[error("Timeout Error")]
     TimeoutError,
@@ -167,7 +163,6 @@ impl From<QueryError> for NewSessionError {
             QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::ProtocolErrorTyped(e) => NewSessionError::ProtocolErrorTyped(e),
-            QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
             QueryError::TimeoutError => NewSessionError::TimeoutError,
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
@@ -249,10 +244,6 @@ pub enum NewSessionError {
     /// Protocol error.
     #[error("Protocol error: {0}")]
     ProtocolErrorTyped(#[from] ProtocolError),
-
-    /// Invalid message received
-    #[error("Invalid message: {0}")]
-    InvalidMessage(String),
 
     /// Timeout error has occurred, couldn't connect to node in time.
     #[error("Timeout Error")]
