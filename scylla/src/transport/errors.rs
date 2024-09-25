@@ -407,6 +407,10 @@ pub enum MetadataError {
     /// Bad tables metadata.
     #[error("Bad tables metadata: {0}")]
     Tables(#[from] TablesMetadataError),
+
+    /// Bad views metadata.
+    #[error("Bad views metadata: {0}")]
+    Views(#[from] ViewsMetadataError),
 }
 
 /// An error that occurred during peers metadata fetch.
@@ -493,6 +497,15 @@ pub enum TablesMetadataError {
         column_name: String,
         column_kind: String,
     },
+}
+
+/// An error that occurred during views metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ViewsMetadataError {
+    /// system_schema.views has invalid column type.
+    #[error("system_schema.views has invalid column type: {0}")]
+    SchemaViewsInvalidColumnType(FromRowError),
 }
 
 /// Error caused by caller creating an invalid query

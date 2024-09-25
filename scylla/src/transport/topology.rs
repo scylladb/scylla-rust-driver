@@ -31,7 +31,7 @@ use uuid::Uuid;
 
 use super::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
-    ProtocolError, TablesMetadataError, UdtMetadataError,
+    ProtocolError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
 };
 use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
@@ -1408,8 +1408,8 @@ async fn query_views(
 
     rows.map(|row_result| {
         let row = row_result?;
-        let (keyspace_name, view_name, base_table_name) = row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system_schema.views has invalid column type")
+        let (keyspace_name, view_name, base_table_name) = row.into_typed().map_err(|err| {
+            MetadataError::Views(ViewsMetadataError::SchemaViewsInvalidColumnType(err))
         })?;
 
         let keyspace_and_view_name = (keyspace_name, view_name);
