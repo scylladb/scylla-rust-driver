@@ -403,6 +403,10 @@ pub enum MetadataError {
     /// Bad UDTs metadata.
     #[error("Bad UDTs metadata: {0}")]
     Udts(#[from] UdtMetadataError),
+
+    /// Bad tables metadata.
+    #[error("Bad tables metadata: {0}")]
+    Tables(#[from] TablesMetadataError),
 }
 
 /// An error that occurred during peers metadata fetch.
@@ -467,6 +471,28 @@ pub enum UdtMetadataError {
     /// Circular UDT dependency detected.
     #[error("Detected circular dependency between user defined types - toposort is impossible!")]
     CircularTypeDependency,
+}
+
+/// An error that occurred during tables metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum TablesMetadataError {
+    /// system_schema.tables has invalid column type.
+    #[error("system_schema.tables has invalid column type: {0}")]
+    SchemaTablesInvalidColumnType(FromRowError),
+
+    /// system_schema.columns has invalid column type.
+    #[error("system_schema.columns has invalid column type: {0}")]
+    SchemaColumnsInvalidColumnType(FromRowError),
+
+    /// Unknown column kind.
+    #[error("Unknown column kind '{column_kind}' for {keyspace_name}.{table_name}.{column_name}")]
+    UnknownColumnKind {
+        keyspace_name: String,
+        table_name: String,
+        column_name: String,
+        column_kind: String,
+    },
 }
 
 /// Error caused by caller creating an invalid query

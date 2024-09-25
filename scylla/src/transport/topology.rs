@@ -31,7 +31,7 @@ use uuid::Uuid;
 
 use super::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
-    ProtocolError, UdtMetadataError,
+    ProtocolError, TablesMetadataError, UdtMetadataError,
 };
 use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
@@ -1366,8 +1366,8 @@ async fn query_tables(
 
     rows.map(|row_result| {
         let row = row_result?;
-        let (keyspace_name, table_name) = row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system_schema.tables has invalid column type")
+        let (keyspace_name, table_name) = row.into_typed().map_err(|err| {
+            MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err))
         })?;
 
         let keyspace_and_table_name = (keyspace_name, table_name);
@@ -1463,8 +1463,8 @@ async fn query_tables_schema(
             String,
             i32,
             String,
-        ) = row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system_schema.columns has invalid column type")
+        ) = row.into_typed().map_err(|err| {
+            MetadataError::Tables(TablesMetadataError::SchemaColumnsInvalidColumnType(err))
         })?;
 
         if type_ == THRIFT_EMPTY_TYPE {
@@ -1474,15 +1474,20 @@ async fn query_tables_schema(
         let pre_cql_type = map_string_to_cql_type(&type_)?;
         let cql_type = pre_cql_type.into_cql_type(&keyspace_name, udts);
 
+        let kind = ColumnKind::from_str(&kind).map_err(|_| {
+            MetadataError::Tables(TablesMetadataError::UnknownColumnKind {
+                keyspace_name: keyspace_name.clone(),
+                table_name: table_name.clone(),
+                column_name: column_name.clone(),
+                column_kind: kind,
+            })
+        })?;
+
         let entry = tables_schema.entry((keyspace_name, table_name)).or_insert((
             HashMap::new(), // columns
             HashMap::new(), // partition key
             HashMap::new(), // clustering key
         ));
-
-        let kind = ColumnKind::from_str(&kind)
-            // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
-            .map_err(|_| QueryError::InvalidMessage(format!("invalid column kind {}", kind)))?;
 
         if kind == ColumnKind::PartitionKey || kind == ColumnKind::Clustering {
             let key_map = if kind == ColumnKind::PartitionKey {
@@ -1676,8 +1681,8 @@ async fn query_table_partitioners(
     let result = rows
         .map(|row_result| {
             let (keyspace_name, table_name, partitioner) =
-                row_result?.into_typed().map_err(|_| {
-                    QueryError::ProtocolError("system_schema.tables has invalid column type")
+                row_result?.into_typed().map_err(|err| {
+                    MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err))
                 })?;
             Ok::<_, QueryError>(((keyspace_name, table_name), partitioner))
         })
