@@ -44,7 +44,7 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
                 let field_type = &field.ty;
 
                 quote_spanned! {field.span() =>
-                    {   
+                    {
                         // To avoid unnecessary copy `std::mem::take` is used.
                         // Using explicit indexing operation is safe because `row_columns` is an array and `col_ix` is a litteral.
                         // <https://doc.rust-lang.org/nightly/nightly-rustc/rustc_lint/builtin/static.UNCONDITIONAL_PANIC.html>
