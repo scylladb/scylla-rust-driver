@@ -20,7 +20,9 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
 
                 quote_spanned! {field.span() =>
                     #field_name: {
-                        // to avoid unnecessary copy `std::mem::take` is used
+                        // To avoid unnecessary copy `std::mem::take` is used.
+                        // Using explicit indexing operation is safe because `row_columns` is an array and `col_ix` is a litteral.
+                        // <https://doc.rust-lang.org/nightly/nightly-rustc/rustc_lint/builtin/static.UNCONDITIONAL_PANIC.html>
                         let col_value = ::std::mem::take(&mut row_columns[#col_ix]);
                         <#field_type as FromCqlVal<::std::option::Option<CqlValue>>>::from_cql(col_value)
                             .map_err(|e| FromRowError::BadCqlVal {
@@ -43,7 +45,9 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
 
                 quote_spanned! {field.span() =>
                     {   
-                        // to avoid unnecessary copy `std::mem::take` is used
+                        // To avoid unnecessary copy `std::mem::take` is used.
+                        // Using explicit indexing operation is safe because `row_columns` is an array and `col_ix` is a litteral.
+                        // <https://doc.rust-lang.org/nightly/nightly-rustc/rustc_lint/builtin/static.UNCONDITIONAL_PANIC.html>
                         let col_value = ::std::mem::take(&mut row_columns[#col_ix]);
                         <#field_type as FromCqlVal<::std::option::Option<CqlValue>>>::from_cql(col_value)
                             .map_err(|e| FromRowError::BadCqlVal {
@@ -73,6 +77,8 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
 
 
                 let row_columns_len = row.columns.len();
+                // An array used, to enable [uncoditional paniking](https://doc.rust-lang.org/nightly/nightly-rustc/rustc_lint/builtin/static.UNCONDITIONAL_PANIC.html)
+                // for "index out of range" issues and be able to catch them during the compile time.
                 let mut row_columns: [_; #fields_count] = row.columns.try_into().map_err(|_| FromRowError::WrongRowSize {
                     expected: #fields_count,
                         actual: row_columns_len,
