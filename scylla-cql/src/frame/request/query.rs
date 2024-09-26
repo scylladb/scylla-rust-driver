@@ -1,17 +1,18 @@
-use std::{borrow::Cow, ops::ControlFlow, sync::Arc};
+use std::{borrow::Cow, num::TryFromIntError, ops::ControlFlow, sync::Arc};
 
 use crate::{
-    frame::{frame_errors::ParseError, types::SerialConsistency},
+    frame::{frame_errors::CqlRequestSerializationError, types::SerialConsistency},
     types::serialize::row::SerializedValues,
 };
 use bytes::{Buf, BufMut};
+use thiserror::Error;
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
     frame::types,
 };
 
-use super::DeserializableRequest;
+use super::{DeserializableRequest, RequestDeserializationError};
 
 // Query flags
 const FLAG_VALUES: u8 = 0x01;
@@ -38,15 +39,18 @@ pub struct Query<'q> {
 impl SerializableRequest for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
-        types::write_long_string(&self.contents, buf)?;
-        self.parameters.serialize(buf)?;
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
+        types::write_long_string(&self.contents, buf)
+            .map_err(QuerySerializationError::StatementStringSerialization)?;
+        self.parameters
+            .serialize(buf)
+            .map_err(QuerySerializationError::QueryParametersSerialization)?;
         Ok(())
     }
 }
 
 impl<'q> DeserializableRequest for Query<'q> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let contents = Cow::Owned(types::read_long_string(buf)?.to_owned());
         let parameters = QueryParameters::deserialize(buf)?;
 
@@ -83,7 +87,10 @@ impl Default for QueryParameters<'_> {
 }
 
 impl QueryParameters<'_> {
-    pub fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    pub fn serialize(
+        &self,
+        buf: &mut impl BufMut,
+    ) -> Result<(), QueryParametersSerializationError> {
         types::write_consistency(self.consistency, buf);
 
         let paging_state_bytes = self.paging_state.as_bytes_slice();
@@ -140,16 +147,15 @@ impl QueryParameters<'_> {
 }
 
 impl<'q> QueryParameters<'q> {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let consistency = types::read_consistency(buf)?;
 
         let flags = buf.get_u8();
         let unknown_flags = flags & (!ALL_FLAGS);
         if unknown_flags != 0 {
-            return Err(ParseError::BadIncomingData(format!(
-                "Specified flags are not recognised: {:02x}",
-                unknown_flags
-            )));
+            return Err(RequestDeserializationError::UnknownFlags {
+                flags: unknown_flags,
+            });
         }
         let values_flag = (flags & FLAG_VALUES) != 0;
         let skip_metadata = (flags & FLAG_SKIP_METADATA) != 0;
@@ -160,9 +166,7 @@ impl<'q> QueryParameters<'q> {
         let values_have_names_flag = (flags & FLAG_WITH_NAMES_FOR_VALUES) != 0;
 
         if values_have_names_flag {
-            return Err(ParseError::BadIncomingData(
-                "Named values in frame are currently unsupported".to_string(),
-            ));
+            return Err(RequestDeserializationError::NamedValuesUnsupported);
         }
 
         let values = Cow::Owned(if values_flag {
@@ -183,10 +187,9 @@ impl<'q> QueryParameters<'q> {
             .map(
                 |consistency| match SerialConsistency::try_from(consistency) {
                     Ok(serial_consistency) => Ok(serial_consistency),
-                    Err(_) => Err(ParseError::BadIncomingData(format!(
-                        "Expected SerialConsistency, got regular Consistency {}",
-                        consistency
-                    ))),
+                    Err(_) => Err(RequestDeserializationError::ExpectedSerialConsistency(
+                        consistency,
+                    )),
                 },
             )
             .transpose()?;
@@ -289,4 +292,26 @@ impl Default for PagingState {
     fn default() -> Self {
         Self::start()
     }
+}
+
+/// An error type returned when serialization of QUERY request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum QuerySerializationError {
+    /// Failed to serialize query parameters.
+    #[error("Invalid query parameters: {0}")]
+    QueryParametersSerialization(QueryParametersSerializationError),
+
+    /// Failed to serialize the CQL statement string.
+    #[error("Failed to serialize a statement content: {0}")]
+    StatementStringSerialization(TryFromIntError),
+}
+
+/// An error type returned when serialization of query parameters fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum QueryParametersSerializationError {
+    /// Failed to serialize paging state.
+    #[error("Malformed paging state: {0}")]
+    BadPagingState(#[from] TryFromIntError),
 }

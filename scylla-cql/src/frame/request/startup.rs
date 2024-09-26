@@ -1,6 +1,8 @@
-use crate::frame::frame_errors::ParseError;
+use thiserror::Error;
 
-use std::{borrow::Cow, collections::HashMap};
+use crate::frame::frame_errors::CqlRequestSerializationError;
+
+use std::{borrow::Cow, collections::HashMap, num::TryFromIntError};
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
@@ -14,8 +16,18 @@ pub struct Startup<'a> {
 impl SerializableRequest for Startup<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Startup;
 
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
-        types::write_string_map(&self.options, buf)?;
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
+        types::write_string_map(&self.options, buf)
+            .map_err(StartupSerializationError::OptionsSerialization)?;
         Ok(())
     }
+}
+
+/// An error type returned when serialization of STARTUP request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum StartupSerializationError {
+    /// Failed to serialize startup options.
+    #[error("Malformed startup options: {0}")]
+    OptionsSerialization(TryFromIntError),
 }

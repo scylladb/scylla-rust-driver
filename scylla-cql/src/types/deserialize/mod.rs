@@ -46,30 +46,31 @@
 //!
 //! ```rust
 //! # use scylla_cql::frame::response::result::ColumnType;
-//! # use scylla_cql::frame::frame_errors::ParseError;
 //! # use scylla_cql::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 //! # use scylla_cql::types::deserialize::value::DeserializeValue;
+//! use thiserror::Error;
 //! struct MyVec(Vec<u8>);
+//! #[derive(Debug, Error)]
+//! enum MyDeserError {
+//!     #[error("Expected bytes")]
+//!     ExpectedBytes,
+//!     #[error("Expected non-null")]
+//!     ExpectedNonNull,
+//! }
 //! impl<'frame> DeserializeValue<'frame> for MyVec {
 //!     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
 //!          if let ColumnType::Blob = typ {
 //!              return Ok(());
 //!          }
-//!          Err(TypeCheckError::new(
-//!             ParseError::BadIncomingData("Expected bytes".to_owned())
-//!          ))
+//!          Err(TypeCheckError::new(MyDeserError::ExpectedBytes))
 //!      }
 //!
 //!      fn deserialize(
 //!          _typ: &'frame ColumnType,
 //!          v: Option<FrameSlice<'frame>>,
 //!      ) -> Result<Self, DeserializationError> {
-//!          v.ok_or_else(|| {
-//!              DeserializationError::new(
-//!                  ParseError::BadIncomingData("Expected non-null value".to_owned())
-//!              )
-//!          })
-//!          .map(|v| Self(v.as_slice().to_vec()))
+//!          v.ok_or_else(|| DeserializationError::new(MyDeserError::ExpectedNonNull))
+//!             .map(|v| Self(v.as_slice().to_vec()))
 //!      }
 //! }
 //! ```
@@ -85,11 +86,18 @@
 //! For example:
 //!
 //! ```rust
-//! # use scylla_cql::frame::frame_errors::ParseError;
 //! # use scylla_cql::frame::response::result::ColumnType;
 //! # use scylla_cql::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 //! # use scylla_cql::types::deserialize::value::DeserializeValue;
+//! use thiserror::Error;
 //! struct MySlice<'a>(&'a [u8]);
+//! #[derive(Debug, Error)]
+//! enum MyDeserError {
+//!     #[error("Expected bytes")]
+//!     ExpectedBytes,
+//!     #[error("Expected non-null")]
+//!     ExpectedNonNull,
+//! }
 //! impl<'a, 'frame> DeserializeValue<'frame> for MySlice<'a>
 //! where
 //!     'frame: 'a,
@@ -98,21 +106,15 @@
 //!          if let ColumnType::Blob = typ {
 //!              return Ok(());
 //!          }
-//!          Err(TypeCheckError::new(
-//!              ParseError::BadIncomingData("Expected bytes".to_owned())
-//!          ))
+//!          Err(TypeCheckError::new(MyDeserError::ExpectedBytes))
 //!      }
 //!
 //!      fn deserialize(
 //!          _typ: &'frame ColumnType,
 //!          v: Option<FrameSlice<'frame>>,
 //!      ) -> Result<Self, DeserializationError> {
-//!          v.ok_or_else(|| {
-//!             DeserializationError::new(
-//!                 ParseError::BadIncomingData("Expected non-null value".to_owned())
-//!             )
-//!          })
-//!          .map(|v| Self(v.as_slice()))
+//!          v.ok_or_else(|| DeserializationError::new(MyDeserError::ExpectedNonNull))
+//!             .map(|v| Self(v.as_slice()))
 //!      }
 //! }
 //! ```
@@ -135,32 +137,36 @@
 //! Example:
 //!
 //! ```rust
-//! # use scylla_cql::frame::frame_errors::ParseError;
 //! # use scylla_cql::frame::response::result::ColumnType;
 //! # use scylla_cql::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 //! # use scylla_cql::types::deserialize::value::DeserializeValue;
 //! # use bytes::Bytes;
+//! use thiserror::Error;
 //! struct MyBytes(Bytes);
+//! #[derive(Debug, Error)]
+//! enum MyDeserError {
+//!     #[error("Expected bytes")]
+//!     ExpectedBytes,
+//!     #[error("Expected non-null")]
+//!     ExpectedNonNull,
+//! }
 //! impl<'frame> DeserializeValue<'frame> for MyBytes {
 //!     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
 //!          if let ColumnType::Blob = typ {
 //!              return Ok(());
 //!          }
-//!          Err(TypeCheckError::new(ParseError::BadIncomingData("Expected bytes".to_owned())))
+//!          Err(TypeCheckError::new(MyDeserError::ExpectedBytes))
 //!      }
 //!
 //!      fn deserialize(
 //!          _typ: &'frame ColumnType,
 //!          v: Option<FrameSlice<'frame>>,
 //!      ) -> Result<Self, DeserializationError> {
-//!          v.ok_or_else(|| {
-//!              DeserializationError::new(ParseError::BadIncomingData("Expected non-null value".to_owned()))
-//!          })
-//!          .map(|v| Self(v.to_bytes()))
+//!          v.ok_or_else(|| DeserializationError::new(MyDeserError::ExpectedNonNull))
+//!             .map(|v| Self(v.to_bytes()))
 //!      }
 //! }
 //! ```
-// TODO: in the above module docstring, stop abusing ParseError once errors are refactored.
 
 pub mod frame_slice;
 pub mod result;

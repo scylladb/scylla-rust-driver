@@ -2841,6 +2841,7 @@ mod latency_awareness {
             match error {
                 // "fast" errors, i.e. ones that are returned quickly after the query begins
                 QueryError::BadQuery(_)
+                | QueryError::CqlRequestSerialization(_)
                 | QueryError::BrokenConnection(_)
                 | QueryError::ConnectionPoolError(_)
                 | QueryError::UnableToAllocStreamId
@@ -2854,6 +2855,7 @@ mod latency_awareness {
                 QueryError::DbError(_, _)
                 | QueryError::CqlResultParseError(_)
                 | QueryError::CqlErrorParseError(_)
+                | QueryError::BodyExtensionsParseError(_)
                 | QueryError::InvalidMessage(_)
                 | QueryError::ProtocolError(_)
                 | QueryError::TimeoutError

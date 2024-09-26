@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use scylla_cql::frame::frame_errors::{FrameError, ParseError};
+use scylla_cql::frame::frame_errors::FrameHeaderParseError;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
-use scylla_cql::frame::request::Request;
 pub use scylla_cql::frame::request::RequestOpcode;
+use scylla_cql::frame::request::{Request, RequestDeserializationError};
 pub use scylla_cql::frame::response::ResponseOpcode;
 use scylla_cql::frame::{response::error::DbError, types};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -69,7 +69,7 @@ impl RequestFrame {
         .await
     }
 
-    pub fn deserialize(&self) -> Result<Request, ParseError> {
+    pub fn deserialize(&self) -> Result<Request, RequestDeserializationError> {
         Request::deserialize(&mut &self.body[..], self.opcode)
     }
 }
@@ -87,7 +87,7 @@ impl ResponseFrame {
         request_params: FrameParams,
         error: DbError,
         msg: Option<&str>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, std::num::TryFromIntError> {
         let msg = msg.unwrap_or("Proxy-triggered error.");
         let len_bytes = (msg.len() as u16).to_be_bytes(); // string len is a short in CQL protocol
         let code_bytes = error.code(&ProtocolFeatures::default()).to_be_bytes(); // TODO: configurable features
@@ -111,7 +111,7 @@ impl ResponseFrame {
     pub fn forged_supported(
         request_params: FrameParams,
         options: &HashMap<String, Vec<String>>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, std::num::TryFromIntError> {
         let mut buf = BytesMut::new();
         types::write_string_multimap(options, &mut buf)?;
 
@@ -144,7 +144,10 @@ impl ResponseFrame {
     }
 }
 
-fn serialize_error_specific_fields(buf: &mut BytesMut, error: DbError) -> Result<(), ParseError> {
+fn serialize_error_specific_fields(
+    buf: &mut BytesMut,
+    error: DbError,
+) -> Result<(), std::num::TryFromIntError> {
     match error {
         DbError::Unavailable {
             consistency,
@@ -250,17 +253,20 @@ pub(crate) async fn write_frame(
 pub(crate) async fn read_frame(
     reader: &mut (impl AsyncRead + Unpin),
     frame_type: FrameType,
-) -> Result<(FrameParams, FrameOpcode, Bytes), FrameError> {
+) -> Result<(FrameParams, FrameOpcode, Bytes), FrameHeaderParseError> {
     let mut raw_header = [0u8; HEADER_SIZE];
-    reader.read_exact(&mut raw_header[..]).await?;
+    reader
+        .read_exact(&mut raw_header[..])
+        .await
+        .map_err(FrameHeaderParseError::HeaderIoError)?;
 
     let mut buf = &raw_header[..];
 
     let version = buf.get_u8();
     {
         let (err, valid_direction, direction_str) = match frame_type {
-            FrameType::Request => (FrameError::FrameFromServer, 0x00, "request"),
-            FrameType::Response => (FrameError::FrameFromClient, 0x80, "response"),
+            FrameType::Request => (FrameHeaderParseError::FrameFromServer, 0x00, "request"),
+            FrameType::Response => (FrameHeaderParseError::FrameFromClient, 0x80, "response"),
         };
         if version & 0x80 != valid_direction {
             return Err(err);
@@ -285,10 +291,12 @@ pub(crate) async fn read_frame(
 
     let opcode = match frame_type {
         FrameType::Request => FrameOpcode::Request(
-            RequestOpcode::try_from(buf.get_u8()).map_err(|_| FrameError::FrameFromServer)?,
+            RequestOpcode::try_from(buf.get_u8())
+                .map_err(|_| FrameHeaderParseError::FrameFromServer)?,
         ),
         FrameType::Response => FrameOpcode::Response(
-            ResponseOpcode::try_from(buf.get_u8()).map_err(|_| FrameError::FrameFromClient)?,
+            ResponseOpcode::try_from(buf.get_u8())
+                .map_err(|_| FrameHeaderParseError::FrameFromClient)?,
         ),
     };
 
@@ -297,10 +305,16 @@ pub(crate) async fn read_frame(
     let mut body = Vec::with_capacity(length).limit(length);
 
     while body.has_remaining_mut() {
-        let n = reader.read_buf(&mut body).await?;
+        let n = reader
+            .read_buf(&mut body)
+            .await
+            .map_err(|err| FrameHeaderParseError::BodyChunkIoError(body.remaining_mut(), err))?;
         if n == 0 {
             // EOF, too early
-            return Err(FrameError::ConnectionClosed(body.remaining_mut(), length));
+            return Err(FrameHeaderParseError::ConnectionClosed(
+                body.remaining_mut(),
+                length,
+            ));
         }
     }
 
@@ -309,7 +323,7 @@ pub(crate) async fn read_frame(
 
 pub(crate) async fn read_request_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<RequestFrame, FrameError> {
+) -> Result<RequestFrame, FrameHeaderParseError> {
     read_frame(reader, FrameType::Request)
         .await
         .map(|(params, opcode, body)| RequestFrame {
@@ -324,7 +338,7 @@ pub(crate) async fn read_request_frame(
 
 pub(crate) async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<ResponseFrame, FrameError> {
+) -> Result<ResponseFrame, FrameHeaderParseError> {
     read_frame(reader, FrameType::Response)
         .await
         .map(|(params, opcode, body)| ResponseFrame {

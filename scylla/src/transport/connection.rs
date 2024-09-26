@@ -780,7 +780,8 @@ impl Connection {
                 }
             },
             Err(e) => match e {
-                RequestError::FrameError(e) => return Err(err(e.into())),
+                RequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
+                RequestError::BodyExtensionsParseError(e) => return Err(err(e.into())),
                 RequestError::CqlResponseParseError(e) => match e {
                     // Parsing of READY response cannot fail, since its body is empty.
                     // Remaining valid responses are AUTHENTICATE and ERROR.
@@ -829,7 +830,8 @@ impl Connection {
                 }
             },
             Err(e) => match e {
-                RequestError::FrameError(e) => return Err(err(e.into())),
+                RequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
+                RequestError::BodyExtensionsParseError(e) => return Err(err(e.into())),
                 RequestError::CqlResponseParseError(e) => match e {
                     CqlResponseParseError::CqlSupportedParseError(e) => return Err(err(e.into())),
                     CqlResponseParseError::CqlErrorParseError(e) => return Err(err(e.into())),
@@ -939,7 +941,8 @@ impl Connection {
                 }
             },
             Err(e) => match e {
-                RequestError::FrameError(e) => return Err(err(e.into())),
+                RequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
+                RequestError::BodyExtensionsParseError(e) => return Err(err(e.into())),
                 RequestError::CqlResponseParseError(e) => match e {
                     CqlResponseParseError::CqlAuthSuccessParseError(e) => {
                         return Err(err(e.into()))
@@ -1400,7 +1403,8 @@ impl Connection {
                 ))),
             },
             Err(e) => match e {
-                RequestError::FrameError(e) => Err(err(e.into())),
+                RequestError::CqlRequestSerialization(e) => Err(err(e.into())),
+                RequestError::BodyExtensionsParseError(e) => Err(err(e.into())),
                 RequestError::CqlResponseParseError(e) => match e {
                     // Parsing the READY response cannot fail. Only remaining valid response is ERROR.
                     CqlResponseParseError::CqlErrorParseError(e) => Err(err(e.into())),
@@ -1614,7 +1618,7 @@ impl Connection {
         loop {
             let (params, opcode, body) = frame::read_response_frame(&mut read_half)
                 .await
-                .map_err(BrokenConnectionErrorKind::FrameError)?;
+                .map_err(BrokenConnectionErrorKind::FrameHeaderParseError)?;
             let response = TaskResponse {
                 params,
                 opcode,
@@ -1860,7 +1864,7 @@ impl Connection {
                 }
             },
             Err(e) => match e {
-                ResponseParseError::FrameError(e) => return Err(e.into()),
+                ResponseParseError::BodyExtensionsParseError(e) => return Err(e.into()),
                 ResponseParseError::CqlResponseParseError(e) => match e {
                     CqlResponseParseError::CqlEventParseError(e) => return Err(e.into()),
                     // Received a response other than EVENT, but failed to deserialize it.

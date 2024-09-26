@@ -7,8 +7,11 @@ pub mod query;
 pub mod register;
 pub mod startup;
 
+use batch::BatchTypeParseError;
+use thiserror::Error;
+
 use crate::types::serialize::row::SerializedValues;
-use crate::{frame::frame_errors::ParseError, Consistency};
+use crate::Consistency;
 use bytes::Bytes;
 
 pub use auth_response::AuthResponse;
@@ -21,6 +24,7 @@ pub use startup::Startup;
 
 use self::batch::BatchStatement;
 
+use super::frame_errors::{CqlRequestSerializationError, LowLevelDeserializationError};
 use super::types::SerialConsistency;
 use super::TryFromPrimitiveError;
 
@@ -92,9 +96,9 @@ impl TryFrom<u8> for RequestOpcode {
 pub trait SerializableRequest {
     const OPCODE: RequestOpcode;
 
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError>;
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError>;
 
-    fn to_bytes(&self) -> Result<Bytes, ParseError> {
+    fn to_bytes(&self) -> Result<Bytes, CqlRequestSerializationError> {
         let mut v = Vec::new();
         self.serialize(&mut v)?;
         Ok(v.into())
@@ -104,7 +108,29 @@ pub trait SerializableRequest {
 /// Not intended for driver's direct usage (as driver has no interest in deserialising CQL requests),
 /// but very useful for testing (e.g. asserting that the sent requests have proper parameters set).
 pub trait DeserializableRequest: SerializableRequest + Sized {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError>;
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError>;
+}
+
+/// An error type returned by [`DeserializableRequest::deserialize`].
+/// This is not intended for driver's direct usage. It's a testing utility,
+/// mainly used by `scylla-proxy` crate.
+#[doc(hidden)]
+#[derive(Debug, Error)]
+pub enum RequestDeserializationError {
+    #[error("Low level deser error: {0}")]
+    LowLevelDeserialization(#[from] LowLevelDeserializationError),
+    #[error("Io error: {0}")]
+    IoError(#[from] std::io::Error),
+    #[error("Specified flags are not recognised: {:02x}", flags)]
+    UnknownFlags { flags: u8 },
+    #[error("Named values in frame are currently unsupported")]
+    NamedValuesUnsupported,
+    #[error("Expected SerialConsistency, got regular Consistency: {0}")]
+    ExpectedSerialConsistency(Consistency),
+    #[error(transparent)]
+    BatchTypeParse(#[from] BatchTypeParseError),
+    #[error("Unexpected batch statement kind: {0}")]
+    UnexpectedBatchStatementKind(u8),
 }
 
 #[non_exhaustive] // TODO: add remaining request types
@@ -115,7 +141,10 @@ pub enum Request<'r> {
 }
 
 impl<'r> Request<'r> {
-    pub fn deserialize(buf: &mut &[u8], opcode: RequestOpcode) -> Result<Self, ParseError> {
+    pub fn deserialize(
+        buf: &mut &[u8],
+        opcode: RequestOpcode,
+    ) -> Result<Self, RequestDeserializationError> {
         match opcode {
             RequestOpcode::Query => Query::deserialize(buf).map(Self::Query),
             RequestOpcode::Execute => Execute::deserialize(buf).map(Self::Execute),

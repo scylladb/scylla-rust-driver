@@ -16,12 +16,6 @@ pub enum FromRowError {
     WrongRowSize { expected: usize, actual: usize },
 }
 
-#[derive(Error, Clone, Debug, PartialEq, Eq)]
-pub enum CqlTypeError {
-    #[error("Invalid number of set elements: {0}")]
-    InvalidNumberOfElements(i32),
-}
-
 /// This trait defines a way to convert CqlValue or `Option<CqlValue>` into some rust type
 // We can't use From trait because impl From<Option<CqlValue>> for String {...}
 // is forbidden since neither From nor String are defined in this crate

@@ -1,61 +1,129 @@
+use std::error::Error;
 use std::sync::Arc;
+
+pub use super::request::{
+    auth_response::AuthResponseSerializationError,
+    batch::{BatchSerializationError, BatchStatementSerializationError},
+    execute::ExecuteSerializationError,
+    prepare::PrepareSerializationError,
+    query::{QueryParametersSerializationError, QuerySerializationError},
+    register::RegisterSerializationError,
+    startup::StartupSerializationError,
+};
 
 use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
-use crate::cql_to_rust::CqlTypeError;
-use crate::frame::value::SerializeValuesError;
-use crate::types::deserialize::{DeserializationError, TypeCheckError};
-use crate::types::serialize::SerializationError;
+use crate::types::deserialize::DeserializationError;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
-pub enum FrameError {
-    #[error(transparent)]
-    Parse(#[from] ParseError),
+/// An error returned by `parse_response_body_extensions`.
+///
+/// It represents an error that occurred during deserialization of
+/// frame body extensions. These extensions include tracing id,
+/// warnings and custom payload.
+///
+/// Possible error kinds:
+/// - failed to decompress frame body (decompression is required for further deserialization)
+/// - failed to deserialize tracing id (body ext.)
+/// - failed to deserialize warnings list (body ext.)
+/// - failed to deserialize custom payload map (body ext.)
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum FrameBodyExtensionsParseError {
+    /// Frame is compressed, but no compression was negotiated for the connection.
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
-    #[error("Received frame marked as coming from a client")]
-    FrameFromClient,
-    #[error("Received frame marked as coming from the server")]
-    FrameFromServer,
-    #[error("Received a frame from version {0}, but only 4 is supported")]
-    VersionNotSupported(u8),
-    #[error("Connection was closed before body was read: missing {0} out of {1}")]
-    ConnectionClosed(usize, usize),
-    #[error("Frame decompression failed.")]
-    FrameDecompression,
-    #[error("Frame compression failed.")]
-    FrameCompression,
-    #[error(transparent)]
-    StdIoError(#[from] std::io::Error),
-    #[error("Unrecognized opcode{0}")]
-    TryFromPrimitiveError(#[from] TryFromPrimitiveError<u8>),
-    #[error("Error compressing lz4 data {0}")]
-    Lz4CompressError(#[from] lz4_flex::block::CompressError),
+
+    /// Failed to deserialize frame trace id.
+    #[error("Malformed trace id: {0}")]
+    TraceIdParse(LowLevelDeserializationError),
+
+    /// Failed to deserialize warnings attached to frame.
+    #[error("Malformed warnings list: {0}")]
+    WarningsListParse(LowLevelDeserializationError),
+
+    /// Failed to deserialize frame's custom payload.
+    #[error("Malformed custom payload map: {0}")]
+    CustomPayloadMapParse(LowLevelDeserializationError),
+
+    /// Failed to decompress frame body (snap).
+    #[error("Snap decompression error: {0}")]
+    SnapDecompressError(Arc<dyn Error + Sync + Send>),
+
+    /// Failed to decompress frame body (lz4).
     #[error("Error decompressing lz4 data {0}")]
-    Lz4DecompressError(#[from] lz4_flex::block::DecompressError),
+    Lz4DecompressError(Arc<dyn Error + Sync + Send>),
 }
 
-#[derive(Error, Debug)]
-pub enum ParseError {
-    #[error("Low-level deserialization failed: {0}")]
-    LowLevelDeserializationError(#[from] LowLevelDeserializationError),
-    #[error("Could not serialize frame: {0}")]
-    BadDataToSerialize(String),
-    #[error("Could not deserialize frame: {0}")]
-    BadIncomingData(String),
-    #[error(transparent)]
-    DeserializationError(#[from] DeserializationError),
-    #[error(transparent)]
-    DeserializationTypeCheckError(#[from] TypeCheckError),
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
-    #[error(transparent)]
-    SerializeValuesError(#[from] SerializeValuesError),
-    #[error(transparent)]
-    SerializationError(#[from] SerializationError),
-    #[error(transparent)]
-    CqlTypeError(#[from] CqlTypeError),
+/// An error that occurred during frame header deserialization.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum FrameHeaderParseError {
+    /// Failed to read the frame header from the socket.
+    #[error("Failed to read the frame header: {0}")]
+    HeaderIoError(std::io::Error),
+
+    /// Received a frame marked as coming from a client.
+    #[error("Received frame marked as coming from a client")]
+    FrameFromClient,
+
+    // FIXME: this should not belong here. User always expects a frame from server.
+    // This variant is only used in scylla-proxy - need to investigate it later.
+    #[error("Received frame marked as coming from the server")]
+    FrameFromServer,
+
+    /// Received a frame with unsupported version.
+    #[error("Received a frame from version {0}, but only 4 is supported")]
+    VersionNotSupported(u8),
+
+    /// Received unknown response opcode.
+    #[error("Unrecognized response opcode {0}")]
+    UnknownResponseOpcode(#[from] TryFromPrimitiveError<u8>),
+
+    /// Failed to read frame body from the socket.
+    #[error("Failed to read a chunk of response body. Expected {0} more bytes, error: {1}")]
+    BodyChunkIoError(usize, std::io::Error),
+
+    /// Connection was closed before whole frame was read.
+    #[error("Connection was closed before body was read: missing {0} out of {1}")]
+    ConnectionClosed(usize, usize),
+}
+
+/// An error that occurred during CQL request serialization.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlRequestSerializationError {
+    /// Failed to serialize STARTUP request.
+    #[error("Failed to serialize STARTUP request: {0}")]
+    StartupSerialization(#[from] StartupSerializationError),
+
+    /// Failed to serialize REGISTER request.
+    #[error("Failed to serialize REGISTER request: {0}")]
+    RegisterSerialization(#[from] RegisterSerializationError),
+
+    /// Failed to serialize AUTH_RESPONSE request.
+    #[error("Failed to serialize AUTH_RESPONSE request: {0}")]
+    AuthResponseSerialization(#[from] AuthResponseSerializationError),
+
+    /// Failed to serialize BATCH request.
+    #[error("Failed to serialize BATCH request: {0}")]
+    BatchSerialization(#[from] BatchSerializationError),
+
+    /// Failed to serialize PREPARE request.
+    #[error("Failed to serialize PREPARE request: {0}")]
+    PrepareSerialization(#[from] PrepareSerializationError),
+
+    /// Failed to serialize EXECUTE request.
+    #[error("Failed to serialize EXECUTE request: {0}")]
+    ExecuteSerialization(#[from] ExecuteSerializationError),
+
+    /// Failed to serialize QUERY request.
+    #[error("Failed to serialize QUERY request: {0}")]
+    QuerySerialization(#[from] QuerySerializationError),
+
+    /// Request body compression failed.
+    #[error("Snap compression error: {0}")]
+    SnapCompressError(Arc<dyn Error + Sync + Send>),
 }
 
 /// An error type returned when deserialization of CQL
