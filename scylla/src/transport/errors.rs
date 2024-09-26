@@ -19,7 +19,7 @@ use scylla_cql::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
             CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError,
             CqlResponseParseError, CqlResultParseError, CqlSupportedParseError,
-            FrameBodyExtensionsParseError, FrameHeaderParseError,
+            FrameBodyExtensionsParseError, FrameHeaderParseError, RowsParseError,
         },
         request::CqlRequestKind,
         response::CqlResponseKind,
@@ -175,6 +175,18 @@ impl From<BadKeyspaceName> for QueryError {
 impl From<response::Error> for QueryError {
     fn from(error: response::Error) -> QueryError {
         QueryError::DbError(error.error, error.reason)
+    }
+}
+
+impl From<RowsParseError> for QueryError {
+    fn from(err: RowsParseError) -> Self {
+        let err: CqlResultParseError = err.into();
+        let err: CqlResponseParseError = err.into();
+        let err: RequestError = err.into();
+        let err: UserRequestError = err.into();
+        let err: QueryError = err.into();
+
+        err
     }
 }
 
