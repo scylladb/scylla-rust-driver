@@ -24,10 +24,13 @@ setupenv:
 .PHONY: setup
 setup:
 	$(POETRY) install
-	$(POETRY) update
 	mkdir -p $(SOURCEDIR)
 	cp -RL source/* $(SOURCEDIR)
 	python _utils/prepare_sphinx_source.py _source
+
+.PHONY: update
+update:
+	$(POETRY) update
 
 # Clean commands
 .PHONY: pristine
