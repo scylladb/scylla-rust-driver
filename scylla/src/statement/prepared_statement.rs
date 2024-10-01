@@ -613,7 +613,7 @@ mod tests {
     use crate::{prepared_statement::PartitionKey, test_utils::setup_tracing};
 
     fn make_meta(
-        cols: impl IntoIterator<Item = ColumnType>,
+        cols: impl IntoIterator<Item = ColumnType<'static>>,
         idx: impl IntoIterator<Item = usize>,
     ) -> PreparedMetadata {
         let table_spec = TableSpec::owned("ks".to_owned(), "t".to_owned());

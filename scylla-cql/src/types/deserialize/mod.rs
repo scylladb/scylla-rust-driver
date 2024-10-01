@@ -296,7 +296,7 @@ mod tests {
         bytes.freeze()
     }
 
-    pub(super) fn spec(name: &str, typ: ColumnType) -> ColumnSpec {
+    pub(super) fn spec(name: &str, typ: ColumnType<'static>) -> ColumnSpec {
         ColumnSpec {
             name: name.to_owned(),
             typ,

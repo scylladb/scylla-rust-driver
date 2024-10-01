@@ -434,7 +434,7 @@ fn test_row_errors() {
     }
 }
 
-fn specs_to_types(specs: &[ColumnSpec]) -> Vec<ColumnType> {
+fn specs_to_types(specs: &[ColumnSpec]) -> Vec<ColumnType<'static>> {
     specs.iter().map(|spec| spec.typ().clone()).collect()
 }
 

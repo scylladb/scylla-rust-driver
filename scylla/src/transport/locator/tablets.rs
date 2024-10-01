@@ -38,7 +38,7 @@ pub(crate) struct RawTablet {
 type RawTabletPayload = (i64, i64, Vec<(Uuid, i32)>);
 
 lazy_static! {
-    static ref RAW_TABLETS_CQL_TYPE: ColumnType = ColumnType::Tuple(vec![
+    static ref RAW_TABLETS_CQL_TYPE: ColumnType<'static> = ColumnType::Tuple(vec![
         ColumnType::BigInt,
         ColumnType::BigInt,
         ColumnType::List(Box::new(ColumnType::Tuple(vec![

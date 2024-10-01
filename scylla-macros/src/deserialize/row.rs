@@ -233,7 +233,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
             fn type_check(
                 specs: &[#macro_internal::ColumnSpec],
             ) -> ::std::result::Result<(), #macro_internal::TypeCheckError> {
-                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(spec.typ()));
+                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
 
                 match specs {
                     [#(#required_fields_idents),*] => {
@@ -441,7 +441,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
                 // For each required field, generate a "visited" boolean flag
                 #(#visited_field_declarations)*
 
-                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(spec.typ()));
+                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
 
                 for (column_index, spec) in specs.iter().enumerate() {
                     // Pattern match on the name and verify that the type is correct.

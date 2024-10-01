@@ -188,7 +188,7 @@ macro_rules! impl_tuple {
             fn type_check(specs: &[ColumnSpec]) -> Result<(), TypeCheckError> {
                 const TUPLE_LEN: usize = (&[$($idx),*] as &[i32]).len();
 
-                let column_types_iter = || specs.iter().map(|spec| spec.typ().clone());
+                let column_types_iter = || specs.iter().map(|spec| spec.typ().clone().into_owned());
                 if let [$($idf),*] = &specs {
                     $(
                         <$Ti as DeserializeValue<'frame>>::type_check($idf.typ())
@@ -256,7 +256,7 @@ pub struct BuiltinTypeCheckError {
     pub rust_name: &'static str,
 
     /// The CQL types of the values that the Rust type was being deserialized from.
-    pub cql_types: Vec<ColumnType>,
+    pub cql_types: Vec<ColumnType<'static>>,
 
     /// Detailed information about the failure.
     pub kind: BuiltinTypeCheckErrorKind,
@@ -265,7 +265,7 @@ pub struct BuiltinTypeCheckError {
 // Not part of the public API; used in derive macros.
 #[doc(hidden)]
 pub fn mk_typck_err<T>(
-    cql_types: impl IntoIterator<Item = ColumnType>,
+    cql_types: impl IntoIterator<Item = ColumnType<'static>>,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
 ) -> TypeCheckError {
     mk_typck_err_named(std::any::type_name::<T>(), cql_types, kind)
@@ -273,7 +273,7 @@ pub fn mk_typck_err<T>(
 
 fn mk_typck_err_named(
     name: &'static str,
-    cql_types: impl IntoIterator<Item = ColumnType>,
+    cql_types: impl IntoIterator<Item = ColumnType<'static>>,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
 ) -> TypeCheckError {
     TypeCheckError::new(BuiltinTypeCheckError {

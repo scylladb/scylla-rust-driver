@@ -256,7 +256,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                             #macro_internal::DeserUdtTypeCheckErrorKind::FieldNameMismatch {
                                 position: #rust_field_idx,
                                 rust_field_name: <_ as ::std::borrow::ToOwned>::to_owned(#rust_field_name),
-                                db_field_name: <_ as ::std::borrow::ToOwned>::to_owned(cql_field_name),
+                                db_field_name: <_ as ::std::clone::Clone>::clone(cql_field_name).into_owned(),
                             }
                         )
                     );
@@ -349,7 +349,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                         return ::std::result::Result::Err(#macro_internal::mk_value_typck_err::<Self>(
                             typ,
                             #macro_internal::DeserUdtTypeCheckErrorKind::ExcessFieldInUdt {
-                                db_field_name: <_ as ::std::clone::Clone>::clone(cql_field_name),
+                                db_field_name: <_ as ::std::clone::Clone>::clone(cql_field_name).into_owned(),
                             }
                         ));
                     }
@@ -370,7 +370,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                         required_fields: vec![
                             #(stringify!(#required_fields_names),)*
                         ],
-                        present_fields: fields.iter().map(|(name, _typ)| name.clone()).collect(),
+                        present_fields: fields.iter().map(|(name, _typ)| name.clone().into_owned()).collect(),
                     }
                 );
 
@@ -384,7 +384,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                 // but not yet matched to a Rust struct field (because the previous
                 // Rust struct field didn't match it and had #[allow_missing] specified).
                 let mut saved_cql_field = ::std::option::Option::None::<
-                    &(::std::string::String, #macro_internal::ColumnType),
+                    &(::std::borrow::Cow<'_, str>, #macro_internal::ColumnType),
                 >;
                 #(
                     #field_validations
@@ -555,7 +555,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
                 // the expected nonrequired field. Therefore, that field is stored here, while the expected field
                 // is default-initialized.
                 let mut saved_cql_field = ::std::option::Option::None::<(
-                    &(::std::string::String, #macro_internal::ColumnType),
+                    &(::std::borrow::Cow<'_, str>, #macro_internal::ColumnType),
                     ::std::option::Option<::std::option::Option<#macro_internal::FrameSlice>>
                 )>;
 
@@ -607,7 +607,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
                             .map_err(|err| #macro_internal::mk_value_typck_err::<Self>(
                                 typ,
                                 #macro_internal::DeserUdtTypeCheckErrorKind::FieldTypeCheckFailed {
-                                    field_name: <_ as ::std::clone::Clone>::clone(cql_field_name),
+                                    field_name: <_ as ::std::clone::Clone>::clone(cql_field_name).into_owned(),
                                     err,
                                 }
                             ))?;
@@ -704,7 +704,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
 
                 for (cql_field_name, cql_field_typ) in cql_fields {
                     // Pattern match on the name and verify that the type is correct.
-                    match cql_field_name.as_str() {
+                    match std::ops::Deref::deref(cql_field_name) {
                         #(#rust_nonskipped_field_names => #type_check_blocks,)*
                         unknown => #excess_udt_field_action,
                     }
@@ -870,12 +870,12 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
                     let value = value_res.map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
                         typ,
                         #macro_internal::UdtDeserializationErrorKind::FieldDeserializationFailed {
-                            field_name: ::std::clone::Clone::clone(cql_field_name),
+                            field_name: ::std::clone::Clone::clone(cql_field_name).into_owned(),
                             err,
                         }
                     ))?;
                     // Pattern match on the field name and deserialize.
-                    match cql_field_name.as_str() {
+                    match std::ops::Deref::deref(cql_field_name) {
                         #(#rust_nonskipped_field_names => #deserialize_blocks,)*
                         unknown => {
                             // Assuming we type checked sucessfully, this must be an excess field.

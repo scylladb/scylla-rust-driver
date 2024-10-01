@@ -810,11 +810,11 @@ fn cqlvalue_serialization() {
         ],
     };
     let typ = ColumnType::UserDefinedType {
-        type_name: "t".to_string(),
-        keyspace: "ks".to_string(),
+        type_name: "t".into(),
+        keyspace: "ks".into(),
         field_types: vec![
-            ("foo".to_string(), ColumnType::Int),
-            ("bar".to_string(), ColumnType::Text),
+            ("foo".into(), ColumnType::Int),
+            ("bar".into(), ColumnType::Text),
         ],
     };
 
@@ -1079,7 +1079,7 @@ fn vec_value_list() {
     );
 }
 
-fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
+fn col_spec(name: &str, typ: ColumnType<'static>) -> ColumnSpec {
     ColumnSpec {
         table_spec: TableSpec::owned("ks".to_string(), "tbl".to_string()),
         name: name.to_string(),

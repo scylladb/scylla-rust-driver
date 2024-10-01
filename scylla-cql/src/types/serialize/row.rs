@@ -868,7 +868,7 @@ mod tests {
     use assert_matches::assert_matches;
     use scylla_macros::SerializeRow;
 
-    fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
+    fn col_spec(name: &str, typ: ColumnType<'static>) -> ColumnSpec {
         ColumnSpec {
             table_spec: TableSpec::owned("ks".to_string(), "tbl".to_string()),
             name: name.to_string(),
@@ -990,7 +990,7 @@ mod tests {
         t.serialize(&ctx, &mut builder).unwrap_err()
     }
 
-    fn col(name: &str, typ: ColumnType) -> ColumnSpec {
+    fn col(name: &str, typ: ColumnType<'static>) -> ColumnSpec {
         ColumnSpec {
             table_spec: TableSpec::owned("ks".to_string(), "tbl".to_string()),
             name: name.to_string(),
@@ -1262,7 +1262,7 @@ mod tests {
     #[test]
     fn test_row_serialization_with_generics() {
         // A minimal smoke test just to test that it works.
-        fn check_with_type<T: SerializeValue + Copy>(typ: ColumnType, t: T) {
+        fn check_with_type<T: SerializeValue + Copy>(typ: ColumnType<'static>, t: T) {
             let spec = [col("a", ColumnType::Text), col("b", typ)];
             let reference = do_serialize(("Ala ma kota", t), &spec);
             let row = do_serialize(
