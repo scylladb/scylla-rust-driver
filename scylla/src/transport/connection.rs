@@ -1362,8 +1362,9 @@ impl Connection {
 
         match query_response.response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
-                if set_keyspace.keyspace_name.to_lowercase()
-                    != keyspace_name.as_str().to_lowercase()
+                if !set_keyspace
+                    .keyspace_name
+                    .eq_ignore_ascii_case(keyspace_name.as_str())
                 {
                     return Err(QueryError::ProtocolError(
                         "USE <keyspace_name> returned response with different keyspace name",
