@@ -445,6 +445,11 @@ pub enum KeyspaceStrategyError {
     /// Replication factor could not be parsed as unsigned integer.
     #[error("Failed to parse a replication factor as unsigned integer: {0}")]
     ReplicationFactorParseError(ParseIntError),
+
+    /// Received an unexpected NTS option.
+    /// Driver expects only 'class' and replication factor per dc ('dc': rf)
+    #[error("Unexpected NetworkTopologyStrategy option: '{key}': '{value}'")]
+    UnexpectedNetworkTopologyStrategyOption { key: String, value: String },
 }
 
 /// Error caused by caller creating an invalid query

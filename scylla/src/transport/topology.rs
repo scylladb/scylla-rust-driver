@@ -1717,13 +1717,18 @@ fn strategy_from_string_map(
             let mut datacenter_repfactors: HashMap<String, usize> =
                 HashMap::with_capacity(strategy_map.len());
 
-            for (datacenter, rep_factor_str) in strategy_map.drain() {
-                let rep_factor: usize = match usize::from_str(&rep_factor_str) {
-                    Ok(number) => number,
-                    Err(_) => continue, // There might be other things in the map, we care only about rep_factors
-                };
+            for (key, value) in strategy_map.drain() {
+                let rep_factor: usize = usize::from_str(&value).map_err(|_| {
+                    // Unexpected NTS option.
+                    // We only expect 'class' (which is resolved above)
+                    // and replication factors per dc.
+                    KeyspaceStrategyError::UnexpectedNetworkTopologyStrategyOption {
+                        key: key.clone(),
+                        value,
+                    }
+                })?;
 
-                datacenter_repfactors.insert(datacenter, rep_factor);
+                datacenter_repfactors.insert(key, rep_factor);
             }
 
             Strategy::NetworkTopologyStrategy {
