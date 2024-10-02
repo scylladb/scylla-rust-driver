@@ -298,7 +298,7 @@ mod tests {
         let row_iter = RowIterator::new(2, specs, FrameSlice::new(raw_data));
         let lending_row_iter =
             RawRowsLendingIterator::new(DeserializedMetadataAndRawRows::new_for_test(
-                ResultMetadata::new_for_test(specs.len(), specs.to_vec()),
+                ResultMetadata::new_for_test(specs.len(), None, specs.to_vec()),
                 2,
                 raw_data.clone(),
             ));
@@ -340,7 +340,7 @@ mod tests {
         let row_iter = RowIterator::new(2, specs, FrameSlice::new(raw_data));
         let lending_row_iter =
             RawRowsLendingIterator::new(DeserializedMetadataAndRawRows::new_for_test(
-                ResultMetadata::new_for_test(specs.len(), specs.to_vec()),
+                ResultMetadata::new_for_test(specs.len(), None, specs.to_vec()),
                 2,
                 raw_data.clone(),
             ));

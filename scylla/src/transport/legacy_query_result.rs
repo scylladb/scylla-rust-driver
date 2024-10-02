@@ -303,12 +303,17 @@ mod tests {
         rows
     }
 
-    fn make_test_metadata() -> ResultMetadata<'static> {
+    fn make_test_metadata() -> scylla_cql::frame::response::result::ResultMetadata<'static> {
         let table_spec = TableSpec::borrowed("some_keyspace", "some_table");
+        let table_spec_clone = table_spec.clone();
 
         let column_spec = ColumnSpec::borrowed("column0", ColumnType::Int, table_spec);
 
-        ResultMetadata::new_for_test(1, vec![column_spec])
+        scylla_cql::frame::response::result::ResultMetadata::new_for_test(
+            1,
+            Some(table_spec_clone),
+            vec![column_spec],
+        )
     }
 
     fn make_not_rows_query_result() -> LegacyQueryResult {

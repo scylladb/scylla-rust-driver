@@ -636,6 +636,7 @@ mod tests {
             col_count: col_specs.len(),
             col_specs,
             pk_indexes,
+            table_spec: Some(table_spec),
         }
     }
 

@@ -525,6 +525,7 @@ impl<'frame> ColumnSpec<'frame> {
 #[derive(Debug, Clone, Yokeable)]
 pub struct ResultMetadata<'a> {
     col_count: usize,
+    table_spec: Option<TableSpec<'a>>,
     col_specs: Vec<ColumnSpec<'a>>,
 }
 
@@ -545,6 +546,7 @@ impl<'a> ResultMetadata<'a> {
     pub fn mock_empty() -> Self {
         Self {
             col_count: 0,
+            table_spec: None,
             col_specs: Vec::new(),
         }
     }
@@ -586,6 +588,7 @@ pub struct PreparedMetadata {
     /// pk_indexes are sorted by `index` and can be reordered in partition key order
     /// using `sequence` field
     pub pk_indexes: Vec<PartitionKeyIndex>,
+    pub table_spec: Option<TableSpec<'static>>,
     pub col_specs: Vec<ColumnSpec<'static>>,
 }
 
@@ -1041,7 +1044,7 @@ fn deser_col_specs_owned<'frame>(
     buf: &mut &'frame [u8],
     global_table_spec: Option<TableSpec<'frame>>,
     col_count: usize,
-) -> StdResult<Vec<ColumnSpec<'static>>, ColumnSpecParseError> {
+) -> StdResult<(TableSpec<'static>, Vec<ColumnSpec<'static>>), ColumnSpecParseError> {
     let result: StdResult<Vec<ColumnSpec<'static>>, ColumnSpecParseError> = deser_col_specs_generic(
         buf,
         global_table_spec,
@@ -1073,18 +1076,21 @@ fn deser_result_metadata(
 
     let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
 
-    let col_specs = if no_metadata {
-        vec![]
+    let (table_spec, col_specs) = if no_metadata {
+        (None, vec![])
     } else {
         let global_table_spec = global_tables_spec
             .then(|| deser_table_spec(buf))
             .transpose()?;
 
-        deser_col_specs_owned(buf, global_table_spec, col_count)?
+        let (table_spec, col_specs) = deser_col_specs_owned(buf, global_table_spec, col_count)?;
+        let table_spec = table_spec.map(TableSpec::into_owned);
+        (table_spec, col_specs)
     };
 
     let metadata = ResultMetadata {
         col_count,
+        table_spec,
         col_specs,
     };
     Ok((metadata, paging_state))
@@ -1262,11 +1268,12 @@ fn deser_prepared_metadata(
         .then(|| deser_table_spec(buf))
         .transpose()?;
 
-    let col_specs = deser_col_specs_owned(buf, global_table_spec, col_count)?;
+    let (table_spec, col_specs) = deser_col_specs_owned(buf, global_table_spec, col_count)?;
 
     Ok(PreparedMetadata {
         flags,
         col_count,
+        table_spec: table_spec.map(TableSpec::into_owned),
         pk_indexes,
         col_specs,
     })
@@ -1619,9 +1626,14 @@ mod test_utils {
     impl<'a> ResultMetadata<'a> {
         #[inline]
         #[doc(hidden)]
-        pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec<'a>>) -> Self {
+        pub fn new_for_test(
+            col_count: usize,
+            table_spec: Option<TableSpec<'a>>,
+            col_specs: Vec<ColumnSpec<'a>>,
+        ) -> Self {
             Self {
                 col_count,
+                table_spec,
                 col_specs,
             }
         }

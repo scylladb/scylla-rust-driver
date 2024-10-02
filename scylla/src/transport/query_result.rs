@@ -506,7 +506,11 @@ mod tests {
         }
 
         fn sample_result_metadata(cols: usize) -> ResultMetadata<'static> {
-            ResultMetadata::new_for_test(cols, column_spec_infinite_iter().take(cols).collect())
+            ResultMetadata::new_for_test(
+                cols,
+                None,
+                column_spec_infinite_iter().take(cols).collect(),
+            )
         }
 
         fn sample_raw_rows(cols: usize, rows: usize) -> RawMetadataAndRawRows {
