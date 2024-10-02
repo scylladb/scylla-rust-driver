@@ -1,7 +1,6 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
-use scylla::transport::session::Session;
-use scylla::SessionBuilder;
 use scylla::{prepared_statement::PreparedStatement, test_utils::unique_keyspace_name};
+use scylla::{Session, SessionBuilder};
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 use scylla_cql::frame::types;
 use scylla_proxy::{
@@ -114,7 +113,7 @@ async fn test_skip_result_metadata() {
                     .query_unpaged(select_query, ())
                     .await
                     .unwrap()
-                    .rows_typed::<RowT>()
+                    .rows::<RowT>()
                     .unwrap()
                     .collect::<Result<Vec<_>, _>>()
                     .unwrap();
@@ -131,7 +130,7 @@ async fn test_skip_result_metadata() {
                         .await
                         .unwrap();
                     results_from_manual_paging
-                        .extend(rs_manual.rows_typed::<RowT>().unwrap().map(Result::unwrap));
+                        .extend(rs_manual.rows::<RowT>().unwrap().map(Result::unwrap));
 
                     match paging_state_response {
                         PagingStateResponse::HasMorePages { state } => {

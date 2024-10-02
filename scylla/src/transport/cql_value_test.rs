@@ -1,4 +1,5 @@
-use crate::frame::{response::result::CqlValue, value::CqlDuration};
+use crate::frame::response::result::{CqlValue, Row};
+use crate::frame::value::CqlDuration;
 
 use crate::test_utils::{create_new_session_builder, setup_tracing};
 use crate::utils::test_utils::unique_keyspace_name;
@@ -58,7 +59,9 @@ async fn test_cqlvalue_udt() {
         .query_unpaged("SELECT my FROM cqlvalue_udt_test", &[])
         .await
         .unwrap()
-        .rows
+        .rows::<Row>()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
     assert_eq!(rows.len(), 1);
@@ -113,7 +116,9 @@ async fn test_cqlvalue_duration() {
         )
         .await
         .unwrap()
-        .rows
+        .rows::<Row>()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
     assert_eq!(rows.len(), 4);

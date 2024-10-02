@@ -469,7 +469,6 @@ mod tests {
     use crate::test_utils::create_new_session_builder;
     use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-    use futures::StreamExt;
     use scylla_cql::Consistency;
 
     // Set a single time for all timestamps within StructuredHistory.

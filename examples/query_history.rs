@@ -1,7 +1,6 @@
 //! This example shows how to collect history of query execution.
 
 use anyhow::Result;
-use futures::StreamExt;
 use scylla::history::{HistoryCollector, StructuredHistory};
 use scylla::query::Query;
 use scylla::transport::session::Session;

@@ -16,9 +16,7 @@ use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::ClusterData;
 use scylla::transport::Node;
 use scylla::transport::NodeRef;
-use scylla::ExecutionProfile;
-use scylla::QueryResult;
-use scylla::Session;
+use scylla::{ExecutionProfile, QueryResult, Session};
 
 use scylla::transport::errors::QueryError;
 use scylla_proxy::{
@@ -30,7 +28,7 @@ use tokio::sync::mpsc;
 use tracing::info;
 use uuid::Uuid;
 
-#[derive(scylla::FromRow)]
+#[derive(scylla::DeserializeRow)]
 struct SelectedTablet {
     last_token: i64,
     replicas: Vec<(Uuid, i32)>,
@@ -57,8 +55,10 @@ async fn get_tablets(session: &Session, ks: &str, table: &str) -> Vec<Tablet> {
         "select last_token, replicas from system.tablets WHERE keyspace_name = ? and table_name = ? ALLOW FILTERING",
         &(ks, table)).await.unwrap();
 
-    let mut selected_tablets = selected_tablets_response
+    let mut selected_tablets: Vec<SelectedTablet> = selected_tablets_response
         .into_typed::<SelectedTablet>()
+        .unwrap()
+        .into_stream()
         .try_collect::<Vec<_>>()
         .await
         .unwrap();
@@ -418,6 +418,8 @@ async fn test_default_policy_is_tablet_aware() {
 #[tokio::test]
 #[ntest::timeout(30000)]
 async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
+    use scylla::test_utils::scylla_supports_tablets;
+
     setup_tracing();
     const TABLET_COUNT: usize = 16;
 
@@ -431,7 +433,7 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets(&session).await {
+            if !scylla_supports_tablets(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
@@ -490,6 +492,8 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
 #[ntest::timeout(30000)]
 #[ignore]
 async fn test_lwt_optimization_works_with_tablets() {
+    use scylla::test_utils::scylla_supports_tablets;
+
     setup_tracing();
     const TABLET_COUNT: usize = 16;
 
@@ -503,7 +507,7 @@ async fn test_lwt_optimization_works_with_tablets() {
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets(&session).await {
+            if !scylla_supports_tablets(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }

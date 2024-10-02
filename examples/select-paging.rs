@@ -1,5 +1,4 @@
 use anyhow::Result;
-use futures::stream::StreamExt;
 use scylla::statement::PagingState;
 use scylla::{query::Query, Session, SessionBuilder};
 use std::env;
@@ -35,7 +34,7 @@ async fn main() -> Result<()> {
     let mut rows_stream = session
         .query_iter("SELECT a, b, c FROM examples_ks.select_paging", &[])
         .await?
-        .into_typed::<(i32, i32, String)>();
+        .into_typed::<(i32, i32, String)>()?;
 
     while let Some(next_row_res) = rows_stream.next().await {
         let (a, b, c) = next_row_res?;
@@ -54,7 +53,7 @@ async fn main() -> Result<()> {
         println!(
             "Paging state: {:#?} ({} rows)",
             paging_state_response,
-            res.rows_num()?,
+            res.rows_num().expect("Got non-Rows response!"),
         );
 
         match paging_state_response.into_paging_control_flow() {
@@ -84,7 +83,7 @@ async fn main() -> Result<()> {
         println!(
             "Paging state from the prepared statement execution: {:#?} ({} rows)",
             paging_state_response,
-            res.rows_num()?,
+            res.rows_num().expect("Got non-Rows response!"),
         );
 
         match paging_state_response.into_paging_control_flow() {

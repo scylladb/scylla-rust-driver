@@ -46,9 +46,9 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::iterator::RowIterator;
+use super::iterator::RawIterator;
 use super::locator::tablets::{RawTablet, TabletParsingError};
-use super::query_result::SingleRowTypedError;
+use super::query_result::{QueryResult, SingleRowError};
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
@@ -69,7 +69,6 @@ use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::transport::Compression;
-use crate::QueryResult;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
@@ -268,14 +267,11 @@ impl NonErrorQueryResponse {
     pub(crate) fn into_query_result_and_paging_state(
         self,
     ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
-        let (rows, paging_state, metadata, serialized_size) = match self.response {
-            NonErrorResponse::Result(result::Result::Rows(rs)) => (
-                Some(rs.rows),
-                rs.paging_state_response,
-                Some(rs.metadata),
-                rs.serialized_size,
-            ),
-            NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages, None, 0),
+        let (raw_rows, paging_state_response) = match self.response {
+            NonErrorResponse::Result(result::Result::Rows((rs, paging_state_response))) => {
+                (Some(rs), paging_state_response)
+            }
+            NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages),
             _ => {
                 return Err(UserRequestError::UnexpectedResponse(
                     self.response.to_response_kind(),
@@ -284,14 +280,8 @@ impl NonErrorQueryResponse {
         };
 
         Ok((
-            QueryResult {
-                rows,
-                warnings: self.warnings,
-                tracing_id: self.tracing_id,
-                metadata,
-                serialized_size,
-            },
-            paging_state,
+            QueryResult::new(raw_rows, self.tracing_id, self.warnings),
+            paging_state_response,
         ))
     }
 
@@ -1188,13 +1178,13 @@ impl Connection {
     pub(crate) async fn query_iter(
         self: Arc<Self>,
         query: Query,
-    ) -> Result<RowIterator, QueryError> {
+    ) -> Result<RawIterator, QueryError> {
         let consistency = query
             .config
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = query.config.serial_consistency.flatten();
 
-        RowIterator::new_for_connection_query_iter(query, self, consistency, serial_consistency)
+        RawIterator::new_for_connection_query_iter(query, self, consistency, serial_consistency)
             .await
     }
 
@@ -1204,13 +1194,13 @@ impl Connection {
         self: Arc<Self>,
         prepared_statement: PreparedStatement,
         values: SerializedValues,
-    ) -> Result<RowIterator, QueryError> {
+    ) -> Result<RawIterator, QueryError> {
         let consistency = prepared_statement
             .config
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = prepared_statement.config.serial_consistency.flatten();
 
-        RowIterator::new_for_connection_execute_iter(
+        RawIterator::new_for_connection_execute_iter(
             prepared_statement,
             values,
             self,
@@ -1424,16 +1414,19 @@ impl Connection {
         let (version_id,) = self
             .query_unpaged(LOCAL_VERSION)
             .await?
-            .single_row_typed()
+            .single_row::<(Uuid,)>()
             .map_err(|err| match err {
-                SingleRowTypedError::RowsExpected(_) => {
+                SingleRowError::NotRowsResponse => {
                     QueryError::ProtocolError("Version query returned not rows")
                 }
-                SingleRowTypedError::BadNumberOfRows(_) => {
+                SingleRowError::UnexpectedRowCount(_) => {
                     QueryError::ProtocolError("system.local query returned a wrong number of rows")
                 }
-                SingleRowTypedError::FromRowError(_) => {
+                SingleRowError::TypeCheckFailed(_) => {
                     QueryError::ProtocolError("Row is not uuid type as it should be")
+                }
+                SingleRowError::DeserializationFailed(_) => {
+                    QueryError::ProtocolError("Error when deserializing schema version")
                 }
             })?;
         Ok(version_id)
@@ -2368,6 +2361,7 @@ mod tests {
     use scylla_cql::frame::protocol_features::{
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };
+    use scylla_cql::frame::response::result::Row;
     use scylla_cql::frame::types;
     use scylla_proxy::{
         Condition, Node, Proxy, Reaction, RequestFrame, RequestOpcode, RequestReaction,
@@ -2466,6 +2460,9 @@ mod tests {
             .query_iter(select_query.clone())
             .await
             .unwrap()
+            .into_typed::<Row>()
+            .unwrap()
+            .into_stream()
             .try_collect::<Vec<_>>()
             .await
             .unwrap();
@@ -2495,6 +2492,8 @@ mod tests {
             .await
             .unwrap()
             .into_typed::<(i32,)>()
+            .unwrap()
+            .into_stream()
             .map(|ret| ret.unwrap().0)
             .collect::<Vec<_>>()
             .await;
@@ -2508,6 +2507,9 @@ mod tests {
             ))
             .await
             .unwrap()
+            .into_typed::<Row>()
+            .unwrap()
+            .into_stream()
             .try_collect::<Vec<_>>()
             .await
             .unwrap();
@@ -2608,7 +2610,7 @@ mod tests {
                 .query_unpaged("SELECT p, v FROM t")
                 .await
                 .unwrap()
-                .rows_typed::<(i32, Vec<u8>)>()
+                .rows::<(i32, Vec<u8>)>()
                 .unwrap()
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();

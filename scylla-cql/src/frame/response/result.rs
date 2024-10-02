@@ -11,10 +11,11 @@ use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
 use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
+use crate::types::deserialize::row::DeserializeRow;
 use crate::types::deserialize::value::{
     mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
 };
-use crate::types::deserialize::{DeserializationError, FrameSlice};
+use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -437,6 +438,8 @@ pub struct ResultMetadata {
 
 impl ResultMetadata {
     #[inline]
+    // Preferred to implementing Default, because users shouldn't be able to create
+    // empty ResultMetadata.
     pub fn mock_empty() -> Self {
         Self {
             col_count: 0,
@@ -484,6 +487,106 @@ impl Row {
     }
 }
 
+/// Rows response, in partially serialized form.
+// TODO: We could provide ResultMetadata in a similar, lazily
+// deserialized form - now it can be a source of allocations
+#[derive(Debug)]
+pub struct RawRows {
+    metadata: Arc<ResultMetadata>,
+    rows_count: usize,
+    raw_rows: Bytes,
+}
+
+impl RawRows {
+    // Preferred to implementing Default, because users shouldn't be able to create
+    // empty RawRows.
+    #[inline]
+    pub fn mock_empty() -> Self {
+        Self {
+            metadata: Arc::new(ResultMetadata::mock_empty()),
+            rows_count: 0,
+            raw_rows: Bytes::new(),
+        }
+    }
+
+    /// Returns the metadata associated with this response (paging state
+    /// and column specifications).
+    #[inline]
+    pub fn metadata(&self) -> &ResultMetadata {
+        &self.metadata
+    }
+
+    #[inline]
+    pub(crate) fn into_inner(self) -> (Arc<ResultMetadata>, usize, Bytes) {
+        (self.metadata, self.rows_count, self.raw_rows)
+    }
+
+    /// Consumes the `RawRows` and returns metadata associated with the
+    /// response.
+    #[inline]
+    pub fn into_metadata(self) -> Arc<ResultMetadata> {
+        self.metadata
+    }
+
+    /// Returns the number of rows that these `RawRows` contain.
+    #[inline]
+    pub fn rows_count(&self) -> usize {
+        self.rows_count
+    }
+
+    /// Returns the serialized size of the `RawRows`.
+    #[inline]
+    pub fn rows_size(&self) -> usize {
+        self.raw_rows.len()
+    }
+
+    /// Creates a typed iterator over the rows that lazily deserializes
+    /// rows in the result.
+    ///
+    /// Returns Err if the schema of returned result doesn't match R.
+    #[inline]
+    pub fn rows_iter<'r, R: DeserializeRow<'r>>(
+        &'r self,
+    ) -> StdResult<TypedRowIterator<'r, R>, TypeCheckError> {
+        let slice = FrameSlice::new(&self.raw_rows);
+        let raw = RowIterator::new(self.rows_count, &self.metadata.col_specs, slice);
+        TypedRowIterator::new(raw)
+    }
+
+    /// Converts the `RawRows` into `Rows` - a legacy, inefficient representation.
+    ///
+    /// Provided only to make migration to the new deserialization API
+    /// more convenient - this function will be deprecated and removed
+    /// in future releases.
+    ///
+    /// As RawRows don't store PagingStateResponse, it must be provided separately.
+    pub fn into_legacy_rows(
+        self,
+        paging_state_response: PagingStateResponse,
+    ) -> StdResult<Rows, RowsParseError> {
+        let rows = self.rows_iter::<Row>()?.collect::<StdResult<_, _>>()?;
+        Ok(Rows {
+            metadata: self.metadata,
+            paging_state_response,
+            rows_count: self.rows_count,
+            rows,
+            serialized_size: self.raw_rows.len(),
+        })
+    }
+}
+
+// Test utils for scylla crate.
+#[doc(hidden)]
+impl RawRows {
+    pub fn new_for_test(metadata: Arc<ResultMetadata>, rows_count: usize, raw_rows: Bytes) -> Self {
+        Self {
+            metadata,
+            rows_count,
+            raw_rows,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Rows {
     pub metadata: Arc<ResultMetadata>,
@@ -497,7 +600,7 @@ pub struct Rows {
 #[derive(Debug)]
 pub enum Result {
     Void,
-    Rows(Rows),
+    Rows((RawRows, PagingStateResponse)),
     SetKeyspace(SetKeyspace),
     Prepared(Prepared),
     SchemaChange(SchemaChange),
@@ -868,7 +971,7 @@ pub fn deser_cql_value(
 fn deser_rows(
     buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata>>,
-) -> StdResult<Rows, RowsParseError> {
+) -> StdResult<(RawRows, PagingStateResponse), RowsParseError> {
     let buf = &mut &*buf_bytes;
     let (server_metadata, paging_state_response) = deser_result_metadata(buf)?;
 
@@ -886,28 +989,16 @@ fn deser_rows(
         }
     };
 
-    let original_size = buf.len();
-
     let rows_count: usize =
         types::read_int_length(buf).map_err(RowsParseError::RowsCountParseError)?;
 
-    let raw_rows_iter = RowIterator::new(
-        rows_count,
-        &metadata.col_specs,
-        FrameSlice::new_borrowed(buf),
-    );
-    let rows_iter = TypedRowIterator::<Row>::new(raw_rows_iter)
-        .map_err(|err| DeserializationError::new(err.0))?;
-
-    let rows = rows_iter.collect::<StdResult<_, _>>()?;
-
-    Ok(Rows {
+    let raw_rows = RawRows {
         metadata,
-        paging_state_response,
         rows_count,
-        rows,
-        serialized_size: original_size - buf.len(),
-    })
+        raw_rows: buf_bytes.slice_ref(buf),
+    };
+
+    Ok((raw_rows, paging_state_response))
 }
 
 fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {

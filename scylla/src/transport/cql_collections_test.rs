@@ -1,7 +1,9 @@
-use crate::cql_to_rust::FromCqlVal;
+use crate::transport::session::Session;
+use scylla_cql::types::deserialize::value::DeserializeValue;
+
+use crate::frame::response::result::CqlValue;
 use crate::test_utils::{create_new_session_builder, setup_tracing};
 use crate::utils::test_utils::unique_keyspace_name;
-use crate::{frame::response::result::CqlValue, Session};
 use scylla_cql::types::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -34,7 +36,7 @@ async fn insert_and_select<InsertT, SelectT>(
     expected: &SelectT,
 ) where
     InsertT: SerializeValue,
-    SelectT: FromCqlVal<Option<CqlValue>> + PartialEq + std::fmt::Debug,
+    SelectT: for<'r> DeserializeValue<'r> + PartialEq + std::fmt::Debug,
 {
     session
         .query_unpaged(
@@ -48,7 +50,7 @@ async fn insert_and_select<InsertT, SelectT>(
         .query_unpaged(format!("SELECT val FROM {} WHERE p = 0", table_name), ())
         .await
         .unwrap()
-        .single_row_typed::<(SelectT,)>()
+        .single_row::<(SelectT,)>()
         .unwrap()
         .0;
 

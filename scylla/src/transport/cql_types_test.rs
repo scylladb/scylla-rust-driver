@@ -1,15 +1,14 @@
 use crate as scylla;
-use crate::cql_to_rust::FromCqlVal;
 use crate::frame::response::result::CqlValue;
 use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
-use crate::macros::FromUserType;
 use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
 use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
 use itertools::Itertools;
 use scylla_cql::frame::value::{CqlTimeuuid, CqlVarint};
+use scylla_cql::types::deserialize::value::DeserializeValue;
 use scylla_cql::types::serialize::value::SerializeValue;
-use scylla_macros::SerializeValue;
+use scylla_macros::{DeserializeValue, SerializeValue};
 use std::cmp::PartialEq;
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -75,7 +74,7 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
 // Expected values and bound values are computed using T::from_str
 async fn run_tests<T>(tests: &[&str], type_name: &str)
 where
-    T: SerializeValue + FromCqlVal<CqlValue> + FromStr + Debug + Clone + PartialEq,
+    T: SerializeValue + for<'r> DeserializeValue<'r> + FromStr + Debug + Clone + PartialEq,
 {
     let session: Session = init_test(type_name, type_name).await;
     session.await_schema_agreement().await.unwrap();
@@ -100,7 +99,7 @@ where
             .query_unpaged(select_values, &[])
             .await
             .unwrap()
-            .rows_typed::<(T,)>()
+            .rows::<(T,)>()
             .unwrap()
             .map(Result::unwrap)
             .map(|row| row.0)
@@ -218,7 +217,7 @@ async fn test_cql_varint() {
             .execute_unpaged(&prepared_select, &[])
             .await
             .unwrap()
-            .rows_typed::<(CqlVarint,)>()
+            .rows::<(CqlVarint,)>()
             .unwrap()
             .map(Result::unwrap)
             .map(|row| row.0)
@@ -293,7 +292,7 @@ async fn test_counter() {
             .query_unpaged(select_values, (i as i32,))
             .await
             .unwrap()
-            .rows_typed::<(Counter,)>()
+            .rows::<(Counter,)>()
             .unwrap()
             .map(Result::unwrap)
             .map(|row| row.0)
@@ -369,7 +368,7 @@ async fn test_naive_date_04() {
             .query_unpaged("SELECT val from chrono_naive_date_tests", &[])
             .await
             .unwrap()
-            .rows_typed::<(NaiveDate,)>()
+            .rows::<(NaiveDate,)>()
             .unwrap()
             .next()
             .unwrap()
@@ -392,7 +391,7 @@ async fn test_naive_date_04() {
                 .query_unpaged("SELECT val from chrono_naive_date_tests", &[])
                 .await
                 .unwrap()
-                .single_row_typed::<(NaiveDate,)>()
+                .single_row::<(NaiveDate,)>()
                 .unwrap();
             assert_eq!(read_date, *naive_date);
         }
@@ -427,15 +426,11 @@ async fn test_cql_date() {
             .await
             .unwrap();
 
-        let read_date: CqlDate = session
+        let (read_date,): (CqlDate,) = session
             .query_unpaged("SELECT val from cql_date_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()[0]
-            .columns[0]
-            .as_ref()
-            .map(|cql_val| cql_val.as_cql_date().unwrap())
+            .single_row::<(CqlDate,)>()
             .unwrap();
 
         assert_eq!(read_date, *date);
@@ -518,7 +513,7 @@ async fn test_date_03() {
             .query_unpaged("SELECT val from time_date_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(Date,)>()
+            .first_row::<(Date,)>()
             .ok()
             .map(|val| val.0);
 
@@ -538,7 +533,7 @@ async fn test_date_03() {
                 .query_unpaged("SELECT val from time_date_tests", &[])
                 .await
                 .unwrap()
-                .first_row_typed::<(Date,)>()
+                .first_row::<(Date,)>()
                 .unwrap();
             assert_eq!(read_date, *date);
         }
@@ -581,7 +576,7 @@ async fn test_cql_time() {
             .query_unpaged("SELECT val from cql_time_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTime,)>()
+            .single_row::<(CqlTime,)>()
             .unwrap();
 
         assert_eq!(read_time, *time_duration);
@@ -599,7 +594,7 @@ async fn test_cql_time() {
             .query_unpaged("SELECT val from cql_time_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTime,)>()
+            .single_row::<(CqlTime,)>()
             .unwrap();
 
         assert_eq!(read_time, *time_duration);
@@ -677,7 +672,7 @@ async fn test_naive_time_04() {
             .query_unpaged("SELECT val from chrono_time_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(NaiveTime,)>()
+            .first_row::<(NaiveTime,)>()
             .unwrap();
 
         assert_eq!(read_time, *time);
@@ -695,7 +690,7 @@ async fn test_naive_time_04() {
             .query_unpaged("SELECT val from chrono_time_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(NaiveTime,)>()
+            .first_row::<(NaiveTime,)>()
             .unwrap();
         assert_eq!(read_time, *time);
     }
@@ -757,7 +752,7 @@ async fn test_time_03() {
             .query_unpaged("SELECT val from time_time_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(Time,)>()
+            .first_row::<(Time,)>()
             .unwrap();
 
         assert_eq!(read_time, *time);
@@ -775,7 +770,7 @@ async fn test_time_03() {
             .query_unpaged("SELECT val from time_time_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(Time,)>()
+            .first_row::<(Time,)>()
             .unwrap();
         assert_eq!(read_time, *time);
     }
@@ -828,7 +823,7 @@ async fn test_cql_timestamp() {
             .query_unpaged("SELECT val from cql_timestamp_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTimestamp,)>()
+            .single_row::<(CqlTimestamp,)>()
             .unwrap();
 
         assert_eq!(read_timestamp, *timestamp_duration);
@@ -846,7 +841,7 @@ async fn test_cql_timestamp() {
             .query_unpaged("SELECT val from cql_timestamp_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTimestamp,)>()
+            .single_row::<(CqlTimestamp,)>()
             .unwrap();
 
         assert_eq!(read_timestamp, *timestamp_duration);
@@ -923,7 +918,7 @@ async fn test_date_time_04() {
             .query_unpaged("SELECT val from chrono_datetime_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(DateTime<Utc>,)>()
+            .first_row::<(DateTime<Utc>,)>()
             .unwrap();
 
         assert_eq!(read_datetime, *datetime);
@@ -941,7 +936,7 @@ async fn test_date_time_04() {
             .query_unpaged("SELECT val from chrono_datetime_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(DateTime<Utc>,)>()
+            .first_row::<(DateTime<Utc>,)>()
             .unwrap();
         assert_eq!(read_datetime, *datetime);
     }
@@ -969,7 +964,7 @@ async fn test_date_time_04() {
         .query_unpaged("SELECT val from chrono_datetime_tests", &[])
         .await
         .unwrap()
-        .first_row_typed::<(DateTime<Utc>,)>()
+        .first_row::<(DateTime<Utc>,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_1st_half_rounded);
 
@@ -995,7 +990,7 @@ async fn test_date_time_04() {
         .query_unpaged("SELECT val from chrono_datetime_tests", &[])
         .await
         .unwrap()
-        .first_row_typed::<(DateTime<Utc>,)>()
+        .first_row::<(DateTime<Utc>,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
 
@@ -1084,7 +1079,7 @@ async fn test_offset_date_time_03() {
             .query_unpaged("SELECT val from time_datetime_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(OffsetDateTime,)>()
+            .first_row::<(OffsetDateTime,)>()
             .unwrap();
 
         assert_eq!(read_datetime, *datetime);
@@ -1102,7 +1097,7 @@ async fn test_offset_date_time_03() {
             .query_unpaged("SELECT val from time_datetime_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(OffsetDateTime,)>()
+            .first_row::<(OffsetDateTime,)>()
             .unwrap();
         assert_eq!(read_datetime, *datetime);
     }
@@ -1130,7 +1125,7 @@ async fn test_offset_date_time_03() {
         .query_unpaged("SELECT val from time_datetime_tests", &[])
         .await
         .unwrap()
-        .first_row_typed::<(OffsetDateTime,)>()
+        .first_row::<(OffsetDateTime,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_1st_half_rounded);
 
@@ -1156,7 +1151,7 @@ async fn test_offset_date_time_03() {
         .query_unpaged("SELECT val from time_datetime_tests", &[])
         .await
         .unwrap()
-        .first_row_typed::<(OffsetDateTime,)>()
+        .first_row::<(OffsetDateTime,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
 }
@@ -1205,7 +1200,7 @@ async fn test_timeuuid() {
             .query_unpaged("SELECT val from timeuuid_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTimeuuid,)>()
+            .single_row::<(CqlTimeuuid,)>()
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
@@ -1224,7 +1219,7 @@ async fn test_timeuuid() {
             .query_unpaged("SELECT val from timeuuid_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTimeuuid,)>()
+            .single_row::<(CqlTimeuuid,)>()
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
@@ -1293,7 +1288,7 @@ async fn test_timeuuid_ordering() {
         .query_unpaged("SELECT t FROM tab WHERE p = 0", ())
         .await
         .unwrap()
-        .rows_typed::<(CqlTimeuuid,)>()
+        .rows::<(CqlTimeuuid,)>()
         .unwrap()
         .map(|r| r.unwrap().0)
         .collect();
@@ -1372,7 +1367,7 @@ async fn test_inet() {
             .query_unpaged("SELECT val from inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .single_row_typed::<(IpAddr,)>()
+            .single_row::<(IpAddr,)>()
             .unwrap();
 
         assert_eq!(read_inet, *inet);
@@ -1387,7 +1382,7 @@ async fn test_inet() {
             .query_unpaged("SELECT val from inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .single_row_typed::<(IpAddr,)>()
+            .single_row::<(IpAddr,)>()
             .unwrap();
 
         assert_eq!(read_inet, *inet);
@@ -1438,7 +1433,7 @@ async fn test_blob() {
             .query_unpaged("SELECT val from blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .single_row_typed::<(Vec<u8>,)>()
+            .single_row::<(Vec<u8>,)>()
             .unwrap();
 
         assert_eq!(read_blob, *blob);
@@ -1453,7 +1448,7 @@ async fn test_blob() {
             .query_unpaged("SELECT val from blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .single_row_typed::<(Vec<u8>,)>()
+            .single_row::<(Vec<u8>,)>()
             .unwrap();
 
         assert_eq!(read_blob, *blob);
@@ -1514,7 +1509,7 @@ async fn test_udt_after_schema_update() {
         .await
         .unwrap();
 
-    #[derive(SerializeValue, FromUserType, Debug, PartialEq)]
+    #[derive(SerializeValue, DeserializeValue, Debug, PartialEq)]
     #[scylla(crate = crate)]
     struct UdtV1 {
         first: i32,
@@ -1541,7 +1536,7 @@ async fn test_udt_after_schema_update() {
         .query_unpaged(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
-        .single_row_typed::<(UdtV1,)>()
+        .single_row::<(UdtV1,)>()
         .unwrap();
 
     assert_eq!(read_udt, v1);
@@ -1558,7 +1553,7 @@ async fn test_udt_after_schema_update() {
         .query_unpaged(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
-        .single_row_typed::<(UdtV1,)>()
+        .single_row::<(UdtV1,)>()
         .unwrap();
 
     assert_eq!(read_udt, v1);
@@ -1568,7 +1563,7 @@ async fn test_udt_after_schema_update() {
         .await
         .unwrap();
 
-    #[derive(FromUserType, Debug, PartialEq)]
+    #[derive(DeserializeValue, Debug, PartialEq)]
     struct UdtV2 {
         first: i32,
         second: bool,
@@ -1579,7 +1574,7 @@ async fn test_udt_after_schema_update() {
         .query_unpaged(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
-        .single_row_typed::<(UdtV2,)>()
+        .single_row::<(UdtV2,)>()
         .unwrap();
 
     assert_eq!(
@@ -1609,7 +1604,7 @@ async fn test_empty() {
         .query_unpaged("SELECT val FROM empty_tests WHERE id = 0", ())
         .await
         .unwrap()
-        .first_row_typed::<(CqlValue,)>()
+        .first_row::<(CqlValue,)>()
         .unwrap();
 
     assert_eq!(empty, CqlValue::Empty);
@@ -1626,7 +1621,7 @@ async fn test_empty() {
         .query_unpaged("SELECT val FROM empty_tests WHERE id = 1", ())
         .await
         .unwrap()
-        .first_row_typed::<(CqlValue,)>()
+        .first_row::<(CqlValue,)>()
         .unwrap();
 
     assert_eq!(empty, CqlValue::Empty);
@@ -1696,7 +1691,7 @@ async fn test_udt_with_missing_field() {
         expected: TR,
     ) where
         TQ: SerializeValue,
-        TR: FromCqlVal<CqlValue> + PartialEq + Debug,
+        TR: for<'r> DeserializeValue<'r> + PartialEq + Debug,
     {
         session
             .query_unpaged(
@@ -1712,13 +1707,13 @@ async fn test_udt_with_missing_field() {
             )
             .await
             .unwrap()
-            .single_row_typed::<(TR,)>()
+            .single_row::<(TR,)>()
             .unwrap()
             .0;
         assert_eq!(expected, result);
     }
 
-    #[derive(FromUserType, Debug, PartialEq)]
+    #[derive(DeserializeValue, Debug, PartialEq)]
     struct UdtFull {
         first: i32,
         second: bool,

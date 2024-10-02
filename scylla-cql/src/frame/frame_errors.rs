@@ -13,7 +13,7 @@ pub use super::request::{
 
 use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
-use crate::types::deserialize::DeserializationError;
+use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use thiserror::Error;
 
 /// An error returned by `parse_response_body_extensions`.
@@ -319,6 +319,8 @@ pub enum RowsParseError {
     },
     #[error("Malformed rows count: {0}")]
     RowsCountParseError(LowLevelDeserializationError),
+    #[error("Data type check prior to deserialization failed: {0}")]
+    IncomingDataTypeCheckError(#[from] TypeCheckError),
     #[error("Data deserialization failed: {0}")]
     DataDeserializationError(#[from] DeserializationError),
 }

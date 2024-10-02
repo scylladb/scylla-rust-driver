@@ -73,19 +73,17 @@
 //! # use scylla::Session;
 //! # use std::error::Error;
 //! # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-//! use scylla::IntoTypedRows;
 //!
 //! // Read rows containing an int and text
 //! // Keep in mind that all results come in one response (no paging is done!),
 //! // so the memory footprint and latency may be huge!
 //! // To prevent that, use `Session::query_iter` or `Session::query_single_page`.
-//! let rows_opt = session
-//!     .query_unpaged("SELECT a, b FROM ks.tab", &[])
-//!     .await?
-//!     .rows;
+//! let query_result = session
+//!         .query_unpaged("SELECT a, b FROM ks.tab", &[])
+//!     .await?;
 //!
-//! if let Some(rows) = rows_opt {
-//!     for row in rows.into_typed::<(i32, String)>() {
+//! if let Some(rows) = query_result.maybe_rows::<(i32, String)>()? {
+//!     for row in rows {
 //!         // Parse row as int and text \
 //!         let (int_val, text_val): (i32, String) = row?;
 //!     }
@@ -190,10 +188,11 @@ pub use statement::query;
 pub use frame::response::cql_to_rust;
 pub use frame::response::cql_to_rust::FromRow;
 
-pub use transport::caching_session::CachingSession;
+pub use transport::caching_session::{CachingSession, LegacyCachingSession};
 pub use transport::execution_profile::ExecutionProfile;
+pub use transport::legacy_query_result::LegacyQueryResult;
 pub use transport::query_result::QueryResult;
-pub use transport::session::{IntoTypedRows, Session, SessionConfig};
+pub use transport::session::{IntoTypedRows, LegacySession, Session, SessionConfig};
 pub use transport::session_builder::SessionBuilder;
 
 #[cfg(feature = "cloud")]

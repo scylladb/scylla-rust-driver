@@ -1,5 +1,5 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
-use scylla::transport::session::Session;
+use scylla::Session;
 use scylla::SessionBuilder;
 use scylla::{query::Query, test_utils::unique_keyspace_name};
 use scylla_proxy::{
