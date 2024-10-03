@@ -603,16 +603,6 @@ pub enum Result {
     SchemaChange(SchemaChange),
 }
 
-fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec<'static>, TableSpecParseError> {
-    let ks_name = types::read_string(buf)
-        .map_err(TableSpecParseError::MalformedKeyspaceName)?
-        .to_owned();
-    let table_name = types::read_string(buf)
-        .map_err(TableSpecParseError::MalformedTableName)?
-        .to_owned();
-    Ok(TableSpec::owned(ks_name, table_name))
-}
-
 macro_rules! generate_deser_type {
     ($deser_type: ident, $l: lifetime, $read_string: expr) => {
         fn $deser_type<'frame>(
@@ -707,6 +697,16 @@ generate_deser_type!(deser_type_owned, 'static, |buf| types::read_string(buf).ma
 
 // This is going to be used for deserializing borrowed result metadata.
 generate_deser_type!(_deser_type_borrowed, 'frame, types::read_string);
+
+fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec<'static>, TableSpecParseError> {
+    let ks_name = types::read_string(buf)
+        .map_err(TableSpecParseError::MalformedKeyspaceName)?
+        .to_owned();
+    let table_name = types::read_string(buf)
+        .map_err(TableSpecParseError::MalformedTableName)?
+        .to_owned();
+    Ok(TableSpec::owned(ks_name, table_name))
+}
 
 fn mk_col_spec_parse_error(
     col_idx: usize,
