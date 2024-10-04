@@ -85,10 +85,29 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
 fn can_be_ignored<ResT>(result: &Result<ResT, QueryError>) -> bool {
     match result {
         Ok(_) => false,
-        Err(QueryError::BrokenConnection(_)) => true,
-        Err(QueryError::ConnectionPoolError(_)) => true,
-        Err(QueryError::TimeoutError) => true,
-        _ => false,
+        Err(e) => {
+            // Do not remove this lint!
+            // It's there for a reason - we don't want new variants
+            // automatically fall under `_` pattern when they are introduced.
+            #[deny(clippy::wildcard_enum_match_arm)]
+            match e {
+                QueryError::BrokenConnection(_)
+                | QueryError::ConnectionPoolError(_)
+                | QueryError::TimeoutError => true,
+
+                QueryError::DbError(_, _)
+                | QueryError::BadQuery(_)
+                | QueryError::CqlRequestSerialization(_)
+                | QueryError::BodyExtensionsParseError(_)
+                | QueryError::EmptyPlan
+                | QueryError::CqlResultParseError(_)
+                | QueryError::CqlErrorParseError(_)
+                | QueryError::MetadataError(_)
+                | QueryError::ProtocolError(_)
+                | QueryError::UnableToAllocStreamId
+                | QueryError::RequestTimeout(_) => false,
+            }
+        }
     }
 }
 
