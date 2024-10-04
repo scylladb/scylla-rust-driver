@@ -223,7 +223,7 @@ mod tests {
     use crate::statement::Consistency;
     use crate::test_utils::setup_tracing;
     use crate::transport::errors::{
-        BadQuery, BrokenConnectionErrorKind, ConnectionPoolError, QueryError,
+        BadQuery, BrokenConnectionErrorKind, ConnectionPoolError, ProtocolError, QueryError,
     };
     use crate::transport::errors::{DbError, WriteType};
     use bytes::Bytes;
@@ -299,7 +299,7 @@ mod tests {
                         (got 1 values, 2 statements)"
                 .to_owned(),
         )));
-        default_policy_assert_never_retries(QueryError::ProtocolError("test"));
+        default_policy_assert_never_retries(ProtocolError::NonfinishedPagingState.into());
     }
 
     // Asserts that for this error policy retries on next on idempotent queries only

@@ -2844,6 +2844,7 @@ mod latency_awareness {
                 | QueryError::CqlRequestSerialization(_)
                 | QueryError::BrokenConnection(_)
                 | QueryError::ConnectionPoolError(_)
+                | QueryError::EmptyPlan
                 | QueryError::UnableToAllocStreamId
                 | QueryError::DbError(DbError::IsBootstrapping, _)
                 | QueryError::DbError(DbError::Unavailable { .. }, _)
@@ -2856,7 +2857,7 @@ mod latency_awareness {
                 | QueryError::CqlResultParseError(_)
                 | QueryError::CqlErrorParseError(_)
                 | QueryError::BodyExtensionsParseError(_)
-                | QueryError::InvalidMessage(_)
+                | QueryError::MetadataError(_)
                 | QueryError::ProtocolError(_)
                 | QueryError::TimeoutError
                 | QueryError::RequestTimeout(_) => true,

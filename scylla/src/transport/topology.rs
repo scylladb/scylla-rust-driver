@@ -29,6 +29,10 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
+use super::errors::{
+    KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
+    ProtocolError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
+};
 use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
@@ -404,11 +408,12 @@ impl fmt::Display for InvalidCqlType {
 
 impl From<InvalidCqlType> for QueryError {
     fn from(e: InvalidCqlType) -> Self {
-        // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
-        QueryError::InvalidMessage(format!(
-            "error parsing type \"{:?}\" at position {}: {}",
-            e.type_, e.position, e.reason
-        ))
+        ProtocolError::InvalidCqlType {
+            typ: e.type_,
+            position: e.position,
+            reason: e.reason,
+        }
+        .into()
     }
 }
 
@@ -750,16 +755,12 @@ async fn query_metadata(
 
     // There must be at least one peer
     if peers.is_empty() {
-        return Err(QueryError::ProtocolError(
-            "Bad Metadata: peers list is empty",
-        ));
+        return Err(MetadataError::Peers(PeersMetadataError::EmptyPeers).into());
     }
 
     // At least one peer has to have some tokens
     if peers.iter().all(|peer| peer.tokens.is_empty()) {
-        return Err(QueryError::ProtocolError(
-            "Bad Metadata: All peers have empty token list",
-        ));
+        return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists).into());
     }
 
     Ok(Metadata { peers, keyspaces })
@@ -957,11 +958,18 @@ async fn query_keyspaces(
 
     rows.map(|row_result| {
         let row = row_result?;
-        let (keyspace_name, strategy_map) = row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system_schema.keyspaces has invalid column type")
+        let (keyspace_name, strategy_map) = row.into_typed::<(String, _)>().map_err(|err| {
+            MetadataError::Keyspaces(KeyspacesMetadataError::SchemaKeyspacesInvalidColumnType(
+                err,
+            ))
         })?;
 
-        let strategy: Strategy = strategy_from_string_map(strategy_map)?;
+        let strategy: Strategy = strategy_from_string_map(strategy_map).map_err(|error| {
+            MetadataError::Keyspaces(KeyspacesMetadataError::Strategy {
+                keyspace: keyspace_name.clone(),
+                error,
+            })
+        })?;
         let tables = all_tables.remove(&keyspace_name).unwrap_or_default();
         let views = all_views.remove(&keyspace_name).unwrap_or_default();
         let user_defined_types = all_user_defined_types
@@ -1035,8 +1043,8 @@ async fn query_user_defined_types(
             let row = row_result?;
             let udt_row = row
                 .into_typed::<UdtRow>()
-                .map_err(|_| {
-                    QueryError::ProtocolError("system_schema.types has invalid column type")
+                .map_err(|err| {
+                    MetadataError::Udts(UdtMetadataError::SchemaTypesInvalidColumnType(err))
                 })?
                 .try_into()?;
 
@@ -1166,9 +1174,7 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), Quer
 
     if sorted.len() < indegs.len() {
         // Some UDTs could not become leaves in the graph, which implies cycles.
-        return Err(QueryError::ProtocolError(
-            "Invalid fetched User Defined Types definitions: circular type dependency detected. Topological sort is thus impossible."
-        ));
+        return Err(MetadataError::Udts(UdtMetadataError::CircularTypeDependency).into());
     }
 
     let owned_sorted = sorted.into_iter().cloned().collect::<Vec<_>>();
@@ -1360,8 +1366,8 @@ async fn query_tables(
 
     rows.map(|row_result| {
         let row = row_result?;
-        let (keyspace_name, table_name) = row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system_schema.tables has invalid column type")
+        let (keyspace_name, table_name) = row.into_typed().map_err(|err| {
+            MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err))
         })?;
 
         let keyspace_and_table_name = (keyspace_name, table_name);
@@ -1402,8 +1408,8 @@ async fn query_views(
 
     rows.map(|row_result| {
         let row = row_result?;
-        let (keyspace_name, view_name, base_table_name) = row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system_schema.views has invalid column type")
+        let (keyspace_name, view_name, base_table_name) = row.into_typed().map_err(|err| {
+            MetadataError::Views(ViewsMetadataError::SchemaViewsInvalidColumnType(err))
         })?;
 
         let keyspace_and_view_name = (keyspace_name, view_name);
@@ -1457,8 +1463,8 @@ async fn query_tables_schema(
             String,
             i32,
             String,
-        ) = row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system_schema.columns has invalid column type")
+        ) = row.into_typed().map_err(|err| {
+            MetadataError::Tables(TablesMetadataError::SchemaColumnsInvalidColumnType(err))
         })?;
 
         if type_ == THRIFT_EMPTY_TYPE {
@@ -1468,15 +1474,20 @@ async fn query_tables_schema(
         let pre_cql_type = map_string_to_cql_type(&type_)?;
         let cql_type = pre_cql_type.into_cql_type(&keyspace_name, udts);
 
+        let kind = ColumnKind::from_str(&kind).map_err(|_| {
+            MetadataError::Tables(TablesMetadataError::UnknownColumnKind {
+                keyspace_name: keyspace_name.clone(),
+                table_name: table_name.clone(),
+                column_name: column_name.clone(),
+                column_kind: kind,
+            })
+        })?;
+
         let entry = tables_schema.entry((keyspace_name, table_name)).or_insert((
             HashMap::new(), // columns
             HashMap::new(), // partition key
             HashMap::new(), // clustering key
         ));
-
-        let kind = ColumnKind::from_str(&kind)
-            // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
-            .map_err(|_| QueryError::InvalidMessage(format!("invalid column kind {}", kind)))?;
 
         if kind == ColumnKind::PartitionKey || kind == ColumnKind::Clustering {
             let key_map = if kind == ColumnKind::PartitionKey {
@@ -1670,8 +1681,8 @@ async fn query_table_partitioners(
     let result = rows
         .map(|row_result| {
             let (keyspace_name, table_name, partitioner) =
-                row_result?.into_typed().map_err(|_| {
-                    QueryError::ProtocolError("system_schema.tables has invalid column type")
+                row_result?.into_typed().map_err(|err| {
+                    MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err))
                 })?;
             Ok::<_, QueryError>(((keyspace_name, table_name), partitioner))
         })
@@ -1690,25 +1701,19 @@ async fn query_table_partitioners(
 
 fn strategy_from_string_map(
     mut strategy_map: HashMap<String, String>,
-) -> Result<Strategy, QueryError> {
+) -> Result<Strategy, KeyspaceStrategyError> {
     let strategy_name: String = strategy_map
         .remove("class")
-        .ok_or(QueryError::ProtocolError(
-            "strategy map should have a 'class' field",
-        ))?;
+        .ok_or(KeyspaceStrategyError::MissingClassForStrategyDefinition)?;
 
     let strategy: Strategy = match strategy_name.as_str() {
         "org.apache.cassandra.locator.SimpleStrategy" | "SimpleStrategy" => {
-            let rep_factor_str: String =
-                strategy_map
-                    .remove("replication_factor")
-                    .ok_or(QueryError::ProtocolError(
-                        "SimpleStrategy in strategy map does not have a replication factor",
-                    ))?;
+            let rep_factor_str: String = strategy_map
+                .remove("replication_factor")
+                .ok_or(KeyspaceStrategyError::MissingReplicationFactorForSimpleStrategy)?;
 
-            let replication_factor: usize = usize::from_str(&rep_factor_str).map_err(|_| {
-                QueryError::ProtocolError("Could not parse replication factor as an integer")
-            })?;
+            let replication_factor: usize = usize::from_str(&rep_factor_str)
+                .map_err(KeyspaceStrategyError::ReplicationFactorParseError)?;
 
             Strategy::SimpleStrategy { replication_factor }
         }
@@ -1716,13 +1721,18 @@ fn strategy_from_string_map(
             let mut datacenter_repfactors: HashMap<String, usize> =
                 HashMap::with_capacity(strategy_map.len());
 
-            for (datacenter, rep_factor_str) in strategy_map.drain() {
-                let rep_factor: usize = match usize::from_str(&rep_factor_str) {
-                    Ok(number) => number,
-                    Err(_) => continue, // There might be other things in the map, we care only about rep_factors
-                };
+            for (key, value) in strategy_map.drain() {
+                let rep_factor: usize = usize::from_str(&value).map_err(|_| {
+                    // Unexpected NTS option.
+                    // We only expect 'class' (which is resolved above)
+                    // and replication factors per dc.
+                    KeyspaceStrategyError::UnexpectedNetworkTopologyStrategyOption {
+                        key: key.clone(),
+                        value,
+                    }
+                })?;
 
-                datacenter_repfactors.insert(datacenter, rep_factor);
+                datacenter_repfactors.insert(key, rep_factor);
             }
 
             Strategy::NetworkTopologyStrategy {

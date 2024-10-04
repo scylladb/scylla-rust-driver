@@ -92,7 +92,7 @@ fn can_be_ignored<ResT>(result: &Result<ResT, QueryError>) -> bool {
     }
 }
 
-const EMPTY_PLAN_ERROR: QueryError = QueryError::ProtocolError("Empty query plan - driver bug!");
+const EMPTY_PLAN_ERROR: QueryError = QueryError::EmptyPlan;
 
 pub(crate) async fn execute<QueryFut, ResT>(
     policy: &dyn SpeculativeExecutionPolicy,

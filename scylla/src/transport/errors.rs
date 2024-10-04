@@ -8,10 +8,12 @@ use std::{
     error::Error,
     io::ErrorKind,
     net::{AddrParseError, IpAddr, SocketAddr},
+    num::ParseIntError,
     sync::Arc,
 };
 
 use scylla_cql::{
+    cql_to_rust::FromRowError,
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
@@ -29,6 +31,8 @@ use scylla_cql::{
 use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
+
+use super::query_result::{RowsExpectedError, SingleRowTypedError};
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
@@ -50,6 +54,15 @@ pub enum QueryError {
     #[error(transparent)]
     BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
 
+    /// Load balancing policy returned an empty plan.
+    #[error(
+        "Load balancing policy returned an empty plan.\
+        First thing to investigate should be the logic of custom LBP implementation.\
+        If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
+        then this is most probably a driver bug!"
+    )]
+    EmptyPlan,
+
     /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
     CqlResultParseError(#[from] CqlResultParseError),
@@ -58,17 +71,17 @@ pub enum QueryError {
     #[error("Failed to deserialize ERROR response: {0}")]
     CqlErrorParseError(#[from] CqlErrorParseError),
 
+    /// A metadata error occurred during schema agreement.
+    #[error("Cluster metadata fetch error occurred during automatic schema agreement: {0}")]
+    MetadataError(#[from] MetadataError),
+
     /// Selected node's connection pool is in invalid state.
     #[error("No connections in the pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
 
-    /// Unexpected message received
-    #[error("Protocol Error: {0}")]
-    ProtocolError(&'static str),
-
-    /// Invalid message received
-    #[error("Invalid message: {0}")]
-    InvalidMessage(String),
+    /// Protocol error.
+    #[error("Protocol error: {0}")]
+    ProtocolError(#[from] ProtocolError),
 
     /// Timeout error has occurred, function didn't complete in time.
     #[error("Timeout Error")]
@@ -113,15 +126,21 @@ impl From<UserRequestError> for QueryError {
             UserRequestError::CqlResultParseError(e) => e.into(),
             UserRequestError::CqlErrorParseError(e) => e.into(),
             UserRequestError::BrokenConnectionError(e) => e.into(),
-            UserRequestError::UnexpectedResponse(_) => {
-                // FIXME: make it typed. It needs to wait for ProtocolError refactor.
-                QueryError::ProtocolError("Received unexpected response from the server. Expected RESULT or ERROR response.")
+            UserRequestError::UnexpectedResponse(response) => {
+                ProtocolError::UnexpectedResponse(response).into()
             }
             UserRequestError::BodyExtensionsParseError(e) => e.into(),
             UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
-            UserRequestError::RepreparedIdChanged => QueryError::ProtocolError(
-                "Prepared statement Id changed, md5 sum should stay the same",
-            ),
+            UserRequestError::RepreparedIdChanged {
+                statement,
+                expected_id,
+                reprepared_id,
+            } => ProtocolError::RepreparedIdChanged {
+                statement,
+                expected_id,
+                reprepared_id,
+            }
+            .into(),
         }
     }
 }
@@ -135,9 +154,10 @@ impl From<QueryError> for NewSessionError {
             QueryError::CqlResultParseError(e) => NewSessionError::CqlResultParseError(e),
             QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
             QueryError::BodyExtensionsParseError(e) => NewSessionError::BodyExtensionsParseError(e),
+            QueryError::EmptyPlan => NewSessionError::EmptyPlan,
+            QueryError::MetadataError(e) => NewSessionError::MetadataError(e),
             QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
-            QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
-            QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
+            QueryError::ProtocolError(e) => NewSessionError::ProtocolError(e),
             QueryError::TimeoutError => NewSessionError::TimeoutError,
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
@@ -183,9 +203,22 @@ pub enum NewSessionError {
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
 
+    /// Load balancing policy returned an empty plan.
+    #[error(
+        "Load balancing policy returned an empty plan.\
+        First thing to investigate should be the logic of custom LBP implementation.\
+        If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
+        then this is most probably a driver bug!"
+    )]
+    EmptyPlan,
+
     /// Failed to deserialize frame body extensions.
     #[error(transparent)]
     BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
+
+    /// Failed to perform initial cluster metadata fetch.
+    #[error("Failed to perform initial cluster metadata fetch: {0}")]
+    MetadataError(#[from] MetadataError),
 
     /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
@@ -199,13 +232,9 @@ pub enum NewSessionError {
     #[error("No connections in the pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
 
-    /// Unexpected message received
-    #[error("Protocol Error: {0}")]
-    ProtocolError(&'static str),
-
-    /// Invalid message received
-    #[error("Invalid message: {0}")]
-    InvalidMessage(String),
+    /// Protocol error.
+    #[error("Protocol error: {0}")]
+    ProtocolError(#[from] ProtocolError),
 
     /// Timeout error has occurred, couldn't connect to node in time.
     #[error("Timeout Error")]
@@ -223,6 +252,242 @@ pub enum NewSessionError {
     /// during `Session` creation.
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
+}
+
+/// A protocol error.
+///
+/// It indicates an inconsistency between CQL protocol
+/// and server's behavior.
+/// In some cases, it could also represent a misuse
+/// of internal driver API - a driver bug.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ProtocolError {
+    /// Received an unexpected response when RESULT or ERROR was expected.
+    #[error(
+        "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
+    )]
+    UnexpectedResponse(CqlResponseKind),
+
+    /// Prepared statement id mismatch.
+    #[error(
+        "Prepared statement id mismatch between multiple connections - all result ids should be equal."
+    )]
+    PreparedStatementIdsMismatch,
+
+    /// Prepared statement id changed after repreparation.
+    #[error(
+        "Prepared statement id changed after repreparation; md5 sum (computed from the query string) should stay the same;\
+        Statement: \"{statement}\"; expected id: {expected_id:?}; reprepared id: {reprepared_id:?}"
+    )]
+    RepreparedIdChanged {
+        statement: String,
+        expected_id: Vec<u8>,
+        reprepared_id: Vec<u8>,
+    },
+
+    /// USE KEYSPACE protocol error.
+    #[error("USE KEYSPACE protocol error: {0}")]
+    UseKeyspace(#[from] UseKeyspaceProtocolError),
+
+    /// A protocol error appeared during schema version fetch.
+    #[error("Schema version fetch protocol error: {0}")]
+    SchemaVersionFetch(SingleRowTypedError),
+
+    /// A result with nonfinished paging state received for unpaged query.
+    #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
+    NonfinishedPagingState,
+
+    /// Failed to parse CQL type.
+    #[error("Failed to parse a CQL type '{typ}', at position {position}: {reason}")]
+    InvalidCqlType {
+        typ: String,
+        position: usize,
+        reason: String,
+    },
+
+    /// Unable extract a partition key based on prepared statement's metadata.
+    #[error("Unable extract a partition key based on prepared statement's metadata")]
+    PartitionKeyExtraction,
+
+    /// A protocol error occurred during tracing info fetch.
+    #[error("Tracing info fetch protocol error: {0}")]
+    Tracing(#[from] TracingProtocolError),
+
+    /// Driver tried to reprepare a statement in the batch, but the reprepared
+    /// statement's id is not included in the batch.
+    #[error("Reprepared statement's id does not exist in the batch.")]
+    RepreparedIdMissingInBatch,
+}
+
+/// A protocol error that occurred during `USE KEYSPACE <>` request.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum UseKeyspaceProtocolError {
+    #[error("Keyspace name mismtach; expected: {expected_keyspace_name_lowercase}, received: {result_keyspace_name_lowercase}")]
+    KeyspaceNameMismatch {
+        expected_keyspace_name_lowercase: String,
+        result_keyspace_name_lowercase: String,
+    },
+    #[error("Received unexpected response: {0}. Expected RESULT:Set_keyspace")]
+    UnexpectedResponse(CqlResponseKind),
+}
+
+/// A protocol error that occurred during tracing info fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum TracingProtocolError {
+    /// Response to system_traces.session is not RESULT:Rows.
+    #[error("Response to system_traces.session is not RESULT:Rows: {0}")]
+    TracesSessionNotRows(RowsExpectedError),
+
+    /// system_traces.session has invalid column type.
+    #[error("system_traces.session has invalid column type: {0}")]
+    TracesSessionInvalidColumnType(FromRowError),
+
+    /// Response to system_traces.events is not RESULT:Rows.
+    #[error("Response to system_traces.events is not RESULT:Rows: {0}")]
+    TracesEventsNotRows(RowsExpectedError),
+
+    /// system_traces.events has invalid column type.
+    #[error("system_traces.events has invalid column type: {0}")]
+    TracesEventsInvalidColumnType(FromRowError),
+
+    /// All tracing queries returned an empty result.
+    #[error(
+        "All tracing queries returned an empty result, \
+        maybe the trace information didn't propagate yet. \
+        Consider configuring Session with \
+        a longer fetch interval (tracing_info_fetch_interval)"
+    )]
+    EmptyResults,
+}
+
+/// An error that occurred during cluster metadata fetch.
+///
+/// An error can occur during metadata fetch of:
+/// - peers
+/// - keyspaces
+/// - UDTs
+/// - tables
+/// - views
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum MetadataError {
+    /// Bad peers metadata.
+    #[error("Bad peers metadata: {0}")]
+    Peers(#[from] PeersMetadataError),
+
+    /// Bad keyspaces metadata.
+    #[error("Bad keyspaces metadata: {0}")]
+    Keyspaces(#[from] KeyspacesMetadataError),
+
+    /// Bad UDTs metadata.
+    #[error("Bad UDTs metadata: {0}")]
+    Udts(#[from] UdtMetadataError),
+
+    /// Bad tables metadata.
+    #[error("Bad tables metadata: {0}")]
+    Tables(#[from] TablesMetadataError),
+
+    /// Bad views metadata.
+    #[error("Bad views metadata: {0}")]
+    Views(#[from] ViewsMetadataError),
+}
+
+/// An error that occurred during peers metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum PeersMetadataError {
+    /// Empty peers list returned during peers metadata fetch.
+    #[error("Peers list is empty")]
+    EmptyPeers,
+
+    /// All peers have empty token lists.
+    #[error("All peers have empty token lists")]
+    EmptyTokenLists,
+}
+
+/// An error that occurred during keyspaces metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum KeyspacesMetadataError {
+    /// system_schema.keyspaces has invalid column type.
+    #[error("system_schema.keyspaces has invalid column type: {0}")]
+    SchemaKeyspacesInvalidColumnType(FromRowError),
+
+    /// Bad keyspace replication strategy.
+    #[error("Bad keyspace <{keyspace}> replication strategy: {error}")]
+    Strategy {
+        keyspace: String,
+        error: KeyspaceStrategyError,
+    },
+}
+
+/// An error that occurred during specific keyspace's metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum KeyspaceStrategyError {
+    /// Keyspace strategy map missing a `class` field.
+    #[error("keyspace strategy definition is missing a 'class' field")]
+    MissingClassForStrategyDefinition,
+
+    /// Missing replication factor for SimpleStrategy.
+    #[error("Missing replication factor field for SimpleStrategy")]
+    MissingReplicationFactorForSimpleStrategy,
+
+    /// Replication factor could not be parsed as unsigned integer.
+    #[error("Failed to parse a replication factor as unsigned integer: {0}")]
+    ReplicationFactorParseError(ParseIntError),
+
+    /// Received an unexpected NTS option.
+    /// Driver expects only 'class' and replication factor per dc ('dc': rf)
+    #[error("Unexpected NetworkTopologyStrategy option: '{key}': '{value}'")]
+    UnexpectedNetworkTopologyStrategyOption { key: String, value: String },
+}
+
+/// An error that occurred during UDTs metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum UdtMetadataError {
+    /// system_schema.types has invalid column type.
+    #[error("system_schema.types has invalid column type: {0}")]
+    SchemaTypesInvalidColumnType(FromRowError),
+
+    /// Circular UDT dependency detected.
+    #[error("Detected circular dependency between user defined types - toposort is impossible!")]
+    CircularTypeDependency,
+}
+
+/// An error that occurred during tables metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum TablesMetadataError {
+    /// system_schema.tables has invalid column type.
+    #[error("system_schema.tables has invalid column type: {0}")]
+    SchemaTablesInvalidColumnType(FromRowError),
+
+    /// system_schema.columns has invalid column type.
+    #[error("system_schema.columns has invalid column type: {0}")]
+    SchemaColumnsInvalidColumnType(FromRowError),
+
+    /// Unknown column kind.
+    #[error("Unknown column kind '{column_kind}' for {keyspace_name}.{table_name}.{column_name}")]
+    UnknownColumnKind {
+        keyspace_name: String,
+        table_name: String,
+        column_name: String,
+        column_kind: String,
+    },
+}
+
+/// An error that occurred during views metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ViewsMetadataError {
+    /// system_schema.views has invalid column type.
+    #[error("system_schema.views has invalid column type: {0}")]
+    SchemaViewsInvalidColumnType(FromRowError),
 }
 
 /// Error caused by caller creating an invalid query
@@ -574,8 +839,15 @@ pub(crate) enum UserRequestError {
     BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
-    #[error("Prepared statement Id changed, md5 sum should stay the same")]
-    RepreparedIdChanged,
+    #[error(
+        "Prepared statement id changed after repreparation; md5 sum (computed from the query string) should stay the same;\
+        Statement: \"{statement}\"; expected id: {expected_id:?}; reprepared id: {reprepared_id:?}"
+    )]
+    RepreparedIdChanged {
+        statement: String,
+        expected_id: Vec<u8>,
+        reprepared_id: Vec<u8>,
+    },
 }
 
 impl From<response::error::Error> for UserRequestError {

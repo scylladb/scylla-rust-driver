@@ -28,7 +28,7 @@ use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::statement::{Consistency, PagingState, SerialConsistency};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
-use crate::transport::errors::{QueryError, UserRequestError};
+use crate::transport::errors::{ProtocolError, QueryError, UserRequestError};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
@@ -511,8 +511,7 @@ where
         let query_plan =
             load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
-        let mut last_error: QueryError =
-            QueryError::ProtocolError("Empty query plan - driver bug!");
+        let mut last_error: QueryError = QueryError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
 
         self.log_query_start();
@@ -723,9 +722,10 @@ where
                 let (proof, _) = self.sender.send_empty_page(tracing_id).await;
                 Ok(ControlFlow::Break(proof))
             }
-            Ok(_) => {
+            Ok(response) => {
                 self.metrics.inc_failed_paged_queries();
-                let err = QueryError::ProtocolError("Unexpected response to next page query");
+                let err =
+                    ProtocolError::UnexpectedResponse(response.response.to_response_kind()).into();
                 self.execution_profile
                     .load_balancing_policy
                     .on_query_failure(&self.statement_info, elapsed, node, &err);
@@ -879,9 +879,10 @@ where
                     return Ok(proof);
                 }
                 _ => {
-                    return Err(QueryError::ProtocolError(
-                        "Unexpected response to next page query",
-                    ));
+                    return Err(ProtocolError::UnexpectedResponse(
+                        response.response.to_response_kind(),
+                    )
+                    .into());
                 }
             }
         }

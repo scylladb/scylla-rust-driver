@@ -8,7 +8,9 @@ use crate::cloud::CloudConfig;
 use crate::history;
 use crate::history::HistoryListener;
 pub use crate::transport::errors::TranslationError;
-use crate::transport::errors::{BadQuery, NewSessionError, QueryError, UserRequestError};
+use crate::transport::errors::{
+    BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
+};
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
@@ -38,6 +40,7 @@ use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
+use super::errors::TracingProtocolError;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
@@ -644,9 +647,8 @@ impl Session {
             .query(&query, values, None, PagingState::start())
             .await?;
         if !paging_state_response.finished() {
-            let err_msg = "Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.";
-            error!(err_msg);
-            return Err(QueryError::ProtocolError(err_msg));
+            error!("Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
+            return Err(ProtocolError::NonfinishedPagingState.into());
         }
         Ok(result)
     }
@@ -991,9 +993,7 @@ impl Session {
         // Validate prepared ids equality
         for statement in results.flatten() {
             if prepared.get_id() != statement.get_id() {
-                return Err(QueryError::ProtocolError(
-                    "Prepared statement Ids differ, all should be equal",
-                ));
+                return Err(ProtocolError::PreparedStatementIdsMismatch.into());
             }
 
             // Collect all tracing ids from prepare() queries in the final result
@@ -1079,9 +1079,8 @@ impl Session {
             .execute(prepared, &serialized_values, None, PagingState::start())
             .await?;
         if !paging_state.finished() {
-            let err_msg = "Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.";
-            error!(err_msg);
-            return Err(QueryError::ProtocolError(err_msg));
+            error!("Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
+            return Err(ProtocolError::NonfinishedPagingState.into());
         }
         Ok(result)
     }
@@ -1599,12 +1598,7 @@ impl Session {
             };
         }
 
-        Err(QueryError::ProtocolError(
-            "All tracing queries returned an empty result, \
-            maybe the trace information didn't propagate yet. \
-            Consider configuring Session with \
-            a longer fetch interval (tracing_info_fetch_interval)",
-        ))
+        Err(ProtocolError::Tracing(TracingProtocolError::EmptyResults).into())
     }
 
     /// Gets the name of the keyspace that is currently set, or `None` if no
@@ -1649,12 +1643,12 @@ impl Session {
         let maybe_tracing_info: Option<TracingInfo> = traces_session_res
             .maybe_first_row_typed()
             .map_err(|err| match err {
-                MaybeFirstRowTypedError::RowsExpected(_) => QueryError::ProtocolError(
-                    "Response to system_traces.sessions query was not Rows",
-                ),
-                MaybeFirstRowTypedError::FromRowError(_) => QueryError::ProtocolError(
-                    "Columns from system_traces.session have an unexpected type",
-                ),
+                MaybeFirstRowTypedError::RowsExpected(e) => {
+                    ProtocolError::Tracing(TracingProtocolError::TracesSessionNotRows(e))
+                }
+                MaybeFirstRowTypedError::FromRowError(e) => {
+                    ProtocolError::Tracing(TracingProtocolError::TracesSessionInvalidColumnType(e))
+                }
             })?;
 
         let mut tracing_info = match maybe_tracing_info {
@@ -1663,15 +1657,13 @@ impl Session {
         };
 
         // Get tracing events
-        let tracing_event_rows = traces_events_res.rows_typed().map_err(|_| {
-            QueryError::ProtocolError("Response to system_traces.events query was not Rows")
+        let tracing_event_rows = traces_events_res.rows_typed().map_err(|err| {
+            ProtocolError::Tracing(TracingProtocolError::TracesEventsNotRows(err))
         })?;
 
         for event in tracing_event_rows {
-            let tracing_event: TracingEvent = event.map_err(|_| {
-                QueryError::ProtocolError(
-                    "Columns from system_traces.events have an unexpected type",
-                )
+            let tracing_event: TracingEvent = event.map_err(|err| {
+                ProtocolError::Tracing(TracingProtocolError::TracesEventsInvalidColumnType(err))
             })?;
 
             tracing_info.events.push(tracing_event);
@@ -1822,9 +1814,7 @@ impl Session {
                         },
                     )
                     .await
-                    .unwrap_or(Err(QueryError::ProtocolError(
-                        "Empty query plan - driver bug!",
-                    )))
+                    .unwrap_or(Err(QueryError::EmptyPlan))
                 }
             }
         };
