@@ -721,18 +721,61 @@ fn mk_col_spec_parse_error(
     }
 }
 
+/// Deserializes col specs (part of ResultMetadata or PreparedMetadata)
+/// in the owned form.
+///
+/// Checks for equality of table specs across columns, because the protocol
+/// does not guarantee that and we want to be sure that the assumption
+/// of them being all the same is correct.
+///
+/// To avoid needless allocations, it is advised to pass `global_table_spec`
+/// in the borrowed form, so that cloning it is cheap.
 fn deser_col_specs(
     buf: &mut &[u8],
     global_table_spec: Option<TableSpec<'_>>,
     col_count: usize,
 ) -> StdResult<Vec<ColumnSpec<'static>>, ColumnSpecParseError> {
+    let global_table_spec_provided = global_table_spec.is_some();
+    let mut known_table_spec = global_table_spec;
+
     let mut col_specs = Vec::with_capacity(col_count);
     for col_idx in 0..col_count {
-        let table_spec = if let Some(ref spec) = global_table_spec {
-            spec.clone()
-        } else {
-            deser_table_spec(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?
+        let table_spec = match known_table_spec {
+            // If global table spec was provided, we simply clone it to each column spec.
+            Some(ref known_spec) if global_table_spec_provided => known_spec.clone(),
+
+            // Else, we deserialize the table spec for a column and, if we already know some
+            // previous spec (i.e. that of the first column), we perform equality check
+            // against it.
+            Some(_) | None => {
+                let table_spec =
+                    deser_table_spec(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
+
+                if let Some(ref known_spec) = known_table_spec {
+                    // We assume that for each column, table spec is the same.
+                    // As this is not guaranteed by the CQL protocol specification but only by how
+                    // Cassandra and ScyllaDB work (no support for joins), we perform a sanity check here.
+                    if known_spec.table_name != table_spec.table_name
+                        || known_spec.ks_name != table_spec.ks_name
+                    {
+                        return Err(mk_col_spec_parse_error(
+                            col_idx,
+                            ColumnSpecParseErrorKind::TableSpecDiffersAcrossColumns(
+                                known_spec.clone().into_owned(),
+                                table_spec.into_owned(),
+                            ),
+                        ));
+                    }
+                } else {
+                    // Once we have read the first column spec, we save its table spec
+                    // in order to verify its equality with other columns'.
+                    known_table_spec = Some(table_spec.clone());
+                }
+
+                table_spec
+            }
         };
+
         let name = types::read_string(buf)
             .map_err(|err| mk_col_spec_parse_error(col_idx, err))?
             .to_owned();
