@@ -1025,7 +1025,7 @@ impl Connection {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         let query: Query = query.into();
 
-        self.query_raw_unpaged(&query, PagingState::start())
+        self.query_raw_unpaged(&query)
             .await
             .map_err(Into::into)
             .and_then(QueryResponse::into_query_result)
@@ -1034,7 +1034,6 @@ impl Connection {
     pub(crate) async fn query_raw_unpaged(
         &self,
         query: &Query,
-        paging_state: PagingState,
     ) -> Result<QueryResponse, UserRequestError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_raw_with_consistency(
@@ -1044,7 +1043,7 @@ impl Connection {
                 .determine_consistency(self.config.default_consistency),
             query.config.serial_consistency.flatten(),
             None,
-            paging_state,
+            PagingState::start(),
         )
         .await
     }
@@ -1084,7 +1083,7 @@ impl Connection {
         values: SerializedValues,
     ) -> Result<QueryResult, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.execute_raw_unpaged(prepared, values, PagingState::start())
+        self.execute_raw_unpaged(prepared, values)
             .await
             .map_err(Into::into)
             .and_then(QueryResponse::into_query_result)
@@ -1095,7 +1094,6 @@ impl Connection {
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
-        paging_state: PagingState,
     ) -> Result<QueryResponse, UserRequestError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
@@ -1106,7 +1104,7 @@ impl Connection {
                 .determine_consistency(self.config.default_consistency),
             prepared.config.serial_consistency.flatten(),
             None,
-            paging_state,
+            PagingState::start(),
         )
         .await
     }
@@ -1362,7 +1360,7 @@ impl Connection {
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
 
-        let query_response = self.query_raw_unpaged(&query, PagingState::start()).await?;
+        let query_response = self.query_raw_unpaged(&query).await?;
         Self::verify_use_keyspace_result(keyspace_name, query_response)
     }
 
@@ -2390,7 +2388,6 @@ mod tests {
 
     use super::ConnectionConfig;
     use crate::query::Query;
-    use crate::statement::PagingState;
     use crate::test_utils::setup_tracing;
     use crate::transport::connection::open_connection;
     use crate::transport::node::ResolvedContactPoint;
@@ -2490,11 +2487,7 @@ mod tests {
         let mut insert_futures = Vec::new();
         for v in &values {
             let values = prepared.serialize_values(&(*v,)).unwrap();
-            let fut = async {
-                connection
-                    .execute_raw_unpaged(&prepared, values, PagingState::start())
-                    .await
-            };
+            let fut = async { connection.execute_raw_unpaged(&prepared, values).await };
             insert_futures.push(fut);
         }
 
@@ -2596,10 +2589,8 @@ mod tests {
                             let values = prepared
                                 .serialize_values(&(j, vec![j as u8; j as usize]))
                                 .unwrap();
-                            let response = conn
-                                .execute_raw_unpaged(&prepared, values, PagingState::start())
-                                .await
-                                .unwrap();
+                            let response =
+                                conn.execute_raw_unpaged(&prepared, values).await.unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
                             let _nonerror_response =
                                 response.into_non_error_query_response().unwrap();
