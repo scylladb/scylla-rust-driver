@@ -1,6 +1,7 @@
 //! Provides types for dealing with CQL value deserialization.
 
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     hash::{BuildHasher, Hash},
     net::IpAddr,
@@ -650,8 +651,8 @@ make_error_replace_rust_name!(
 
 /// An iterator over either a CQL set or list.
 pub struct ListlikeIterator<'frame, T> {
-    coll_typ: &'frame ColumnType,
-    elem_typ: &'frame ColumnType,
+    coll_typ: &'frame ColumnType<'frame>,
+    elem_typ: &'frame ColumnType<'frame>,
     raw_iter: FixedLengthBytesSequenceIterator<'frame>,
     phantom_data: std::marker::PhantomData<T>,
 }
@@ -840,9 +841,9 @@ where
 
 /// An iterator over a CQL map.
 pub struct MapIterator<'frame, K, V> {
-    coll_typ: &'frame ColumnType,
-    k_typ: &'frame ColumnType,
-    v_typ: &'frame ColumnType,
+    coll_typ: &'frame ColumnType<'frame>,
+    k_typ: &'frame ColumnType<'frame>,
+    v_typ: &'frame ColumnType<'frame>,
     raw_iter: FixedLengthBytesSequenceIterator<'frame>,
     phantom_data_k: std::marker::PhantomData<K>,
     phantom_data_v: std::marker::PhantomData<V>,
@@ -1146,16 +1147,16 @@ impl_tuple_multiple!(
 /// - `Some(None)` - present, but null
 /// - `Some(Some(...))` - non-null, present value
 pub struct UdtIterator<'frame> {
-    all_fields: &'frame [(String, ColumnType)],
+    all_fields: &'frame [(Cow<'frame, str>, ColumnType<'frame>)],
     type_name: &'frame str,
     keyspace: &'frame str,
-    remaining_fields: &'frame [(String, ColumnType)],
+    remaining_fields: &'frame [(Cow<'frame, str>, ColumnType<'frame>)],
     raw_iter: BytesSequenceIterator<'frame>,
 }
 
 impl<'frame> UdtIterator<'frame> {
     fn new(
-        fields: &'frame [(String, ColumnType)],
+        fields: &'frame [(Cow<'frame, str>, ColumnType<'frame>)],
         type_name: &'frame str,
         keyspace: &'frame str,
         slice: FrameSlice<'frame>,
@@ -1170,7 +1171,7 @@ impl<'frame> UdtIterator<'frame> {
     }
 
     #[inline]
-    pub fn fields(&self) -> &'frame [(String, ColumnType)] {
+    pub fn fields(&self) -> &'frame [(Cow<'frame, str>, ColumnType<'frame>)] {
         self.remaining_fields
     }
 }
@@ -1204,7 +1205,7 @@ impl<'frame> DeserializeValue<'frame> for UdtIterator<'frame> {
 
 impl<'frame> Iterator for UdtIterator<'frame> {
     type Item = (
-        &'frame (String, ColumnType),
+        &'frame (Cow<'frame, str>, ColumnType<'frame>),
         Result<Option<Option<FrameSlice<'frame>>>, DeserializationError>,
     );
 
@@ -1219,8 +1220,8 @@ impl<'frame> Iterator for UdtIterator<'frame> {
             // There were some bytes but they didn't parse as correct field value
             Some(Err(err)) => Err(mk_deser_err::<Self>(
                 &ColumnType::UserDefinedType {
-                    type_name: self.type_name.to_owned(),
-                    keyspace: self.keyspace.to_owned(),
+                    type_name: self.type_name.into(),
+                    keyspace: self.keyspace.into(),
                     field_types: self.all_fields.to_owned(),
                 },
                 BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
@@ -1275,9 +1276,9 @@ fn ensure_exact_length<'frame, T, const SIZE: usize>(
     })
 }
 
-fn ensure_tuple_type<T, const SIZE: usize>(
-    typ: &ColumnType,
-) -> Result<&[ColumnType; SIZE], TypeCheckError> {
+fn ensure_tuple_type<'a, 'b, T, const SIZE: usize>(
+    typ: &'b ColumnType<'a>,
+) -> Result<&'b [ColumnType<'a>; SIZE], TypeCheckError> {
     if let ColumnType::Tuple(typs_v) = typ {
         typs_v.as_slice().try_into().map_err(|_| {
             BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
@@ -1374,7 +1375,7 @@ pub struct BuiltinTypeCheckError {
     pub rust_name: &'static str,
 
     /// The CQL type that the Rust type was being deserialized from.
-    pub cql_type: ColumnType,
+    pub cql_type: ColumnType<'static>,
 
     /// Detailed information about the failure.
     pub kind: BuiltinTypeCheckErrorKind,
@@ -1396,7 +1397,7 @@ fn mk_typck_err_named(
 ) -> TypeCheckError {
     TypeCheckError::new(BuiltinTypeCheckError {
         rust_name: name,
-        cql_type: cql_type.clone(),
+        cql_type: cql_type.clone().into_owned(),
         kind: kind.into(),
     })
 }
@@ -1423,7 +1424,7 @@ pub enum BuiltinTypeCheckErrorKind {
     /// Expected one from a list of particular types.
     MismatchedType {
         /// The list of types that the Rust type can deserialize from.
-        expected: &'static [ColumnType],
+        expected: &'static [ColumnType<'static>],
     },
 
     /// A type check failure specific to a CQL set or list.
@@ -1690,7 +1691,7 @@ pub struct BuiltinDeserializationError {
     pub rust_name: &'static str,
 
     /// The CQL type that the Rust type was being deserialized from.
-    pub cql_type: ColumnType,
+    pub cql_type: ColumnType<'static>,
 
     /// Detailed information about the failure.
     pub kind: BuiltinDeserializationErrorKind,
@@ -1712,7 +1713,7 @@ fn mk_deser_err_named(
 ) -> DeserializationError {
     DeserializationError::new(BuiltinDeserializationError {
         rust_name: name,
-        cql_type: cql_type.clone(),
+        cql_type: cql_type.clone().into_owned(),
         kind: kind.into(),
     })
 }

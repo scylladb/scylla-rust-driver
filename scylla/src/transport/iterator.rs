@@ -397,7 +397,7 @@ impl RowIterator {
 
     /// Returns specification of row columns
     pub fn get_column_specs(&self) -> &[ColumnSpec] {
-        &self.current_page.metadata.col_specs
+        self.current_page.metadata.col_specs()
     }
 
     fn is_current_page_exhausted(&self) -> bool {

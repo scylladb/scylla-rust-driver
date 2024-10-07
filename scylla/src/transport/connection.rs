@@ -1453,7 +1453,7 @@ impl Connection {
         request: &impl SerializableRequest,
         compress: bool,
         tracing: bool,
-        cached_metadata: Option<&Arc<ResultMetadata>>,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     ) -> Result<QueryResponse, RequestError> {
         let compression = if compress {
             self.config.compression
@@ -1480,7 +1480,7 @@ impl Connection {
         task_response: TaskResponse,
         compression: Option<Compression>,
         features: &ProtocolFeatures,
-        cached_metadata: Option<&Arc<ResultMetadata>>,
+        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
     ) -> Result<QueryResponse, ResponseParseError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,

@@ -169,7 +169,7 @@ impl Context {
                 #crate_path::SerializationError::new(
                     #crate_path::BuiltinTypeTypeCheckError {
                         rust_name: ::std::any::type_name::<Self>(),
-                        got: <_ as ::std::clone::Clone>::clone(typ),
+                        got: <_ as ::std::clone::Clone>::clone(typ).into_owned(),
                         kind: #crate_path::BuiltinTypeTypeCheckErrorKind::UdtError(kind),
                     }
                 )
@@ -184,7 +184,7 @@ impl Context {
                 #crate_path::SerializationError::new(
                     #crate_path::BuiltinTypeSerializationError {
                         rust_name: ::std::any::type_name::<Self>(),
-                        got: <_ as ::std::clone::Clone>::clone(typ),
+                        got: <_ as ::std::clone::Clone>::clone(typ).into_owned(),
                         kind: #crate_path::BuiltinTypeSerializationErrorKind::UdtError(kind),
                     }
                 )
@@ -231,7 +231,7 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
             parse_quote! {
                 return ::std::result::Result::Err(mk_typck_err(
                     #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
-                        field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                        field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),
                     }
                 ))
             }
@@ -302,7 +302,7 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
         // the field name.
         statements.push(parse_quote! {
             for (field_name, field_type) in field_types {
-                match ::std::string::String::as_str(field_name) {
+                match ::std::ops::Deref::deref(field_name) {
                     #(
                         #udt_field_names => {
                             #serialize_missing_nulls_statement
@@ -312,7 +312,7 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
                                 ::std::result::Result::Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(
                                         #crate_path::UdtSerializationErrorKind::FieldSerializationFailed {
-                                            field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                                            field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),
                                             err,
                                         }
                                     ));
@@ -357,7 +357,7 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
                     .map_err(|_| #crate_path::SerializationError::new(
                         #crate_path::BuiltinTypeSerializationError {
                             rust_name: ::std::any::type_name::<Self>(),
-                            got: <_ as ::std::clone::Clone>::clone(typ),
+                            got: <_ as ::std::clone::Clone>::clone(typ).into_owned(),
                             kind: #crate_path::BuiltinTypeSerializationErrorKind::SizeOverflow,
                         }
                     ) as #crate_path::SerializationError)?;
@@ -419,7 +419,7 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
                                 Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(
                                         #crate_path::UdtSerializationErrorKind::FieldSerializationFailed {
-                                            field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                                            field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),
                                             err,
                                         }
                                     ));
@@ -429,7 +429,7 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
                             return ::std::result::Result::Err(mk_typck_err(
                                 #crate_path::UdtTypeCheckErrorKind::FieldNameMismatch {
                                     rust_field_name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
-                                    db_field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                                    db_field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),
                                 }
                             ));
                         }
@@ -451,7 +451,7 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
                 if let Some((field_name, typ)) = field_iter.next() {
                     return ::std::result::Result::Err(mk_typck_err(
                         #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
-                            field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                            field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),
                         }
                     ));
                 }
@@ -469,7 +469,7 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
                     .map_err(|_| #crate_path::SerializationError::new(
                         #crate_path::BuiltinTypeSerializationError {
                             rust_name: ::std::any::type_name::<Self>(),
-                            got: <_ as ::std::clone::Clone>::clone(typ),
+                            got: <_ as ::std::clone::Clone>::clone(typ).into_owned(),
                             kind: #crate_path::BuiltinTypeSerializationErrorKind::SizeOverflow,
                         }
                     ) as #crate_path::SerializationError)?;

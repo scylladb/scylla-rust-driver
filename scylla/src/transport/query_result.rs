@@ -21,7 +21,7 @@ pub struct QueryResult {
     /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
     pub tracing_id: Option<Uuid>,
     /// Metadata returned along with this response.
-    pub(crate) metadata: Option<Arc<ResultMetadata>>,
+    pub(crate) metadata: Option<Arc<ResultMetadata<'static>>>,
     /// The original size of the serialized rows in request
     pub serialized_size: usize,
 }
@@ -141,7 +141,7 @@ impl QueryResult {
     pub fn col_specs(&self) -> &[ColumnSpec] {
         self.metadata
             .as_ref()
-            .map(|metadata| metadata.col_specs.as_slice())
+            .map(|metadata| metadata.col_specs())
             .unwrap_or_default()
     }
 
@@ -151,7 +151,7 @@ impl QueryResult {
         self.col_specs()
             .iter()
             .enumerate()
-            .find(|(_id, spec)| spec.name == name)
+            .find(|(_id, spec)| spec.name() == name)
     }
 }
 
@@ -314,14 +314,10 @@ mod tests {
         rows
     }
 
-    fn make_test_metadata() -> ResultMetadata {
+    fn make_test_metadata() -> ResultMetadata<'static> {
         let table_spec = TableSpec::borrowed("some_keyspace", "some_table");
 
-        let column_spec = ColumnSpec {
-            table_spec,
-            name: "column0".to_string(),
-            typ: ColumnType::Int,
-        };
+        let column_spec = ColumnSpec::borrowed("column0", ColumnType::Int, table_spec);
 
         ResultMetadata::new_for_test(1, vec![column_spec])
     }

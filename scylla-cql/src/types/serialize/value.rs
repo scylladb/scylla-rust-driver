@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
 use std::hash::BuildHasher;
 use std::net::IpAddr;
+use std::ops::Deref as _;
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -626,8 +627,8 @@ fn serialize_udt<'b>(
         return Err(mk_typck_err::<CqlValue>(
             typ,
             UdtTypeCheckErrorKind::NameMismatch {
-                keyspace: dst_keyspace.clone(),
-                type_name: dst_type_name.clone(),
+                keyspace: dst_keyspace.clone().into_owned(),
+                type_name: dst_type_name.clone().into_owned(),
             },
         ));
     }
@@ -641,7 +642,7 @@ fn serialize_udt<'b>(
         // Take a value from the original list.
         // If a field is missing, write null instead.
         let fvalue = indexed_fields
-            .remove(fname.as_str())
+            .remove(fname.deref())
             .and_then(|x| x.as_ref());
 
         let writer = builder.make_sub_writer();
@@ -652,7 +653,7 @@ fn serialize_udt<'b>(
                 mk_ser_err::<CqlValue>(
                     typ,
                     UdtSerializationErrorKind::FieldSerializationFailed {
-                        field_name: fname.clone(),
+                        field_name: fname.clone().into_owned(),
                         err,
                     },
                 )
@@ -680,7 +681,7 @@ fn serialize_udt<'b>(
 
 fn serialize_tuple_like<'t, 'b>(
     typ: &ColumnType,
-    field_types: impl Iterator<Item = &'t ColumnType>,
+    field_types: impl Iterator<Item = &'t ColumnType<'t>>,
     field_values: impl Iterator<Item = &'t Option<CqlValue>>,
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
@@ -1025,7 +1026,7 @@ pub struct BuiltinTypeCheckError {
     pub rust_name: &'static str,
 
     /// The CQL type that the Rust type was being serialized to.
-    pub got: ColumnType,
+    pub got: ColumnType<'static>,
 
     /// Detailed information about the failure.
     pub kind: BuiltinTypeCheckErrorKind,
@@ -1045,7 +1046,7 @@ fn mk_typck_err_named(
 ) -> SerializationError {
     SerializationError::new(BuiltinTypeCheckError {
         rust_name: name,
-        got: got.clone(),
+        got: got.clone().into_owned(),
         kind: kind.into(),
     })
 }
@@ -1058,7 +1059,7 @@ pub struct BuiltinSerializationError {
     pub rust_name: &'static str,
 
     /// The CQL type that the Rust type was being serialized to.
-    pub got: ColumnType,
+    pub got: ColumnType<'static>,
 
     /// Detailed information about the failure.
     pub kind: BuiltinSerializationErrorKind,
@@ -1078,7 +1079,7 @@ fn mk_ser_err_named(
 ) -> SerializationError {
     SerializationError::new(BuiltinSerializationError {
         rust_name: name,
-        got: got.clone(),
+        got: got.clone().into_owned(),
         kind: kind.into(),
     })
 }
@@ -1090,7 +1091,7 @@ pub enum BuiltinTypeCheckErrorKind {
     /// Expected one from a list of particular types.
     MismatchedType {
         /// The list of types that the Rust type can serialize as.
-        expected: &'static [ColumnType],
+        expected: &'static [ColumnType<'static>],
     },
 
     /// Expected a type that can be empty.
@@ -1912,12 +1913,12 @@ mod tests {
             ],
         };
         let typ = ColumnType::UserDefinedType {
-            type_name: "udt2".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "udt2".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Int),
-                ("b".to_string(), ColumnType::Int),
-                ("c".to_string(), ColumnType::Int),
+                ("a".into(), ColumnType::Int),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::Int),
             ],
         };
         let err = do_serialize_err(v, &typ);
@@ -1945,11 +1946,11 @@ mod tests {
             ],
         };
         let typ = ColumnType::UserDefinedType {
-            type_name: "udt".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "udt".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Int),
-                ("b".to_string(), ColumnType::Int),
+                ("a".into(), ColumnType::Int),
+                ("b".into(), ColumnType::Int),
                 // c is missing
             ],
         };
@@ -1979,12 +1980,12 @@ mod tests {
             ],
         };
         let typ = ColumnType::UserDefinedType {
-            type_name: "udt".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "udt".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Int),
-                ("b".to_string(), ColumnType::Int),
-                ("c".to_string(), ColumnType::Double),
+                ("a".into(), ColumnType::Int),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::Double),
             ],
         };
         let err = do_serialize_err(v, &typ);
@@ -2026,15 +2027,12 @@ mod tests {
     #[test]
     fn test_udt_serialization_with_field_sorting_correct_order() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
             ],
         };
 
@@ -2075,16 +2073,13 @@ mod tests {
     #[test]
     fn test_udt_serialization_with_field_sorting_incorrect_order() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
                 // Two first columns are swapped
-                ("b".to_string(), ColumnType::Int),
-                ("a".to_string(), ColumnType::Text),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("b".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Text),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
             ],
         };
 
@@ -2129,31 +2124,25 @@ mod tests {
         let udt = TestUdtWithFieldSorting::default();
 
         let typ_normal = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
             ],
         };
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
                 // Unexpected fields
-                ("d".to_string(), ColumnType::Counter),
-                ("e".to_string(), ColumnType::Counter),
+                ("d".into(), ColumnType::Counter),
+                ("e".into(), ColumnType::Counter),
             ],
         };
 
@@ -2189,19 +2178,16 @@ mod tests {
         let udt3 = TestUdtWithFieldSorting3::default();
 
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
                 // Unexpected fields
-                ("d".to_string(), ColumnType::Counter),
-                ("e".to_string(), ColumnType::Float),
+                ("d".into(), ColumnType::Counter),
+                ("e".into(), ColumnType::Float),
                 // Remaining normal field
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
             ],
         };
 
@@ -2229,11 +2215,11 @@ mod tests {
         );
 
         let typ_without_c = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
                 // Last field is missing
             ],
         };
@@ -2250,12 +2236,12 @@ mod tests {
         );
 
         let typ_wrong_type = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                ("c".to_string(), ColumnType::TinyInt), // Wrong column type
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::TinyInt), // Wrong column type
             ],
         };
 
@@ -2283,9 +2269,9 @@ mod tests {
         // A minimal smoke test just to test that it works.
         fn check_with_type<T: SerializeValue>(typ: ColumnType, t: T, cql_t: CqlValue) {
             let typ = ColumnType::UserDefinedType {
-                type_name: "typ".to_string(),
-                keyspace: "ks".to_string(),
-                field_types: vec![("a".to_string(), ColumnType::Text), ("b".to_string(), typ)],
+                type_name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![("a".into(), ColumnType::Text), ("b".into(), typ)],
             };
             let reference = do_serialize(
                 CqlValue::UserDefinedType {
@@ -2326,15 +2312,12 @@ mod tests {
     #[test]
     fn test_udt_serialization_with_enforced_order_correct_order() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
             ],
         };
 
@@ -2377,30 +2360,24 @@ mod tests {
         let udt = TestUdtWithEnforcedOrder::default();
 
         let typ_normal = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
             ],
         };
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
                 // Unexpected field
-                ("d".to_string(), ColumnType::Counter),
+                ("d".into(), ColumnType::Counter),
             ],
         };
 
@@ -2426,16 +2403,13 @@ mod tests {
         );
 
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
                 // Two first columns are swapped
-                ("b".to_string(), ColumnType::Int),
-                ("a".to_string(), ColumnType::Text),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("b".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Text),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
             ],
         };
 
@@ -2448,11 +2422,11 @@ mod tests {
         );
 
         let typ_without_c = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
                 // Last field is missing
             ],
         };
@@ -2469,12 +2443,12 @@ mod tests {
         );
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                ("c".to_string(), ColumnType::TinyInt), // Wrong column type
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::TinyInt), // Wrong column type
             ],
         };
 
@@ -2512,11 +2486,11 @@ mod tests {
     #[test]
     fn test_udt_serialization_with_field_rename() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("x".to_string(), ColumnType::Int),
-                ("a".to_string(), ColumnType::Text),
+                ("x".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Text),
             ],
         };
 
@@ -2544,11 +2518,11 @@ mod tests {
     #[test]
     fn test_udt_serialization_with_field_rename_and_enforce_order() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("x".to_string(), ColumnType::Int),
+                ("a".into(), ColumnType::Text),
+                ("x".into(), ColumnType::Int),
             ],
         };
 
@@ -2584,11 +2558,11 @@ mod tests {
     #[test]
     fn test_udt_serialization_with_skipped_name_checks() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("x".to_string(), ColumnType::Int),
+                ("a".into(), ColumnType::Text),
+                ("x".into(), ColumnType::Int),
             ],
         };
 
@@ -2627,17 +2601,14 @@ mod tests {
         let mut data = Vec::new();
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
                 // Unexpected field
-                ("d".to_string(), ColumnType::Counter),
+                ("d".into(), ColumnType::Counter),
             ],
         };
 
@@ -2651,17 +2622,14 @@ mod tests {
         );
 
         let typ_unexpected_field_middle = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
                 // Unexpected field
-                ("b_c".to_string(), ColumnType::Counter),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("b_c".into(), ColumnType::Counter),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
             ],
         };
 
@@ -2689,17 +2657,14 @@ mod tests {
         let mut data = Vec::new();
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
                 // Unexpected field
-                ("d".to_string(), ColumnType::Counter),
+                ("d".into(), ColumnType::Counter),
             ],
         };
 
@@ -2730,15 +2695,12 @@ mod tests {
     #[test]
     fn test_row_serialization_with_skipped_field() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
             field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
+                ("a".into(), ColumnType::Text),
+                ("b".into(), ColumnType::Int),
+                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
             ],
         };
 

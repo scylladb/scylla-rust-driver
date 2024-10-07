@@ -30,7 +30,7 @@ pub struct SetKeyspace {
 pub struct Prepared {
     pub id: Bytes,
     pub prepared_metadata: PreparedMetadata,
-    pub result_metadata: ResultMetadata,
+    pub result_metadata: ResultMetadata<'static>,
 }
 
 #[derive(Debug)]
@@ -45,8 +45,8 @@ pub struct TableSpec<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ColumnType {
-    Custom(String),
+pub enum ColumnType<'frame> {
+    Custom(Cow<'frame, str>),
     Ascii,
     Boolean,
     Blob,
@@ -61,21 +61,70 @@ pub enum ColumnType {
     Text,
     Timestamp,
     Inet,
-    List(Box<ColumnType>),
-    Map(Box<ColumnType>, Box<ColumnType>),
-    Set(Box<ColumnType>),
+    List(Box<ColumnType<'frame>>),
+    Map(Box<ColumnType<'frame>>, Box<ColumnType<'frame>>),
+    Set(Box<ColumnType<'frame>>),
     UserDefinedType {
-        type_name: String,
-        keyspace: String,
-        field_types: Vec<(String, ColumnType)>,
+        type_name: Cow<'frame, str>,
+        keyspace: Cow<'frame, str>,
+        field_types: Vec<(Cow<'frame, str>, ColumnType<'frame>)>,
     },
     SmallInt,
     TinyInt,
     Time,
     Timeuuid,
-    Tuple(Vec<ColumnType>),
+    Tuple(Vec<ColumnType<'frame>>),
     Uuid,
     Varint,
+}
+
+impl<'frame> ColumnType<'frame> {
+    pub fn into_owned(self) -> ColumnType<'static> {
+        match self {
+            ColumnType::Custom(cow) => ColumnType::Custom(cow.into_owned().into()),
+            ColumnType::Ascii => ColumnType::Ascii,
+            ColumnType::Boolean => ColumnType::Boolean,
+            ColumnType::Blob => ColumnType::Blob,
+            ColumnType::Counter => ColumnType::Counter,
+            ColumnType::Date => ColumnType::Date,
+            ColumnType::Decimal => ColumnType::Decimal,
+            ColumnType::Double => ColumnType::Double,
+            ColumnType::Duration => ColumnType::Duration,
+            ColumnType::Float => ColumnType::Float,
+            ColumnType::Int => ColumnType::Int,
+            ColumnType::BigInt => ColumnType::BigInt,
+            ColumnType::Text => ColumnType::Text,
+            ColumnType::Timestamp => ColumnType::Timestamp,
+            ColumnType::Inet => ColumnType::Inet,
+            ColumnType::List(elem_type) => ColumnType::List(Box::new(elem_type.into_owned())),
+            ColumnType::Map(key_type, value_type) => ColumnType::Map(
+                Box::new(key_type.into_owned()),
+                Box::new(value_type.into_owned()),
+            ),
+            ColumnType::Set(elem_type) => ColumnType::Set(Box::new(elem_type.into_owned())),
+            ColumnType::UserDefinedType {
+                type_name,
+                keyspace,
+                field_types,
+            } => ColumnType::UserDefinedType {
+                type_name: type_name.into_owned().into(),
+                keyspace: keyspace.into_owned().into(),
+                field_types: field_types
+                    .into_iter()
+                    .map(|(cow, column_type)| (cow.into_owned().into(), column_type.into_owned()))
+                    .collect(),
+            },
+            ColumnType::SmallInt => ColumnType::SmallInt,
+            ColumnType::TinyInt => ColumnType::TinyInt,
+            ColumnType::Time => ColumnType::Time,
+            ColumnType::Timeuuid => ColumnType::Timeuuid,
+            ColumnType::Tuple(vec) => {
+                ColumnType::Tuple(vec.into_iter().map(ColumnType::into_owned).collect())
+            }
+            ColumnType::Uuid => ColumnType::Uuid,
+            ColumnType::Varint => ColumnType::Varint,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -153,7 +202,7 @@ impl TableSpec<'static> {
     }
 }
 
-impl ColumnType {
+impl ColumnType<'_> {
     // Returns true if the type allows a special, empty value in addition to its
     // natural representation. For example, bigint represents a 32-bit integer,
     // but it can also hold a 0-bit empty value.
@@ -423,19 +472,60 @@ impl CqlValue {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ColumnSpec {
-    pub table_spec: TableSpec<'static>,
-    pub name: String,
-    pub typ: ColumnType,
+pub struct ColumnSpec<'frame> {
+    pub(crate) table_spec: TableSpec<'frame>,
+    pub(crate) name: Cow<'frame, str>,
+    pub(crate) typ: ColumnType<'frame>,
+}
+
+impl ColumnSpec<'static> {
+    #[inline]
+    pub fn owned(name: String, typ: ColumnType<'static>, table_spec: TableSpec<'static>) -> Self {
+        Self {
+            table_spec,
+            name: Cow::Owned(name),
+            typ,
+        }
+    }
+}
+
+impl<'frame> ColumnSpec<'frame> {
+    #[inline]
+    pub fn borrowed(
+        name: &'frame str,
+        typ: ColumnType<'frame>,
+        table_spec: TableSpec<'frame>,
+    ) -> Self {
+        Self {
+            table_spec,
+            name: Cow::Borrowed(name),
+            typ,
+        }
+    }
+
+    #[inline]
+    pub fn table_spec(&self) -> &TableSpec<'frame> {
+        &self.table_spec
+    }
+
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[inline]
+    pub fn typ(&self) -> &ColumnType<'frame> {
+        &self.typ
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct ResultMetadata {
+pub struct ResultMetadata<'a> {
     col_count: usize,
-    pub col_specs: Vec<ColumnSpec>,
+    col_specs: Vec<ColumnSpec<'a>>,
 }
 
-impl ResultMetadata {
+impl<'a> ResultMetadata<'a> {
     #[inline]
     pub fn mock_empty() -> Self {
         Self {
@@ -446,11 +536,21 @@ impl ResultMetadata {
 
     #[inline]
     #[doc(hidden)]
-    pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec>) -> Self {
+    pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec<'static>>) -> Self {
         Self {
             col_count,
             col_specs,
         }
+    }
+
+    #[inline]
+    pub fn col_count(&self) -> usize {
+        self.col_count
+    }
+
+    #[inline]
+    pub fn col_specs(&self) -> &[ColumnSpec] {
+        &self.col_specs
     }
 }
 
@@ -469,7 +569,7 @@ pub struct PreparedMetadata {
     /// pk_indexes are sorted by `index` and can be reordered in partition key order
     /// using `sequence` field
     pub pk_indexes: Vec<PartitionKeyIndex>,
-    pub col_specs: Vec<ColumnSpec>,
+    pub col_specs: Vec<ColumnSpec<'static>>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -486,7 +586,7 @@ impl Row {
 
 #[derive(Debug)]
 pub struct Rows {
-    pub metadata: Arc<ResultMetadata>,
+    pub metadata: Arc<ResultMetadata<'static>>,
     pub paging_state_response: PagingStateResponse,
     pub rows_count: usize,
     pub rows: Vec<Row>,
@@ -503,95 +603,112 @@ pub enum Result {
     SchemaChange(SchemaChange),
 }
 
-fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec<'static>, TableSpecParseError> {
-    let ks_name = types::read_string(buf)
-        .map_err(TableSpecParseError::MalformedKeyspaceName)?
-        .to_owned();
-    let table_name = types::read_string(buf)
-        .map_err(TableSpecParseError::MalformedTableName)?
-        .to_owned();
-    Ok(TableSpec::owned(ks_name, table_name))
+macro_rules! generate_deser_type {
+    ($deser_type: ident, $l: lifetime, $read_string: expr) => {
+        fn $deser_type<'frame>(
+            buf: &mut &'frame [u8],
+        ) -> StdResult<ColumnType<$l>, CqlTypeParseError> {
+            use ColumnType::*;
+            let id = types::read_short(buf)
+                .map_err(|err| CqlTypeParseError::TypeIdParseError(err.into()))?;
+            Ok(match id {
+                0x0000 => {
+                    // We use types::read_string instead of $read_string here on purpose.
+                    // Chances are the underlying string is `...DurationType`, in which case
+                    // we don't need to allocate it at all. Only for Custom types
+                    // (which we don't support anyway) do we need to allocate.
+                    // OTOH, the macro argument function deserializes borrowed OR owned string;
+                    // here we want to always deserialize borrowed string.
+                    let type_str = types::read_string(buf)
+                        .map_err(CqlTypeParseError::CustomTypeNameParseError)?;
+                    match type_str {
+                        "org.apache.cassandra.db.marshal.DurationType" => Duration,
+                        _ => Custom(type_str.to_owned().into()),
+                    }
+                }
+                0x0001 => Ascii,
+                0x0002 => BigInt,
+                0x0003 => Blob,
+                0x0004 => Boolean,
+                0x0005 => Counter,
+                0x0006 => Decimal,
+                0x0007 => Double,
+                0x0008 => Float,
+                0x0009 => Int,
+                0x000B => Timestamp,
+                0x000C => Uuid,
+                0x000D => Text,
+                0x000E => Varint,
+                0x000F => Timeuuid,
+                0x0010 => Inet,
+                0x0011 => Date,
+                0x0012 => Time,
+                0x0013 => SmallInt,
+                0x0014 => TinyInt,
+                0x0015 => Duration,
+                0x0020 => List(Box::new($deser_type(buf)?)),
+                0x0021 => Map(Box::new($deser_type(buf)?), Box::new($deser_type(buf)?)),
+                0x0022 => Set(Box::new($deser_type(buf)?)),
+                0x0030 => {
+                    let keyspace_name =
+                        $read_string(buf).map_err(CqlTypeParseError::UdtKeyspaceNameParseError)?;
+                    let type_name =
+                        $read_string(buf).map_err(CqlTypeParseError::UdtNameParseError)?;
+                    let fields_size: usize = types::read_short(buf)
+                        .map_err(|err| CqlTypeParseError::UdtFieldsCountParseError(err.into()))?
+                        .into();
+
+                    let mut field_types: Vec<(Cow<$l, str>, ColumnType)> =
+                        Vec::with_capacity(fields_size);
+
+                    for _ in 0..fields_size {
+                        let field_name =
+                            $read_string(buf).map_err(CqlTypeParseError::UdtFieldNameParseError)?;
+                        let field_type = $deser_type(buf)?;
+
+                        field_types.push((field_name.into(), field_type));
+                    }
+
+                    UserDefinedType {
+                        type_name: type_name.into(),
+                        keyspace: keyspace_name.into(),
+                        field_types,
+                    }
+                }
+                0x0031 => {
+                    let len: usize = types::read_short(buf)
+                        .map_err(|err| CqlTypeParseError::TupleLengthParseError(err.into()))?
+                        .into();
+                    let mut types = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        types.push($deser_type(buf)?);
+                    }
+                    Tuple(types)
+                }
+                id => {
+                    return Err(CqlTypeParseError::TypeNotImplemented(id));
+                }
+            })
+        }
+    };
 }
 
-fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, CqlTypeParseError> {
-    use ColumnType::*;
-    let id =
-        types::read_short(buf).map_err(|err| CqlTypeParseError::TypeIdParseError(err.into()))?;
-    Ok(match id {
-        0x0000 => {
-            let type_str: String = types::read_string(buf)
-                .map_err(CqlTypeParseError::CustomTypeNameParseError)?
-                .to_string();
-            match type_str.as_str() {
-                "org.apache.cassandra.db.marshal.DurationType" => Duration,
-                _ => Custom(type_str),
-            }
-        }
-        0x0001 => Ascii,
-        0x0002 => BigInt,
-        0x0003 => Blob,
-        0x0004 => Boolean,
-        0x0005 => Counter,
-        0x0006 => Decimal,
-        0x0007 => Double,
-        0x0008 => Float,
-        0x0009 => Int,
-        0x000B => Timestamp,
-        0x000C => Uuid,
-        0x000D => Text,
-        0x000E => Varint,
-        0x000F => Timeuuid,
-        0x0010 => Inet,
-        0x0011 => Date,
-        0x0012 => Time,
-        0x0013 => SmallInt,
-        0x0014 => TinyInt,
-        0x0015 => Duration,
-        0x0020 => List(Box::new(deser_type(buf)?)),
-        0x0021 => Map(Box::new(deser_type(buf)?), Box::new(deser_type(buf)?)),
-        0x0022 => Set(Box::new(deser_type(buf)?)),
-        0x0030 => {
-            let keyspace_name: String = types::read_string(buf)
-                .map_err(CqlTypeParseError::UdtKeyspaceNameParseError)?
-                .to_string();
-            let type_name: String = types::read_string(buf)
-                .map_err(CqlTypeParseError::UdtNameParseError)?
-                .to_string();
-            let fields_size: usize = types::read_short(buf)
-                .map_err(|err| CqlTypeParseError::UdtFieldsCountParseError(err.into()))?
-                .into();
+generate_deser_type!(deser_type_owned, 'static, |buf| types::read_string(buf).map(ToOwned::to_owned));
 
-            let mut field_types: Vec<(String, ColumnType)> = Vec::with_capacity(fields_size);
+// This is going to be used for deserializing borrowed result metadata.
+generate_deser_type!(_deser_type_borrowed, 'frame, types::read_string);
 
-            for _ in 0..fields_size {
-                let field_name: String = types::read_string(buf)
-                    .map_err(CqlTypeParseError::UdtFieldNameParseError)?
-                    .to_string();
-                let field_type: ColumnType = deser_type(buf)?;
-
-                field_types.push((field_name, field_type));
-            }
-
-            UserDefinedType {
-                type_name,
-                keyspace: keyspace_name,
-                field_types,
-            }
-        }
-        0x0031 => {
-            let len: usize = types::read_short(buf)
-                .map_err(|err| CqlTypeParseError::TupleLengthParseError(err.into()))?
-                .into();
-            let mut types = Vec::with_capacity(len);
-            for _ in 0..len {
-                types.push(deser_type(buf)?);
-            }
-            Tuple(types)
-        }
-        id => {
-            return Err(CqlTypeParseError::TypeNotImplemented(id));
-        }
-    })
+/// Deserializes a table spec, be it per-column one or a global one,
+/// in the borrowed form.
+///
+/// This function does not allocate.
+/// To obtain TableSpec<'static>, use `.into_owned()` on its result.
+fn deser_table_spec<'frame>(
+    buf: &mut &'frame [u8],
+) -> StdResult<TableSpec<'frame>, TableSpecParseError> {
+    let ks_name = types::read_string(buf).map_err(TableSpecParseError::MalformedKeyspaceName)?;
+    let table_name = types::read_string(buf).map_err(TableSpecParseError::MalformedTableName)?;
+    Ok(TableSpec::borrowed(ks_name, table_name))
 }
 
 fn mk_col_spec_parse_error(
@@ -604,34 +721,73 @@ fn mk_col_spec_parse_error(
     }
 }
 
+/// Deserializes col specs (part of ResultMetadata or PreparedMetadata)
+/// in the owned form.
+///
+/// Checks for equality of table specs across columns, because the protocol
+/// does not guarantee that and we want to be sure that the assumption
+/// of them being all the same is correct.
+///
+/// To avoid needless allocations, it is advised to pass `global_table_spec`
+/// in the borrowed form, so that cloning it is cheap.
 fn deser_col_specs(
     buf: &mut &[u8],
-    global_table_spec: &Option<TableSpec<'static>>,
+    global_table_spec: Option<TableSpec<'_>>,
     col_count: usize,
-) -> StdResult<Vec<ColumnSpec>, ColumnSpecParseError> {
+) -> StdResult<Vec<ColumnSpec<'static>>, ColumnSpecParseError> {
+    let global_table_spec_provided = global_table_spec.is_some();
+    let mut known_table_spec = global_table_spec;
+
     let mut col_specs = Vec::with_capacity(col_count);
     for col_idx in 0..col_count {
-        let table_spec = if let Some(spec) = global_table_spec {
-            spec.clone()
-        } else {
-            deser_table_spec(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?
+        let table_spec = match known_table_spec {
+            // If global table spec was provided, we simply clone it to each column spec.
+            Some(ref known_spec) if global_table_spec_provided => known_spec.clone(),
+
+            // Else, we deserialize the table spec for a column and, if we already know some
+            // previous spec (i.e. that of the first column), we perform equality check
+            // against it.
+            Some(_) | None => {
+                let table_spec =
+                    deser_table_spec(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
+
+                if let Some(ref known_spec) = known_table_spec {
+                    // We assume that for each column, table spec is the same.
+                    // As this is not guaranteed by the CQL protocol specification but only by how
+                    // Cassandra and ScyllaDB work (no support for joins), we perform a sanity check here.
+                    if known_spec.table_name != table_spec.table_name
+                        || known_spec.ks_name != table_spec.ks_name
+                    {
+                        return Err(mk_col_spec_parse_error(
+                            col_idx,
+                            ColumnSpecParseErrorKind::TableSpecDiffersAcrossColumns(
+                                known_spec.clone().into_owned(),
+                                table_spec.into_owned(),
+                            ),
+                        ));
+                    }
+                } else {
+                    // Once we have read the first column spec, we save its table spec
+                    // in order to verify its equality with other columns'.
+                    known_table_spec = Some(table_spec.clone());
+                }
+
+                table_spec
+            }
         };
+
         let name = types::read_string(buf)
             .map_err(|err| mk_col_spec_parse_error(col_idx, err))?
             .to_owned();
-        let typ = deser_type(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
-        col_specs.push(ColumnSpec {
-            table_spec,
-            name,
-            typ,
-        });
+        let typ = deser_type_owned(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
+        col_specs.push(ColumnSpec::owned(name, typ, table_spec.into_owned()));
     }
     Ok(col_specs)
 }
 
 fn deser_result_metadata(
     buf: &mut &[u8],
-) -> StdResult<(ResultMetadata, PagingStateResponse), ResultMetadataParseError> {
+) -> StdResult<(ResultMetadata<'static>, PagingStateResponse), ResultMetadataParseError> {
     let flags = types::read_int(buf)
         .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
     let global_tables_spec = flags & 0x0001 != 0;
@@ -649,13 +805,11 @@ fn deser_result_metadata(
     let col_specs = if no_metadata {
         vec![]
     } else {
-        let global_table_spec = if global_tables_spec {
-            Some(deser_table_spec(buf)?)
-        } else {
-            None
-        };
+        let global_table_spec = global_tables_spec
+            .then(|| deser_table_spec(buf))
+            .transpose()?;
 
-        deser_col_specs(buf, &global_table_spec, col_count)?
+        deser_col_specs(buf, global_table_spec, col_count)?
     };
 
     let metadata = ResultMetadata {
@@ -689,13 +843,11 @@ fn deser_prepared_metadata(
     }
     pk_indexes.sort_unstable_by_key(|pki| pki.index);
 
-    let global_table_spec = if global_tables_spec {
-        Some(deser_table_spec(buf)?)
-    } else {
-        None
-    };
+    let global_table_spec = global_tables_spec
+        .then(|| deser_table_spec(buf))
+        .transpose()?;
 
-    let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
+    let col_specs = deser_col_specs(buf, global_table_spec, col_count)?;
 
     Ok(PreparedMetadata {
         flags,
@@ -835,14 +987,14 @@ pub fn deser_cql_value(
                 .map(|((col_name, col_type), res)| {
                     res.and_then(|v| {
                         let val = Option::<CqlValue>::deserialize(col_type, v.flatten())?;
-                        Ok((col_name.clone(), val))
+                        Ok((col_name.clone().into_owned(), val))
                     })
                 })
                 .collect::<StdResult<_, _>>()?;
 
             CqlValue::UserDefinedType {
-                keyspace: keyspace.clone(),
-                type_name: type_name.clone(),
+                keyspace: keyspace.clone().into_owned(),
+                type_name: type_name.clone().into_owned(),
                 fields,
             }
         }
@@ -867,7 +1019,7 @@ pub fn deser_cql_value(
 
 fn deser_rows(
     buf_bytes: Bytes,
-    cached_metadata: Option<&Arc<ResultMetadata>>,
+    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
 ) -> StdResult<Rows, RowsParseError> {
     let buf = &mut &*buf_bytes;
     let (server_metadata, paging_state_response) = deser_result_metadata(buf)?;
@@ -950,7 +1102,7 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
 
 pub fn deserialize(
     buf_bytes: Bytes,
-    cached_metadata: Option<&Arc<ResultMetadata>>,
+    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
 ) -> StdResult<Result, CqlResultParseError> {
     let buf = &mut &*buf_bytes;
     use self::Result::*;
@@ -1732,8 +1884,8 @@ mod tests {
             (ColumnType::Set(Box::new(ColumnType::Int)), CqlValue::Empty),
             (
                 ColumnType::UserDefinedType {
-                    type_name: "".to_owned(),
-                    keyspace: "".to_owned(),
+                    type_name: "".into(),
+                    keyspace: "".into(),
                     field_types: vec![],
                 },
                 CqlValue::Empty,

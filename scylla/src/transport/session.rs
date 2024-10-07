@@ -2105,8 +2105,8 @@ impl RequestSpan {
         }
     }
 
-    pub(crate) fn new_prepared<'ps>(
-        partition_key: Option<impl Iterator<Item = (&'ps [u8], &'ps ColumnSpec)> + Clone>,
+    pub(crate) fn new_prepared<'ps, 'spec: 'ps>(
+        partition_key: Option<impl Iterator<Item = (&'ps [u8], &'ps ColumnSpec<'spec>)> + Clone>,
         token: Option<Token>,
         request_size: usize,
     ) -> Self {
@@ -2227,14 +2227,14 @@ impl Drop for RequestSpan {
     }
 }
 
-fn partition_key_displayer<'ps, 'res>(
-    mut pk_values_iter: impl Iterator<Item = (&'ps [u8], &'ps ColumnSpec)> + 'res + Clone,
+fn partition_key_displayer<'ps, 'res, 'spec: 'ps>(
+    mut pk_values_iter: impl Iterator<Item = (&'ps [u8], &'ps ColumnSpec<'spec>)> + 'res + Clone,
 ) -> impl Display + 'res {
     CommaSeparatedDisplayer(
         std::iter::from_fn(move || {
             pk_values_iter
                 .next()
-                .map(|(mut cell, spec)| deser_cql_value(&spec.typ, &mut cell))
+                .map(|(mut cell, spec)| deser_cql_value(spec.typ(), &mut cell))
         })
         .map(|c| match c {
             Ok(c) => Either::Left(CqlValueDisplayer(c)),

@@ -102,7 +102,7 @@ pub struct PreparedStatement {
 #[derive(Debug)]
 struct PreparedStatementSharedData {
     metadata: PreparedMetadata,
-    result_metadata: Arc<ResultMetadata>,
+    result_metadata: Arc<ResultMetadata<'static>>,
     statement: String,
 }
 
@@ -125,7 +125,7 @@ impl PreparedStatement {
         id: Bytes,
         is_lwt: bool,
         metadata: PreparedMetadata,
-        result_metadata: Arc<ResultMetadata>,
+        result_metadata: Arc<ResultMetadata<'static>>,
         statement: String,
         page_size: PageSize,
         config: StatementConfig,
@@ -281,7 +281,7 @@ impl PreparedStatement {
         self.get_prepared_metadata()
             .col_specs
             .first()
-            .map(|spec| &spec.table_spec)
+            .map(|spec| spec.table_spec())
     }
 
     /// Returns the name of the keyspace this statement is operating on.
@@ -289,7 +289,7 @@ impl PreparedStatement {
         self.get_prepared_metadata()
             .col_specs
             .first()
-            .map(|col_spec| col_spec.table_spec.ks_name())
+            .map(|col_spec| col_spec.table_spec().ks_name())
     }
 
     /// Returns the name of the table this statement is operating on.
@@ -297,7 +297,7 @@ impl PreparedStatement {
         self.get_prepared_metadata()
             .col_specs
             .first()
-            .map(|col_spec| col_spec.table_spec.table_name())
+            .map(|col_spec| col_spec.table_spec().table_name())
     }
 
     /// Sets the consistency to be used when executing this statement.
@@ -417,13 +417,13 @@ impl PreparedStatement {
     }
 
     /// Access metadata about the result of prepared statement returned by the database
-    pub(crate) fn get_result_metadata(&self) -> &Arc<ResultMetadata> {
+    pub(crate) fn get_result_metadata(&self) -> &Arc<ResultMetadata<'static>> {
         &self.shared.result_metadata
     }
 
     /// Access column specifications of the result set returned after the execution of this statement
     pub fn get_result_set_col_specs(&self) -> &[ColumnSpec] {
-        &self.shared.result_metadata.col_specs
+        self.shared.result_metadata.col_specs()
     }
 
     /// Get the name of the partitioner used for this statement.
@@ -513,13 +513,13 @@ impl From<SerializationError> for PartitionKeyError {
     }
 }
 
-pub(crate) type PartitionKeyValue<'ps> = (&'ps [u8], &'ps ColumnSpec);
+pub(crate) type PartitionKeyValue<'ps> = (&'ps [u8], &'ps ColumnSpec<'ps>);
 
 pub(crate) struct PartitionKey<'ps> {
     pk_values: SmallVec<[Option<PartitionKeyValue<'ps>>; PartitionKey::SMALLVEC_ON_STACK_SIZE]>,
 }
 
-impl<'ps> PartitionKey<'ps> {
+impl<'ps, 'spec: 'ps> PartitionKey<'ps> {
     const SMALLVEC_ON_STACK_SIZE: usize = 8;
 
     fn new(
@@ -613,18 +613,14 @@ mod tests {
     use crate::{prepared_statement::PartitionKey, test_utils::setup_tracing};
 
     fn make_meta(
-        cols: impl IntoIterator<Item = ColumnType>,
+        cols: impl IntoIterator<Item = ColumnType<'static>>,
         idx: impl IntoIterator<Item = usize>,
     ) -> PreparedMetadata {
         let table_spec = TableSpec::owned("ks".to_owned(), "t".to_owned());
         let col_specs: Vec<_> = cols
             .into_iter()
             .enumerate()
-            .map(|(i, typ)| ColumnSpec {
-                name: format!("col_{}", i),
-                table_spec: table_spec.clone(),
-                typ,
-            })
+            .map(|(i, typ)| ColumnSpec::owned(format!("col_{}", i), typ, table_spec.clone()))
             .collect();
         let mut pk_indexes = idx
             .into_iter()

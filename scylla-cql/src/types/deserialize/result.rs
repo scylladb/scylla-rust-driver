@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 /// Iterates over the whole result, returning rows.
 #[derive(Debug)]
 pub struct RowIterator<'frame> {
-    specs: &'frame [ColumnSpec],
+    specs: &'frame [ColumnSpec<'frame>],
     remaining: usize,
     slice: FrameSlice<'frame>,
 }
@@ -56,7 +56,7 @@ impl<'frame> Iterator for RowIterator<'frame> {
                 return Some(Err(mk_deser_err::<Self>(
                     BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
                         column_index,
-                        column_name: spec.name.clone(),
+                        column_name: spec.name().to_owned(),
                         err: DeserializationError::new(err),
                     },
                 )));

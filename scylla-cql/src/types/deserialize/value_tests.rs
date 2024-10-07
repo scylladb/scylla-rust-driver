@@ -2,6 +2,7 @@ use assert_matches::assert_matches;
 use bytes::{BufMut, Bytes, BytesMut};
 use uuid::Uuid;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -580,11 +581,11 @@ fn test_tuples() {
 }
 
 fn udt_def_with_fields(
-    fields: impl IntoIterator<Item = (impl Into<String>, ColumnType)>,
-) -> ColumnType {
+    fields: impl IntoIterator<Item = (impl Into<Cow<'static, str>>, ColumnType<'static>)>,
+) -> ColumnType<'static> {
     ColumnType::UserDefinedType {
-        type_name: "udt".to_owned(),
-        keyspace: "ks".to_owned(),
+        type_name: "udt".into(),
+        keyspace: "ks".into(),
         field_types: fields.into_iter().map(|(s, t)| (s.into(), t)).collect(),
     }
 }
