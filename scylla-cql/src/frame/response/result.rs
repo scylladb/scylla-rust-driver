@@ -762,11 +762,9 @@ fn deser_result_metadata(
     let col_specs = if no_metadata {
         vec![]
     } else {
-        let global_table_spec = if global_tables_spec {
-            Some(deser_table_spec(buf)?)
-        } else {
-            None
-        };
+        let global_table_spec = global_tables_spec
+            .then(|| deser_table_spec(buf))
+            .transpose()?;
 
         deser_col_specs(buf, global_table_spec, col_count)?
     };
@@ -802,11 +800,9 @@ fn deser_prepared_metadata(
     }
     pk_indexes.sort_unstable_by_key(|pki| pki.index);
 
-    let global_table_spec = if global_tables_spec {
-        Some(deser_table_spec(buf)?)
-    } else {
-        None
-    };
+    let global_table_spec = global_tables_spec
+        .then(|| deser_table_spec(buf))
+        .transpose()?;
 
     let col_specs = deser_col_specs(buf, global_table_spec, col_count)?;
 
