@@ -698,14 +698,17 @@ generate_deser_type!(deser_type_owned, 'static, |buf| types::read_string(buf).ma
 // This is going to be used for deserializing borrowed result metadata.
 generate_deser_type!(_deser_type_borrowed, 'frame, types::read_string);
 
-fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec<'static>, TableSpecParseError> {
-    let ks_name = types::read_string(buf)
-        .map_err(TableSpecParseError::MalformedKeyspaceName)?
-        .to_owned();
-    let table_name = types::read_string(buf)
-        .map_err(TableSpecParseError::MalformedTableName)?
-        .to_owned();
-    Ok(TableSpec::owned(ks_name, table_name))
+/// Deserializes a table spec, be it per-column one or a global one,
+/// in the borrowed form.
+///
+/// This function does not allocate.
+/// To obtain TableSpec<'static>, use `.into_owned()` on its result.
+fn deser_table_spec<'frame>(
+    buf: &mut &'frame [u8],
+) -> StdResult<TableSpec<'frame>, TableSpecParseError> {
+    let ks_name = types::read_string(buf).map_err(TableSpecParseError::MalformedKeyspaceName)?;
+    let table_name = types::read_string(buf).map_err(TableSpecParseError::MalformedTableName)?;
+    Ok(TableSpec::borrowed(ks_name, table_name))
 }
 
 fn mk_col_spec_parse_error(
@@ -720,12 +723,12 @@ fn mk_col_spec_parse_error(
 
 fn deser_col_specs(
     buf: &mut &[u8],
-    global_table_spec: &Option<TableSpec<'static>>,
+    global_table_spec: Option<TableSpec<'_>>,
     col_count: usize,
 ) -> StdResult<Vec<ColumnSpec<'static>>, ColumnSpecParseError> {
     let mut col_specs = Vec::with_capacity(col_count);
     for col_idx in 0..col_count {
-        let table_spec = if let Some(spec) = global_table_spec {
+        let table_spec = if let Some(ref spec) = global_table_spec {
             spec.clone()
         } else {
             deser_table_spec(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?
@@ -734,7 +737,7 @@ fn deser_col_specs(
             .map_err(|err| mk_col_spec_parse_error(col_idx, err))?
             .to_owned();
         let typ = deser_type_owned(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
-        col_specs.push(ColumnSpec::owned(name, typ, table_spec));
+        col_specs.push(ColumnSpec::owned(name, typ, table_spec.into_owned()));
     }
     Ok(col_specs)
 }
@@ -765,7 +768,7 @@ fn deser_result_metadata(
             None
         };
 
-        deser_col_specs(buf, &global_table_spec, col_count)?
+        deser_col_specs(buf, global_table_spec, col_count)?
     };
 
     let metadata = ResultMetadata {
@@ -805,7 +808,7 @@ fn deser_prepared_metadata(
         None
     };
 
-    let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
+    let col_specs = deser_col_specs(buf, global_table_spec, col_count)?;
 
     Ok(PreparedMetadata {
         flags,
