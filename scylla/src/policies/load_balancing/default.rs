@@ -2854,27 +2854,65 @@ mod latency_awareness {
         }
 
         pub(crate) fn reliable_latency_measure(error: &RequestAttemptError) -> bool {
+            // Do not remove this lint!
+            // It's there for a reason - we don't want new variants
+            // automatically fall under `_` pattern when they are introduced.
+            #[deny(clippy::wildcard_enum_match_arm)]
             match error {
-                // "fast" errors, i.e. ones that are returned quickly after the query begins
+                // "fast" errors, i.e. ones that appeared on driver side, before sending the request
                 RequestAttemptError::CqlRequestSerialization(_)
                 | RequestAttemptError::BrokenConnectionError(_)
                 | RequestAttemptError::UnableToAllocStreamId
-                | RequestAttemptError::DbError(DbError::IsBootstrapping, _)
-                | RequestAttemptError::DbError(DbError::Unavailable { .. }, _)
-                | RequestAttemptError::DbError(DbError::Unprepared { .. }, _)
-                | RequestAttemptError::DbError(DbError::Overloaded, _)
-                | RequestAttemptError::DbError(DbError::RateLimitReached { .. }, _)
                 | RequestAttemptError::SerializationError(_) => false,
 
                 // "slow" errors, i.e. ones that are returned after considerable time of query being run
-                RequestAttemptError::DbError(_, _)
-                | RequestAttemptError::CqlResultParseError(_)
+                RequestAttemptError::CqlResultParseError(_)
                 | RequestAttemptError::CqlErrorParseError(_)
                 | RequestAttemptError::BodyExtensionsParseError(_)
                 | RequestAttemptError::RepreparedIdChanged { .. }
                 | RequestAttemptError::RepreparedIdMissingInBatch
                 | RequestAttemptError::UnexpectedResponse(_)
                 | RequestAttemptError::NonfinishedPagingState => true,
+
+                // handle db errors
+                RequestAttemptError::DbError(db_error, _) => {
+                    // Do not remove this lint!
+                    // It's there for a reason - we don't want new variants
+                    // automatically fall under `_` pattern when they are introduced.
+                    #[deny(clippy::wildcard_enum_match_arm)]
+                    match db_error {
+                        // An errors that appeared on server side, but did not require selected node
+                        // to contact other nodes (i.e. fast server side errors).
+                        DbError::IsBootstrapping
+                        | DbError::Unavailable { .. }
+                        | DbError::Unprepared { .. }
+                        | DbError::Overloaded
+                        | DbError::RateLimitReached { .. } => false,
+
+                        // Rest of server side errors that take considerable amount of time to be returned
+                        DbError::SyntaxError
+                        | DbError::Invalid
+                        | DbError::AlreadyExists { .. }
+                        | DbError::FunctionFailure { .. }
+                        | DbError::AuthenticationError
+                        | DbError::TruncateError
+                        | DbError::ReadTimeout { .. }
+                        | DbError::WriteTimeout { .. }
+                        | DbError::ReadFailure { .. }
+                        | DbError::WriteFailure { .. }
+                        | DbError::ServerError
+                        | DbError::ProtocolError
+                        | DbError::Unauthorized
+                        | DbError::ConfigError
+                        | DbError::Other(_) => true,
+
+                        // Driver may be used with newer version of scylla-cql, which may define additional error variants.
+                        // It is better to not include unknown errors in latency measure.
+                        // `wildcard_enum_match_arm will` will still trigger if we add new variants to DbError,
+                        // so there is no risk of forgetting to update this match.
+                        _ => false,
+                    }
+                }
             }
         }
     }
