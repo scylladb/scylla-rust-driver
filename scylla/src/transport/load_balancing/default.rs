@@ -2838,29 +2838,61 @@ mod latency_awareness {
         }
 
         pub(crate) fn reliable_latency_measure(error: &QueryError) -> bool {
+            // Do not remove this lint!
+            // It's there for a reason - we don't want new variants
+            // automatically fall under `_` pattern when they are introduced.
+            #[deny(clippy::wildcard_enum_match_arm)]
             match error {
-                // "fast" errors, i.e. ones that are returned quickly after the query begins
+                // "fast" errors, i.e. ones that appeared on driver side, before sending the request
                 QueryError::BadQuery(_)
                 | QueryError::CqlRequestSerialization(_)
                 | QueryError::BrokenConnection(_)
                 | QueryError::ConnectionPoolError(_)
                 | QueryError::EmptyPlan
-                | QueryError::UnableToAllocStreamId
-                | QueryError::DbError(DbError::IsBootstrapping, _)
-                | QueryError::DbError(DbError::Unavailable { .. }, _)
-                | QueryError::DbError(DbError::Unprepared { .. }, _)
-                | QueryError::DbError(DbError::Overloaded { .. }, _)
-                | QueryError::DbError(DbError::RateLimitReached { .. }, _) => false,
+                | QueryError::UnableToAllocStreamId => false,
 
                 // "slow" errors, i.e. ones that are returned after considerable time of query being run
-                QueryError::DbError(_, _)
-                | QueryError::CqlResultParseError(_)
+                QueryError::CqlResultParseError(_)
                 | QueryError::CqlErrorParseError(_)
                 | QueryError::BodyExtensionsParseError(_)
                 | QueryError::MetadataError(_)
                 | QueryError::ProtocolError(_)
                 | QueryError::TimeoutError
                 | QueryError::RequestTimeout(_) => true,
+
+                // handle db errors
+                QueryError::DbError(db_error, _) => {
+                    // Do not remove this lint!
+                    // It's there for a reason - we don't want new variants
+                    // automatically fall under `_` pattern when they are introduced.
+                    #[deny(clippy::wildcard_enum_match_arm)]
+                    match db_error {
+                        // An errors that appeared on server side, but did not require selected node
+                        // to contact other nodes (i.e. fast server side errors).
+                        DbError::IsBootstrapping
+                        | DbError::Unavailable { .. }
+                        | DbError::Unprepared { .. }
+                        | DbError::Overloaded { .. }
+                        | DbError::RateLimitReached { .. } => false,
+
+                        // Rest of server side errors that take considerable amount of time to be returned
+                        DbError::SyntaxError
+                        | DbError::Invalid
+                        | DbError::AlreadyExists { .. }
+                        | DbError::FunctionFailure { .. }
+                        | DbError::AuthenticationError
+                        | DbError::TruncateError
+                        | DbError::ReadTimeout { .. }
+                        | DbError::WriteTimeout { .. }
+                        | DbError::ReadFailure { .. }
+                        | DbError::WriteFailure { .. }
+                        | DbError::ServerError
+                        | DbError::ProtocolError
+                        | DbError::Unauthorized
+                        | DbError::ConfigError
+                        | DbError::Other(_) => true,
+                    }
+                }
             }
         }
     }

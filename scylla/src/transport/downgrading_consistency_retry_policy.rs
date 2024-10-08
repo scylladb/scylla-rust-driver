@@ -91,87 +91,128 @@ impl RetrySession for DowngradingConsistencyRetrySession {
             decision
         }
 
+        // Do not remove this lint!
+        // It's there for a reason - we don't want new variants
+        // automatically fall under `_` pattern when they are introduced.
+        #[deny(clippy::wildcard_enum_match_arm)]
         match query_info.error {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
-            QueryError::BrokenConnection(_)
-            | QueryError::ConnectionPoolError(_)
-            | QueryError::DbError(DbError::Overloaded, _)
-            | QueryError::DbError(DbError::ServerError, _)
-            | QueryError::DbError(DbError::TruncateError, _) => {
+            QueryError::BrokenConnection(_) | QueryError::ConnectionPoolError(_) => {
                 if query_info.is_idempotent {
                     RetryDecision::RetryNextNode(None)
                 } else {
                     RetryDecision::DontRetry
                 }
             }
-            // Unavailable - the current node believes that not enough nodes
-            // are alive to satisfy specified consistency requirements.
-            QueryError::DbError(DbError::Unavailable { alive, .. }, _) => {
-                if !self.was_retry {
-                    self.was_retry = true;
-                    max_likely_to_work_cl(*alive, cl)
-                } else {
-                    RetryDecision::DontRetry
-                }
-            }
-            // ReadTimeout - coordinator didn't receive enough replies in time.
-            QueryError::DbError(
-                DbError::ReadTimeout {
-                    received,
-                    required,
-                    data_present,
-                    ..
-                },
-                _,
-            ) => {
-                if self.was_retry {
-                    RetryDecision::DontRetry
-                } else if received < required {
-                    self.was_retry = true;
-                    max_likely_to_work_cl(*received, cl)
-                } else if !*data_present {
-                    self.was_retry = true;
-                    RetryDecision::RetrySameNode(None)
-                } else {
-                    RetryDecision::DontRetry
-                }
-            }
-            // Write timeout - coordinator didn't receive enough replies in time.
-            QueryError::DbError(
-                DbError::WriteTimeout {
-                    write_type,
-                    received,
-                    ..
-                },
-                _,
-            ) => {
-                if self.was_retry || !query_info.is_idempotent {
-                    RetryDecision::DontRetry
-                } else {
-                    self.was_retry = true;
-                    match write_type {
-                        WriteType::Batch | WriteType::Simple if *received > 0 => {
-                            RetryDecision::IgnoreWriteError
+            // DbErrors
+            QueryError::DbError(db_error, _) => {
+                // Do not remove this lint!
+                // It's there for a reason - we don't want new variants
+                // automatically fall under `_` pattern when they are introduced.
+                #[deny(clippy::wildcard_enum_match_arm)]
+                match db_error {
+                    // Basic errors - there are some problems on this node
+                    // Retry on a different one if possible
+                    DbError::Overloaded | DbError::ServerError | DbError::TruncateError => {
+                        if query_info.is_idempotent {
+                            RetryDecision::RetryNextNode(None)
+                        } else {
+                            RetryDecision::DontRetry
                         }
-
-                        WriteType::UnloggedBatch => {
-                            // Since only part of the batch could have been persisted,
-                            // retry with whatever consistency should allow to persist all
-                            max_likely_to_work_cl(*received, cl)
-                        }
-                        WriteType::BatchLog => RetryDecision::RetrySameNode(None),
-
-                        _ => RetryDecision::DontRetry,
                     }
+                    // Unavailable - the current node believes that not enough nodes
+                    // are alive to satisfy specified consistency requirements.
+                    DbError::Unavailable { alive, .. } => {
+                        if !self.was_retry {
+                            self.was_retry = true;
+                            max_likely_to_work_cl(*alive, cl)
+                        } else {
+                            RetryDecision::DontRetry
+                        }
+                    }
+                    // ReadTimeout - coordinator didn't receive enough replies in time.
+                    DbError::ReadTimeout {
+                        received,
+                        required,
+                        data_present,
+                        ..
+                    } => {
+                        if self.was_retry {
+                            RetryDecision::DontRetry
+                        } else if received < required {
+                            self.was_retry = true;
+                            max_likely_to_work_cl(*received, cl)
+                        } else if !*data_present {
+                            self.was_retry = true;
+                            RetryDecision::RetrySameNode(None)
+                        } else {
+                            RetryDecision::DontRetry
+                        }
+                    }
+                    // Write timeout - coordinator didn't receive enough replies in time.
+                    DbError::WriteTimeout {
+                        write_type,
+                        received,
+                        ..
+                    } => {
+                        if self.was_retry || !query_info.is_idempotent {
+                            RetryDecision::DontRetry
+                        } else {
+                            self.was_retry = true;
+                            match write_type {
+                                WriteType::Batch | WriteType::Simple if *received > 0 => {
+                                    RetryDecision::IgnoreWriteError
+                                }
+
+                                WriteType::UnloggedBatch => {
+                                    // Since only part of the batch could have been persisted,
+                                    // retry with whatever consistency should allow to persist all
+                                    max_likely_to_work_cl(*received, cl)
+                                }
+                                WriteType::BatchLog => RetryDecision::RetrySameNode(None),
+
+                                WriteType::Counter
+                                | WriteType::Cas
+                                | WriteType::View
+                                | WriteType::Cdc
+                                | WriteType::Simple
+                                | WriteType::Batch
+                                | WriteType::Other(_) => RetryDecision::DontRetry,
+                            }
+                        }
+                    }
+                    // The node is still bootstrapping it can't execute the query, we should try another one
+                    DbError::IsBootstrapping => RetryDecision::RetryNextNode(None),
+                    // In all other cases propagate the error to the user
+                    DbError::SyntaxError
+                    | DbError::Invalid
+                    | DbError::AlreadyExists { .. }
+                    | DbError::FunctionFailure { .. }
+                    | DbError::AuthenticationError
+                    | DbError::Unauthorized
+                    | DbError::ConfigError
+                    | DbError::ReadFailure { .. }
+                    | DbError::WriteFailure { .. }
+                    | DbError::Unprepared { .. }
+                    | DbError::ProtocolError
+                    | DbError::RateLimitReached { .. }
+                    | DbError::Other(_) => RetryDecision::DontRetry,
                 }
             }
-            // The node is still bootstrapping it can't execute the query, we should try another one
-            QueryError::DbError(DbError::IsBootstrapping, _) => RetryDecision::RetryNextNode(None),
             // Connection to the contacted node is overloaded, try another one
             QueryError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
             // In all other cases propagate the error to the user
-            _ => RetryDecision::DontRetry,
+            QueryError::BadQuery(_)
+            | QueryError::MetadataError(_)
+            | QueryError::CqlRequestSerialization(_)
+            | QueryError::BodyExtensionsParseError(_)
+            | QueryError::EmptyPlan
+            | QueryError::CqlResultParseError(_)
+            | QueryError::CqlErrorParseError(_)
+            | QueryError::ProtocolError(_)
+            | QueryError::TimeoutError
+            | QueryError::RequestTimeout(_) => RetryDecision::DontRetry,
         }
     }
 
