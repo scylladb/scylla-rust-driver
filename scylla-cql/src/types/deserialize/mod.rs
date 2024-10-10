@@ -211,6 +211,11 @@ impl TypeCheckError {
     pub fn new(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self(Arc::new(err))
     }
+
+    /// Retrieve an error reason by downcasting to specific type.
+    pub fn downcast_ref<T: std::error::Error + 'static>(&self) -> Option<&T> {
+        self.0.downcast_ref()
+    }
 }
 
 /// An error indicating that a failure happened during deserialization.
@@ -235,6 +240,11 @@ impl DeserializationError {
     #[inline]
     pub fn new(err: impl Error + Send + Sync + 'static) -> Self {
         Self(Arc::new(err))
+    }
+
+    /// Retrieve an error reason by downcasting to specific type.
+    pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
+        self.0.downcast_ref()
     }
 }
 
