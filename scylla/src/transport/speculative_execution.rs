@@ -127,21 +127,17 @@ where
                 }
             }
             res = async_tasks.select_next_some() => {
-                match res {
-                    Some(r) => {
-                        if !can_be_ignored(&r) {
-                            return r;
-                        } else {
-                            last_error = Some(r)
-                        }
-                    },
-                    None =>  {
-                        if async_tasks.is_empty() && retries_remaining == 0 {
-                            return last_error.unwrap_or({
-                                Err(EMPTY_PLAN_ERROR)
-                            });
-                        }
-                    },
+                if let Some(r) = res {
+                    if !can_be_ignored(&r) {
+                        return r;
+                    } else {
+                        last_error = Some(r)
+                    }
+                }
+                if async_tasks.is_empty() && retries_remaining == 0 {
+                    return last_error.unwrap_or({
+                        Err(EMPTY_PLAN_ERROR)
+                    });
                 }
             }
         }
