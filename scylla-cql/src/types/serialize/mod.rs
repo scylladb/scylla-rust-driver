@@ -41,6 +41,11 @@ impl SerializationError {
     pub fn new(err: impl Error + Send + Sync + 'static) -> SerializationError {
         SerializationError(Arc::new(err))
     }
+
+    /// Retrieve an error reason by downcasting to specific type.
+    pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
+        self.0.downcast_ref()
+    }
 }
 
 impl Display for SerializationError {
