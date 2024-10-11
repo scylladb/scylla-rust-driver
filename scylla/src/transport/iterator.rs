@@ -675,8 +675,6 @@ where
 
                 let paging_state_response = rows.paging_state_response.take();
 
-                request_span.record_rows_fields(&rows);
-
                 let received_page = ReceivedPage { rows, tracing_id };
 
                 // Send next page to RowIterator

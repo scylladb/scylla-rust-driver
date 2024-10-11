@@ -821,7 +821,6 @@ impl Session {
         self.handle_auto_await_schema_agreement(&response).await?;
 
         let (result, paging_state) = response.into_query_result_and_paging_state()?;
-        span.record_result_fields(&result);
         Ok((result, paging_state))
     }
 
@@ -1256,7 +1255,6 @@ impl Session {
         self.handle_auto_await_schema_agreement(&response).await?;
 
         let (result, paging_state) = response.into_query_result_and_paging_state()?;
-        span.record_result_fields(&result);
         Ok((result, paging_state))
     }
 
@@ -1452,7 +1450,6 @@ impl Session {
             RunQueryResult::IgnoredWriteError => LegacyQueryResult::mock_empty(),
             RunQueryResult::Completed(response) => response,
         };
-        span.record_result_fields(&result);
         Ok(result)
     }
 
@@ -2169,18 +2166,6 @@ impl RequestSpan {
         if let Some(info) = conn.get_shard_info() {
             self.span.record("shard", info.shard);
         }
-    }
-
-    pub(crate) fn record_result_fields(&self, result: &LegacyQueryResult) {
-        self.span.record("result_size", result.serialized_size);
-        if let Some(rows) = result.rows.as_ref() {
-            self.span.record("result_rows", rows.len());
-        }
-    }
-
-    pub(crate) fn record_rows_fields(&self, rows: &Rows) {
-        self.span.record("result_size", rows.serialized_size);
-        self.span.record("result_rows", rows.rows.len());
     }
 
     pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [(impl Borrow<Arc<Node>>, Shard)]) {
