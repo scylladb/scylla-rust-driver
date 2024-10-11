@@ -839,16 +839,6 @@ impl DeserializedMetadataAndRawRows {
 }
 
 #[derive(Debug)]
-pub struct Rows {
-    pub metadata: ResultMetadataHolder,
-    pub paging_state_response: PagingStateResponse,
-    pub rows_count: usize,
-    pub rows: Vec<Row>,
-    /// Original size of the serialized rows.
-    pub serialized_size: usize,
-}
-
-#[derive(Debug)]
 pub enum Result {
     Void,
     Rows((RawMetadataAndRawRows, PagingStateResponse)),
@@ -1278,29 +1268,6 @@ impl RawMetadataAndRawRows {
             metadata: metadata_deserialized,
             rows_count,
             raw_rows: frame_slice.to_bytes(),
-        })
-    }
-
-    pub fn into_legacy_rows(
-        self,
-        paging_state_response: PagingStateResponse,
-    ) -> StdResult<Rows, RowsParseError> {
-        let raw_rows_with_deserialized_metadata = self.deserialize_metadata()?;
-
-        let rows_size = raw_rows_with_deserialized_metadata.rows_bytes_size();
-        let rows_count = raw_rows_with_deserialized_metadata.rows_count();
-        let rows = raw_rows_with_deserialized_metadata
-            .rows_iter::<Row>()?
-            .collect::<StdResult<_, _>>()?;
-
-        let metadata = raw_rows_with_deserialized_metadata.into_metadata();
-
-        Ok(Rows {
-            metadata,
-            paging_state_response,
-            rows_count,
-            rows,
-            serialized_size: rows_size,
         })
     }
 }
