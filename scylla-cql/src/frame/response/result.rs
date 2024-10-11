@@ -527,23 +527,6 @@ pub struct ResultMetadata<'a> {
 
 impl<'a> ResultMetadata<'a> {
     #[inline]
-    pub fn mock_empty() -> Self {
-        Self {
-            col_count: 0,
-            col_specs: Vec::new(),
-        }
-    }
-
-    #[inline]
-    #[doc(hidden)]
-    pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec<'static>>) -> Self {
-        Self {
-            col_count,
-            col_specs,
-        }
-    }
-
-    #[inline]
     pub fn col_count(&self) -> usize {
         self.col_count
     }
@@ -551,6 +534,16 @@ impl<'a> ResultMetadata<'a> {
     #[inline]
     pub fn col_specs(&self) -> &[ColumnSpec<'a>] {
         &self.col_specs
+    }
+
+    // Preferred to implementing Default, because users shouldn't be encouraged to create
+    // empty ResultMetadata.
+    #[inline]
+    pub fn mock_empty() -> Self {
+        Self {
+            col_count: 0,
+            col_specs: Vec::new(),
+        }
     }
 }
 
@@ -1182,6 +1175,26 @@ pub fn deserialize(
             id => return Err(CqlResultParseError::UnknownResultId(id)),
         },
     )
+}
+
+// This is not #[cfg(test)], because it is used by scylla crate.
+// Unfortunately, this attribute does not apply recursively to
+// children item. Therefore, every `pub` item here must use have
+// the specifier, too.
+#[doc(hidden)]
+mod test_utils {
+    use super::*;
+
+    impl<'a> ResultMetadata<'a> {
+        #[inline]
+        #[doc(hidden)]
+        pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec<'static>>) -> Self {
+            Self {
+                col_count,
+                col_specs,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
