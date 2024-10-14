@@ -470,5 +470,8 @@ pub use scylla_cql::macros::ValueList;
 
 pub use scylla_cql::macros::impl_from_cql_value_from_method;
 
+pub use scylla_cql::macros::impl_serialize_row_via_value_list;
+pub use scylla_cql::macros::impl_serialize_value_via_value;
+
 // Reexports for derive(IntoUserType)
 pub use bytes::{BufMut, Bytes, BytesMut};
