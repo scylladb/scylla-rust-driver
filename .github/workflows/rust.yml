@@ -26,6 +26,9 @@ jobs:
       run: |
         sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
         docker compose -f test/cluster/docker-compose.yml up -d --wait
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     - name: Update rust toolchain
       run: rustup update
     - name: Print rustc version
