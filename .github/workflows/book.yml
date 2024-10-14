@@ -25,6 +25,9 @@ jobs:
         ports:
           - 9042:9042
         options: --health-cmd "cqlsh --debug scylladb" --health-interval 5s --health-retries 10
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
     - uses: actions/checkout@v3
     - name: Update rust toolchain
