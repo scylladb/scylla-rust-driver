@@ -179,7 +179,6 @@ pub use row::DeserializeRow;
 pub use value::DeserializeValue;
 
 use std::error::Error;
-use std::fmt::Display;
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -202,7 +201,7 @@ use thiserror::Error;
 ///   It won't be returned by the `Session` directly, but it might be nested
 ///   in the [`row::BuiltinTypeCheckError`].
 #[derive(Debug, Clone, Error)]
-#[error(transparent)]
+#[error("TypeCheckError: {0}")]
 pub struct TypeCheckError(pub(crate) Arc<dyn std::error::Error + Send + Sync>);
 
 impl TypeCheckError {
@@ -233,6 +232,7 @@ impl TypeCheckError {
 ///   It won't be returned by the `Session` directly, but it might be nested
 ///   in the [`row::BuiltinDeserializationError`].
 #[derive(Debug, Clone, Error)]
+#[error("DeserializationError: {0}")]
 pub struct DeserializationError(Arc<dyn Error + Send + Sync>);
 
 impl DeserializationError {
@@ -245,12 +245,6 @@ impl DeserializationError {
     /// Retrieve an error reason by downcasting to specific type.
     pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
         self.0.downcast_ref()
-    }
-}
-
-impl Display for DeserializationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "DeserializationError: {}", self.0)
     }
 }
 

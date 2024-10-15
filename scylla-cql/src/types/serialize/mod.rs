@@ -2,7 +2,7 @@
 
 //! Types and traits related to serialization of values to the CQL format.
 
-use std::{error::Error, fmt::Display, sync::Arc};
+use std::{error::Error, sync::Arc};
 
 use thiserror::Error;
 
@@ -33,6 +33,7 @@ pub use writers::{CellValueBuilder, CellWriter, RowWriter};
 ///   as an argument to the statement, and rewriting it using the new
 ///   `SerializeRow` interface fails.
 #[derive(Debug, Clone, Error)]
+#[error("SerializationError: {0}")]
 pub struct SerializationError(Arc<dyn Error + Send + Sync>);
 
 impl SerializationError {
@@ -45,11 +46,5 @@ impl SerializationError {
     /// Retrieve an error reason by downcasting to specific type.
     pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
         self.0.downcast_ref()
-    }
-}
-
-impl Display for SerializationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SerializationError: {}", self.0)
     }
 }
