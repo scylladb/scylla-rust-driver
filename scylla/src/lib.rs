@@ -63,8 +63,7 @@
 //! # Ok(())
 //! # }
 //! ```
-//! But the driver will accept anything implementing the trait [SerializeRow]
-//! (crate::serialize::row::SerializeRow)
+//! But the driver will accept anything implementing the trait [SerializeRow].
 //!
 //! ### Receiving results
 //! The easiest way to read rows returned by a query is to cast each row to a tuple of values:
