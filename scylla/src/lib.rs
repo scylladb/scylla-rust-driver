@@ -150,15 +150,6 @@ pub mod serialize {
         };
     }
 
-    /// Contains the [RawBatchValues][raw_batch::RawBatchValues] and [RawBatchValuesIterator][raw_batch::RawBatchValuesIterator]
-    /// trait and their implementations.
-    pub mod raw_batch {
-        pub use scylla_cql::types::serialize::raw_batch::{
-            RawBatchValues, RawBatchValuesAdapter, RawBatchValuesIterator,
-            RawBatchValuesIteratorAdapter,
-        };
-    }
-
     /// Contains the [SerializeRow][row::SerializeRow] trait and its implementations.
     pub mod row {
         // Main types
