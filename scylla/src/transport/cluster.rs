@@ -784,12 +784,13 @@ pub(crate) fn use_keyspace_result(
     for result in use_keyspace_results {
         match result {
             Ok(()) => was_ok = true,
-            Err(err) => match err {
-                QueryError::BrokenConnection(_) | QueryError::ConnectionPoolError(_) => {
+            Err(err) => {
+                if err.is_connection_broken() {
                     broken_conn_error = Some(err)
+                } else {
+                    return Err(err);
                 }
-                _ => return Err(err),
-            },
+            }
         }
     }
 
