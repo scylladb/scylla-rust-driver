@@ -3003,3 +3003,108 @@ async fn test_manual_primary_key_computation() {
         .await;
     }
 }
+
+#[cfg(cassandra_tests)]
+#[tokio::test]
+async fn test_vector_type_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session
+        .query_unpaged(
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)",
+                ks
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.refresh_metadata().await.unwrap();
+    let metadata = session.get_cluster_data();
+    let columns = &metadata.keyspaces[&ks].tables["t"].columns;
+    assert_eq!(
+        columns["b"].type_,
+        CqlType::Vector {
+            type_: Box::new(CqlType::Native(NativeType::Int)),
+            dimensions: 4,
+        },
+    );
+    assert_eq!(
+        columns["c"].type_,
+        CqlType::Vector {
+            type_: Box::new(CqlType::Native(NativeType::Text)),
+            dimensions: 2,
+        },
+    );
+}
+
+#[cfg(cassandra_tests)]
+#[tokio::test]
+async fn test_vector_type_unprepared() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session
+        .query_unpaged(
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)",
+                ks
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query_unpaged(
+            format!(
+                "INSERT INTO {}.t (a, b, c) VALUES (1, [1, 2, 3, 4], ['foo', 'bar'])",
+                ks
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    // TODO: Implement and test SELECT statements and bind values (`?`)
+}
+
+#[cfg(cassandra_tests)]
+#[tokio::test]
+async fn test_vector_type_prepared() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session
+        .query_unpaged(
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)",
+                ks
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let prepared_statement = session
+        .prepare(format!(
+            "INSERT INTO {}.t (a, b, c) VALUES (?, [11, 12, 13, 14], ['afoo', 'abar'])",
+            ks
+        ))
+        .await
+        .unwrap();
+    session
+        .execute_unpaged(&prepared_statement, &(2,))
+        .await
+        .unwrap();
+
+    // TODO: Implement and test SELECT statements and bind values (`?`)
+}
