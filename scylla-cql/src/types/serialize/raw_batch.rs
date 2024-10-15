@@ -1,6 +1,9 @@
 //! Contains the [`RawBatchValues`] and [`RawBatchValuesIterator`] trait and their
 //! implementations.
 
+// Note: When editing above doc-comment edit the corresponding comment on
+// re-export module in scylla crate too.
+
 use super::batch::{BatchValues, BatchValuesIterator};
 use super::row::{RowSerializationContext, SerializedValues};
 use super::{RowWriter, SerializationError};

@@ -131,8 +131,84 @@ pub mod frame {
 }
 
 /// Serializing bound values of a query to be sent to the DB.
+// Note: When editing comment on submodules here edit corresponding comments
+// on scylla-cql modules too.
 pub mod serialize {
-    pub use scylla_cql::types::serialize::*;
+    pub use scylla_cql::types::serialize::SerializationError;
+    /// Contains the [BatchValues][batch::BatchValues] and [BatchValuesIterator][batch::BatchValuesIterator] trait and their
+    /// implementations.
+    pub mod batch {
+        // Main types
+        pub use scylla_cql::types::serialize::batch::{
+            BatchValues, BatchValuesFromIterator, BatchValuesIterator,
+            BatchValuesIteratorFromIterator, TupleValuesIter,
+        };
+
+        // Legacy migration types - to be removed when removing legacy framework
+        pub use scylla_cql::types::serialize::batch::{
+            LegacyBatchValuesAdapter, LegacyBatchValuesIteratorAdapter,
+        };
+    }
+
+    /// Contains the [RawBatchValues][raw_batch::RawBatchValues] and [RawBatchValuesIterator][raw_batch::RawBatchValuesIterator]
+    /// trait and their implementations.
+    pub mod raw_batch {
+        pub use scylla_cql::types::serialize::raw_batch::{
+            RawBatchValues, RawBatchValuesAdapter, RawBatchValuesIterator,
+            RawBatchValuesIteratorAdapter,
+        };
+    }
+
+    /// Contains the [SerializeRow][row::SerializeRow] trait and its implementations.
+    pub mod row {
+        // Main types
+        pub use scylla_cql::types::serialize::row::{RowSerializationContext, SerializeRow};
+
+        // Errors
+        pub use scylla_cql::types::serialize::row::{
+            BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
+            BuiltinTypeCheckErrorKind,
+        };
+
+        // Legacy migration types - to be removed when removing legacy framework
+        pub use scylla_cql::types::serialize::row::{
+            // Legacy migration types - to be removed when removing legacy framework
+            serialize_legacy_row,
+            ValueListAdapter,
+            ValueListToSerializeRowAdapterError,
+        };
+
+        // Not part of the old framework, but something that we should
+        // still aim to remove from public API.
+        pub use scylla_cql::types::serialize::row::{SerializedValues, SerializedValuesIterator};
+    }
+
+    /// Contains the [SerializeValue][value::SerializeValue] trait and its implementations.
+    pub mod value {
+        // Main types
+        pub use scylla_cql::types::serialize::value::SerializeValue;
+
+        // Errors
+        pub use scylla_cql::types::serialize::value::{
+            BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
+            BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind,
+            SetOrListSerializationErrorKind, SetOrListTypeCheckErrorKind,
+            TupleSerializationErrorKind, TupleTypeCheckErrorKind, UdtSerializationErrorKind,
+            UdtTypeCheckErrorKind,
+        };
+
+        // Legacy migration types - to be removed when removing legacy framework
+        pub use scylla_cql::types::serialize::value::{
+            serialize_legacy_value, ValueAdapter, ValueToSerializeValueAdapterError,
+        };
+    }
+
+    /// Contains types and traits used for safe serialization of values for a CQL statement.
+    pub mod writers {
+        pub use scylla_cql::types::serialize::writers::{
+            CellOverflowError, CellValueBuilder, CellWriter, RowWriter, WrittenCellProof,
+        };
+    }
 }
 
 /// Deserializing DB response containing CQL query results.

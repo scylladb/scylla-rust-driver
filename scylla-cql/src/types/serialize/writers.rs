@@ -1,5 +1,8 @@
 //! Contains types and traits used for safe serialization of values for a CQL statement.
 
+// Note: When editing above doc-comment edit the corresponding comment on
+// re-export module in scylla crate too.
+
 use thiserror::Error;
 
 use super::row::SerializedValues;

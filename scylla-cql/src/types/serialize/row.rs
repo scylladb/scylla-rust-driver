@@ -1,5 +1,8 @@
 //! Contains the [`SerializeRow`] trait and its implementations.
 
+// Note: When editing above doc-comment edit the corresponding comment on
+// re-export module in scylla crate too.
+
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Display;
