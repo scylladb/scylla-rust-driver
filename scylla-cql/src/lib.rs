@@ -14,6 +14,9 @@ pub mod macros {
     pub use bytes::{BufMut, Bytes, BytesMut};
 
     pub use crate::impl_from_cql_value_from_method;
+
+    pub use crate::impl_serialize_row_via_value_list;
+    pub use crate::impl_serialize_value_via_value;
 }
 
 pub mod types;
