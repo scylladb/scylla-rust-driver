@@ -1,6 +1,9 @@
 //! Contains the [`BatchValues`] and [`BatchValuesIterator`] trait and their
 //! implementations.
 
+// Note: When editing above doc-comment edit the corresponding comment on
+// re-export module in scylla crate too.
+
 use crate::frame::value::{LegacyBatchValues, LegacyBatchValuesIterator};
 
 use super::row::{RowSerializationContext, SerializeRow};
