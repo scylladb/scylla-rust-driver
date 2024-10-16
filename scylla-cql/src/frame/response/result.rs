@@ -1579,7 +1579,116 @@ pub fn deserialize(
 // the specifier, too.
 #[doc(hidden)]
 mod test_utils {
+    use std::num::TryFromIntError;
+
+    use bytes::BufMut;
+
     use super::*;
+
+    impl TableSpec<'_> {
+        pub(crate) fn serialize(&self, buf: &mut impl BufMut) -> StdResult<(), TryFromIntError> {
+            types::write_string(&self.ks_name, buf)?;
+            types::write_string(&self.table_name, buf)?;
+
+            Ok(())
+        }
+    }
+
+    impl ColumnType<'_> {
+        fn id(&self) -> u16 {
+            match self {
+                Self::Custom(_) => 0x0000,
+                Self::Ascii => 0x0001,
+                Self::BigInt => 0x0002,
+                Self::Blob => 0x0003,
+                Self::Boolean => 0x0004,
+                Self::Counter => 0x0005,
+                Self::Decimal => 0x0006,
+                Self::Double => 0x0007,
+                Self::Float => 0x0008,
+                Self::Int => 0x0009,
+                Self::Timestamp => 0x000B,
+                Self::Uuid => 0x000C,
+                Self::Text => 0x000D,
+                Self::Varint => 0x000E,
+                Self::Timeuuid => 0x000F,
+                Self::Inet => 0x0010,
+                Self::Date => 0x0011,
+                Self::Time => 0x0012,
+                Self::SmallInt => 0x0013,
+                Self::TinyInt => 0x0014,
+                Self::Duration => 0x0015,
+                Self::List(_) => 0x0020,
+                Self::Map(_, _) => 0x0021,
+                Self::Set(_) => 0x0022,
+                Self::UserDefinedType { .. } => 0x0030,
+                Self::Tuple(_) => 0x0031,
+            }
+        }
+
+        // Only for use in tests
+        pub(crate) fn serialize(&self, buf: &mut impl BufMut) -> StdResult<(), TryFromIntError> {
+            let id = self.id();
+            types::write_short(id, buf);
+
+            match self {
+                ColumnType::Custom(type_name) => {
+                    types::write_string(type_name, buf)?;
+                }
+
+                // Simple types
+                ColumnType::Ascii
+                | ColumnType::Boolean
+                | ColumnType::Blob
+                | ColumnType::Counter
+                | ColumnType::Date
+                | ColumnType::Decimal
+                | ColumnType::Double
+                | ColumnType::Duration
+                | ColumnType::Float
+                | ColumnType::Int
+                | ColumnType::BigInt
+                | ColumnType::Text
+                | ColumnType::Timestamp
+                | ColumnType::Inet
+                | ColumnType::SmallInt
+                | ColumnType::TinyInt
+                | ColumnType::Time
+                | ColumnType::Timeuuid
+                | ColumnType::Uuid
+                | ColumnType::Varint => (),
+
+                ColumnType::List(elem_type) | ColumnType::Set(elem_type) => {
+                    elem_type.serialize(buf)?;
+                }
+                ColumnType::Map(key_type, value_type) => {
+                    key_type.serialize(buf)?;
+                    value_type.serialize(buf)?;
+                }
+                ColumnType::Tuple(types) => {
+                    types::write_short_length(types.len(), buf)?;
+                    for typ in types.iter() {
+                        typ.serialize(buf)?;
+                    }
+                }
+                ColumnType::UserDefinedType {
+                    type_name,
+                    keyspace,
+                    field_types,
+                } => {
+                    types::write_string(keyspace, buf)?;
+                    types::write_string(type_name, buf)?;
+                    types::write_short_length(field_types.len(), buf)?;
+                    for (field_name, field_type) in field_types {
+                        types::write_string(field_name, buf)?;
+                        field_type.serialize(buf)?;
+                    }
+                }
+            }
+
+            Ok(())
+        }
+    }
 
     impl<'a> ResultMetadata<'a> {
         #[inline]
@@ -1589,6 +1698,47 @@ mod test_utils {
                 col_count,
                 col_specs,
             }
+        }
+
+        pub(crate) fn serialize(
+            &self,
+            buf: &mut impl BufMut,
+            no_metadata: bool,
+            global_tables_spec: bool,
+        ) -> StdResult<(), TryFromIntError> {
+            let global_table_spec = global_tables_spec
+                .then(|| self.col_specs.first().map(|col_spec| col_spec.table_spec()))
+                .flatten();
+
+            let mut flags = 0;
+            if global_table_spec.is_some() {
+                flags |= 0x0001;
+            }
+            if no_metadata {
+                flags |= 0x0004;
+            }
+            types::write_int(flags, buf);
+
+            types::write_int_length(self.col_count, buf)?;
+
+            // No paging state.
+
+            if !no_metadata {
+                if let Some(spec) = global_table_spec {
+                    spec.serialize(buf)?;
+                }
+
+                for col_spec in self.col_specs() {
+                    if global_table_spec.is_none() {
+                        col_spec.table_spec().serialize(buf)?;
+                    }
+
+                    types::write_string(col_spec.name(), buf)?;
+                    col_spec.typ().serialize(buf)?;
+                }
+            }
+
+            Ok(())
         }
     }
 
