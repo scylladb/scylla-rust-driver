@@ -1839,6 +1839,11 @@ impl Connection {
                     );
                     return Err(err);
                 }
+
+                trace!(
+                    "Keepalive request successful on connection to node {}",
+                    node_address
+                );
             }
         } else {
             // No keepalives are to be sent.
