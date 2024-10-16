@@ -740,15 +740,15 @@ impl ConnectionSetupRequestError {
 pub struct BrokenConnectionError(Arc<dyn Error + Sync + Send>);
 
 impl BrokenConnectionError {
-    /// Retrieve an error reason.
-    pub fn get_reason(&self) -> &Arc<dyn Error + Sync + Send> {
-        &self.0
+    /// Retrieve an error reason by downcasting to specific type.
+    pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
+        self.0.downcast_ref()
     }
 }
 
 /// A reason why connection was broken.
 ///
-/// See [`BrokenConnectionError::get_reason()`].
+/// See [`BrokenConnectionError::downcast_ref()`].
 /// You can retrieve the actual type by downcasting `Arc<dyn Error>`.
 #[derive(Error, Debug)]
 #[non_exhaustive]

@@ -2780,7 +2780,7 @@ mod tests {
         let err = error_receiver.await.unwrap();
         let err_inner: &BrokenConnectionErrorKind = match err {
             crate::transport::connection::ConnectionError::BrokenConnection(ref e) => {
-                e.get_reason().downcast_ref().unwrap()
+                e.downcast_ref().unwrap()
             }
             _ => panic!("Bad error type. Expected keepalive timeout."),
         };
