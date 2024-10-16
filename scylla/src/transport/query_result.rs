@@ -601,3 +601,299 @@ pub enum SingleRowError {
 #[derive(Debug, Error)]
 #[error("The request response was, unexpectedly, of Rows kind")]
 pub struct ResultNotRowsError;
+
+#[cfg(test)]
+mod tests {
+    use assert_matches::assert_matches;
+    use bytes::{Bytes, BytesMut};
+    use itertools::Itertools as _;
+    use scylla_cql::frame::response::result::ResultMetadata;
+    use scylla_cql::frame::types;
+
+    use super::*;
+
+    const TABLE_SPEC: TableSpec<'static> = TableSpec::borrowed("ks", "tbl");
+
+    fn column_spec_infinite_iter() -> impl Iterator<Item = ColumnSpec<'static>> {
+        (0..).map(|k| {
+            ColumnSpec::owned(
+                format!("col_{}", k),
+                match k % 3 {
+                    0 => ColumnType::Ascii,
+                    1 => ColumnType::Boolean,
+                    2 => ColumnType::Float,
+                    _ => unreachable!(),
+                },
+                TABLE_SPEC,
+            )
+        })
+    }
+
+    #[test]
+    fn test_query_result() {
+        fn serialize_cells(cells: impl IntoIterator<Item = Option<impl AsRef<[u8]>>>) -> Bytes {
+            let mut bytes = BytesMut::new();
+            for cell in cells {
+                types::write_bytes_opt(cell, &mut bytes).unwrap();
+            }
+            bytes.freeze()
+        }
+
+        fn sample_result_metadata(cols: usize) -> ResultMetadata<'static> {
+            ResultMetadata::new_for_test(cols, column_spec_infinite_iter().take(cols).collect())
+        }
+
+        fn sample_raw_rows(cols: usize, rows: usize) -> RawMetadataAndRawRows {
+            let metadata = sample_result_metadata(cols);
+
+            static STRING: &[u8] = "MOCK".as_bytes();
+            static BOOLEAN: &[u8] = &(true as i8).to_be_bytes();
+            static FLOAT: &[u8] = &12341_i32.to_be_bytes();
+            let cells = metadata.col_specs().iter().map(|spec| match spec.typ() {
+                ColumnType::Ascii => STRING,
+                ColumnType::Boolean => BOOLEAN,
+                ColumnType::Float => FLOAT,
+                _ => unreachable!(),
+            });
+            let bytes = serialize_cells(cells.map(Some));
+            RawMetadataAndRawRows::new_for_test(None, Some(metadata), false, rows, &bytes).unwrap()
+        }
+
+        // Used to trigger DeserializationError.
+        fn sample_raw_rows_invalid_bytes(cols: usize, rows: usize) -> RawMetadataAndRawRows {
+            let metadata = sample_result_metadata(cols);
+
+            RawMetadataAndRawRows::new_for_test(None, Some(metadata), false, rows, &[]).unwrap()
+        }
+
+        // Check tracing ID
+        for tracing_id in [None, Some(Uuid::from_u128(0x_feed_dead))] {
+            for raw_rows in [None, Some(sample_raw_rows(7, 6))] {
+                let qr = QueryResult::new(raw_rows, tracing_id, vec![]);
+                assert_eq!(qr.tracing_id(), tracing_id);
+            }
+        }
+
+        // Check warnings
+        for raw_rows in [None, Some(sample_raw_rows(7, 6))] {
+            let warnings = &["Ooops", "Meltdown..."];
+            let qr = QueryResult::new(
+                raw_rows,
+                None,
+                warnings.iter().copied().map(String::from).collect(),
+            );
+            assert_eq!(qr.warnings().collect_vec(), warnings);
+        }
+
+        // Check col specs
+        {
+            // Not RESULT::Rows response -> no column specs
+            {
+                let rqr = QueryResult::new(None, None, Vec::new());
+                let qr = rqr.rows_deserializer().unwrap();
+                assert_matches!(qr, None);
+            }
+
+            // RESULT::Rows response -> some column specs
+            {
+                let n = 5;
+                let metadata = sample_result_metadata(n);
+                let rr = RawMetadataAndRawRows::new_for_test(None, Some(metadata), false, 0, &[])
+                    .unwrap();
+                let rqr = QueryResult::new(Some(rr), None, Vec::new());
+                let qr = rqr.rows_deserializer().unwrap().unwrap();
+                let column_specs = qr.column_specs();
+                assert_eq!(column_specs.len(), n);
+
+                // By index
+                {
+                    for (i, expected_col_spec) in column_spec_infinite_iter().enumerate().take(n) {
+                        let expected_view =
+                            ColumnSpecView::new_from_column_spec(&expected_col_spec);
+                        assert_eq!(column_specs.get_by_index(i), Some(expected_view));
+                    }
+
+                    assert_matches!(column_specs.get_by_index(n), None);
+                }
+
+                // By name
+                {
+                    for (idx, expected_col_spec) in column_spec_infinite_iter().enumerate().take(n)
+                    {
+                        let name = expected_col_spec.name();
+                        let expected_view =
+                            ColumnSpecView::new_from_column_spec(&expected_col_spec);
+                        assert_eq!(column_specs.get_by_name(name), Some((idx, expected_view)));
+                    }
+
+                    assert_matches!(column_specs.get_by_name("ala ma kota"), None);
+                }
+
+                // By iter
+                {
+                    for (got_view, expected_col_spec) in
+                        column_specs.iter().zip(column_spec_infinite_iter())
+                    {
+                        let expected_view =
+                            ColumnSpecView::new_from_column_spec(&expected_col_spec);
+                        assert_eq!(got_view, expected_view);
+                    }
+                }
+            }
+        }
+
+        // rows(), maybe_rows(), result_not_rows(), first_row(), maybe_first_row(), single_row()
+        // All errors are checked.
+        {
+            // Not RESULT::Rows
+            {
+                let rqr = QueryResult::new(None, None, Vec::new());
+                let qr = rqr.rows_deserializer().unwrap();
+                assert_matches!(qr, None);
+            }
+
+            // RESULT::Rows with 0 rows
+            {
+                let rr = sample_raw_rows(1, 0);
+                let rqr = QueryResult::new(Some(rr), None, Vec::new());
+                let qr = rqr.rows_deserializer().unwrap().unwrap();
+
+                assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
+
+                // Type check error
+                {
+                    assert_matches!(qr.rows::<(i32,)>(), Err(RowsError::TypeCheckFailed(_)));
+
+                    assert_matches!(
+                        qr.first_row::<(i32,)>(),
+                        Err(FirstRowError::TypeCheckFailed(_))
+                    );
+                    assert_matches!(
+                        qr.maybe_first_row::<(i32,)>(),
+                        Err(MaybeFirstRowError::TypeCheckFailed(_))
+                    );
+
+                    assert_matches!(
+                        qr.single_row::<(i32,)>(),
+                        Err(SingleRowError::TypeCheckFailed(_))
+                    );
+                }
+
+                // Correct type
+                {
+                    assert_matches!(qr.rows::<(&str,)>(), Ok(_));
+
+                    assert_matches!(qr.first_row::<(&str,)>(), Err(FirstRowError::RowsEmpty));
+                    assert_matches!(qr.maybe_first_row::<(&str,)>(), Ok(None));
+
+                    assert_matches!(
+                        qr.single_row::<(&str,)>(),
+                        Err(SingleRowError::UnexpectedRowCount(0))
+                    );
+                }
+            }
+
+            // RESULT::Rows with 1 row
+            {
+                let rr_good_data = sample_raw_rows(2, 1);
+                let rr_bad_data = sample_raw_rows_invalid_bytes(2, 1);
+                let rqr_good_data = QueryResult::new(Some(rr_good_data), None, Vec::new());
+                let qr_good_data = rqr_good_data.rows_deserializer().unwrap().unwrap();
+                let rqr_bad_data = QueryResult::new(Some(rr_bad_data), None, Vec::new());
+                let qr_bad_data = rqr_bad_data.rows_deserializer().unwrap().unwrap();
+
+                for rqr in [&rqr_good_data, &rqr_bad_data] {
+                    assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
+                }
+
+                for qr in [&qr_good_data, &qr_bad_data] {
+                    // Type check error
+                    {
+                        assert_matches!(
+                            qr.rows::<(i32, i32)>(),
+                            Err(RowsError::TypeCheckFailed(_))
+                        );
+
+                        assert_matches!(
+                            qr.first_row::<(i32, i32)>(),
+                            Err(FirstRowError::TypeCheckFailed(_))
+                        );
+                        assert_matches!(
+                            qr.maybe_first_row::<(i32, i32)>(),
+                            Err(MaybeFirstRowError::TypeCheckFailed(_))
+                        );
+
+                        assert_matches!(
+                            qr.single_row::<(i32, i32)>(),
+                            Err(SingleRowError::TypeCheckFailed(_))
+                        );
+                    }
+                }
+
+                // Correct type
+                {
+                    assert_matches!(qr_good_data.rows::<(&str, bool)>(), Ok(_));
+                    assert_matches!(qr_bad_data.rows::<(&str, bool)>(), Ok(_));
+
+                    assert_matches!(qr_good_data.first_row::<(&str, bool)>(), Ok(_));
+                    assert_matches!(
+                        qr_bad_data.first_row::<(&str, bool)>(),
+                        Err(FirstRowError::DeserializationFailed(_))
+                    );
+                    assert_matches!(qr_good_data.maybe_first_row::<(&str, bool)>(), Ok(_));
+                    assert_matches!(
+                        qr_bad_data.maybe_first_row::<(&str, bool)>(),
+                        Err(MaybeFirstRowError::DeserializationFailed(_))
+                    );
+
+                    assert_matches!(qr_good_data.single_row::<(&str, bool)>(), Ok(_));
+                    assert_matches!(
+                        qr_bad_data.single_row::<(&str, bool)>(),
+                        Err(SingleRowError::DeserializationFailed(_))
+                    );
+                }
+            }
+
+            // RESULT::Rows with 2 rows
+            {
+                let rr = sample_raw_rows(2, 2);
+                let rqr = QueryResult::new(Some(rr), None, Vec::new());
+                let qr = rqr.rows_deserializer().unwrap().unwrap();
+
+                assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
+
+                // Type check error
+                {
+                    assert_matches!(qr.rows::<(i32, i32)>(), Err(RowsError::TypeCheckFailed(_)));
+
+                    assert_matches!(
+                        qr.first_row::<(i32, i32)>(),
+                        Err(FirstRowError::TypeCheckFailed(_))
+                    );
+                    assert_matches!(
+                        qr.maybe_first_row::<(i32, i32)>(),
+                        Err(MaybeFirstRowError::TypeCheckFailed(_))
+                    );
+
+                    assert_matches!(
+                        qr.single_row::<(i32, i32)>(),
+                        Err(SingleRowError::TypeCheckFailed(_))
+                    );
+                }
+
+                // Correct type
+                {
+                    assert_matches!(qr.rows::<(&str, bool)>(), Ok(_));
+
+                    assert_matches!(qr.first_row::<(&str, bool)>(), Ok(_));
+                    assert_matches!(qr.maybe_first_row::<(&str, bool)>(), Ok(_));
+
+                    assert_matches!(
+                        qr.single_row::<(&str, bool)>(),
+                        Err(SingleRowError::UnexpectedRowCount(2))
+                    );
+                }
+            }
+        }
+    }
+}
