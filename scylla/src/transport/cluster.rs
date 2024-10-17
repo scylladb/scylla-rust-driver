@@ -257,18 +257,6 @@ impl Cluster {
 }
 
 impl ClusterData {
-    // Updates information about rack count in each datacenter
-    fn update_rack_count(datacenters: &mut HashMap<String, Datacenter>) {
-        for datacenter in datacenters.values_mut() {
-            datacenter.rack_count = datacenter
-                .nodes
-                .iter()
-                .filter_map(|node| node.rack.as_ref())
-                .unique()
-                .count();
-        }
-    }
-
     pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
         for node in self.locator.unique_nodes_in_global_ring().iter() {
             node.wait_until_pool_initialized().await;
@@ -289,7 +277,6 @@ impl ClusterData {
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
         let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
-        let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
 
         for peer in metadata.peers {
             // Take existing Arc<Node> if possible, otherwise create new one
@@ -324,19 +311,6 @@ impl ClusterData {
             };
 
             new_known_peers.insert(peer_host_id, node.clone());
-
-            if let Some(dc) = &node.datacenter {
-                match datacenters.get_mut(dc) {
-                    Some(v) => v.nodes.push(node.clone()),
-                    None => {
-                        let v = Datacenter {
-                            nodes: vec![node.clone()],
-                            rack_count: 0,
-                        };
-                        datacenters.insert(dc.clone(), v);
-                    }
-                }
-            }
 
             for token in peer_tokens {
                 ring.push((token, node.clone()));
@@ -383,8 +357,6 @@ impl ClusterData {
                 &recreated_nodes,
             )
         }
-
-        Self::update_rack_count(&mut datacenters);
 
         let keyspaces = metadata.keyspaces;
         let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
