@@ -381,25 +381,6 @@ impl ClusterData {
         &self.keyspaces
     }
 
-    /// Access datacenter details collected by the driver
-    /// Returned `HashMap` is indexed by names of datacenters
-    pub fn get_datacenters_info(&self) -> HashMap<String, Datacenter> {
-        self.locator
-            .datacenter_names()
-            .iter()
-            .map(|dc_name| {
-                let nodes = self
-                    .locator
-                    .unique_nodes_in_datacenter_ring(dc_name)
-                    .unwrap()
-                    .to_vec();
-                let rack_count = nodes.iter().map(|node| node.rack.as_ref()).unique().count();
-
-                (dc_name.clone(), Datacenter { nodes, rack_count })
-            })
-            .collect()
-    }
-
     /// Access details about nodes known to the driver
     pub fn get_nodes_info(&self) -> &[Arc<Node>] {
         self.locator.unique_nodes_in_global_ring()
