@@ -29,6 +29,9 @@ use openssl::ssl::SslContext;
 use tracing::warn;
 
 mod sealed {
+    // This is a sealed trait - it's whole purpose is to be unnameable.
+    // This means we need to disable the check.
+    #[allow(unnameable_types)]
     pub trait Sealed {}
 }
 pub trait SessionBuilderKind: sealed::Sealed + Clone {}

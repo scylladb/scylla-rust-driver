@@ -33,7 +33,7 @@ use super::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
     ProtocolError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
 };
-use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
+use super::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
@@ -51,7 +51,7 @@ pub(crate) struct MetadataReader {
 
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
-    initial_known_nodes: Vec<KnownNode>,
+    initial_known_nodes: Vec<InternalKnownNode>,
 
     // When a control connection breaks, the PoolRefiller of its pool uses the requester
     // to signal ClusterWorker that an immediate metadata refresh is advisable.
@@ -75,9 +75,8 @@ pub struct Peer {
 
 /// An endpoint for a node that the driver is to issue connections to,
 /// possibly after prior address translation.
-#[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 #[derive(Clone, Debug)]
-pub enum UntranslatedEndpoint {
+pub(crate) enum UntranslatedEndpoint {
     /// Provided by user in SessionConfig (initial contact points).
     ContactPoint(ResolvedContactPoint),
     /// Fetched in Metadata with `query_peers()`
@@ -452,7 +451,7 @@ impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
-        initial_known_nodes: Vec<KnownNode>,
+        initial_known_nodes: Vec<InternalKnownNode>,
         control_connection_repair_requester: broadcast::Sender<()>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
