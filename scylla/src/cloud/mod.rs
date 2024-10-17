@@ -2,7 +2,7 @@ mod config;
 
 use std::net::SocketAddr;
 
-pub(crate) use config::CloudConfig;
+pub use config::CloudConfig;
 pub use config::CloudConfigError;
 use openssl::{
     error::ErrorStack,
