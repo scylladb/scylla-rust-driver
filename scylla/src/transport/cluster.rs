@@ -59,12 +59,6 @@ impl<'a> std::fmt::Debug for ClusterNeatDebug<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Datacenter {
-    pub nodes: Vec<Arc<Node>>,
-    pub rack_count: usize,
-}
-
 #[derive(Clone)]
 pub struct ClusterData {
     pub(crate) known_peers: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
