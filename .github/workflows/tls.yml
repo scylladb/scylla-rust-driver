@@ -34,6 +34,9 @@ jobs:
     - uses: actions/checkout@v3
     - name: Update rust toolchain
       run: rustup update
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     - name: Check
       run: cargo check --verbose --features "ssl"
       working-directory: ${{env.working-directory}}

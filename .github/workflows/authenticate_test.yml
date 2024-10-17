@@ -31,3 +31,6 @@ jobs:
       run: rustup update
     - name: Run tests
       run: RUST_LOG=trace cargo test --verbose authenticate_superuser -- custom_authentication --ignored
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

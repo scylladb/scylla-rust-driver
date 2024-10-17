@@ -27,6 +27,9 @@ jobs:
       # A separate step for building to separate measuring time of compilation and testing
     - name: Update rust toolchain
       run: rustup update
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     - name: Build the project
       run: cargo build --verbose --tests --features "full-serialization"
     - name: Run tests on cassandra
