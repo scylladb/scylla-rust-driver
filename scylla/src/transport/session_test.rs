@@ -8,7 +8,6 @@ use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::test_utils::{scylla_supports_tablets, setup_tracing};
 use crate::tracing::TracingInfo;
-use crate::transport::cluster::Datacenter;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{
     calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
@@ -1874,10 +1873,11 @@ async fn test_turning_off_schema_fetching() {
     let cluster_data = &session.get_cluster_data();
     let keyspace = &cluster_data.get_keyspace_info()[&ks];
 
-    let datacenters: HashMap<String, Datacenter> = cluster_data.get_datacenters_info();
-    let datacenter_repfactors: HashMap<String, usize> = datacenters
-        .into_keys()
-        .map(|dc_name| (dc_name, 1))
+    let datacenter_repfactors: HashMap<String, usize> = cluster_data
+        .replica_locator()
+        .datacenter_names()
+        .iter()
+        .map(|dc_name| (dc_name.to_owned(), 1))
         .collect();
 
     assert_eq!(
