@@ -242,8 +242,7 @@ pub struct CloudEndpoint {
 
 /// Describes a database server known on Session startup, with already resolved address.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct ResolvedContactPoint {
+pub(crate) struct ResolvedContactPoint {
     pub address: SocketAddr,
     pub datacenter: Option<String>,
 }
