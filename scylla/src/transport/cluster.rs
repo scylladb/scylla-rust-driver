@@ -27,7 +27,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::locator::tablets::{RawTablet, Tablet, TabletsInfo};
-use super::node::{KnownNode, NodeAddr};
+use super::node::{InternalKnownNode, NodeAddr};
 use super::NodeRef;
 
 use super::locator::ReplicaLocator;
@@ -145,7 +145,7 @@ struct UseKeyspaceRequest {
 
 impl Cluster {
     pub(crate) async fn new(
-        known_nodes: Vec<KnownNode>,
+        known_nodes: Vec<InternalKnownNode>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
