@@ -99,7 +99,7 @@ where
         trait_: syn::Path,
         items: impl IntoIterator<Item = syn::ImplItem>,
     ) -> syn::ItemImpl {
-        let (constraint_lifetime, _) = self.constraint_lifetimes();
+        let (frame_lifetime, metadata_lifetime) = self.constraint_lifetimes();
         let (_, ty_generics, _) = self.generics.split_for_impl();
         let impl_generics = &self.generics.params;
 
@@ -108,17 +108,35 @@ where
         let predicates = generate_lifetime_constraints_for_impl(
             &self.generics,
             self.constraint_trait.clone(),
-            constraint_lifetime,
+            frame_lifetime,
         )
         .chain(generate_default_constraints(&self.fields));
         let trait_: syn::Path = parse_quote!(#macro_internal::#trait_);
         let items = items.into_iter();
 
-        parse_quote! {
-            impl<#constraint_lifetime, #impl_generics> #trait_<#constraint_lifetime> for #struct_name #ty_generics
-            where #(#predicates),*
-            {
-                #(#items)*
+        // This `if` is purely temporary. When in a next commit DeserializeRow receives a 'metadata lifetime,
+        // the handling of both traits is unified again.
+        if trait_
+            .segments
+            .last()
+            .is_some_and(|name| name.ident == "DeserializeValue")
+        {
+            parse_quote! {
+                impl<#frame_lifetime, #metadata_lifetime, #impl_generics>
+                    #trait_<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
+                where #(#predicates),*
+                {
+                    #(#items)*
+                }
+            }
+        } else {
+            parse_quote! {
+                impl<#frame_lifetime, #impl_generics>
+                    #trait_<#frame_lifetime> for #struct_name #ty_generics
+                where #(#predicates),*
+                {
+                    #(#items)*
+                }
             }
         }
     }

@@ -242,7 +242,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                             #name_verifications
 
                             // Verify the type
-                            <#required_fields_deserializers as #macro_internal::DeserializeValue<#constraint_lifetime>>::type_check(#required_fields_idents.typ())
+                            <#required_fields_deserializers as #macro_internal::DeserializeValue<#constraint_lifetime, #constraint_lifetime>>::type_check(#required_fields_idents.typ())
                                 .map_err(|err| #macro_internal::mk_row_typck_err::<Self>(
                                     column_types_iter(),
                                     #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnTypeCheckFailed {
@@ -301,7 +301,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
 
                 #name_check
 
-                <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(col.spec.typ(), col.slice)
+                <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime, #constraint_lifetime>>::deserialize(col.spec.typ(), col.slice)
                     .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
                         #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
                             column_index: #field_index,
@@ -373,7 +373,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
             parse_quote! {
                 {
                     if !#visited_flag {
-                        <#typ as #macro_internal::DeserializeValue<#constraint_lifetime>>::type_check(spec.typ())
+                        <#typ as #macro_internal::DeserializeValue<#constraint_lifetime, #constraint_lifetime>>::type_check(spec.typ())
                             .map_err(|err| {
                                 #macro_internal::mk_row_typck_err::<Self>(
                                     column_types_iter(),
@@ -529,7 +529,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
                 );
 
                 #deserialize_field = ::std::option::Option::Some(
-                    <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(col.spec.typ(), col.slice)
+                    <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime, #constraint_lifetime>>::deserialize(col.spec.typ(), col.slice)
                         .map_err(|err| {
                             #macro_internal::mk_row_deser_err::<Self>(
                                 #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {

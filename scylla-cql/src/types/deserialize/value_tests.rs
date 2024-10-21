@@ -432,9 +432,11 @@ fn test_list_and_set() {
         let set_typ = ColumnType::Set(Box::new(ColumnType::BigInt));
         type CollTyp = i64;
 
-        fn check<'frame, Collection: DeserializeValue<'frame>>(typ: &'frame ColumnType) {
-            <Collection as DeserializeValue<'_>>::type_check(typ).unwrap();
-            <Collection as DeserializeValue<'_>>::deserialize(typ, None).unwrap();
+        fn check<'frame, 'metadata, Collection: DeserializeValue<'frame, 'metadata>>(
+            typ: &'metadata ColumnType<'metadata>,
+        ) {
+            <Collection as DeserializeValue<'_, '_>>::type_check(typ).unwrap();
+            <Collection as DeserializeValue<'_, '_>>::deserialize(typ, None).unwrap();
         }
 
         check::<Vec<CollTyp>>(&list_typ);
@@ -512,9 +514,11 @@ fn test_map() {
         type KeyTyp = i64;
         type ValueTyp<'s> = &'s str;
 
-        fn check<'frame, Collection: DeserializeValue<'frame>>(typ: &'frame ColumnType) {
-            <Collection as DeserializeValue<'_>>::type_check(typ).unwrap();
-            <Collection as DeserializeValue<'_>>::deserialize(typ, None).unwrap();
+        fn check<'frame, 'metadata, Collection: DeserializeValue<'frame, 'metadata>>(
+            typ: &'metadata ColumnType<'metadata>,
+        ) {
+            <Collection as DeserializeValue<'_, '_>>::type_check(typ).unwrap();
+            <Collection as DeserializeValue<'_, '_>>::deserialize(typ, None).unwrap();
         }
 
         check::<HashMap<KeyTyp, ValueTyp>>(&map_typ);
@@ -1010,20 +1014,21 @@ fn test_udt_cross_rename_fields() {
 fn test_custom_type_parser() {
     #[derive(Default, Debug, PartialEq, Eq)]
     struct SwappedPair<A, B>(B, A);
-    impl<'frame, A, B> DeserializeValue<'frame> for SwappedPair<A, B>
+    impl<'frame, 'metadata, A, B> DeserializeValue<'frame, 'metadata> for SwappedPair<A, B>
     where
-        A: DeserializeValue<'frame>,
-        B: DeserializeValue<'frame>,
+        A: DeserializeValue<'frame, 'metadata>,
+        B: DeserializeValue<'frame, 'metadata>,
     {
         fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-            <(B, A) as DeserializeValue<'frame>>::type_check(typ)
+            <(B, A) as DeserializeValue<'frame, 'metadata>>::type_check(typ)
         }
 
         fn deserialize(
-            typ: &'frame ColumnType,
+            typ: &'metadata ColumnType<'metadata>,
             v: Option<FrameSlice<'frame>>,
         ) -> Result<Self, DeserializationError> {
-            <(B, A) as DeserializeValue<'frame>>::deserialize(typ, v).map(|(b, a)| Self(b, a))
+            <(B, A) as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)
+                .map(|(b, a)| Self(b, a))
         }
     }
 
@@ -1038,14 +1043,14 @@ fn test_custom_type_parser() {
     assert_eq!(tup, SwappedPair("foo", 42));
 }
 
-fn deserialize<'frame, T>(
-    typ: &'frame ColumnType,
+fn deserialize<'frame, 'metadata, T>(
+    typ: &'metadata ColumnType<'metadata>,
     bytes: &'frame Bytes,
 ) -> Result<T, DeserializationError>
 where
-    T: DeserializeValue<'frame>,
+    T: DeserializeValue<'frame, 'metadata>,
 {
-    <T as DeserializeValue<'frame>>::type_check(typ)
+    <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
         .map_err(|typecheck_err| DeserializationError(typecheck_err.0))?;
     let mut frame_slice = FrameSlice::new(bytes);
     let value = frame_slice.read_cql_bytes().map_err(|err| {
@@ -1054,7 +1059,7 @@ where
             BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
         )
     })?;
-    <T as DeserializeValue<'frame>>::deserialize(typ, value)
+    <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, value)
 }
 
 fn make_bytes(cell: &[u8]) -> Bytes {
@@ -1091,7 +1096,7 @@ fn append_null(b: &mut impl BufMut) {
     b.put_i32(-1);
 }
 
-fn assert_ser_de_identity<'f, T: SerializeValue + DeserializeValue<'f> + PartialEq + Debug>(
+fn assert_ser_de_identity<'f, T: SerializeValue + DeserializeValue<'f, 'f> + PartialEq + Debug>(
     typ: &'f ColumnType,
     v: &'f T,
     buf: &'f mut Bytes, // `buf` must be passed as a reference from outside, because otherwise
