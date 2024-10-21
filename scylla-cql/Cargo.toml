@@ -56,4 +56,5 @@ full-serialization = [
 ]
 
 [lints.rust]
+unnameable_types = "warn"
 unreachable_pub = "warn"

@@ -19,4 +19,5 @@ quote = "1.0"
 proc-macro2 = "1.0"
 
 [lints.rust]
+unnameable_types = "warn"
 unreachable_pub = "warn"

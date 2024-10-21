@@ -27,7 +27,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::locator::tablets::{RawTablet, Tablet, TabletsInfo};
-use super::node::{KnownNode, NodeAddr};
+use super::node::{InternalKnownNode, NodeAddr};
 use super::NodeRef;
 
 use super::locator::ReplicaLocator;
@@ -57,12 +57,6 @@ impl<'a> std::fmt::Debug for ClusterNeatDebug<'a> {
             .field("data", &ClusterDataNeatDebug(&cluster.data.load()))
             .finish_non_exhaustive()
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct Datacenter {
-    pub nodes: Vec<Arc<Node>>,
-    pub rack_count: usize,
 }
 
 #[derive(Clone)]
@@ -145,7 +139,7 @@ struct UseKeyspaceRequest {
 
 impl Cluster {
     pub(crate) async fn new(
-        known_nodes: Vec<KnownNode>,
+        known_nodes: Vec<InternalKnownNode>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
@@ -257,18 +251,6 @@ impl Cluster {
 }
 
 impl ClusterData {
-    // Updates information about rack count in each datacenter
-    fn update_rack_count(datacenters: &mut HashMap<String, Datacenter>) {
-        for datacenter in datacenters.values_mut() {
-            datacenter.rack_count = datacenter
-                .nodes
-                .iter()
-                .filter_map(|node| node.rack.as_ref())
-                .unique()
-                .count();
-        }
-    }
-
     pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
         for node in self.locator.unique_nodes_in_global_ring().iter() {
             node.wait_until_pool_initialized().await;
@@ -289,7 +271,6 @@ impl ClusterData {
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
         let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
-        let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
 
         for peer in metadata.peers {
             // Take existing Arc<Node> if possible, otherwise create new one
@@ -324,19 +305,6 @@ impl ClusterData {
             };
 
             new_known_peers.insert(peer_host_id, node.clone());
-
-            if let Some(dc) = &node.datacenter {
-                match datacenters.get_mut(dc) {
-                    Some(v) => v.nodes.push(node.clone()),
-                    None => {
-                        let v = Datacenter {
-                            nodes: vec![node.clone()],
-                            rack_count: 0,
-                        };
-                        datacenters.insert(dc.clone(), v);
-                    }
-                }
-            }
 
             for token in peer_tokens {
                 ring.push((token, node.clone()));
@@ -384,8 +352,6 @@ impl ClusterData {
             )
         }
 
-        Self::update_rack_count(&mut datacenters);
-
         let keyspaces = metadata.keyspaces;
         let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
@@ -407,25 +373,6 @@ impl ClusterData {
     /// They can be read using this method
     pub fn get_keyspace_info(&self) -> &HashMap<String, Keyspace> {
         &self.keyspaces
-    }
-
-    /// Access datacenter details collected by the driver
-    /// Returned `HashMap` is indexed by names of datacenters
-    pub fn get_datacenters_info(&self) -> HashMap<String, Datacenter> {
-        self.locator
-            .datacenter_names()
-            .iter()
-            .map(|dc_name| {
-                let nodes = self
-                    .locator
-                    .unique_nodes_in_datacenter_ring(dc_name)
-                    .unwrap()
-                    .to_vec();
-                let rack_count = nodes.iter().map(|node| node.rack.as_ref()).unique().count();
-
-                (dc_name.clone(), Datacenter { nodes, rack_count })
-            })
-            .collect()
     }
 
     /// Access details about nodes known to the driver
