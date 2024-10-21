@@ -44,7 +44,7 @@ use super::errors::TracingProtocolError;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
-use super::node::KnownNode;
+use super::node::{InternalKnownNode, KnownNode};
 use super::partitioner::PartitionerName;
 use super::query_result::MaybeFirstRowTypedError;
 use super::topology::UntranslatedPeer;
@@ -489,23 +489,28 @@ impl Session {
         let known_nodes = config.known_nodes;
 
         #[cfg(feature = "cloud")]
-        let known_nodes = if let Some(cloud_servers) =
-            config.cloud_config.as_ref().map(|cloud_config| {
-                cloud_config
+        let cloud_known_nodes: Option<Vec<InternalKnownNode>> =
+            if let Some(ref cloud_config) = config.cloud_config {
+                let cloud_servers = cloud_config
                     .get_datacenters()
                     .iter()
                     .map(|(dc_name, dc_data)| {
-                        KnownNode::CloudEndpoint(CloudEndpoint {
+                        InternalKnownNode::CloudEndpoint(CloudEndpoint {
                             hostname: dc_data.get_server().to_owned(),
                             datacenter: dc_name.clone(),
                         })
                     })
-                    .collect()
-            }) {
-            cloud_servers
-        } else {
-            known_nodes
-        };
+                    .collect();
+                Some(cloud_servers)
+            } else {
+                None
+            };
+
+        #[cfg(not(feature = "cloud"))]
+        let cloud_known_nodes: Option<Vec<InternalKnownNode>> = None;
+
+        let known_nodes = cloud_known_nodes
+            .unwrap_or_else(|| known_nodes.into_iter().map(|node| node.into()).collect());
 
         // Ensure there is at least one known node
         if known_nodes.is_empty() {

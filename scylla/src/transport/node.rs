@@ -227,17 +227,35 @@ impl Hash for Node {
 pub enum KnownNode {
     Hostname(String),
     Address(SocketAddr),
+}
+
+/// Describes a database server known on `Session` startup.
+/// It is similar to [KnownNode] but includes also `CloudEndpoint` variant,
+/// which is created by the driver if session is configured to connect to
+/// serverless cluster.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum InternalKnownNode {
+    Hostname(String),
+    Address(SocketAddr),
     #[cfg(feature = "cloud")]
     CloudEndpoint(CloudEndpoint),
 }
 
+impl From<KnownNode> for InternalKnownNode {
+    fn from(value: KnownNode) -> Self {
+        match value {
+            KnownNode::Hostname(s) => InternalKnownNode::Hostname(s),
+            KnownNode::Address(s) => InternalKnownNode::Address(s),
+        }
+    }
+}
+
 /// Describes a database server in the serverless Scylla Cloud.
 #[cfg(feature = "cloud")]
-#[non_exhaustive]
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct CloudEndpoint {
-    pub hostname: String,
-    pub datacenter: String,
+pub(crate) struct CloudEndpoint {
+    pub(crate) hostname: String,
+    pub(crate) datacenter: String,
 }
 
 /// Describes a database server known on Session startup, with already resolved address.
@@ -275,12 +293,12 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::E
     })
 }
 
-/// Transforms the given [`KnownNode`]s into [`ContactPoint`]s.
+/// Transforms the given [`InternalKnownNode`]s into [`ContactPoint`]s.
 ///
 /// In case of a hostname, resolves it using a DNS lookup.
 /// In case of a plain IP address, parses it and uses straight.
 pub(crate) async fn resolve_contact_points(
-    known_nodes: &[KnownNode],
+    known_nodes: &[InternalKnownNode],
 ) -> (Vec<ResolvedContactPoint>, Vec<String>) {
     // Find IP addresses of all known nodes passed in the config
     let mut initial_peers: Vec<ResolvedContactPoint> = Vec::with_capacity(known_nodes.len());
@@ -290,16 +308,16 @@ pub(crate) async fn resolve_contact_points(
 
     for node in known_nodes.iter() {
         match node {
-            KnownNode::Hostname(hostname) => {
+            InternalKnownNode::Hostname(hostname) => {
                 to_resolve.push((hostname, None));
                 hostnames.push(hostname.clone());
             }
-            KnownNode::Address(address) => initial_peers.push(ResolvedContactPoint {
+            InternalKnownNode::Address(address) => initial_peers.push(ResolvedContactPoint {
                 address: *address,
                 datacenter: None,
             }),
             #[cfg(feature = "cloud")]
-            KnownNode::CloudEndpoint(CloudEndpoint {
+            InternalKnownNode::CloudEndpoint(CloudEndpoint {
                 hostname,
                 datacenter,
             }) => to_resolve.push((hostname, Some(datacenter.clone()))),
