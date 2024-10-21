@@ -229,7 +229,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
     // Generates name and type validation for given Rust struct's field.
     fn generate_field_validation(&self, rust_field_idx: usize, field: &Field) -> syn::Expr {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let constraint_lifetime = self.0.constraint_lifetime();
+        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
         let rust_field_name = field.cql_name_literal();
         let rust_field_typ = field.deserialize_target();
         let default_when_missing = field.default_when_missing;
@@ -413,7 +413,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
         let cql_name_literal = field.cql_name_literal();
         let deserializer = field.deserialize_target();
-        let constraint_lifetime = self.0.constraint_lifetime();
+        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
         let default_when_missing = field.default_when_missing;
         let default_when_null = field.default_when_null;
         let skip_name_checks = self.0.attrs.skip_name_checks;
@@ -532,7 +532,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         // We can assume that type_check was called.
 
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let constraint_lifetime = self.0.constraint_lifetime();
+        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
         let fields = self.0.fields();
 
         let field_idents = fields.iter().map(|f| f.ident.as_ref().unwrap());
@@ -592,7 +592,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
     fn generate_type_check(&self, field: &Field) -> Option<syn::Block> {
         (!field.skip).then(|| {
             let macro_internal = self.0.struct_attrs().macro_internal_path();
-            let constraint_lifetime = self.0.constraint_lifetime();
+            let (constraint_lifetime, _) = self.0.constraint_lifetimes();
             let visited_flag = Self::visited_flag_variable(field);
             let typ = field.deserialize_target();
             let cql_name_literal = field.cql_name_literal();
@@ -770,7 +770,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
     fn generate_deserialization(&self, field: &Field) -> Option<syn::Expr> {
         (!field.skip).then(|| {
             let macro_internal = self.0.struct_attrs().macro_internal_path();
-            let constraint_lifetime = self.0.constraint_lifetime();
+            let (constraint_lifetime, _) = self.0.constraint_lifetimes();
             let deserialize_field = Self::deserialize_field_variable(field);
             let cql_name_literal = field.cql_name_literal();
             let deserializer = field.deserialize_target();
@@ -833,7 +833,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
 
     fn generate(&self) -> syn::ImplItemFn {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let constraint_lifetime = self.0.constraint_lifetime();
+        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
         let fields = self.0.fields();
 
         let deserialize_field_decls = fields.iter().map(Self::generate_deserialize_field_decl);
