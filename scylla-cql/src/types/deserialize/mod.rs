@@ -10,6 +10,48 @@
 //! Those traits are quite similar to each other, both in the idea behind them
 //! and the interface that they expose.
 //!
+//! It's important to understand what is a _deserialized type_. It's not just
+//! an implementor of Deserialize{Value, Row}; there are some implementors of
+//! `Deserialize{Value, Row}` who are not yet final types, but **partially**
+//! deserialized types that support further deserialization - _type
+//! deserializers_, such as `ListlikeIterator`, `UdtIterator` or `ColumnIterator`.
+//!
+//! # Lifetime parameters
+//!
+//! - `'frame` is the lifetime of the frame. Any deserialized type that is going to borrow
+//!   from the frame must have its lifetime bound by `'frame`.
+//! - `'metadata` is the lifetime of the result metadata. As result metadata is only needed
+//!   for the very deserialization process and the **final** deserialized types (i.e. those
+//!   that are not going to deserialize anything else, opposite of e.g. `MapIterator`) can
+//!   later live independently of the metadata, this is different from `'frame`.
+//!
+//! _Type deserializers_, as they still need to deserialize some type, are naturally bound
+//! by 'metadata lifetime. However, final types are completely deserialized, so they should
+//! not be bound by 'metadata - only by 'frame.
+//!
+//! Rationale:
+//! `DeserializeValue` requires two types of data in order to perform
+//! deserialization:
+//! 1) a reference to the CQL frame (a FrameSlice),
+//! 2) the type of the column being deserialized, being part of the
+//!    ResultMetadata.
+//!
+//! Similarly, `DeserializeRow` requires two types of data in order to
+//! perform deserialization:
+//! 1) a reference to the CQL frame (a FrameSlice),
+//! 2) a slice of specifications of all columns in the row, being part of
+//!    the ResultMetadata.
+//!
+//! When deserializing owned types, both the frame and the metadata can have
+//! any lifetime and it's not important. When deserializing borrowed types,
+//! however, they borrow from the frame, so their lifetime must necessarily
+//! be bound by the lifetime of the frame. Metadata is only needed for the
+//! deserialization, so its lifetime does not abstractly bound the
+//! deserialized value. Not to unnecessarily shorten the deserialized
+//! values' lifetime to the metadata's lifetime (due to unification of
+//! metadata's and frame's lifetime in value deserializers), a separate
+//! lifetime parameter is introduced for result metadata: `'metadata`.
+//!
 //! # `type_check` and `deserialize`
 //!
 //! The deserialization process is divided into two parts: type checking and
