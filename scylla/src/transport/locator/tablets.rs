@@ -210,6 +210,12 @@ pub(crate) struct Tablet {
 }
 
 impl Tablet {
+    // Ignore clippy lints here. Clippy suggests to
+    // Box<> `Err` variant, because it's too large. It does not
+    // make much sense to do so, looking at the caller of this function.
+    // Tablet returned in `Err` variant is used as if no error appeared.
+    // The only difference is that we use node ids to emit some debug logs.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn from_raw_tablet(
         raw_tablet: RawTablet,
         replica_translator: impl Fn(Uuid) -> Option<Arc<Node>>,
