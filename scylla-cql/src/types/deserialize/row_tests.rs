@@ -251,18 +251,18 @@ fn val_str(s: &str) -> Option<Vec<u8>> {
     Some(s.as_bytes().to_vec())
 }
 
-fn deserialize<'frame, R>(
-    specs: &'frame [ColumnSpec],
+fn deserialize<'frame, 'metadata, R>(
+    specs: &'metadata [ColumnSpec<'metadata>],
     byts: &'frame Bytes,
 ) -> Result<R, DeserializationError>
 where
-    R: DeserializeRow<'frame>,
+    R: DeserializeRow<'frame, 'metadata>,
 {
-    <R as DeserializeRow<'frame>>::type_check(specs)
+    <R as DeserializeRow<'frame, 'metadata>>::type_check(specs)
         .map_err(|typecheck_err| DeserializationError(typecheck_err.0))?;
     let slice = FrameSlice::new(byts);
     let iter = ColumnIterator::new(specs, slice);
-    <R as DeserializeRow<'frame>>::deserialize(iter)
+    <R as DeserializeRow<'frame, 'metadata>>::deserialize(iter)
 }
 
 #[track_caller]

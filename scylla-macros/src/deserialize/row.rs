@@ -206,7 +206,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
         // of the columns correspond fields' names/types.
 
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+        let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
 
         let required_fields_iter = || {
             self.0
@@ -242,7 +242,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                             #name_verifications
 
                             // Verify the type
-                            <#required_fields_deserializers as #macro_internal::DeserializeValue<#constraint_lifetime, #constraint_lifetime>>::type_check(#required_fields_idents.typ())
+                            <#required_fields_deserializers as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(#required_fields_idents.typ())
                                 .map_err(|err| #macro_internal::mk_row_typck_err::<Self>(
                                     column_types_iter(),
                                     #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnTypeCheckFailed {
@@ -281,7 +281,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
         let cql_name_literal = field.cql_name_literal();
         let deserializer = field.deserialize_target();
-        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+        let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
 
         let name_check: Option<syn::Stmt> = (!self.0.struct_attrs().skip_name_checks).then(|| parse_quote! {
             if col.spec.name() != #cql_name_literal {
@@ -301,7 +301,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
 
                 #name_check
 
-                <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime, #constraint_lifetime>>::deserialize(col.spec.typ(), col.slice)
+                <#deserializer as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
                     .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
                         #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
                             column_index: #field_index,
@@ -315,7 +315,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
 
     fn generate(&self) -> syn::ImplItemFn {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+        let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
 
         let fields = self.0.fields();
         let field_idents = fields.iter().map(|f| f.ident.as_ref().unwrap());
@@ -327,7 +327,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         parse_quote! {
             fn deserialize(
                 #[allow(unused_mut)]
-                mut row: #macro_internal::ColumnIterator<#constraint_lifetime>,
+                mut row: #macro_internal::ColumnIterator<#frame_lifetime, #metadata_lifetime>,
             ) -> ::std::result::Result<Self, #macro_internal::DeserializationError> {
                 ::std::result::Result::Ok(Self {
                     #(#field_idents: #field_finalizers,)*
@@ -362,7 +362,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
     fn generate_type_check(&self, field: &Field) -> Option<syn::Block> {
         (!field.skip).then(|| {
             let macro_internal = self.0.struct_attrs().macro_internal_path();
-            let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+            let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
             let visited_flag = Self::visited_flag_variable(field);
             let typ = field.deserialize_target();
             let cql_name_literal = field.cql_name_literal();
@@ -373,7 +373,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
             parse_quote! {
                 {
                     if !#visited_flag {
-                        <#typ as #macro_internal::DeserializeValue<#constraint_lifetime, #constraint_lifetime>>::type_check(spec.typ())
+                        <#typ as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(spec.typ())
                             .map_err(|err| {
                                 #macro_internal::mk_row_typck_err::<Self>(
                                     column_types_iter(),
@@ -516,7 +516,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
     fn generate_deserialization(&self, column_index: usize, field: &Field) -> syn::Expr {
         assert!(!field.skip);
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+        let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
         let deserialize_field = Self::deserialize_field_variable(field);
         let deserializer = field.deserialize_target();
 
@@ -529,7 +529,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
                 );
 
                 #deserialize_field = ::std::option::Option::Some(
-                    <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime, #constraint_lifetime>>::deserialize(col.spec.typ(), col.slice)
+                    <#deserializer as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
                         .map_err(|err| {
                             #macro_internal::mk_row_deser_err::<Self>(
                                 #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
@@ -557,7 +557,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
 
     fn generate(&self) -> syn::ImplItemFn {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+        let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
         let fields = self.0.fields();
 
         let deserialize_field_decls = fields
@@ -581,7 +581,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
         parse_quote! {
             fn deserialize(
                 #[allow(unused_mut)]
-                mut row: #macro_internal::ColumnIterator<#constraint_lifetime>,
+                mut row: #macro_internal::ColumnIterator<#frame_lifetime, #metadata_lifetime>,
             ) -> ::std::result::Result<Self, #macro_internal::DeserializationError> {
 
                 // Generate fields that will serve as temporary storage
