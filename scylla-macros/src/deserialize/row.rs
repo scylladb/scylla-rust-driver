@@ -206,7 +206,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
         // of the columns correspond fields' names/types.
 
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let constraint_lifetime = self.0.constraint_lifetime();
+        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
 
         let required_fields_iter = || {
             self.0
@@ -281,7 +281,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
         let cql_name_literal = field.cql_name_literal();
         let deserializer = field.deserialize_target();
-        let constraint_lifetime = self.0.constraint_lifetime();
+        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
 
         let name_check: Option<syn::Stmt> = (!self.0.struct_attrs().skip_name_checks).then(|| parse_quote! {
             if col.spec.name() != #cql_name_literal {
@@ -315,7 +315,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
 
     fn generate(&self) -> syn::ImplItemFn {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let constraint_lifetime = self.0.constraint_lifetime();
+        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
 
         let fields = self.0.fields();
         let field_idents = fields.iter().map(|f| f.ident.as_ref().unwrap());
@@ -362,7 +362,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
     fn generate_type_check(&self, field: &Field) -> Option<syn::Block> {
         (!field.skip).then(|| {
             let macro_internal = self.0.struct_attrs().macro_internal_path();
-            let constraint_lifetime = self.0.constraint_lifetime();
+            let (constraint_lifetime, _) = self.0.constraint_lifetimes();
             let visited_flag = Self::visited_flag_variable(field);
             let typ = field.deserialize_target();
             let cql_name_literal = field.cql_name_literal();
@@ -516,7 +516,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
     fn generate_deserialization(&self, column_index: usize, field: &Field) -> syn::Expr {
         assert!(!field.skip);
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let constraint_lifetime = self.0.constraint_lifetime();
+        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
         let deserialize_field = Self::deserialize_field_variable(field);
         let deserializer = field.deserialize_target();
 
@@ -557,7 +557,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
 
     fn generate(&self) -> syn::ImplItemFn {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let constraint_lifetime = self.0.constraint_lifetime();
+        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
         let fields = self.0.fields();
 
         let deserialize_field_decls = fields

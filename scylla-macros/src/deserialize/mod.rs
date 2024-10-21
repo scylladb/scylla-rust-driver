@@ -40,7 +40,7 @@ struct StructDescForDeserialize<Attrs, Field> {
     attrs: Attrs,
     fields: Vec<Field>,
     constraint_trait: syn::Path,
-    constraint_lifetime: syn::Lifetime,
+    constraint_lifetimes: (syn::Lifetime, syn::Lifetime),
 
     generics: syn::Generics,
 }
@@ -70,14 +70,14 @@ where
             .map(Field::from_field)
             .collect::<Result<_, _>>()?;
 
-        let constraint_lifetime = generate_unique_lifetime_for_impl(&input.generics);
+        let constraint_lifetimes = generate_pair_of_unique_lifetimes_for_impl(&input.generics);
 
         Ok(Self {
             name: input.ident.clone(),
             attrs,
             fields,
             constraint_trait,
-            constraint_lifetime,
+            constraint_lifetimes,
             generics: input.generics.clone(),
         })
     }
@@ -86,8 +86,8 @@ where
         &self.attrs
     }
 
-    fn constraint_lifetime(&self) -> &syn::Lifetime {
-        &self.constraint_lifetime
+    fn constraint_lifetimes(&self) -> &(syn::Lifetime, syn::Lifetime) {
+        &self.constraint_lifetimes
     }
 
     fn fields(&self) -> &[Field] {
@@ -99,7 +99,7 @@ where
         trait_: syn::Path,
         items: impl IntoIterator<Item = syn::ImplItem>,
     ) -> syn::ItemImpl {
-        let constraint_lifetime = &self.constraint_lifetime;
+        let (constraint_lifetime, _) = self.constraint_lifetimes();
         let (_, ty_generics, _) = self.generics.split_for_impl();
         let impl_generics = &self.generics.params;
 
@@ -108,7 +108,7 @@ where
         let predicates = generate_lifetime_constraints_for_impl(
             &self.generics,
             self.constraint_trait.clone(),
-            &self.constraint_lifetime,
+            constraint_lifetime,
         )
         .chain(generate_default_constraints(&self.fields));
         let trait_: syn::Path = parse_quote!(#macro_internal::#trait_);
@@ -168,16 +168,31 @@ fn generate_lifetime_constraints_for_impl<'a>(
     lifetime_constraints.chain(type_constraints)
 }
 
-/// Generates a new lifetime parameter, with a different name to any of the
+/// Generates a pair of new lifetime parameters, with a different name to any of the
 /// existing generic lifetimes.
-fn generate_unique_lifetime_for_impl(generics: &syn::Generics) -> syn::Lifetime {
+fn generate_pair_of_unique_lifetimes_for_impl(
+    generics: &syn::Generics,
+) -> (syn::Lifetime, syn::Lifetime) {
     let mut constraint_lifetime_name = "'lifetime".to_string();
-    while generics
-        .lifetimes()
-        .any(|l| l.lifetime.to_string() == constraint_lifetime_name)
-    {
+    fn lifetime_occupied(generics: &syn::Generics, lifetime_name: &str) -> bool {
+        generics
+            .lifetimes()
+            .any(|l| l.lifetime.to_string() == lifetime_name)
+    }
+
+    while lifetime_occupied(generics, &constraint_lifetime_name) {
         // Extend the lifetime name with another underscore.
         constraint_lifetime_name += "_";
     }
-    syn::Lifetime::new(&constraint_lifetime_name, Span::call_site())
+
+    let lifetime1 = syn::Lifetime::new(&constraint_lifetime_name, Span::call_site());
+    constraint_lifetime_name += "_";
+
+    while lifetime_occupied(generics, &constraint_lifetime_name) {
+        // Extend the lifetime name with another underscore.
+        constraint_lifetime_name += "_";
+    }
+    let lifetime2 = syn::Lifetime::new(&constraint_lifetime_name, Span::call_site());
+
+    (lifetime1, lifetime2)
 }
