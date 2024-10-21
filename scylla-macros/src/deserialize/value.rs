@@ -229,7 +229,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
     // Generates name and type validation for given Rust struct's field.
     fn generate_field_validation(&self, rust_field_idx: usize, field: &Field) -> syn::Expr {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+        let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
         let rust_field_name = field.cql_name_literal();
         let rust_field_typ = field.deserialize_target();
         let default_when_missing = field.default_when_missing;
@@ -296,7 +296,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                     #name_verification
 
                     // Verify the type
-                    <#rust_field_typ as #macro_internal::DeserializeValue<#constraint_lifetime>>::type_check(cql_field_typ)
+                    <#rust_field_typ as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(cql_field_typ)
                         .map_err(|err| #macro_internal::mk_value_typck_err::<Self>(
                             typ,
                             #macro_internal::DeserUdtTypeCheckErrorKind::FieldTypeCheckFailed {
@@ -413,13 +413,13 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
         let cql_name_literal = field.cql_name_literal();
         let deserializer = field.deserialize_target();
-        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+        let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
         let default_when_missing = field.default_when_missing;
         let default_when_null = field.default_when_null;
         let skip_name_checks = self.0.attrs.skip_name_checks;
 
         let deserialize: syn::Expr = parse_quote! {
-            <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(cql_field_typ, value)
+            <#deserializer as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(cql_field_typ, value)
                 .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
                     typ,
                     #macro_internal::UdtDeserializationErrorKind::FieldDeserializationFailed {
@@ -532,7 +532,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         // We can assume that type_check was called.
 
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+        let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
         let fields = self.0.fields();
 
         let field_idents = fields.iter().map(|f| f.ident.as_ref().unwrap());
@@ -540,15 +540,15 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
 
         #[allow(unused_mut)]
         let mut iterator_type: syn::Type =
-            parse_quote!(#macro_internal::UdtIterator<#constraint_lifetime>);
+            parse_quote!(#macro_internal::UdtIterator<#frame_lifetime, #metadata_lifetime>);
 
         parse_quote! {
             fn deserialize(
-                typ: &#constraint_lifetime #macro_internal::ColumnType,
-                v: ::std::option::Option<#macro_internal::FrameSlice<#constraint_lifetime>>,
+                typ: &#metadata_lifetime #macro_internal::ColumnType<#metadata_lifetime>,
+                v: ::std::option::Option<#macro_internal::FrameSlice<#frame_lifetime>>,
             ) -> ::std::result::Result<Self, #macro_internal::DeserializationError> {
                 // Create an iterator over the fields of the UDT.
-                let mut cql_field_iter = <#iterator_type as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(typ, v)
+                let mut cql_field_iter = <#iterator_type as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(typ, v)
                     .map_err(#macro_internal::value_deser_error_replace_rust_name::<Self>)?;
 
                 // This is to hold another field that already popped up from the field iterator but appeared to not match
@@ -592,7 +592,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
     fn generate_type_check(&self, field: &Field) -> Option<syn::Block> {
         (!field.skip).then(|| {
             let macro_internal = self.0.struct_attrs().macro_internal_path();
-            let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+            let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
             let visited_flag = Self::visited_flag_variable(field);
             let typ = field.deserialize_target();
             let cql_name_literal = field.cql_name_literal();
@@ -603,7 +603,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
             parse_quote! {
                 {
                     if !#visited_flag {
-                        <#typ as #macro_internal::DeserializeValue<#constraint_lifetime>>::type_check(cql_field_typ)
+                        <#typ as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(cql_field_typ)
                             .map_err(|err| #macro_internal::mk_value_typck_err::<Self>(
                                 typ,
                                 #macro_internal::DeserUdtTypeCheckErrorKind::FieldTypeCheckFailed {
@@ -770,13 +770,13 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
     fn generate_deserialization(&self, field: &Field) -> Option<syn::Expr> {
         (!field.skip).then(|| {
             let macro_internal = self.0.struct_attrs().macro_internal_path();
-            let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+            let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
             let deserialize_field = Self::deserialize_field_variable(field);
             let cql_name_literal = field.cql_name_literal();
             let deserializer = field.deserialize_target();
 
             let do_deserialize: syn::Expr = parse_quote! {
-                <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(cql_field_typ, value)
+                <#deserializer as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(cql_field_typ, value)
                 .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
                     typ,
                     #macro_internal::UdtDeserializationErrorKind::FieldDeserializationFailed {
@@ -833,7 +833,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
 
     fn generate(&self) -> syn::ImplItemFn {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let (constraint_lifetime, _) = self.0.constraint_lifetimes();
+        let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
         let fields = self.0.fields();
 
         let deserialize_field_decls = fields.iter().map(Self::generate_deserialize_field_decl);
@@ -847,18 +847,18 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
         let field_finalizers = fields.iter().map(|f| self.generate_finalize_field(f));
 
         let iterator_type: syn::Type = parse_quote! {
-            #macro_internal::UdtIterator<#constraint_lifetime>
+            #macro_internal::UdtIterator<#frame_lifetime, #metadata_lifetime>
         };
 
         // TODO: Allow collecting unrecognized fields into some special field
 
         parse_quote! {
             fn deserialize(
-                typ: &#constraint_lifetime #macro_internal::ColumnType,
-                v: ::std::option::Option<#macro_internal::FrameSlice<#constraint_lifetime>>,
+                typ: &#metadata_lifetime #macro_internal::ColumnType<#metadata_lifetime>,
+                v: ::std::option::Option<#macro_internal::FrameSlice<#frame_lifetime>>,
             ) -> ::std::result::Result<Self, #macro_internal::DeserializationError> {
                 // Create an iterator over the fields of the UDT.
-                let cql_field_iter = <#iterator_type as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(typ, v)
+                let cql_field_iter = <#iterator_type as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(typ, v)
                     .map_err(#macro_internal::value_deser_error_replace_rust_name::<Self>)?;
 
                 // Generate fields that will serve as temporary storage

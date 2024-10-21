@@ -2,7 +2,7 @@
 //!
 //! Deserialization is based on two traits:
 //!
-//! - A type that implements `DeserializeValue<'frame>` can be deserialized
+//! - A type that implements `DeserializeValue<'frame, 'metadata>` can be deserialized
 //!   from a single _CQL value_ - i.e. an element of a row in the query result,
 //! - A type that implements `DeserializeRow<'frame>` can be deserialized
 //!   from a single _row_ of a query result.
@@ -57,7 +57,7 @@
 //!     #[error("Expected non-null")]
 //!     ExpectedNonNull,
 //! }
-//! impl<'frame> DeserializeValue<'frame> for MyVec {
+//! impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for MyVec {
 //!     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
 //!          if let ColumnType::Blob = typ {
 //!              return Ok(());
@@ -66,7 +66,7 @@
 //!      }
 //!
 //!      fn deserialize(
-//!          _typ: &'frame ColumnType,
+//!          _typ: &'metadata ColumnType<'metadata>,
 //!          v: Option<FrameSlice<'frame>>,
 //!      ) -> Result<Self, DeserializationError> {
 //!          v.ok_or_else(|| DeserializationError::new(MyDeserError::ExpectedNonNull))
@@ -98,7 +98,7 @@
 //!     #[error("Expected non-null")]
 //!     ExpectedNonNull,
 //! }
-//! impl<'a, 'frame> DeserializeValue<'frame> for MySlice<'a>
+//! impl<'a, 'frame, 'metadata> DeserializeValue<'frame, 'metadata> for MySlice<'a>
 //! where
 //!     'frame: 'a,
 //! {
@@ -110,7 +110,7 @@
 //!      }
 //!
 //!      fn deserialize(
-//!          _typ: &'frame ColumnType,
+//!          _typ: &'metadata ColumnType<'metadata>,
 //!          v: Option<FrameSlice<'frame>>,
 //!      ) -> Result<Self, DeserializationError> {
 //!          v.ok_or_else(|| DeserializationError::new(MyDeserError::ExpectedNonNull))
@@ -150,7 +150,7 @@
 //!     #[error("Expected non-null")]
 //!     ExpectedNonNull,
 //! }
-//! impl<'frame> DeserializeValue<'frame> for MyBytes {
+//! impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for MyBytes {
 //!     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
 //!          if let ColumnType::Blob = typ {
 //!              return Ok(());
@@ -159,7 +159,7 @@
 //!      }
 //!
 //!      fn deserialize(
-//!          _typ: &'frame ColumnType,
+//!          _typ: &'metadata ColumnType<'metadata>,
 //!          v: Option<FrameSlice<'frame>>,
 //!      ) -> Result<Self, DeserializationError> {
 //!          v.ok_or_else(|| DeserializationError::new(MyDeserError::ExpectedNonNull))

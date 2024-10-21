@@ -1013,7 +1013,7 @@ pub fn deser_cql_value(
             CqlValue::List(l)
         }
         Map(_key_type, _value_type) => {
-            let iter = MapIterator::<'_, CqlValue, CqlValue>::deserialize(typ, v)?;
+            let iter = MapIterator::<'_, '_, CqlValue, CqlValue>::deserialize(typ, v)?;
             let m: Vec<(CqlValue, CqlValue)> = iter.collect::<StdResult<_, _>>()?;
             CqlValue::Map(m)
         }

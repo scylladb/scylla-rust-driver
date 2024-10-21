@@ -31,7 +31,7 @@ use crate::frame::value::{
 /// The crate also provides a derive macro which allows to automatically
 /// implement the trait for a custom type. For more details on what the macro
 /// is capable of, see its documentation.
-pub trait DeserializeValue<'frame>
+pub trait DeserializeValue<'frame, 'metadata>
 where
     Self: Sized,
 {
@@ -45,19 +45,19 @@ where
     /// so it should not use the assumption about `type_check` being called
     /// as an excuse to run `unsafe` code.
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError>;
 }
 
-impl<'frame> DeserializeValue<'frame> for CqlValue {
+impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
     fn type_check(_typ: &ColumnType) -> Result<(), TypeCheckError> {
         // CqlValue accepts all possible CQL types
         Ok(())
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         let mut val = ensure_not_null_slice::<Self>(typ, v)?;
@@ -69,16 +69,16 @@ impl<'frame> DeserializeValue<'frame> for CqlValue {
 // Option represents nullability of CQL values:
 // None corresponds to null,
 // Some(val) to non-null values.
-impl<'frame, T> DeserializeValue<'frame> for Option<T>
+impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata> for Option<T>
 where
-    T: DeserializeValue<'frame>,
+    T: DeserializeValue<'frame, 'metadata>,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         T::type_check(typ)
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         v.map(|_| T::deserialize(typ, v)).transpose()
@@ -106,24 +106,24 @@ pub enum MaybeEmpty<T: Emptiable> {
     Value(T),
 }
 
-impl<'frame, T> DeserializeValue<'frame> for MaybeEmpty<T>
+impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata> for MaybeEmpty<T>
 where
-    T: DeserializeValue<'frame> + Emptiable,
+    T: DeserializeValue<'frame, 'metadata> + Emptiable,
 {
     #[inline]
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-        <T as DeserializeValue<'frame>>::type_check(typ)
+        <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         if val.is_empty() {
             Ok(MaybeEmpty::Empty)
         } else {
-            let v = <T as DeserializeValue<'frame>>::deserialize(typ, v)?;
+            let v = <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)?;
             Ok(MaybeEmpty::Value(v))
         }
     }
@@ -131,7 +131,7 @@ where
 
 macro_rules! impl_strict_type {
     ($t:ty, [$($cql:ident)|+], $conv:expr $(, $l:lifetime)?) => {
-        impl<$($l,)? 'frame> DeserializeValue<'frame> for $t
+        impl<$($l,)? 'frame, 'metadata> DeserializeValue<'frame, 'metadata> for $t
         where
             $('frame: $l)?
         {
@@ -144,7 +144,7 @@ macro_rules! impl_strict_type {
             }
 
             fn deserialize(
-                typ: &'frame ColumnType,
+                typ: &'metadata ColumnType<'metadata>,
                 v: Option<FrameSlice<'frame>>,
             ) -> Result<Self, DeserializationError> {
                 $conv(typ, v)
@@ -179,7 +179,7 @@ macro_rules! impl_fixed_numeric_type {
         impl_emptiable_strict_type!(
             $t,
             [$($cql)|*],
-            |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+            |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
                 const SIZE: usize = std::mem::size_of::<$t>();
                 let val = ensure_not_null_slice::<Self>(typ, v)?;
                 let arr = ensure_exact_length::<Self, SIZE>(typ, val)?;
@@ -197,7 +197,7 @@ macro_rules! impl_fixed_numeric_type {
 impl_emptiable_strict_type!(
     bool,
     Boolean,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         let arr = ensure_exact_length::<Self, 1>(typ, val)?;
         Ok(arr[0] != 0x00)
@@ -216,34 +216,36 @@ impl_fixed_numeric_type!(f64, Double);
 impl_emptiable_strict_type!(
     CqlVarint,
     Varint,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         Ok(CqlVarint::from_signed_bytes_be_slice(val))
     }
 );
 
 #[cfg(feature = "num-bigint-03")]
-impl_emptiable_strict_type!(num_bigint_03::BigInt, Varint, |typ: &'frame ColumnType,
-                                                            v: Option<
-    FrameSlice<'frame>,
->| {
-    let val = ensure_not_null_slice::<Self>(typ, v)?;
-    Ok(num_bigint_03::BigInt::from_signed_bytes_be(val))
-});
+impl_emptiable_strict_type!(
+    num_bigint_03::BigInt,
+    Varint,
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        Ok(num_bigint_03::BigInt::from_signed_bytes_be(val))
+    }
+);
 
 #[cfg(feature = "num-bigint-04")]
-impl_emptiable_strict_type!(num_bigint_04::BigInt, Varint, |typ: &'frame ColumnType,
-                                                            v: Option<
-    FrameSlice<'frame>,
->| {
-    let val = ensure_not_null_slice::<Self>(typ, v)?;
-    Ok(num_bigint_04::BigInt::from_signed_bytes_be(val))
-});
+impl_emptiable_strict_type!(
+    num_bigint_04::BigInt,
+    Varint,
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        Ok(num_bigint_04::BigInt::from_signed_bytes_be(val))
+    }
+);
 
 impl_emptiable_strict_type!(
     CqlDecimal,
     Decimal,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let mut val = ensure_not_null_slice::<Self>(typ, v)?;
         let scale = types::read_int(&mut val).map_err(|err| {
             mk_deser_err::<Self>(
@@ -261,7 +263,7 @@ impl_emptiable_strict_type!(
 impl_emptiable_strict_type!(
     bigdecimal_04::BigDecimal,
     Decimal,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let mut val = ensure_not_null_slice::<Self>(typ, v)?;
         let scale = types::read_int(&mut val).map_err(|err| {
             mk_deser_err::<Self>(
@@ -279,7 +281,7 @@ impl_emptiable_strict_type!(
 impl_strict_type!(
     &'a [u8],
     Blob,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         Ok(val)
     },
@@ -288,7 +290,7 @@ impl_strict_type!(
 impl_strict_type!(
     Vec<u8>,
     Blob,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         Ok(val.to_vec())
     }
@@ -296,7 +298,7 @@ impl_strict_type!(
 impl_strict_type!(
     Bytes,
     Blob,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_owned::<Self>(typ, v)?;
         Ok(val)
     }
@@ -327,7 +329,7 @@ fn check_ascii<T>(typ: &ColumnType, s: &[u8]) -> Result<(), DeserializationError
 
 impl_string_type!(
     &'a str,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         check_ascii::<&str>(typ, val)?;
         let s = std::str::from_utf8(val).map_err(|err| {
@@ -339,7 +341,7 @@ impl_string_type!(
 );
 impl_string_type!(
     String,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         check_ascii::<String>(typ, val)?;
         let s = std::str::from_utf8(val).map_err(|err| {
@@ -356,7 +358,7 @@ impl_string_type!(
 impl_strict_type!(
     Counter,
     Counter,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         let arr = ensure_exact_length::<Self, 8>(typ, val)?;
         let counter = i64::from_be_bytes(*arr);
@@ -370,7 +372,7 @@ impl_strict_type!(
 impl_strict_type!(
     CqlDuration,
     Duration,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let mut val = ensure_not_null_slice::<Self>(typ, v)?;
 
         macro_rules! mk_err {
@@ -415,7 +417,7 @@ impl_strict_type!(
 impl_emptiable_strict_type!(
     CqlDate,
     Date,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         let arr = ensure_exact_length::<Self, 4>(typ, val)?;
         let days = u32::from_be_bytes(*arr);
@@ -436,7 +438,9 @@ fn get_days_since_epoch_from_date_column<T>(
 }
 
 #[cfg(feature = "chrono-04")]
-impl_emptiable_strict_type!(chrono_04::NaiveDate, Date, |typ: &'frame ColumnType,
+impl_emptiable_strict_type!(chrono_04::NaiveDate, Date, |typ: &'metadata ColumnType<
+    'metadata,
+>,
                                                          v: Option<
     FrameSlice<'frame>,
 >| {
@@ -454,7 +458,7 @@ impl_emptiable_strict_type!(chrono_04::NaiveDate, Date, |typ: &'frame ColumnType
 impl_emptiable_strict_type!(
     time_03::Date,
     Date,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let days_since_epoch =
             time_03::Duration::days(get_days_since_epoch_from_date_column::<Self>(typ, v)?);
         time_03::Date::from_calendar_date(1970, time_03::Month::January, 1)
@@ -488,7 +492,7 @@ fn get_nanos_from_time_column<T>(
 impl_emptiable_strict_type!(
     CqlTime,
     Time,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let nanoseconds = get_nanos_from_time_column::<Self>(typ, v)?;
 
         Ok(CqlTime(nanoseconds))
@@ -496,7 +500,9 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "chrono-04")]
-impl_emptiable_strict_type!(chrono_04::NaiveTime, Time, |typ: &'frame ColumnType,
+impl_emptiable_strict_type!(chrono_04::NaiveTime, Time, |typ: &'metadata ColumnType<
+    'metadata,
+>,
                                                          v: Option<
     FrameSlice<'frame>,
 >| {
@@ -512,7 +518,7 @@ impl_emptiable_strict_type!(chrono_04::NaiveTime, Time, |typ: &'frame ColumnType
 impl_emptiable_strict_type!(
     time_03::Time,
     Time,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let nanoseconds = get_nanos_from_time_column::<time_03::Time>(typ, v)?;
 
         let time: time_03::Time = CqlTime(nanoseconds).try_into().map_err(|_| {
@@ -536,7 +542,7 @@ fn get_millis_from_timestamp_column<T>(
 impl_emptiable_strict_type!(
     CqlTimestamp,
     Timestamp,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let millis = get_millis_from_timestamp_column::<Self>(typ, v)?;
         Ok(CqlTimestamp(millis))
     }
@@ -546,7 +552,7 @@ impl_emptiable_strict_type!(
 impl_emptiable_strict_type!(
     chrono_04::DateTime<chrono_04::Utc>,
     Timestamp,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         use chrono_04::TimeZone as _;
 
         let millis = get_millis_from_timestamp_column::<Self>(typ, v)?;
@@ -564,7 +570,7 @@ impl_emptiable_strict_type!(
 impl_emptiable_strict_type!(
     time_03::OffsetDateTime,
     Timestamp,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let millis = get_millis_from_timestamp_column::<Self>(typ, v)?;
         time_03::OffsetDateTime::from_unix_timestamp_nanos(millis as i128 * 1_000_000)
             .map_err(|_| mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::ValueOverflow))
@@ -576,7 +582,7 @@ impl_emptiable_strict_type!(
 impl_emptiable_strict_type!(
     IpAddr,
     Inet,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         if let Ok(ipv4) = <[u8; 4]>::try_from(val) {
             Ok(IpAddr::from(ipv4))
@@ -596,7 +602,7 @@ impl_emptiable_strict_type!(
 impl_emptiable_strict_type!(
     Uuid,
     Uuid,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         let arr = ensure_exact_length::<Self, 16>(typ, val)?;
         let i = u128::from_be_bytes(*arr);
@@ -607,7 +613,7 @@ impl_emptiable_strict_type!(
 impl_emptiable_strict_type!(
     CqlTimeuuid,
     Timeuuid,
-    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         let arr = ensure_exact_length::<Self, 16>(typ, val)?;
         let i = u128::from_be_bytes(*arr);
@@ -617,19 +623,19 @@ impl_emptiable_strict_type!(
 
 // secrecy
 #[cfg(feature = "secrecy-08")]
-impl<'frame, T> DeserializeValue<'frame> for secrecy_08::Secret<T>
+impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata> for secrecy_08::Secret<T>
 where
-    T: DeserializeValue<'frame> + secrecy_08::Zeroize,
+    T: DeserializeValue<'frame, 'metadata> + secrecy_08::Zeroize,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-        <T as DeserializeValue<'frame>>::type_check(typ)
+        <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        <T as DeserializeValue<'frame>>::deserialize(typ, v).map(secrecy_08::Secret::new)
+        <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v).map(secrecy_08::Secret::new)
     }
 }
 
@@ -650,17 +656,17 @@ make_error_replace_rust_name!(
 // lists and sets
 
 /// An iterator over either a CQL set or list.
-pub struct ListlikeIterator<'frame, T> {
-    coll_typ: &'frame ColumnType<'frame>,
-    elem_typ: &'frame ColumnType<'frame>,
+pub struct ListlikeIterator<'frame, 'metadata, T> {
+    coll_typ: &'metadata ColumnType<'metadata>,
+    elem_typ: &'metadata ColumnType<'metadata>,
     raw_iter: FixedLengthBytesSequenceIterator<'frame>,
     phantom_data: std::marker::PhantomData<T>,
 }
 
-impl<'frame, T> ListlikeIterator<'frame, T> {
+impl<'frame, 'metadata, T> ListlikeIterator<'frame, 'metadata, T> {
     fn new(
-        coll_typ: &'frame ColumnType,
-        elem_typ: &'frame ColumnType,
+        coll_typ: &'metadata ColumnType<'metadata>,
+        elem_typ: &'metadata ColumnType<'metadata>,
         count: usize,
         slice: FrameSlice<'frame>,
     ) -> Self {
@@ -672,7 +678,10 @@ impl<'frame, T> ListlikeIterator<'frame, T> {
         }
     }
 
-    fn empty(coll_typ: &'frame ColumnType, elem_typ: &'frame ColumnType) -> Self {
+    fn empty(
+        coll_typ: &'metadata ColumnType<'metadata>,
+        elem_typ: &'metadata ColumnType<'metadata>,
+    ) -> Self {
         Self {
             coll_typ,
             elem_typ,
@@ -682,14 +691,15 @@ impl<'frame, T> ListlikeIterator<'frame, T> {
     }
 }
 
-impl<'frame, T> DeserializeValue<'frame> for ListlikeIterator<'frame, T>
+impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata>
+    for ListlikeIterator<'frame, 'metadata, T>
 where
-    T: DeserializeValue<'frame>,
+    T: DeserializeValue<'frame, 'metadata>,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
             ColumnType::List(el_t) | ColumnType::Set(el_t) => {
-                <T as DeserializeValue<'frame>>::type_check(el_t).map_err(|err| {
+                <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t).map_err(|err| {
                     mk_typck_err::<Self>(
                         typ,
                         SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
@@ -706,7 +716,7 @@ where
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         let elem_typ = match typ {
@@ -735,9 +745,9 @@ where
     }
 }
 
-impl<'frame, T> Iterator for ListlikeIterator<'frame, T>
+impl<'frame, 'metadata, T> Iterator for ListlikeIterator<'frame, 'metadata, T>
 where
-    T: DeserializeValue<'frame>,
+    T: DeserializeValue<'frame, 'metadata>,
 {
     type Item = Result<T, DeserializationError>;
 
@@ -764,35 +774,35 @@ where
     }
 }
 
-impl<'frame, T> DeserializeValue<'frame> for Vec<T>
+impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata> for Vec<T>
 where
-    T: DeserializeValue<'frame>,
+    T: DeserializeValue<'frame, 'metadata>,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         // It makes sense for both Set and List to deserialize to Vec.
-        ListlikeIterator::<'frame, T>::type_check(typ)
+        ListlikeIterator::<'frame, 'metadata, T>::type_check(typ)
             .map_err(typck_error_replace_rust_name::<Self>)
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        ListlikeIterator::<'frame, T>::deserialize(typ, v)
+        ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
             .and_then(|it| it.collect::<Result<_, DeserializationError>>())
             .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
 
-impl<'frame, T> DeserializeValue<'frame> for BTreeSet<T>
+impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata> for BTreeSet<T>
 where
-    T: DeserializeValue<'frame> + Ord,
+    T: DeserializeValue<'frame, 'metadata> + Ord,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         // It only makes sense for Set to deserialize to BTreeSet.
         // Deserializing List straight to BTreeSet would be lossy.
         match typ {
-            ColumnType::Set(el_t) => <T as DeserializeValue<'frame>>::type_check(el_t)
+            ColumnType::Set(el_t) => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
                 typ,
@@ -802,25 +812,25 @@ where
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        ListlikeIterator::<'frame, T>::deserialize(typ, v)
+        ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
             .and_then(|it| it.collect::<Result<_, DeserializationError>>())
             .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
 
-impl<'frame, T, S> DeserializeValue<'frame> for HashSet<T, S>
+impl<'frame, 'metadata, T, S> DeserializeValue<'frame, 'metadata> for HashSet<T, S>
 where
-    T: DeserializeValue<'frame> + Eq + Hash,
+    T: DeserializeValue<'frame, 'metadata> + Eq + Hash,
     S: BuildHasher + Default + 'frame,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         // It only makes sense for Set to deserialize to HashSet.
         // Deserializing List straight to HashSet would be lossy.
         match typ {
-            ColumnType::Set(el_t) => <T as DeserializeValue<'frame>>::type_check(el_t)
+            ColumnType::Set(el_t) => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
                 typ,
@@ -830,30 +840,30 @@ where
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        ListlikeIterator::<'frame, T>::deserialize(typ, v)
+        ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
             .and_then(|it| it.collect::<Result<_, DeserializationError>>())
             .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
 
 /// An iterator over a CQL map.
-pub struct MapIterator<'frame, K, V> {
-    coll_typ: &'frame ColumnType<'frame>,
-    k_typ: &'frame ColumnType<'frame>,
-    v_typ: &'frame ColumnType<'frame>,
+pub struct MapIterator<'frame, 'metadata, K, V> {
+    coll_typ: &'metadata ColumnType<'metadata>,
+    k_typ: &'metadata ColumnType<'metadata>,
+    v_typ: &'metadata ColumnType<'metadata>,
     raw_iter: FixedLengthBytesSequenceIterator<'frame>,
     phantom_data_k: std::marker::PhantomData<K>,
     phantom_data_v: std::marker::PhantomData<V>,
 }
 
-impl<'frame, K, V> MapIterator<'frame, K, V> {
+impl<'frame, 'metadata, K, V> MapIterator<'frame, 'metadata, K, V> {
     fn new(
-        coll_typ: &'frame ColumnType,
-        k_typ: &'frame ColumnType,
-        v_typ: &'frame ColumnType,
+        coll_typ: &'metadata ColumnType<'metadata>,
+        k_typ: &'metadata ColumnType<'metadata>,
+        v_typ: &'metadata ColumnType<'metadata>,
         count: usize,
         slice: FrameSlice<'frame>,
     ) -> Self {
@@ -868,9 +878,9 @@ impl<'frame, K, V> MapIterator<'frame, K, V> {
     }
 
     fn empty(
-        coll_typ: &'frame ColumnType,
-        k_typ: &'frame ColumnType,
-        v_typ: &'frame ColumnType,
+        coll_typ: &'metadata ColumnType<'metadata>,
+        k_typ: &'metadata ColumnType<'metadata>,
+        v_typ: &'metadata ColumnType<'metadata>,
     ) -> Self {
         Self {
             coll_typ,
@@ -883,18 +893,19 @@ impl<'frame, K, V> MapIterator<'frame, K, V> {
     }
 }
 
-impl<'frame, K, V> DeserializeValue<'frame> for MapIterator<'frame, K, V>
+impl<'frame, 'metadata, K, V> DeserializeValue<'frame, 'metadata>
+    for MapIterator<'frame, 'metadata, K, V>
 where
-    K: DeserializeValue<'frame>,
-    V: DeserializeValue<'frame>,
+    K: DeserializeValue<'frame, 'metadata>,
+    V: DeserializeValue<'frame, 'metadata>,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
             ColumnType::Map(k_t, v_t) => {
-                <K as DeserializeValue<'frame>>::type_check(k_t).map_err(|err| {
+                <K as DeserializeValue<'frame, 'metadata>>::type_check(k_t).map_err(|err| {
                     mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::KeyTypeCheckFailed(err))
                 })?;
-                <V as DeserializeValue<'frame>>::type_check(v_t).map_err(|err| {
+                <V as DeserializeValue<'frame, 'metadata>>::type_check(v_t).map_err(|err| {
                     mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::ValueTypeCheckFailed(err))
                 })?;
                 Ok(())
@@ -904,7 +915,7 @@ where
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         let (k_typ, v_typ) = match typ {
@@ -933,10 +944,10 @@ where
     }
 }
 
-impl<'frame, K, V> Iterator for MapIterator<'frame, K, V>
+impl<'frame, 'metadata, K, V> Iterator for MapIterator<'frame, 'metadata, K, V>
 where
-    K: DeserializeValue<'frame>,
-    V: DeserializeValue<'frame>,
+    K: DeserializeValue<'frame, 'metadata>,
+    V: DeserializeValue<'frame, 'metadata>,
 {
     type Item = Result<(K, V), DeserializationError>;
 
@@ -985,40 +996,42 @@ where
     }
 }
 
-impl<'frame, K, V> DeserializeValue<'frame> for BTreeMap<K, V>
+impl<'frame, 'metadata, K, V> DeserializeValue<'frame, 'metadata> for BTreeMap<K, V>
 where
-    K: DeserializeValue<'frame> + Ord,
-    V: DeserializeValue<'frame>,
+    K: DeserializeValue<'frame, 'metadata> + Ord,
+    V: DeserializeValue<'frame, 'metadata>,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-        MapIterator::<'frame, K, V>::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
+        MapIterator::<'frame, 'metadata, K, V>::type_check(typ)
+            .map_err(typck_error_replace_rust_name::<Self>)
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        MapIterator::<'frame, K, V>::deserialize(typ, v)
+        MapIterator::<'frame, 'metadata, K, V>::deserialize(typ, v)
             .and_then(|it| it.collect::<Result<_, DeserializationError>>())
             .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
 
-impl<'frame, K, V, S> DeserializeValue<'frame> for HashMap<K, V, S>
+impl<'frame, 'metadata, K, V, S> DeserializeValue<'frame, 'metadata> for HashMap<K, V, S>
 where
-    K: DeserializeValue<'frame> + Eq + Hash,
-    V: DeserializeValue<'frame>,
+    K: DeserializeValue<'frame, 'metadata> + Eq + Hash,
+    V: DeserializeValue<'frame, 'metadata>,
     S: BuildHasher + Default + 'frame,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-        MapIterator::<'frame, K, V>::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
+        MapIterator::<'frame, 'metadata, K, V>::type_check(typ)
+            .map_err(typck_error_replace_rust_name::<Self>)
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        MapIterator::<'frame, K, V>::deserialize(typ, v)
+        MapIterator::<'frame, 'metadata, K, V>::deserialize(typ, v)
             .and_then(|it| it.collect::<Result<_, DeserializationError>>())
             .map_err(deser_error_replace_rust_name::<Self>)
     }
@@ -1030,9 +1043,9 @@ where
 // The generated impl expects that the serialized data contains exactly the given amount of values.
 macro_rules! impl_tuple {
     ($($Ti:ident),*; $($idx:literal),*; $($idf:ident),*) => {
-        impl<'frame, $($Ti),*> DeserializeValue<'frame> for ($($Ti,)*)
+        impl<'frame, 'metadata, $($Ti),*> DeserializeValue<'frame, 'metadata> for ($($Ti,)*)
         where
-            $($Ti: DeserializeValue<'frame>),*
+            $($Ti: DeserializeValue<'frame, 'metadata>),*
         {
             fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
                 const TUPLE_LEN: usize = (&[$($idx),*] as &[i32]).len();
@@ -1049,7 +1062,7 @@ macro_rules! impl_tuple {
                 Ok(())
             }
 
-            fn deserialize(typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>) -> Result<Self, DeserializationError> {
+            fn deserialize(typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>) -> Result<Self, DeserializationError> {
                 const TUPLE_LEN: usize = (&[$($idx),*] as &[i32]).len();
                 // Safety: we are allowed to assume that type_check() was already called.
                 let [$($idf),*] = ensure_tuple_type::<($($Ti,)*), TUPLE_LEN>(typ)
@@ -1146,19 +1159,19 @@ impl_tuple_multiple!(
 /// - `None` - missing from the serialized form
 /// - `Some(None)` - present, but null
 /// - `Some(Some(...))` - non-null, present value
-pub struct UdtIterator<'frame> {
-    all_fields: &'frame [(Cow<'frame, str>, ColumnType<'frame>)],
-    type_name: &'frame str,
-    keyspace: &'frame str,
-    remaining_fields: &'frame [(Cow<'frame, str>, ColumnType<'frame>)],
+pub struct UdtIterator<'frame, 'metadata> {
+    all_fields: &'metadata [(Cow<'metadata, str>, ColumnType<'metadata>)],
+    type_name: &'metadata str,
+    keyspace: &'metadata str,
+    remaining_fields: &'metadata [(Cow<'metadata, str>, ColumnType<'metadata>)],
     raw_iter: BytesSequenceIterator<'frame>,
 }
 
-impl<'frame> UdtIterator<'frame> {
+impl<'frame, 'metadata> UdtIterator<'frame, 'metadata> {
     fn new(
-        fields: &'frame [(Cow<'frame, str>, ColumnType<'frame>)],
-        type_name: &'frame str,
-        keyspace: &'frame str,
+        fields: &'metadata [(Cow<'metadata, str>, ColumnType<'metadata>)],
+        type_name: &'metadata str,
+        keyspace: &'metadata str,
         slice: FrameSlice<'frame>,
     ) -> Self {
         Self {
@@ -1171,12 +1184,12 @@ impl<'frame> UdtIterator<'frame> {
     }
 
     #[inline]
-    pub fn fields(&self) -> &'frame [(Cow<'frame, str>, ColumnType<'frame>)] {
+    pub fn fields(&self) -> &'metadata [(Cow<'metadata, str>, ColumnType<'metadata>)] {
         self.remaining_fields
     }
 }
 
-impl<'frame> DeserializeValue<'frame> for UdtIterator<'frame> {
+impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for UdtIterator<'frame, 'metadata> {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
             ColumnType::UserDefinedType { .. } => Ok(()),
@@ -1185,7 +1198,7 @@ impl<'frame> DeserializeValue<'frame> for UdtIterator<'frame> {
     }
 
     fn deserialize(
-        typ: &'frame ColumnType,
+        typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         let v = ensure_not_null_frame_slice::<Self>(typ, v)?;
@@ -1203,9 +1216,9 @@ impl<'frame> DeserializeValue<'frame> for UdtIterator<'frame> {
     }
 }
 
-impl<'frame> Iterator for UdtIterator<'frame> {
+impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
     type Item = (
-        &'frame (Cow<'frame, str>, ColumnType<'frame>),
+        &'metadata (Cow<'metadata, str>, ColumnType<'metadata>),
         Result<Option<Option<FrameSlice<'frame>>>, DeserializationError>,
     );
 
