@@ -242,10 +242,10 @@ pub struct CloudEndpoint {
 
 /// Describes a database server known on Session startup, with already resolved address.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct ResolvedContactPoint {
-    pub address: SocketAddr,
-    pub datacenter: Option<String>,
+pub(crate) struct ResolvedContactPoint {
+    pub(crate) address: SocketAddr,
+    #[cfg_attr(not(feature = "cloud"), allow(unused))]
+    pub(crate) datacenter: Option<String>,
 }
 
 // Resolve the given hostname using a DNS lookup if necessary.

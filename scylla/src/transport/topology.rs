@@ -75,9 +75,8 @@ pub struct Peer {
 
 /// An endpoint for a node that the driver is to issue connections to,
 /// possibly after prior address translation.
-#[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 #[derive(Clone, Debug)]
-pub enum UntranslatedEndpoint {
+pub(crate) enum UntranslatedEndpoint {
     /// Provided by user in SessionConfig (initial contact points).
     ContactPoint(ResolvedContactPoint),
     /// Fetched in Metadata with `query_peers()`
