@@ -114,29 +114,12 @@ where
         let trait_: syn::Path = parse_quote!(#macro_internal::#trait_);
         let items = items.into_iter();
 
-        // This `if` is purely temporary. When in a next commit DeserializeRow receives a 'metadata lifetime,
-        // the handling of both traits is unified again.
-        if trait_
-            .segments
-            .last()
-            .is_some_and(|name| name.ident == "DeserializeValue")
-        {
-            parse_quote! {
-                impl<#frame_lifetime, #metadata_lifetime, #impl_generics>
-                    #trait_<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
-                where #(#predicates),*
-                {
-                    #(#items)*
-                }
-            }
-        } else {
-            parse_quote! {
-                impl<#frame_lifetime, #impl_generics>
-                    #trait_<#frame_lifetime> for #struct_name #ty_generics
-                where #(#predicates),*
-                {
-                    #(#items)*
-                }
+        parse_quote! {
+            impl<#frame_lifetime, #metadata_lifetime, #impl_generics>
+                #trait_<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
+            where #(#predicates),*
+            {
+                #(#items)*
             }
         }
     }

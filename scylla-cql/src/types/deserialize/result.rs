@@ -42,7 +42,7 @@ impl<'frame> RowIterator<'frame> {
 }
 
 impl<'frame> Iterator for RowIterator<'frame> {
-    type Item = Result<ColumnIterator<'frame>, DeserializationError>;
+    type Item = Result<ColumnIterator<'frame, 'frame>, DeserializationError>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -85,7 +85,7 @@ pub struct TypedRowIterator<'frame, R> {
 
 impl<'frame, R> TypedRowIterator<'frame, R>
 where
-    R: DeserializeRow<'frame>,
+    R: DeserializeRow<'frame, 'frame>,
 {
     /// Creates a new [TypedRowIterator] from given [RowIterator].
     ///
@@ -115,7 +115,7 @@ where
 
 impl<'frame, R> Iterator for TypedRowIterator<'frame, R>
 where
-    R: DeserializeRow<'frame>,
+    R: DeserializeRow<'frame, 'frame>,
 {
     type Item = Result<R, DeserializationError>;
 

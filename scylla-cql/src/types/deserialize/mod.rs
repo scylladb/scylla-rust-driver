@@ -4,7 +4,7 @@
 //!
 //! - A type that implements `DeserializeValue<'frame, 'metadata>` can be deserialized
 //!   from a single _CQL value_ - i.e. an element of a row in the query result,
-//! - A type that implements `DeserializeRow<'frame>` can be deserialized
+//! - A type that implements `DeserializeRow<'frame, 'metadata>` can be deserialized
 //!   from a single _row_ of a query result.
 //!
 //! Those traits are quite similar to each other, both in the idea behind them
