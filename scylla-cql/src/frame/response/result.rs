@@ -532,7 +532,7 @@ impl<'a> ResultMetadata<'a> {
     }
 
     #[inline]
-    pub fn col_specs(&self) -> &[ColumnSpec] {
+    pub fn col_specs(&self) -> &[ColumnSpec<'a>] {
         &self.col_specs
     }
 
@@ -1168,7 +1168,7 @@ mod test_utils {
     impl<'a> ResultMetadata<'a> {
         #[inline]
         #[doc(hidden)]
-        pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec<'static>>) -> Self {
+        pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec<'a>>) -> Self {
             Self {
                 col_count,
                 col_specs,
