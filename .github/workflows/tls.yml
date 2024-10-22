@@ -30,6 +30,8 @@ jobs:
           --health-retries 10
     env:
       working-directory: ./scylla
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
     - uses: actions/checkout@v3
     - name: Update rust toolchain
