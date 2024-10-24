@@ -30,10 +30,6 @@ impl RetryPolicy for DowngradingConsistencyRetryPolicy {
     fn new_session(&self) -> Box<dyn RetrySession> {
         Box::new(DowngradingConsistencyRetrySession::new())
     }
-
-    fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
-        Box::new(DowngradingConsistencyRetryPolicy)
-    }
 }
 
 pub struct DowngradingConsistencyRetrySession {

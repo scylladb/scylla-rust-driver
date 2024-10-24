@@ -95,10 +95,6 @@ impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {
         self.report_node(Report::RetryPolicy);
         Box::new(self.clone())
     }
-
-    fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
-        Box::new(self.clone())
-    }
 }
 
 impl<const NODE: u8> RetrySession for BoundToPredefinedNodePolicy<NODE> {
