@@ -10,26 +10,29 @@ use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row};
 
 /// Represents a raw, unparsed column value.
 #[non_exhaustive]
-pub struct RawColumn<'frame> {
+pub struct RawColumn<'frame, 'metadata> {
     pub index: usize,
-    pub spec: &'frame ColumnSpec<'frame>,
+    pub spec: &'metadata ColumnSpec<'metadata>,
     pub slice: Option<FrameSlice<'frame>>,
 }
 
 /// Iterates over columns of a single row.
 #[derive(Clone, Debug)]
-pub struct ColumnIterator<'frame> {
-    specs: std::iter::Enumerate<std::slice::Iter<'frame, ColumnSpec<'frame>>>,
+pub struct ColumnIterator<'frame, 'metadata> {
+    specs: std::iter::Enumerate<std::slice::Iter<'metadata, ColumnSpec<'metadata>>>,
     slice: FrameSlice<'frame>,
 }
 
-impl<'frame> ColumnIterator<'frame> {
+impl<'frame, 'metadata> ColumnIterator<'frame, 'metadata> {
     /// Creates a new iterator over a single row.
     ///
     /// - `specs` - information about columns of the serialized response,
     /// - `slice` - a [FrameSlice] which points to the serialized row.
     #[inline]
-    pub(crate) fn new(specs: &'frame [ColumnSpec], slice: FrameSlice<'frame>) -> Self {
+    pub(crate) fn new(
+        specs: &'metadata [ColumnSpec<'metadata>],
+        slice: FrameSlice<'frame>,
+    ) -> Self {
         Self {
             specs: specs.iter().enumerate(),
             slice,
@@ -44,8 +47,8 @@ impl<'frame> ColumnIterator<'frame> {
     }
 }
 
-impl<'frame> Iterator for ColumnIterator<'frame> {
-    type Item = Result<RawColumn<'frame>, DeserializationError>;
+impl<'frame, 'metadata> Iterator for ColumnIterator<'frame, 'metadata> {
+    type Item = Result<RawColumn<'frame, 'metadata>, DeserializationError>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -84,7 +87,7 @@ impl<'frame> Iterator for ColumnIterator<'frame> {
 /// The crate also provides a derive macro which allows to automatically
 /// implement the trait for a custom type. For more details on what the macro
 /// is capable of, see its documentation.
-pub trait DeserializeRow<'frame>
+pub trait DeserializeRow<'frame, 'metadata>
 where
     Self: Sized,
 {
@@ -100,7 +103,7 @@ where
     /// the row's type. Note that `deserialize` is not an unsafe function,
     /// so it should not use the assumption about `type_check` being called
     /// as an excuse to run `unsafe` code.
-    fn deserialize(row: ColumnIterator<'frame>) -> Result<Self, DeserializationError>;
+    fn deserialize(row: ColumnIterator<'frame, 'metadata>) -> Result<Self, DeserializationError>;
 }
 
 // raw deserialization as ColumnIterator
@@ -111,14 +114,14 @@ where
 // Implementing DeserializeRow for it allows us to simplify our interface. For example,
 // we have `QueryResult::rows<T: DeserializeRow>()` - you can put T = ColumnIterator
 // instead of having a separate rows_raw function or something like this.
-impl<'frame> DeserializeRow<'frame> for ColumnIterator<'frame> {
+impl<'frame, 'metadata> DeserializeRow<'frame, 'metadata> for ColumnIterator<'frame, 'metadata> {
     #[inline]
     fn type_check(_specs: &[ColumnSpec]) -> Result<(), TypeCheckError> {
         Ok(())
     }
 
     #[inline]
-    fn deserialize(row: ColumnIterator<'frame>) -> Result<Self, DeserializationError> {
+    fn deserialize(row: ColumnIterator<'frame, 'metadata>) -> Result<Self, DeserializationError> {
         Ok(row)
     }
 }
@@ -140,7 +143,7 @@ make_error_replace_rust_name!(
 /// While no longer encouraged (because the new framework encourages deserializing
 /// directly into desired types, entirely bypassing [CqlValue]), this can be indispensable
 /// for some use cases, i.e. those involving dynamic parsing (ORMs?).
-impl<'frame> DeserializeRow<'frame> for Row {
+impl<'frame, 'metadata> DeserializeRow<'frame, 'metadata> for Row {
     #[inline]
     fn type_check(_specs: &[ColumnSpec]) -> Result<(), TypeCheckError> {
         // CqlValues accept all types, no type checking needed.
@@ -148,7 +151,9 @@ impl<'frame> DeserializeRow<'frame> for Row {
     }
 
     #[inline]
-    fn deserialize(mut row: ColumnIterator<'frame>) -> Result<Self, DeserializationError> {
+    fn deserialize(
+        mut row: ColumnIterator<'frame, 'metadata>,
+    ) -> Result<Self, DeserializationError> {
         let mut columns = Vec::with_capacity(row.size_hint().0);
         while let Some(column) = row
             .next()
@@ -181,9 +186,9 @@ impl<'frame> DeserializeRow<'frame> for Row {
 /// and needed conversions, issuing meaningful errors in case something goes wrong.
 macro_rules! impl_tuple {
     ($($Ti:ident),*; $($idx:literal),*; $($idf:ident),*) => {
-        impl<'frame, $($Ti),*> DeserializeRow<'frame> for ($($Ti,)*)
+        impl<'frame, 'metadata, $($Ti),*> DeserializeRow<'frame, 'metadata> for ($($Ti,)*)
         where
-            $($Ti: DeserializeValue<'frame>),*
+            $($Ti: DeserializeValue<'frame, 'metadata>),*
         {
             fn type_check(specs: &[ColumnSpec]) -> Result<(), TypeCheckError> {
                 const TUPLE_LEN: usize = (&[$($idx),*] as &[i32]).len();
@@ -191,7 +196,7 @@ macro_rules! impl_tuple {
                 let column_types_iter = || specs.iter().map(|spec| spec.typ().clone().into_owned());
                 if let [$($idf),*] = &specs {
                     $(
-                        <$Ti as DeserializeValue<'frame>>::type_check($idf.typ())
+                        <$Ti as DeserializeValue<'frame, 'metadata>>::type_check($idf.typ())
                             .map_err(|err| mk_typck_err::<Self>(column_types_iter(), BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
                                 column_index: $idx,
                                 column_name: specs[$idx].name().to_owned(),
@@ -206,7 +211,7 @@ macro_rules! impl_tuple {
                 }
             }
 
-            fn deserialize(mut row: ColumnIterator<'frame>) -> Result<Self, DeserializationError> {
+            fn deserialize(mut row: ColumnIterator<'frame, 'metadata>) -> Result<Self, DeserializationError> {
                 const TUPLE_LEN: usize = (&[$($idx),*] as &[i32]).len();
 
                 let ret = (
@@ -217,7 +222,7 @@ macro_rules! impl_tuple {
                             $idx
                         )).map_err(deser_error_replace_rust_name::<Self>)?;
 
-                        <$Ti as DeserializeValue<'frame>>::deserialize(column.spec.typ(), column.slice)
+                        <$Ti as DeserializeValue<'frame, 'metadata>>::deserialize(column.spec.typ(), column.slice)
                             .map_err(|err| mk_deser_err::<Self>(BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
                                 column_index: column.index,
                                 column_name: column.spec.name().to_owned(),
