@@ -100,6 +100,33 @@ pub enum QueryError {
     RequestTimeout(String),
 }
 
+impl QueryError {
+    pub(crate) fn is_connection_broken(&self) -> bool {
+        // Do not remove this lint!
+        // It's there for a reason - we don't want new variants
+        // automatically fall under `_` pattern when they are introduced.
+        #[deny(clippy::wildcard_enum_match_arm)]
+        match self {
+            // Error variants that imply that some connection error appeared before/during execution.
+            QueryError::BrokenConnection(_) | QueryError::ConnectionPoolError(_) => true,
+
+            // Other errors.
+            QueryError::DbError(_, _)
+            | QueryError::BadQuery(_)
+            | QueryError::CqlRequestSerialization(_)
+            | QueryError::BodyExtensionsParseError(_)
+            | QueryError::EmptyPlan
+            | QueryError::CqlResultParseError(_)
+            | QueryError::CqlErrorParseError(_)
+            | QueryError::MetadataError(_)
+            | QueryError::ProtocolError(_)
+            | QueryError::TimeoutError
+            | QueryError::UnableToAllocStreamId
+            | QueryError::RequestTimeout(_) => false,
+        }
+    }
+}
+
 impl From<SerializeValuesError> for QueryError {
     fn from(serialized_err: SerializeValuesError) -> QueryError {
         QueryError::BadQuery(BadQuery::SerializeValuesError(serialized_err))
