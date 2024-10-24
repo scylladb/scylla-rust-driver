@@ -179,6 +179,22 @@ impl<T: SerializeValue> SerializeRow for Vec<T> {
     impl_serialize_row_for_slice!();
 }
 
+impl<T: SerializeRow> SerializeRow for Box<T> {
+    #[inline]
+    fn serialize(
+        &self,
+        ctx: &RowSerializationContext<'_>,
+        writer: &mut RowWriter,
+    ) -> Result<(), SerializationError> {
+        self.as_ref().serialize(ctx, writer)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.as_ref().is_empty()
+    }
+}
+
 macro_rules! impl_serialize_row_for_map {
     () => {
         fn serialize(
@@ -1541,6 +1557,16 @@ mod tests {
             },
             &spec,
         );
+
+        assert_eq!(reference, row);
+    }
+
+    #[test]
+    fn test_row_serialization_with_boxed_tuple() {
+        let spec = [col("a", ColumnType::Int), col("b", ColumnType::Int)];
+
+        let reference = do_serialize((42i32, 42i32), &spec);
+        let row = do_serialize(Box::new((42i32, 42i32)), &spec);
 
         assert_eq!(reference, row);
     }
