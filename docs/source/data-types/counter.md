@@ -11,6 +11,12 @@
 use futures::TryStreamExt;
 use scylla::frame::value::Counter;
 
+// Add to counter value
+let to_add: Counter = Counter(100);
+session
+    .query_unpaged("UPDATE keyspace.table SET c = c + ? WHERE pk = 15", (to_add,))
+    .await?;
+
 // Read counter from the table
 let mut iter = session.query_iter("SELECT c FROM keyspace.table", &[])
     .await?
