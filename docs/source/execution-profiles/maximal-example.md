@@ -18,7 +18,7 @@ let profile = ExecutionProfile::builder()
     .consistency(Consistency::All)
     .serial_consistency(Some(SerialConsistency::Serial))
     .request_timeout(Some(Duration::from_secs(30)))
-    .retry_policy(Box::new(FallthroughRetryPolicy::new()))
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
     .load_balancing_policy(Arc::new(DefaultPolicy::default()))
     .speculative_execution_policy(
         Some(

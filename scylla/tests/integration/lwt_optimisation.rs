@@ -47,7 +47,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         });
 
         let handle = ExecutionProfile::builder()
-            .retry_policy(Box::new(FallthroughRetryPolicy))
+            .retry_policy(Arc::new(FallthroughRetryPolicy))
             .build()
             .into_handle();
 

@@ -145,7 +145,7 @@ async fn test_execution_profiles() {
 
         let profile1 = ExecutionProfile::builder()
             .load_balancing_policy(policy1.clone())
-            .retry_policy(Box::new(policy1.deref().clone()))
+            .retry_policy(Arc::new(policy1.deref().clone()))
             .consistency(Consistency::One)
             .serial_consistency(None)
             .speculative_execution_policy(None)
@@ -153,7 +153,7 @@ async fn test_execution_profiles() {
 
         let profile2 = ExecutionProfile::builder()
             .load_balancing_policy(policy2.clone())
-            .retry_policy(Box::new(policy2.deref().clone()))
+            .retry_policy(Arc::new(policy2.deref().clone()))
             .consistency(Consistency::Two)
             .serial_consistency(Some(SerialConsistency::LocalSerial))
             .speculative_execution_policy(Some(policy2))

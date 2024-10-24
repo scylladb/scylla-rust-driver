@@ -288,7 +288,7 @@ async fn consistency_is_correctly_set_in_cql_requests() {
             }
 
             let fallthrough_exec_profile_builder =
-                ExecutionProfile::builder().retry_policy(Box::new(FallthroughRetryPolicy));
+                ExecutionProfile::builder().retry_policy(Arc::new(FallthroughRetryPolicy));
 
             let translation_map = Arc::new(translation_map);
 
@@ -421,7 +421,7 @@ async fn consistency_is_correctly_set_in_routing_info() {
     };
 
     let exec_profile_builder = ExecutionProfile::builder()
-        .retry_policy(Box::new(FallthroughRetryPolicy))
+        .retry_policy(Arc::new(FallthroughRetryPolicy))
         .load_balancing_policy(Arc::new(reporting_load_balancer));
 
     // DB preparation phase

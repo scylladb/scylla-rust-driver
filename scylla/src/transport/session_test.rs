@@ -2724,7 +2724,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
 
     let handle = ExecutionProfile::builder()
         .consistency(Consistency::All)
-        .retry_policy(Box::new(MyRetryPolicy(retried_flag.clone())))
+        .retry_policy(Arc::new(MyRetryPolicy(retried_flag.clone())))
         .build()
         .into_handle();
 
