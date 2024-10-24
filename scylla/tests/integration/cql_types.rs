@@ -1,12 +1,9 @@
-use crate as scylla;
-use crate::cql_to_rust::FromCqlVal;
-use crate::frame::response::result::CqlValue;
-use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
-use crate::macros::FromUserType;
-use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
-use crate::transport::session::Session;
-use crate::utils::test_utils::unique_keyspace_name;
 use itertools::Itertools;
+use scylla::cql_to_rust::FromCqlVal;
+use scylla::frame::response::result::CqlValue;
+use scylla::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
+use scylla::macros::FromUserType;
+use scylla::transport::session::Session;
 use scylla_cql::frame::value::{CqlTimeuuid, CqlVarint};
 use scylla_cql::types::serialize::value::SerializeValue;
 use scylla_macros::SerializeValue;
@@ -14,6 +11,10 @@ use std::cmp::PartialEq;
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+
+use crate::utils::{
+    create_new_session_builder, scylla_supports_tablets, setup_tracing, unique_keyspace_name,
+};
 
 // Used to prepare a table for test
 // Creates a new keyspace, without tablets if requested and the ScyllaDB instance supports them.
@@ -1515,7 +1516,6 @@ async fn test_udt_after_schema_update() {
         .unwrap();
 
     #[derive(SerializeValue, FromUserType, Debug, PartialEq)]
-    #[scylla(crate = crate)]
     struct UdtV1 {
         first: i32,
         second: bool,
@@ -1727,7 +1727,6 @@ async fn test_udt_with_missing_field() {
     }
 
     #[derive(SerializeValue)]
-    #[scylla(crate = crate)]
     struct UdtV1 {
         first: i32,
         second: bool,
@@ -1753,7 +1752,6 @@ async fn test_udt_with_missing_field() {
     id += 1;
 
     #[derive(SerializeValue)]
-    #[scylla(crate = crate)]
     struct UdtV2 {
         first: i32,
         second: bool,
@@ -1781,7 +1779,6 @@ async fn test_udt_with_missing_field() {
     id += 1;
 
     #[derive(SerializeValue)]
-    #[scylla(crate = crate)]
     struct UdtV3 {
         first: i32,
         second: bool,
@@ -1809,7 +1806,7 @@ async fn test_udt_with_missing_field() {
     id += 1;
 
     #[derive(SerializeValue)]
-    #[scylla(crate = crate, flavor="enforce_order")]
+    #[scylla(flavor = "enforce_order")]
     struct UdtV4 {
         first: i32,
         second: bool,

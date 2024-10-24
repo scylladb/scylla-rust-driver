@@ -1,10 +1,10 @@
-use crate::utils::{setup_tracing, test_with_3_node_cluster};
+use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name};
+use scylla::query::Query;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::transport::session::Session;
 use scylla::ExecutionProfile;
 use scylla::SessionBuilder;
-use scylla::{query::Query, test_utils::unique_keyspace_name};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;

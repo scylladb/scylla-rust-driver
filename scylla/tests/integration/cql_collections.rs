@@ -1,9 +1,9 @@
-use crate::cql_to_rust::FromCqlVal;
-use crate::test_utils::{create_new_session_builder, setup_tracing};
-use crate::utils::test_utils::unique_keyspace_name;
-use crate::{frame::response::result::CqlValue, Session};
+use scylla::cql_to_rust::FromCqlVal;
+use scylla::{frame::response::result::CqlValue, Session};
 use scylla_cql::types::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name};
 
 async fn connect() -> Session {
     let session = create_new_session_builder().build().await.unwrap();

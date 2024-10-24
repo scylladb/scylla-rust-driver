@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
+use crate::utils::scylla_supports_tablets;
 use crate::utils::setup_tracing;
 use crate::utils::test_with_3_node_cluster;
+use crate::utils::unique_keyspace_name;
 
 use futures::future::try_join_all;
 use futures::TryStreamExt;
@@ -12,7 +14,6 @@ use scylla::load_balancing::RoutingInfo;
 use scylla::prepared_statement::PreparedStatement;
 use scylla::query::Query;
 use scylla::serialize::row::SerializeRow;
-use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::ClusterData;
 use scylla::transport::Node;
 use scylla::transport::NodeRef;
@@ -300,7 +301,7 @@ async fn test_default_policy_is_tablet_aware() {
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets(&session).await {
+            if !scylla_supports_tablets(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
@@ -431,7 +432,7 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets(&session).await {
+            if !scylla_supports_tablets(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
@@ -503,7 +504,7 @@ async fn test_lwt_optimization_works_with_tablets() {
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets(&session).await {
+            if !scylla_supports_tablets(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }

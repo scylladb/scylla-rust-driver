@@ -1,7 +1,7 @@
-use crate::utils::{setup_tracing, test_with_3_node_cluster};
+use crate::utils::{
+    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+};
 use scylla::retry_policy::FallthroughRetryPolicy;
-use scylla::test_utils::scylla_supports_tablets;
-use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::session::Session;
 use scylla::{ExecutionProfile, SessionBuilder};
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
