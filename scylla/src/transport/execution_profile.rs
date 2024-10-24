@@ -457,6 +457,36 @@ impl ExecutionProfile {
     pub fn into_handle_with_label(self, label: String) -> ExecutionProfileHandle {
         ExecutionProfileHandle(Arc::new((ArcSwap::new(self.0), Some(label))))
     }
+
+    /// Gets client timeout associated with this profile.
+    pub fn get_request_timeout(&self) -> Option<Duration> {
+        self.0.request_timeout
+    }
+
+    /// Gets consistency associated with this profile.
+    pub fn get_consistency(&self) -> Consistency {
+        self.0.consistency
+    }
+
+    /// Gets serial consistency (if set) associated with this profile.
+    pub fn get_serial_consistency(&self) -> Option<SerialConsistency> {
+        self.0.serial_consistency
+    }
+
+    /// Gets load balancing policy associated with this profile.
+    pub fn get_load_balancing_policy(&self) -> &Arc<dyn LoadBalancingPolicy> {
+        &self.0.load_balancing_policy
+    }
+
+    /// Gets retry policy associated with this profile.
+    pub fn get_retry_policy(&self) -> &Arc<dyn RetryPolicy> {
+        &self.0.retry_policy
+    }
+
+    /// Gets speculative execution policy associated with this profile.
+    pub fn get_speculative_execution_policy(&self) -> Option<&Arc<dyn SpeculativeExecutionPolicy>> {
+        self.0.speculative_execution_policy.as_ref()
+    }
 }
 
 /// A handle that points to an ExecutionProfile.
