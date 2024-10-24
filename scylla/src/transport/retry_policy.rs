@@ -29,15 +29,6 @@ pub enum RetryDecision {
 pub trait RetryPolicy: std::fmt::Debug + Send + Sync {
     /// Called for each new query, starts a session of deciding about retries
     fn new_session(&self) -> Box<dyn RetrySession>;
-
-    /// Used to clone this RetryPolicy
-    fn clone_boxed(&self) -> Box<dyn RetryPolicy>;
-}
-
-impl Clone for Box<dyn RetryPolicy> {
-    fn clone(&self) -> Box<dyn RetryPolicy> {
-        self.clone_boxed()
-    }
 }
 
 /// Used throughout a single query to decide when to retry it
@@ -71,10 +62,6 @@ impl RetryPolicy for FallthroughRetryPolicy {
     fn new_session(&self) -> Box<dyn RetrySession> {
         Box::new(FallthroughRetrySession)
     }
-
-    fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
-        Box::new(FallthroughRetryPolicy)
-    }
 }
 
 impl RetrySession for FallthroughRetrySession {
@@ -105,10 +92,6 @@ impl Default for DefaultRetryPolicy {
 impl RetryPolicy for DefaultRetryPolicy {
     fn new_session(&self) -> Box<dyn RetrySession> {
         Box::new(DefaultRetrySession::new())
-    }
-
-    fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
-        Box::new(DefaultRetryPolicy)
     }
 }
 

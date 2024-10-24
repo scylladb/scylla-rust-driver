@@ -191,8 +191,8 @@ pub(crate) mod defaults {
     pub(crate) fn load_balancing_policy() -> Arc<dyn LoadBalancingPolicy> {
         Arc::new(load_balancing::DefaultPolicy::default())
     }
-    pub(crate) fn retry_policy() -> Box<dyn RetryPolicy> {
-        Box::new(DefaultRetryPolicy::new())
+    pub(crate) fn retry_policy() -> Arc<dyn RetryPolicy> {
+        Arc::new(DefaultRetryPolicy::new())
     }
     pub(crate) fn speculative_execution_policy() -> Option<Arc<dyn SpeculativeExecutionPolicy>> {
         None
@@ -218,10 +218,11 @@ pub(crate) mod defaults {
 /// ```
 /// # use scylla::transport::{ExecutionProfile, retry_policy::FallthroughRetryPolicy};
 /// # use scylla::statement::Consistency;
+/// # use std::sync::Arc;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let profile: ExecutionProfile = ExecutionProfile::builder()
 ///     .consistency(Consistency::Three) // as this is the number we shall count to
-///     .retry_policy(Box::new(FallthroughRetryPolicy::new()))
+///     .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
 ///     .build();
 /// # Ok(())
 /// # }
@@ -232,7 +233,7 @@ pub struct ExecutionProfileBuilder {
     consistency: Option<Consistency>,
     serial_consistency: Option<Option<SerialConsistency>>,
     load_balancing_policy: Option<Arc<dyn LoadBalancingPolicy>>,
-    retry_policy: Option<Box<dyn RetryPolicy>>,
+    retry_policy: Option<Arc<dyn RetryPolicy>>,
     speculative_execution_policy: Option<Option<Arc<dyn SpeculativeExecutionPolicy>>>,
 }
 
@@ -302,14 +303,15 @@ impl ExecutionProfileBuilder {
     /// ```
     /// use scylla::transport::retry_policy::DefaultRetryPolicy;
     /// # use scylla::transport::ExecutionProfile;
+    /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let profile: ExecutionProfile = ExecutionProfile::builder()
-    ///     .retry_policy(Box::new(DefaultRetryPolicy::new()))
+    ///     .retry_policy(Arc::new(DefaultRetryPolicy::new()))
     ///     .build();
     /// # Ok(())
     /// # }
     /// ```
-    pub fn retry_policy(mut self, retry_policy: Box<dyn RetryPolicy>) -> Self {
+    pub fn retry_policy(mut self, retry_policy: Arc<dyn RetryPolicy>) -> Self {
         self.retry_policy = Some(retry_policy);
         self
     }
@@ -352,9 +354,10 @@ impl ExecutionProfileBuilder {
     /// ```
     /// use scylla::transport::retry_policy::DefaultRetryPolicy;
     /// # use scylla::transport::ExecutionProfile;
+    /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let profile: ExecutionProfile = ExecutionProfile::builder()
-    ///     .retry_policy(Box::new(DefaultRetryPolicy::new()))
+    ///     .retry_policy(Arc::new(DefaultRetryPolicy::new()))
     ///     .build();
     /// # Ok(())
     /// # }
@@ -402,7 +405,7 @@ pub(crate) struct ExecutionProfileInner {
     pub(crate) serial_consistency: Option<SerialConsistency>,
 
     pub(crate) load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
-    pub(crate) retry_policy: Box<dyn RetryPolicy>,
+    pub(crate) retry_policy: Arc<dyn RetryPolicy>,
     pub(crate) speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
 }
 

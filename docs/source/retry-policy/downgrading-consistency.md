@@ -50,13 +50,14 @@ To use in `Session`:
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
+# use std::sync::Arc;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder};
 use scylla::transport::ExecutionProfile;
 use scylla::transport::downgrading_consistency_retry_policy::DowngradingConsistencyRetryPolicy;
 
 let handle = ExecutionProfile::builder()
-    .retry_policy(Box::new(DowngradingConsistencyRetryPolicy::new()))
+    .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
     .build()
     .into_handle();
 
@@ -74,13 +75,14 @@ To use in a [simple query](../queries/simple.md):
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
+# use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
 use scylla::transport::ExecutionProfile;
 use scylla::transport::downgrading_consistency_retry_policy::DowngradingConsistencyRetryPolicy;
 
 let handle = ExecutionProfile::builder()
-    .retry_policy(Box::new(DowngradingConsistencyRetryPolicy::new()))
+    .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
     .build()
     .into_handle();
 
@@ -100,13 +102,14 @@ To use in a [prepared query](../queries/prepared.md):
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
+# use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
 use scylla::transport::ExecutionProfile;
 use scylla::transport::downgrading_consistency_retry_policy::DowngradingConsistencyRetryPolicy;
 
 let handle = ExecutionProfile::builder()
-    .retry_policy(Box::new(DowngradingConsistencyRetryPolicy::new()))
+    .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
     .build()
     .into_handle();
 

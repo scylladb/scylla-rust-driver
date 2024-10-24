@@ -9,13 +9,14 @@ To use in `Session`:
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
+# use std::sync::Arc;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder};
 use scylla::transport::ExecutionProfile;
 use scylla::transport::retry_policy::DefaultRetryPolicy;
 
 let handle = ExecutionProfile::builder()
-    .retry_policy(Box::new(DefaultRetryPolicy::new()))
+    .retry_policy(Arc::new(DefaultRetryPolicy::new()))
     .build()
     .into_handle();
 
@@ -45,7 +46,7 @@ my_query.set_retry_policy(Some(Arc::new(DefaultRetryPolicy::new())));
 
 // You can also set retry policy in an execution profile
 let handle = ExecutionProfile::builder()
-    .retry_policy(Box::new(DefaultRetryPolicy::new()))
+    .retry_policy(Arc::new(DefaultRetryPolicy::new()))
     .build()
     .into_handle();
 my_query.set_execution_profile_handle(Some(handle));
@@ -76,7 +77,7 @@ prepared.set_retry_policy(Some(Arc::new(DefaultRetryPolicy::new())));
 
 // You can also set retry policy in an execution profile
 let handle = ExecutionProfile::builder()
-    .retry_policy(Box::new(DefaultRetryPolicy::new()))
+    .retry_policy(Arc::new(DefaultRetryPolicy::new()))
     .build()
     .into_handle();
 prepared.set_execution_profile_handle(Some(handle));

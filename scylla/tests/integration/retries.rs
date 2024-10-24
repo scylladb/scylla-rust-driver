@@ -26,7 +26,7 @@ async fn speculative_execution_is_fired() {
         let simple_speculative_no_retry_profile = ExecutionProfile::builder().speculative_execution_policy(Some(Arc::new(SimpleSpeculativeExecutionPolicy {
             max_retry_count: 2,
             retry_interval: Duration::from_millis(10),
-        }))).retry_policy(Box::new(FallthroughRetryPolicy)).build();
+        }))).retry_policy(Arc::new(FallthroughRetryPolicy)).build();
         let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .default_execution_profile_handle(simple_speculative_no_retry_profile.into_handle())
@@ -180,7 +180,7 @@ async fn speculative_execution_panic_regression_test() {
         };
         let profile = ExecutionProfile::builder()
             .speculative_execution_policy(Some(Arc::new(se)))
-            .retry_policy(Box::new(FallthroughRetryPolicy))
+            .retry_policy(Arc::new(FallthroughRetryPolicy))
             .build();
         // DB preparation phase
         let session: Session = SessionBuilder::new()

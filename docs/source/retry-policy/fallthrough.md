@@ -8,13 +8,14 @@ To use in `Session`:
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
+# use std::sync::Arc;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder};
 use scylla::transport::ExecutionProfile;
 use scylla::transport::retry_policy::FallthroughRetryPolicy;
 
 let handle = ExecutionProfile::builder()
-    .retry_policy(Box::new(FallthroughRetryPolicy::new()))
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
     .build()
     .into_handle();
 
@@ -32,13 +33,14 @@ To use in a [simple query](../queries/simple.md):
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
+# use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
 use scylla::transport::ExecutionProfile;
 use scylla::transport::retry_policy::FallthroughRetryPolicy;
 
 let handle = ExecutionProfile::builder()
-    .retry_policy(Box::new(FallthroughRetryPolicy::new()))
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
     .build()
     .into_handle();
 
@@ -58,13 +60,14 @@ To use in a [prepared query](../queries/prepared.md):
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
+# use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
 use scylla::transport::ExecutionProfile;
 use scylla::transport::retry_policy::FallthroughRetryPolicy;
 
 let handle = ExecutionProfile::builder()
-    .retry_policy(Box::new(FallthroughRetryPolicy::new()))
+    .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
     .build()
     .into_handle();
 

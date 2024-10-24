@@ -2708,9 +2708,6 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
         fn new_session(&self) -> Box<dyn RetrySession> {
             Box::new(MyRetrySession(self.0.clone()))
         }
-        fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
-            Box::new(MyRetryPolicy(self.0.clone()))
-        }
     }
 
     struct MyRetrySession(Arc<AtomicBool>);
@@ -2724,7 +2721,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
 
     let handle = ExecutionProfile::builder()
         .consistency(Consistency::All)
-        .retry_policy(Box::new(MyRetryPolicy(retried_flag.clone())))
+        .retry_policy(Arc::new(MyRetryPolicy(retried_flag.clone())))
         .build()
         .into_handle();
 

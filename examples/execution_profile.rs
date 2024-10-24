@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
         .serial_consistency(Some(SerialConsistency::Serial))
         .request_timeout(Some(Duration::from_secs(42)))
         .load_balancing_policy(Arc::new(load_balancing::DefaultPolicy::default()))
-        .retry_policy(Box::new(FallthroughRetryPolicy::new()))
+        .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
         .speculative_execution_policy(Some(Arc::new(PercentileSpeculativeExecutionPolicy {
             max_retry_count: 2,
             percentile: 42.0,
@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
         .serial_consistency(None)
         .request_timeout(Some(Duration::from_secs(3)))
         .load_balancing_policy(Arc::new(load_balancing::DefaultPolicy::default()))
-        .retry_policy(Box::new(DefaultRetryPolicy::new()))
+        .retry_policy(Arc::new(DefaultRetryPolicy::new()))
         .speculative_execution_policy(None)
         .build();
 
