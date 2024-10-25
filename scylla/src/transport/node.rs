@@ -323,18 +323,20 @@ pub(crate) async fn resolve_contact_points(
             }) => to_resolve.push((hostname, Some(datacenter.clone()))),
         };
     }
-    let resolve_futures = to_resolve.iter().map(|(hostname, datacenter)| async move {
-        match resolve_hostname(hostname).await {
-            Ok(address) => Some(ResolvedContactPoint {
-                address,
-                datacenter: datacenter.clone(),
-            }),
-            Err(e) => {
-                warn!("Hostname resolution failed for {}: {}", hostname, &e);
-                None
+    let resolve_futures = to_resolve
+        .into_iter()
+        .map(|(hostname, datacenter)| async move {
+            match resolve_hostname(hostname).await {
+                Ok(address) => Some(ResolvedContactPoint {
+                    address,
+                    datacenter,
+                }),
+                Err(e) => {
+                    warn!("Hostname resolution failed for {}: {}", hostname, &e);
+                    None
+                }
             }
-        }
-    });
+        });
     let resolved: Vec<_> = futures::future::join_all(resolve_futures).await;
     initial_peers.extend(resolved.into_iter().flatten());
 
