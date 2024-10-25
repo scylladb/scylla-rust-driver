@@ -780,58 +780,73 @@ fn deser_table_spec_for_col_spec<'frame>(
     Ok(table_spec)
 }
 
-macro_rules! generate_deser_col_specs {
-    ($deser_col_specs: ident, $l: lifetime, $deser_type: ident, $make_col_spec: expr $(,)?) => {
-        /// Deserializes col specs (part of ResultMetadata or PreparedMetadata)
-        /// in the form mentioned by its name.
-        ///
-        /// Checks for equality of table specs across columns, because the protocol
-        /// does not guarantee that and we want to be sure that the assumption
-        /// of them being all the same is correct.
-        ///
-        /// To avoid needless allocations, it is advised to pass `global_table_spec`
-        /// in the borrowed form, so that cloning it is cheap.
-        fn $deser_col_specs<'frame>(
-            buf: &mut &'frame [u8],
-            global_table_spec: Option<TableSpec<'frame>>,
-            col_count: usize,
-        ) -> StdResult<Vec<ColumnSpec<$l>>, ColumnSpecParseError> {
-            let global_table_spec_provided = global_table_spec.is_some();
-            let mut known_table_spec = global_table_spec;
+/// Deserializes col specs (part of ResultMetadata or PreparedMetadata)
+/// in the form mentioned by its name.
+///
+/// Checks for equality of table specs across columns, because the protocol
+/// does not guarantee that and we want to be sure that the assumption
+/// of them being all the same is correct.
+///
+/// To avoid needless allocations, it is advised to pass `global_table_spec`
+/// in the borrowed form, so that cloning it is cheap.
+fn deser_col_specs_generic<'frame, 'result>(
+    buf: &mut &'frame [u8],
+    global_table_spec: Option<TableSpec<'frame>>,
+    col_count: usize,
+    make_col_spec: fn(&'frame str, ColumnType<'result>, TableSpec<'frame>) -> ColumnSpec<'result>,
+    deser_type: fn(&mut &'frame [u8]) -> StdResult<ColumnType<'result>, CqlTypeParseError>,
+) -> StdResult<Vec<ColumnSpec<'result>>, ColumnSpecParseError> {
+    let global_table_spec_provided = global_table_spec.is_some();
+    let mut known_table_spec = global_table_spec;
 
-            let mut col_specs = Vec::with_capacity(col_count);
-            for col_idx in 0..col_count {
-                let table_spec = deser_table_spec_for_col_spec(
-                    buf,
-                    global_table_spec_provided,
-                    &mut known_table_spec,
-                    col_idx,
-                )?;
+    let mut col_specs = Vec::with_capacity(col_count);
+    for col_idx in 0..col_count {
+        let table_spec = deser_table_spec_for_col_spec(
+            buf,
+            global_table_spec_provided,
+            &mut known_table_spec,
+            col_idx,
+        )?;
 
-                let name =
-                    types::read_string(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
-                let typ = $deser_type(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
-                let col_spec = $make_col_spec(name, typ, table_spec);
-                col_specs.push(col_spec);
-            }
-            Ok(col_specs)
-        }
-    };
+        let name = types::read_string(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
+        let typ = deser_type(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
+        let col_spec = make_col_spec(name, typ, table_spec);
+        col_specs.push(col_spec);
+    }
+    Ok(col_specs)
 }
 
-generate_deser_col_specs!(
-    _deser_col_specs_borrowed,
-    'frame,
-    _deser_type_borrowed,
-    ColumnSpec::borrowed,
-);
+fn _deser_col_specs_borrowed<'frame>(
+    buf: &mut &'frame [u8],
+    global_table_spec: Option<TableSpec<'frame>>,
+    col_count: usize,
+) -> StdResult<Vec<ColumnSpec<'frame>>, ColumnSpecParseError> {
+    deser_col_specs_generic(
+        buf,
+        global_table_spec,
+        col_count,
+        ColumnSpec::borrowed,
+        _deser_type_borrowed,
+    )
+}
 
-generate_deser_col_specs!(
-    deser_col_specs_owned,
-    'static,
-    deser_type_owned,
-    |name: &str, typ, table_spec: TableSpec| ColumnSpec::owned(name.to_owned(), typ, table_spec.into_owned()),
-);
+fn deser_col_specs_owned<'frame>(
+    buf: &mut &'frame [u8],
+    global_table_spec: Option<TableSpec<'frame>>,
+    col_count: usize,
+) -> StdResult<Vec<ColumnSpec<'static>>, ColumnSpecParseError> {
+    let result: StdResult<Vec<ColumnSpec<'static>>, ColumnSpecParseError> = deser_col_specs_generic(
+        buf,
+        global_table_spec,
+        col_count,
+        |name: &str, typ, table_spec: TableSpec| {
+            ColumnSpec::owned(name.to_owned(), typ, table_spec.into_owned())
+        },
+        deser_type_owned,
+    );
+
+    result
+}
 
 fn deser_result_metadata(
     buf: &mut &[u8],
