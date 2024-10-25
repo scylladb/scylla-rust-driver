@@ -2,7 +2,7 @@ use assert_matches::assert_matches;
 use bytes::Bytes;
 use scylla_macros::DeserializeRow;
 
-use crate::frame::response::result::{ColumnSpec, ColumnType};
+use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
 use crate::types::deserialize::row::BuiltinDeserializationErrorKind;
 use crate::types::deserialize::{value, DeserializationError, FrameSlice};
 
@@ -858,4 +858,50 @@ fn test_struct_deserialization_errors() {
             }
         }
     }
+}
+
+#[test]
+fn metadata_does_not_bound_deserialized_rows() {
+    /* It's important to understand what is a _deserialized row_. It's not just
+     * an implementor of `DeserializeRow`; there are some implementors of `DeserializeRow`
+     * who are not yet final rows, but partially deserialized rows that support further
+     * deserialization - _row deserializers_, such as `ColumnIterator`.
+     * _Row deserializers_, because they still need to deserialize some row, are naturally
+     * bound by 'metadata lifetime. However, _rows_ are completely deserialized, so they
+     * should not be bound by 'metadata - only by 'frame. This test asserts that.
+     */
+
+    // We don't care about the actual deserialized data - all `Err`s is OK.
+    // This test's goal is only to compile, asserting that lifetimes are correct.
+    let bytes = Bytes::new();
+
+    // By this binding, we require that the deserialized rows live longer than metadata.
+    let _decoded_results = {
+        // Metadata's lifetime is limited to this scope.
+
+        fn col_spec<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+            ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
+        }
+
+        let row_typ = &[
+            col_spec("bytes", ColumnType::Blob),
+            col_spec("text", ColumnType::Text),
+        ];
+
+        // Tuple
+        let decoded_tuple_res = deserialize::<(&[u8], &str)>(row_typ, &bytes);
+
+        // Custom struct
+        #[derive(DeserializeRow)]
+        #[scylla(crate=crate)]
+        struct MyRow<'frame> {
+            #[allow(dead_code)]
+            bytes: &'frame [u8],
+            #[allow(dead_code)]
+            text: &'frame str,
+        }
+        let decoded_custom_struct_res = deserialize::<MyRow>(row_typ, &bytes);
+
+        (decoded_tuple_res, decoded_custom_struct_res)
+    };
 }
