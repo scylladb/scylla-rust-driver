@@ -271,10 +271,13 @@ pub(crate) struct ResolvedContactPoint {
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
 pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::Error> {
     let mut ret = None;
-    let addrs: Vec<SocketAddr> = match lookup_host(hostname).await {
-        Ok(addrs) => addrs.collect(),
+    let addrs = match lookup_host(hostname).await {
+        Ok(addrs) => itertools::Either::Left(addrs),
         // Use a default port in case of error, but propagate the original error on failure
-        Err(e) => lookup_host((hostname, 9042)).await.or(Err(e))?.collect(),
+        Err(e) => {
+            let addrs = lookup_host((hostname, 9042)).await.or(Err(e))?;
+            itertools::Either::Right(addrs)
+        }
     };
     for a in addrs {
         match a {
