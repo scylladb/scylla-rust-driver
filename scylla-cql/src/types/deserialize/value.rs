@@ -207,7 +207,7 @@ impl_emptiable_strict_type!(
 impl_fixed_numeric_type!(i8, TinyInt);
 impl_fixed_numeric_type!(i16, SmallInt);
 impl_fixed_numeric_type!(i32, Int);
-impl_fixed_numeric_type!(i64, [BigInt | Counter]);
+impl_fixed_numeric_type!(i64, BigInt);
 impl_fixed_numeric_type!(f32, Float);
 impl_fixed_numeric_type!(f64, Double);
 

@@ -320,7 +320,7 @@ fn test_tuple_errors() {
         assert_matches!(
             &err.kind,
             super::super::value::BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::BigInt, ColumnType::Counter]
+                expected: &[ColumnType::BigInt]
             }
         );
     }
