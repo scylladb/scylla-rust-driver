@@ -1284,7 +1284,7 @@ fn test_set_or_list_errors() {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::BigInt, ColumnType::Counter]
+                expected: &[ColumnType::BigInt]
             }
         );
     }
@@ -1363,7 +1363,7 @@ fn test_map_errors() {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::BigInt, ColumnType::Counter]
+                expected: &[ColumnType::BigInt]
             }
         );
     }
@@ -1527,7 +1527,7 @@ fn test_tuple_errors() {
             assert_matches!(
                 err.kind,
                 BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[ColumnType::BigInt, ColumnType::Counter]
+                    expected: &[ColumnType::BigInt]
                 }
             );
         }
