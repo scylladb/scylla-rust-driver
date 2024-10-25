@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use tokio::net::lookup_host;
 use tracing::warn;
 use uuid::Uuid;
@@ -270,7 +271,6 @@ pub(crate) struct ResolvedContactPoint {
 // The resolution may return multiple IPs and the function returns one of them.
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
 pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::Error> {
-    let mut ret = None;
     let addrs = match lookup_host(hostname).await {
         Ok(addrs) => itertools::Either::Left(addrs),
         // Use a default port in case of error, but propagate the original error on failure
@@ -279,21 +279,15 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::E
             itertools::Either::Right(addrs)
         }
     };
-    for a in addrs {
-        match a {
-            SocketAddr::V4(_) => return Ok(a),
-            _ => {
-                ret = Some(a);
-            }
-        }
-    }
 
-    ret.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("Empty address list returned by DNS for {}", hostname),
-        )
-    })
+    addrs
+        .find_or_last(|addr| matches!(addr, SocketAddr::V4(_)))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("Empty address list returned by DNS for {}", hostname),
+            )
+        })
 }
 
 /// Transforms the given [`InternalKnownNode`]s into [`ContactPoint`]s.
