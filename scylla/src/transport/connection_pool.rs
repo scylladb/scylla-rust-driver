@@ -988,7 +988,7 @@ impl PoolRefiller {
     // `last_error` must not be `None` if there is a possibility of the pool
     // being empty.
     fn update_shared_conns(&mut self, last_error: Option<ConnectionError>) {
-        let new_conns = if !self.has_connections() {
+        let new_conns = if self.is_empty() {
             Arc::new(MaybePoolConnections::Broken(last_error.unwrap()))
         } else {
             let new_conns = if let Some(sharder) = self.sharder.as_ref() {
@@ -1046,7 +1046,7 @@ impl PoolRefiller {
                 self.conns[shard_id].len(),
                 self.active_connection_count(),
             );
-            if !self.has_connections() {
+            if self.is_empty() {
                 let _ = self.pool_empty_notifier.send(());
             }
             self.update_shared_conns(Some(last_error));
@@ -1150,10 +1150,6 @@ impl PoolRefiller {
             }
             .boxed(),
         );
-    }
-
-    fn has_connections(&self) -> bool {
-        self.conns.iter().any(|v| !v.is_empty())
     }
 
     fn active_connection_count(&self) -> usize {
