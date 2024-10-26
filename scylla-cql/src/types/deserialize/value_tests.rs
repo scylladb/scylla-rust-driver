@@ -1,5 +1,6 @@
 use assert_matches::assert_matches;
 use bytes::{BufMut, Bytes, BytesMut};
+use scylla_macros::DeserializeValue;
 use uuid::Uuid;
 
 use std::borrow::Cow;
@@ -432,9 +433,11 @@ fn test_list_and_set() {
         let set_typ = ColumnType::Set(Box::new(ColumnType::BigInt));
         type CollTyp = i64;
 
-        fn check<'frame, Collection: DeserializeValue<'frame>>(typ: &'frame ColumnType) {
-            <Collection as DeserializeValue<'_>>::type_check(typ).unwrap();
-            <Collection as DeserializeValue<'_>>::deserialize(typ, None).unwrap();
+        fn check<'frame, 'metadata, Collection: DeserializeValue<'frame, 'metadata>>(
+            typ: &'metadata ColumnType<'metadata>,
+        ) {
+            <Collection as DeserializeValue<'_, '_>>::type_check(typ).unwrap();
+            <Collection as DeserializeValue<'_, '_>>::deserialize(typ, None).unwrap();
         }
 
         check::<Vec<CollTyp>>(&list_typ);
@@ -512,9 +515,11 @@ fn test_map() {
         type KeyTyp = i64;
         type ValueTyp<'s> = &'s str;
 
-        fn check<'frame, Collection: DeserializeValue<'frame>>(typ: &'frame ColumnType) {
-            <Collection as DeserializeValue<'_>>::type_check(typ).unwrap();
-            <Collection as DeserializeValue<'_>>::deserialize(typ, None).unwrap();
+        fn check<'frame, 'metadata, Collection: DeserializeValue<'frame, 'metadata>>(
+            typ: &'metadata ColumnType<'metadata>,
+        ) {
+            <Collection as DeserializeValue<'_, '_>>::type_check(typ).unwrap();
+            <Collection as DeserializeValue<'_, '_>>::deserialize(typ, None).unwrap();
         }
 
         check::<HashMap<KeyTyp, ValueTyp>>(&map_typ);
@@ -1010,20 +1015,21 @@ fn test_udt_cross_rename_fields() {
 fn test_custom_type_parser() {
     #[derive(Default, Debug, PartialEq, Eq)]
     struct SwappedPair<A, B>(B, A);
-    impl<'frame, A, B> DeserializeValue<'frame> for SwappedPair<A, B>
+    impl<'frame, 'metadata, A, B> DeserializeValue<'frame, 'metadata> for SwappedPair<A, B>
     where
-        A: DeserializeValue<'frame>,
-        B: DeserializeValue<'frame>,
+        A: DeserializeValue<'frame, 'metadata>,
+        B: DeserializeValue<'frame, 'metadata>,
     {
         fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-            <(B, A) as DeserializeValue<'frame>>::type_check(typ)
+            <(B, A) as DeserializeValue<'frame, 'metadata>>::type_check(typ)
         }
 
         fn deserialize(
-            typ: &'frame ColumnType,
+            typ: &'metadata ColumnType<'metadata>,
             v: Option<FrameSlice<'frame>>,
         ) -> Result<Self, DeserializationError> {
-            <(B, A) as DeserializeValue<'frame>>::deserialize(typ, v).map(|(b, a)| Self(b, a))
+            <(B, A) as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)
+                .map(|(b, a)| Self(b, a))
         }
     }
 
@@ -1038,14 +1044,14 @@ fn test_custom_type_parser() {
     assert_eq!(tup, SwappedPair("foo", 42));
 }
 
-fn deserialize<'frame, T>(
-    typ: &'frame ColumnType,
+fn deserialize<'frame, 'metadata, T>(
+    typ: &'metadata ColumnType<'metadata>,
     bytes: &'frame Bytes,
 ) -> Result<T, DeserializationError>
 where
-    T: DeserializeValue<'frame>,
+    T: DeserializeValue<'frame, 'metadata>,
 {
-    <T as DeserializeValue<'frame>>::type_check(typ)
+    <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
         .map_err(|typecheck_err| DeserializationError(typecheck_err.0))?;
     let mut frame_slice = FrameSlice::new(bytes);
     let value = frame_slice.read_cql_bytes().map_err(|err| {
@@ -1054,7 +1060,7 @@ where
             BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
         )
     })?;
-    <T as DeserializeValue<'frame>>::deserialize(typ, value)
+    <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, value)
 }
 
 fn make_bytes(cell: &[u8]) -> Bytes {
@@ -1091,7 +1097,7 @@ fn append_null(b: &mut impl BufMut) {
     b.put_i32(-1);
 }
 
-fn assert_ser_de_identity<'f, T: SerializeValue + DeserializeValue<'f> + PartialEq + Debug>(
+fn assert_ser_de_identity<'f, T: SerializeValue + DeserializeValue<'f, 'f> + PartialEq + Debug>(
     typ: &'f ColumnType,
     v: &'f T,
     buf: &'f mut Bytes, // `buf` must be passed as a reference from outside, because otherwise
@@ -1954,4 +1960,77 @@ fn test_udt_errors() {
             }
         }
     }
+}
+
+#[test]
+fn metadata_does_not_bound_deserialized_values() {
+    /* It's important to understand what is a _deserialized value_. It's not just
+     * an implementor of DeserializeValue; there are some implementors of DeserializeValue
+     * who are not yet final values, but partially deserialized types that support further
+     * deserialization - _value deserializers_, such as `ListlikeIterator` or `UdtIterator`.
+     * _Value deserializers_, because they still need to deserialize some value, are naturally
+     * bound by 'metadata lifetime. However, _values_ are completely deserialized, so they
+     * should not be bound by 'metadata - only by 'frame. This test asserts that.
+     */
+
+    // We don't care about the actual deserialized data - all `Err`s is OK.
+    // This test's goal is only to compile, asserting that lifetimes are correct.
+    let bytes = Bytes::new();
+
+    // By this binding, we require that the deserialized values live longer than metadata.
+    let _decoded_results = {
+        // Metadata's lifetime is limited to this scope.
+
+        // blob
+        let blob_typ = ColumnType::Blob;
+        let decoded_blob_res = deserialize::<&[u8]>(&blob_typ, &bytes);
+
+        // str
+        let str_typ = ColumnType::Ascii;
+        let decoded_str_res = deserialize::<&str>(&str_typ, &bytes);
+
+        // list
+        let list_typ = ColumnType::List(Box::new(ColumnType::Ascii));
+        let decoded_vec_str_res = deserialize::<Vec<&str>>(&list_typ, &bytes);
+        let decoded_vec_string_res = deserialize::<Vec<String>>(&list_typ, &bytes);
+
+        // set
+        let set_typ = ColumnType::Set(Box::new(ColumnType::Ascii));
+        let decoded_set_str_res = deserialize::<HashSet<&str>>(&set_typ, &bytes);
+        let decoded_set_string_res = deserialize::<HashSet<String>>(&set_typ, &bytes);
+
+        // map
+        let map_typ = ColumnType::Map(Box::new(ColumnType::Ascii), Box::new(ColumnType::Int));
+        let decoded_map_str_int_res = deserialize::<HashMap<&str, i32>>(&map_typ, &bytes);
+
+        // UDT
+        let udt_typ = ColumnType::UserDefinedType {
+            type_name: "udt".into(),
+            keyspace: "ks".into(),
+            field_types: vec![
+                ("bytes".into(), ColumnType::Blob),
+                ("text".into(), ColumnType::Text),
+            ],
+        };
+        #[derive(DeserializeValue)]
+        #[scylla(crate=crate)]
+        struct Udt<'frame> {
+            #[allow(dead_code)]
+            bytes: &'frame [u8],
+            #[allow(dead_code)]
+            text: &'frame str,
+        }
+        let decoded_udt_res = deserialize::<Udt>(&udt_typ, &bytes);
+
+        (
+            decoded_blob_res,
+            decoded_str_res,
+            decoded_vec_str_res,
+            decoded_vec_string_res,
+            decoded_set_str_res,
+            decoded_set_string_res,
+            decoded_map_str_int_res,
+            decoded_udt_res,
+        )
+    };
 }

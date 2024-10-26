@@ -2,13 +2,55 @@
 //!
 //! Deserialization is based on two traits:
 //!
-//! - A type that implements `DeserializeValue<'frame>` can be deserialized
+//! - A type that implements `DeserializeValue<'frame, 'metadata>` can be deserialized
 //!   from a single _CQL value_ - i.e. an element of a row in the query result,
-//! - A type that implements `DeserializeRow<'frame>` can be deserialized
+//! - A type that implements `DeserializeRow<'frame, 'metadata>` can be deserialized
 //!   from a single _row_ of a query result.
 //!
 //! Those traits are quite similar to each other, both in the idea behind them
 //! and the interface that they expose.
+//!
+//! It's important to understand what is a _deserialized type_. It's not just
+//! an implementor of Deserialize{Value, Row}; there are some implementors of
+//! `Deserialize{Value, Row}` who are not yet final types, but **partially**
+//! deserialized types that support further deserialization - _type
+//! deserializers_, such as `ListlikeIterator`, `UdtIterator` or `ColumnIterator`.
+//!
+//! # Lifetime parameters
+//!
+//! - `'frame` is the lifetime of the frame. Any deserialized type that is going to borrow
+//!   from the frame must have its lifetime bound by `'frame`.
+//! - `'metadata` is the lifetime of the result metadata. As result metadata is only needed
+//!   for the very deserialization process and the **final** deserialized types (i.e. those
+//!   that are not going to deserialize anything else, opposite of e.g. `MapIterator`) can
+//!   later live independently of the metadata, this is different from `'frame`.
+//!
+//! _Type deserializers_, as they still need to deserialize some type, are naturally bound
+//! by 'metadata lifetime. However, final types are completely deserialized, so they should
+//! not be bound by 'metadata - only by 'frame.
+//!
+//! Rationale:
+//! `DeserializeValue` requires two types of data in order to perform
+//! deserialization:
+//! 1) a reference to the CQL frame (a FrameSlice),
+//! 2) the type of the column being deserialized, being part of the
+//!    ResultMetadata.
+//!
+//! Similarly, `DeserializeRow` requires two types of data in order to
+//! perform deserialization:
+//! 1) a reference to the CQL frame (a FrameSlice),
+//! 2) a slice of specifications of all columns in the row, being part of
+//!    the ResultMetadata.
+//!
+//! When deserializing owned types, both the frame and the metadata can have
+//! any lifetime and it's not important. When deserializing borrowed types,
+//! however, they borrow from the frame, so their lifetime must necessarily
+//! be bound by the lifetime of the frame. Metadata is only needed for the
+//! deserialization, so its lifetime does not abstractly bound the
+//! deserialized value. Not to unnecessarily shorten the deserialized
+//! values' lifetime to the metadata's lifetime (due to unification of
+//! metadata's and frame's lifetime in value deserializers), a separate
+//! lifetime parameter is introduced for result metadata: `'metadata`.
 //!
 //! # `type_check` and `deserialize`
 //!
@@ -57,7 +99,7 @@
 //!     #[error("Expected non-null")]
 //!     ExpectedNonNull,
 //! }
-//! impl<'frame> DeserializeValue<'frame> for MyVec {
+//! impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for MyVec {
 //!     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
 //!          if let ColumnType::Blob = typ {
 //!              return Ok(());
@@ -66,7 +108,7 @@
 //!      }
 //!
 //!      fn deserialize(
-//!          _typ: &'frame ColumnType,
+//!          _typ: &'metadata ColumnType<'metadata>,
 //!          v: Option<FrameSlice<'frame>>,
 //!      ) -> Result<Self, DeserializationError> {
 //!          v.ok_or_else(|| DeserializationError::new(MyDeserError::ExpectedNonNull))
@@ -98,7 +140,7 @@
 //!     #[error("Expected non-null")]
 //!     ExpectedNonNull,
 //! }
-//! impl<'a, 'frame> DeserializeValue<'frame> for MySlice<'a>
+//! impl<'a, 'frame, 'metadata> DeserializeValue<'frame, 'metadata> for MySlice<'a>
 //! where
 //!     'frame: 'a,
 //! {
@@ -110,7 +152,7 @@
 //!      }
 //!
 //!      fn deserialize(
-//!          _typ: &'frame ColumnType,
+//!          _typ: &'metadata ColumnType<'metadata>,
 //!          v: Option<FrameSlice<'frame>>,
 //!      ) -> Result<Self, DeserializationError> {
 //!          v.ok_or_else(|| DeserializationError::new(MyDeserError::ExpectedNonNull))
@@ -150,7 +192,7 @@
 //!     #[error("Expected non-null")]
 //!     ExpectedNonNull,
 //! }
-//! impl<'frame> DeserializeValue<'frame> for MyBytes {
+//! impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for MyBytes {
 //!     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
 //!          if let ColumnType::Blob = typ {
 //!              return Ok(());
@@ -159,7 +201,7 @@
 //!      }
 //!
 //!      fn deserialize(
-//!          _typ: &'frame ColumnType,
+//!          _typ: &'metadata ColumnType<'metadata>,
 //!          v: Option<FrameSlice<'frame>>,
 //!      ) -> Result<Self, DeserializationError> {
 //!          v.ok_or_else(|| DeserializationError::new(MyDeserError::ExpectedNonNull))
