@@ -138,7 +138,7 @@ impl QueryResult {
 
     /// Returns column specifications.
     #[inline]
-    pub fn col_specs(&self) -> &[ColumnSpec] {
+    pub fn col_specs(&self) -> &[ColumnSpec<'static>] {
         self.metadata
             .as_ref()
             .map(|metadata| metadata.col_specs())
@@ -147,7 +147,7 @@ impl QueryResult {
 
     /// Returns a column specification for a column with given name, or None if not found
     #[inline]
-    pub fn get_column_spec<'a>(&'a self, name: &str) -> Option<(usize, &'a ColumnSpec)> {
+    pub fn get_column_spec<'a>(&'a self, name: &str) -> Option<(usize, &'a ColumnSpec<'static>)> {
         self.col_specs()
             .iter()
             .enumerate()
