@@ -396,7 +396,7 @@ impl RowIterator {
     }
 
     /// Returns specification of row columns
-    pub fn get_column_specs(&self) -> &[ColumnSpec] {
+    pub fn get_column_specs(&self) -> &[ColumnSpec<'static>] {
         self.current_page.metadata.col_specs()
     }
 
@@ -904,7 +904,7 @@ impl<RowT> TypedRowIterator<RowT> {
     }
 
     /// Returns specification of row columns
-    pub fn get_column_specs(&self) -> &[ColumnSpec] {
+    pub fn get_column_specs(&self) -> &[ColumnSpec<'static>] {
         self.row_iterator.get_column_specs()
     }
 }

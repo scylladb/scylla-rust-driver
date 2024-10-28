@@ -407,7 +407,7 @@ impl PreparedStatement {
     }
 
     /// Access column specifications of the bind variables of this statement
-    pub fn get_variable_col_specs(&self) -> &[ColumnSpec] {
+    pub fn get_variable_col_specs(&self) -> &[ColumnSpec<'static>] {
         &self.shared.metadata.col_specs
     }
 
@@ -422,7 +422,7 @@ impl PreparedStatement {
     }
 
     /// Access column specifications of the result set returned after the execution of this statement
-    pub fn get_result_set_col_specs(&self) -> &[ColumnSpec] {
+    pub fn get_result_set_col_specs(&self) -> &[ColumnSpec<'static>] {
         self.shared.result_metadata.col_specs()
     }
 

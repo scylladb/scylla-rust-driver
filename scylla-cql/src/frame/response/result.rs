@@ -549,7 +549,7 @@ impl<'a> ResultMetadata<'a> {
     }
 
     #[inline]
-    pub fn col_specs(&self) -> &[ColumnSpec] {
+    pub fn col_specs(&self) -> &[ColumnSpec<'a>] {
         &self.col_specs
     }
 }
