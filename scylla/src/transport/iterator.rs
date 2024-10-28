@@ -328,6 +328,8 @@ where
                     .load_balancing_policy
                     .on_query_success(&self.statement_info, elapsed, node);
 
+                request_span.record_raw_rows_fields(&rows);
+
                 let received_page = ReceivedPage { rows, tracing_id };
 
                 // Send next page to RowIterator

@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::{Either, Itertools};
+use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec};
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::batch::BatchValues;
@@ -828,6 +829,7 @@ impl Session {
         self.handle_auto_await_schema_agreement(&response).await?;
 
         let (result, paging_state) = response.into_query_result_and_paging_state()?;
+        span.record_result_fields(&result);
         let result = result.into_legacy_result()?;
         Ok((result, paging_state))
     }
@@ -1265,6 +1267,7 @@ impl Session {
         self.handle_auto_await_schema_agreement(&response).await?;
 
         let (result, paging_state) = response.into_query_result_and_paging_state()?;
+        span.record_result_fields(&result);
         let result = result.into_legacy_result()?;
         Ok((result, paging_state))
     }
@@ -1460,8 +1463,12 @@ impl Session {
 
         let result = match run_query_result {
             RunQueryResult::IgnoredWriteError => LegacyQueryResult::mock_empty(),
-            RunQueryResult::Completed(response) => response.into_legacy_result()?,
+            RunQueryResult::Completed(result) => {
+                span.record_result_fields(&result);
+                result.into_legacy_result()?
+            }
         };
+
         Ok(result)
     }
 
@@ -2177,6 +2184,17 @@ impl RequestSpan {
     pub(crate) fn record_shard_id(&self, conn: &Connection) {
         if let Some(info) = conn.get_shard_info() {
             self.span.record("shard", info.shard);
+        }
+    }
+
+    pub(crate) fn record_raw_rows_fields(&self, raw_rows: &RawMetadataAndRawRows) {
+        self.span
+            .record("raw_result_size", raw_rows.metadata_and_rows_bytes_size());
+    }
+
+    pub(crate) fn record_result_fields(&self, query_result: &QueryResult) {
+        if let Some(raw_metadata_and_rows) = query_result.raw_metadata_and_rows() {
+            self.record_raw_rows_fields(raw_metadata_and_rows);
         }
     }
 

@@ -641,6 +641,12 @@ impl RawMetadataAndRawRows {
             cached_metadata: None,
         }
     }
+
+    /// Returns the serialized size of the raw metadata + raw rows.
+    #[inline]
+    pub fn metadata_and_rows_bytes_size(&self) -> usize {
+        self.raw_metadata_and_rows.len()
+    }
 }
 
 /// RESULT:Rows response, in partially serialized form.
