@@ -1057,7 +1057,7 @@ mod tests {
 
         assert_eq!(
             builder.config.known_nodes,
-            vec![KnownNode::Hostname("test_hostname".into())]
+            &[KnownNode::Hostname("test_hostname".into())]
         );
         assert_eq!(builder.config.compression, None);
     }
@@ -1070,7 +1070,7 @@ mod tests {
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 1357);
         builder = builder.known_node_addr(addr);
 
-        assert_eq!(builder.config.known_nodes, vec![KnownNode::Address(addr)]);
+        assert_eq!(builder.config.known_nodes, &[KnownNode::Address(addr)]);
         assert_eq!(builder.config.compression, None);
     }
 
@@ -1083,7 +1083,7 @@ mod tests {
 
         assert_eq!(
             builder.config.known_nodes,
-            vec![
+            &[
                 KnownNode::Hostname("test_hostname1".into()),
                 KnownNode::Hostname("test_hostname2".into())
             ]
@@ -1103,7 +1103,7 @@ mod tests {
 
         assert_eq!(
             builder.config.known_nodes,
-            vec![KnownNode::Address(addr1), KnownNode::Address(addr2)]
+            &[KnownNode::Address(addr1), KnownNode::Address(addr2)]
         );
         assert_eq!(builder.config.compression, None);
     }
@@ -1274,7 +1274,7 @@ mod tests {
 
         assert_eq!(
             builder.config.known_nodes,
-            vec![
+            &[
                 KnownNode::Hostname("hostname_test".into()),
                 KnownNode::Address(addr),
                 KnownNode::Hostname("hostname_test1".into()),

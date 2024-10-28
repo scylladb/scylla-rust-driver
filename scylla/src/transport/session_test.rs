@@ -126,7 +126,7 @@ async fn test_unprepared_statement() {
     results.sort();
     assert_eq!(
         results,
-        vec![
+        &[
             (1, 2, String::from("abc")),
             (1, 4, String::from("hello")),
             (7, 11, String::from(""))
@@ -518,7 +518,7 @@ async fn test_batch() {
     results.sort();
     assert_eq!(
         results,
-        vec![
+        &[
             (1, 2, String::from("abc")),
             (1, 4, String::from("hello")),
             (7, 11, String::from(""))
@@ -555,7 +555,7 @@ async fn test_batch() {
         .collect::<Result<_, _>>()
         .unwrap();
 
-    assert_eq!(results, vec![(4, 20, String::from("foobar"))]);
+    assert_eq!(results, &[(4, 20, String::from("foobar"))]);
 }
 
 #[tokio::test]
@@ -653,7 +653,7 @@ async fn test_token_awareness() {
 
     // The default policy should be token aware
     for size in 1..50usize {
-        let key = vec!['a'; size].into_iter().collect::<String>();
+        let key = std::iter::repeat('a').take(size).collect::<String>();
         let values = (&key,);
 
         // Execute a query and observe tracing info
@@ -724,7 +724,7 @@ async fn test_use_keyspace() {
 
     rows.sort();
 
-    assert_eq!(rows, vec!["test1".to_string(), "test2".to_string()]);
+    assert_eq!(rows, &["test1".to_string(), "test2".to_string()]);
 
     // Test that trying to use nonexisting keyspace fails
     assert!(session
@@ -776,7 +776,7 @@ async fn test_use_keyspace() {
 
     rows2.sort();
 
-    assert_eq!(rows2, vec!["test1".to_string(), "test2".to_string()]);
+    assert_eq!(rows2, &["test1".to_string(), "test2".to_string()]);
 }
 
 #[tokio::test]
@@ -837,7 +837,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .map(|row| row.unwrap().0)
         .collect();
 
-    assert_eq!(rows, vec!["lowercase".to_string()]);
+    assert_eq!(rows, &["lowercase"]);
 
     // Use uppercase keyspace with case sensitivity
     // Should select the uppercase one
@@ -855,7 +855,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .map(|row| row.unwrap().0)
         .collect();
 
-    assert_eq!(rows, vec!["uppercase".to_string()]);
+    assert_eq!(rows, &["uppercase"]);
 }
 
 #[tokio::test]
@@ -899,7 +899,7 @@ async fn test_raw_use_keyspace() {
         .map(|res| res.unwrap().0)
         .collect();
 
-    assert_eq!(rows, vec!["raw_test".to_string()]);
+    assert_eq!(rows, &["raw_test"]);
 
     // Check if case sensitivity is correctly detected
     assert!(session
@@ -1575,14 +1575,14 @@ async fn test_schema_types_in_metadata() {
 
     assert_eq!(
         tables.keys().sorted().collect::<Vec<_>>(),
-        vec!["table_a", "table_b"]
+        &["table_a", "table_b"]
     );
 
     let table_a_columns = &tables["table_a"].columns;
 
     assert_eq!(
         table_a_columns.keys().sorted().collect::<Vec<_>>(),
-        vec!["a", "b", "c", "d", "e"]
+        &["a", "b", "c", "d", "e"]
     );
 
     let a = &table_a_columns["a"];
@@ -1709,7 +1709,7 @@ async fn test_user_defined_types_in_metadata() {
 
     assert_eq!(
         user_defined_types.keys().sorted().collect::<Vec<_>>(),
-        vec!["type_a", "type_b", "type_c"]
+        &["type_a", "type_b", "type_c"]
     );
 
     let type_a = &user_defined_types["type_a"];
@@ -1812,8 +1812,8 @@ async fn test_primary_key_ordering_in_metadata() {
     let cluster_data = session.get_cluster_data();
     let table = &cluster_data.get_keyspace_info()[&ks].tables["t"];
 
-    assert_eq!(table.partition_key, vec!["c", "e"]);
-    assert_eq!(table.clustering_key, vec!["b", "a"]);
+    assert_eq!(table.partition_key, &["c", "e"]);
+    assert_eq!(table.clustering_key, &["b", "a"]);
 }
 
 #[tokio::test]
@@ -1990,9 +1990,9 @@ async fn test_named_bind_markers() {
         .map(|res| res.unwrap())
         .collect();
 
-    assert_eq!(rows, vec![(7, 13, 42), (17, 113, 142)]);
+    assert_eq!(rows, &[(7, 13, 42), (17, 113, 142)]);
 
-    let wrongmaps: Vec<HashMap<&str, i32>> = vec![
+    let wrongmaps: &[HashMap<&str, i32>] = &[
         HashMap::from([("pk", 7), ("fefe", 42), ("ck", 13)]),
         HashMap::from([("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 7)]),
         HashMap::new(),
@@ -2144,7 +2144,7 @@ async fn test_unprepared_reprepare_in_execute() {
         .map(|r| r.unwrap())
         .collect();
     all_rows.sort_unstable();
-    assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
+    assert_eq!(all_rows, &[(1, 2, 3), (1, 3, 2)]);
 }
 
 #[tokio::test]
@@ -2170,7 +2170,7 @@ async fn test_unusual_valuelists() {
         .await
         .unwrap();
 
-    let values_dyn: Vec<&dyn SerializeValue> = vec![
+    let values_dyn: &[&dyn SerializeValue] = &[
         &1 as &dyn SerializeValue,
         &2 as &dyn SerializeValue,
         &"&dyn" as &dyn SerializeValue,
@@ -2180,7 +2180,7 @@ async fn test_unusual_valuelists() {
         .await
         .unwrap();
 
-    let values_box_dyn: Vec<Box<dyn SerializeValue>> = vec![
+    let values_box_dyn: &[Box<dyn SerializeValue>] = &[
         Box::new(1) as Box<dyn SerializeValue>,
         Box::new(3) as Box<dyn SerializeValue>,
         Box::new("Box dyn") as Box<dyn SerializeValue>,
@@ -2204,7 +2204,7 @@ async fn test_unusual_valuelists() {
     all_rows.sort();
     assert_eq!(
         all_rows,
-        vec![
+        &[
             (1i32, 2i32, "&dyn".to_owned()),
             (1, 3, "Box dyn".to_owned())
         ]
@@ -2276,7 +2276,7 @@ async fn test_unprepared_reprepare_in_batch() {
         .map(|r| r.unwrap())
         .collect();
     all_rows.sort_unstable();
-    assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2), (4, 5, 6), (4, 6, 5)]);
+    assert_eq!(all_rows, &[(1, 2, 3), (1, 3, 2), (4, 5, 6), (4, 6, 5)]);
 }
 
 // A tests which checks that Session::execute automatically reprepares PreparedStatemtns if they become unprepared.
@@ -2346,7 +2346,7 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
         .map(|r| r.unwrap())
         .collect();
     all_rows.sort_unstable();
-    assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
+    assert_eq!(all_rows, &[(1, 2, 3), (1, 3, 2)]);
 }
 
 #[tokio::test]
@@ -2667,7 +2667,7 @@ async fn test_batch_lwts_for_scylla(
         .collect::<Result<_, _>>()
         .unwrap();
 
-    let expected_batch_res_rows = vec![
+    let expected_batch_res_rows = &[
         (true, Some(0), Some(0), Some(0), Some(0)),
         (true, None, None, None, None),
         (true, Some(0), Some(0), Some(0), Some(0)),
@@ -2689,7 +2689,7 @@ async fn test_batch_lwts_for_scylla(
             .map(|r| r.unwrap())
             .collect();
 
-    let expected_prepared_batch_res_rows = vec![
+    let expected_prepared_batch_res_rows = &[
         (false, Some(0), Some(0), Some(1), Some(1)),
         (false, None, None, None, None),
         (false, Some(0), Some(0), Some(1), Some(1)),
@@ -2714,7 +2714,7 @@ async fn test_batch_lwts_for_cassandra(
         .map(|r| r.unwrap())
         .collect();
 
-    let expected_batch_res_rows = vec![(true,)];
+    let expected_batch_res_rows = &[(true,)];
 
     assert_eq!(batch_res_rows, expected_batch_res_rows);
 
@@ -2734,7 +2734,7 @@ async fn test_batch_lwts_for_cassandra(
             .map(|r| r.unwrap())
             .collect();
 
-    let expected_prepared_batch_res_rows = vec![(false, Some(0), Some(0), Some(1), Some(1))];
+    let expected_prepared_batch_res_rows = &[(false, Some(0), Some(0), Some(1), Some(1))];
 
     assert_eq!(prepared_batch_res_rows, expected_prepared_batch_res_rows);
 }
@@ -2992,7 +2992,7 @@ async fn simple_strategy_test() {
         .collect::<Vec<(i32, i32, i32)>>();
     rows.sort();
 
-    assert_eq!(rows, vec![(1, 2, 3), (4, 5, 6), (7, 8, 9)]);
+    assert_eq!(rows, &[(1, 2, 3), (4, 5, 6), (7, 8, 9)]);
 }
 
 #[tokio::test]

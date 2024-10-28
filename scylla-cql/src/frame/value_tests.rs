@@ -52,24 +52,24 @@ fn compute_hash<T: Hash>(x: &T) -> u64 {
 
 #[test]
 fn boolean_serialization() {
-    assert_eq!(serialized(true, ColumnType::Boolean), vec![0, 0, 0, 1, 1]);
-    assert_eq!(serialized(false, ColumnType::Boolean), vec![0, 0, 0, 1, 0]);
+    assert_eq!(serialized(true, ColumnType::Boolean), &[0, 0, 0, 1, 1]);
+    assert_eq!(serialized(false, ColumnType::Boolean), &[0, 0, 0, 1, 0]);
 }
 
 #[test]
 fn fixed_integral_serialization() {
-    assert_eq!(serialized(8_i8, ColumnType::TinyInt), vec![0, 0, 0, 1, 8]);
+    assert_eq!(serialized(8_i8, ColumnType::TinyInt), &[0, 0, 0, 1, 8]);
     assert_eq!(
         serialized(16_i16, ColumnType::SmallInt),
-        vec![0, 0, 0, 2, 0, 16]
+        &[0, 0, 0, 2, 0, 16]
     );
     assert_eq!(
         serialized(32_i32, ColumnType::Int),
-        vec![0, 0, 0, 4, 0, 0, 0, 32]
+        &[0, 0, 0, 4, 0, 0, 0, 32]
     );
     assert_eq!(
         serialized(64_i64, ColumnType::BigInt),
-        vec![0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 64]
+        &[0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 64]
     );
 }
 
@@ -77,7 +77,7 @@ fn fixed_integral_serialization() {
 fn counter_serialization() {
     assert_eq!(
         serialized(0x0123456789abcdef_i64, ColumnType::BigInt),
-        vec![0, 0, 0, 8, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]
+        &[0, 0, 0, 8, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]
     );
 }
 
@@ -241,29 +241,26 @@ fn floating_point_serialization() {
 fn text_serialization() {
     assert_eq!(
         serialized("abc", ColumnType::Text),
-        vec![0, 0, 0, 3, 97, 98, 99]
+        &[0, 0, 0, 3, 97, 98, 99]
     );
     assert_eq!(
         serialized("abc".to_string(), ColumnType::Ascii),
-        vec![0, 0, 0, 3, 97, 98, 99]
+        &[0, 0, 0, 3, 97, 98, 99]
     );
 }
 
 #[test]
 fn u8_array_serialization() {
     let val = [1u8; 4];
-    assert_eq!(
-        serialized(val, ColumnType::Blob),
-        vec![0, 0, 0, 4, 1, 1, 1, 1]
-    );
+    assert_eq!(serialized(val, ColumnType::Blob), &[0, 0, 0, 4, 1, 1, 1, 1]);
 }
 
 #[test]
 fn u8_slice_serialization() {
-    let val = vec![1u8, 1, 1, 1];
+    let val = &[1u8, 1, 1, 1];
     assert_eq!(
         serialized(val.as_slice(), ColumnType::Blob),
-        vec![0, 0, 0, 4, 1, 1, 1, 1]
+        &[0, 0, 0, 4, 1, 1, 1, 1]
     );
 }
 
@@ -271,21 +268,18 @@ fn u8_slice_serialization() {
 fn cql_date_serialization() {
     assert_eq!(
         serialized(CqlDate(0), ColumnType::Date),
-        vec![0, 0, 0, 4, 0, 0, 0, 0]
+        &[0, 0, 0, 4, 0, 0, 0, 0]
     );
     assert_eq!(
         serialized(CqlDate(u32::MAX), ColumnType::Date),
-        vec![0, 0, 0, 4, 255, 255, 255, 255]
+        &[0, 0, 0, 4, 255, 255, 255, 255]
     );
 }
 
 #[test]
 fn vec_u8_slice_serialization() {
-    let val = vec![1u8, 1, 1, 1];
-    assert_eq!(
-        serialized(val, ColumnType::Blob),
-        vec![0, 0, 0, 4, 1, 1, 1, 1]
-    );
+    let val = &[1u8, 1, 1, 1];
+    assert_eq!(serialized(val, ColumnType::Blob), &[0, 0, 0, 4, 1, 1, 1, 1]);
 }
 
 #[test]
@@ -293,13 +287,13 @@ fn ipaddr_serialization() {
     let ipv4 = IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4));
     assert_eq!(
         serialized(ipv4, ColumnType::Inet),
-        vec![0, 0, 0, 4, 1, 2, 3, 4]
+        &[0, 0, 0, 4, 1, 2, 3, 4]
     );
 
     let ipv6 = IpAddr::V6(Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8));
     assert_eq!(
         serialized(ipv6, ColumnType::Inet),
-        vec![
+        &[
             0, 0, 0, 16, // serialized size
             0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8, // contents
         ]
@@ -314,7 +308,7 @@ fn naive_date_04_serialization() {
     let unix_epoch: NaiveDate = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
     assert_eq!(
         serialized(unix_epoch, ColumnType::Date),
-        vec![0, 0, 0, 4, 128, 0, 0, 0]
+        &[0, 0, 0, 4, 128, 0, 0, 0]
     );
     assert_eq!(2_u32.pow(31).to_be_bytes(), [128, 0, 0, 0]);
 
@@ -322,7 +316,7 @@ fn naive_date_04_serialization() {
     let before_epoch: NaiveDate = NaiveDate::from_ymd_opt(1969, 12, 2).unwrap();
     assert_eq!(
         serialized(before_epoch, ColumnType::Date),
-        vec![0, 0, 0, 4, 127, 255, 255, 226]
+        &[0, 0, 0, 4, 127, 255, 255, 226]
     );
     assert_eq!((2_u32.pow(31) - 30).to_be_bytes(), [127, 255, 255, 226]);
 
@@ -330,7 +324,7 @@ fn naive_date_04_serialization() {
     let after_epoch: NaiveDate = NaiveDate::from_ymd_opt(1970, 1, 31).unwrap();
     assert_eq!(
         serialized(after_epoch, ColumnType::Date),
-        vec![0, 0, 0, 4, 128, 0, 0, 30]
+        &[0, 0, 0, 4, 128, 0, 0, 30]
     );
     assert_eq!((2_u32.pow(31) + 30).to_be_bytes(), [128, 0, 0, 30]);
 }
@@ -342,7 +336,7 @@ fn date_03_serialization() {
     let unix_epoch = time_03::Date::from_ordinal_date(1970, 1).unwrap();
     assert_eq!(
         serialized(unix_epoch, ColumnType::Date),
-        vec![0, 0, 0, 4, 128, 0, 0, 0]
+        &[0, 0, 0, 4, 128, 0, 0, 0]
     );
     assert_eq!(2_u32.pow(31).to_be_bytes(), [128, 0, 0, 0]);
 
@@ -351,7 +345,7 @@ fn date_03_serialization() {
         time_03::Date::from_calendar_date(1969, time_03::Month::December, 2).unwrap();
     assert_eq!(
         serialized(before_epoch, ColumnType::Date),
-        vec![0, 0, 0, 4, 127, 255, 255, 226]
+        &[0, 0, 0, 4, 127, 255, 255, 226]
     );
     assert_eq!((2_u32.pow(31) - 30).to_be_bytes(), [127, 255, 255, 226]);
 
@@ -359,7 +353,7 @@ fn date_03_serialization() {
     let after_epoch = time_03::Date::from_calendar_date(1970, time_03::Month::January, 31).unwrap();
     assert_eq!(
         serialized(after_epoch, ColumnType::Date),
-        vec![0, 0, 0, 4, 128, 0, 0, 30]
+        &[0, 0, 0, 4, 128, 0, 0, 30]
     );
     assert_eq!((2_u32.pow(31) + 30).to_be_bytes(), [128, 0, 0, 30]);
 
@@ -373,7 +367,7 @@ fn date_03_serialization() {
     );
     assert_eq!(
         serialized(long_before_epoch, ColumnType::Date),
-        vec![0, 0, 0, 4, 127, 189, 75, 125]
+        &[0, 0, 0, 4, 127, 189, 75, 125]
     );
 
     // Max date represented by time_03::Date (without large-dates feature)
@@ -386,7 +380,7 @@ fn date_03_serialization() {
     );
     assert_eq!(
         serialized(long_after_epoch, ColumnType::Date),
-        vec![0, 0, 0, 4, 128, 44, 192, 160]
+        &[0, 0, 0, 4, 128, 44, 192, 160]
     );
 }
 
@@ -653,25 +647,22 @@ fn cqlduration_serialization() {
     };
     assert_eq!(
         serialized(duration, ColumnType::Duration),
-        vec![0, 0, 0, 3, 2, 4, 6]
+        &[0, 0, 0, 3, 2, 4, 6]
     );
 }
 
 #[test]
 fn box_serialization() {
     let x: Box<i32> = Box::new(123);
-    assert_eq!(
-        serialized(x, ColumnType::Int),
-        vec![0, 0, 0, 4, 0, 0, 0, 123]
-    );
+    assert_eq!(serialized(x, ColumnType::Int), &[0, 0, 0, 4, 0, 0, 0, 123]);
 }
 
 #[test]
 fn vec_set_serialization() {
-    let m = vec!["ala", "ma", "kota"];
+    let m = &["ala", "ma", "kota"][..];
     assert_eq!(
         serialized(m, ColumnType::Set(Box::new(ColumnType::Text))),
-        vec![
+        &[
             0, 0, 0, 25, // 25 bytes
             0, 0, 0, 3, // 3 items
             0, 0, 0, 3, 97, 108, 97, // ala
@@ -683,10 +674,10 @@ fn vec_set_serialization() {
 
 #[test]
 fn slice_set_serialization() {
-    let m = ["ala", "ma", "kota"];
+    let m = &["ala", "ma", "kota"][..];
     assert_eq!(
         serialized(m.as_ref(), ColumnType::Set(Box::new(ColumnType::Text))),
-        vec![
+        &[
             0, 0, 0, 25, // 25 bytes
             0, 0, 0, 3, // 3 items
             0, 0, 0, 3, 97, 108, 97, // ala
@@ -721,7 +712,7 @@ fn hashset_serialization() {
     let m: HashSet<&'static str, DumbBuildHasher> = ["ala", "ma", "kota"].into_iter().collect();
     assert_eq!(
         serialized(m, ColumnType::Set(Box::new(ColumnType::Text))),
-        vec![
+        &[
             0, 0, 0, 25, // 25 bytes
             0, 0, 0, 3, // 3 items
             0, 0, 0, 2, 109, 97, // ma
@@ -740,7 +731,7 @@ fn hashmap_serialization() {
             m,
             ColumnType::Map(Box::new(ColumnType::Text), Box::new(ColumnType::Int))
         ),
-        vec![
+        &[
             0, 0, 0, 49, // 49 bytes
             0, 0, 0, 3, // 3 items
             0, 0, 0, 2, 109, 97, // ma
@@ -758,7 +749,7 @@ fn btreeset_serialization() {
     let m: BTreeSet<&'static str> = ["ala", "ma", "kota"].into_iter().collect();
     assert_eq!(
         serialized(m, ColumnType::Set(Box::new(ColumnType::Text))),
-        vec![
+        &[
             0, 0, 0, 25, // 25 bytes
             0, 0, 0, 3, // 3 items
             0, 0, 0, 3, 97, 108, 97, // ala
@@ -776,7 +767,7 @@ fn btreemap_serialization() {
             m,
             ColumnType::Map(Box::new(ColumnType::Text), Box::new(ColumnType::Int))
         ),
-        vec![
+        &[
             0, 0, 0, 49, // 49 bytes
             0, 0, 0, 3, // 3 items
             0, 0, 0, 3, 97, 108, 97, // ala
@@ -795,10 +786,7 @@ fn cqlvalue_serialization() {
     // e.g. UDTs or tuples.
 
     // Empty
-    assert_eq!(
-        serialized(CqlValue::Empty, ColumnType::Int),
-        vec![0, 0, 0, 0],
-    );
+    assert_eq!(serialized(CqlValue::Empty, ColumnType::Int), &[0, 0, 0, 0],);
 
     // UDTs
     let udt = CqlValue::UserDefinedType {
@@ -820,7 +808,7 @@ fn cqlvalue_serialization() {
 
     assert_eq!(
         serialized(udt, typ.clone()),
-        vec![
+        &[
             0, 0, 0, 12, // size of the whole thing
             0, 0, 0, 4, 0, 0, 0, 123, // foo: 123_i32
             255, 255, 255, 255, // bar: null
@@ -840,7 +828,7 @@ fn cqlvalue_serialization() {
 
     assert_eq!(
         serialized_only_new(udt, typ.clone()),
-        vec![
+        &[
             0, 0, 0, 12, // size of the whole thing
             0, 0, 0, 4, 0, 0, 0, 123, // foo: 123_i32
             255, 255, 255, 255, // bar: null
@@ -852,7 +840,7 @@ fn cqlvalue_serialization() {
     let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Text]);
     assert_eq!(
         serialized(tup, typ),
-        vec![
+        &[
             0, 0, 0, 12, // size of the whole thing
             0, 0, 0, 4, 0, 0, 0, 123, // 123_i32
             255, 255, 255, 255, // null
@@ -867,7 +855,7 @@ fn cqlvalue_serialization() {
     let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Text, ColumnType::Counter]);
     assert_eq!(
         serialized(tup, typ),
-        vec![
+        &[
             0, 0, 0, 12, // size of the whole thing
             0, 0, 0, 4, 0, 0, 0, 123, // 123_i32
             255, 255, 255, 255, // null
@@ -881,7 +869,7 @@ fn secret_serialization() {
     let secret = secrecy_08::Secret::new(987654i32);
     assert_eq!(
         serialized(secret, ColumnType::Int),
-        vec![0, 0, 0, 4, 0x00, 0x0f, 0x12, 0x06]
+        &[0, 0, 0, 4, 0x00, 0x0f, 0x12, 0x06]
     );
 }
 
@@ -889,7 +877,7 @@ fn secret_serialization() {
 fn option_value() {
     assert_eq!(
         serialized(Some(32_i32), ColumnType::Int),
-        vec![0, 0, 0, 4, 0, 0, 0, 32]
+        &[0, 0, 0, 4, 0, 0, 0, 32]
     );
     let null_i32: Option<i32> = None;
     assert_eq!(
@@ -914,7 +902,7 @@ fn unset_value() {
     let set_i32: MaybeUnset<i32> = MaybeUnset::Set(32);
     assert_eq!(
         serialized(set_i32, ColumnType::Int),
-        vec![0, 0, 0, 4, 0, 0, 0, 32]
+        &[0, 0, 0, 4, 0, 0, 0, 32]
     );
 }
 
@@ -945,7 +933,7 @@ fn empty_serialized_values() {
 
     let mut empty_request = Vec::<u8>::new();
     EMPTY.write_to_request(&mut empty_request);
-    assert_eq!(empty_request, vec![0, 0]);
+    assert_eq!(empty_request, &[0, 0]);
 }
 
 #[test]
@@ -961,11 +949,11 @@ fn serialized_values() {
 
         let mut request = Vec::<u8>::new();
         values.write_to_request(&mut request);
-        assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 8]);
+        assert_eq!(request, &[0, 1, 0, 0, 0, 1, 8]);
 
         assert_eq!(
             values.iter().collect::<Vec<_>>(),
-            vec![RawValue::Value([8].as_ref())]
+            &[RawValue::Value([8].as_ref())]
         );
     }
 
@@ -977,11 +965,11 @@ fn serialized_values() {
 
         let mut request = Vec::<u8>::new();
         values.write_to_request(&mut request);
-        assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 8, 0, 0, 0, 2, 0, 16]);
+        assert_eq!(request, &[0, 2, 0, 0, 0, 1, 8, 0, 0, 0, 2, 0, 16]);
 
         assert_eq!(
             values.iter().collect::<Vec<_>>(),
-            vec![
+            &[
                 RawValue::Value([8].as_ref()),
                 RawValue::Value([0, 16].as_ref())
             ]
@@ -1012,11 +1000,11 @@ fn serialized_values() {
 
         let mut request = Vec::<u8>::new();
         values.write_to_request(&mut request);
-        assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 8, 0, 0, 0, 2, 0, 16]);
+        assert_eq!(request, &[0, 2, 0, 0, 0, 1, 8, 0, 0, 0, 2, 0, 16]);
 
         assert_eq!(
             values.iter().collect::<Vec<_>>(),
-            vec![
+            &[
                 RawValue::Value([8].as_ref()),
                 RawValue::Value([0, 16].as_ref())
             ]
@@ -1051,7 +1039,7 @@ fn slice_value_list() {
 
     assert_eq!(
         serialized.iter().collect::<Vec<_>>(),
-        vec![
+        &[
             RawValue::Value([0, 0, 0, 1].as_ref()),
             RawValue::Value([0, 0, 0, 2].as_ref()),
             RawValue::Value([0, 0, 0, 3].as_ref())
@@ -1061,7 +1049,7 @@ fn slice_value_list() {
 
 #[test]
 fn vec_value_list() {
-    let values: Vec<i32> = vec![1, 2, 3];
+    let values = &[1, 2, 3][..];
     let cols = &[
         col_spec("ala", ColumnType::Int),
         col_spec("ma", ColumnType::Int),
@@ -1071,7 +1059,7 @@ fn vec_value_list() {
 
     assert_eq!(
         serialized.iter().collect::<Vec<_>>(),
-        vec![
+        &[
             RawValue::Value([0, 0, 0, 1].as_ref()),
             RawValue::Value([0, 0, 0, 2].as_ref()),
             RawValue::Value([0, 0, 0, 3].as_ref())
@@ -1222,7 +1210,7 @@ fn map_value_list() {
     let new_values = serialize_values_only_new(row.clone(), cols);
     assert_eq!(
         new_values,
-        vec![
+        &[
             0, 3, // value count: 3
             0, 0, 0, 4, 0, 0, 0, 1, // ala: 1
             0, 0, 0, 4, 0, 0, 0, 2, // ma: 2
@@ -1251,7 +1239,7 @@ fn ref_value_list() {
 
     assert_eq!(
         serialized.iter().collect::<Vec<_>>(),
-        vec![
+        &[
             RawValue::Value([0, 0, 0, 1].as_ref()),
             RawValue::Value([0, 0, 0, 2].as_ref()),
             RawValue::Value([0, 0, 0, 3].as_ref())
@@ -1343,7 +1331,7 @@ fn slice_batch_values() {
             col_spec("b", ColumnType::TinyInt),
         ];
         let request = serialize_batch_value_iterators(&mut iters, cols);
-        assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
+        assert_eq!(request, &[0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 
     {
@@ -1356,14 +1344,14 @@ fn slice_batch_values() {
         let request = serialize_batch_value_iterators(&mut iters, cols);
         assert_eq!(
             request,
-            vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
+            &[0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
         );
     }
 
     {
         let cols = &[col_spec("a", ColumnType::TinyInt)];
         let request = serialize_batch_value_iterators(&mut iters, cols);
-        assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
+        assert_eq!(request, &[0, 1, 0, 0, 0, 1, 6]);
     }
 
     assert_eq!(iters.0.write_next_to_request(&mut Vec::new()), None);
@@ -1386,7 +1374,7 @@ fn vec_batch_values() {
             col_spec("b", ColumnType::TinyInt),
         ];
         let request = serialize_batch_value_iterators(&mut iters, cols);
-        assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
+        assert_eq!(request, &[0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 
     {
@@ -1399,14 +1387,14 @@ fn vec_batch_values() {
         let request = serialize_batch_value_iterators(&mut iters, cols);
         assert_eq!(
             request,
-            vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
+            &[0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
         );
     }
 
     {
         let cols = &[col_spec("a", ColumnType::TinyInt)];
         let request = serialize_batch_value_iterators(&mut iters, cols);
-        assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
+        assert_eq!(request, &[0, 1, 0, 0, 0, 1, 6]);
     }
 }
 
@@ -1619,7 +1607,7 @@ fn ref_batch_values() {
         let mut iters = make_batch_value_iters(&batch_values, &legacy_batch_values);
 
         let request = serialize_batch_value_iterators(&mut iters, cols);
-        assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
+        assert_eq!(request, &[0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 }
 
@@ -1661,7 +1649,7 @@ fn check_batch_values_iterator_is_not_lending() {
         let mut it = bv.batch_values_iter();
         let mut it2 = bv.batch_values_iter();
         // Make sure we can hold all these at the same time
-        let v = vec![
+        let v = &[
             it.next_serialized().unwrap().unwrap(),
             it2.next_serialized().unwrap().unwrap(),
             it.next_serialized().unwrap().unwrap(),
@@ -1679,7 +1667,7 @@ fn check_batch_values_iterator_is_not_lending() {
         let mut writer = RowWriter::new(&mut data);
 
         // Make sure we can hold all these at the same time
-        let v = vec![
+        let v = &[
             it.serialize_next(&ctx, &mut writer).unwrap().unwrap(),
             it2.serialize_next(&ctx, &mut writer).unwrap().unwrap(),
             it.serialize_next(&ctx, &mut writer).unwrap().unwrap(),

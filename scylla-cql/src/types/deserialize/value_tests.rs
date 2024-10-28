@@ -393,8 +393,8 @@ fn test_list_and_set() {
     assert_eq!(iter.next().transpose().unwrap(), Some("fox"));
     assert_eq!(iter.next().transpose().unwrap(), None);
 
-    let expected_vec_str = vec!["quick", "brown", "fox"];
-    let expected_vec_string = vec!["quick".to_string(), "brown".to_string(), "fox".to_string()];
+    let expected_vec_str = ["quick", "brown", "fox"];
+    let expected_vec_string = ["quick".to_string(), "brown".to_string(), "fox".to_string()];
 
     // list
     let decoded_vec_str = deserialize::<Vec<&str>>(&list_typ, &collection).unwrap();
@@ -483,8 +483,8 @@ fn test_map() {
     assert_eq!(iter.next().transpose().unwrap(), Some((3, "fox")));
     assert_eq!(iter.next().transpose().unwrap(), None);
 
-    let expected_str = vec![(1, "quick"), (2, "brown"), (3, "fox")];
-    let expected_string = vec![
+    let expected_str = [(1, "quick"), (2, "brown"), (3, "fox")];
+    let expected_string = [
         (1, "quick".to_string()),
         (2, "brown".to_string()),
         (3, "fox".to_string()),

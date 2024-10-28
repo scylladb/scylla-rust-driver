@@ -267,19 +267,19 @@ mod tests {
             assert_eq!(ids, expected_node_ids);
         };
 
-        check(160, 0, vec![]);
-        check(160, 1, vec![F]);
-        check(160, 2, vec![F, A]);
+        check(160, 0, &[][..]);
+        check(160, 1, &[F]);
+        check(160, 2, &[F, A]);
         assert_eq!(
             precomputed_replicas.get_precomputed_simple_strategy_replicas(Token::new(160), 3),
             None
         );
 
-        check(200, 1, vec![F]);
-        check(200, 2, vec![F, A]);
+        check(200, 1, &[F]);
+        check(200, 2, &[F, A]);
 
-        check(701, 1, vec![E]);
-        check(701, 2, vec![E, G]);
+        check(701, 1, &[E]);
+        check(701, 2, &[E, G]);
     }
 
     #[tokio::test]
@@ -312,10 +312,10 @@ mod tests {
             assert_eq!(ids, expected_node_ids);
         };
 
-        check(160, "eu", 0, vec![]);
-        check(160, "eu", 1, vec![A]);
-        check(160, "eu", 2, vec![A, G]);
-        check(160, "eu", 3, vec![A, C, G]);
+        check(160, "eu", 0, &[][..]);
+        check(160, "eu", 1, &[A]);
+        check(160, "eu", 2, &[A, G]);
+        check(160, "eu", 3, &[A, C, G]);
         assert_eq!(
             precomputed_replicas.get_precomputed_network_strategy_replicas(
                 Token::new(160),
@@ -325,10 +325,10 @@ mod tests {
             None
         );
 
-        check(160, "us", 0, vec![]);
-        check(160, "us", 1, vec![F]);
-        check(160, "us", 2, vec![F, D]);
-        check(160, "us", 3, vec![F, D, E]);
+        check(160, "us", 0, &[][..]);
+        check(160, "us", 1, &[F]);
+        check(160, "us", 2, &[F, D]);
+        check(160, "us", 3, &[F, D, E]);
         assert_eq!(
             precomputed_replicas.get_precomputed_network_strategy_replicas(
                 Token::new(160),

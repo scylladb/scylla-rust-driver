@@ -117,7 +117,7 @@ async fn test_cql_set() {
     .await;
 
     // HashSet
-    let set_hashset: HashSet<i32> = vec![-1, 1, -2].into_iter().collect();
+    let set_hashset: HashSet<i32> = [-1, 1, -2].into_iter().collect();
     let set_hashset_empty: HashSet<i32> = HashSet::new();
     let set_hashset_empty_selected: Option<HashSet<i32>> = None;
     insert_and_select(&session, table_name, &set_hashset, &set_hashset).await;
@@ -130,7 +130,7 @@ async fn test_cql_set() {
     .await;
 
     // BTreeSet
-    let set_btreeset: BTreeSet<i32> = vec![0, -2, -1].into_iter().collect();
+    let set_btreeset: BTreeSet<i32> = [0, -2, -1].into_iter().collect();
     let set_btreeset_empty: BTreeSet<i32> = BTreeSet::new();
     let set_btreeset_empty_selected: Option<BTreeSet<i32>> = None;
     insert_and_select(&session, table_name, &set_btreeset, &set_btreeset).await;

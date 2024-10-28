@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn downgrading_consistency_never_retries() {
         setup_tracing();
-        let never_retried_dberrors = vec![
+        let never_retried_dberrors = [
             DbError::SyntaxError,
             DbError::Invalid,
             DbError::AlreadyExists {
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn downgrading_consistency_idempotent_next_retries() {
         setup_tracing();
-        let idempotent_next_errors = vec![
+        let idempotent_next_errors = &[
             QueryError::DbError(DbError::Overloaded, String::new()),
             QueryError::DbError(DbError::TruncateError, String::new()),
             QueryError::DbError(DbError::ServerError, String::new()),

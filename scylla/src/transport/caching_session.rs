@@ -708,7 +708,7 @@ mod tests {
             .unwrap();
 
         rows.sort_unstable();
-        assert_eq!(rows, vec![(1, 1000), (2, 2000)]);
+        assert_eq!(rows, &[(1, 1000), (2, 2000)]);
     }
 
     // Checks whether the PartitionerName is cached properly.

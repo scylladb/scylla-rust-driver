@@ -1730,7 +1730,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_text_types() {
-        let buf: Vec<u8> = vec![0x41];
+        let buf = [0x41];
         let int_slice = &mut &buf[..];
         let ascii_serialized = super::deser_cql_value(&ColumnType::Ascii, int_slice).unwrap();
         let text_serialized = super::deser_cql_value(&ColumnType::Text, int_slice).unwrap();
@@ -1742,7 +1742,7 @@ mod tests {
     fn test_deserialize_uuid_inet_types() {
         let my_uuid = Uuid::parse_str("00000000000000000000000000000001").unwrap();
 
-        let uuid_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let uuid_buf = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
         let uuid_slice = &mut &uuid_buf[..];
         let uuid_serialize = super::deser_cql_value(&ColumnType::Uuid, uuid_slice).unwrap();
         assert_eq!(uuid_serialize, CqlValue::Uuid(my_uuid));
@@ -1753,13 +1753,13 @@ mod tests {
         assert_eq!(time_uuid_serialize, CqlValue::Timeuuid(my_timeuuid));
 
         let my_ip = "::1".parse().unwrap();
-        let ip_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let ip_buf = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
         let ip_slice = &mut &ip_buf[..];
         let ip_serialize = super::deser_cql_value(&ColumnType::Inet, ip_slice).unwrap();
         assert_eq!(ip_serialize, CqlValue::Inet(my_ip));
 
         let max_ip = "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap();
-        let max_ip_buf: Vec<u8> = vec![
+        let max_ip_buf = [
             255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
         ];
         let max_ip_slice = &mut &max_ip_buf[..];
@@ -1772,12 +1772,12 @@ mod tests {
         let float: f32 = 0.5;
         let double: f64 = 2.0;
 
-        let float_buf: Vec<u8> = vec![63, 0, 0, 0];
+        let float_buf = [63, 0, 0, 0];
         let float_slice = &mut &float_buf[..];
         let float_serialize = super::deser_cql_value(&ColumnType::Float, float_slice).unwrap();
         assert_eq!(float_serialize, CqlValue::Float(float));
 
-        let double_buf: Vec<u8> = vec![64, 0, 0, 0, 0, 0, 0, 0];
+        let double_buf = [64, 0, 0, 0, 0, 0, 0, 0];
         let double_slice = &mut &double_buf[..];
         let double_serialize = super::deser_cql_value(&ColumnType::Double, double_slice).unwrap();
         assert_eq!(double_serialize, CqlValue::Double(double));
@@ -1790,7 +1790,7 @@ mod tests {
     }
 
     #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
-    fn varint_test_cases_from_spec() -> Vec<VarintTestCase> {
+    fn varint_test_cases_from_spec() -> [VarintTestCase; 8] {
         /*
             Table taken from CQL Binary Protocol v4 spec
 
@@ -1805,7 +1805,7 @@ mod tests {
              -128 |     0x80
              -129 |   0xFF7F
         */
-        vec![
+        [
             VarintTestCase {
                 value: 0,
                 encoding: vec![0x00],
@@ -1906,7 +1906,7 @@ mod tests {
 
     #[test]
     fn test_deserialize_counter() {
-        let counter: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 1, 0];
+        let counter = [0, 0, 0, 0, 0, 0, 1, 0];
         let counter_slice = &mut &counter[..];
         let counter_serialize =
             super::deser_cql_value(&ColumnType::Counter, counter_slice).unwrap();
@@ -1923,12 +1923,12 @@ mod tests {
 
     #[test]
     fn test_deserialize_bool() {
-        let bool_buf: Vec<u8> = vec![0x00];
+        let bool_buf = [0x00];
         let bool_slice = &mut &bool_buf[..];
         let bool_serialize = super::deser_cql_value(&ColumnType::Boolean, bool_slice).unwrap();
         assert_eq!(bool_serialize, CqlValue::Boolean(false));
 
-        let bool_buf: Vec<u8> = vec![0x01];
+        let bool_buf = [0x01];
         let bool_slice = &mut &bool_buf[..];
         let bool_serialize = super::deser_cql_value(&ColumnType::Boolean, bool_slice).unwrap();
         assert_eq!(bool_serialize, CqlValue::Boolean(true));
@@ -1936,24 +1936,24 @@ mod tests {
 
     #[test]
     fn test_deserialize_int_types() {
-        let int_buf: Vec<u8> = vec![0, 0, 0, 4];
+        let int_buf = [0, 0, 0, 4];
         let int_slice = &mut &int_buf[..];
         let int_serialized = super::deser_cql_value(&ColumnType::Int, int_slice).unwrap();
         assert_eq!(int_serialized, CqlValue::Int(4));
 
-        let smallint_buf: Vec<u8> = vec![0, 4];
+        let smallint_buf = [0, 4];
         let smallint_slice = &mut &smallint_buf[..];
         let smallint_serialized =
             super::deser_cql_value(&ColumnType::SmallInt, smallint_slice).unwrap();
         assert_eq!(smallint_serialized, CqlValue::SmallInt(4));
 
-        let tinyint_buf: Vec<u8> = vec![4];
+        let tinyint_buf = [4];
         let tinyint_slice = &mut &tinyint_buf[..];
         let tinyint_serialized =
             super::deser_cql_value(&ColumnType::TinyInt, tinyint_slice).unwrap();
         assert_eq!(tinyint_serialized, CqlValue::TinyInt(4));
 
-        let bigint_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 4];
+        let bigint_buf = [0, 0, 0, 0, 0, 0, 0, 4];
         let bigint_slice = &mut &bigint_buf[..];
         let bigint_serialized = super::deser_cql_value(&ColumnType::BigInt, bigint_slice).unwrap();
         assert_eq!(bigint_serialized, CqlValue::BigInt(4));
@@ -2442,7 +2442,7 @@ mod tests {
         let mut v = Vec::new();
         empty.serialize(&mut v).unwrap();
 
-        assert_eq!(v, vec![0, 0, 0, 0]);
+        assert_eq!(v, &[0, 0, 0, 0]);
     }
 
     #[test]

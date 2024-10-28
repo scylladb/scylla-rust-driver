@@ -1026,7 +1026,7 @@ mod tests {
             col_spec("b", ColumnType::Int),
         ];
         let buf = do_serialize(ValueListAdapter(Foo), columns);
-        let expected = vec![
+        let expected = &[
             0, 0, 0, 4, 0, 0, 0, 123, // First value
             0, 0, 0, 4, 0, 0, 1, 65, // Second value
         ];
@@ -1093,11 +1093,11 @@ mod tests {
     fn test_slice_errors() {
         // Non-unit tuple
         // Count mismatch
-        let v = vec!["Ala ma kota"];
+        let v = &["Ala ma kota"][..];
         let spec = [col("a", ColumnType::Text), col("b", ColumnType::Text)];
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
-        assert_eq!(err.rust_name, std::any::type_name::<Vec<&str>>());
+        assert_eq!(err.rust_name, std::any::type_name::<&[&str]>());
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::WrongColumnCount {
@@ -1107,7 +1107,7 @@ mod tests {
         );
 
         // Serialization of one of the element fails
-        let v = vec!["Ala ma kota", "Kot ma pchły"];
+        let v = &["Ala ma kota", "Kot ma pchły"][..];
         let spec = [col("a", ColumnType::Text), col("b", ColumnType::Int)];
         let err = do_serialize_err(v, &spec);
         let err = get_ser_err(&err);

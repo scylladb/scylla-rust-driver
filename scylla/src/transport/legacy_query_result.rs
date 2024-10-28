@@ -372,7 +372,7 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
 
-        assert_eq!(rows0, vec![]);
+        assert_eq!(rows0, &[]);
 
         let rows1: Vec<(i32,)> = make_rows_query_result(1)
             .rows_typed::<(i32,)>()
@@ -380,7 +380,7 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
 
-        assert_eq!(rows1, vec![(0,)]);
+        assert_eq!(rows1, &[(0,)]);
 
         let rows2: Vec<(i32,)> = make_rows_query_result(2)
             .rows_typed::<(i32,)>()
@@ -388,7 +388,7 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
 
-        assert_eq!(rows2, vec![(0,), (1,)]);
+        assert_eq!(rows2, &[(0,), (1,)]);
     }
 
     #[test]
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn rows_or_empty_test() {
         setup_tracing();
-        assert_eq!(make_not_rows_query_result().rows_or_empty(), vec![]);
+        assert_eq!(make_not_rows_query_result().rows_or_empty(), &[]);
         assert_eq!(make_rows_query_result(0).rows_or_empty(), make_rows(0));
         assert_eq!(make_rows_query_result(1).rows_or_empty(), make_rows(1));
         assert_eq!(make_rows_query_result(2).rows_or_empty(), make_rows(2));
@@ -426,28 +426,28 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
 
-        assert_eq!(rows_empty, vec![]);
+        assert_eq!(rows_empty, &[]);
 
         let rows0: Vec<(i32,)> = make_rows_query_result(0)
             .rows_typed_or_empty::<(i32,)>()
             .map(|r| r.unwrap())
             .collect();
 
-        assert_eq!(rows0, vec![]);
+        assert_eq!(rows0, &[]);
 
         let rows1: Vec<(i32,)> = make_rows_query_result(1)
             .rows_typed_or_empty::<(i32,)>()
             .map(|r| r.unwrap())
             .collect();
 
-        assert_eq!(rows1, vec![(0,)]);
+        assert_eq!(rows1, &[(0,)]);
 
         let rows2: Vec<(i32,)> = make_rows_query_result(2)
             .rows_typed_or_empty::<(i32,)>()
             .map(|r| r.unwrap())
             .collect();
 
-        assert_eq!(rows2, vec![(0,), (1,)]);
+        assert_eq!(rows2, &[(0,), (1,)]);
     }
 
     #[test]

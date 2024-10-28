@@ -302,9 +302,9 @@ mod test {
         let mut out = Vec::from(&b"Hello"[..]);
         let uncomp_body = b", World!";
         let compression = Compression::Lz4;
-        let expect = vec![
+        let expect = &[
             72, 101, 108, 108, 111, 0, 0, 0, 8, 128, 44, 32, 87, 111, 114, 108, 100, 33,
-        ];
+        ][..];
 
         compress_append(uncomp_body, compression, &mut out).unwrap();
         assert_eq!(expect, out);

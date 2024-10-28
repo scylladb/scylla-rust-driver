@@ -109,13 +109,13 @@ where
             .collect::<Vec<_>>();
 
         let expected_value = T::from_str(test).ok().unwrap();
-        assert_eq!(read_values, vec![expected_value.clone(), expected_value]);
+        assert_eq!(read_values, &[expected_value.clone(), expected_value]);
     }
 }
 
 #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
-fn varint_test_cases() -> Vec<&'static str> {
-    vec![
+fn varint_test_cases() -> &'static [&'static str] {
+    &[
         "0",
         "1",
         "127",
@@ -151,20 +151,20 @@ async fn test_varint04() {
 #[tokio::test]
 async fn test_cql_varint() {
     setup_tracing();
-    let tests = [
-        vec![0x00],       // 0
-        vec![0x01],       // 1
-        vec![0x00, 0x01], // 1 (with leading zeros)
-        vec![0x7F],       // 127
-        vec![0x00, 0x80], // 128
-        vec![0x00, 0x81], // 129
-        vec![0xFF],       // -1
-        vec![0x80],       // -128
-        vec![0xFF, 0x7F], // -129
-        vec![
+    let tests = &[
+        &[0x00][..],   // 0
+        &[0x01],       // 1
+        &[0x00, 0x01], // 1 (with leading zeros)
+        &[0x7F],       // 127
+        &[0x00, 0x80], // 128
+        &[0x00, 0x81], // 129
+        &[0xFF],       // -1
+        &[0x80],       // -128
+        &[0xFF, 0x7F], // -129
+        &[
             0x01, 0x8E, 0xE9, 0x0F, 0xF6, 0xC3, 0x73, 0xE0, 0xEE, 0x4E, 0x3F, 0x0A, 0xD2,
         ], // 123456789012345678901234567890
-        vec![
+        &[
             0xFE, 0x71, 0x16, 0xF0, 0x09, 0x3C, 0x8C, 0x1F, 0x11, 0xB1, 0xC0, 0xF5, 0x2E,
         ], // -123456789012345678901234567890
     ];
@@ -229,7 +229,7 @@ async fn test_cql_varint() {
             .map(|row| row.0)
             .collect::<Vec<_>>();
 
-        assert_eq!(read_values, vec![cql_varint])
+        assert_eq!(read_values, &[cql_varint])
     }
 }
 
@@ -308,7 +308,7 @@ async fn test_counter() {
             .collect::<Vec<_>>();
 
         let expected_value = Counter(i64::from_str(test).unwrap());
-        assert_eq!(read_values, vec![expected_value]);
+        assert_eq!(read_values, &[expected_value]);
     }
 }
 
@@ -1332,7 +1332,7 @@ async fn test_timeuuid_ordering() {
         .unwrap();
 
     // Timeuuid values, sorted in the same order as Scylla/Cassandra sorts them.
-    let sorted_timeuuid_vals: Vec<CqlTimeuuid> = vec![
+    let sorted_timeuuid_vals: &[CqlTimeuuid] = &[
         CqlTimeuuid::from_str("00000000-0000-1000-8080-808080808080").unwrap(),
         CqlTimeuuid::from_str("00000000-0000-1000-ffff-ffffffffffff").unwrap(),
         CqlTimeuuid::from_str("00000000-0000-1000-0000-000000000000").unwrap(),
@@ -1481,27 +1481,27 @@ async fn test_blob() {
     setup_tracing();
     let session: Session = init_test("blob_tests", "blob").await;
 
-    let long_blob: Vec<u8> = vec![0x11; 1234];
+    let long_blob: &[u8] = &[0x11; 1234];
     let mut long_blob_str: String = "0x".to_string();
     long_blob_str.extend(std::iter::repeat('1').take(2 * 1234));
 
     let tests = [
-        ("0x", vec![]),
-        ("0x00", vec![0x00]),
-        ("0x01", vec![0x01]),
-        ("0xff", vec![0xff]),
-        ("0x1122", vec![0x11, 0x22]),
-        ("0x112233", vec![0x11, 0x22, 0x33]),
-        ("0x11223344", vec![0x11, 0x22, 0x33, 0x44]),
-        ("0x1122334455", vec![0x11, 0x22, 0x33, 0x44, 0x55]),
-        ("0x112233445566", vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]),
+        ("0x", &[][..]),
+        ("0x00", &[0x00]),
+        ("0x01", &[0x01]),
+        ("0xff", &[0xff]),
+        ("0x1122", &[0x11, 0x22]),
+        ("0x112233", &[0x11, 0x22, 0x33]),
+        ("0x11223344", &[0x11, 0x22, 0x33, 0x44]),
+        ("0x1122334455", &[0x11, 0x22, 0x33, 0x44, 0x55]),
+        ("0x112233445566", &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66]),
         (
             "0x11223344556677",
-            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
+            &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
         ),
         (
             "0x1122334455667788",
-            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
+            &[0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
         ),
         (&long_blob_str, long_blob),
     ];

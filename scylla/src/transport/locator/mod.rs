@@ -859,21 +859,21 @@ mod tests {
             None,
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_3).unwrap().strategy,
             TABLE_NTS_RF_3,
-            vec![F, A, C, D, G, E],
+            &[F, A, C, D, G, E][..],
         );
         check(
             160,
             None,
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_2).unwrap().strategy,
             TABLE_NTS_RF_2,
-            vec![F, A, D, G],
+            &[F, A, D, G],
         );
         check(
             160,
             None,
             &metadata.keyspaces.get(KEYSPACE_SS_RF_2).unwrap().strategy,
             TABLE_SS_RF_2,
-            vec![F, A],
+            &[F, A],
         );
 
         check(
@@ -881,21 +881,21 @@ mod tests {
             Some("eu"),
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_3).unwrap().strategy,
             TABLE_NTS_RF_3,
-            vec![A, C, G],
+            &[A, C, G],
         );
         check(
             160,
             Some("us"),
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_3).unwrap().strategy,
             TABLE_NTS_RF_3,
-            vec![F, D, E],
+            &[F, D, E],
         );
         check(
             160,
             Some("eu"),
             &metadata.keyspaces.get(KEYSPACE_SS_RF_2).unwrap().strategy,
             TABLE_SS_RF_2,
-            vec![A],
+            &[A],
         );
     }
 }
