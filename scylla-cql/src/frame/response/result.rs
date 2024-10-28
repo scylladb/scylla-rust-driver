@@ -1,8 +1,8 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
-    PreparedParseError, ResultMetadataParseError, RowsParseError, SchemaChangeEventParseError,
-    SetKeyspaceParseError, TableSpecParseError,
+    LowLevelDeserializationError, PreparedParseError, ResultMetadataParseError, RowsParseError,
+    SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
 };
 use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::event::SchemaChangeEvent;
@@ -603,99 +603,104 @@ pub enum Result {
     SchemaChange(SchemaChange),
 }
 
-macro_rules! generate_deser_type {
-    ($deser_type: ident, $l: lifetime, $read_string: expr) => {
-        fn $deser_type<'frame>(
-            buf: &mut &'frame [u8],
-        ) -> StdResult<ColumnType<$l>, CqlTypeParseError> {
-            use ColumnType::*;
-            let id = types::read_short(buf)
-                .map_err(|err| CqlTypeParseError::TypeIdParseError(err.into()))?;
-            Ok(match id {
-                0x0000 => {
-                    // We use types::read_string instead of $read_string here on purpose.
-                    // Chances are the underlying string is `...DurationType`, in which case
-                    // we don't need to allocate it at all. Only for Custom types
-                    // (which we don't support anyway) do we need to allocate.
-                    // OTOH, the macro argument function deserializes borrowed OR owned string;
-                    // here we want to always deserialize borrowed string.
-                    let type_str = types::read_string(buf)
-                        .map_err(CqlTypeParseError::CustomTypeNameParseError)?;
-                    match type_str {
-                        "org.apache.cassandra.db.marshal.DurationType" => Duration,
-                        _ => Custom(type_str.to_owned().into()),
-                    }
-                }
-                0x0001 => Ascii,
-                0x0002 => BigInt,
-                0x0003 => Blob,
-                0x0004 => Boolean,
-                0x0005 => Counter,
-                0x0006 => Decimal,
-                0x0007 => Double,
-                0x0008 => Float,
-                0x0009 => Int,
-                0x000B => Timestamp,
-                0x000C => Uuid,
-                0x000D => Text,
-                0x000E => Varint,
-                0x000F => Timeuuid,
-                0x0010 => Inet,
-                0x0011 => Date,
-                0x0012 => Time,
-                0x0013 => SmallInt,
-                0x0014 => TinyInt,
-                0x0015 => Duration,
-                0x0020 => List(Box::new($deser_type(buf)?)),
-                0x0021 => Map(Box::new($deser_type(buf)?), Box::new($deser_type(buf)?)),
-                0x0022 => Set(Box::new($deser_type(buf)?)),
-                0x0030 => {
-                    let keyspace_name =
-                        $read_string(buf).map_err(CqlTypeParseError::UdtKeyspaceNameParseError)?;
-                    let type_name =
-                        $read_string(buf).map_err(CqlTypeParseError::UdtNameParseError)?;
-                    let fields_size: usize = types::read_short(buf)
-                        .map_err(|err| CqlTypeParseError::UdtFieldsCountParseError(err.into()))?
-                        .into();
-
-                    let mut field_types: Vec<(Cow<$l, str>, ColumnType)> =
-                        Vec::with_capacity(fields_size);
-
-                    for _ in 0..fields_size {
-                        let field_name =
-                            $read_string(buf).map_err(CqlTypeParseError::UdtFieldNameParseError)?;
-                        let field_type = $deser_type(buf)?;
-
-                        field_types.push((field_name.into(), field_type));
-                    }
-
-                    UserDefinedType {
-                        type_name: type_name.into(),
-                        keyspace: keyspace_name.into(),
-                        field_types,
-                    }
-                }
-                0x0031 => {
-                    let len: usize = types::read_short(buf)
-                        .map_err(|err| CqlTypeParseError::TupleLengthParseError(err.into()))?
-                        .into();
-                    let mut types = Vec::with_capacity(len);
-                    for _ in 0..len {
-                        types.push($deser_type(buf)?);
-                    }
-                    Tuple(types)
-                }
-                id => {
-                    return Err(CqlTypeParseError::TypeNotImplemented(id));
-                }
-            })
+fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
+    buf: &mut &'frame [u8],
+    read_string: fn(&mut &'frame [u8]) -> StdResult<StrT, LowLevelDeserializationError>,
+) -> StdResult<ColumnType<'result>, CqlTypeParseError> {
+    use ColumnType::*;
+    let id =
+        types::read_short(buf).map_err(|err| CqlTypeParseError::TypeIdParseError(err.into()))?;
+    Ok(match id {
+        0x0000 => {
+            // We use types::read_string instead of read_string argument here on purpose.
+            // Chances are the underlying string is `...DurationType`, in which case
+            // we don't need to allocate it at all. Only for Custom types
+            // (which we don't support anyway) do we need to allocate.
+            // OTOH, the macro argument function deserializes borrowed OR owned string;
+            // here we want to always deserialize borrowed string.
+            let type_str =
+                types::read_string(buf).map_err(CqlTypeParseError::CustomTypeNameParseError)?;
+            match type_str {
+                "org.apache.cassandra.db.marshal.DurationType" => Duration,
+                _ => Custom(type_str.to_owned().into()),
+            }
         }
-    };
+        0x0001 => Ascii,
+        0x0002 => BigInt,
+        0x0003 => Blob,
+        0x0004 => Boolean,
+        0x0005 => Counter,
+        0x0006 => Decimal,
+        0x0007 => Double,
+        0x0008 => Float,
+        0x0009 => Int,
+        0x000B => Timestamp,
+        0x000C => Uuid,
+        0x000D => Text,
+        0x000E => Varint,
+        0x000F => Timeuuid,
+        0x0010 => Inet,
+        0x0011 => Date,
+        0x0012 => Time,
+        0x0013 => SmallInt,
+        0x0014 => TinyInt,
+        0x0015 => Duration,
+        0x0020 => List(Box::new(deser_type_generic(buf, read_string)?)),
+        0x0021 => Map(
+            Box::new(deser_type_generic(buf, read_string)?),
+            Box::new(deser_type_generic(buf, read_string)?),
+        ),
+        0x0022 => Set(Box::new(deser_type_generic(buf, read_string)?)),
+        0x0030 => {
+            let keyspace_name =
+                read_string(buf).map_err(CqlTypeParseError::UdtKeyspaceNameParseError)?;
+            let type_name = read_string(buf).map_err(CqlTypeParseError::UdtNameParseError)?;
+            let fields_size: usize = types::read_short(buf)
+                .map_err(|err| CqlTypeParseError::UdtFieldsCountParseError(err.into()))?
+                .into();
+
+            let mut field_types: Vec<(Cow<'result, str>, ColumnType)> =
+                Vec::with_capacity(fields_size);
+
+            for _ in 0..fields_size {
+                let field_name =
+                    read_string(buf).map_err(CqlTypeParseError::UdtFieldNameParseError)?;
+                let field_type = deser_type_generic(buf, read_string)?;
+
+                field_types.push((field_name.into(), field_type));
+            }
+
+            UserDefinedType {
+                type_name: type_name.into(),
+                keyspace: keyspace_name.into(),
+                field_types,
+            }
+        }
+        0x0031 => {
+            let len: usize = types::read_short(buf)
+                .map_err(|err| CqlTypeParseError::TupleLengthParseError(err.into()))?
+                .into();
+            let mut types = Vec::with_capacity(len);
+            for _ in 0..len {
+                types.push(deser_type_generic(buf, read_string)?);
+            }
+            Tuple(types)
+        }
+        id => {
+            return Err(CqlTypeParseError::TypeNotImplemented(id));
+        }
+    })
 }
 
-generate_deser_type!(_deser_type_borrowed, 'frame, types::read_string);
+fn _deser_type_borrowed<'frame>(
+    buf: &mut &'frame [u8],
+) -> StdResult<ColumnType<'frame>, CqlTypeParseError> {
+    deser_type_generic(buf, |buf| types::read_string(buf))
+}
 
-generate_deser_type!(deser_type_owned, 'static, |buf| types::read_string(buf).map(ToOwned::to_owned));
+fn deser_type_owned(buf: &mut &[u8]) -> StdResult<ColumnType<'static>, CqlTypeParseError> {
+    deser_type_generic(buf, |buf| types::read_string(buf).map(ToOwned::to_owned))
+}
 
 /// Deserializes a table spec, be it per-column one or a global one,
 /// in the borrowed form.
