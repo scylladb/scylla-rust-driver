@@ -167,6 +167,10 @@ impl QueryResult {
         }
     }
 
+    pub(crate) fn raw_metadata_and_rows(&self) -> Option<&RawMetadataAndRawRows> {
+        self.raw_metadata_and_rows.as_ref()
+    }
+
     /// Warnings emitted by the database.
     #[inline]
     pub fn warnings(&self) -> impl Iterator<Item = &str> {
