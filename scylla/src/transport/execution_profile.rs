@@ -513,6 +513,11 @@ impl ExecutionProfileHandle {
         self.0 .0.load().to_builder()
     }
 
+    /// Returns execution profile pointed by this handle.
+    pub fn to_profile(&self) -> ExecutionProfile {
+        ExecutionProfile(self.access())
+    }
+
     /// Makes the handle point to a new execution profile.
     /// All entities (queries/Session) holding this handle will reflect the change.
     pub fn map_to_another_profile(&mut self, profile: ExecutionProfile) {
