@@ -93,6 +93,7 @@ pub(crate) enum SingleKeyspaceMetadataError {
 pub(crate) struct MetadataReader {
     control_connection_pool_config: PoolConfig,
     request_serverside_timeout: Option<Duration>,
+    hostname_resolution_timeout: Option<Duration>,
 
     control_connection_endpoint: UntranslatedEndpoint,
     control_connection: NodeConnectionPool,
@@ -477,6 +478,7 @@ impl MetadataReader {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         initial_known_nodes: Vec<KnownNode>,
+        hostname_resolution_timeout: Option<Duration>,
         control_connection_repair_requester: broadcast::Sender<()>,
         mut connection_config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
@@ -531,6 +533,7 @@ impl MetadataReader {
             control_connection_endpoint,
             control_connection,
             request_serverside_timeout,
+            hostname_resolution_timeout,
             known_peers: initial_peers
                 .into_iter()
                 .map(UntranslatedEndpoint::ContactPoint)

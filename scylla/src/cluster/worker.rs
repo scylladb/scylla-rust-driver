@@ -104,6 +104,7 @@ impl Cluster {
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         metadata_request_serverside_timeout: Option<Duration>,
+        hostname_resolution_timeout: Option<Duration>,
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
@@ -117,6 +118,7 @@ impl Cluster {
 
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
+            hostname_resolution_timeout,
             control_connection_repair_sender,
             pool_config.connection_config.clone(),
             metadata_request_serverside_timeout,

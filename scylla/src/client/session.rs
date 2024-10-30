@@ -908,6 +908,7 @@ impl Session {
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
             config.metadata_request_serverside_timeout,
+            config.hostname_resolution_timeout,
             config.host_filter,
             config.cluster_metadata_refresh_interval,
             tablet_receiver,
