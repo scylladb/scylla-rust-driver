@@ -60,6 +60,7 @@ pub(crate) struct PoolConfig {
     pub(crate) pool_size: PoolSize,
     pub(crate) can_use_shard_aware_port: bool,
     pub(crate) keepalive_interval: Option<Duration>,
+    pub(crate) hostname_resolution_timeout: Option<Duration>,
 }
 
 impl Default for PoolConfig {
@@ -69,6 +70,7 @@ impl Default for PoolConfig {
             pool_size: Default::default(),
             can_use_shard_aware_port: true,
             keepalive_interval: None,
+            hostname_resolution_timeout: None,
         }
     }
 }

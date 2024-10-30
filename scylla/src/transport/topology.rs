@@ -39,6 +39,7 @@ use super::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 pub(crate) struct MetadataReader {
     connection_config: ConnectionConfig,
     keepalive_interval: Option<Duration>,
+    hostname_resolution_timeout: Option<Duration>,
 
     control_connection_endpoint: UntranslatedEndpoint,
     control_connection: NodeConnectionPool,
@@ -452,6 +453,7 @@ impl MetadataReader {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
         initial_known_nodes: Vec<InternalKnownNode>,
+        hostname_resolution_timeout: Option<Duration>,
         control_connection_repair_requester: broadcast::Sender<()>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
@@ -485,6 +487,7 @@ impl MetadataReader {
             control_connection_endpoint.clone(),
             connection_config.clone(),
             keepalive_interval,
+            hostname_resolution_timeout,
             control_connection_repair_requester.clone(),
         );
 
@@ -492,6 +495,7 @@ impl MetadataReader {
             control_connection_endpoint,
             control_connection,
             keepalive_interval,
+            hostname_resolution_timeout,
             connection_config,
             known_peers: initial_peers
                 .into_iter()
@@ -612,6 +616,7 @@ impl MetadataReader {
                 self.control_connection_endpoint.clone(),
                 self.connection_config.clone(),
                 self.keepalive_interval,
+                self.hostname_resolution_timeout,
                 self.control_connection_repair_requester.clone(),
             );
 
@@ -712,6 +717,7 @@ impl MetadataReader {
                         self.control_connection_endpoint.clone(),
                         self.connection_config.clone(),
                         self.keepalive_interval,
+                        self.hostname_resolution_timeout,
                         self.control_connection_repair_requester.clone(),
                     );
                 }
@@ -723,11 +729,13 @@ impl MetadataReader {
         endpoint: UntranslatedEndpoint,
         connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
+        hostname_resolution_timeout: Option<Duration>,
         refresh_requester: broadcast::Sender<()>,
     ) -> NodeConnectionPool {
         let pool_config = PoolConfig {
             connection_config,
             keepalive_interval,
+            hostname_resolution_timeout,
 
             // We want to have only one connection to receive events from
             pool_size: PoolSize::PerHost(NonZeroUsize::new(1).unwrap()),
