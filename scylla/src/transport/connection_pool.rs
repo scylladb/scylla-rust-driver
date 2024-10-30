@@ -867,6 +867,7 @@ impl PoolRefiller {
         mut endpoint: UntranslatedEndpoint,
     ) -> impl Future<Output = UntranslatedEndpoint> {
         let cloud_config = self.pool_config.connection_config.cloud_config.clone();
+        let hostname_resolution_timeout = self.pool_config.hostname_resolution_timeout;
         async move {
             if let Some(cloud_config) = cloud_config {
                 // If we operate in the serverless Cloud, then we substitute every node's address
@@ -881,7 +882,9 @@ impl PoolRefiller {
                     if let Some(dc) = datacenter.as_deref() {
                         if let Some(dc_config) = cloud_config.get_datacenters().get(dc) {
                             let hostname = dc_config.get_server();
-                            if let Ok(resolved) = resolve_hostname(hostname).await {
+                            if let Ok(resolved) =
+                                resolve_hostname(hostname, hostname_resolution_timeout).await
+                            {
                                 *address = NodeAddr::Untranslatable(resolved)
                             } else {
                                 warn!(

@@ -463,7 +463,7 @@ impl MetadataReader {
         host_filter: &Option<Arc<dyn HostFilter>>,
     ) -> Result<Self, NewSessionError> {
         let (initial_peers, resolved_hostnames) =
-            resolve_contact_points(&initial_known_nodes).await;
+            resolve_contact_points(&initial_known_nodes, hostname_resolution_timeout).await;
         // Ensure there is at least one resolved node
         if initial_peers.is_empty() {
             return Err(NewSessionError::FailedToResolveAnyHostname(
@@ -556,8 +556,11 @@ impl MetadataReader {
                 // If no known peer is reachable, try falling back to initial contact points, in hope that
                 // there are some hostnames there which will resolve to reachable new addresses.
                 warn!("Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points.");
-                let (initial_peers, _hostnames) =
-                    resolve_contact_points(&self.initial_known_nodes).await;
+                let (initial_peers, _hostnames) = resolve_contact_points(
+                    &self.initial_known_nodes,
+                    self.hostname_resolution_timeout,
+                )
+                .await;
                 result = self
                     .retry_fetch_metadata_on_nodes(
                         initial,
