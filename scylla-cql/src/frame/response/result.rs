@@ -491,7 +491,7 @@ impl ColumnSpec<'static> {
 
 impl<'frame> ColumnSpec<'frame> {
     #[inline]
-    pub fn borrowed(
+    pub const fn borrowed(
         name: &'frame str,
         typ: ColumnType<'frame>,
         table_spec: TableSpec<'frame>,
