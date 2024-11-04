@@ -616,7 +616,7 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
             // Chances are the underlying string is `...DurationType`, in which case
             // we don't need to allocate it at all. Only for Custom types
             // (which we don't support anyway) do we need to allocate.
-            // OTOH, the macro argument function deserializes borrowed OR owned string;
+            // OTOH, the provided `read_string` function deserializes borrowed OR owned string;
             // here we want to always deserialize borrowed string.
             let type_str =
                 types::read_string(buf).map_err(CqlTypeParseError::CustomTypeNameParseError)?;
@@ -780,15 +780,6 @@ fn deser_table_spec_for_col_spec<'frame>(
     Ok(table_spec)
 }
 
-/// Deserializes col specs (part of ResultMetadata or PreparedMetadata)
-/// in the form mentioned by its name.
-///
-/// Checks for equality of table specs across columns, because the protocol
-/// does not guarantee that and we want to be sure that the assumption
-/// of them being all the same is correct.
-///
-/// To avoid needless allocations, it is advised to pass `global_table_spec`
-/// in the borrowed form, so that cloning it is cheap.
 fn deser_col_specs_generic<'frame, 'result>(
     buf: &mut &'frame [u8],
     global_table_spec: Option<TableSpec<'frame>>,
@@ -816,6 +807,15 @@ fn deser_col_specs_generic<'frame, 'result>(
     Ok(col_specs)
 }
 
+/// Deserializes col specs (part of ResultMetadata or PreparedMetadata)
+/// in the borrowed form.
+///
+/// Checks for equality of table specs across columns, because the protocol
+/// does not guarantee that and we want to be sure that the assumption
+/// of them being all the same is correct.
+///
+/// To avoid needless allocations, it is advised to pass `global_table_spec`
+/// in the borrowed form, so that cloning it is cheap.
 fn _deser_col_specs_borrowed<'frame>(
     buf: &mut &'frame [u8],
     global_table_spec: Option<TableSpec<'frame>>,
@@ -830,6 +830,15 @@ fn _deser_col_specs_borrowed<'frame>(
     )
 }
 
+/// Deserializes col specs (part of ResultMetadata or PreparedMetadata)
+/// in the owned form.
+///
+/// Checks for equality of table specs across columns, because the protocol
+/// does not guarantee that and we want to be sure that the assumption
+/// of them being all the same is correct.
+///
+/// To avoid needless allocations, it is advised to pass `global_table_spec`
+/// in the borrowed form, so that cloning it is cheap.
 fn deser_col_specs_owned<'frame>(
     buf: &mut &'frame [u8],
     global_table_spec: Option<TableSpec<'frame>>,
