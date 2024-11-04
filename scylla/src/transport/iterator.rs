@@ -396,8 +396,8 @@ impl RowIterator {
     }
 
     /// Returns specification of row columns
-    pub fn get_column_specs(&self) -> &[ColumnSpec<'static>] {
-        self.current_page.metadata.col_specs()
+    pub fn get_column_specs(&self) -> &[ColumnSpec<'_>] {
+        self.current_page.metadata.inner().col_specs()
     }
 
     fn is_current_page_exhausted(&self) -> bool {
@@ -410,9 +410,9 @@ impl RowIterator {
 mod checked_channel_sender {
     use scylla_cql::frame::{
         request::query::PagingStateResponse,
-        response::result::{ResultMetadata, Rows},
+        response::result::{ResultMetadataHolder, Rows},
     };
-    use std::{marker::PhantomData, sync::Arc};
+    use std::marker::PhantomData;
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
@@ -455,7 +455,7 @@ mod checked_channel_sender {
         ) {
             let empty_page = ReceivedPage {
                 rows: Rows {
-                    metadata: Arc::new(ResultMetadata::mock_empty()),
+                    metadata: ResultMetadataHolder::mock_empty(),
                     paging_state_response: PagingStateResponse::NoMorePages,
                     rows_count: 0,
                     rows: Vec::new(),
@@ -904,7 +904,7 @@ impl<RowT> TypedRowIterator<RowT> {
     }
 
     /// Returns specification of row columns
-    pub fn get_column_specs(&self) -> &[ColumnSpec<'static>] {
+    pub fn get_column_specs(&self) -> &[ColumnSpec<'_>] {
         self.row_iterator.get_column_specs()
     }
 }
