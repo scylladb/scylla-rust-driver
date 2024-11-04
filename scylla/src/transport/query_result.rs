@@ -4,8 +4,7 @@ use uuid::Uuid;
 
 use scylla_cql::frame::frame_errors::RowsParseError;
 use scylla_cql::frame::response::result::{
-    ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, RawMetadataAndRawRows, RawRowsBorrowed,
-    RawRowsKind, RawRowsOwned, Row, TableSpec,
+    ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, RawMetadataAndRawRows, Row, TableSpec,
 };
 use scylla_cql::types::deserialize::result::TypedRowIterator;
 use scylla_cql::types::deserialize::row::DeserializeRow;
@@ -234,66 +233,11 @@ impl QueryResult {
     /// # }
     ///
     /// ```
-    pub fn rows_deserializer(
-        &self,
-    ) -> Result<Option<RowsDeserializer<'_, RawRowsBorrowed<'_>>>, RowsParseError> {
+    pub fn into_rows_result(self) -> Result<Option<QueryRowsResult>, RowsParseError> {
         self.raw_metadata_and_rows
-            .as_ref()
             .map(|raw_rows| {
-                let raw_rows_with_metadata = raw_rows.deserialize_borrowed_metadata()?;
-                Ok(RowsDeserializer {
-                    raw_rows_with_metadata,
-                })
-            })
-            .transpose()
-    }
-
-    /// Creates an owned [`RowsDeserializer`] to enable deserializing rows contained
-    /// in this [`QueryResult`]'s frame. Deserializes result metadata and allocates it,
-    /// so this should be considered a moderately costly operation and performed only once.
-    ///
-    /// Returns `None` if the response is not of Rows kind.
-    ///
-    /// The created [`RowsDeserializer`] does not borrow from the [`QueryResult`],
-    /// so it does not not limit flexibility. However, the cost involves more string
-    /// heap allocations.
-    /// If you don't need that flexibility, use cheaper [`QueryResult::rows_deserializer`].
-    ///
-    /// ```compile_fail
-    /// # use scylla::transport::QueryResult;
-    /// fn example(query: impl FnOnce() -> QueryResult) -> Result<(), Box<dyn std::error::Error>> {
-    ///     let deserializer = query().rows_deserializer()?.unwrap();
-    ///
-    ///     // Compiler complains: "Temporary value dropped when borrowed".
-    ///     let col_specs = deserializer.column_specs();
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    ///
-    /// ```rust
-    /// # use scylla::transport::query_result::{QueryResult, RowsDeserializerOwning};
-    /// fn example(
-    ///     query: impl FnOnce() -> QueryResult
-    /// ) -> Result<RowsDeserializerOwning, Box<dyn std::error::Error>> {
-    ///     let deserializer = query().rows_deserializer_owned()?.unwrap();
-    ///
-    ///     // This compiles.
-    ///     let col_specs = deserializer.column_specs();
-    ///
-    ///     // RowsDeserializer is fully owned and independent, but at cost
-    ///     // of moderately more expensive metadata deserialization.
-    ///     Ok(deserializer)
-    /// }
-    /// ```
-    pub fn rows_deserializer_owned(
-        &self,
-    ) -> Result<Option<RowsDeserializer<'static, RawRowsOwned>>, RowsParseError> {
-        self.raw_metadata_and_rows
-            .as_ref()
-            .map(|raw_rows| {
-                let raw_rows_with_metadata = raw_rows.deserialize_owned_metadata()?;
-                Ok(RowsDeserializer {
+                let raw_rows_with_metadata = raw_rows.deserialize_metadata()?;
+                Ok(QueryRowsResult {
                     raw_rows_with_metadata,
                 })
             })
@@ -305,7 +249,7 @@ impl QueryResult {
     /// period to the new API.
     pub fn into_legacy_result(self) -> Result<LegacyQueryResult, RowsParseError> {
         if let Some(raw_rows) = self.raw_metadata_and_rows {
-            let raw_rows_with_metadata = raw_rows.deserialize_owned_metadata()?;
+            let raw_rows_with_metadata = raw_rows.deserialize_metadata()?;
 
             let deserialized_rows = raw_rows_with_metadata
                 .rows_iter::<Row>()?
@@ -364,14 +308,11 @@ impl QueryResult {
 ///
 /// ```
 #[derive(Debug)]
-pub struct RowsDeserializer<'frame, Kind: RawRowsKind> {
-    raw_rows_with_metadata: DeserializedMetadataAndRawRows<'frame, Kind>,
+pub struct QueryRowsResult {
+    raw_rows_with_metadata: DeserializedMetadataAndRawRows,
 }
 
-pub type RowsDeserializerOwning = RowsDeserializer<'static, RawRowsOwned>;
-pub type RowsDeserializerBorrowing<'frame> = RowsDeserializer<'frame, RawRowsBorrowed<'frame>>;
-
-impl<'frame, RawRows: RawRowsKind> RowsDeserializer<'frame, RawRows> {
+impl QueryRowsResult {
     /// Returns the number of received rows.
     #[inline]
     pub fn rows_num(&self) -> usize {
@@ -391,84 +332,7 @@ impl<'frame, RawRows: RawRowsKind> RowsDeserializer<'frame, RawRows> {
     }
 }
 
-impl<'frame> RowsDeserializer<'frame, RawRowsBorrowed<'frame>> {
-    /// Returns the received rows when present.
-    ///
-    /// Returns an error if the rows in the response are of incorrect type.
-    #[inline]
-    pub fn rows<'metadata, R: DeserializeRow<'frame, 'metadata>>(
-        &'metadata self,
-    ) -> Result<TypedRowIterator<'frame, 'metadata, R>, RowsError> {
-        self.raw_rows_with_metadata
-            .rows_iter()
-            .map_err(RowsError::TypeCheckFailed)
-    }
-
-    /// Returns `Option<R>` containing the first of a result.
-    ///
-    /// Fails when the the rows in the response are of incorrect type,
-    /// or when the deserialization fails.
-    pub fn maybe_first_row<'metadata, R: DeserializeRow<'frame, 'metadata>>(
-        &'metadata self,
-    ) -> Result<Option<R>, MaybeFirstRowError> {
-        self.rows::<R>()
-            .map_err(|err| match err {
-                RowsError::TypeCheckFailed(typck_err) => {
-                    MaybeFirstRowError::TypeCheckFailed(typck_err)
-                }
-            })?
-            .next()
-            .transpose()
-            .map_err(MaybeFirstRowError::DeserializationFailed)
-    }
-
-    /// Returns first row from the received rows.
-    ///
-    /// When the first row is not available, returns an error.
-    /// Fails when the the rows in the response are of incorrect type,
-    /// or when the deserialization fails.
-    pub fn first_row<'metadata, R: DeserializeRow<'frame, 'metadata>>(
-        &'metadata self,
-    ) -> Result<R, FirstRowError> {
-        match self.maybe_first_row::<R>() {
-            Ok(Some(row)) => Ok(row),
-            Ok(None) => Err(FirstRowError::RowsEmpty),
-            Err(MaybeFirstRowError::TypeCheckFailed(err)) => {
-                Err(FirstRowError::TypeCheckFailed(err))
-            }
-            Err(MaybeFirstRowError::DeserializationFailed(err)) => {
-                Err(FirstRowError::DeserializationFailed(err))
-            }
-        }
-    }
-
-    /// Returns the only received row.
-    ///
-    /// Fails if the result is anything else than a single row.
-    /// Fails when the the rows in the response are of incorrect type,
-    /// or when the deserialization fails.
-    pub fn single_row<'metadata, R: DeserializeRow<'frame, 'metadata>>(
-        &'metadata self,
-    ) -> Result<R, SingleRowError> {
-        match self.rows::<R>() {
-            Ok(mut rows) => match rows.next() {
-                Some(Ok(row)) => {
-                    if rows.rows_remaining() != 0 {
-                        return Err(SingleRowError::UnexpectedRowCount(
-                            rows.rows_remaining() + 1,
-                        ));
-                    }
-                    Ok(row)
-                }
-                Some(Err(err)) => Err(SingleRowError::DeserializationFailed(err)),
-                None => Err(SingleRowError::UnexpectedRowCount(0)),
-            },
-            Err(RowsError::TypeCheckFailed(err)) => Err(SingleRowError::TypeCheckFailed(err)),
-        }
-    }
-}
-
-impl RowsDeserializer<'static, RawRowsOwned> {
+impl QueryRowsResult {
     /// Returns the received rows when present.
     ///
     /// Returns an error if the rows in the response are of incorrect type.
@@ -692,7 +556,7 @@ mod tests {
             // Not RESULT::Rows response -> no column specs
             {
                 let rqr = QueryResult::new(None, None, Vec::new());
-                let qr = rqr.rows_deserializer().unwrap();
+                let qr = rqr.into_rows_result().unwrap();
                 assert_matches!(qr, None);
             }
 
@@ -703,7 +567,7 @@ mod tests {
                 let rr = RawMetadataAndRawRows::new_for_test(None, Some(metadata), false, 0, &[])
                     .unwrap();
                 let rqr = QueryResult::new(Some(rr), None, Vec::new());
-                let qr = rqr.rows_deserializer().unwrap().unwrap();
+                let qr = rqr.into_rows_result().unwrap().unwrap();
                 let column_specs = qr.column_specs();
                 assert_eq!(column_specs.len(), n);
 
@@ -750,7 +614,7 @@ mod tests {
             // Not RESULT::Rows
             {
                 let rqr = QueryResult::new(None, None, Vec::new());
-                let qr = rqr.rows_deserializer().unwrap();
+                let qr = rqr.into_rows_result().unwrap();
                 assert_matches!(qr, None);
             }
 
@@ -758,9 +622,9 @@ mod tests {
             {
                 let rr = sample_raw_rows(1, 0);
                 let rqr = QueryResult::new(Some(rr), None, Vec::new());
-                let qr = rqr.rows_deserializer().unwrap().unwrap();
-
                 assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
+
+                let qr = rqr.into_rows_result().unwrap().unwrap();
 
                 // Type check error
                 {
@@ -800,13 +664,14 @@ mod tests {
                 let rr_good_data = sample_raw_rows(2, 1);
                 let rr_bad_data = sample_raw_rows_invalid_bytes(2, 1);
                 let rqr_good_data = QueryResult::new(Some(rr_good_data), None, Vec::new());
-                let qr_good_data = rqr_good_data.rows_deserializer().unwrap().unwrap();
                 let rqr_bad_data = QueryResult::new(Some(rr_bad_data), None, Vec::new());
-                let qr_bad_data = rqr_bad_data.rows_deserializer().unwrap().unwrap();
 
                 for rqr in [&rqr_good_data, &rqr_bad_data] {
                     assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
                 }
+
+                let qr_good_data = rqr_good_data.into_rows_result().unwrap().unwrap();
+                let qr_bad_data = rqr_bad_data.into_rows_result().unwrap().unwrap();
 
                 for qr in [&qr_good_data, &qr_bad_data] {
                     // Type check error
@@ -860,9 +725,9 @@ mod tests {
             {
                 let rr = sample_raw_rows(2, 2);
                 let rqr = QueryResult::new(Some(rr), None, Vec::new());
-                let qr = rqr.rows_deserializer().unwrap().unwrap();
-
                 assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
+
+                let qr = rqr.into_rows_result().unwrap().unwrap();
 
                 // Type check error
                 {

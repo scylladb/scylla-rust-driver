@@ -1,7 +1,7 @@
 use bytes::Bytes;
 
 use crate::frame::response::result::{
-    ColumnSpec, DeserializedMetadataAndRawRows, RawRowsOwned, ResultMetadata, ResultMetadataHolder,
+    ColumnSpec, DeserializedMetadataAndRawRows, ResultMetadata, ResultMetadataHolder,
 };
 
 use super::row::{mk_deser_err, BuiltinDeserializationErrorKind, ColumnIterator, DeserializeRow};
@@ -150,7 +150,7 @@ where
 /// library to represent this concept yet).
 #[derive(Debug)]
 pub struct RawRowsLendingIterator {
-    metadata: ResultMetadataHolder<'static>,
+    metadata: ResultMetadataHolder,
     remaining: usize,
     at: usize,
     raw_rows: Bytes,
@@ -159,7 +159,7 @@ pub struct RawRowsLendingIterator {
 impl RawRowsLendingIterator {
     /// Creates a new `RawRowsLendingIterator`, consuming given `RawRows`.
     #[inline]
-    pub fn new(raw_rows: DeserializedMetadataAndRawRows<'static, RawRowsOwned>) -> Self {
+    pub fn new(raw_rows: DeserializedMetadataAndRawRows) -> Self {
         let (metadata, rows_count, raw_rows) = raw_rows.into_inner();
         Self {
             metadata,
@@ -186,10 +186,10 @@ impl RawRowsLendingIterator {
         // Ideally, we would prefer to preserve the FrameSlice between calls to `next()`,
         // but borrowing from oneself is impossible, so we have to recreate it this way.
 
-        let iter = ColumnIterator::new(self.metadata.col_specs(), remaining_frame);
+        let iter = ColumnIterator::new(self.metadata.inner().col_specs(), remaining_frame);
 
         // Skip the row here, manually
-        for (column_index, spec) in self.metadata.col_specs().iter().enumerate() {
+        for (column_index, spec) in self.metadata.inner().col_specs().iter().enumerate() {
             let remaining_frame_len_before_column_read = remaining_frame.as_slice().len();
             if let Err(err) = remaining_frame.read_cql_bytes() {
                 return Some(Err(mk_deser_err::<Self>(
@@ -220,8 +220,8 @@ impl RawRowsLendingIterator {
     /// Returns the metadata associated with the response (paging state and
     /// column specifications).
     #[inline]
-    pub fn metadata(&self) -> &ResultMetadata<'static> {
-        &self.metadata
+    pub fn metadata(&self) -> &ResultMetadata<'_> {
+        self.metadata.inner()
     }
 
     /// Returns the remaining number of rows that this iterator is expected

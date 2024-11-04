@@ -648,8 +648,7 @@ impl RawIterator {
         let mut s = self.as_mut();
 
         let received_page = ready_some_ok!(Pin::new(&mut s.page_receiver).poll_recv(cx));
-        let raw_rows_with_deserialized_metadata =
-            received_page.rows.deserialize_owned_metadata()?;
+        let raw_rows_with_deserialized_metadata = received_page.rows.deserialize_metadata()?;
         s.current_page = RawRowsLendingIterator::new(raw_rows_with_deserialized_metadata);
 
         if let Some(tracing_id) = received_page.tracing_id {
@@ -962,8 +961,7 @@ impl RawIterator {
         // - That future is polled in a tokio::task which isn't going to be
         //   cancelled
         let page_received = receiver.recv().await.unwrap()?;
-        let raw_rows_with_deserialized_metadata =
-            page_received.rows.deserialize_owned_metadata()?;
+        let raw_rows_with_deserialized_metadata = page_received.rows.deserialize_metadata()?;
 
         Ok(Self {
             current_page: RawRowsLendingIterator::new(raw_rows_with_deserialized_metadata),
@@ -984,7 +982,7 @@ impl RawIterator {
 
     /// Returns specification of row columns
     #[inline]
-    pub fn column_specs(&self) -> ColumnSpecs<'static, '_> {
+    pub fn column_specs(&self) -> ColumnSpecs<'_> {
         ColumnSpecs::new(self.current_page.metadata().col_specs())
     }
 
@@ -1128,7 +1126,7 @@ impl LegacyRowIterator {
     }
 
     /// Returns specification of row columns
-    pub fn get_column_specs(&self) -> &[ColumnSpec<'static>] {
+    pub fn get_column_specs(&self) -> &[ColumnSpec<'_>] {
         self.raw_iterator.column_specs().inner()
     }
 
@@ -1157,7 +1155,7 @@ impl<RowT> LegacyTypedRowIterator<RowT> {
 
     /// Returns specification of row columns
     #[inline]
-    pub fn get_column_specs(&self) -> &[ColumnSpec<'static>] {
+    pub fn get_column_specs(&self) -> &[ColumnSpec<'_>] {
         self.row_iterator.get_column_specs()
     }
 }
