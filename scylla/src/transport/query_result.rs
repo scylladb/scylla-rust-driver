@@ -195,7 +195,7 @@ impl QueryResult {
 
     /// Returns `Ok` for a request's result that shouldn't contain any rows.\
     /// Will return `Ok` for `INSERT` result, but a `SELECT` result, even an empty one, will cause an error.\
-    /// Opposite of [`rows_deserializer()`](QueryResult::rows_deserializer).
+    /// Opposite of [`into_rows_result()`](QueryResult::rows_deserializer).
     #[inline]
     pub fn result_not_rows(&self) -> Result<(), ResultNotRowsError> {
         match &self.raw_metadata_and_rows {
@@ -219,7 +219,7 @@ impl QueryResult {
     /// ```rust
     /// # use scylla::transport::query_result::{QueryResult, RowsDeserializer};
     /// # fn example(query_result: QueryResult) -> Result<(), Box<dyn std::error::Error>> {
-    /// let rows_deserializer = query_result.rows_deserializer()?;
+    /// let rows_deserializer = query_result.into_rows_result()?;
     /// if let Some(rows_result) = rows_deserializer {
     ///     let mut rows_iter = rows_result.rows::<(i32, &str)>()?;
     ///     while let Some((num, text)) = rows_iter.next().transpose()? {
@@ -293,7 +293,7 @@ impl QueryResult {
 /// ```rust
 /// # use scylla::transport::query_result::QueryResult;
 /// # fn example(query_result: QueryResult) -> Result<(), Box<dyn std::error::Error>> {
-/// let rows_deserializer = query_result.rows_deserializer()?;
+/// let rows_deserializer = query_result.into_rows_result()?;
 /// if let Some(rows_result) = rows_deserializer {
 ///     let mut rows_iter = rows_result.rows::<(i32, &str)>()?;
 ///     while let Some((num, text)) = rows_iter.next().transpose()? {
