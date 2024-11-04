@@ -12,7 +12,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use scylla_proxy::{Node, Proxy, ProxyError, RunningProxy, ShardAwareness};
 
-#[cfg(test)]
 pub(crate) fn setup_tracing() {
     let _ = tracing_subscriber::fmt::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -22,7 +21,6 @@ pub(crate) fn setup_tracing() {
 
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-#[allow(unused)]
 pub(crate) fn unique_keyspace_name() -> String {
     let cnt = UNIQUE_COUNTER.fetch_add(1, Ordering::SeqCst);
     let name = format!(
@@ -87,7 +85,6 @@ where
     running_proxy.finish().await
 }
 
-#[allow(unused)]
 pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
     // Cassandra doesn't have a concept of features, so first detect
     // if there is the `supported_features` column in system.local
@@ -120,7 +117,6 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
         .any(|f| f == feature)
 }
 
-#[allow(unused)]
 pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
     supports_feature(session, "TABLETS").await
 }
@@ -128,7 +124,6 @@ pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
 // Creates a generic session builder based on conditional compilation configuration
 // For SessionBuilder of DefaultMode type, adds localhost to known hosts, as all of the tests
 // connect to localhost.
-#[allow(unused)]
 pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilderKind> {
     let session_builder = {
         #[cfg(not(scylla_cloud_tests))]
