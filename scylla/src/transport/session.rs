@@ -49,8 +49,6 @@ use super::node::{InternalKnownNode, KnownNode};
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use super::{NodeRef, SelfIdentity};
-use crate::cql_to_rust::FromRow;
-use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -75,6 +73,10 @@ use crate::{
 };
 
 pub use crate::transport::connection_pool::PoolSize;
+
+// This re-export is to preserve backward compatibility.
+// Those items are no longer here not to clutter session.rs with legacy things.
+pub use crate::transport::legacy_query_result::{IntoTypedRows, TypedRowIter};
 
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
@@ -420,38 +422,6 @@ impl SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Trait used to implement `Vec<result::Row>::into_typed<RowT>`
-// This is the only way to add custom method to Vec
-pub trait IntoTypedRows {
-    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT>;
-}
-
-// Adds method Vec<result::Row>::into_typed<RowT>(self)
-// It transforms the Vec into iterator mapping to custom row type
-impl IntoTypedRows for Vec<result::Row> {
-    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT> {
-        TypedRowIter {
-            row_iter: self.into_iter(),
-            phantom_data: Default::default(),
-        }
-    }
-}
-
-/// Iterator over rows parsed as the given type\
-/// Returned by `rows.into_typed::<(...)>()`
-pub struct TypedRowIter<RowT: FromRow> {
-    row_iter: std::vec::IntoIter<result::Row>,
-    phantom_data: std::marker::PhantomData<RowT>,
-}
-
-impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
-    type Item = Result<RowT, FromRowError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.row_iter.next().map(RowT::from_row)
     }
 }
 
