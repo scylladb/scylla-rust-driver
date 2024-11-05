@@ -4,16 +4,16 @@ use super::row::{mk_deser_err, BuiltinDeserializationErrorKind, ColumnIterator, 
 use super::{DeserializationError, FrameSlice, TypeCheckError};
 use std::marker::PhantomData;
 
-/// Iterates over the whole result, returning rows.
+/// Iterates over the whole result, returning raw rows.
 #[derive(Debug)]
-pub struct RowIterator<'frame, 'metadata> {
+pub struct RawRowIterator<'frame, 'metadata> {
     specs: &'metadata [ColumnSpec<'metadata>],
     remaining: usize,
     slice: FrameSlice<'frame>,
 }
 
-impl<'frame, 'metadata> RowIterator<'frame, 'metadata> {
-    /// Creates a new iterator over rows from a serialized response.
+impl<'frame, 'metadata> RawRowIterator<'frame, 'metadata> {
+    /// Creates a new iterator over raw rows from a serialized response.
     ///
     /// - `remaining` - number of the remaining rows in the serialized response,
     /// - `specs` - information about columns of the serialized response,
@@ -45,7 +45,7 @@ impl<'frame, 'metadata> RowIterator<'frame, 'metadata> {
     }
 }
 
-impl<'frame, 'metadata> Iterator for RowIterator<'frame, 'metadata> {
+impl<'frame, 'metadata> Iterator for RawRowIterator<'frame, 'metadata> {
     type Item = Result<ColumnIterator<'frame, 'metadata>, DeserializationError>;
 
     #[inline]
@@ -79,11 +79,11 @@ impl<'frame, 'metadata> Iterator for RowIterator<'frame, 'metadata> {
     }
 }
 
-/// A typed version of [RowIterator] which deserializes the rows before
+/// A typed version of [RawRowIterator] which deserializes the rows before
 /// returning them.
 #[derive(Debug)]
 pub struct TypedRowIterator<'frame, 'metadata, R> {
-    inner: RowIterator<'frame, 'metadata>,
+    inner: RawRowIterator<'frame, 'metadata>,
     _phantom: PhantomData<R>,
 }
 
@@ -91,11 +91,11 @@ impl<'frame, 'metadata, R> TypedRowIterator<'frame, 'metadata, R>
 where
     R: DeserializeRow<'frame, 'metadata>,
 {
-    /// Creates a new [TypedRowIterator] from given [RowIterator].
+    /// Creates a new [TypedRowIterator] from given [RawRowIterator].
     ///
     /// Calls `R::type_check` and fails if the type check fails.
     #[inline]
-    pub fn new(raw: RowIterator<'frame, 'metadata>) -> Result<Self, TypeCheckError> {
+    pub fn new(raw: RawRowIterator<'frame, 'metadata>) -> Result<Self, TypeCheckError> {
         R::type_check(raw.specs())?;
         Ok(Self {
             inner: raw,
@@ -143,13 +143,13 @@ mod tests {
     use crate::frame::response::result::ColumnType;
 
     use super::super::tests::{serialize_cells, spec, CELL1, CELL2};
-    use super::{FrameSlice, RowIterator, TypedRowIterator};
+    use super::{FrameSlice, RawRowIterator, TypedRowIterator};
 
     #[test]
     fn test_row_iterator_basic_parse() {
         let raw_data = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
         let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
-        let mut iter = RowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+        let mut iter = RawRowIterator::new(2, &specs, FrameSlice::new(&raw_data));
 
         let mut row1 = iter.next().unwrap().unwrap();
         let c11 = row1.next().unwrap().unwrap();
@@ -172,7 +172,7 @@ mod tests {
     fn test_row_iterator_too_few_rows() {
         let raw_data = serialize_cells([Some(CELL1), Some(CELL2)]);
         let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
-        let mut iter = RowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+        let mut iter = RawRowIterator::new(2, &specs, FrameSlice::new(&raw_data));
 
         iter.next().unwrap().unwrap();
         assert!(iter.next().unwrap().is_err());
@@ -182,7 +182,7 @@ mod tests {
     fn test_typed_row_iterator_basic_parse() {
         let raw_data = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
         let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
-        let iter = RowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+        let iter = RawRowIterator::new(2, &specs, FrameSlice::new(&raw_data));
         let mut iter = TypedRowIterator::<'_, '_, (&[u8], Vec<u8>)>::new(iter).unwrap();
 
         let (c11, c12) = iter.next().unwrap().unwrap();
@@ -200,7 +200,7 @@ mod tests {
     fn test_typed_row_iterator_wrong_type() {
         let raw_data = Bytes::new();
         let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
-        let iter = RowIterator::new(0, &specs, FrameSlice::new(&raw_data));
+        let iter = RawRowIterator::new(0, &specs, FrameSlice::new(&raw_data));
         assert!(TypedRowIterator::<'_, '_, (i32, i64)>::new(iter).is_err());
     }
 }

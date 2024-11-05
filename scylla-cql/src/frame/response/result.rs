@@ -10,7 +10,7 @@ use crate::frame::types;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
-use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
+use crate::types::deserialize::result::{RawRowIterator, TypedRowIterator};
 use crate::types::deserialize::value::{
     mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
 };
@@ -1107,7 +1107,7 @@ fn deser_rows(
     let rows_count: usize =
         types::read_int_length(buf).map_err(RowsParseError::RowsCountParseError)?;
 
-    let raw_rows_iter = RowIterator::new(
+    let raw_rows_iter = RawRowIterator::new(
         rows_count,
         &metadata.col_specs,
         FrameSlice::new_borrowed(buf),
