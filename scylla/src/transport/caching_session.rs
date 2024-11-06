@@ -71,8 +71,8 @@ where
     S: BuildHasher + Clone,
     DeserApi: DeserializationApiKind,
 {
-    /// Builds a [`CachingSession`] from a [`Session`], a cache size, and a [`BuildHasher`].,
-    /// using a customer hasher.
+    /// Builds a [`CachingSession`] from a [`Session`](GenericSession), a cache size,
+    /// and a [`BuildHasher`], using a customer hasher.
     pub fn with_hasher(session: GenericSession<DeserApi>, cache_size: usize, hasher: S) -> Self {
         Self {
             session,
@@ -86,7 +86,8 @@ impl<S> GenericCachingSession<CurrentDeserializationApi, S>
 where
     S: BuildHasher + Clone,
 {
-    /// Does the same thing as [`Session::execute_unpaged`] but uses the prepared statement cache
+    /// Does the same thing as [`Session::execute_unpaged`](GenericSession::execute_unpaged)
+    /// but uses the prepared statement cache.
     pub async fn execute_unpaged(
         &self,
         query: impl Into<Query>,
@@ -97,7 +98,8 @@ where
         self.session.execute_unpaged(&prepared, values).await
     }
 
-    /// Does the same thing as [`Session::execute_iter`] but uses the prepared statement cache
+    /// Does the same thing as [`Session::execute_iter`](GenericSession::execute_iter)
+    /// but uses the prepared statement cache.
     pub async fn execute_iter(
         &self,
         query: impl Into<Query>,
@@ -108,7 +110,8 @@ where
         self.session.execute_iter(prepared, values).await
     }
 
-    /// Does the same thing as [`Session::execute_single_page`] but uses the prepared statement cache
+    /// Does the same thing as [`Session::execute_single_page`](GenericSession::execute_single_page)
+    /// but uses the prepared statement cache.
     pub async fn execute_single_page(
         &self,
         query: impl Into<Query>,
@@ -122,8 +125,10 @@ where
             .await
     }
 
-    /// Does the same thing as [`Session::batch`] but uses the prepared statement cache\
-    /// Prepares batch using CachingSession::prepare_batch if needed and then executes it
+    /// Does the same thing as [`Session::batch`](GenericSession::batch) but uses the
+    /// prepared statement cache.\
+    /// Prepares batch using [`CachingSession::prepare_batch`](GenericCachingSession::prepare_batch)
+    /// if needed and then executes it.
     pub async fn batch(
         &self,
         batch: &Batch,
@@ -148,7 +153,8 @@ impl<S> GenericCachingSession<LegacyDeserializationApi, S>
 where
     S: BuildHasher + Clone,
 {
-    /// Does the same thing as [`Session::execute_unpaged`] but uses the prepared statement cache
+    /// Does the same thing as [`Session::execute_unpaged`](GenericSession::execute_unpaged)
+    /// but uses the prepared statement cache.
     pub async fn execute_unpaged(
         &self,
         query: impl Into<Query>,
@@ -159,7 +165,8 @@ where
         self.session.execute_unpaged(&prepared, values).await
     }
 
-    /// Does the same thing as [`Session::execute_iter`] but uses the prepared statement cache
+    /// Does the same thing as [`Session::execute_iter`](GenericSession::execute_iter)
+    /// but uses the prepared statement cache.
     pub async fn execute_iter(
         &self,
         query: impl Into<Query>,
@@ -170,7 +177,8 @@ where
         self.session.execute_iter(prepared, values).await
     }
 
-    /// Does the same thing as [`Session::execute_single_page`] but uses the prepared statement cache
+    /// Does the same thing as [`Session::execute_single_page`](GenericSession::execute_single_page)
+    /// but uses the prepared statement cache.
     pub async fn execute_single_page(
         &self,
         query: impl Into<Query>,
@@ -184,8 +192,9 @@ where
             .await
     }
 
-    /// Does the same thing as [`Session::batch`] but uses the prepared statement cache\
-    /// Prepares batch using CachingSession::prepare_batch if needed and then executes it
+    /// Does the same thing as [`Session::batch`](GenericSession::batch) but uses
+    /// the prepared statement cache.\
+    /// Prepares batch using CachingSession::prepare_batch if needed and then executes it.
     pub async fn batch(
         &self,
         batch: &Batch,
