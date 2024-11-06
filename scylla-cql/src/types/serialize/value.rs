@@ -196,6 +196,15 @@ impl SerializeValue for time_03::OffsetDateTime {
         <CqlTimestamp as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
+
+#[cfg(feature = "time-03")]
+impl SerializeValue for time_03::PrimitiveDateTime {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Timestamp);
+        <CqlTimestamp as SerializeValue>::serialize(&(*me).into(), typ, writer)?
+    });
+}
+
 #[cfg(feature = "time-03")]
 impl SerializeValue for time_03::Time {
     impl_serialize_via_writer!(|me, typ, writer| {

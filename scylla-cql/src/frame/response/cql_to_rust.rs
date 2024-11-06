@@ -228,6 +228,15 @@ impl FromCqlVal<CqlValue> for time_03::OffsetDateTime {
     }
 }
 
+#[cfg(feature = "time-03")]
+impl FromCqlVal<CqlValue> for time_03::PrimitiveDateTime {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        let datetime = time_03::OffsetDateTime::from_cql(cql_val)?;
+
+        Ok(Self::new(datetime.date(), datetime.time()))
+    }
+}
+
 #[cfg(feature = "secrecy-08")]
 impl<V: FromCqlVal<CqlValue> + secrecy_08::Zeroize> FromCqlVal<CqlValue> for secrecy_08::Secret<V> {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {

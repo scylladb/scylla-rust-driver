@@ -609,6 +609,13 @@ impl From<time_03::OffsetDateTime> for CqlTimestamp {
 }
 
 #[cfg(feature = "time-03")]
+impl From<time_03::PrimitiveDateTime> for CqlTimestamp {
+    fn from(value: time_03::PrimitiveDateTime) -> Self {
+        value.assume_utc().into()
+    }
+}
+
+#[cfg(feature = "time-03")]
 impl TryInto<time_03::OffsetDateTime> for CqlTimestamp {
     type Error = ValueOverflow;
 
