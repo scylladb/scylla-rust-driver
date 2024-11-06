@@ -8,8 +8,8 @@ use scylla::statement::{
     prepared_statement::PreparedStatement, query::Query, Consistency, SerialConsistency,
 };
 use scylla::tracing::TracingInfo;
-use scylla::transport::iterator::RowIterator;
-use scylla::QueryResult;
+use scylla::transport::iterator::LegacyRowIterator;
+use scylla::LegacyQueryResult;
 use scylla::{Session, SessionBuilder};
 use std::env;
 use std::num::NonZeroU32;
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
 
     // QueryResult will contain a tracing_id which can be used to query tracing information
-    let query_result: QueryResult = session.query_unpaged(query.clone(), &[]).await?;
+    let query_result: LegacyQueryResult = session.query_unpaged(query.clone(), &[]).await?;
     let query_tracing_id: Uuid = query_result
         .tracing_id
         .ok_or_else(|| anyhow!("Tracing id is None!"))?;
@@ -79,14 +79,14 @@ async fn main() -> Result<()> {
     // To trace execution of a prepared statement tracing must be enabled for it
     prepared.set_tracing(true);
 
-    let execute_result: QueryResult = session.execute_unpaged(&prepared, &[]).await?;
+    let execute_result: LegacyQueryResult = session.execute_unpaged(&prepared, &[]).await?;
     println!("Execute tracing id: {:?}", execute_result.tracing_id);
 
     // PAGED QUERY_ITER EXECUTE_ITER
     // It's also possible to trace paged queries like query_iter or execute_iter
     // After iterating through all rows iterator.get_tracing_ids() will give tracing ids
     // for all page queries
-    let mut row_iterator: RowIterator = session.query_iter(query, &[]).await?;
+    let mut row_iterator: LegacyRowIterator = session.query_iter(query, &[]).await?;
 
     while let Some(_row) = row_iterator.next().await {
         // Receive rows
@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
     batch.set_tracing(true);
 
     // Run the batch and print its tracing_id
-    let batch_result: QueryResult = session.batch(&batch, ((),)).await?;
+    let batch_result: LegacyQueryResult = session.batch(&batch, ((),)).await?;
     println!("Batch tracing id: {:?}\n", batch_result.tracing_id);
 
     // CUSTOM

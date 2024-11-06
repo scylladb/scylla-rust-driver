@@ -209,7 +209,7 @@ pub mod deserialize {
 
     /// Deserializing the whole query result contents.
     pub mod result {
-        pub use scylla_cql::types::deserialize::result::{RowIterator, TypedRowIterator};
+        pub use scylla_cql::types::deserialize::result::TypedRowIterator;
     }
 
     /// Deserializing a row of the query result.
@@ -258,7 +258,8 @@ pub use frame::response::cql_to_rust::FromRow;
 
 pub use transport::caching_session::CachingSession;
 pub use transport::execution_profile::ExecutionProfile;
-pub use transport::query_result::QueryResult;
+pub use transport::legacy_query_result::LegacyQueryResult;
+pub use transport::query_result::{QueryResult, QueryRowsResult};
 pub use transport::session::{IntoTypedRows, Session, SessionConfig};
 pub use transport::session_builder::SessionBuilder;
 

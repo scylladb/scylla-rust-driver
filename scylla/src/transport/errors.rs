@@ -32,7 +32,7 @@ use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-use super::query_result::{RowsExpectedError, SingleRowTypedError};
+use super::legacy_query_result::{RowsExpectedError, SingleRowTypedError};
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]

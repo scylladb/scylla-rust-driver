@@ -4,6 +4,7 @@
 use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
+use crate::LegacyQueryResult;
 
 use crate::history;
 use crate::history::HistoryListener;
@@ -17,7 +18,8 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::{Either, Itertools};
-use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
+use scylla_cql::frame::response::result::RawMetadataAndRawRows;
+use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec};
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::batch::BatchValues;
 use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
@@ -42,15 +44,14 @@ use super::connection::QueryResponse;
 use super::connection::SslConfig;
 use super::errors::TracingProtocolError;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
+use super::iterator::QueryPager;
+use super::legacy_query_result::MaybeFirstRowTypedError;
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
 use super::node::{InternalKnownNode, KnownNode};
 use super::partitioner::PartitionerName;
-use super::query_result::MaybeFirstRowTypedError;
 use super::topology::UntranslatedPeer;
 use super::{NodeRef, SelfIdentity};
-use crate::cql_to_rust::FromRow;
-use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -61,7 +62,7 @@ use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
-use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
+use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
@@ -75,6 +76,10 @@ use crate::{
 };
 
 pub use crate::transport::connection_pool::PoolSize;
+
+// This re-export is to preserve backward compatibility.
+// Those items are no longer here not to clutter session.rs with legacy things.
+pub use crate::transport::legacy_query_result::{IntoTypedRows, TypedRowIter};
 
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
@@ -423,38 +428,6 @@ impl Default for SessionConfig {
     }
 }
 
-/// Trait used to implement `Vec<result::Row>::into_typed<RowT>`
-// This is the only way to add custom method to Vec
-pub trait IntoTypedRows {
-    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT>;
-}
-
-// Adds method Vec<result::Row>::into_typed<RowT>(self)
-// It transforms the Vec into iterator mapping to custom row type
-impl IntoTypedRows for Vec<result::Row> {
-    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT> {
-        TypedRowIter {
-            row_iter: self.into_iter(),
-            phantom_data: Default::default(),
-        }
-    }
-}
-
-/// Iterator over rows parsed as the given type\
-/// Returned by `rows.into_typed::<(...)>()`
-pub struct TypedRowIter<RowT: FromRow> {
-    row_iter: std::vec::IntoIter<result::Row>,
-    phantom_data: std::marker::PhantomData<RowT>,
-}
-
-impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
-    type Item = Result<RowT, FromRowError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.row_iter.next().map(RowT::from_row)
-    }
-}
-
 pub(crate) enum RunQueryResult<ResT> {
     IgnoredWriteError,
     Completed(ResT),
@@ -646,7 +619,7 @@ impl Session {
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, QueryError> {
         let query = query.into();
         let (result, paging_state_response) = self
             .query(&query, values, None, PagingState::start())
@@ -711,7 +684,7 @@ impl Session {
         query: impl Into<Query>,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
         let query = query.into();
         self.query(
             &query,
@@ -739,7 +712,7 @@ impl Session {
         values: impl SerializeRow,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
         let execution_profile = query
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -827,6 +800,7 @@ impl Session {
 
         let (result, paging_state) = response.into_query_result_and_paging_state()?;
         span.record_result_fields(&result);
+        let result = result.into_legacy_result()?;
         Ok((result, paging_state))
     }
 
@@ -906,7 +880,7 @@ impl Session {
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<RowIterator, QueryError> {
+    ) -> Result<LegacyRowIterator, QueryError> {
         let query: Query = query.into();
 
         let execution_profile = query
@@ -915,20 +889,21 @@ impl Session {
             .access();
 
         if values.is_empty() {
-            RowIterator::new_for_query(
+            QueryPager::new_for_query(
                 query,
                 execution_profile,
                 self.cluster.get_data(),
                 self.metrics.clone(),
             )
             .await
+            .map(QueryPager::into_legacy)
         } else {
-            // Making RowIterator::new_for_query work with values is too hard (if even possible)
+            // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
             // we fully prepare a statement beforehand.
             let prepared = self.prepare(query).await?;
             let values = prepared.serialize_values(&values)?;
-            RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
+            QueryPager::new_for_prepared_statement(PreparedIteratorConfig {
                 prepared,
                 values,
                 execution_profile,
@@ -936,6 +911,7 @@ impl Session {
                 metrics: self.metrics.clone(),
             })
             .await
+            .map(QueryPager::into_legacy)
         }
     }
 
@@ -1078,7 +1054,7 @@ impl Session {
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let (result, paging_state) = self
             .execute(prepared, &serialized_values, None, PagingState::start())
@@ -1148,7 +1124,7 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let page_size = prepared.get_validated_page_size();
         self.execute(prepared, &serialized_values, Some(page_size), paging_state)
@@ -1171,7 +1147,7 @@ impl Session {
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
@@ -1262,6 +1238,7 @@ impl Session {
 
         let (result, paging_state) = response.into_query_result_and_paging_state()?;
         span.record_result_fields(&result);
+        let result = result.into_legacy_result()?;
         Ok((result, paging_state))
     }
 
@@ -1309,7 +1286,7 @@ impl Session {
         &self,
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
-    ) -> Result<RowIterator, QueryError> {
+    ) -> Result<LegacyRowIterator, QueryError> {
         let prepared = prepared.into();
         let serialized_values = prepared.serialize_values(&values)?;
 
@@ -1318,7 +1295,7 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
+        QueryPager::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values,
             execution_profile,
@@ -1326,6 +1303,7 @@ impl Session {
             metrics: self.metrics.clone(),
         })
         .await
+        .map(QueryPager::into_legacy)
     }
 
     /// Perform a batch request.\
@@ -1377,7 +1355,7 @@ impl Session {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, QueryError> {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
 
@@ -1454,10 +1432,13 @@ impl Session {
             .await?;
 
         let result = match run_query_result {
-            RunQueryResult::IgnoredWriteError => QueryResult::mock_empty(),
-            RunQueryResult::Completed(response) => response,
+            RunQueryResult::IgnoredWriteError => LegacyQueryResult::mock_empty(),
+            RunQueryResult::Completed(result) => {
+                span.record_result_fields(&result);
+                result.into_legacy_result()?
+            }
         };
-        span.record_result_fields(&result);
+
         Ok(result)
     }
 
@@ -2176,16 +2157,15 @@ impl RequestSpan {
         }
     }
 
-    pub(crate) fn record_result_fields(&self, result: &QueryResult) {
-        self.span.record("result_size", result.serialized_size);
-        if let Some(rows) = result.rows.as_ref() {
-            self.span.record("result_rows", rows.len());
-        }
+    pub(crate) fn record_raw_rows_fields(&self, raw_rows: &RawMetadataAndRawRows) {
+        self.span
+            .record("raw_result_size", raw_rows.metadata_and_rows_bytes_size());
     }
 
-    pub(crate) fn record_rows_fields(&self, rows: &Rows) {
-        self.span.record("result_size", rows.serialized_size);
-        self.span.record("result_rows", rows.rows.len());
+    pub(crate) fn record_result_fields(&self, query_result: &QueryResult) {
+        if let Some(raw_metadata_and_rows) = query_result.raw_metadata_and_rows() {
+            self.record_raw_rows_fields(raw_metadata_and_rows);
+        }
     }
 
     pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [(impl Borrow<Arc<Node>>, Shard)]) {

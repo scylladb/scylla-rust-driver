@@ -342,7 +342,7 @@ mod tests {
         bytes.freeze()
     }
 
-    pub(super) fn spec<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+    pub(super) const fn spec<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
         ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
     }
 }
