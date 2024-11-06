@@ -631,7 +631,7 @@ impl QueryPager {
     /// to a middle-man [Row] type.
     #[inline]
     pub fn into_legacy(self) -> LegacyRowIterator {
-        LegacyRowIterator { raw_iterator: self }
+        LegacyRowIterator::new(self)
     }
 
     pub(crate) async fn new_for_query(
@@ -936,97 +936,106 @@ impl QueryPager {
     }
 }
 
-/// Iterator over rows returned by paged queries.
-///
-/// Allows to easily access rows without worrying about handling multiple pages.
-pub struct LegacyRowIterator {
-    raw_iterator: QueryPager,
-}
+mod legacy {
+    use super::*;
 
-impl Stream for LegacyRowIterator {
-    type Item = Result<Row, QueryError>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut s = self.as_mut();
-
-        let next_fut = s.raw_iterator.next();
-        futures::pin_mut!(next_fut);
-
-        let next_column_iter = ready_some_ok!(next_fut.poll(cx));
-
-        let next_ready_row =
-            Row::deserialize(next_column_iter).map_err(|e| RowsParseError::from(e).into());
-
-        Poll::Ready(Some(next_ready_row))
-    }
-}
-
-impl LegacyRowIterator {
-    /// If tracing was enabled returns tracing ids of all finished page queries
-    pub fn get_tracing_ids(&self) -> &[Uuid] {
-        self.raw_iterator.tracing_ids()
+    /// Iterator over rows returned by paged queries.
+    ///
+    /// Allows to easily access rows without worrying about handling multiple pages.
+    pub struct LegacyRowIterator {
+        raw_stream: QueryPager,
     }
 
-    /// Returns specification of row columns
-    pub fn get_column_specs(&self) -> &[ColumnSpec<'_>] {
-        self.raw_iterator.column_specs().inner()
-    }
+    impl Stream for LegacyRowIterator {
+        type Item = Result<Row, QueryError>;
 
-    pub fn into_typed<RowT>(self) -> LegacyTypedRowIterator<RowT> {
-        LegacyTypedRowIterator {
-            row_iterator: self,
-            _phantom_data: Default::default(),
+        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let mut s = self.as_mut();
+
+            let next_fut = s.raw_stream.next();
+            futures::pin_mut!(next_fut);
+
+            let next_column_iter = ready_some_ok!(next_fut.poll(cx));
+
+            let next_ready_row =
+                Row::deserialize(next_column_iter).map_err(|e| RowsParseError::from(e).into());
+
+            Poll::Ready(Some(next_ready_row))
         }
     }
-}
 
-/// Iterator over rows returned by paged queries
-/// where each row is parsed as the given type\
-/// Returned by `RowIterator::into_typed`
-pub struct LegacyTypedRowIterator<RowT> {
-    row_iterator: LegacyRowIterator,
-    _phantom_data: std::marker::PhantomData<RowT>,
-}
+    impl LegacyRowIterator {
+        pub(super) fn new(raw_stream: QueryPager) -> Self {
+            Self { raw_stream }
+        }
 
-impl<RowT> LegacyTypedRowIterator<RowT> {
-    /// If tracing was enabled returns tracing ids of all finished page queries
-    #[inline]
-    pub fn get_tracing_ids(&self) -> &[Uuid] {
-        self.row_iterator.get_tracing_ids()
+        /// If tracing was enabled returns tracing ids of all finished page queries
+        pub fn get_tracing_ids(&self) -> &[Uuid] {
+            self.raw_stream.tracing_ids()
+        }
+
+        /// Returns specification of row columns
+        pub fn get_column_specs(&self) -> &[ColumnSpec<'_>] {
+            self.raw_stream.column_specs().inner()
+        }
+
+        pub fn into_typed<RowT>(self) -> LegacyTypedRowIterator<RowT> {
+            LegacyTypedRowIterator {
+                row_iterator: self,
+                _phantom_data: Default::default(),
+            }
+        }
     }
 
-    /// Returns specification of row columns
-    #[inline]
-    pub fn get_column_specs(&self) -> &[ColumnSpec<'_>] {
-        self.row_iterator.get_column_specs()
+    /// Iterator over rows returned by paged queries
+    /// where each row is parsed as the given type\
+    /// Returned by `RowIterator::into_typed`
+    pub struct LegacyTypedRowIterator<RowT> {
+        row_iterator: LegacyRowIterator,
+        _phantom_data: std::marker::PhantomData<RowT>,
     }
-}
 
-/// Couldn't get next typed row from the iterator
-#[derive(Error, Debug, Clone)]
-pub enum NextRowError {
-    /// Query to fetch next page has failed
-    #[error(transparent)]
-    QueryError(#[from] QueryError),
+    impl<RowT> LegacyTypedRowIterator<RowT> {
+        /// If tracing was enabled returns tracing ids of all finished page queries
+        #[inline]
+        pub fn get_tracing_ids(&self) -> &[Uuid] {
+            self.row_iterator.get_tracing_ids()
+        }
 
-    /// Parsing values in row as given types failed
-    #[error(transparent)]
-    FromRowError(#[from] FromRowError),
-}
-
-/// Fetching pages is asynchronous so `LegacyTypedRowIterator` does not implement the `Iterator` trait.\
-/// Instead it uses the asynchronous `Stream` trait
-impl<RowT: FromRow> Stream for LegacyTypedRowIterator<RowT> {
-    type Item = Result<RowT, NextRowError>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut s = self.as_mut();
-
-        let next_row = ready_some_ok!(Pin::new(&mut s.row_iterator).poll_next(cx));
-        let typed_row_res = RowT::from_row(next_row).map_err(|e| e.into());
-        Poll::Ready(Some(typed_row_res))
+        /// Returns specification of row columns
+        #[inline]
+        pub fn get_column_specs(&self) -> &[ColumnSpec<'_>] {
+            self.row_iterator.get_column_specs()
+        }
     }
-}
 
-// LegacyTypedRowIterator can be moved freely for any RowT so it's Unpin
-impl<RowT> Unpin for LegacyTypedRowIterator<RowT> {}
+    /// Couldn't get next typed row from the iterator
+    #[derive(Error, Debug, Clone)]
+    pub enum NextRowError {
+        /// Query to fetch next page has failed
+        #[error(transparent)]
+        QueryError(#[from] QueryError),
+
+        /// Parsing values in row as given types failed
+        #[error(transparent)]
+        FromRowError(#[from] FromRowError),
+    }
+
+    /// Fetching pages is asynchronous so `LegacyTypedRowIterator` does not implement the `Iterator` trait.\
+    /// Instead it uses the asynchronous `Stream` trait
+    impl<RowT: FromRow> Stream for LegacyTypedRowIterator<RowT> {
+        type Item = Result<RowT, NextRowError>;
+
+        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let mut s = self.as_mut();
+
+            let next_row = ready_some_ok!(Pin::new(&mut s.row_iterator).poll_next(cx));
+            let typed_row_res = RowT::from_row(next_row).map_err(|e| e.into());
+            Poll::Ready(Some(typed_row_res))
+        }
+    }
+
+    // LegacyTypedRowIterator can be moved freely for any RowT so it's Unpin
+    impl<RowT> Unpin for LegacyTypedRowIterator<RowT> {}
+}
+pub use legacy::{LegacyRowIterator, LegacyTypedRowIterator, NextRowError};
