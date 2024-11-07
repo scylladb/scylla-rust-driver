@@ -5,6 +5,7 @@ use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, NewSessionError, QueryError};
 use crate::transport::host_filter::HostFilter;
+use crate::transport::iterator::QueryPager;
 use crate::transport::node::resolve_contact_points;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
@@ -933,8 +934,15 @@ where
 {
     let conn = conn.clone();
 
-    let fut = async move {
-        let pager = if keyspaces_to_fetch.is_empty() {
+    // This function is extracted to reduce monomorphisation penalty:
+    // query_filter_keyspace_name() is going to be monomorphised into 5 distinct functions,
+    // so it's better to extract the common part.
+    async fn make_keyspace_filtered_query_pager(
+        conn: Arc<Connection>,
+        query_str: &str,
+        keyspaces_to_fetch: &[String],
+    ) -> Result<QueryPager, QueryError> {
+        if keyspaces_to_fetch.is_empty() {
             let mut query = Query::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
@@ -949,8 +957,11 @@ where
             let prepared = conn.prepare(&query).await?;
             let serialized_values = prepared.serialize_values(&keyspaces)?;
             conn.execute_iter(prepared, serialized_values).await
-        }?;
+        }
+    }
 
+    let fut = async move {
+        let pager = make_keyspace_filtered_query_pager(conn, query_str, keyspaces_to_fetch).await?;
         let stream: super::iterator::TypedRowStream<R> =
             pager.rows_stream::<R>().map_err(convert_typecheck_error)?;
         Ok::<_, QueryError>(stream)
