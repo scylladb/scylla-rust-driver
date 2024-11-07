@@ -540,13 +540,13 @@ where
     }
 }
 
-/// An intermediate object that allows to construct an iterator over a query
+/// An intermediate object that allows to construct a stream over a query
 /// that is asynchronously paged in the background.
 ///
 /// Before the results can be processed in a convenient way, the QueryPager
-/// needs to be cast into a typed iterator. This is done by use of `into_typed()` method.
+/// needs to be cast into a typed stream. This is done by use of `rows_stream()` method.
 /// As the method is generic over the target type, the turbofish syntax
-/// can come in handy there, e.g. `raw_iter.into_typed::<(i32, &str, Uuid)>()`.
+/// can come in handy there, e.g. `query_pager.rows_stream::<(i32, String, Uuid)>()`.
 ///
 /// A pre-0.15.0 interface is also available, although deprecated:
 /// `into_legacy()` method converts QueryPager to LegacyRowIterator,
