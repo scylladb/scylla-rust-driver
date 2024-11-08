@@ -113,12 +113,6 @@ pub enum QueryError {
     #[error("An error occurred during async iteration over rows of result: {0}")]
     NextRowError(#[from] NextRowError),
 
-    // TODO: This should not belong here, but it requires changes to error types
-    // returned in `iter` API. It's going to be addressed later in this PR.
-    /// Failed to lazily deserialize result metadata.
-    #[error("Failed to lazily deserialize result metadata: {0}")]
-    ResultMetadataParseError(#[from] ResultMetadataAndRowsCountParseError),
-
     /// Failed to convert [`QueryResult`][crate::transport::query_result::QueryResult]
     /// into [`LegacyQueryResult`][crate::transport::legacy_query_result::LegacyQueryResult].
     #[error("Failed to convert `QueryResult` into `LegacyQueryResult`: {0}")]
@@ -190,7 +184,6 @@ impl From<QueryError> for NewSessionError {
             QueryError::IntoLegacyQueryResultError(e) => {
                 NewSessionError::IntoLegacyQueryResultError(e)
             }
-            QueryError::ResultMetadataParseError(e) => NewSessionError::ResultMetadataParseError(e),
             QueryError::NextRowError(e) => NewSessionError::NextRowError(e),
         }
     }
@@ -302,12 +295,6 @@ pub enum NewSessionError {
     /// An error occurred during async iteration over rows of result.
     #[error("An error occurred during async iteration over rows of result: {0}")]
     NextRowError(#[from] NextRowError),
-
-    // TODO: This should not belong here, but it requires changes to error types
-    // returned in `iter` API. This should be handled in separate PR.
-    /// Failed to lazily deserialize result metadata.
-    #[error("Failed to lazily deserialize result metadata: {0}")]
-    ResultMetadataParseError(#[from] ResultMetadataAndRowsCountParseError),
 
     /// Failed to convert [`QueryResult`][crate::transport::query_result::QueryResult]
     /// into [`LegacyQueryResult`][crate::transport::legacy_query_result::LegacyQueryResult].
