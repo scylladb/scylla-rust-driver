@@ -2,8 +2,8 @@ use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
     LowLevelDeserializationError, PreparedMetadataParseError, PreparedParseError,
-    ResultMetadataParseError, RowsParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
-    TableSpecParseError,
+    RawRowsAndPagingStateResponseParseError, ResultMetadataParseError, RowsParseError,
+    SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
 };
 use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::event::SchemaChangeEvent;
@@ -1143,20 +1143,20 @@ impl RawMetadataAndRawRows {
     fn deserialize(
         frame: &mut FrameSlice,
         cached_metadata: Option<Arc<ResultMetadata<'static>>>,
-    ) -> StdResult<(Self, PagingStateResponse), RowsParseError> {
+    ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
         let flags = types::read_int(frame.as_slice_mut())
-            .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
+            .map_err(|err| RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into()))?;
         let global_tables_spec = flags & 0x0001 != 0;
         let has_more_pages = flags & 0x0002 != 0;
         let no_metadata = flags & 0x0004 != 0;
 
         let col_count = types::read_int_length(frame.as_slice_mut())
-            .map_err(ResultMetadataParseError::ColumnCountParseError)?;
+            .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
 
         let raw_paging_state = has_more_pages
             .then(|| {
                 types::read_bytes(frame.as_slice_mut())
-                    .map_err(ResultMetadataParseError::PagingStateParseError)
+                    .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
             })
             .transpose()?;
 
@@ -1474,7 +1474,8 @@ pub fn deser_cql_value(
 fn deser_rows(
     buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RowsParseError> {
+) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RawRowsAndPagingStateResponseParseError>
+{
     let mut frame_slice = FrameSlice::new(&buf_bytes);
     RawMetadataAndRawRows::deserialize(&mut frame_slice, cached_metadata.cloned())
 }

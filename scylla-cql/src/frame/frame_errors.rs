@@ -227,6 +227,11 @@ pub enum CqlResultParseError {
     #[error("RESULT:Prepared response deserialization failed: {0}")]
     PreparedParseError(#[from] PreparedParseError),
     #[error("RESULT:Rows response deserialization failed: {0}")]
+    RawRowsParseError(#[from] RawRowsAndPagingStateResponseParseError),
+
+    // TODO: This is required for `From<RowsParseError> for QueryError conversion`.
+    // It will be removed in later commits.
+    #[error("RESULT:Rows response deserialization failed: {0}")]
     RowsParseError(#[from] RowsParseError),
 }
 
@@ -304,6 +309,28 @@ pub enum PreparedParseError {
     PreparedMetadataParseError(PreparedMetadataParseError),
     #[error("Non-zero paging state in result metadata: {0:?}")]
     NonZeroPagingState(Arc<[u8]>),
+}
+
+/// An error that occurred during initial deserialization of
+/// `RESULT:Rows` response. Since the deserialization of rows is lazy,
+/// we initially only need to deserialize:
+/// - result metadata flags
+/// - column count (result metadata)
+/// - paging state response
+#[non_exhaustive]
+#[derive(Debug, Error, Clone)]
+pub enum RawRowsAndPagingStateResponseParseError {
+    /// Failed to parse metadata flags.
+    #[error("Malformed metadata flags: {0}")]
+    FlagsParseError(LowLevelDeserializationError),
+
+    /// Failed to parse column count.
+    #[error("Malformed column count: {0}")]
+    ColumnCountParseError(LowLevelDeserializationError),
+
+    /// Failed to parse paging state response.
+    #[error("Malformed paging state: {0}")]
+    PagingStateParseError(LowLevelDeserializationError),
 }
 
 /// An error type returned when deserialization
