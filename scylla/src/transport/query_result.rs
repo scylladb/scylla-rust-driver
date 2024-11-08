@@ -11,7 +11,7 @@ use scylla_cql::types::deserialize::result::TypedRowIterator;
 use scylla_cql::types::deserialize::row::DeserializeRow;
 use scylla_cql::types::deserialize::{DeserializationError, TypeCheckError};
 
-use super::legacy_query_result::LegacyQueryResult;
+use super::legacy_query_result::{IntoLegacyQueryResultError, LegacyQueryResult};
 
 /// A view over specification of a table in the database.
 #[derive(Debug, Clone, Copy)]
@@ -243,7 +243,7 @@ impl QueryResult {
     /// Transforms itself into the legacy result type, by eagerly deserializing rows
     /// into the Row type. This is inefficient, and should only be used during transition
     /// period to the new API.
-    pub fn into_legacy_result(self) -> Result<LegacyQueryResult, RowsParseError> {
+    pub fn into_legacy_result(self) -> Result<LegacyQueryResult, IntoLegacyQueryResultError> {
         if let Some(raw_rows) = self.raw_metadata_and_rows {
             let raw_rows_with_metadata = raw_rows.deserialize_metadata()?;
 

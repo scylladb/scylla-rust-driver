@@ -1,7 +1,9 @@
 use crate::frame::response::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
+use scylla_cql::frame::frame_errors::RowsParseError;
 use scylla_cql::frame::response::result::{self, ResultMetadataHolder};
+use scylla_cql::types::deserialize::{DeserializationError, TypeCheckError};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -172,6 +174,25 @@ impl LegacyQueryResult {
             .enumerate()
             .find(|(_id, spec)| spec.name() == name)
     }
+}
+
+/// An error that occurred during [`QueryResult`](crate::transport::query_result::QueryResult)
+/// to [`LegacyQueryResult`] conversion.
+#[non_exhaustive]
+#[derive(Error, Clone, Debug)]
+pub enum IntoLegacyQueryResultError {
+    // TODO: Replace RowsParseError with narrower error. Done in later commit.
+    /// Failed to lazily deserialize result metadata.
+    #[error("Failed to lazily deserialize result metadata: {0}")]
+    ResultMetadataParseError(#[from] RowsParseError),
+
+    /// Failed to perform the typecheck against [`Row`] type.
+    #[error("Typecheck error: {0}")]
+    TypecheckError(#[from] TypeCheckError),
+
+    /// Failed to deserialize rows.
+    #[error("Failed to deserialize rows: {0}")]
+    DeserializationError(#[from] DeserializationError),
 }
 
 /// [`LegacyQueryResult::rows()`](LegacyQueryResult::rows) or a similar function called on a bad LegacyQueryResult.\

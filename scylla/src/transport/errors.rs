@@ -34,7 +34,7 @@ use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-use super::query_result::SingleRowError;
+use super::{legacy_query_result::IntoLegacyQueryResultError, query_result::SingleRowError};
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
@@ -100,6 +100,11 @@ pub enum QueryError {
     /// Client timeout occurred before any response arrived
     #[error("Request timeout: {0}")]
     RequestTimeout(String),
+
+    /// Failed to convert [`QueryResult`][crate::transport::query_result::QueryResult]
+    /// into [`LegacyQueryResult`][crate::transport::legacy_query_result::LegacyQueryResult].
+    #[error("Failed to convert `QueryResult` into `LegacyQueryResult`: {0}")]
+    IntoLegacyQueryResultError(#[from] IntoLegacyQueryResultError),
 }
 
 impl From<SerializeValuesError> for QueryError {
@@ -164,6 +169,9 @@ impl From<QueryError> for NewSessionError {
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
             QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
+            QueryError::IntoLegacyQueryResultError(e) => {
+                NewSessionError::IntoLegacyQueryResultError(e)
+            }
         }
     }
 }
@@ -266,6 +274,11 @@ pub enum NewSessionError {
     /// during `Session` creation.
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
+
+    /// Failed to convert [`QueryResult`][crate::transport::query_result::QueryResult]
+    /// into [`LegacyQueryResult`][crate::transport::legacy_query_result::LegacyQueryResult].
+    #[error("Failed to convert `QueryResult` into `LegacyQueryResult`: {0}")]
+    IntoLegacyQueryResultError(#[from] IntoLegacyQueryResultError),
 }
 
 /// A protocol error.
