@@ -301,7 +301,7 @@ pub enum PreparedParseError {
     #[error("Invalid result metadata: {0}")]
     ResultMetadataParseError(ResultMetadataParseError),
     #[error("Invalid prepared metadata: {0}")]
-    PreparedMetadataParseError(ResultMetadataParseError),
+    PreparedMetadataParseError(PreparedMetadataParseError),
     #[error("Non-zero paging state in result metadata: {0:?}")]
     NonZeroPagingState(Arc<[u8]>),
 }
@@ -327,22 +327,57 @@ pub enum RowsParseError {
 }
 
 /// An error type returned when deserialization
-/// of `[Result/Prepared]Metadata` failed.
+/// of statement's prepared metadata failed.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum PreparedMetadataParseError {
+    /// Failed to parse metadata flags.
+    #[error("Malformed metadata flags: {0}")]
+    FlagsParseError(LowLevelDeserializationError),
+
+    /// Failed to parse column count.
+    #[error("Malformed column count: {0}")]
+    ColumnCountParseError(LowLevelDeserializationError),
+
+    /// Failed to parse partition key count.
+    #[error("Malformed partition key count: {0}")]
+    PkCountParseError(LowLevelDeserializationError),
+
+    /// Failed to parse partition key index.
+    #[error("Malformed partition key index: {0}")]
+    PkIndexParseError(LowLevelDeserializationError),
+
+    /// Failed to parse global table spec.
+    #[error("Invalid global table spec: {0}")]
+    GlobalTableSpecParseError(#[from] TableSpecParseError),
+
+    /// Failed to parse column spec.
+    #[error("Invalid column spec: {0}")]
+    ColumnSpecParseError(#[from] ColumnSpecParseError),
+}
+
+/// An error type returned when deserialization
+/// of result metadata failed.
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
 pub enum ResultMetadataParseError {
+    /// Failed to parse metadata flags.
     #[error("Malformed metadata flags: {0}")]
     FlagsParseError(LowLevelDeserializationError),
+
+    /// Failed to parse column count.
     #[error("Malformed column count: {0}")]
     ColumnCountParseError(LowLevelDeserializationError),
-    #[error("Malformed partition key count: {0}")]
-    PkCountParseError(LowLevelDeserializationError),
-    #[error("Malformed partition key index: {0}")]
-    PkIndexParseError(LowLevelDeserializationError),
+
+    /// Failed to parse paging state response.
     #[error("Malformed paging state: {0}")]
     PagingStateParseError(LowLevelDeserializationError),
+
+    /// Failed to parse global table spec.
     #[error("Invalid global table spec: {0}")]
     GlobalTableSpecParseError(#[from] TableSpecParseError),
+
+    /// Failed to parse column spec.
     #[error("Invalid column spec: {0}")]
     ColumnSpecParseError(#[from] ColumnSpecParseError),
 }

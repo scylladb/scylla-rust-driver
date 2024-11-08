@@ -1,8 +1,9 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
-    LowLevelDeserializationError, PreparedParseError, ResultMetadataParseError, RowsParseError,
-    SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
+    LowLevelDeserializationError, PreparedMetadataParseError, PreparedParseError,
+    ResultMetadataParseError, RowsParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
+    TableSpecParseError,
 };
 use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::event::SchemaChangeEvent;
@@ -1274,22 +1275,22 @@ impl RawMetadataAndRawRows {
 
 fn deser_prepared_metadata(
     buf: &mut &[u8],
-) -> StdResult<PreparedMetadata, ResultMetadataParseError> {
+) -> StdResult<PreparedMetadata, PreparedMetadataParseError> {
     let flags = types::read_int(buf)
-        .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
+        .map_err(|err| PreparedMetadataParseError::FlagsParseError(err.into()))?;
     let global_tables_spec = flags & 0x0001 != 0;
 
     let col_count =
-        types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
+        types::read_int_length(buf).map_err(PreparedMetadataParseError::ColumnCountParseError)?;
 
     let pk_count: usize =
-        types::read_int_length(buf).map_err(ResultMetadataParseError::PkCountParseError)?;
+        types::read_int_length(buf).map_err(PreparedMetadataParseError::PkCountParseError)?;
 
     let mut pk_indexes = Vec::with_capacity(pk_count);
     for i in 0..pk_count {
         pk_indexes.push(PartitionKeyIndex {
             index: types::read_short(buf)
-                .map_err(|err| ResultMetadataParseError::PkIndexParseError(err.into()))?
+                .map_err(|err| PreparedMetadataParseError::PkIndexParseError(err.into()))?
                 as u16,
             sequence: i as u16,
         });
