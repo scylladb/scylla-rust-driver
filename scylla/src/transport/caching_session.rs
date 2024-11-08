@@ -428,7 +428,7 @@ mod tests {
             .execute_unpaged("select * from test_table", &[])
             .await
             .unwrap();
-        let result_rows = result.into_rows_result().unwrap().unwrap();
+        let result_rows = result.into_rows_result().unwrap();
 
         assert_eq!(1, session.cache.len());
         assert_eq!(1, result_rows.rows_num());
@@ -438,7 +438,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result_rows = result.into_rows_result().unwrap().unwrap();
+        let result_rows = result.into_rows_result().unwrap();
 
         assert_eq!(1, session.cache.len());
         assert_eq!(1, result_rows.rows_num());
@@ -485,7 +485,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.into_rows_result().unwrap().unwrap().rows_num());
+        assert_eq!(1, result.into_rows_result().unwrap().rows_num());
     }
 
     async fn assert_test_batch_table_rows_contain(
@@ -497,7 +497,6 @@ mod tests {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .rows::<(i32, i32)>()
             .unwrap()
@@ -709,7 +708,6 @@ mod tests {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .rows::<(i32, i64)>()
             .unwrap()

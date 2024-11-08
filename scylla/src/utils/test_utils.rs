@@ -50,7 +50,6 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .single_row()
         .unwrap();
 
@@ -108,10 +107,9 @@ pub async fn scylla_supports_tablets(session: &Session) -> bool {
         )
         .await
         .unwrap()
-        .into_rows_result()
-        .unwrap();
+        .into_rows_result();
 
-    result.map_or(false, |rows_result| rows_result.single_row::<Row>().is_ok())
+    result.is_ok_and(|rows_result| rows_result.single_row::<Row>().is_ok())
 }
 
 #[cfg(test)]

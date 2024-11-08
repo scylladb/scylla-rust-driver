@@ -514,11 +514,9 @@ impl GenericSession<CurrentDeserializationApi> {
     ///     .await?
     ///     .into_rows_result()?;
     ///
-    /// if let Some(rows) = query_rows {
-    ///     for row in rows.rows()? {
-    ///         // Parse row as int and text.
-    ///         let (int_val, text_val): (i32, &str) = row?;
-    ///     }
+    /// for row in query_rows.rows()? {
+    ///     // Parse row as int and text.
+    ///     let (int_val, text_val): (i32, &str) = row?;
     /// }
     /// # Ok(())
     /// # }
@@ -562,7 +560,6 @@ impl GenericSession<CurrentDeserializationApi> {
     ///    // Do something with a single page of results.
     ///    for row in res
     ///        .into_rows_result()?
-    ///        .unwrap()
     ///        .rows::<(i32, &str)>()?
     ///    {
     ///        let (a, b) = row?;
@@ -725,7 +722,6 @@ impl GenericSession<CurrentDeserializationApi> {
     ///    // Do something with a single page of results.
     ///    for row in res
     ///        .into_rows_result()?
-    ///        .unwrap()
     ///        .rows::<(i32, &str)>()?
     ///    {
     ///        let (a, b) = row?;
@@ -1801,13 +1797,8 @@ where
         let maybe_tracing_info: Option<TracingInfo> = traces_session_res
             .into_rows_result()
             .map_err(|err| {
-                ProtocolError::Tracing(TracingProtocolError::TracesSessionResultMetadataParseError(
-                    err,
-                ))
+                ProtocolError::Tracing(TracingProtocolError::TracesSessionIntoRowsResultError(err))
             })?
-            .ok_or(ProtocolError::Tracing(
-                TracingProtocolError::TracesSessionNotRows,
-            ))?
             .maybe_first_row()
             .map_err(|err| match err {
                 MaybeFirstRowError::TypeCheckFailed(e) => {
@@ -1824,16 +1815,9 @@ where
         };
 
         // Get tracing events
-        let tracing_event_rows_result = traces_events_res
-            .into_rows_result()
-            .map_err(|err| {
-                ProtocolError::Tracing(TracingProtocolError::TracesEventsResultMetadataParseError(
-                    err,
-                ))
-            })?
-            .ok_or(ProtocolError::Tracing(
-                TracingProtocolError::TracesEventsNotRows,
-            ))?;
+        let tracing_event_rows_result = traces_events_res.into_rows_result().map_err(|err| {
+            ProtocolError::Tracing(TracingProtocolError::TracesEventsIntoRowsResultError(err))
+        })?;
         let tracing_event_rows = tracing_event_rows_result.rows().map_err(|err| match err {
             RowsError::TypeCheckFailed(err) => {
                 ProtocolError::Tracing(TracingProtocolError::TracesEventsInvalidColumnType(err))

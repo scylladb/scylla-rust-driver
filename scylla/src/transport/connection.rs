@@ -1437,12 +1437,9 @@ impl Connection {
             .into_rows_result()
             .map_err(|err| {
                 QueryError::ProtocolError(ProtocolError::SchemaVersionFetch(
-                    SchemaVersionFetchError::ResultMetadataParseError(err),
+                    SchemaVersionFetchError::TracesEventsIntoRowsResultError(err),
                 ))
             })?
-            .ok_or(QueryError::ProtocolError(
-                ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::ResultNotRows),
-            ))?
             .single_row::<(Uuid,)>()
             .map_err(|err| {
                 ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::SingleRowError(err))
@@ -2624,7 +2621,6 @@ mod tests {
                 .await
                 .unwrap()
                 .into_rows_result()
-                .unwrap()
                 .unwrap()
                 .rows::<(i32, Vec<u8>)>()
                 .unwrap()

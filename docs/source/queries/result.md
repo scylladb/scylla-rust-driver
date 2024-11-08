@@ -41,20 +41,18 @@ Additionally, [`QueryResult`](https://docs.rs/scylla/latest/scylla/transport/que
 let result = session
     .query_unpaged("SELECT a from ks.tab", &[])
     .await?
-    .into_rows_result()?
-    .unwrap();
+    .into_rows_result()?;
 
 for row in result.rows::<(i32,)>()? {
     let (int_value,): (i32,) = row?;
 }
 
 // first_row gets the first row and parses it as the given type
-let first_int_val: Option<(i32,)> = session
+let first_int_val: (i32,) = session
     .query_unpaged("SELECT a from ks.tab", &[])
     .await?
     .into_rows_result()?
-    .map(|res| res.first_row::<(i32,)>())
-    .transpose()?;
+    .first_row::<(i32,)>()?;
 
 // result_not_rows fails when the response is rows
 session.query_unpaged("INSERT INTO ks.tab (a) VALUES (0)", &[]).await?.result_not_rows()?;
@@ -75,13 +73,13 @@ To properly handle `NULL` values parse column as an `Option<>`:
 use scylla::IntoTypedRows;
 
 // Parse row as two columns containing an int and text which might be null
-if let Some(rows_result) = session.query_unpaged("SELECT a, b from ks.tab", &[])
+let rows_result = session
+    .query_unpaged("SELECT a, b from ks.tab", &[])
     .await?
-    .into_rows_result()?
-{
-    for row in rows_result.rows::<(i32, Option<&str>)>()? {
-        let (int_value, str_or_null): (i32, Option<&str>) = row?;
-    }
+    .into_rows_result()?;
+
+for row in rows_result.rows::<(i32, Option<&str>)>()? {
+    let (int_value, str_or_null): (i32, Option<&str>) = row?;
 }
 # Ok(())
 # }
@@ -111,13 +109,13 @@ struct MyRow {
 }
 
 // Parse row as two columns containing an int and text which might be null
-if let Some(result_rows) = session.query_unpaged("SELECT a, b from ks.tab", &[])
+let result_rows = session
+    .query_unpaged("SELECT a, b from ks.tab", &[])
     .await?
-    .into_rows_result()?
-{
-    for row in result_rows.rows::<MyRow>()? {
-        let my_row: MyRow = row?;
-    }
+    .into_rows_result()?;
+
+for row in result_rows.rows::<MyRow>()? {
+    let my_row: MyRow = row?;
 }
 # Ok(())
 # }

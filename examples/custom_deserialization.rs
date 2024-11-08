@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use scylla::deserialize::DeserializeValue;
 use scylla::frame::response::result::ColumnType;
 use scylla::transport::session::Session;
@@ -55,8 +55,7 @@ async fn main() -> Result<()> {
             (),
         )
         .await?
-        .into_rows_result()?
-        .context("Expected Result:Rows response, got a different Result response.")?;
+        .into_rows_result()?;
 
     let (v,) = rows_result.single_row::<(MyType,)>()?;
     assert_eq!(v, MyType("asdf"));

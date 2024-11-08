@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use scylla::frame::response::result::Row;
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
@@ -39,8 +39,7 @@ async fn main() -> Result<()> {
     let rows_result = session
         .query_unpaged("SELECT pk, ck, value FROM examples_ks.get_by_name", &[])
         .await?
-        .into_rows_result()?
-        .context("Response is not of Rows type")?;
+        .into_rows_result()?;
     let col_specs = rows_result.column_specs();
     let (ck_idx, _) = col_specs
         .get_by_name("ck")

@@ -19,7 +19,6 @@ use scylla_cql::{
             CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError,
             CqlResponseParseError, CqlResultParseError, CqlSupportedParseError,
             FrameBodyExtensionsParseError, FrameHeaderParseError,
-            ResultMetadataAndRowsCountParseError,
         },
         request::CqlRequestKind,
         response::CqlResponseKind,
@@ -36,8 +35,9 @@ use thiserror::Error;
 use crate::{authentication::AuthError, frame::response};
 
 use super::{
-    iterator::NextRowError, legacy_query_result::IntoLegacyQueryResultError,
-    query_result::SingleRowError,
+    iterator::NextRowError,
+    legacy_query_result::IntoLegacyQueryResultError,
+    query_result::{IntoRowsResultError, SingleRowError},
 };
 
 /// Error that occurred during query execution
@@ -373,13 +373,9 @@ pub enum UseKeyspaceProtocolError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum SchemaVersionFetchError {
-    /// Schema version query returned non-rows result.
-    #[error("Schema version query returned non-rows result")]
-    ResultNotRows,
-
-    /// Failed to lazily deserialize result metadata.
-    #[error("Failed to lazily deserialize result metadata")]
-    ResultMetadataParseError(ResultMetadataAndRowsCountParseError),
+    /// Failed to convert schema version query result into rows result.
+    #[error("Failed to convert schema version query result into rows result: {0}")]
+    TracesEventsIntoRowsResultError(IntoRowsResultError),
 
     /// Failed to deserialize a single row from schema version query response.
     #[error(transparent)]
@@ -390,15 +386,9 @@ pub enum SchemaVersionFetchError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum TracingProtocolError {
-    /// Response to system_traces.session is not RESULT:Rows.
-    #[error("Response to system_traces.session is not RESULT:Rows")]
-    TracesSessionNotRows,
-
-    /// Failed to lazily deserialize result metadata from response to system_traces.session query.
-    #[error(
-        "Failed to lazily deserialize result metadata from response to system_traces.session query"
-    )]
-    TracesSessionResultMetadataParseError(ResultMetadataAndRowsCountParseError),
+    /// Failed to convert result of system_traces.session query to rows result.
+    #[error("Failed to convert result of system_traces.session query to rows result")]
+    TracesSessionIntoRowsResultError(IntoRowsResultError),
 
     /// system_traces.session has invalid column type.
     #[error("system_traces.session has invalid column type: {0}")]
@@ -408,15 +398,9 @@ pub enum TracingProtocolError {
     #[error("Response to system_traces.session failed to deserialize: {0}")]
     TracesSessionDeserializationFailed(DeserializationError),
 
-    /// Response to system_traces.events is not RESULT:Rows.
-    #[error("Response to system_traces.events is not RESULT:Rows")]
-    TracesEventsNotRows,
-
-    /// Failed to lazily deserialize result metadata from response to system_traces.events query.
-    #[error(
-        "Failed to lazily deserialize result metadata from response to system_traces.events query"
-    )]
-    TracesEventsResultMetadataParseError(ResultMetadataAndRowsCountParseError),
+    /// Failed to convert result of system_traces.events query to rows result.
+    #[error("Failed to convert result of system_traces.events query to rows result")]
+    TracesEventsIntoRowsResultError(IntoRowsResultError),
 
     /// system_traces.events has invalid column type.
     #[error("system_traces.events has invalid column type: {0}")]
