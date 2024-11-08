@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::Stream;
-use scylla_cql::frame::frame_errors::{ResultMetadataAndRowsCountParseError, RowsParseError};
+use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::deserialize::result::RawRowLendingIterator;
@@ -1075,7 +1075,7 @@ mod legacy {
     }
 
     impl Stream for LegacyRowIterator {
-        type Item = Result<Row, QueryError>;
+        type Item = Result<Row, LegacyNextRowError>;
 
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             let mut s = self.as_mut();
@@ -1085,8 +1085,8 @@ mod legacy {
 
             let next_column_iter = ready_some_ok!(next_fut.poll(cx));
 
-            let next_ready_row =
-                Row::deserialize(next_column_iter).map_err(|e| RowsParseError::from(e).into());
+            let next_ready_row = Row::deserialize(next_column_iter)
+                .map_err(LegacyNextRowError::RowDeserializationError);
 
             Poll::Ready(Some(next_ready_row))
         }
@@ -1147,6 +1147,10 @@ mod legacy {
         /// Parsing values in row as given types failed
         #[error(transparent)]
         FromRowError(#[from] FromRowError),
+
+        /// Row deserialization error
+        #[error("Row deserialization error: {0}")]
+        RowDeserializationError(#[from] DeserializationError),
     }
 
     /// Fetching pages is asynchronous so `LegacyTypedRowIterator` does not implement the `Iterator` trait.\
