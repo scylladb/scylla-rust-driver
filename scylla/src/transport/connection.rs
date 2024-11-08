@@ -1434,7 +1434,12 @@ impl Connection {
         let (version_id,) = self
             .query_unpaged(LOCAL_VERSION)
             .await?
-            .into_rows_result()?
+            .into_rows_result()
+            .map_err(|err| {
+                QueryError::ProtocolError(ProtocolError::SchemaVersionFetch(
+                    SchemaVersionFetchError::ResultMetadataParseError(err),
+                ))
+            })?
             .ok_or(QueryError::ProtocolError(
                 ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::ResultNotRows),
             ))?

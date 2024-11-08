@@ -378,6 +378,20 @@ pub enum PreparedMetadataParseError {
     ColumnSpecParseError(#[from] ColumnSpecParseError),
 }
 
+/// An error returned when lazy deserialization of
+/// result metadata and rows count fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum ResultMetadataAndRowsCountParseError {
+    /// Failed to deserialize result metadata.
+    #[error("Failed to lazily deserialize result metadata: {0}")]
+    ResultMetadataParseError(#[from] ResultMetadataParseError),
+
+    /// Received malformed rows count from the server.
+    #[error("Malformed rows count: {0}")]
+    RowsCountParseError(LowLevelDeserializationError),
+}
+
 /// An error type returned when deserialization
 /// of result metadata failed.
 #[non_exhaustive]

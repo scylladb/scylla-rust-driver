@@ -1,7 +1,7 @@
 use crate::frame::response::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
-use scylla_cql::frame::frame_errors::RowsParseError;
+use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::response::result::{self, ResultMetadataHolder};
 use scylla_cql::types::deserialize::{DeserializationError, TypeCheckError};
 use thiserror::Error;
@@ -181,10 +181,9 @@ impl LegacyQueryResult {
 #[non_exhaustive]
 #[derive(Error, Clone, Debug)]
 pub enum IntoLegacyQueryResultError {
-    // TODO: Replace RowsParseError with narrower error. Done in later commit.
     /// Failed to lazily deserialize result metadata.
     #[error("Failed to lazily deserialize result metadata: {0}")]
-    ResultMetadataParseError(#[from] RowsParseError),
+    ResultMetadataAndRowsCountParseError(#[from] ResultMetadataAndRowsCountParseError),
 
     /// Failed to perform the typecheck against [`Row`] type.
     #[error("Typecheck error: {0}")]

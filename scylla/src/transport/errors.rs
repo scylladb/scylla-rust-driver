@@ -18,7 +18,8 @@ use scylla_cql::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
             CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError,
             CqlResponseParseError, CqlResultParseError, CqlSupportedParseError,
-            FrameBodyExtensionsParseError, FrameHeaderParseError, RowsParseError,
+            FrameBodyExtensionsParseError, FrameHeaderParseError,
+            ResultMetadataAndRowsCountParseError, RowsParseError,
         },
         request::CqlRequestKind,
         response::CqlResponseKind,
@@ -101,6 +102,12 @@ pub enum QueryError {
     #[error("Request timeout: {0}")]
     RequestTimeout(String),
 
+    // TODO: This should not belong here, but it requires changes to error types
+    // returned in `iter` API. It's going to be addressed later in this PR.
+    /// Failed to lazily deserialize result metadata.
+    #[error("Failed to lazily deserialize result metadata: {0}")]
+    ResultMetadataParseError(#[from] ResultMetadataAndRowsCountParseError),
+
     /// Failed to convert [`QueryResult`][crate::transport::query_result::QueryResult]
     /// into [`LegacyQueryResult`][crate::transport::legacy_query_result::LegacyQueryResult].
     #[error("Failed to convert `QueryResult` into `LegacyQueryResult`: {0}")]
@@ -172,6 +179,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::IntoLegacyQueryResultError(e) => {
                 NewSessionError::IntoLegacyQueryResultError(e)
             }
+            QueryError::ResultMetadataParseError(e) => NewSessionError::ResultMetadataParseError(e),
         }
     }
 }
@@ -275,6 +283,12 @@ pub enum NewSessionError {
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
 
+    // TODO: This should not belong here, but it requires changes to error types
+    // returned in `iter` API. It's going to be addressed later in this PR.
+    /// Failed to lazily deserialize result metadata.
+    #[error("Failed to lazily deserialize result metadata: {0}")]
+    ResultMetadataParseError(#[from] ResultMetadataAndRowsCountParseError),
+
     /// Failed to convert [`QueryResult`][crate::transport::query_result::QueryResult]
     /// into [`LegacyQueryResult`][crate::transport::legacy_query_result::LegacyQueryResult].
     #[error("Failed to convert `QueryResult` into `LegacyQueryResult`: {0}")]
@@ -364,8 +378,15 @@ pub enum UseKeyspaceProtocolError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum SchemaVersionFetchError {
+    /// Schema version query returned non-rows result.
     #[error("Schema version query returned non-rows result")]
     ResultNotRows,
+
+    /// Failed to lazily deserialize result metadata.
+    #[error("Failed to lazily deserialize result metadata")]
+    ResultMetadataParseError(ResultMetadataAndRowsCountParseError),
+
+    /// Failed to deserialize a single row from schema version query response.
     #[error(transparent)]
     SingleRowError(SingleRowError),
 }
@@ -378,6 +399,12 @@ pub enum TracingProtocolError {
     #[error("Response to system_traces.session is not RESULT:Rows")]
     TracesSessionNotRows,
 
+    /// Failed to lazily deserialize result metadata from response to system_traces.session query.
+    #[error(
+        "Failed to lazily deserialize result metadata from response to system_traces.session query"
+    )]
+    TracesSessionResultMetadataParseError(ResultMetadataAndRowsCountParseError),
+
     /// system_traces.session has invalid column type.
     #[error("system_traces.session has invalid column type: {0}")]
     TracesSessionInvalidColumnType(TypeCheckError),
@@ -389,6 +416,12 @@ pub enum TracingProtocolError {
     /// Response to system_traces.events is not RESULT:Rows.
     #[error("Response to system_traces.events is not RESULT:Rows")]
     TracesEventsNotRows,
+
+    /// Failed to lazily deserialize result metadata from response to system_traces.events query.
+    #[error(
+        "Failed to lazily deserialize result metadata from response to system_traces.events query"
+    )]
+    TracesEventsResultMetadataParseError(ResultMetadataAndRowsCountParseError),
 
     /// system_traces.events has invalid column type.
     #[error("system_traces.events has invalid column type: {0}")]

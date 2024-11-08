@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use thiserror::Error;
 use uuid::Uuid;
 
-use scylla_cql::frame::frame_errors::RowsParseError;
+use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::response::result::{
     ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, RawMetadataAndRawRows, Row, TableSpec,
 };
@@ -222,7 +222,9 @@ impl QueryResult {
     /// # }
     ///
     /// ```
-    pub fn into_rows_result(self) -> Result<Option<QueryRowsResult>, RowsParseError> {
+    pub fn into_rows_result(
+        self,
+    ) -> Result<Option<QueryRowsResult>, ResultMetadataAndRowsCountParseError> {
         let QueryResult {
             raw_metadata_and_rows,
             tracing_id,

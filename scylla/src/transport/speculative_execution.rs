@@ -96,6 +96,7 @@ fn can_be_ignored<ResT>(result: &Result<ResT, QueryError>) -> bool {
         Err(e) => match e {
             // Errors that will almost certainly appear for other nodes as well
             QueryError::BadQuery(_)
+            | QueryError::ResultMetadataParseError(_)
             | QueryError::CqlRequestSerialization(_)
             | QueryError::BodyExtensionsParseError(_)
             | QueryError::CqlResultParseError(_)

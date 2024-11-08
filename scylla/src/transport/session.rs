@@ -1799,7 +1799,12 @@ where
 
         // Get tracing info
         let maybe_tracing_info: Option<TracingInfo> = traces_session_res
-            .into_rows_result()?
+            .into_rows_result()
+            .map_err(|err| {
+                ProtocolError::Tracing(TracingProtocolError::TracesSessionResultMetadataParseError(
+                    err,
+                ))
+            })?
             .ok_or(ProtocolError::Tracing(
                 TracingProtocolError::TracesSessionNotRows,
             ))?
@@ -1819,12 +1824,16 @@ where
         };
 
         // Get tracing events
-        let tracing_event_rows_result =
-            traces_events_res
-                .into_rows_result()?
-                .ok_or(ProtocolError::Tracing(
-                    TracingProtocolError::TracesEventsNotRows,
-                ))?;
+        let tracing_event_rows_result = traces_events_res
+            .into_rows_result()
+            .map_err(|err| {
+                ProtocolError::Tracing(TracingProtocolError::TracesEventsResultMetadataParseError(
+                    err,
+                ))
+            })?
+            .ok_or(ProtocolError::Tracing(
+                TracingProtocolError::TracesEventsNotRows,
+            ))?;
         let tracing_event_rows = tracing_event_rows_result.rows().map_err(|err| match err {
             RowsError::TypeCheckFailed(err) => {
                 ProtocolError::Tracing(TracingProtocolError::TracesEventsInvalidColumnType(err))

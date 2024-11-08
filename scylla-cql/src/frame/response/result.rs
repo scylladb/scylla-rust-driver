@@ -2,8 +2,9 @@ use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
     LowLevelDeserializationError, PreparedMetadataParseError, PreparedParseError,
-    RawRowsAndPagingStateResponseParseError, ResultMetadataParseError, RowsParseError,
-    SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
+    RawRowsAndPagingStateResponseParseError, ResultMetadataAndRowsCountParseError,
+    ResultMetadataParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
+    TableSpecParseError,
 };
 use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::event::SchemaChangeEvent;
@@ -1187,17 +1188,16 @@ impl RawMetadataAndRawRows {
     fn metadata_deserializer(
         col_count: usize,
         global_tables_spec: bool,
-    ) -> impl for<'frame> FnOnce(&mut &'frame [u8]) -> StdResult<ResultMetadata<'frame>, RowsParseError>
-    {
+    ) -> impl for<'frame> FnOnce(
+        &mut &'frame [u8],
+    ) -> StdResult<ResultMetadata<'frame>, ResultMetadataParseError> {
         move |buf| {
             let server_metadata = {
                 let global_table_spec = global_tables_spec
                     .then(|| deser_table_spec(buf))
-                    .transpose()
-                    .map_err(ResultMetadataParseError::from)?;
+                    .transpose()?;
 
-                let col_specs = deser_col_specs_borrowed(buf, global_table_spec, col_count)
-                    .map_err(ResultMetadataParseError::from)?;
+                let col_specs = deser_col_specs_borrowed(buf, global_table_spec, col_count)?;
 
                 ResultMetadata {
                     col_count,
@@ -1212,7 +1212,9 @@ impl RawMetadataAndRawRows {
     ///
     /// If metadata is cached (in the PreparedStatement), it is reused (shared) from cache
     /// instead of deserializing.
-    pub fn deserialize_metadata(self) -> StdResult<DeserializedMetadataAndRawRows, RowsParseError> {
+    pub fn deserialize_metadata(
+        self,
+    ) -> StdResult<DeserializedMetadataAndRawRows, ResultMetadataAndRowsCountParseError> {
         let (metadata_deserialized, row_count_and_raw_rows) = match self.cached_metadata {
             Some(cached) if self.no_metadata => {
                 // Server sent no metadata, but we have metadata cached. This means that we asked the server
@@ -1257,7 +1259,7 @@ impl RawMetadataAndRawRows {
         let mut frame_slice = FrameSlice::new(&row_count_and_raw_rows);
 
         let rows_count: usize = types::read_int_length(frame_slice.as_slice_mut())
-            .map_err(RowsParseError::RowsCountParseError)?;
+            .map_err(ResultMetadataAndRowsCountParseError::RowsCountParseError)?;
 
         Ok(DeserializedMetadataAndRawRows {
             metadata: metadata_deserialized,
