@@ -2862,6 +2862,7 @@ mod latency_awareness {
                 | QueryError::TimeoutError
                 | QueryError::RequestTimeout(_)
                 | QueryError::ResultMetadataParseError(_)
+                | QueryError::NextRowError(_)
                 | QueryError::IntoLegacyQueryResultError(_) => true,
             }
         }

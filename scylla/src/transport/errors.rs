@@ -35,7 +35,10 @@ use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-use super::{legacy_query_result::IntoLegacyQueryResultError, query_result::SingleRowError};
+use super::{
+    iterator::NextRowError, legacy_query_result::IntoLegacyQueryResultError,
+    query_result::SingleRowError,
+};
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
@@ -101,6 +104,14 @@ pub enum QueryError {
     /// Client timeout occurred before any response arrived
     #[error("Request timeout: {0}")]
     RequestTimeout(String),
+
+    // TODO: This should not belong here, but it requires changes to error types
+    // returned in async iterator API. This should be handled in separate PR.
+    // The reason this needs to be included is that topology.rs makes use of iter API and returns QueryError.
+    // Once iter API is adjusted, we can then adjust errors returned by topology module (e.g. refactor MetadataError and not include it in QueryError).
+    /// An error occurred during async iteration over rows of result.
+    #[error("An error occurred during async iteration over rows of result: {0}")]
+    NextRowError(#[from] NextRowError),
 
     // TODO: This should not belong here, but it requires changes to error types
     // returned in `iter` API. It's going to be addressed later in this PR.
@@ -180,6 +191,7 @@ impl From<QueryError> for NewSessionError {
                 NewSessionError::IntoLegacyQueryResultError(e)
             }
             QueryError::ResultMetadataParseError(e) => NewSessionError::ResultMetadataParseError(e),
+            QueryError::NextRowError(e) => NewSessionError::NextRowError(e),
         }
     }
 }
@@ -284,7 +296,15 @@ pub enum NewSessionError {
     RequestTimeout(String),
 
     // TODO: This should not belong here, but it requires changes to error types
-    // returned in `iter` API. It's going to be addressed later in this PR.
+    // returned in async iterator API. This should be handled in separate PR.
+    // The reason this needs to be included is that topology.rs makes use of iter API and returns QueryError.
+    // Once iter API is adjusted, we can then adjust errors returned by topology module (e.g. refactor MetadataError and not include it in QueryError).
+    /// An error occurred during async iteration over rows of result.
+    #[error("An error occurred during async iteration over rows of result: {0}")]
+    NextRowError(#[from] NextRowError),
+
+    // TODO: This should not belong here, but it requires changes to error types
+    // returned in `iter` API. This should be handled in separate PR.
     /// Failed to lazily deserialize result metadata.
     #[error("Failed to lazily deserialize result metadata: {0}")]
     ResultMetadataParseError(#[from] ResultMetadataAndRowsCountParseError),
