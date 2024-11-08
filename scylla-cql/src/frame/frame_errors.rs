@@ -14,7 +14,6 @@ pub use super::request::{
 use super::response::result::TableSpec;
 use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
-use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use thiserror::Error;
 
 /// An error returned by `parse_response_body_extensions`.
@@ -228,11 +227,6 @@ pub enum CqlResultParseError {
     PreparedParseError(#[from] PreparedParseError),
     #[error("RESULT:Rows response deserialization failed: {0}")]
     RawRowsParseError(#[from] RawRowsAndPagingStateResponseParseError),
-
-    // TODO: This is required for `From<RowsParseError> for QueryError conversion`.
-    // It will be removed in later commits.
-    #[error("RESULT:Rows response deserialization failed: {0}")]
-    RowsParseError(#[from] RowsParseError),
 }
 
 #[non_exhaustive]
@@ -331,21 +325,6 @@ pub enum RawRowsAndPagingStateResponseParseError {
     /// Failed to parse paging state response.
     #[error("Malformed paging state: {0}")]
     PagingStateParseError(LowLevelDeserializationError),
-}
-
-/// An error type returned when deserialization
-/// of `RESULT::Rows` response fails.
-#[non_exhaustive]
-#[derive(Debug, Error, Clone)]
-pub enum RowsParseError {
-    #[error("Invalid result metadata: {0}")]
-    ResultMetadataParseError(#[from] ResultMetadataParseError),
-    #[error("Malformed rows count: {0}")]
-    RowsCountParseError(LowLevelDeserializationError),
-    #[error("Data type check prior to deserialization failed: {0}")]
-    IncomingDataTypeCheckError(#[from] TypeCheckError),
-    #[error("Data deserialization failed: {0}")]
-    DataDeserializationError(#[from] DeserializationError),
 }
 
 /// An error type returned when deserialization
