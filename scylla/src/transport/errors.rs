@@ -477,6 +477,14 @@ pub enum MetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum PeersMetadataError {
+    /// system.peers has invalid column type.
+    #[error("system.peers has invalid column type: {0}")]
+    SystemPeersInvalidColumnType(TypeCheckError),
+
+    /// system.local has invalid column type.
+    #[error("system.local has invalid column type: {0}")]
+    SystemLocalInvalidColumnType(TypeCheckError),
+
     /// Empty peers list returned during peers metadata fetch.
     #[error("Peers list is empty")]
     EmptyPeers,
