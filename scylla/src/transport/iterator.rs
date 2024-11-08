@@ -1104,7 +1104,7 @@ mod legacy {
 
     /// Couldn't get next typed row from the iterator
     #[derive(Error, Debug, Clone)]
-    pub enum NextRowError {
+    pub enum LegacyNextRowError {
         /// Query to fetch next page has failed
         #[error(transparent)]
         QueryError(#[from] QueryError),
@@ -1117,7 +1117,7 @@ mod legacy {
     /// Fetching pages is asynchronous so `LegacyTypedRowIterator` does not implement the `Iterator` trait.\
     /// Instead it uses the asynchronous `Stream` trait
     impl<RowT: FromRow> Stream for LegacyTypedRowIterator<RowT> {
-        type Item = Result<RowT, NextRowError>;
+        type Item = Result<RowT, LegacyNextRowError>;
 
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             let mut s = self.as_mut();
@@ -1131,4 +1131,4 @@ mod legacy {
     // LegacyTypedRowIterator can be moved freely for any RowT so it's Unpin
     impl<RowT> Unpin for LegacyTypedRowIterator<RowT> {}
 }
-pub use legacy::{LegacyRowIterator, LegacyTypedRowIterator, NextRowError};
+pub use legacy::{LegacyNextRowError, LegacyRowIterator, LegacyTypedRowIterator};
