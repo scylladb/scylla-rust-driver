@@ -347,7 +347,7 @@ pub enum BuiltinTypeCheckErrorKind {
 
     /// Duplicated column in DB metadata.
     DuplicatedColumn {
-        /// Column index of the second occurence of the column with the same name.
+        /// Column index of the second occurrence of the column with the same name.
         column_index: usize,
 
         /// The name of the duplicated column.
@@ -401,7 +401,7 @@ impl Display for BuiltinTypeCheckErrorKind {
             ),
             BuiltinTypeCheckErrorKind::DuplicatedColumn { column_name, column_index } => write!(
                 f,
-                "column {} occurs more than once in DB metadata; second occurence is at column index {}",
+                "column {} occurs more than once in DB metadata; second occurrence is at column index {}",
                 column_name,
                 column_index,
             ),

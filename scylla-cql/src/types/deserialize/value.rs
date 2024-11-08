@@ -1572,7 +1572,7 @@ pub enum TupleTypeCheckErrorKind {
         /// The index of the field whose type check failed.
         position: usize,
 
-        /// The type check error that occured.
+        /// The type check error that occurred.
         err: TypeCheckError,
     },
 }
@@ -1651,7 +1651,7 @@ pub enum UdtTypeCheckErrorKind {
         /// The name of the field whose type check failed.
         field_name: String,
 
-        /// Inner type check error that occured.
+        /// Inner type check error that occurred.
         err: TypeCheckError,
     },
 }
