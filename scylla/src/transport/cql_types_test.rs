@@ -1,4 +1,5 @@
 use crate as scylla;
+use crate::deserialize::DeserializeOwnedValue;
 use crate::frame::response::result::CqlValue;
 use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
 use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
@@ -6,7 +7,6 @@ use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
 use itertools::Itertools;
 use scylla_cql::frame::value::{CqlTimeuuid, CqlVarint};
-use scylla_cql::types::deserialize::value::DeserializeValue;
 use scylla_cql::types::serialize::value::SerializeValue;
 use scylla_macros::{DeserializeValue, SerializeValue};
 use std::cmp::PartialEq;
@@ -74,7 +74,7 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
 // Expected values and bound values are computed using T::from_str
 async fn run_tests<T>(tests: &[&str], type_name: &str)
 where
-    T: SerializeValue + for<'r> DeserializeValue<'r, 'r> + FromStr + Debug + Clone + PartialEq,
+    T: SerializeValue + DeserializeOwnedValue + FromStr + Debug + Clone + PartialEq,
 {
     let session: Session = init_test(type_name, type_name).await;
     session.await_schema_agreement().await.unwrap();
@@ -1799,7 +1799,7 @@ async fn test_udt_with_missing_field() {
         expected: TR,
     ) where
         TQ: SerializeValue,
-        TR: for<'r> DeserializeValue<'r, 'r> + PartialEq + Debug,
+        TR: DeserializeOwnedValue + PartialEq + Debug,
     {
         session
             .query_unpaged(

@@ -1,5 +1,5 @@
 use crate::batch::{Batch, BatchStatement};
-use crate::deserialize::DeserializeValue;
+use crate::deserialize::DeserializeOwnedValue;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
@@ -3100,7 +3100,7 @@ async fn test_deserialize_empty_collections() {
     session.use_keyspace(&ks, true).await.unwrap();
 
     async fn deserialize_empty_collection<
-        Collection: Default + for<'frame> DeserializeValue<'frame, 'frame> + SerializeValue,
+        Collection: Default + DeserializeOwnedValue + SerializeValue,
     >(
         session: &Session,
         collection_name: &str,

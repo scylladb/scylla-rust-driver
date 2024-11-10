@@ -230,6 +230,13 @@ pub mod deserialize {
             UdtIterator, UdtTypeCheckErrorKind,
         };
     }
+
+    // Shorthands for better readability.
+    #[cfg_attr(not(test), allow(unused))]
+    pub(crate) trait DeserializeOwnedValue: for<'r> DeserializeValue<'r, 'r> {}
+    impl<T> DeserializeOwnedValue for T where T: for<'r> DeserializeValue<'r, 'r> {}
+    pub(crate) trait DeserializeOwnedRow: for<'r> DeserializeRow<'r, 'r> {}
+    impl<T> DeserializeOwnedRow for T where T: for<'r> DeserializeRow<'r, 'r> {}
 }
 
 pub mod authentication;

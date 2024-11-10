@@ -24,6 +24,7 @@ use super::query_result::ColumnSpecs;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
+use crate::deserialize::DeserializeOwnedRow;
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row},
@@ -1076,7 +1077,7 @@ impl<RowT> TypedRowStream<RowT> {
 /// It only works with owned types! For example, &str is not supported.
 impl<RowT> Stream for TypedRowStream<RowT>
 where
-    RowT: for<'r> DeserializeRow<'r, 'r>,
+    RowT: DeserializeOwnedRow,
 {
     type Item = Result<RowT, QueryError>;
 

@@ -1,5 +1,5 @@
+use crate::deserialize::DeserializeOwnedValue;
 use crate::transport::session::Session;
-use scylla_cql::types::deserialize::value::DeserializeValue;
 
 use crate::frame::response::result::CqlValue;
 use crate::test_utils::{create_new_session_builder, setup_tracing};
@@ -36,7 +36,7 @@ async fn insert_and_select<InsertT, SelectT>(
     expected: &SelectT,
 ) where
     InsertT: SerializeValue,
-    SelectT: for<'r> DeserializeValue<'r, 'r> + PartialEq + std::fmt::Debug,
+    SelectT: DeserializeOwnedValue + PartialEq + std::fmt::Debug,
 {
     session
         .query_unpaged(

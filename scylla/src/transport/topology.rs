@@ -1,3 +1,4 @@
+use crate::deserialize::DeserializeOwnedRow;
 use crate::frame::response::event::Event;
 use crate::routing::Token;
 use crate::statement::query::Query;
@@ -15,7 +16,6 @@ use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 use scylla_cql::frame::frame_errors::RowsParseError;
-use scylla_cql::types::deserialize::row::DeserializeRow;
 use scylla_cql::types::deserialize::TypeCheckError;
 use scylla_macros::DeserializeRow;
 use std::borrow::BorrowMut;
@@ -930,7 +930,7 @@ fn query_filter_keyspace_name<'a, R>(
     convert_typecheck_error: impl FnOnce(TypeCheckError) -> MetadataError + 'a,
 ) -> impl Stream<Item = Result<R, QueryError>> + 'a
 where
-    R: for<'r> DeserializeRow<'r, 'r> + 'static,
+    R: DeserializeOwnedRow + 'static,
 {
     let conn = conn.clone();
 
