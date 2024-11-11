@@ -307,20 +307,26 @@ pub use scylla_cql::macros::SerializeRow;
 /// macro itself, so in those cases the user must provide an alternative path
 /// to either the `scylla` or `scylla-cql` crate.
 ///
-/// `#[scylla(enforce_order)]`
 ///
-/// By default, the generated deserialization code will be insensitive
-/// to the UDT field order - when processing a field, it will look it up
-/// in the Rust struct with the corresponding field and set it. However,
-/// if the UDT field order is known to be the same both in the UDT
-/// and the Rust struct, then the `enforce_order` annotation can be used
-/// so that a more efficient implementation that does not perform lookups
-/// is be generated. The UDT field names will still be checked during the
-/// type check phase.
+/// `#[scylla(flavor = "flavor_name")]`
+///
+/// Allows to choose one of the possible "flavors", i.e. the way how the
+/// generated code will approach deserialization. Possible flavors are:
+///
+/// - `"match_by_name"` (default) - the generated implementation _does not
+///   require_ the fields in the Rust struct to be in the same order as the
+///   fields in the UDT. During deserialization, the implementation will take
+///   care to deserialize the fields in the order which the database expects.
+/// - `"enforce_order"` - the generated implementation _requires_ the fields
+///   in the Rust struct to be in the same order as the fields in the UDT.
+///   If the order is incorrect, type checking/deserialization will fail.
+///   This is a less robust flavor than `"match_by_name"`, but should be
+///   slightly more performant as it doesn't need to perform lookups by name.
+///   The UDT field names will still be checked during the type check phase.
 ///
 /// #[(scylla(skip_name_checks))]
 ///
-/// This attribute only works when used with `enforce_order`.
+/// This attribute only works when used with `flavor = "enforce_order"`.
 ///
 /// If set, the generated implementation will not verify the UDT field names at
 /// all. Because it only works with `enforce_order`, it will deserialize first
