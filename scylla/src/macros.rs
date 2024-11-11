@@ -443,19 +443,25 @@ pub use scylla_macros::DeserializeValue;
 /// macro itself, so in those cases the user must provide an alternative path
 /// to either the `scylla` or `scylla-cql` crate.
 ///
-/// `#[scylla(enforce_order)]`
+/// `#[scylla(flavor = "flavor_name")]`
 ///
-/// By default, the generated deserialization code will be insensitive
-/// to the column order - when processing a column, the corresponding Rust field
-/// will be looked up and the column will be deserialized based on its type.
-/// However, if the column order and the Rust field order is known to be the
-/// same,  then the `enforce_order` annotation can be used so that a more
-/// efficient implementation that does not perform lookups is be generated.
-/// The generated code will still check that the column and field names match.
+/// Allows to choose one of the possible "flavors", i.e. the way how the
+/// generated code will approach deserialization. Possible flavors are:
+///
+/// - `"match_by_name"` (default) - the generated implementation _does not
+///   require_ the fields in the Rust struct to be in the same order as the
+///   columns in the row. During deserialization, the implementation will take
+///   care to deserialize the columns in the order which the database provided.
+/// - `"enforce_order"` - the generated implementation _requires_ the fields
+///   in the Rust struct to be in the same order as the columns in the row.
+///   If the order is incorrect, type checking/deserialization will fail.
+///   This is a less robust flavor than `"match_by_name"`, but should be
+///   slightly more performant as it doesn't need to perform lookups by name.
+///   The generated code will still check that the column and field names match.
 ///
 /// #[(scylla(skip_name_checks))]
 ///
-/// This attribute only works when used with `enforce_order`.
+/// This attribute only works when used with `flavor = "enforce_order"`.
 ///
 /// If set, the generated implementation will not verify the column names at
 /// all. Because it only works with `enforce_order`, it will deserialize first

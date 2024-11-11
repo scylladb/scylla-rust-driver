@@ -91,7 +91,7 @@ struct TestUdtWithNoFieldsUnordered {}
 
 #[allow(unused)]
 #[derive(DeserializeRow)]
-#[scylla(crate = crate, enforce_order)]
+#[scylla(crate = crate, flavor = "enforce_order")]
 struct TestUdtWithNoFieldsOrdered {}
 
 #[test]
@@ -143,7 +143,7 @@ fn test_struct_deserialization_loose_ordering() {
 #[test]
 fn test_struct_deserialization_strict_ordering() {
     #[derive(DeserializeRow, PartialEq, Eq, Debug)]
-    #[scylla(crate = "crate", enforce_order)]
+    #[scylla(crate = "crate", flavor = "enforce_order")]
     struct MyRow<'a> {
         a: &'a str,
         b: Option<i32>,
@@ -180,7 +180,7 @@ fn test_struct_deserialization_strict_ordering() {
 #[test]
 fn test_struct_deserialization_no_name_check() {
     #[derive(DeserializeRow, PartialEq, Eq, Debug)]
-    #[scylla(crate = "crate", enforce_order, skip_name_checks)]
+    #[scylla(crate = "crate", flavor = "enforce_order", skip_name_checks)]
     struct MyRow<'a> {
         a: &'a str,
         b: Option<i32>,
@@ -623,7 +623,7 @@ fn test_struct_deserialization_errors() {
     // Strict ordering
     {
         #[derive(scylla_macros::DeserializeRow, PartialEq, Eq, Debug)]
-        #[scylla(crate = "crate", enforce_order)]
+        #[scylla(crate = "crate", flavor = "enforce_order")]
         struct MyRow<'a> {
             a: &'a str,
             #[scylla(skip)]
