@@ -2591,7 +2591,7 @@ mod tests {
     }
 
     #[derive(SerializeValue, Debug, PartialEq, Eq, Default)]
-    #[scylla(crate = crate, force_exact_match)]
+    #[scylla(crate = crate, forbid_excess_udt_fields)]
     struct TestStrictUdtWithFieldSorting {
         a: String,
         b: i32,
@@ -2647,7 +2647,7 @@ mod tests {
     }
 
     #[derive(SerializeValue, Debug, PartialEq, Eq, Default)]
-    #[scylla(crate = crate, flavor = "enforce_order", force_exact_match)]
+    #[scylla(crate = crate, flavor = "enforce_order", forbid_excess_udt_fields)]
     struct TestStrictUdtWithEnforcedOrder {
         a: String,
         b: i32,

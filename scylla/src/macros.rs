@@ -44,12 +44,12 @@ pub use scylla_cql::macros::IntoUserType;
 /// - serialization will succeed in "match_by_name" flavor (default). Missing
 ///   fields in the middle of UDT will be sent as NULLs, missing fields at the end will not be sent
 ///   at all.
-/// - serialization will succed if suffix of UDT fields is missing. If there are missing fields in the
+/// - serialization will succeed if suffix of UDT fields is missing. If there are missing fields in the
 ///   middle it will fail. Note that if "skip_name_checks" is enabled, and the types happen to match,
 ///   it is possible for serialization to succeed with unexpected result.
 ///
 /// This behavior is the default to support ALTERing UDTs by adding new fields.
-/// You can require exact match of fields using `force_exact_match` attribute.
+/// You can forbid excess fields in the UDT using `forbid_excess_udt_fields` attribute.
 ///
 /// In case of failure, either [`BuiltinTypeCheckError`](crate::serialize::value::BuiltinTypeCheckError)
 /// or [`BuiltinSerializationError`](crate::serialize::value::BuiltinSerializationError)
@@ -125,7 +125,7 @@ pub use scylla_cql::macros::IntoUserType;
 /// struct field names and UDT field names, i.e. it's OK if i-th field has a
 /// different name in Rust and in the UDT. Fields are still being type-checked.
 ///
-/// `#[scylla(force_exact_match)]`
+/// `#[scylla(forbid_excess_udt_fields)]`
 ///
 /// Forces Rust struct to have all the fields present in UDT, otherwise
 /// serialization fails.

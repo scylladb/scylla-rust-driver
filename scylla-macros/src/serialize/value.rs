@@ -19,8 +19,14 @@ struct Attributes {
     #[darling(default)]
     skip_name_checks: bool,
 
+    // If true, then the type checking code will require that the UDT does not
+    // contain excess fields at its suffix. Otherwise, if UDT has some fields
+    // at its suffix that do not correspond to Rust struct's fields,
+    // they will be sent as NULLs (if they are in the middle of the UDT) or not
+    // sent at all (if they are in the prefix of the UDT), which means that
+    // the DB will interpret them as NULLs anyway.
     #[darling(default)]
-    force_exact_match: bool,
+    forbid_excess_udt_fields: bool,
 }
 
 impl Attributes {
@@ -227,21 +233,25 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
         let udt_field_names = rust_field_names.clone(); // For now, it's the same
         let field_types = self.ctx.fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
 
-        let missing_rust_field_expression: syn::Expr = if self.ctx.attributes.force_exact_match {
-            parse_quote! {
-                return ::std::result::Result::Err(mk_typck_err(
-                    #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
-                        field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),
-                    }
-                ))
-            }
-        } else {
-            parse_quote! {
-                skipped_fields += 1
-            }
-        };
+        let missing_rust_field_expression: syn::Expr =
+            if self.ctx.attributes.forbid_excess_udt_fields {
+                parse_quote! {
+                    return ::std::result::Result::Err(mk_typck_err(
+                        #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
+                            field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),
+                        }
+                    ))
+                }
+            } else {
+                parse_quote! {
+                    skipped_fields += 1
+                }
+            };
 
-        let serialize_missing_nulls_statement: syn::Stmt = if self.ctx.attributes.force_exact_match
+        let serialize_missing_nulls_statement: syn::Stmt = if self
+            .ctx
+            .attributes
+            .forbid_excess_udt_fields
         {
             // Not sure if there is better way to create no-op statement
             // parse_quote!{} / parse_quote!{ ; } doesn't work
@@ -287,7 +297,7 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
         // nothing for those fields at the end of UDT. While executing the loop
         // we don't know if there will be any more present fields. The solution is
         // to count how many fields we missed and send them when we find any present field.
-        if !self.ctx.attributes.force_exact_match {
+        if !self.ctx.attributes.forbid_excess_udt_fields {
             statements.push(parse_quote! {
                 let mut skipped_fields = 0;
             });
@@ -445,7 +455,7 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
             });
         }
 
-        if self.ctx.attributes.force_exact_match {
+        if self.ctx.attributes.forbid_excess_udt_fields {
             // Check whether there are some fields remaining
             statements.push(parse_quote! {
                 if let Some((field_name, typ)) = field_iter.next() {
