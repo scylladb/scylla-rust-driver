@@ -1,4 +1,4 @@
-use darling::ToTokens;
+use darling::{FromMeta, ToTokens};
 use proc_macro::TokenStream;
 
 mod from_row;
@@ -6,6 +6,24 @@ mod from_user_type;
 mod into_user_type;
 mod parser;
 mod value_list;
+
+// Flavor of serialization/deserialization macros ({De,S}erialize{Value,Row}).
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+enum Flavor {
+    #[default]
+    MatchByName,
+    EnforceOrder,
+}
+
+impl FromMeta for Flavor {
+    fn from_string(value: &str) -> darling::Result<Self> {
+        match value {
+            "match_by_name" => Ok(Self::MatchByName),
+            "enforce_order" => Ok(Self::EnforceOrder),
+            _ => Err(darling::Error::unknown_value(value)),
+        }
+    }
+}
 
 mod serialize;
 

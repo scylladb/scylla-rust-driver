@@ -5,7 +5,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use syn::parse_quote;
 
-use super::Flavor;
+use crate::Flavor;
 
 #[derive(FromAttributes)]
 #[darling(attributes(scylla))]
