@@ -1585,6 +1585,8 @@ where
                                 serial_consistency,
                             )
                             .await
+                            .map_err(UserRequestError::into_query_error)
+                            .and_then(QueryResponse::into_query_result)
                     }
                 },
                 &span,
