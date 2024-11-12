@@ -1,10 +1,9 @@
 use self::latency_awareness::LatencyAwareness;
 pub use self::latency_awareness::LatencyAwarenessBuilder;
 
-use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
+use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo, UserRequestError};
 use crate::{
     routing::{Shard, Token},
-    transport::errors::QueryError,
     transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
 };
 use itertools::{Either, Itertools};
@@ -567,7 +566,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         _routing_info: &RoutingInfo,
         latency: Duration,
         node: NodeRef<'_>,
-        error: &QueryError,
+        error: &UserRequestError,
     ) {
         if let Some(latency_awareness) = self.latency_awareness.as_ref() {
             if LatencyAwareness::reliable_latency_measure(error) {
@@ -2550,10 +2549,9 @@ mod latency_awareness {
     use uuid::Uuid;
 
     use crate::{
-        load_balancing::NodeRef,
+        load_balancing::{NodeRef, UserRequestError},
         routing::Shard,
-        transport::errors::{DbError, QueryError},
-        transport::node::Node,
+        transport::{errors::DbError, node::Node},
     };
     use std::{
         collections::HashMap,
@@ -2837,33 +2835,27 @@ mod latency_awareness {
             }
         }
 
-        pub(crate) fn reliable_latency_measure(error: &QueryError) -> bool {
+        pub(crate) fn reliable_latency_measure(error: &UserRequestError) -> bool {
             match error {
                 // "fast" errors, i.e. ones that are returned quickly after the query begins
-                QueryError::BadQuery(_)
-                | QueryError::CqlRequestSerialization(_)
-                | QueryError::BrokenConnection(_)
-                | QueryError::ConnectionPoolError(_)
-                | QueryError::EmptyPlan
-                | QueryError::UnableToAllocStreamId
-                | QueryError::DbError(DbError::IsBootstrapping, _)
-                | QueryError::DbError(DbError::Unavailable { .. }, _)
-                | QueryError::DbError(DbError::Unprepared { .. }, _)
-                | QueryError::DbError(DbError::Overloaded { .. }, _)
-                | QueryError::DbError(DbError::RateLimitReached { .. }, _) => false,
+                UserRequestError::CqlRequestSerialization(_)
+                | UserRequestError::BrokenConnectionError(_)
+                | UserRequestError::UnableToAllocStreamId
+                | UserRequestError::DbError(DbError::IsBootstrapping, _)
+                | UserRequestError::DbError(DbError::Unavailable { .. }, _)
+                | UserRequestError::DbError(DbError::Unprepared { .. }, _)
+                | UserRequestError::DbError(DbError::Overloaded { .. }, _)
+                | UserRequestError::DbError(DbError::RateLimitReached { .. }, _)
+                | UserRequestError::SerializationError(_) => false,
 
                 // "slow" errors, i.e. ones that are returned after considerable time of query being run
-                #[allow(deprecated)]
-                QueryError::DbError(_, _)
-                | QueryError::CqlResultParseError(_)
-                | QueryError::CqlErrorParseError(_)
-                | QueryError::BodyExtensionsParseError(_)
-                | QueryError::MetadataError(_)
-                | QueryError::ProtocolError(_)
-                | QueryError::TimeoutError
-                | QueryError::RequestTimeout(_)
-                | QueryError::NextRowError(_)
-                | QueryError::IntoLegacyQueryResultError(_) => true,
+                UserRequestError::DbError(_, _)
+                | UserRequestError::CqlResultParseError(_)
+                | UserRequestError::CqlErrorParseError(_)
+                | UserRequestError::BodyExtensionsParseError(_)
+                | UserRequestError::RepreparedIdChanged { .. }
+                | UserRequestError::RepreparedIdMissingInBatch
+                | UserRequestError::UnexpectedResponse(_) => true,
             }
         }
     }
