@@ -663,12 +663,9 @@ impl QueryPager {
     /// It only allows deserializing owned types, because [Stream] is not lending.
     /// Begins with performing type check.
     #[inline]
-    pub fn rows_stream<'frame, 'metadata, RowT: 'static + DeserializeRow<'frame, 'metadata>>(
+    pub fn rows_stream<RowT: 'static + for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>>(
         self,
-    ) -> Result<TypedRowStream<RowT>, TypeCheckError>
-    where
-        'frame: 'metadata,
-    {
+    ) -> Result<TypedRowStream<RowT>, TypeCheckError> {
         TypedRowLendingStream::<RowT>::new(self).map(|typed_row_lending_stream| TypedRowStream {
             typed_row_lending_stream,
         })

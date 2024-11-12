@@ -233,10 +233,19 @@ pub mod deserialize {
 
     // Shorthands for better readability.
     #[cfg_attr(not(test), allow(unused))]
-    pub(crate) trait DeserializeOwnedValue: for<'r> DeserializeValue<'r, 'r> {}
-    impl<T> DeserializeOwnedValue for T where T: for<'r> DeserializeValue<'r, 'r> {}
-    pub(crate) trait DeserializeOwnedRow: for<'r> DeserializeRow<'r, 'r> {}
-    impl<T> DeserializeOwnedRow for T where T: for<'r> DeserializeRow<'r, 'r> {}
+    pub(crate) trait DeserializeOwnedValue:
+        for<'frame, 'metadata> DeserializeValue<'frame, 'metadata>
+    {
+    }
+    impl<T> DeserializeOwnedValue for T where
+        T: for<'frame, 'metadata> DeserializeValue<'frame, 'metadata>
+    {
+    }
+    pub(crate) trait DeserializeOwnedRow:
+        for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>
+    {
+    }
+    impl<T> DeserializeOwnedRow for T where T: for<'frame, 'metadata> DeserializeRow<'frame, 'metadata> {}
 }
 
 pub mod authentication;
