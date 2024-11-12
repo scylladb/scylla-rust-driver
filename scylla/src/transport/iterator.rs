@@ -634,28 +634,13 @@ impl QueryPager {
 
     /// Type-checks the iterator against given type.
     ///
-    /// This is automatically called upon transforming [QueryPager] into [TypedRowLendingStream].
+    /// This is automatically called upon transforming [QueryPager] into [TypedRowStream].
     /// Can be used with `next()` for manual deserialization. See `next()` for an example.
     #[inline]
     pub fn type_check<'frame, 'metadata, RowT: DeserializeRow<'frame, 'metadata>>(
         &self,
     ) -> Result<(), TypeCheckError> {
         RowT::type_check(self.column_specs().inner())
-    }
-
-    /// Casts the iterator to a given row type, enabling Stream'ed operations
-    /// on rows, which deserialize them on-the-fly to that given type.
-    /// It allows deserializing borrowed types, but hence cannot implement [Stream]
-    /// (because [Stream] is not lending).
-    /// Begins with performing type check.
-    #[inline]
-    pub fn rows_lending_stream<'frame, 'metadata, RowT: DeserializeRow<'frame, 'metadata>>(
-        self,
-    ) -> Result<TypedRowLendingStream<RowT>, TypeCheckError>
-    where
-        'frame: 'metadata,
-    {
-        TypedRowLendingStream::<RowT>::new(self)
     }
 
     /// Casts the iterator to a given row type, enabling [Stream]'ed operations
@@ -666,9 +651,7 @@ impl QueryPager {
     pub fn rows_stream<RowT: 'static + for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>>(
         self,
     ) -> Result<TypedRowStream<RowT>, TypeCheckError> {
-        TypedRowLendingStream::<RowT>::new(self).map(|typed_row_lending_stream| TypedRowStream {
-            typed_row_lending_stream,
-        })
+        TypedRowStream::<RowT>::new(self)
     }
 
     /// Converts this iterator into an iterator over rows parsed as given type,
@@ -982,18 +965,32 @@ impl QueryPager {
     }
 }
 
-/// Returned by [QueryPager::rows_lending_stream].
+/// Returned by [QueryPager::rows_stream].
 ///
-/// Does not implement [Stream], but permits deserialization of borrowed types.
+/// Implements [Stream], but only permits deserialization of owned types.
 /// To use [Stream] API (only accessible for owned types), use [QueryPager::rows_stream].
-pub struct TypedRowLendingStream<RowT> {
+pub struct TypedRowStream<RowT: 'static> {
     raw_row_lending_stream: QueryPager,
     _phantom: std::marker::PhantomData<RowT>,
 }
 
-impl<RowT> Unpin for TypedRowLendingStream<RowT> {}
+impl<RowT> Unpin for TypedRowStream<RowT> {}
 
-impl<RowT> TypedRowLendingStream<RowT> {
+impl<RowT> TypedRowStream<RowT>
+where
+    RowT: for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>,
+{
+    fn new(raw_stream: QueryPager) -> Result<Self, TypeCheckError> {
+        raw_stream.type_check::<RowT>()?;
+
+        Ok(Self {
+            raw_row_lending_stream: raw_stream,
+            _phantom: Default::default(),
+        })
+    }
+}
+
+impl<RowT> TypedRowStream<RowT> {
     /// If tracing was enabled, returns tracing ids of all finished page queries.
     #[inline]
     pub fn tracing_ids(&self) -> &[Uuid] {
@@ -1007,68 +1004,6 @@ impl<RowT> TypedRowLendingStream<RowT> {
     }
 }
 
-impl<'frame, 'metadata, RowT> TypedRowLendingStream<RowT>
-where
-    'frame: 'metadata,
-    RowT: DeserializeRow<'frame, 'metadata>,
-{
-    fn new(raw_stream: QueryPager) -> Result<Self, TypeCheckError> {
-        raw_stream.type_check::<RowT>()?;
-
-        Ok(Self {
-            raw_row_lending_stream: raw_stream,
-            _phantom: Default::default(),
-        })
-    }
-
-    /// Stream-like next() implementation for TypedRowLendingStream.
-    ///
-    /// It also works with borrowed types! For example, &str is supported.
-    /// However, this is not a Stream. To create a Stream, use `into_stream()`.
-    #[inline]
-    pub async fn next(&'frame mut self) -> Option<Result<RowT, QueryError>> {
-        self.raw_row_lending_stream.next().await.map(|res| {
-            res.and_then(|column_iterator| {
-                <RowT as DeserializeRow>::deserialize(column_iterator)
-                    .map_err(|err| RowsParseError::from(err).into())
-            })
-        })
-    }
-
-    /// Stream-like try_next() implementation for TypedRowLendingStream.
-    ///
-    /// It also works with borrowed types! For example, &str is supported.
-    /// However, this is not a Stream. To create a Stream, use `into_stream()`.
-    #[inline]
-    pub async fn try_next(&'frame mut self) -> Result<Option<RowT>, QueryError> {
-        self.next().await.transpose()
-    }
-}
-
-/// Returned by [QueryPager::rows_stream].
-///
-/// Implements [Stream], but only permits deserialization of owned types.
-/// To use [Stream] API (only accessible for owned types), use [QueryPager::rows_stream].
-pub struct TypedRowStream<RowT: 'static> {
-    typed_row_lending_stream: TypedRowLendingStream<RowT>,
-}
-
-impl<RowT> Unpin for TypedRowStream<RowT> {}
-
-impl<RowT> TypedRowStream<RowT> {
-    /// If tracing was enabled, returns tracing ids of all finished page queries.
-    #[inline]
-    pub fn tracing_ids(&self) -> &[Uuid] {
-        self.typed_row_lending_stream.tracing_ids()
-    }
-
-    /// Returns specification of row columns
-    #[inline]
-    pub fn column_specs(&self) -> ColumnSpecs {
-        self.typed_row_lending_stream.column_specs()
-    }
-}
-
 /// Stream implementation for TypedRowStream.
 ///
 /// It only works with owned types! For example, &str is not supported.
@@ -1079,9 +1014,15 @@ where
     type Item = Result<RowT, QueryError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut s = self.as_mut();
+        let next_fut = async {
+            self.raw_row_lending_stream.next().await.map(|res| {
+                res.and_then(|column_iterator| {
+                    <RowT as DeserializeRow>::deserialize(column_iterator)
+                        .map_err(|err| RowsParseError::from(err).into())
+                })
+            })
+        };
 
-        let next_fut = s.typed_row_lending_stream.next();
         futures::pin_mut!(next_fut);
         let value = ready_some_ok!(next_fut.poll(cx));
         Poll::Ready(Some(Ok(value)))
