@@ -3,6 +3,9 @@
 use super::frame_errors::LowLevelDeserializationError;
 use super::TryFromPrimitiveError;
 use byteorder::{BigEndian, ReadBytesExt};
+use bytes::Bytes;
+#[cfg(test)]
+use bytes::BytesMut;
 use bytes::{Buf, BufMut};
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -314,12 +317,12 @@ pub fn write_short_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), std::num
 
 pub fn read_bytes_map(
     buf: &mut &[u8],
-) -> Result<HashMap<String, Vec<u8>>, LowLevelDeserializationError> {
+) -> Result<HashMap<String, Bytes>, LowLevelDeserializationError> {
     let len = read_short_length(buf)?;
     let mut v = HashMap::with_capacity(len);
     for _ in 0..len {
         let key = read_string(buf)?.to_owned();
-        let val = read_bytes(buf)?.to_owned();
+        let val = Bytes::copy_from_slice(read_bytes(buf)?);
         v.insert(key, val);
     }
     Ok(v)
@@ -344,10 +347,10 @@ where
 #[test]
 fn type_bytes_map() {
     let mut val = HashMap::new();
-    val.insert("".to_owned(), vec![]);
-    val.insert("EXTENSION1".to_owned(), vec![1, 2, 3]);
-    val.insert("EXTENSION2".to_owned(), vec![4, 5, 6]);
-    let mut buf = Vec::new();
+    val.insert("".to_owned(), Bytes::new());
+    val.insert("EXTENSION1".to_owned(), Bytes::from_static(&[1, 2, 3]));
+    val.insert("EXTENSION2".to_owned(), Bytes::from_static(&[4, 5, 6]));
+    let mut buf = BytesMut::new();
     write_bytes_map(&val, &mut buf).unwrap();
     assert_eq!(read_bytes_map(&mut &*buf).unwrap(), val);
 }
