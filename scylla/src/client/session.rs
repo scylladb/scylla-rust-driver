@@ -1564,7 +1564,7 @@ where
 
         let span = RequestSpan::new_batch();
 
-        let run_request_result = self
+        let run_request_result: RunRequestResult<NonErrorQueryResponse> = self
             .run_request(
                 statement_info,
                 &batch.config,
@@ -1585,8 +1585,8 @@ where
                                 serial_consistency,
                             )
                             .await
+                            .and_then(QueryResponse::into_non_error_query_response)
                             .map_err(UserRequestError::into_query_error)
-                            .and_then(QueryResponse::into_query_result)
                     }
                 },
                 &span,
@@ -1596,7 +1596,8 @@ where
 
         let result = match run_request_result {
             RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(),
-            RunRequestResult::Completed(result) => {
+            RunRequestResult::Completed(non_error_query_response) => {
+                let result = non_error_query_response.into_query_result()?;
                 span.record_result_fields(&result);
                 result
             }
