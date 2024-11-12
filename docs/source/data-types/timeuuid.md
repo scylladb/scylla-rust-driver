@@ -24,7 +24,7 @@ session
 // Read Timeuuid from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(CqlTimeuuid, )>();
+    .rows_stream::<(CqlTimeuuid, )>()?;
 
 while let Some((timeuuid,)) = iter.try_next().await? {
     println!("Read a value from row: {}", timeuuid);
@@ -68,7 +68,7 @@ session
 // Read Timeuuid from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(CqlTimeuuid, )>();
+    .rows_stream::<(CqlTimeuuid, )>()?;
 
 while let Some((timeuuid,)) = iter.try_next().await? {
     println!("Read a value from row: {}", timeuuid);

@@ -21,7 +21,7 @@ session
 // Read a bool from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(bool,)>();
+    .rows_stream::<(bool,)>()?;
 while let Some((bool_value,)) = iter.try_next().await? {
     println!("{:?}", bool_value);
 }
@@ -50,7 +50,7 @@ session
 // Read a tinyint from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(i8,)>();
+    .rows_stream::<(i8,)>()?;
 while let Some((tinyint_value,)) = iter.try_next().await? {
     println!("{:?}", tinyint_value);
 }
@@ -79,7 +79,7 @@ session
 // Read a smallint from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(i16,)>();
+    .rows_stream::<(i16,)>()?;
 while let Some((smallint_value,)) = iter.try_next().await? {
     println!("{}", smallint_value);
 }
@@ -108,7 +108,7 @@ session
 // Read an int from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(i32,)>();
+    .rows_stream::<(i32,)>()?;
 while let Some((int_value,)) = iter.try_next().await? {
     println!("{}", int_value);
 }
@@ -137,7 +137,7 @@ session
 // Read a bigint from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(i64,)>();
+    .rows_stream::<(i64,)>()?;
 while let Some((bigint_value,)) = iter.try_next().await? {
     println!("{:?}", bigint_value);
 }
@@ -166,7 +166,7 @@ session
 // Read a float from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(f32,)>();
+    .rows_stream::<(f32,)>()?;
 while let Some((float_value,)) = iter.try_next().await? {
     println!("{:?}", float_value);
 }
@@ -195,7 +195,7 @@ session
 // Read a double from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(f64,)>();
+    .rows_stream::<(f64,)>()?;
 while let Some((double_value,)) = iter.try_next().await? {
     println!("{:?}", double_value);
 }

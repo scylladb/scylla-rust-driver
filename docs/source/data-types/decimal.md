@@ -25,7 +25,7 @@ session
 // Read a decimal from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(CqlDecimal,)>();
+    .rows_stream::<(CqlDecimal,)>()?;
 while let Some((decimal_value,)) = iter.try_next().await? {
     println!("{:?}", decimal_value);
 }
@@ -57,7 +57,7 @@ session
 // Read a decimal from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(BigDecimal,)>();
+    .rows_stream::<(BigDecimal,)>()?;
 while let Some((decimal_value,)) = iter.try_next().await? {
     println!("{:?}", decimal_value);
 }

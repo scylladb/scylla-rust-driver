@@ -19,64 +19,18 @@ return a `QueryResult` with rows represented as `Option<Vec<Row>>`.
 > To sum up, **for SELECTs** (especially those that may return a lot of data) **prefer paged queries**,
 > e.g. with `Session::query_iter()` (see [Paged queries](paged.md)).
 
-### Basic representation
-`Row` is a basic representation of a received row. It can be used by itself, but it's a bit awkward to use:
-```rust
-# extern crate scylla;
-# use scylla::Session;
-# use std::error::Error;
-# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-if let Some(rows) = session.query_unpaged("SELECT a from ks.tab", &[]).await?.rows {
-    for row in rows {
-        let int_value: i32 = row.columns[0].as_ref().unwrap().as_int().unwrap();
-    }
-}
-# Ok(())
-# }
-```
-
-### Parsing using `into_typed`
-The driver provides a way to parse a row as a tuple of Rust types:
-```rust
-# extern crate scylla;
-# use scylla::Session;
-# use std::error::Error;
-# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
-
-// Parse row as a single column containing an int value
-if let Some(rows) = session.query_unpaged("SELECT a from ks.tab", &[]).await?.rows {
-    for row in rows {
-        let (int_value,): (i32,) = row.into_typed::<(i32,)>()?;
-    }
-}
-
-// rows.into_typed() converts a Vec of Rows to an iterator of parsing results
-if let Some(rows) = session.query_unpaged("SELECT a from ks.tab", &[]).await?.rows {
-    for row in rows.into_typed::<(i32,)>() {
-        let (int_value,): (i32,) = row?;
-    }
-}
-
-// Parse row as two columns containing an int and text columns
-if let Some(rows) = session.query_unpaged("SELECT a, b from ks.tab", &[]).await?.rows {
-    for row in rows.into_typed::<(i32, String)>() {
-        let (int_value, text_value): (i32, String) = row?;
-    }
-}
-# Ok(())
-# }
-```
-
 ## Parsing using convenience methods
-[`QueryResult`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryResult.html) provides convenience methods for parsing rows.
-Here are a few of them:
-* `rows_typed::<RowT>()` - returns the rows parsed as the given type
-* `maybe_first_row_typed::<RowT>` - returns `Option<RowT>` containing first row from the result
-* `first_row_typed::<RowT>` - same as `maybe_first_row`, but fails without the first row
-* `single_row_typed::<RowT>` - same as `first_row`, but fails when there is more than one row
-* `result_not_rows()` - ensures that query response was not `rows`, helps avoid bugs
 
+By calling [`QueryResult::into_rows_result`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryResult.html#method.into_rows_result),
+one can obtain  [`QueryRowsResult`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryRowsResult.html).
+`QueryRowsResult` provides convenience methods for parsing rows.
+Here are a few of them:
+* `rows::<RowT>()` - returns the rows parsed as the given type
+* `maybe_first_row::<RowT>()` - returns the first received row or `None` if there are no rows
+* `first_row::<RowT>()` - returns the first received row; fails if there are no rows
+* `single_row::<RowT>()` - same as `first_row`, but fails when there is more than one row
+
+Additionally, [`QueryResult`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryResult.html) has a method `result_not_rows()`, which ensures that query response was not `rows` and thus helps avoid bugs.
 
 ```rust
 # extern crate scylla;
@@ -84,26 +38,31 @@ Here are a few of them:
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 // Parse row as a single column containing an int value
-let rows = session
+let result = session
     .query_unpaged("SELECT a from ks.tab", &[])
     .await?
-    .rows_typed::<(i32,)>()?; // Same as .rows()?.into_typed()
-for row in rows {
+    .into_rows_result()?
+    .unwrap();
+
+for row in result.rows::<(i32,)>()? {
     let (int_value,): (i32,) = row?;
 }
 
-// maybe_first_row_typed gets the first row and parses it as the given type
+// first_row gets the first row and parses it as the given type
 let first_int_val: Option<(i32,)> = session
     .query_unpaged("SELECT a from ks.tab", &[])
     .await?
-    .maybe_first_row_typed::<(i32,)>()?;
+    .into_rows_result()?
+    .map(|res| res.first_row::<(i32,)>())
+    .transpose()?;
 
-// no_rows fails when the response is rows
+// result_not_rows fails when the response is rows
 session.query_unpaged("INSERT INTO ks.tab (a) VALUES (0)", &[]).await?.result_not_rows()?;
 # Ok(())
 # }
 ```
 For more see [`QueryResult`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryResult.html)
+and [`QueryRowsResult`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryRowsResult.html)
 
 ### `NULL` values
 `NULL` values will return an error when parsed as a Rust type. 
@@ -116,9 +75,12 @@ To properly handle `NULL` values parse column as an `Option<>`:
 use scylla::IntoTypedRows;
 
 // Parse row as two columns containing an int and text which might be null
-if let Some(rows) = session.query_unpaged("SELECT a, b from ks.tab", &[]).await?.rows {
-    for row in rows.into_typed::<(i32, Option<String>)>() {
-        let (int_value, str_or_null): (i32, Option<String>) = row?;
+if let Some(rows_result) = session.query_unpaged("SELECT a, b from ks.tab", &[])
+    .await?
+    .into_rows_result()?
+{
+    for row in rows_result.rows::<(i32, Option<&str>)>()? {
+        let (int_value, str_or_null): (i32, Option<&str>) = row?;
     }
 }
 # Ok(())
@@ -130,7 +92,7 @@ It is possible to receive row as a struct with fields matching the columns.\
 The struct must:
 * have the same number of fields as the number of queried columns
 * have field types matching the columns being received
-* derive `FromRow`
+* derive `DeserializeRow`
 
 Field names don't need to match column names.
 ```rust
@@ -139,18 +101,21 @@ Field names don't need to match column names.
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::IntoTypedRows;
-use scylla::macros::FromRow;
-use scylla::frame::response::cql_to_rust::FromRow;
+use scylla::macros::DeserializeRow;
+use scylla::deserialize::DeserializeRow;
 
-#[derive(FromRow)]
+#[derive(DeserializeRow)]
 struct MyRow {
     age: i32,
-    name: Option<String>
+    name: Option<String>,
 }
 
 // Parse row as two columns containing an int and text which might be null
-if let Some(rows) = session.query_unpaged("SELECT a, b from ks.tab", &[]).await?.rows {
-    for row in rows.into_typed::<MyRow>() {
+if let Some(result_rows) = session.query_unpaged("SELECT a, b from ks.tab", &[])
+    .await?
+    .into_rows_result()?
+{
+    for row in result_rows.rows::<MyRow>()? {
         let my_row: MyRow = row?;
     }
 }

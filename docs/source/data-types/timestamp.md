@@ -33,7 +33,7 @@ session
 // Read timestamp from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(CqlTimestamp,)>();
+    .rows_stream::<(CqlTimestamp,)>()?;
 while let Some((value,)) = iter.try_next().await? {
     // ...
 }
@@ -73,7 +73,7 @@ session
 // Read timestamp from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(DateTime<Utc>,)>();
+    .rows_stream::<(DateTime<Utc>,)>()?;
 while let Some((timestamp_value,)) = iter.try_next().await? {
     println!("{:?}", timestamp_value);
 }
@@ -114,7 +114,7 @@ session
 // Read timestamp from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(OffsetDateTime,)>();
+    .rows_stream::<(OffsetDateTime,)>()?;
 while let Some((timestamp_value,)) = iter.try_next().await? {
     println!("{:?}", timestamp_value);
 }

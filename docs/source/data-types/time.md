@@ -32,7 +32,7 @@ session
 // Read time from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(CqlTime,)>();
+    .rows_stream::<(CqlTime,)>()?;
 while let Some((value,)) = iter.try_next().await? {
     // ...
 }
@@ -68,7 +68,7 @@ session
 // Read time from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(NaiveTime,)>();
+    .rows_stream::<(NaiveTime,)>()?;
 while let Some((time_value,)) = iter.try_next().await? {
     println!("{:?}", time_value);
 }
@@ -102,7 +102,7 @@ session
 // Read time from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(Time,)>();
+    .rows_stream::<(Time,)>()?;
 while let Some((time_value,)) = iter.try_next().await? {
     println!("{:?}", time_value);
 }

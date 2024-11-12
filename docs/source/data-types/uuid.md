@@ -21,7 +21,7 @@ session
 // Read uuid from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(Uuid,)>();
+    .rows_stream::<(Uuid,)>()?;
 while let Some((uuid_value,)) = iter.try_next().await? {
     println!("{:?}", uuid_value);
 }

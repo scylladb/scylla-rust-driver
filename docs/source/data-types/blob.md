@@ -18,8 +18,10 @@ session
     .await?;
 
 // Read blobs from the table
-let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[]).await?.into_typed::<(Vec<u8>,)>();
-while let Some((blob_value,)) = iter.try_next().await? {
+let mut stream = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(Vec<u8>,)>()?;
+while let Some((blob_value,)) = stream.try_next().await? {
     println!("{:?}", blob_value);
 }
 # Ok(())
