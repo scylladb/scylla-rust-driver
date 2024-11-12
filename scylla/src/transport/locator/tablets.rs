@@ -1,9 +1,11 @@
 use bytes::Bytes;
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use scylla_cql::cql_to_rust::FromCqlVal;
-use scylla_cql::frame::response::result::{deser_cql_value, ColumnType, TableSpec};
-use scylla_cql::types::deserialize::DeserializationError;
+use scylla_cql::frame::response::result::{ColumnType, TableSpec};
+use scylla_cql::types::deserialize::value::ListlikeIterator;
+use scylla_cql::types::deserialize::{
+    DeserializationError, DeserializeValue, FrameSlice, TypeCheckError,
+};
 use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
@@ -12,12 +14,15 @@ use crate::routing::{Shard, Token};
 use crate::transport::Node;
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 use std::sync::Arc;
 
 #[derive(Error, Debug)]
 pub(crate) enum TabletParsingError {
     #[error(transparent)]
     Deserialization(#[from] DeserializationError),
+    #[error(transparent)]
+    TypeCheck(#[from] TypeCheckError),
     #[error("Shard id for tablet is negative: {0}")]
     ShardNum(i32),
 }
@@ -36,7 +41,8 @@ pub(crate) struct RawTablet {
     replicas: RawTabletReplicas,
 }
 
-type RawTabletPayload = (i64, i64, Vec<(Uuid, i32)>);
+type RawTabletPayload<'frame, 'metadata> =
+    (i64, i64, ListlikeIterator<'frame, 'metadata, (Uuid, i32)>);
 
 lazy_static! {
     static ref RAW_TABLETS_CQL_TYPE: ColumnType<'static> = ColumnType::Tuple(vec![
@@ -56,26 +62,34 @@ impl RawTablet {
         payload: &HashMap<String, Bytes>,
     ) -> Option<Result<RawTablet, TabletParsingError>> {
         let payload = payload.get(CUSTOM_PAYLOAD_TABLETS_V1_KEY)?;
-        let cql_value = match deser_cql_value(&RAW_TABLETS_CQL_TYPE, &mut payload.as_ref()) {
-            Ok(r) => r,
-            Err(e) => return Some(Err(e.into())),
+
+        if let Err(err) =
+            <RawTabletPayload as DeserializeValue<'_, '_>>::type_check(RAW_TABLETS_CQL_TYPE.deref())
+        {
+            return Some(Err(err.into()));
         };
 
-        // This could only fail if the type was wrong, but we do pass correct type
-        // to `deser_cql_value`.
         let (first_token, last_token, replicas): RawTabletPayload =
-            FromCqlVal::from_cql(cql_value).unwrap();
+            match <RawTabletPayload as DeserializeValue<'_, '_>>::deserialize(
+                RAW_TABLETS_CQL_TYPE.deref(),
+                Some(FrameSlice::new(payload)),
+            ) {
+                Ok(tuple) => tuple,
+                Err(err) => return Some(Err(err.into())),
+            };
 
         let replicas = match replicas
-            .into_iter()
-            .map(|(uuid, shard_num)| match shard_num.try_into() {
-                Ok(s) => Ok((uuid, s)),
-                Err(_) => Err(shard_num),
+            .map(|res| {
+                res.map_err(TabletParsingError::from)
+                    .and_then(|(uuid, shard_num)| match shard_num.try_into() {
+                        Ok(s) => Ok((uuid, s)),
+                        Err(_) => Err(TabletParsingError::ShardNum(shard_num)),
+                    })
             })
-            .collect::<Result<Vec<(Uuid, Shard)>, _>>()
+            .collect::<Result<Vec<(Uuid, Shard)>, TabletParsingError>>()
         {
             Ok(r) => r,
-            Err(shard_num) => return Some(Err(TabletParsingError::ShardNum(shard_num))),
+            Err(err) => return Some(Err(err)),
         };
 
         Some(Ok(RawTablet {
