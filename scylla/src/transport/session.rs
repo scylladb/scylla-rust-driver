@@ -2159,7 +2159,6 @@ where
                         return Some(Ok(RunRequestResult::Completed(response)));
                     }
                     Err(e) => {
-                        let e = e.into_query_error();
                         trace!(
                             parent: &span,
                             last_error = %e,
@@ -2172,7 +2171,7 @@ where
                             node,
                             &e,
                         );
-                        Some(e)
+                        Some(e.into_query_error())
                     }
                 };
 
