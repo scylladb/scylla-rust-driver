@@ -1090,7 +1090,9 @@ impl Connection {
                                 .map_err(UserRequestError::into_query_error)?;
                             continue;
                         } else {
-                            return Err(ProtocolError::RepreparedIdMissingInBatch.into());
+                            return Err(
+                                UserRequestError::RepreparedIdMissingInBatch.into_query_error()
+                            );
                         }
                     }
                     _ => Err(err.into()),

@@ -907,6 +907,8 @@ pub(crate) enum UserRequestError {
         expected_id: Vec<u8>,
         reprepared_id: Vec<u8>,
     },
+    #[error("Reprepared statement's id does not exist in the batch.")]
+    RepreparedIdMissingInBatch,
 }
 
 impl UserRequestError {
@@ -933,6 +935,9 @@ impl UserRequestError {
                 reprepared_id,
             }
             .into(),
+            UserRequestError::RepreparedIdMissingInBatch => {
+                ProtocolError::RepreparedIdMissingInBatch.into()
+            }
         }
     }
 }
