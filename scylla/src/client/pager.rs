@@ -359,12 +359,11 @@ where
                 Ok(ControlFlow::Continue(()))
             }
             Err(err) => {
-                let err = err.into_query_error();
                 self.metrics.inc_failed_paged_queries();
                 self.execution_profile
                     .load_balancing_policy
                     .on_query_failure(&self.statement_info, elapsed, node, &err);
-                Err(err)
+                Err(err.into_query_error())
             }
             Ok(NonErrorQueryResponse {
                 response: NonErrorResponse::Result(_),
@@ -381,11 +380,11 @@ where
             Ok(response) => {
                 self.metrics.inc_failed_paged_queries();
                 let err =
-                    ProtocolError::UnexpectedResponse(response.response.to_response_kind()).into();
+                    RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
                 self.execution_profile
                     .load_balancing_policy
                     .on_query_failure(&self.statement_info, elapsed, node, &err);
-                Err(err)
+                Err(err.into_query_error())
             }
         }
     }

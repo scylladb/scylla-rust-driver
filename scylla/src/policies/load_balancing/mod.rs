@@ -4,7 +4,7 @@
 
 use crate::cluster::{ClusterState, NodeRef};
 use crate::{
-    errors::QueryError,
+    errors::RequestAttemptError,
     routing::{Shard, Token},
 };
 use scylla_cql::frame::{response::result::TableSpec, types};
@@ -91,7 +91,7 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
         _query: &RoutingInfo,
         _latency: Duration,
         _node: NodeRef<'_>,
-        _error: &QueryError,
+        _error: &RequestAttemptError,
     ) {
     }
 
