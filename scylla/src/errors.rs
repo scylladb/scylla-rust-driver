@@ -909,6 +909,8 @@ pub(crate) enum UserRequestError {
     },
     #[error("Reprepared statement's id does not exist in the batch.")]
     RepreparedIdMissingInBatch,
+    #[error("Failed to serialize query parameters: {0}")]
+    SerializationError(#[from] SerializationError),
 }
 
 impl UserRequestError {
@@ -938,6 +940,7 @@ impl UserRequestError {
             UserRequestError::RepreparedIdMissingInBatch => {
                 ProtocolError::RepreparedIdMissingInBatch.into()
             }
+            UserRequestError::SerializationError(e) => e.into(),
         }
     }
 }
