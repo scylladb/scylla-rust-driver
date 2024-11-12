@@ -1233,6 +1233,8 @@ impl Connection {
             batch.config.serial_consistency.flatten(),
         )
         .await
+        .map_err(UserRequestError::into_query_error)
+        .and_then(QueryResponse::into_query_result)
     }
 
     pub(crate) async fn batch_with_consistency(
@@ -1241,11 +1243,8 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<QueryResult, QueryError> {
-        let batch = self
-            .prepare_batch(init_batch, &values)
-            .await
-            .map_err(UserRequestError::into_query_error)?;
+    ) -> Result<QueryResponse, UserRequestError> {
+        let batch = self.prepare_batch(init_batch, &values).await?;
 
         let contexts = batch.statements.iter().map(|bs| match bs {
             BatchStatement::Query(_) => RowSerializationContext::empty(),
@@ -1269,8 +1268,7 @@ impl Connection {
             let query_response = self
                 .send_request(&batch_frame, true, batch.config.tracing, None)
                 .await
-                .map_err(UserRequestError::from)
-                .map_err(UserRequestError::into_query_error)?;
+                .map_err(UserRequestError::from)?;
 
             return match query_response.response {
                 Response::Error(err) => match err.error {
@@ -1283,23 +1281,18 @@ impl Connection {
                             _ => None,
                         });
                         if let Some(p) = prepared_statement {
-                            self.reprepare(p.get_statement(), p)
-                                .await
-                                .map_err(UserRequestError::into_query_error)?;
+                            self.reprepare(p.get_statement(), p).await?;
                             continue;
                         } else {
-                            return Err(
-                                UserRequestError::RepreparedIdMissingInBatch.into_query_error()
-                            );
+                            return Err(UserRequestError::RepreparedIdMissingInBatch);
                         }
                     }
                     _ => Err(err.into()),
                 },
-                Response::Result(_) => Ok(query_response.into_query_result()?),
+                Response::Result(_) => Ok(query_response),
                 _ => Err(UserRequestError::UnexpectedResponse(
                     query_response.response.to_response_kind(),
-                )
-                .into_query_error()),
+                )),
             };
         }
     }
