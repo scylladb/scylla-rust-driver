@@ -1044,7 +1044,10 @@ impl Connection {
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
-        let batch = self.prepare_batch(init_batch, &values).await?;
+        let batch = self
+            .prepare_batch(init_batch, &values)
+            .await
+            .map_err(UserRequestError::into_query_error)?;
 
         let contexts = batch.statements.iter().map(|bs| match bs {
             BatchStatement::Query(_) => RowSerializationContext::empty(),
@@ -1105,7 +1108,7 @@ impl Connection {
         &self,
         init_batch: &'b Batch,
         values: impl BatchValues,
-    ) -> Result<Cow<'b, Batch>, QueryError> {
+    ) -> Result<Cow<'b, Batch>, UserRequestError> {
         let mut to_prepare = HashSet::<&str>::new();
 
         {
@@ -1128,10 +1131,7 @@ impl Connection {
         let mut prepared_queries = HashMap::<&str, PreparedStatement>::new();
 
         for query in &to_prepare {
-            let prepared = self
-                .prepare(&Query::new(query.to_string()))
-                .await
-                .map_err(UserRequestError::into_query_error)?;
+            let prepared = self.prepare(&Query::new(query.to_string())).await?;
             prepared_queries.insert(query, prepared);
         }
 
