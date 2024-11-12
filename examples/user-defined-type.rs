@@ -1,6 +1,6 @@
 use anyhow::Result;
-use futures::TryStreamExt;
-use scylla::macros::FromUserType;
+use futures::TryStreamExt as _;
+use scylla::macros::DeserializeValue;
 use scylla::{SerializeValue, Session, SessionBuilder};
 use std::env;
 
@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
 
     // Define custom struct that matches User Defined Type created earlier
     // wrapping field in Option will gracefully handle null field values
-    #[derive(Debug, FromUserType, SerializeValue)]
+    #[derive(Debug, DeserializeValue, SerializeValue)]
     struct MyType {
         int_val: i32,
         text_val: Option<String>,
@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
             &[],
         )
         .await?
-        .into_typed::<(MyType,)>();
+        .rows_stream::<(MyType,)>()?;
     while let Some((my_val,)) = iter.try_next().await? {
         println!("{:?}", my_val);
     }

@@ -6,8 +6,8 @@ use scylla::prepared_statement::PreparedStatement;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::routing::{Shard, Token};
 use scylla::test_utils::unique_keyspace_name;
-use scylla::transport::session::Session;
 use scylla::transport::NodeRef;
+use scylla::Session;
 use scylla_cql::frame::response::result::TableSpec;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 

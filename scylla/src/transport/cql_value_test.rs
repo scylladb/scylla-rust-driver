@@ -1,4 +1,7 @@
-use crate::frame::{response::result::CqlValue, value::CqlDuration};
+use assert_matches::assert_matches;
+
+use crate::frame::response::result::CqlValue;
+use crate::frame::value::CqlDuration;
 
 use crate::test_utils::{create_new_session_builder, setup_tracing};
 use crate::utils::test_utils::unique_keyspace_name;
@@ -54,19 +57,17 @@ async fn test_cqlvalue_udt() {
         .await
         .unwrap();
 
-    let rows = session
+    let rows_result = session
         .query_unpaged("SELECT my FROM cqlvalue_udt_test", &[])
         .await
         .unwrap()
-        .rows
+        .into_rows_result()
+        .unwrap()
         .unwrap();
 
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].columns.len(), 1);
+    let (received_udt_cql_value,) = rows_result.single_row::<(CqlValue,)>().unwrap();
 
-    let received_udt_cql_value = rows[0].columns[0].as_ref().unwrap();
-
-    assert_eq!(received_udt_cql_value, &udt_cql_value);
+    assert_eq!(received_udt_cql_value, udt_cql_value);
 }
 
 #[tokio::test]
@@ -106,45 +107,51 @@ async fn test_cqlvalue_duration() {
         session.query_unpaged(query.0, query.1).await.unwrap();
     }
 
-    let rows = session
+    let rows_result = session
         .query_unpaged(
             "SELECT v FROM cqlvalue_duration_test WHERE pk = ?",
             (CqlValue::Int(0),),
         )
         .await
         .unwrap()
-        .rows
+        .into_rows_result()
+        .unwrap()
         .unwrap();
 
-    assert_eq!(rows.len(), 4);
-    assert_eq!(rows[0].columns.len(), 1);
+    let mut rows_iter = rows_result.rows::<(CqlValue,)>().unwrap();
 
-    assert_eq!(rows[0].columns[0].as_ref().unwrap(), &duration_cql_value);
+    let (first_value,) = rows_iter.next().unwrap().unwrap();
+    assert_eq!(first_value, duration_cql_value);
 
+    let (second_value,) = rows_iter.next().unwrap().unwrap();
     assert_eq!(
-        rows[1].columns[0].as_ref().unwrap(),
-        &CqlValue::Duration(CqlDuration {
+        second_value,
+        CqlValue::Duration(CqlDuration {
             months: 0,
             days: 0,
             nanoseconds: 320_688_000_000_000,
         })
     );
 
+    let (third_value,) = rows_iter.next().unwrap().unwrap();
     assert_eq!(
-        rows[2].columns[0].as_ref().unwrap(),
-        &CqlValue::Duration(CqlDuration {
+        third_value,
+        CqlValue::Duration(CqlDuration {
             months: 0,
             days: 0,
             nanoseconds: 320_933_000_000_000,
         })
     );
 
+    let (fourth_value,) = rows_iter.next().unwrap().unwrap();
     assert_eq!(
-        rows[3].columns[0].as_ref().unwrap(),
-        &CqlValue::Duration(CqlDuration {
+        fourth_value,
+        CqlValue::Duration(CqlDuration {
             months: 0,
             days: 0,
             nanoseconds: 320_949_000_000_000,
         })
     );
+
+    assert_matches!(rows_iter.next(), None);
 }

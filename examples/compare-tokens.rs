@@ -51,7 +51,9 @@ async fn main() -> Result<()> {
                 (pk,),
             )
             .await?
-            .single_row_typed::<(i64,)>()?;
+            .into_rows_result()?
+            .expect("Got not Rows result")
+            .single_row()?;
         assert_eq!(t, qt);
         println!("token for {}: {}", pk, t);
     }

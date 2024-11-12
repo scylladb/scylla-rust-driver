@@ -5,7 +5,7 @@ use crate::statement::{PagingState, PagingStateResponse};
 use crate::transport::errors::QueryError;
 use crate::transport::iterator::LegacyRowIterator;
 use crate::transport::partitioner::PartitionerName;
-use crate::{LegacyQueryResult, Session};
+use crate::{LegacyQueryResult, QueryResult};
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
@@ -15,6 +15,11 @@ use scylla_cql::types::serialize::row::SerializeRow;
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
 use std::sync::Arc;
+
+use super::iterator::QueryPager;
+use super::session::{
+    CurrentDeserializationApi, DeserializationApiKind, GenericSession, LegacyDeserializationApi,
+};
 
 /// Contains just the parts of a prepared statement that were returned
 /// from the database. All remaining parts (query string, page size,
@@ -31,11 +36,12 @@ struct RawPreparedStatementData {
 
 /// Provides auto caching while executing queries
 #[derive(Debug)]
-pub struct CachingSession<S = RandomState>
+pub struct GenericCachingSession<DeserializationApi, S = RandomState>
 where
     S: Clone + BuildHasher,
+    DeserializationApi: DeserializationApiKind,
 {
-    session: Session,
+    session: GenericSession<DeserializationApi>,
     /// The prepared statement cache size
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
@@ -43,11 +49,15 @@ where
     cache: DashMap<String, RawPreparedStatementData, S>,
 }
 
-impl<S> CachingSession<S>
+pub type CachingSession<S = RandomState> = GenericCachingSession<CurrentDeserializationApi, S>;
+pub type LegacyCachingSession<S = RandomState> = GenericCachingSession<LegacyDeserializationApi, S>;
+
+impl<DeserApi, S> GenericCachingSession<DeserApi, S>
 where
     S: Default + BuildHasher + Clone,
+    DeserApi: DeserializationApiKind,
 {
-    pub fn from(session: Session, cache_size: usize) -> Self {
+    pub fn from(session: GenericSession<DeserApi>, cache_size: usize) -> Self {
         Self {
             session,
             max_capacity: cache_size,
@@ -56,21 +66,95 @@ where
     }
 }
 
-impl<S> CachingSession<S>
+impl<DeserApi, S> GenericCachingSession<DeserApi, S>
 where
     S: BuildHasher + Clone,
+    DeserApi: DeserializationApiKind,
 {
-    /// Builds a [`CachingSession`] from a [`Session`], a cache size, and a [`BuildHasher`].,
-    /// using a customer hasher.
-    pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
+    /// Builds a [`CachingSession`] from a [`Session`](GenericSession), a cache size,
+    /// and a [`BuildHasher`], using a customer hasher.
+    pub fn with_hasher(session: GenericSession<DeserApi>, cache_size: usize, hasher: S) -> Self {
         Self {
             session,
             max_capacity: cache_size,
             cache: DashMap::with_hasher(hasher),
         }
     }
+}
 
-    /// Does the same thing as [`Session::execute_unpaged`] but uses the prepared statement cache
+impl<S> GenericCachingSession<CurrentDeserializationApi, S>
+where
+    S: BuildHasher + Clone,
+{
+    /// Does the same thing as [`Session::execute_unpaged`](GenericSession::execute_unpaged)
+    /// but uses the prepared statement cache.
+    pub async fn execute_unpaged(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+    ) -> Result<QueryResult, QueryError> {
+        let query = query.into();
+        let prepared = self.add_prepared_statement_owned(query).await?;
+        self.session.execute_unpaged(&prepared, values).await
+    }
+
+    /// Does the same thing as [`Session::execute_iter`](GenericSession::execute_iter)
+    /// but uses the prepared statement cache.
+    pub async fn execute_iter(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+    ) -> Result<QueryPager, QueryError> {
+        let query = query.into();
+        let prepared = self.add_prepared_statement_owned(query).await?;
+        self.session.execute_iter(prepared, values).await
+    }
+
+    /// Does the same thing as [`Session::execute_single_page`](GenericSession::execute_single_page)
+    /// but uses the prepared statement cache.
+    pub async fn execute_single_page(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+        paging_state: PagingState,
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+        let query = query.into();
+        let prepared = self.add_prepared_statement_owned(query).await?;
+        self.session
+            .execute_single_page(&prepared, values, paging_state)
+            .await
+    }
+
+    /// Does the same thing as [`Session::batch`](GenericSession::batch) but uses the
+    /// prepared statement cache.\
+    /// Prepares batch using [`CachingSession::prepare_batch`](GenericCachingSession::prepare_batch)
+    /// if needed and then executes it.
+    pub async fn batch(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+    ) -> Result<QueryResult, QueryError> {
+        let all_prepared: bool = batch
+            .statements
+            .iter()
+            .all(|stmt| matches!(stmt, BatchStatement::PreparedStatement(_)));
+
+        if all_prepared {
+            self.session.batch(batch, &values).await
+        } else {
+            let prepared_batch: Batch = self.prepare_batch(batch).await?;
+
+            self.session.batch(&prepared_batch, &values).await
+        }
+    }
+}
+
+impl<S> GenericCachingSession<LegacyDeserializationApi, S>
+where
+    S: BuildHasher + Clone,
+{
+    /// Does the same thing as [`Session::execute_unpaged`](GenericSession::execute_unpaged)
+    /// but uses the prepared statement cache.
     pub async fn execute_unpaged(
         &self,
         query: impl Into<Query>,
@@ -81,7 +165,8 @@ where
         self.session.execute_unpaged(&prepared, values).await
     }
 
-    /// Does the same thing as [`Session::execute_iter`] but uses the prepared statement cache
+    /// Does the same thing as [`Session::execute_iter`](GenericSession::execute_iter)
+    /// but uses the prepared statement cache.
     pub async fn execute_iter(
         &self,
         query: impl Into<Query>,
@@ -92,7 +177,8 @@ where
         self.session.execute_iter(prepared, values).await
     }
 
-    /// Does the same thing as [`Session::execute_single_page`] but uses the prepared statement cache
+    /// Does the same thing as [`Session::execute_single_page`](GenericSession::execute_single_page)
+    /// but uses the prepared statement cache.
     pub async fn execute_single_page(
         &self,
         query: impl Into<Query>,
@@ -106,8 +192,9 @@ where
             .await
     }
 
-    /// Does the same thing as [`Session::batch`] but uses the prepared statement cache\
-    /// Prepares batch using CachingSession::prepare_batch if needed and then executes it
+    /// Does the same thing as [`Session::batch`](GenericSession::batch) but uses
+    /// the prepared statement cache.\
+    /// Prepares batch using CachingSession::prepare_batch if needed and then executes it.
     pub async fn batch(
         &self,
         batch: &Batch,
@@ -126,7 +213,13 @@ where
             self.session.batch(&prepared_batch, &values).await
         }
     }
+}
 
+impl<DeserApi, S> GenericCachingSession<DeserApi, S>
+where
+    S: BuildHasher + Clone,
+    DeserApi: DeserializationApiKind,
+{
     /// Prepares all statements within the batch and returns a new batch where every
     /// statement is prepared.
     /// Uses the prepared statements cache.
@@ -212,7 +305,7 @@ where
         self.max_capacity
     }
 
-    pub fn get_session(&self) -> &Session {
+    pub fn get_session(&self) -> &GenericSession<DeserApi> {
         &self.session
     }
 }
@@ -223,13 +316,15 @@ mod tests {
     use crate::statement::PagingState;
     use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
     use crate::transport::partitioner::PartitionerName;
+    use crate::transport::session::Session;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
         batch::{Batch, BatchStatement},
         prepared_statement::PreparedStatement,
-        CachingSession, Session,
+        CachingSession,
     };
     use futures::TryStreamExt;
+    use scylla_cql::frame::response::result::Row;
     use std::collections::BTreeSet;
 
     async fn new_for_test(with_tablet_support: bool) -> Session {
@@ -333,17 +428,20 @@ mod tests {
             .execute_unpaged("select * from test_table", &[])
             .await
             .unwrap();
+        let result_rows = result.into_rows_result().unwrap().unwrap();
 
         assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.rows_num().unwrap());
+        assert_eq!(1, result_rows.rows_num());
 
         let result = session
             .execute_unpaged("select * from test_table", &[])
             .await
             .unwrap();
 
+        let result_rows = result.into_rows_result().unwrap().unwrap();
+
         assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.rows_num().unwrap());
+        assert_eq!(1, result_rows.rows_num());
     }
 
     /// Checks that caching works with execute_iter
@@ -357,9 +455,17 @@ mod tests {
         let iter = session
             .execute_iter("select * from test_table", &[])
             .await
-            .unwrap();
+            .unwrap()
+            .rows_stream::<Row>()
+            .unwrap()
+            .into_stream();
 
-        let rows = iter.try_collect::<Vec<_>>().await.unwrap().len();
+        let rows = iter
+            .into_stream()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap()
+            .len();
 
         assert_eq!(1, rows);
         assert_eq!(1, session.cache.len());
@@ -379,7 +485,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.rows_num().unwrap());
+        assert_eq!(1, result.into_rows_result().unwrap().unwrap().rows_num());
     }
 
     async fn assert_test_batch_table_rows_contain(
@@ -390,7 +496,10 @@ mod tests {
             .execute_unpaged("SELECT a, b FROM test_batch_table", ())
             .await
             .unwrap()
-            .rows_typed::<(i32, i32)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows::<(i32, i32)>()
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
@@ -599,7 +708,11 @@ mod tests {
             .execute_unpaged("SELECT b, WRITETIME(b) FROM tbl", ())
             .await
             .unwrap()
-            .rows_typed_or_empty::<(i32, i64)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows::<(i32, i64)>()
+            .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 

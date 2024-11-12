@@ -96,7 +96,10 @@ async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(
         .query_unpaged("SELECT a, b FROM test_batch_table", ())
         .await
         .unwrap()
-        .rows_typed::<(i32, i32)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
         .collect();

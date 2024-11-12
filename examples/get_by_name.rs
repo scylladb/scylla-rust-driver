@@ -1,4 +1,5 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
+use scylla::frame::response::result::Row;
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
@@ -35,18 +36,26 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let query_result = session
+    let rows_result = session
         .query_unpaged("SELECT pk, ck, value FROM examples_ks.get_by_name", &[])
-        .await?;
-    let (ck_idx, _) = query_result
-        .get_column_spec("ck")
+        .await?
+        .into_rows_result()?
+        .context("Response is not of Rows type")?;
+    let col_specs = rows_result.column_specs();
+    let (ck_idx, _) = col_specs
+        .get_by_name("ck")
         .ok_or_else(|| anyhow!("No ck column found"))?;
-    let (value_idx, _) = query_result
-        .get_column_spec("value")
+    let (value_idx, _) = col_specs
+        .get_by_name("value")
         .ok_or_else(|| anyhow!("No value column found"))?;
+    let rows = rows_result
+        .rows::<Row>()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     println!("ck           |  value");
     println!("---------------------");
-    for row in query_result.rows.ok_or_else(|| anyhow!("no rows found"))? {
+    for row in rows {
         println!("{:?} | {:?}", row.columns[ck_idx], row.columns[value_idx]);
     }
 

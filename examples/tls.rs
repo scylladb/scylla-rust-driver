@@ -1,5 +1,5 @@
 use anyhow::Result;
-use futures::TryStreamExt;
+use futures::TryStreamExt as _;
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
     let mut iter = session
         .query_iter("SELECT a, b, c FROM examples_ks.tls", &[])
         .await?
-        .into_typed::<(i32, i32, String)>();
+        .rows_stream::<(i32, i32, String)>()?;
     while let Some((a, b, c)) = iter.try_next().await? {
         println!("a, b, c: {}, {}, {}", a, b, c);
     }

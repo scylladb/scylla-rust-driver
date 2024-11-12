@@ -1,7 +1,8 @@
 //! This example shows how to collect history of query execution.
 
 use anyhow::Result;
-use futures::StreamExt;
+use futures::StreamExt as _;
+use scylla::frame::response::result::Row;
 use scylla::history::{HistoryCollector, StructuredHistory};
 use scylla::query::Query;
 use scylla::transport::session::Session;
@@ -59,7 +60,10 @@ async fn main() -> Result<()> {
     let iter_history_listener = Arc::new(HistoryCollector::new());
     iter_query.set_history_listener(iter_history_listener.clone());
 
-    let mut rows_iterator = session.query_iter(iter_query, ()).await?;
+    let mut rows_iterator = session
+        .query_iter(iter_query, ())
+        .await?
+        .rows_stream::<Row>()?;
     while let Some(_row) = rows_iterator.next().await {
         // Receive rows...
     }

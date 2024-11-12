@@ -469,8 +469,8 @@ mod tests {
     use crate::test_utils::create_new_session_builder;
     use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-    use futures::StreamExt;
-    use scylla_cql::Consistency;
+    use futures::StreamExt as _;
+    use scylla_cql::{frame::response::result::Row, Consistency};
 
     // Set a single time for all timestamps within StructuredHistory.
     // HistoryCollector sets the timestamp to current time which changes with each test.
@@ -1045,7 +1045,12 @@ mod tests {
         let history_collector = Arc::new(HistoryCollector::new());
         iter_query.set_history_listener(history_collector.clone());
 
-        let mut rows_iterator = session.query_iter(iter_query, ()).await.unwrap();
+        let mut rows_iterator = session
+            .query_iter(iter_query, ())
+            .await
+            .unwrap()
+            .rows_stream::<Row>()
+            .unwrap();
         while let Some(_row) = rows_iterator.next().await {
             // Receive rows...
         }

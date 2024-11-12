@@ -7,7 +7,7 @@ use crate::transport::errors::{BadQuery, QueryError};
 use crate::{
     batch::Batch,
     test_utils::{create_new_session_builder, unique_keyspace_name},
-    LegacyQueryResult, Session,
+    QueryResult, Session,
 };
 
 #[tokio::test]
@@ -51,11 +51,7 @@ async fn create_test_session(session: Session, ks: &String) -> Session {
     session
 }
 
-async fn write_batch(
-    session: &Session,
-    n: usize,
-    ks: &String,
-) -> Result<LegacyQueryResult, QueryError> {
+async fn write_batch(session: &Session, n: usize, ks: &String) -> Result<QueryResult, QueryError> {
     let mut batch_query = Batch::new(BatchType::Unlogged);
     let mut batch_values = Vec::new();
     let query = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);

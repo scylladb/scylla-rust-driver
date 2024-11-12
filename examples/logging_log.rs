@@ -1,6 +1,5 @@
 use anyhow::Result;
-use scylla::transport::session::Session;
-use scylla::SessionBuilder;
+use scylla::{Session, SessionBuilder};
 use std::env;
 use tracing::info;
 

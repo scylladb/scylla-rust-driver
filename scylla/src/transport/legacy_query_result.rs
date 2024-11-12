@@ -56,16 +56,6 @@ pub struct LegacyQueryResult {
 }
 
 impl LegacyQueryResult {
-    pub(crate) fn mock_empty() -> Self {
-        Self {
-            rows: None,
-            warnings: Vec::new(),
-            tracing_id: None,
-            metadata: None,
-            serialized_size: 0,
-        }
-    }
-
     /// Returns the number of received rows.\
     /// Fails when the query isn't of a type that could return rows, same as [`rows()`](LegacyQueryResult::rows).
     pub fn rows_num(&self) -> Result<usize, RowsExpectedError> {

@@ -46,8 +46,8 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{ProtocolError, UseKeyspaceProtocolError};
-use super::iterator::{LegacyRowIterator, QueryPager};
+use super::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
+use super::iterator::QueryPager;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::QueryResult;
 use super::session::AddressTranslator;
@@ -1182,7 +1182,7 @@ impl Connection {
     pub(crate) async fn query_iter(
         self: Arc<Self>,
         query: Query,
-    ) -> Result<LegacyRowIterator, QueryError> {
+    ) -> Result<QueryPager, QueryError> {
         let consistency = query
             .config
             .determine_consistency(self.config.default_consistency);
@@ -1190,7 +1190,6 @@ impl Connection {
 
         QueryPager::new_for_connection_query_iter(query, self, consistency, serial_consistency)
             .await
-            .map(QueryPager::into_legacy)
     }
 
     /// Executes a prepared statements and fetches its results over multiple pages, using
@@ -1199,7 +1198,7 @@ impl Connection {
         self: Arc<Self>,
         prepared_statement: PreparedStatement,
         values: SerializedValues,
-    ) -> Result<LegacyRowIterator, QueryError> {
+    ) -> Result<QueryPager, QueryError> {
         let consistency = prepared_statement
             .config
             .determine_consistency(self.config.default_consistency);
@@ -1213,7 +1212,6 @@ impl Connection {
             serial_consistency,
         )
         .await
-        .map(QueryPager::into_legacy)
     }
 
     #[allow(dead_code)]
@@ -1436,9 +1434,15 @@ impl Connection {
         let (version_id,) = self
             .query_unpaged(LOCAL_VERSION)
             .await?
-            .into_legacy_result()?
-            .single_row_typed()
-            .map_err(ProtocolError::SchemaVersionFetch)?;
+            .into_rows_result()?
+            .ok_or(QueryError::ProtocolError(
+                ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::ResultNotRows),
+            ))?
+            .single_row::<(Uuid,)>()
+            .map_err(|err| {
+                ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::SingleRowError(err))
+            })?;
+
         Ok(version_id)
     }
 
@@ -2473,6 +2477,8 @@ mod tests {
             .query_iter(select_query.clone())
             .await
             .unwrap()
+            .rows_stream::<(i32,)>()
+            .unwrap()
             .try_collect::<Vec<_>>()
             .await
             .unwrap();
@@ -2497,7 +2503,8 @@ mod tests {
             .query_iter(select_query.clone())
             .await
             .unwrap()
-            .into_typed::<(i32,)>()
+            .rows_stream::<(i32,)>()
+            .unwrap()
             .map(|ret| ret.unwrap().0)
             .collect::<Vec<_>>()
             .await;
@@ -2510,6 +2517,8 @@ mod tests {
                 "INSERT INTO connection_query_iter_tab (p) VALUES (0)",
             ))
             .await
+            .unwrap()
+            .rows_stream::<()>()
             .unwrap()
             .try_collect::<Vec<_>>()
             .await
@@ -2609,9 +2618,10 @@ mod tests {
                 .query_unpaged("SELECT p, v FROM t")
                 .await
                 .unwrap()
-                .into_legacy_result()
+                .into_rows_result()
                 .unwrap()
-                .rows_typed::<(i32, Vec<u8>)>()
+                .unwrap()
+                .rows::<(i32, Vec<u8>)>()
                 .unwrap()
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();

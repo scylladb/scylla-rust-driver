@@ -13,7 +13,6 @@ use std::{
 };
 
 use scylla_cql::{
-    cql_to_rust::FromRowError,
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
@@ -25,14 +24,17 @@ use scylla_cql::{
         response::CqlResponseKind,
         value::SerializeValuesError,
     },
-    types::serialize::SerializationError,
+    types::{
+        deserialize::{DeserializationError, TypeCheckError},
+        serialize::SerializationError,
+    },
 };
 
 use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-use super::legacy_query_result::{RowsExpectedError, SingleRowTypedError};
+use super::query_result::SingleRowError;
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
@@ -304,7 +306,7 @@ pub enum ProtocolError {
 
     /// A protocol error appeared during schema version fetch.
     #[error("Schema version fetch protocol error: {0}")]
-    SchemaVersionFetch(SingleRowTypedError),
+    SchemaVersionFetch(#[from] SchemaVersionFetchError),
 
     /// A result with nonfinished paging state received for unpaged query.
     #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
@@ -345,25 +347,43 @@ pub enum UseKeyspaceProtocolError {
     UnexpectedResponse(CqlResponseKind),
 }
 
+/// A protocol error that occurred during schema version fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum SchemaVersionFetchError {
+    #[error("Schema version query returned non-rows result")]
+    ResultNotRows,
+    #[error(transparent)]
+    SingleRowError(SingleRowError),
+}
+
 /// A protocol error that occurred during tracing info fetch.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum TracingProtocolError {
     /// Response to system_traces.session is not RESULT:Rows.
-    #[error("Response to system_traces.session is not RESULT:Rows: {0}")]
-    TracesSessionNotRows(RowsExpectedError),
+    #[error("Response to system_traces.session is not RESULT:Rows")]
+    TracesSessionNotRows,
 
     /// system_traces.session has invalid column type.
     #[error("system_traces.session has invalid column type: {0}")]
-    TracesSessionInvalidColumnType(FromRowError),
+    TracesSessionInvalidColumnType(TypeCheckError),
+
+    /// Response to system_traces.session failed to deserialize.
+    #[error("Response to system_traces.session failed to deserialize: {0}")]
+    TracesSessionDeserializationFailed(DeserializationError),
 
     /// Response to system_traces.events is not RESULT:Rows.
-    #[error("Response to system_traces.events is not RESULT:Rows: {0}")]
-    TracesEventsNotRows(RowsExpectedError),
+    #[error("Response to system_traces.events is not RESULT:Rows")]
+    TracesEventsNotRows,
 
     /// system_traces.events has invalid column type.
     #[error("system_traces.events has invalid column type: {0}")]
-    TracesEventsInvalidColumnType(FromRowError),
+    TracesEventsInvalidColumnType(TypeCheckError),
+
+    /// Response to system_traces.events failed to deserialize.
+    #[error("Response to system_traces.events failed to deserialize: {0}")]
+    TracesEventsDeserializationFailed(DeserializationError),
 
     /// All tracing queries returned an empty result.
     #[error(
@@ -426,7 +446,7 @@ pub enum PeersMetadataError {
 pub enum KeyspacesMetadataError {
     /// system_schema.keyspaces has invalid column type.
     #[error("system_schema.keyspaces has invalid column type: {0}")]
-    SchemaKeyspacesInvalidColumnType(FromRowError),
+    SchemaKeyspacesInvalidColumnType(TypeCheckError),
 
     /// Bad keyspace replication strategy.
     #[error("Bad keyspace <{keyspace}> replication strategy: {error}")]
@@ -464,7 +484,7 @@ pub enum KeyspaceStrategyError {
 pub enum UdtMetadataError {
     /// system_schema.types has invalid column type.
     #[error("system_schema.types has invalid column type: {0}")]
-    SchemaTypesInvalidColumnType(FromRowError),
+    SchemaTypesInvalidColumnType(TypeCheckError),
 
     /// Circular UDT dependency detected.
     #[error("Detected circular dependency between user defined types - toposort is impossible!")]
@@ -477,11 +497,11 @@ pub enum UdtMetadataError {
 pub enum TablesMetadataError {
     /// system_schema.tables has invalid column type.
     #[error("system_schema.tables has invalid column type: {0}")]
-    SchemaTablesInvalidColumnType(FromRowError),
+    SchemaTablesInvalidColumnType(TypeCheckError),
 
     /// system_schema.columns has invalid column type.
     #[error("system_schema.columns has invalid column type: {0}")]
-    SchemaColumnsInvalidColumnType(FromRowError),
+    SchemaColumnsInvalidColumnType(TypeCheckError),
 
     /// Unknown column kind.
     #[error("Unknown column kind '{column_kind}' for {keyspace_name}.{table_name}.{column_name}")]
@@ -499,7 +519,7 @@ pub enum TablesMetadataError {
 pub enum ViewsMetadataError {
     /// system_schema.views has invalid column type.
     #[error("system_schema.views has invalid column type: {0}")]
-    SchemaViewsInvalidColumnType(FromRowError),
+    SchemaViewsInvalidColumnType(TypeCheckError),
 }
 
 /// Error caused by caller creating an invalid query

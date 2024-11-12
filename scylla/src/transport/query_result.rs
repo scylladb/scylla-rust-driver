@@ -279,10 +279,12 @@ impl QueryResult {
 /// This struct provides generic methods which enable typed access to the data,
 /// by deserializing rows on the fly to the type provided as a type parameter.
 /// Those methods are:
-/// - rows() - for iterating through rows,
-/// - first_row() and maybe_first_row() - for accessing the first row first,
-/// - single_row() - for accessing the first row, additionally asserting
-///   that it's the only one in the response.
+/// - [rows()](QueryRowsResult::rows) - for iterating through rows,
+/// - [first_row()](QueryRowsResult::first_row) and
+///   [maybe_first_row()](QueryRowsResult::maybe_first_row) -
+///   for accessing the first row,
+/// - [single_row()](QueryRowsResult::single_row) - for accessing the first row,
+///   additionally asserting that it's the only one in the response.
 ///
 /// ```rust
 /// # use scylla::transport::query_result::QueryResult;
@@ -338,10 +340,8 @@ impl QueryRowsResult {
     pub fn column_specs(&self) -> ColumnSpecs {
         ColumnSpecs::new(self.raw_rows_with_metadata.metadata().col_specs())
     }
-}
 
-impl QueryRowsResult {
-    /// Returns the received rows when present.
+    /// Returns an iterator over the received rows.
     ///
     /// Returns an error if the rows in the response are of incorrect type.
     #[inline]
@@ -353,7 +353,7 @@ impl QueryRowsResult {
             .map_err(RowsError::TypeCheckFailed)
     }
 
-    /// Returns `Option<R>` containing the first of a result.
+    /// Returns `Option<R>` containing the first row of the result.
     ///
     /// Fails when the the rows in the response are of incorrect type,
     /// or when the deserialization fails.
@@ -371,7 +371,7 @@ impl QueryRowsResult {
             .map_err(MaybeFirstRowError::DeserializationFailed)
     }
 
-    /// Returns first row from the received rows.
+    /// Returns the first row of the received result.
     ///
     /// When the first row is not available, returns an error.
     /// Fails when the the rows in the response are of incorrect type,

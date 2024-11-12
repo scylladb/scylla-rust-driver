@@ -1,6 +1,5 @@
-use crate as scylla;
 use crate::batch::{Batch, BatchStatement};
-use crate::frame::response::result::Row;
+use crate::deserialize::DeserializeOwnedValue;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
@@ -12,6 +11,7 @@ use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{
     calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
 };
+use crate::transport::session::Session;
 use crate::transport::topology::Strategy::NetworkTopologyStrategy;
 use crate::transport::topology::{
     CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType,
@@ -19,23 +19,25 @@ use crate::transport::topology::{
 use crate::utils::test_utils::{
     create_new_session_builder, supports_feature, unique_keyspace_name,
 };
-use crate::CachingSession;
 use crate::ExecutionProfile;
-use crate::LegacyQueryResult;
-use crate::{Session, SessionBuilder};
+use crate::{self as scylla, QueryResult};
+use crate::{CachingSession, SessionBuilder};
 use assert_matches::assert_matches;
-use futures::{FutureExt, StreamExt, TryStreamExt};
+use futures::{FutureExt, StreamExt as _, TryStreamExt};
 use itertools::Itertools;
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
-use scylla_cql::frame::response::result::ColumnType;
+use scylla_cql::frame::response::result::{ColumnType, Row};
+use scylla_cql::frame::value::CqlVarint;
 use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use scylla_cql::types::serialize::value::SerializeValue;
-use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use uuid::Uuid;
+
+use super::query_result::QueryRowsResult;
 
 #[tokio::test]
 async fn test_connection_failure() {
@@ -107,42 +109,40 @@ async fn test_unprepared_statement() {
         .await
         .unwrap();
 
-    let (a_idx, _) = query_result.get_column_spec("a").unwrap();
-    let (b_idx, _) = query_result.get_column_spec("b").unwrap();
-    let (c_idx, _) = query_result.get_column_spec("c").unwrap();
-    assert!(query_result.get_column_spec("d").is_none());
+    let rows = query_result.into_rows_result().unwrap().unwrap();
 
-    let rs = query_result.rows.unwrap();
+    let col_specs = rows.column_specs();
+    assert_eq!(col_specs.get_by_name("a").unwrap().0, 0);
+    assert_eq!(col_specs.get_by_name("b").unwrap().0, 1);
+    assert_eq!(col_specs.get_by_name("c").unwrap().0, 2);
+    assert!(col_specs.get_by_name("d").is_none());
 
-    let mut results: Vec<(i32, i32, &String)> = rs
-        .iter()
-        .map(|r| {
-            let a = r.columns[a_idx].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[b_idx].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[c_idx].as_ref().unwrap().as_text().unwrap();
-            (a, b, c)
-        })
-        .collect();
+    let mut results = rows
+        .rows::<(i32, i32, String)>()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
     results.sort();
     assert_eq!(
         results,
         vec![
-            (1, 2, &String::from("abc")),
-            (1, 4, &String::from("hello")),
-            (7, 11, &String::from(""))
+            (1, 2, String::from("abc")),
+            (1, 4, String::from("hello")),
+            (7, 11, String::from(""))
         ]
     );
     let query_result = session
         .query_iter(format!("SELECT a, b, c FROM {}.t", ks), &[])
         .await
         .unwrap();
-    let specs = query_result.get_column_specs();
+    let specs = query_result.column_specs();
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name(), name); // Check column name.
         assert_eq!(spec.table_spec().ks_name(), ks);
     }
-    let mut results_from_manual_paging: Vec<Row> = vec![];
+    let mut results_from_manual_paging = vec![];
     let query = Query::new(format!("SELECT a, b, c FROM {}.t", ks)).with_page_size(1);
     let mut paging_state = PagingState::start();
     let mut watchdog = 0;
@@ -151,7 +151,15 @@ async fn test_unprepared_statement() {
             .query_single_page(query.clone(), &[], paging_state)
             .await
             .unwrap();
-        results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
+        let mut page_results = rs_manual
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows::<(i32, i32, String)>()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        results_from_manual_paging.append(&mut page_results);
         match paging_state_response {
             PagingStateResponse::HasMorePages { state } => {
                 paging_state = state;
@@ -161,7 +169,7 @@ async fn test_unprepared_statement() {
         }
         watchdog += 1;
     }
-    assert_eq!(results_from_manual_paging, rs);
+    assert_eq!(results_from_manual_paging, results);
 }
 
 #[tokio::test]
@@ -195,7 +203,7 @@ async fn test_prepared_statement() {
         .await
         .unwrap();
     let query_result = session.execute_iter(prepared_statement, &[]).await.unwrap();
-    let specs = query_result.get_column_specs();
+    let specs = query_result.column_specs();
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name(), name); // Check column name.
@@ -234,7 +242,10 @@ async fn test_prepared_statement() {
             .query_unpaged(format!("SELECT token(a) FROM {}.t2", ks), &[])
             .await
             .unwrap()
-            .single_row_typed()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(i64,)>()
             .unwrap();
         let token = Token::new(value);
         let prepared_token = Murmur3Partitioner
@@ -253,7 +264,10 @@ async fn test_prepared_statement() {
             .query_unpaged(format!("SELECT token(a,b,c) FROM {}.complex_pk", ks), &[])
             .await
             .unwrap()
-            .single_row_typed()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(i64,)>()
             .unwrap();
         let token = Token::new(value);
         let prepared_token = Murmur3Partitioner.hash_one(
@@ -275,15 +289,17 @@ async fn test_prepared_statement() {
             .query_unpaged(format!("SELECT a,b,c FROM {}.t2", ks), &[])
             .await
             .unwrap()
-            .rows
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows::<(i32, i32, String)>()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        let r = rs.first().unwrap();
-        let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-        let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-        let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-        assert_eq!((a, b, c), (17, 16, &String::from("I'm prepared!!!")));
+        let r = &rs[0];
+        assert_eq!(r, &(17, 16, String::from("I'm prepared!!!")));
 
-        let mut results_from_manual_paging: Vec<Row> = vec![];
+        let mut results_from_manual_paging = vec![];
         let query = Query::new(format!("SELECT a, b, c FROM {}.t2", ks)).with_page_size(1);
         let prepared_paged = session.prepare(query).await.unwrap();
         let mut paging_state = PagingState::start();
@@ -293,7 +309,15 @@ async fn test_prepared_statement() {
                 .execute_single_page(&prepared_paged, &[], paging_state)
                 .await
                 .unwrap();
-            results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
+            let mut page_results = rs_manual
+                .into_rows_result()
+                .unwrap()
+                .unwrap()
+                .rows::<(i32, i32, String)>()
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            results_from_manual_paging.append(&mut page_results);
             match paging_state_response {
                 PagingStateResponse::HasMorePages { state } => {
                     paging_state = state;
@@ -310,7 +334,10 @@ async fn test_prepared_statement() {
             .query_unpaged(format!("SELECT a,b,c,d,e FROM {}.complex_pk", ks), &[])
             .await
             .unwrap()
-            .single_row_typed()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(i32, i32, String, i32, Option<i32>)>()
             .unwrap();
         assert!(e.is_none());
         assert_eq!(
@@ -318,9 +345,9 @@ async fn test_prepared_statement() {
             (17, 16, "I'm prepared!!!", 7, None)
         );
     }
-    // Check that SerializeRow macro works
+    // Check that SerializeRow and DeserializeRow macros work
     {
-        #[derive(scylla::SerializeRow, scylla::FromRow, PartialEq, Debug, Clone)]
+        #[derive(scylla::SerializeRow, scylla::DeserializeRow, PartialEq, Debug, Clone)]
         #[scylla(crate = crate)]
         struct ComplexPk {
             a: i32,
@@ -356,7 +383,10 @@ async fn test_prepared_statement() {
             )
             .await
             .unwrap()
-            .single_row_typed()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row()
             .unwrap();
         assert_eq!(input, output)
     }
@@ -477,7 +507,10 @@ async fn test_batch() {
         .query_unpaged(format!("SELECT a, b, c FROM {}.t_batch", ks), &[])
         .await
         .unwrap()
-        .rows_typed()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32, String)>()
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
@@ -514,7 +547,10 @@ async fn test_batch() {
         )
         .await
         .unwrap()
-        .rows_typed()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32, String)>()
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
@@ -567,7 +603,10 @@ async fn test_token_calculation() {
             )
             .await
             .unwrap()
-            .single_row_typed()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(i64,)>()
             .unwrap();
         let token = Token::new(value);
         let prepared_token = Murmur3Partitioner
@@ -623,7 +662,7 @@ async fn test_token_awareness() {
             .await
             .unwrap();
         let tracing_info = session
-            .get_tracing_info(res.tracing_id.as_ref().unwrap())
+            .get_tracing_info(res.tracing_id().as_ref().unwrap())
             .await
             .unwrap();
 
@@ -635,7 +674,7 @@ async fn test_token_awareness() {
             .execute_iter(prepared_statement.clone(), values)
             .await
             .unwrap();
-        let tracing_id = iter.get_tracing_ids()[0];
+        let tracing_id = iter.tracing_ids()[0];
         let tracing_info = session.get_tracing_info(&tracing_id).await.unwrap();
 
         // Again, verify that only one node was involved
@@ -675,7 +714,10 @@ async fn test_use_keyspace() {
         .query_unpaged("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows_typed::<(String,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(String,)>()
         .unwrap()
         .map(|res| res.unwrap().0)
         .collect();
@@ -724,7 +766,10 @@ async fn test_use_keyspace() {
         .query_unpaged("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows_typed::<(String,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(String,)>()
         .unwrap()
         .map(|res| res.unwrap().0)
         .collect();
@@ -784,7 +829,10 @@ async fn test_use_keyspace_case_sensitivity() {
         .query_unpaged("SELECT * from tab", &[])
         .await
         .unwrap()
-        .rows_typed::<(String,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(String,)>()
         .unwrap()
         .map(|row| row.unwrap().0)
         .collect();
@@ -799,7 +847,10 @@ async fn test_use_keyspace_case_sensitivity() {
         .query_unpaged("SELECT * from tab", &[])
         .await
         .unwrap()
-        .rows_typed::<(String,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(String,)>()
         .unwrap()
         .map(|row| row.unwrap().0)
         .collect();
@@ -840,7 +891,10 @@ async fn test_raw_use_keyspace() {
         .query_unpaged("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows_typed::<(String,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(String,)>()
         .unwrap()
         .map(|res| res.unwrap().0)
         .collect();
@@ -959,21 +1013,20 @@ async fn test_tracing() {
 async fn test_tracing_query(session: &Session, ks: String) {
     // A query without tracing enabled has no tracing uuid in result
     let untraced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
-    let untraced_query_result: LegacyQueryResult =
+    let untraced_query_result: QueryResult =
         session.query_unpaged(untraced_query, &[]).await.unwrap();
 
-    assert!(untraced_query_result.tracing_id.is_none());
+    assert!(untraced_query_result.tracing_id().is_none());
 
     // A query with tracing enabled has a tracing uuid in result
     let mut traced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
     traced_query.config.tracing = true;
 
-    let traced_query_result: LegacyQueryResult =
-        session.query_unpaged(traced_query, &[]).await.unwrap();
-    assert!(traced_query_result.tracing_id.is_some());
+    let traced_query_result: QueryResult = session.query_unpaged(traced_query, &[]).await.unwrap();
+    assert!(traced_query_result.tracing_id().is_some());
 
     // Querying this uuid from tracing table gives some results
-    assert_in_tracing_table(session, traced_query_result.tracing_id.unwrap()).await;
+    assert_in_tracing_table(session, traced_query_result.tracing_id().unwrap()).await;
 }
 
 async fn test_tracing_execute(session: &Session, ks: String) {
@@ -983,12 +1036,12 @@ async fn test_tracing_execute(session: &Session, ks: String) {
         .await
         .unwrap();
 
-    let untraced_prepared_result: LegacyQueryResult = session
+    let untraced_prepared_result: QueryResult = session
         .execute_unpaged(&untraced_prepared, &[])
         .await
         .unwrap();
 
-    assert!(untraced_prepared_result.tracing_id.is_none());
+    assert!(untraced_prepared_result.tracing_id().is_none());
 
     // Executing a prepared statement with tracing enabled has a tracing uuid in result
     let mut traced_prepared = session
@@ -998,14 +1051,14 @@ async fn test_tracing_execute(session: &Session, ks: String) {
 
     traced_prepared.config.tracing = true;
 
-    let traced_prepared_result: LegacyQueryResult = session
+    let traced_prepared_result: QueryResult = session
         .execute_unpaged(&traced_prepared, &[])
         .await
         .unwrap();
-    assert!(traced_prepared_result.tracing_id.is_some());
+    assert!(traced_prepared_result.tracing_id().is_some());
 
     // Querying this uuid from tracing table gives some results
-    assert_in_tracing_table(session, traced_prepared_result.tracing_id.unwrap()).await;
+    assert_in_tracing_table(session, traced_prepared_result.tracing_id().unwrap()).await;
 }
 
 async fn test_tracing_prepare(session: &Session, ks: String) {
@@ -1035,9 +1088,8 @@ async fn test_get_tracing_info(session: &Session, ks: String) {
     let mut traced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
     traced_query.config.tracing = true;
 
-    let traced_query_result: LegacyQueryResult =
-        session.query_unpaged(traced_query, &[]).await.unwrap();
-    let tracing_id: Uuid = traced_query_result.tracing_id.unwrap();
+    let traced_query_result: QueryResult = session.query_unpaged(traced_query, &[]).await.unwrap();
+    let tracing_id: Uuid = traced_query_result.tracing_id().unwrap();
 
     // Getting tracing info from session using this uuid works
     let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
@@ -1049,33 +1101,22 @@ async fn test_tracing_query_iter(session: &Session, ks: String) {
     // A query without tracing enabled has no tracing ids
     let untraced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
 
-    let mut untraced_row_iter = session.query_iter(untraced_query, &[]).await.unwrap();
-    while let Some(_row) = untraced_row_iter.next().await {
-        // Receive rows
-    }
+    let untraced_query_pager = session.query_iter(untraced_query, &[]).await.unwrap();
+    assert!(untraced_query_pager.tracing_ids().is_empty());
 
-    assert!(untraced_row_iter.get_tracing_ids().is_empty());
-
-    // The same is true for TypedRowIter
-    let untraced_typed_row_iter = untraced_row_iter.into_typed::<(String,)>();
-    assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
+    let untraced_typed_row_iter = untraced_query_pager.rows_stream::<(String,)>().unwrap();
+    assert!(untraced_typed_row_iter.tracing_ids().is_empty());
 
     // A query with tracing enabled has a tracing ids in result
     let mut traced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
     traced_query.config.tracing = true;
 
-    let mut traced_row_iter = session.query_iter(traced_query, &[]).await.unwrap();
-    while let Some(_row) = traced_row_iter.next().await {
-        // Receive rows
-    }
+    let traced_query_pager = session.query_iter(traced_query, &[]).await.unwrap();
 
-    assert!(!traced_row_iter.get_tracing_ids().is_empty());
+    let traced_typed_row_stream = traced_query_pager.rows_stream::<(String,)>().unwrap();
+    assert!(!traced_typed_row_stream.tracing_ids().is_empty());
 
-    // The same is true for TypedRowIter
-    let traced_typed_row_iter = traced_row_iter.into_typed::<(String,)>();
-    assert!(!traced_typed_row_iter.get_tracing_ids().is_empty());
-
-    for tracing_id in traced_typed_row_iter.get_tracing_ids() {
+    for tracing_id in traced_typed_row_stream.tracing_ids() {
         assert_in_tracing_table(session, *tracing_id).await;
     }
 }
@@ -1087,16 +1128,11 @@ async fn test_tracing_execute_iter(session: &Session, ks: String) {
         .await
         .unwrap();
 
-    let mut untraced_row_iter = session.execute_iter(untraced_prepared, &[]).await.unwrap();
-    while let Some(_row) = untraced_row_iter.next().await {
-        // Receive rows
-    }
+    let untraced_query_pager = session.execute_iter(untraced_prepared, &[]).await.unwrap();
+    assert!(untraced_query_pager.tracing_ids().is_empty());
 
-    assert!(untraced_row_iter.get_tracing_ids().is_empty());
-
-    // The same is true for TypedRowIter
-    let untraced_typed_row_iter = untraced_row_iter.into_typed::<(String,)>();
-    assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
+    let untraced_typed_row_stream = untraced_query_pager.rows_stream::<(String,)>().unwrap();
+    assert!(untraced_typed_row_stream.tracing_ids().is_empty());
 
     // A prepared statement with tracing enabled has a tracing ids in result
     let mut traced_prepared = session
@@ -1105,18 +1141,12 @@ async fn test_tracing_execute_iter(session: &Session, ks: String) {
         .unwrap();
     traced_prepared.config.tracing = true;
 
-    let mut traced_row_iter = session.execute_iter(traced_prepared, &[]).await.unwrap();
-    while let Some(_row) = traced_row_iter.next().await {
-        // Receive rows
-    }
+    let traced_query_pager = session.execute_iter(traced_prepared, &[]).await.unwrap();
 
-    assert!(!traced_row_iter.get_tracing_ids().is_empty());
+    let traced_typed_row_stream = traced_query_pager.rows_stream::<(String,)>().unwrap();
+    assert!(!traced_typed_row_stream.tracing_ids().is_empty());
 
-    // The same is true for TypedRowIter
-    let traced_typed_row_iter = traced_row_iter.into_typed::<(String,)>();
-    assert!(!traced_typed_row_iter.get_tracing_ids().is_empty());
-
-    for tracing_id in traced_typed_row_iter.get_tracing_ids() {
+    for tracing_id in traced_typed_row_stream.tracing_ids() {
         assert_in_tracing_table(session, *tracing_id).await;
     }
 }
@@ -1126,19 +1156,18 @@ async fn test_tracing_batch(session: &Session, ks: String) {
     let mut untraced_batch: Batch = Default::default();
     untraced_batch.append_statement(&format!("INSERT INTO {}.tab (a) VALUES('a')", ks)[..]);
 
-    let untraced_batch_result: LegacyQueryResult =
-        session.batch(&untraced_batch, ((),)).await.unwrap();
-    assert!(untraced_batch_result.tracing_id.is_none());
+    let untraced_batch_result: QueryResult = session.batch(&untraced_batch, ((),)).await.unwrap();
+    assert!(untraced_batch_result.tracing_id().is_none());
 
     // Batch with tracing enabled has a tracing uuid in result
     let mut traced_batch: Batch = Default::default();
     traced_batch.append_statement(&format!("INSERT INTO {}.tab (a) VALUES('a')", ks)[..]);
     traced_batch.config.tracing = true;
 
-    let traced_batch_result: LegacyQueryResult = session.batch(&traced_batch, ((),)).await.unwrap();
-    assert!(traced_batch_result.tracing_id.is_some());
+    let traced_batch_result: QueryResult = session.batch(&traced_batch, ((),)).await.unwrap();
+    assert!(traced_batch_result.tracing_id().is_some());
 
-    assert_in_tracing_table(session, traced_batch_result.tracing_id.unwrap()).await;
+    assert_in_tracing_table(session, traced_batch_result.tracing_id().unwrap()).await;
 }
 
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
@@ -1157,9 +1186,10 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
             .query_unpaged(traces_query.clone(), (tracing_uuid,))
             .await
             .unwrap()
-            .rows_num()
-            .unwrap();
-
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows_num();
         if rows_num > 0 {
             // Ok there was some row for this tracing_uuid
             return;
@@ -1178,13 +1208,6 @@ async fn test_await_schema_agreement() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let _schema_version = session.await_schema_agreement().await.unwrap();
-}
-
-#[tokio::test]
-async fn test_await_timed_schema_agreement() {
-    setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
-    session.await_schema_agreement().await.unwrap();
 }
 
 #[tokio::test]
@@ -1271,14 +1294,19 @@ async fn test_timestamp() {
         .await
         .unwrap();
 
-    let mut results = session
+    let query_rows_result = session
         .query_unpaged(
             format!("SELECT a, b, WRITETIME(b) FROM {}.t_timestamp", ks),
             &[],
         )
         .await
         .unwrap()
-        .rows_typed::<(String, String, i64)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap();
+
+    let mut results = query_rows_result
+        .rows::<(&str, &str, i64)>()
         .unwrap()
         .map(Result::unwrap)
         .collect::<Vec<_>>();
@@ -1290,8 +1318,7 @@ async fn test_timestamp() {
         ("regular query", "higher timestamp", 420),
         ("second query in batch", "higher timestamp", 420),
     ]
-    .iter()
-    .map(|(x, y, t)| (x.to_string(), y.to_string(), *t))
+    .into_iter()
     .collect::<Vec<_>>();
 
     assert_eq!(results, expected_results);
@@ -1932,7 +1959,10 @@ async fn test_named_bind_markers() {
         .query_unpaged("SELECT pk, ck, v FROM t", &[])
         .await
         .unwrap()
-        .rows_typed::<(i32, i32, i32)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32, i32)>()
         .unwrap()
         .map(|res| res.unwrap())
         .collect();
@@ -2083,7 +2113,10 @@ async fn test_unprepared_reprepare_in_execute() {
         .query_unpaged("SELECT a, b, c FROM tab", ())
         .await
         .unwrap()
-        .rows_typed::<(i32, i32, i32)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
@@ -2138,7 +2171,10 @@ async fn test_unusual_valuelists() {
         .query_unpaged("SELECT a, b, c FROM tab", ())
         .await
         .unwrap()
-        .rows_typed::<(i32, i32, String)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32, String)>()
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
@@ -2209,7 +2245,10 @@ async fn test_unprepared_reprepare_in_batch() {
         .query_unpaged("SELECT a, b, c FROM tab", ())
         .await
         .unwrap()
-        .rows_typed::<(i32, i32, i32)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
@@ -2276,7 +2315,10 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
         .execute_unpaged("SELECT a, b, c FROM tab", &())
         .await
         .unwrap()
-        .rows_typed::<(i32, i32, i32)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
@@ -2343,7 +2385,10 @@ async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(
         .query_unpaged("SELECT a, b FROM test_batch_table", ())
         .await
         .unwrap()
-        .rows_typed::<(i32, i32)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
@@ -2570,33 +2615,34 @@ async fn test_batch_lwts() {
     batch.append_statement("INSERT INTO tab (p1, c1, r1, r2) VALUES (0, 123, 321, 312)");
     batch.append_statement("UPDATE tab SET r1 = 1 WHERE p1 = 0 AND c1 = 0 IF r2 = 0");
 
-    let batch_res: LegacyQueryResult = session.batch(&batch, ((), (), ())).await.unwrap();
+    let batch_res: QueryResult = session.batch(&batch, ((), (), ())).await.unwrap();
+    let batch_deserializer = batch_res.into_rows_result().unwrap().unwrap();
 
     // Scylla returns 5 columns, but Cassandra returns only 1
-    let is_scylla: bool = batch_res.col_specs().len() == 5;
+    let is_scylla: bool = batch_deserializer.column_specs().len() == 5;
 
     if is_scylla {
-        test_batch_lwts_for_scylla(&session, &batch, batch_res).await;
+        test_batch_lwts_for_scylla(&session, &batch, &batch_deserializer).await;
     } else {
-        test_batch_lwts_for_cassandra(&session, &batch, batch_res).await;
+        test_batch_lwts_for_cassandra(&session, &batch, &batch_deserializer).await;
     }
 }
 
 async fn test_batch_lwts_for_scylla(
     session: &Session,
     batch: &Batch,
-    batch_res: LegacyQueryResult,
+    query_rows_result: &QueryRowsResult,
 ) {
     // Alias required by clippy
     type IntOrNull = Option<i32>;
 
     // Returned columns are:
     // [applied], p1, c1, r1, r2
-    let batch_res_rows: Vec<(bool, IntOrNull, IntOrNull, IntOrNull, IntOrNull)> = batch_res
-        .rows_typed()
+    let batch_res_rows: Vec<(bool, IntOrNull, IntOrNull, IntOrNull, IntOrNull)> = query_rows_result
+        .rows()
         .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
+        .collect::<Result<_, _>>()
+        .unwrap();
 
     let expected_batch_res_rows = vec![
         (true, Some(0), Some(0), Some(0), Some(0)),
@@ -2607,12 +2653,15 @@ async fn test_batch_lwts_for_scylla(
     assert_eq!(batch_res_rows, expected_batch_res_rows);
 
     let prepared_batch: Batch = session.prepare_batch(batch).await.unwrap();
-    let prepared_batch_res: LegacyQueryResult =
+    let prepared_batch_res: QueryResult =
         session.batch(&prepared_batch, ((), (), ())).await.unwrap();
 
     let prepared_batch_res_rows: Vec<(bool, IntOrNull, IntOrNull, IntOrNull, IntOrNull)> =
         prepared_batch_res
-            .rows_typed()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows()
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
@@ -2629,15 +2678,15 @@ async fn test_batch_lwts_for_scylla(
 async fn test_batch_lwts_for_cassandra(
     session: &Session,
     batch: &Batch,
-    batch_res: LegacyQueryResult,
+    query_rows_result: &QueryRowsResult,
 ) {
     // Alias required by clippy
     type IntOrNull = Option<i32>;
 
     // Returned columns are:
     // [applied]
-    let batch_res_rows: Vec<(bool,)> = batch_res
-        .rows_typed()
+    let batch_res_rows: Vec<(bool,)> = query_rows_result
+        .rows()
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
@@ -2647,14 +2696,17 @@ async fn test_batch_lwts_for_cassandra(
     assert_eq!(batch_res_rows, expected_batch_res_rows);
 
     let prepared_batch: Batch = session.prepare_batch(batch).await.unwrap();
-    let prepared_batch_res: LegacyQueryResult =
+    let prepared_batch_res: QueryResult =
         session.batch(&prepared_batch, ((), (), ())).await.unwrap();
 
     // Returned columns are:
     // [applied], p1, c1, r1, r2
     let prepared_batch_res_rows: Vec<(bool, IntOrNull, IntOrNull, IntOrNull, IntOrNull)> =
         prepared_batch_res
-            .rows_typed()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows()
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
@@ -2759,13 +2811,15 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     assert!(!retried_flag.load(Ordering::Relaxed));
     // Try to write something to the new table - it should fail and the policy
     // will tell us to ignore the error
-    let mut iter = session
+    let mut stream = session
         .query_iter("INSERT INTO t (pk v) VALUES (1, 2)", ())
         .await
+        .unwrap()
+        .rows_stream::<Row>()
         .unwrap();
 
     assert!(retried_flag.load(Ordering::Relaxed));
-    while iter.try_next().await.unwrap().is_some() {}
+    while stream.try_next().await.unwrap().is_some() {}
 
     retried_flag.store(false, Ordering::Relaxed);
     // Try the same with execute_iter()
@@ -2773,7 +2827,13 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
         .prepare("INSERT INTO t (pk, v) VALUES (?, ?)")
         .await
         .unwrap();
-    let mut iter = session.execute_iter(p, (1, 2)).await.unwrap();
+    let mut iter = session
+        .execute_iter(p, (1, 2))
+        .await
+        .unwrap()
+        .rows_stream::<Row>()
+        .unwrap()
+        .into_stream();
 
     assert!(retried_flag.load(Ordering::Relaxed));
     while iter.try_next().await.unwrap().is_some() {}
@@ -2801,19 +2861,30 @@ async fn test_iter_methods_with_modification_statements() {
         ks
     ));
     query.set_tracing(true);
-    let mut row_iterator = session.query_iter(query, &[]).await.unwrap();
-    row_iterator.next().await.ok_or(()).unwrap_err(); // assert empty
-    assert!(!row_iterator.get_tracing_ids().is_empty());
+    let mut rows_stream = session
+        .query_iter(query, &[])
+        .await
+        .unwrap()
+        .rows_stream::<Row>()
+        .unwrap();
+    rows_stream.next().await.ok_or(()).unwrap_err(); // assert empty
+    assert!(!rows_stream.tracing_ids().is_empty());
 
     let prepared_statement = session
         .prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks))
         .await
         .unwrap();
-    let mut row_iterator = session
+    let query_pager = session
         .execute_iter(prepared_statement, (2, 3, "cba"))
         .await
         .unwrap();
-    row_iterator.next().await.ok_or(()).unwrap_err(); // assert empty
+    query_pager
+        .rows_stream::<()>()
+        .unwrap()
+        .next()
+        .await
+        .ok_or(())
+        .unwrap_err(); // assert empty
 }
 
 #[tokio::test]
@@ -2899,7 +2970,10 @@ async fn simple_strategy_test() {
         .query_unpaged(format!("SELECT p, c, r FROM {}.tab", ks), ())
         .await
         .unwrap()
-        .rows_typed::<(i32, i32, i32)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
         .collect::<Vec<(i32, i32, i32)>>();
@@ -3010,4 +3084,69 @@ async fn test_manual_primary_key_computation() {
         )
         .await;
     }
+}
+
+/// ScyllaDB does not distinguish empty collections from nulls. That is, INSERTing an empty collection
+/// is equivalent to nullifying the corresponding column.
+/// As pointed out in [#1001](https://github.com/scylladb/scylla-rust-driver/issues/1001), it's a nice
+/// QOL feature to be able to deserialize empty CQL collections to empty Rust collections instead of
+/// `None::<RustCollection>`. This test checks that.
+#[tokio::test]
+async fn test_deserialize_empty_collections() {
+    // Setup session.
+    let ks = unique_keyspace_name();
+    let session = create_new_session_builder().build().await.unwrap();
+    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(&ks, true).await.unwrap();
+
+    async fn deserialize_empty_collection<
+        Collection: Default + DeserializeOwnedValue + SerializeValue,
+    >(
+        session: &Session,
+        collection_name: &str,
+        collection_type_params: &str,
+    ) -> Collection {
+        // Create a table for the given collection type.
+        let table_name = "test_empty_".to_owned() + collection_name;
+        let query = format!(
+            "CREATE TABLE {} (n int primary key, c {}<{}>)",
+            table_name, collection_name, collection_type_params
+        );
+        session.query_unpaged(query, ()).await.unwrap();
+
+        // Populate the table with an empty collection, effectively inserting null as the collection.
+        session
+            .query_unpaged(
+                format!("INSERT INTO {} (n, c) VALUES (?, ?)", table_name,),
+                (0, Collection::default()),
+            )
+            .await
+            .unwrap();
+
+        let query_rows_result = session
+            .query_unpaged(format!("SELECT c FROM {}", table_name), ())
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .unwrap();
+        let (collection,) = query_rows_result.first_row::<(Collection,)>().unwrap();
+
+        // Drop the table
+        collection
+    }
+
+    let list = deserialize_empty_collection::<Vec<i32>>(&session, "list", "int").await;
+    assert!(list.is_empty());
+
+    let set = deserialize_empty_collection::<HashSet<i64>>(&session, "set", "bigint").await;
+    assert!(set.is_empty());
+
+    let map = deserialize_empty_collection::<HashMap<bool, CqlVarint>>(
+        &session,
+        "map",
+        "boolean, varint",
+    )
+    .await;
+    assert!(map.is_empty());
 }

@@ -1,3 +1,4 @@
+use crate::deserialize::DeserializeOwnedRow;
 use crate::frame::response::event::Event;
 use crate::routing::Token;
 use crate::statement::query::Query;
@@ -5,6 +6,7 @@ use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, NewSessionError, QueryError};
 use crate::transport::host_filter::HostFilter;
+use crate::transport::iterator::QueryPager;
 use crate::transport::node::resolve_contact_points;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
@@ -13,8 +15,9 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
-use scylla_cql::frame::response::result::Row;
-use scylla_macros::FromRow;
+use scylla_cql::frame::frame_errors::RowsParseError;
+use scylla_cql::types::deserialize::TypeCheckError;
+use scylla_macros::DeserializeRow;
 use std::borrow::BorrowMut;
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -765,11 +768,13 @@ async fn query_metadata(
     Ok(Metadata { peers, keyspaces })
 }
 
-#[derive(FromRow)]
-#[scylla_crate = "scylla_cql"]
+#[derive(DeserializeRow)]
+#[scylla(crate = "scylla_cql")]
 struct NodeInfoRow {
     host_id: Option<Uuid>,
+    #[scylla(rename = "rpc_address")]
     untranslated_ip_addr: IpAddr,
+    #[scylla(rename = "data_center")]
     datacenter: Option<String>,
     rack: Option<String>,
     tokens: Option<Vec<String>>,
@@ -799,6 +804,13 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
     let peers_query_stream = conn
         .clone()
         .query_iter(peers_query)
+        .map(|pager_res| {
+            let pager = pager_res?;
+            let rows_stream = pager
+                .rows_stream::<NodeInfoRow>()
+                .map_err(RowsParseError::from)?;
+            Ok::<_, QueryError>(rows_stream)
+        })
         .into_stream()
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
@@ -809,6 +821,13 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
     let local_query_stream = conn
         .clone()
         .query_iter(local_query)
+        .map(|pager_res| {
+            let pager = pager_res?;
+            let rows_stream = pager
+                .rows_stream::<NodeInfoRow>()
+                .map_err(RowsParseError::from)?;
+            Ok::<_, QueryError>(rows_stream)
+        })
         .into_stream()
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Local, row_result)));
@@ -819,9 +838,8 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
     let local_address = SocketAddr::new(local_ip, connect_port);
 
     let translated_peers_futures = untranslated_rows.map(|row_result| async {
-        let (source, raw_row) = row_result?;
-        match raw_row.into_typed() {
-            Ok(row) => create_peer_from_row(source, row, local_address).await,
+        match row_result {
+            Ok((source, row)) => create_peer_from_row(source, row, local_address).await,
             Err(err) => {
                 warn!(
                     "system.peers or system.local has an invalid row, skipping it: {}",
@@ -905,14 +923,25 @@ async fn create_peer_from_row(
     }))
 }
 
-fn query_filter_keyspace_name<'a>(
+fn query_filter_keyspace_name<'a, R>(
     conn: &Arc<Connection>,
     query_str: &'a str,
     keyspaces_to_fetch: &'a [String],
-) -> impl Stream<Item = Result<Row, QueryError>> + 'a {
+    convert_typecheck_error: impl FnOnce(TypeCheckError) -> MetadataError + 'a,
+) -> impl Stream<Item = Result<R, QueryError>> + 'a
+where
+    R: DeserializeOwnedRow + 'static,
+{
     let conn = conn.clone();
 
-    let fut = async move {
+    // This function is extracted to reduce monomorphisation penalty:
+    // query_filter_keyspace_name() is going to be monomorphised into 5 distinct functions,
+    // so it's better to extract the common part.
+    async fn make_keyspace_filtered_query_pager(
+        conn: Arc<Connection>,
+        query_str: &str,
+        keyspaces_to_fetch: &[String],
+    ) -> Result<QueryPager, QueryError> {
         if keyspaces_to_fetch.is_empty() {
             let mut query = Query::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
@@ -929,6 +958,13 @@ fn query_filter_keyspace_name<'a>(
             let serialized_values = prepared.serialize_values(&keyspaces)?;
             conn.execute_iter(prepared, serialized_values).await
         }
+    }
+
+    let fut = async move {
+        let pager = make_keyspace_filtered_query_pager(conn, query_str, keyspaces_to_fetch).await?;
+        let stream: super::iterator::TypedRowStream<R> =
+            pager.rows_stream::<R>().map_err(convert_typecheck_error)?;
+        Ok::<_, QueryError>(stream)
     };
     fut.into_stream().try_flatten()
 }
@@ -938,10 +974,15 @@ async fn query_keyspaces(
     keyspaces_to_fetch: &[String],
     fetch_schema: bool,
 ) -> Result<HashMap<String, Keyspace>, QueryError> {
-    let rows = query_filter_keyspace_name(
+    let rows = query_filter_keyspace_name::<(String, HashMap<String, String>)>(
         conn,
         "select keyspace_name, replication from system_schema.keyspaces",
         keyspaces_to_fetch,
+        |err| {
+            MetadataError::Keyspaces(KeyspacesMetadataError::SchemaKeyspacesInvalidColumnType(
+                err,
+            ))
+        },
     );
 
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
@@ -956,12 +997,7 @@ async fn query_keyspaces(
     };
 
     rows.map(|row_result| {
-        let row = row_result?;
-        let (keyspace_name, strategy_map) = row.into_typed::<(String, _)>().map_err(|err| {
-            MetadataError::Keyspaces(KeyspacesMetadataError::SchemaKeyspacesInvalidColumnType(
-                err,
-            ))
-        })?;
+        let (keyspace_name, strategy_map) = row_result?;
 
         let strategy: Strategy = strategy_from_string_map(strategy_map).map_err(|error| {
             MetadataError::Keyspaces(KeyspacesMetadataError::Strategy {
@@ -988,8 +1024,8 @@ async fn query_keyspaces(
     .await
 }
 
-#[derive(FromRow, Debug)]
-#[scylla_crate = "crate"]
+#[derive(DeserializeRow, Debug)]
+#[scylla(crate = "crate")]
 struct UdtRow {
     keyspace_name: String,
     type_name: String,
@@ -1031,21 +1067,16 @@ async fn query_user_defined_types(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
 ) -> Result<HashMap<String, HashMap<String, Arc<UserDefinedType>>>, QueryError> {
-    let rows = query_filter_keyspace_name(
+    let rows = query_filter_keyspace_name::<UdtRow>(
         conn,
         "select keyspace_name, type_name, field_names, field_types from system_schema.types",
         keyspaces_to_fetch,
+        |err| MetadataError::Udts(UdtMetadataError::SchemaTypesInvalidColumnType(err)),
     );
 
     let mut udt_rows: Vec<UdtRowWithParsedFieldTypes> = rows
         .map(|row_result| {
-            let row = row_result?;
-            let udt_row = row
-                .into_typed::<UdtRow>()
-                .map_err(|err| {
-                    MetadataError::Udts(UdtMetadataError::SchemaTypesInvalidColumnType(err))
-                })?
-                .try_into()?;
+            let udt_row = row_result?.try_into()?;
 
             Ok::<_, QueryError>(udt_row)
         })
@@ -1355,21 +1386,17 @@ async fn query_tables(
     keyspaces_to_fetch: &[String],
     udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
 ) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
-    let rows = query_filter_keyspace_name(
+    let rows = query_filter_keyspace_name::<(String, String)>(
         conn,
         "SELECT keyspace_name, table_name FROM system_schema.tables",
         keyspaces_to_fetch,
+        |err| MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err)),
     );
     let mut result = HashMap::new();
     let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
 
     rows.map(|row_result| {
-        let row = row_result?;
-        let (keyspace_name, table_name) = row.into_typed().map_err(|err| {
-            MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err))
-        })?;
-
-        let keyspace_and_table_name = (keyspace_name, table_name);
+        let keyspace_and_table_name = row_result?;
 
         let table = tables.remove(&keyspace_and_table_name).unwrap_or(Table {
             columns: HashMap::new(),
@@ -1396,20 +1423,18 @@ async fn query_views(
     keyspaces_to_fetch: &[String],
     udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
 ) -> Result<HashMap<String, HashMap<String, MaterializedView>>, QueryError> {
-    let rows = query_filter_keyspace_name(
+    let rows = query_filter_keyspace_name::<(String, String, String)>(
         conn,
         "SELECT keyspace_name, view_name, base_table_name FROM system_schema.views",
         keyspaces_to_fetch,
+        |err| MetadataError::Views(ViewsMetadataError::SchemaViewsInvalidColumnType(err)),
     );
 
     let mut result = HashMap::new();
     let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
 
     rows.map(|row_result| {
-        let row = row_result?;
-        let (keyspace_name, view_name, base_table_name) = row.into_typed().map_err(|err| {
-            MetadataError::Views(ViewsMetadataError::SchemaViewsInvalidColumnType(err))
-        })?;
+        let (keyspace_name, view_name, base_table_name) = row_result?;
 
         let keyspace_and_view_name = (keyspace_name, view_name);
 
@@ -1447,24 +1472,18 @@ async fn query_tables_schema(
     // This column shouldn't be exposed to the user but is currently exposed in system tables.
     const THRIFT_EMPTY_TYPE: &str = "empty";
 
-    let rows = query_filter_keyspace_name(conn,
-        "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns", keyspaces_to_fetch
+    type RowType = (String, String, String, String, i32, String);
+
+    let rows = query_filter_keyspace_name::<RowType>(conn,
+        "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns", keyspaces_to_fetch, |err| {
+            MetadataError::Tables(TablesMetadataError::SchemaColumnsInvalidColumnType(err))
+        }
     );
 
     let mut tables_schema = HashMap::new();
 
     rows.map(|row_result| {
-        let row = row_result?;
-        let (keyspace_name, table_name, column_name, kind, position, type_): (
-            String,
-            String,
-            String,
-            String,
-            i32,
-            String,
-        ) = row.into_typed().map_err(|err| {
-            MetadataError::Tables(TablesMetadataError::SchemaColumnsInvalidColumnType(err))
-        })?;
+        let (keyspace_name, table_name, column_name, kind, position, type_) = row_result?;
 
         if type_ == THRIFT_EMPTY_TYPE {
             return Ok::<_, QueryError>(());
@@ -1674,15 +1693,21 @@ async fn query_table_partitioners(
     let rows = conn
         .clone()
         .query_iter(partitioner_query)
+        .map(|pager_res| {
+            let pager = pager_res?;
+            let stream = pager
+                .rows_stream::<(String, String, Option<String>)>()
+                .map_err(|err| {
+                    MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err))
+                })?;
+            Ok::<_, QueryError>(stream)
+        })
         .into_stream()
         .try_flatten();
 
     let result = rows
         .map(|row_result| {
-            let (keyspace_name, table_name, partitioner) =
-                row_result?.into_typed().map_err(|err| {
-                    MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err))
-                })?;
+            let (keyspace_name, table_name, partitioner) = row_result?;
             Ok::<_, QueryError>(((keyspace_name, table_name), partitioner))
         })
         .try_collect::<HashMap<_, _>>()

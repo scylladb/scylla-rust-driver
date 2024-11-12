@@ -24,6 +24,7 @@ use super::query_result::ColumnSpecs;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
+use crate::deserialize::DeserializeOwnedRow;
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row},
@@ -126,9 +127,9 @@ use checked_channel_sender::{ProvingSender, SendAttemptedProof};
 
 type PageSendAttemptedProof = SendAttemptedProof<Result<ReceivedPage, QueryError>>;
 
-// RowIteratorWorker works in the background to fetch pages
-// RowIterator receives them through a channel
-struct RowIteratorWorker<'a, QueryFunc, SpanCreatorFunc> {
+// PagerWorker works in the background to fetch pages
+// QueryPager receives them through a channel
+struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     sender: ProvingSender<Result<ReceivedPage, QueryError>>,
 
     // Closure used to perform a single page query
@@ -152,7 +153,7 @@ struct RowIteratorWorker<'a, QueryFunc, SpanCreatorFunc> {
     span_creator: SpanCreatorFunc,
 }
 
-impl<QueryFunc, QueryFut, SpanCreator> RowIteratorWorker<'_, QueryFunc, SpanCreator>
+impl<QueryFunc, QueryFut, SpanCreator> PagerWorker<'_, QueryFunc, SpanCreator>
 where
     QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, UserRequestError>>,
@@ -259,7 +260,7 @@ where
             }
         }
 
-        // Send last_error to RowIterator - query failed fully
+        // Send last_error to QueryPager - query failed fully
         self.log_query_error(&last_error);
         let (proof, _) = self.sender.send(Err(last_error)).await;
         proof
@@ -332,10 +333,10 @@ where
 
                 let received_page = ReceivedPage { rows, tracing_id };
 
-                // Send next page to RowIterator
+                // Send next page to QueryPager
                 let (proof, res) = self.sender.send(Ok(received_page)).await;
                 if res.is_err() {
-                    // channel was closed, RowIterator was dropped - should shutdown
+                    // channel was closed, QueryPager was dropped - should shutdown
                     return Ok(ControlFlow::Break(proof));
                 }
 
@@ -468,15 +469,15 @@ where
     }
 }
 
-/// A massively simplified version of the RowIteratorWorker. It does not have
+/// A massively simplified version of the PagerWorker. It does not have
 /// any complicated logic related to retries, it just fetches pages from
 /// a single connection.
-struct SingleConnectionRowIteratorWorker<Fetcher> {
+struct SingleConnectionPagerWorker<Fetcher> {
     sender: ProvingSender<Result<ReceivedPage, QueryError>>,
     fetcher: Fetcher,
 }
 
-impl<Fetcher, FetchFut> SingleConnectionRowIteratorWorker<Fetcher>
+impl<Fetcher, FetchFut> SingleConnectionPagerWorker<Fetcher>
 where
     Fetcher: Fn(PagingState) -> FetchFut + Send + Sync,
     FetchFut: Future<Output = Result<QueryResponse, UserRequestError>> + Send,
@@ -507,7 +508,7 @@ where
                         .await;
 
                     if send_result.is_err() {
-                        // channel was closed, RowIterator was dropped - should shutdown
+                        // channel was closed, QueryPager was dropped - should shutdown
                         return Ok(proof);
                     }
 
@@ -540,13 +541,13 @@ where
     }
 }
 
-/// An intermediate object that allows to construct an iterator over a query
+/// An intermediate object that allows to construct a stream over a query
 /// that is asynchronously paged in the background.
 ///
 /// Before the results can be processed in a convenient way, the QueryPager
-/// needs to be cast into a typed iterator. This is done by use of `into_typed()` method.
+/// needs to be cast into a typed stream. This is done by use of `rows_stream()` method.
 /// As the method is generic over the target type, the turbofish syntax
-/// can come in handy there, e.g. `raw_iter.into_typed::<(i32, &str, Uuid)>()`.
+/// can come in handy there, e.g. `query_pager.rows_stream::<(i32, String, Uuid)>()`.
 ///
 /// A pre-0.15.0 interface is also available, although deprecated:
 /// `into_legacy()` method converts QueryPager to LegacyRowIterator,
@@ -662,12 +663,9 @@ impl QueryPager {
     /// It only allows deserializing owned types, because [Stream] is not lending.
     /// Begins with performing type check.
     #[inline]
-    pub fn rows_stream<'frame, 'metadata, RowT: 'static + DeserializeRow<'frame, 'metadata>>(
+    pub fn rows_stream<RowT: 'static + for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>>(
         self,
-    ) -> Result<TypedRowStream<RowT>, TypeCheckError>
-    where
-        'frame: 'metadata,
-    {
+    ) -> Result<TypedRowStream<RowT>, TypeCheckError> {
         TypedRowLendingStream::<RowT>::new(self).map(|typed_row_lending_stream| TypedRowStream {
             typed_row_lending_stream,
         })
@@ -741,7 +739,7 @@ impl QueryPager {
                 span
             };
 
-            let worker = RowIteratorWorker {
+            let worker = PagerWorker {
                 sender: sender.into(),
                 page_query,
                 statement_info: routing_info,
@@ -859,7 +857,7 @@ impl QueryPager {
                 span
             };
 
-            let worker = RowIteratorWorker {
+            let worker = PagerWorker {
                 sender: sender.into(),
                 page_query,
                 statement_info,
@@ -893,7 +891,7 @@ impl QueryPager {
         let page_size = query.get_validated_page_size();
 
         let worker_task = async move {
-            let worker = SingleConnectionRowIteratorWorker {
+            let worker = SingleConnectionPagerWorker {
                 sender: sender.into(),
                 fetcher: |paging_state| {
                     connection.query_raw_with_consistency(
@@ -923,7 +921,7 @@ impl QueryPager {
         let page_size = prepared.get_validated_page_size();
 
         let worker_task = async move {
-            let worker = SingleConnectionRowIteratorWorker {
+            let worker = SingleConnectionPagerWorker {
                 sender: sender.into(),
                 fetcher: |paging_state| {
                     connection.execute_raw_with_consistency(
@@ -1076,7 +1074,7 @@ impl<RowT> TypedRowStream<RowT> {
 /// It only works with owned types! For example, &str is not supported.
 impl<RowT> Stream for TypedRowStream<RowT>
 where
-    RowT: for<'r> DeserializeRow<'r, 'r>,
+    RowT: DeserializeOwnedRow,
 {
     type Item = Result<RowT, QueryError>;
 

@@ -1,3 +1,5 @@
+use scylla_cql::frame::response::result::Row;
+
 #[cfg(test)]
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::Session;
@@ -46,7 +48,10 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
         .query_unpaged("SELECT supported_features FROM system.local", ())
         .await
         .unwrap()
-        .single_row_typed()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .single_row()
         .unwrap();
 
     features
@@ -95,15 +100,18 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
 pub async fn scylla_supports_tablets(session: &Session) -> bool {
     let result = session
         .query_unpaged(
-            "select column_name from system_schema.columns where 
+            "select column_name from system_schema.columns where
                 keyspace_name = 'system_schema'
                 and table_name = 'scylla_keyspaces'
                 and column_name = 'initial_tablets'",
             &[],
         )
         .await
+        .unwrap()
+        .into_rows_result()
         .unwrap();
-    result.single_row().is_ok()
+
+    result.map_or(false, |rows_result| rows_result.single_row::<Row>().is_ok())
 }
 
 #[cfg(test)]
