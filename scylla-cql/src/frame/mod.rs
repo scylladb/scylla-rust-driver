@@ -184,7 +184,7 @@ pub struct ResponseBodyWithExtensions {
     pub trace_id: Option<Uuid>,
     pub warnings: Vec<String>,
     pub body: Bytes,
-    pub custom_payload: Option<HashMap<String, Vec<u8>>>,
+    pub custom_payload: Option<HashMap<String, Bytes>>,
 }
 
 pub fn parse_response_body_extensions(

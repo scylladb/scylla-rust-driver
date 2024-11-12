@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use scylla_cql::cql_to_rust::FromCqlVal;
@@ -52,10 +53,10 @@ const CUSTOM_PAYLOAD_TABLETS_V1_KEY: &str = "tablets-routing-v1";
 
 impl RawTablet {
     pub(crate) fn from_custom_payload(
-        payload: &HashMap<String, Vec<u8>>,
+        payload: &HashMap<String, Bytes>,
     ) -> Option<Result<RawTablet, TabletParsingError>> {
         let payload = payload.get(CUSTOM_PAYLOAD_TABLETS_V1_KEY)?;
-        let cql_value = match deser_cql_value(&RAW_TABLETS_CQL_TYPE, &mut payload.as_slice()) {
+        let cql_value = match deser_cql_value(&RAW_TABLETS_CQL_TYPE, &mut payload.as_ref()) {
             Ok(r) => r,
             Err(e) => return Some(Err(e.into())),
         };
@@ -590,6 +591,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
+    use bytes::Bytes;
     use scylla_cql::frame::response::result::{ColumnType, CqlValue, TableSpec};
     use scylla_cql::types::serialize::value::SerializeValue;
     use scylla_cql::types::serialize::CellWriter;
@@ -618,8 +620,10 @@ mod tests {
 
     #[test]
     fn test_raw_tablet_deser_trash() {
-        let custom_payload =
-            HashMap::from([(CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(), vec![1, 2, 3])]);
+        let custom_payload = HashMap::from([(
+            CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(),
+            Bytes::from_static(&[1, 2, 3]),
+        )]);
         assert_matches::assert_matches!(
             RawTablet::from_custom_payload(&custom_payload),
             Some(Err(TabletParsingError::Deserialization(_)))
@@ -648,7 +652,7 @@ mod tests {
         SerializeValue::serialize(&value, &col_type, CellWriter::new(&mut data)).unwrap();
         debug!("{:?}", data);
 
-        custom_payload.insert(CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(), data);
+        custom_payload.insert(CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(), Bytes::from(data));
 
         assert_matches::assert_matches!(
             RawTablet::from_custom_payload(&custom_payload),
@@ -688,7 +692,7 @@ mod tests {
             // Skipping length because `SerializeValue::serialize` adds length at the
             // start of serialized value while Scylla sends the value without initial
             // length.
-            data[4..].to_vec(),
+            Bytes::copy_from_slice(&data[4..]),
         );
 
         let tablet = RawTablet::from_custom_payload(&custom_payload)

@@ -217,7 +217,7 @@ pub(crate) struct QueryResponse {
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Vec<String>,
     #[allow(dead_code)] // This is not exposed to user (yet?)
-    pub(crate) custom_payload: Option<HashMap<String, Vec<u8>>>,
+    pub(crate) custom_payload: Option<HashMap<String, Bytes>>,
 }
 
 // A QueryResponse in which response can not be Response::Error
