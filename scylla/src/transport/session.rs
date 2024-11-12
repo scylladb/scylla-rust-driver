@@ -1232,12 +1232,8 @@ where
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
-                                .map_err(UserRequestError::into_query_error)
                         } else {
-                            let prepared = connection
-                                .prepare(query_ref)
-                                .await
-                                .map_err(UserRequestError::into_query_error)?;
+                            let prepared = connection.prepare(query_ref).await?;
                             let serialized = prepared.serialize_values(values_ref)?;
                             span_ref.record_request_size(serialized.buffer_size());
                             connection
@@ -1251,7 +1247,6 @@ where
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
-                                .map_err(UserRequestError::into_query_error)
                         }
                     }
                 },
@@ -1556,7 +1551,6 @@ where
                             )
                             .await
                             .and_then(QueryResponse::into_non_error_query_response)
-                            .map_err(UserRequestError::into_query_error)
                     }
                 },
                 &span,
@@ -1680,7 +1674,6 @@ where
                             )
                             .await
                             .and_then(QueryResponse::into_non_error_query_response)
-                            .map_err(UserRequestError::into_query_error)
                     }
                 },
                 &span,
@@ -1946,7 +1939,7 @@ where
         request_span: &'a RequestSpan,
     ) -> Result<RunRequestResult<ResT>, QueryError>
     where
-        QueryFut: Future<Output = Result<ResT, QueryError>>,
+        QueryFut: Future<Output = Result<ResT, UserRequestError>>,
         ResT: AllowedRunRequestResTType,
     {
         let history_listener_and_id: Option<(&'a dyn HistoryListener, history::QueryId)> =
@@ -2110,7 +2103,7 @@ where
         mut context: ExecuteRequestContext<'a>,
     ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
     where
-        QueryFut: Future<Output = Result<ResT, QueryError>>,
+        QueryFut: Future<Output = Result<ResT, UserRequestError>>,
         ResT: AllowedRunRequestResTType,
     {
         let mut last_error: Option<QueryError> = None;
@@ -2147,7 +2140,7 @@ where
                 );
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connection.get_connect_address());
-                let request_result: Result<ResT, QueryError> =
+                let request_result: Result<ResT, UserRequestError> =
                     run_request_once(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
                         .await;
@@ -2166,6 +2159,7 @@ where
                         return Some(Ok(RunRequestResult::Completed(response)));
                     }
                     Err(e) => {
+                        let e = e.into_query_error();
                         trace!(
                             parent: &span,
                             last_error = %e,
