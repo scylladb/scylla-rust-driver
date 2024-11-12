@@ -1096,10 +1096,10 @@ impl Connection {
                     _ => Err(err.into()),
                 },
                 Response::Result(_) => Ok(query_response.into_query_result()?),
-                _ => Err(ProtocolError::UnexpectedResponse(
+                _ => Err(UserRequestError::UnexpectedResponse(
                     query_response.response.to_response_kind(),
                 )
-                .into()),
+                .into_query_error()),
             };
         }
     }
