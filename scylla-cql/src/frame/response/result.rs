@@ -1204,12 +1204,6 @@ impl RawMetadataAndRawRows {
                     col_specs,
                 }
             };
-            if server_metadata.col_count() != server_metadata.col_specs().len() {
-                return Err(RowsParseError::ColumnCountMismatch {
-                    col_count: server_metadata.col_count(),
-                    col_specs_count: server_metadata.col_specs().len(),
-                });
-            }
             Ok(server_metadata)
         }
     }

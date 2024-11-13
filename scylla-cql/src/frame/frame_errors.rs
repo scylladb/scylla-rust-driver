@@ -340,11 +340,6 @@ pub enum RawRowsAndPagingStateResponseParseError {
 pub enum RowsParseError {
     #[error("Invalid result metadata: {0}")]
     ResultMetadataParseError(#[from] ResultMetadataParseError),
-    #[error("Invalid result metadata, server claims {col_count} columns, received {col_specs_count} col specs.")]
-    ColumnCountMismatch {
-        col_count: usize,
-        col_specs_count: usize,
-    },
     #[error("Malformed rows count: {0}")]
     RowsCountParseError(LowLevelDeserializationError),
     #[error("Data type check prior to deserialization failed: {0}")]
