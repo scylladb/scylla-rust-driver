@@ -577,6 +577,16 @@ impl_emptiable_strict_type!(
     }
 );
 
+#[cfg(feature = "time-03")]
+impl_emptiable_strict_type!(
+    time_03::PrimitiveDateTime,
+    Timestamp,
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
+        let time = time_03::OffsetDateTime::deserialize(typ, v)?;
+        Ok(Self::new(time.date(), time.time()))
+    }
+);
+
 // inet
 
 impl_emptiable_strict_type!(
