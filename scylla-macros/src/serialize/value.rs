@@ -16,6 +16,10 @@ struct Attributes {
     #[darling(default)]
     flavor: Flavor,
 
+    // If true, then the type checking code won't verify the UDT field names.
+    // UDT fields will be matched to struct fields based solely on the order.
+    //
+    // This annotation only works if `enforce_order` flavor is specified.
     #[darling(default)]
     skip_name_checks: bool,
 
@@ -62,8 +66,12 @@ impl Field {
 #[derive(FromAttributes)]
 #[darling(attributes(scylla))]
 struct FieldAttributes {
+    // If set, then serializes from the UDT field with this particular name
+    // instead of the Rust field name.
     rename: Option<String>,
 
+    // If true, then the field is not serialized at all, but simply ignored.
+    // All other attributes are ignored.
     #[darling(default)]
     skip: bool,
 
