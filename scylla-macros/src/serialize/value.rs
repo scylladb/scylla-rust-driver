@@ -51,6 +51,12 @@ impl Field {
             None => self.ident.to_string(),
         }
     }
+
+    // Returns whether this field must be serialized (can't be ignored in case
+    // that there is no corresponding field in UDT).
+    fn is_required(&self) -> bool {
+        !self.attrs.skip && !self.attrs.ignore_missing
+    }
 }
 
 #[derive(FromAttributes)]
@@ -60,6 +66,12 @@ struct FieldAttributes {
 
     #[darling(default)]
     skip: bool,
+
+    // If true, then - if this field is missing from the UDT fields metadata
+    // - it will be ignored during serialization.
+    #[darling(default)]
+    #[darling(rename = "allow_missing")]
+    ignore_missing: bool,
 }
 
 struct Context {
@@ -123,6 +135,28 @@ impl Context {
                 )
                 .with_span(struct_ident);
                 errors.push(err);
+            }
+
+            // When name checks are skipped, fields with `allow_missing` are only
+            // permitted at the end of the struct, i.e. no field without
+            // `allow_missing` and `skip` is allowed to be after any field
+            // with `allow_missing`.
+            let invalid_default_when_missing_field = self
+                .fields
+                .iter()
+                .rev()
+                // Skip the whole suffix of <allow_missing> and <skip>.
+                .skip_while(|field| !field.is_required())
+                // skip_while finished either because the iterator is empty or it found a field without both <allow_missing> and <skip>.
+                // In either case, there aren't allowed to be any more fields with `allow_missing`.
+                .find(|field| field.attrs.ignore_missing);
+            if let Some(invalid) = invalid_default_when_missing_field {
+                let error =
+                darling::Error::custom(
+                    "when `skip_name_checks` is on, fields with `allow_missing` are only permitted at the end of the struct, \
+                          i.e. no field without `allow_missing` and `skip` is allowed to be after any field with `allow_missing`."
+            ).with_span(&invalid.ident);
+                errors.push(error);
             }
 
             // `rename` annotations don't make sense with skipped name checks
@@ -230,6 +264,8 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
             .iter()
             .map(|f| f.field_name())
             .collect::<Vec<_>>();
+        let rust_field_ignore_missing_flags =
+            self.ctx.fields.iter().map(|f| f.attrs.ignore_missing);
         let udt_field_names = rust_field_names.clone(); // For now, it's the same
         let field_types = self.ctx.fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
 
@@ -278,14 +314,31 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
                 .generate_udt_type_match(parse_quote!(#crate_path::UdtTypeCheckErrorKind::NotUdt)),
         );
 
+        fn make_visited_flag_ident(field_name: &str) -> syn::Ident {
+            syn::Ident::new(&format!("visited_flag_{}", field_name), Span::call_site())
+        }
+
         // Generate a "visited" flag for each field
         let visited_flag_names = rust_field_names
             .iter()
-            .map(|s| syn::Ident::new(&format!("visited_flag_{}", s), Span::call_site()))
+            .map(|s| make_visited_flag_ident(s))
             .collect::<Vec<_>>();
         statements.extend::<Vec<_>>(parse_quote! {
             #(let mut #visited_flag_names = false;)*
         });
+
+        // An iterator over names of Rust fields that can't be ignored
+        // (i.e., if UDT misses a corresponding field, an error should be raised).
+        let nonignorable_rust_field_names = self
+            .ctx
+            .fields
+            .iter()
+            .filter(|f| !f.attrs.ignore_missing)
+            .map(|f| f.field_name());
+        // An iterator over visited flags of Rust fields that can't be ignored
+        // (i.e., if UDT misses a corresponding field, an error should be raised).
+        let nonignorable_visited_flag_names =
+            nonignorable_rust_field_names.map(|s| make_visited_flag_ident(&s));
 
         // Generate a variable that counts down visited fields.
         let field_count = self.ctx.fields.len();
@@ -340,11 +393,12 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
         });
 
         // Finally, check that all fields were consumed.
-        // If there are some missing fields, return an error
+        // If there are some missing fields that don't have the `#[allow_missing]`
+        // attribute on them, return an error.
         statements.push(parse_quote! {
             if remaining_count > 0 {
                 #(
-                    if !#visited_flag_names {
+                    if !#nonignorable_visited_flag_names && !#rust_field_ignore_missing_flags {
                         return ::std::result::Result::Err(mk_typck_err(
                             #crate_path::UdtTypeCheckErrorKind::ValueMissingForUdtField {
                                 field_name: <_ as ::std::string::ToString>::to_string(#rust_field_names),
@@ -352,7 +406,6 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
                         ));
                     }
                 )*
-                ::std::unreachable!()
             }
         });
 
@@ -404,15 +457,16 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
             let mut builder = #crate_path::CellWriter::into_value_builder(writer);
         });
 
-        // Create an iterator over fields
+        // Create a peekable iterator over fields.
         statements.push(parse_quote! {
-            let mut field_iter = field_types.iter();
+            let mut field_iter = field_types.iter().peekable();
         });
 
         // Serialize each field
         for field in self.ctx.fields.iter() {
             let rust_field_ident = &field.ident;
             let rust_field_name = field.field_name();
+            let field_can_be_ignored = field.attrs.ignore_missing;
             let typ = &field.ty;
             let name_check_expression: syn::Expr = if !self.ctx.attributes.skip_name_checks {
                 parse_quote! { field_name == #rust_field_name }
@@ -420,9 +474,12 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
                 parse_quote! { true }
             };
             statements.push(parse_quote! {
-                match field_iter.next() {
+                match field_iter.peek() {
                     Some((field_name, typ)) => {
                         if #name_check_expression {
+                            // Advance the iterator.
+                            field_iter.next();
+
                             let sub_builder = #crate_path::CellValueBuilder::make_sub_writer(&mut builder);
                             match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, typ, sub_builder) {
                                 Ok(_proof) => {},
@@ -435,7 +492,7 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
                                     ));
                                 }
                             }
-                        } else {
+                        } else if !#field_can_be_ignored {
                             return ::std::result::Result::Err(mk_typck_err(
                                 #crate_path::UdtTypeCheckErrorKind::FieldNameMismatch {
                                     rust_field_name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
@@ -443,13 +500,17 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
                                 }
                             ));
                         }
+                        // Else simply ignore the field.
                     }
                     None => {
-                        return ::std::result::Result::Err(mk_typck_err(
-                            #crate_path::UdtTypeCheckErrorKind::ValueMissingForUdtField {
-                                field_name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
-                            }
-                        ));
+                        if !#field_can_be_ignored {
+                            return ::std::result::Result::Err(mk_typck_err(
+                                #crate_path::UdtTypeCheckErrorKind::ValueMissingForUdtField {
+                                    field_name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
+                                }
+                            ));
+                        }
+                        // Else the field is ignored and we continue with other fields.
                     }
                 }
             });

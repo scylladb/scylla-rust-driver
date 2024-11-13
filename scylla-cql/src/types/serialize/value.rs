@@ -1540,6 +1540,45 @@ mod doctests {
     /// }
     /// ```
     fn _test_udt_bad_attributes_rename_collision_with_another_rename() {}
+
+    /// ```compile_fail
+    ///
+    /// #[derive(scylla_macros::SerializeValue)]
+    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
+    /// struct TestUdt {
+    ///     a: i32,
+    ///     #[scylla(allow_missing)]
+    ///     b: bool,
+    ///     c: String,
+    /// }
+    /// ```
+    fn _test_udt_bad_attributes_name_skip_name_checks_limitations_on_allow_missing() {}
+
+    /// ```
+    ///
+    /// #[derive(scylla_macros::SerializeValue)]
+    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
+    /// struct TestUdt {
+    ///     a: i32,
+    ///     #[scylla(allow_missing)]
+    ///     b: bool,
+    ///     #[scylla(allow_missing)]
+    ///     c: String,
+    /// }
+    /// ```
+    fn _test_udt_good_attributes_name_skip_name_checks_limitations_on_allow_missing() {}
+
+    /// ```
+    /// #[derive(scylla_macros::SerializeValue)]
+    /// #[scylla(crate = scylla_cql)]
+    /// struct TestUdt {
+    ///     a: i32,
+    ///     #[scylla(allow_missing)]
+    ///     b: bool,
+    ///     c: String,
+    /// }
+    /// ```
+    fn _test_udt_unordered_flavour_no_limitations_on_allow_missing() {}
 }
 
 #[cfg(test)]
