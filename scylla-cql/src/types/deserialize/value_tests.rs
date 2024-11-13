@@ -258,6 +258,20 @@ fn test_date_time_types() {
         &time_03::OffsetDateTime::from_unix_timestamp(0xdead_cafe).unwrap(),
         &mut Bytes::new(),
     );
+
+    #[cfg(feature = "time-03")]
+    assert_ser_de_identity(
+        &ColumnType::Timestamp,
+        &time_03::PrimitiveDateTime::new(
+            time_03::OffsetDateTime::from_unix_timestamp(0xdead_cafe)
+                .unwrap()
+                .date(),
+            time_03::OffsetDateTime::from_unix_timestamp(0xdead_cafe)
+                .unwrap()
+                .time(),
+        ),
+        &mut Bytes::new(),
+    );
 }
 
 #[test]
