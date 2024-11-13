@@ -20,13 +20,14 @@ and `DeserializeValue` macros documentation.
 ```rust
 # extern crate scylla;
 # async fn check_only_compiles() {
-use scylla::macros::{FromUserType, SerializeValue};
+use scylla::macros::{DeserializeValue, SerializeValue};
 
 // Define a custom struct that matches the User Defined Type created earlier.
-// Fields must be in the same order as they are in the database and also
-// have the same names.
+// Fields don't have to be in the same order as they are in the database.
+// By default, they must have the same names, but this can be worked around
+// using `#[rename] field attribute.
 // Wrapping a field in Option will gracefully handle null field values.
-#[derive(Debug, FromUserType, SerializeValue)]
+#[derive(Debug, DeserializeValue, SerializeValue)]
 struct MyType {
     int_val: i32,
     text_val: Option<String>,
