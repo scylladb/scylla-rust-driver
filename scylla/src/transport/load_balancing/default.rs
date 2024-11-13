@@ -2860,7 +2860,9 @@ mod latency_awareness {
                 | QueryError::MetadataError(_)
                 | QueryError::ProtocolError(_)
                 | QueryError::TimeoutError
-                | QueryError::RequestTimeout(_) => true,
+                | QueryError::RequestTimeout(_)
+                | QueryError::NextRowError(_)
+                | QueryError::IntoLegacyQueryResultError(_) => true,
             }
         }
     }

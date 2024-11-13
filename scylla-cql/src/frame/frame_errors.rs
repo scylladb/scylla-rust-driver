@@ -14,7 +14,6 @@ pub use super::request::{
 use super::response::result::TableSpec;
 use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
-use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use thiserror::Error;
 
 /// An error returned by `parse_response_body_extensions`.
@@ -227,7 +226,7 @@ pub enum CqlResultParseError {
     #[error("RESULT:Prepared response deserialization failed: {0}")]
     PreparedParseError(#[from] PreparedParseError),
     #[error("RESULT:Rows response deserialization failed: {0}")]
-    RowsParseError(#[from] RowsParseError),
+    RawRowsParseError(#[from] RawRowsAndPagingStateResponseParseError),
 }
 
 #[non_exhaustive]
@@ -301,48 +300,99 @@ pub enum PreparedParseError {
     #[error("Invalid result metadata: {0}")]
     ResultMetadataParseError(ResultMetadataParseError),
     #[error("Invalid prepared metadata: {0}")]
-    PreparedMetadataParseError(ResultMetadataParseError),
+    PreparedMetadataParseError(PreparedMetadataParseError),
     #[error("Non-zero paging state in result metadata: {0:?}")]
     NonZeroPagingState(Arc<[u8]>),
 }
 
-/// An error type returned when deserialization
-/// of `RESULT::Rows` response fails.
+/// An error that occurred during initial deserialization of
+/// `RESULT:Rows` response. Since the deserialization of rows is lazy,
+/// we initially only need to deserialize:
+/// - result metadata flags
+/// - column count (result metadata)
+/// - paging state response
 #[non_exhaustive]
 #[derive(Debug, Error, Clone)]
-pub enum RowsParseError {
-    #[error("Invalid result metadata: {0}")]
-    ResultMetadataParseError(#[from] ResultMetadataParseError),
-    #[error("Invalid result metadata, server claims {col_count} columns, received {col_specs_count} col specs.")]
-    ColumnCountMismatch {
-        col_count: usize,
-        col_specs_count: usize,
-    },
-    #[error("Malformed rows count: {0}")]
-    RowsCountParseError(LowLevelDeserializationError),
-    #[error("Data type check prior to deserialization failed: {0}")]
-    IncomingDataTypeCheckError(#[from] TypeCheckError),
-    #[error("Data deserialization failed: {0}")]
-    DataDeserializationError(#[from] DeserializationError),
+pub enum RawRowsAndPagingStateResponseParseError {
+    /// Failed to parse metadata flags.
+    #[error("Malformed metadata flags: {0}")]
+    FlagsParseError(LowLevelDeserializationError),
+
+    /// Failed to parse column count.
+    #[error("Malformed column count: {0}")]
+    ColumnCountParseError(LowLevelDeserializationError),
+
+    /// Failed to parse paging state response.
+    #[error("Malformed paging state: {0}")]
+    PagingStateParseError(LowLevelDeserializationError),
 }
 
 /// An error type returned when deserialization
-/// of `[Result/Prepared]Metadata` failed.
+/// of statement's prepared metadata failed.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum PreparedMetadataParseError {
+    /// Failed to parse metadata flags.
+    #[error("Malformed metadata flags: {0}")]
+    FlagsParseError(LowLevelDeserializationError),
+
+    /// Failed to parse column count.
+    #[error("Malformed column count: {0}")]
+    ColumnCountParseError(LowLevelDeserializationError),
+
+    /// Failed to parse partition key count.
+    #[error("Malformed partition key count: {0}")]
+    PkCountParseError(LowLevelDeserializationError),
+
+    /// Failed to parse partition key index.
+    #[error("Malformed partition key index: {0}")]
+    PkIndexParseError(LowLevelDeserializationError),
+
+    /// Failed to parse global table spec.
+    #[error("Invalid global table spec: {0}")]
+    GlobalTableSpecParseError(#[from] TableSpecParseError),
+
+    /// Failed to parse column spec.
+    #[error("Invalid column spec: {0}")]
+    ColumnSpecParseError(#[from] ColumnSpecParseError),
+}
+
+/// An error returned when lazy deserialization of
+/// result metadata and rows count fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum ResultMetadataAndRowsCountParseError {
+    /// Failed to deserialize result metadata.
+    #[error("Failed to lazily deserialize result metadata: {0}")]
+    ResultMetadataParseError(#[from] ResultMetadataParseError),
+
+    /// Received malformed rows count from the server.
+    #[error("Malformed rows count: {0}")]
+    RowsCountParseError(LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization
+/// of result metadata failed.
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
 pub enum ResultMetadataParseError {
+    /// Failed to parse metadata flags.
     #[error("Malformed metadata flags: {0}")]
     FlagsParseError(LowLevelDeserializationError),
+
+    /// Failed to parse column count.
     #[error("Malformed column count: {0}")]
     ColumnCountParseError(LowLevelDeserializationError),
-    #[error("Malformed partition key count: {0}")]
-    PkCountParseError(LowLevelDeserializationError),
-    #[error("Malformed partition key index: {0}")]
-    PkIndexParseError(LowLevelDeserializationError),
+
+    /// Failed to parse paging state response.
     #[error("Malformed paging state: {0}")]
     PagingStateParseError(LowLevelDeserializationError),
+
+    /// Failed to parse global table spec.
     #[error("Invalid global table spec: {0}")]
     GlobalTableSpecParseError(#[from] TableSpecParseError),
+
+    /// Failed to parse column spec.
     #[error("Invalid column spec: {0}")]
     ColumnSpecParseError(#[from] ColumnSpecParseError),
 }

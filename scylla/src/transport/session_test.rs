@@ -109,7 +109,7 @@ async fn test_unprepared_statement() {
         .await
         .unwrap();
 
-    let rows = query_result.into_rows_result().unwrap().unwrap();
+    let rows = query_result.into_rows_result().unwrap();
 
     let col_specs = rows.column_specs();
     assert_eq!(col_specs.get_by_name("a").unwrap().0, 0);
@@ -153,7 +153,6 @@ async fn test_unprepared_statement() {
             .unwrap();
         let mut page_results = rs_manual
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .rows::<(i32, i32, String)>()
             .unwrap()
@@ -244,7 +243,6 @@ async fn test_prepared_statement() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .single_row::<(i64,)>()
             .unwrap();
         let token = Token::new(value);
@@ -265,7 +263,6 @@ async fn test_prepared_statement() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row::<(i64,)>()
             .unwrap();
@@ -291,7 +288,6 @@ async fn test_prepared_statement() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .rows::<(i32, i32, String)>()
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
@@ -311,7 +307,6 @@ async fn test_prepared_statement() {
                 .unwrap();
             let mut page_results = rs_manual
                 .into_rows_result()
-                .unwrap()
                 .unwrap()
                 .rows::<(i32, i32, String)>()
                 .unwrap()
@@ -335,7 +330,6 @@ async fn test_prepared_statement() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row::<(i32, i32, String, i32, Option<i32>)>()
             .unwrap();
@@ -384,7 +378,6 @@ async fn test_prepared_statement() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row()
             .unwrap();
@@ -509,7 +502,6 @@ async fn test_batch() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .rows::<(i32, i32, String)>()
         .unwrap()
         .collect::<Result<_, _>>()
@@ -548,7 +540,6 @@ async fn test_batch() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .rows::<(i32, i32, String)>()
         .unwrap()
@@ -604,7 +595,6 @@ async fn test_token_calculation() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row::<(i64,)>()
             .unwrap();
@@ -716,7 +706,6 @@ async fn test_use_keyspace() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .rows::<(String,)>()
         .unwrap()
         .map(|res| res.unwrap().0)
@@ -767,7 +756,6 @@ async fn test_use_keyspace() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .rows::<(String,)>()
         .unwrap()
@@ -831,7 +819,6 @@ async fn test_use_keyspace_case_sensitivity() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .rows::<(String,)>()
         .unwrap()
         .map(|row| row.unwrap().0)
@@ -848,7 +835,6 @@ async fn test_use_keyspace_case_sensitivity() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .rows::<(String,)>()
         .unwrap()
@@ -892,7 +878,6 @@ async fn test_raw_use_keyspace() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .rows::<(String,)>()
         .unwrap()
@@ -1188,7 +1173,6 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .rows_num();
         if rows_num > 0 {
             // Ok there was some row for this tracing_uuid
@@ -1302,7 +1286,6 @@ async fn test_timestamp() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap();
 
     let mut results = query_rows_result
@@ -1961,7 +1944,6 @@ async fn test_named_bind_markers() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .rows::<(i32, i32, i32)>()
         .unwrap()
         .map(|res| res.unwrap())
@@ -2115,7 +2097,6 @@ async fn test_unprepared_reprepare_in_execute() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .rows::<(i32, i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
@@ -2172,7 +2153,6 @@ async fn test_unusual_valuelists() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .rows::<(i32, i32, String)>()
         .unwrap()
@@ -2247,7 +2227,6 @@ async fn test_unprepared_reprepare_in_batch() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .rows::<(i32, i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
@@ -2317,7 +2296,6 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .rows::<(i32, i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
@@ -2386,7 +2364,6 @@ async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .rows::<(i32, i32)>()
         .unwrap()
@@ -2616,7 +2593,7 @@ async fn test_batch_lwts() {
     batch.append_statement("UPDATE tab SET r1 = 1 WHERE p1 = 0 AND c1 = 0 IF r2 = 0");
 
     let batch_res: QueryResult = session.batch(&batch, ((), (), ())).await.unwrap();
-    let batch_deserializer = batch_res.into_rows_result().unwrap().unwrap();
+    let batch_deserializer = batch_res.into_rows_result().unwrap();
 
     // Scylla returns 5 columns, but Cassandra returns only 1
     let is_scylla: bool = batch_deserializer.column_specs().len() == 5;
@@ -2659,7 +2636,6 @@ async fn test_batch_lwts_for_scylla(
     let prepared_batch_res_rows: Vec<(bool, IntOrNull, IntOrNull, IntOrNull, IntOrNull)> =
         prepared_batch_res
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .rows()
             .unwrap()
@@ -2704,7 +2680,6 @@ async fn test_batch_lwts_for_cassandra(
     let prepared_batch_res_rows: Vec<(bool, IntOrNull, IntOrNull, IntOrNull, IntOrNull)> =
         prepared_batch_res
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .rows()
             .unwrap()
@@ -2972,7 +2947,6 @@ async fn simple_strategy_test() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .rows::<(i32, i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
@@ -3128,7 +3102,6 @@ async fn test_deserialize_empty_collections() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap();
         let (collection,) = query_rows_result.first_row::<(Collection,)>().unwrap();
 

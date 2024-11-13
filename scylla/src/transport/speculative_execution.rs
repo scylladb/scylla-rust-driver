@@ -110,7 +110,9 @@ fn can_be_ignored<ResT>(result: &Result<ResT, QueryError>) -> bool {
             QueryError::EmptyPlan => false,
 
             // Errors that should not appear here, thus should not be ignored
-            QueryError::TimeoutError
+            QueryError::NextRowError(_)
+            | QueryError::IntoLegacyQueryResultError(_)
+            | QueryError::TimeoutError
             | QueryError::RequestTimeout(_)
             | QueryError::MetadataError(_) => false,
 

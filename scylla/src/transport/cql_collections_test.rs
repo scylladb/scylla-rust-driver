@@ -52,7 +52,6 @@ async fn insert_and_select<InsertT, SelectT>(
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .single_row::<(SelectT,)>()
         .unwrap()
         .0;

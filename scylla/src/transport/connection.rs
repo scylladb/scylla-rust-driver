@@ -1434,10 +1434,12 @@ impl Connection {
         let (version_id,) = self
             .query_unpaged(LOCAL_VERSION)
             .await?
-            .into_rows_result()?
-            .ok_or(QueryError::ProtocolError(
-                ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::ResultNotRows),
-            ))?
+            .into_rows_result()
+            .map_err(|err| {
+                QueryError::ProtocolError(ProtocolError::SchemaVersionFetch(
+                    SchemaVersionFetchError::TracesEventsIntoRowsResultError(err),
+                ))
+            })?
             .single_row::<(Uuid,)>()
             .map_err(|err| {
                 ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::SingleRowError(err))
@@ -2619,7 +2621,6 @@ mod tests {
                 .await
                 .unwrap()
                 .into_rows_result()
-                .unwrap()
                 .unwrap()
                 .rows::<(i32, Vec<u8>)>()
                 .unwrap()

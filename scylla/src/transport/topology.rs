@@ -15,7 +15,6 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
-use scylla_cql::frame::frame_errors::RowsParseError;
 use scylla_cql::types::deserialize::TypeCheckError;
 use scylla_macros::DeserializeRow;
 use std::borrow::BorrowMut;
@@ -806,9 +805,9 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
         .query_iter(peers_query)
         .map(|pager_res| {
             let pager = pager_res?;
-            let rows_stream = pager
-                .rows_stream::<NodeInfoRow>()
-                .map_err(RowsParseError::from)?;
+            let rows_stream = pager.rows_stream::<NodeInfoRow>().map_err(|err| {
+                MetadataError::Peers(PeersMetadataError::SystemPeersInvalidColumnType(err))
+            })?;
             Ok::<_, QueryError>(rows_stream)
         })
         .into_stream()
@@ -823,9 +822,9 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
         .query_iter(local_query)
         .map(|pager_res| {
             let pager = pager_res?;
-            let rows_stream = pager
-                .rows_stream::<NodeInfoRow>()
-                .map_err(RowsParseError::from)?;
+            let rows_stream = pager.rows_stream::<NodeInfoRow>().map_err(|err| {
+                MetadataError::Peers(PeersMetadataError::SystemLocalInvalidColumnType(err))
+            })?;
             Ok::<_, QueryError>(rows_stream)
         })
         .into_stream()

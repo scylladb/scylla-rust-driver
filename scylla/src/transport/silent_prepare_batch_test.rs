@@ -98,7 +98,6 @@ async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .rows::<(i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())

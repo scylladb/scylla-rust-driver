@@ -8,12 +8,12 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::Stream;
-use scylla_cql::frame::frame_errors::RowsParseError;
+use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::deserialize::result::RawRowLendingIterator;
 use scylla_cql::types::deserialize::row::{ColumnIterator, DeserializeRow};
-use scylla_cql::types::deserialize::TypeCheckError;
+use scylla_cql::types::deserialize::{DeserializationError, TypeCheckError};
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::result::Result;
 use thiserror::Error;
@@ -587,7 +587,7 @@ impl QueryPager {
             self.current_page
                 .next()
                 .unwrap()
-                .map_err(|e| RowsParseError::from(e).into()),
+                .map_err(|err| NextRowError::RowDeserializationError(err).into()),
         )
     }
 
@@ -622,7 +622,14 @@ impl QueryPager {
         let mut s = self.as_mut();
 
         let received_page = ready_some_ok!(Pin::new(&mut s.page_receiver).poll_recv(cx));
-        let raw_rows_with_deserialized_metadata = received_page.rows.deserialize_metadata()?;
+
+        // TODO: see my other comment next to QueryError::NextRowError
+        // This is the place where conversion happens. To fix this, we need to refactor error types in iterator API.
+        // The `page_receiver`'s error type should be narrowed from QueryError to some other error type.
+        let raw_rows_with_deserialized_metadata =
+            received_page.rows.deserialize_metadata().map_err(|err| {
+                NextRowError::NextPageError(NextPageError::ResultMetadataParseError(err))
+            })?;
         s.current_page = RawRowLendingIterator::new(raw_rows_with_deserialized_metadata);
 
         if let Some(tracing_id) = received_page.tracing_id {
@@ -935,7 +942,10 @@ impl QueryPager {
         // - That future is polled in a tokio::task which isn't going to be
         //   cancelled
         let page_received = receiver.recv().await.unwrap()?;
-        let raw_rows_with_deserialized_metadata = page_received.rows.deserialize_metadata()?;
+        let raw_rows_with_deserialized_metadata =
+            page_received.rows.deserialize_metadata().map_err(|err| {
+                NextRowError::NextPageError(NextPageError::ResultMetadataParseError(err))
+            })?;
 
         Ok(Self {
             current_page: RawRowLendingIterator::new(raw_rows_with_deserialized_metadata),
@@ -1018,7 +1028,7 @@ where
             self.raw_row_lending_stream.next().await.map(|res| {
                 res.and_then(|column_iterator| {
                     <RowT as DeserializeRow>::deserialize(column_iterator)
-                        .map_err(|err| RowsParseError::from(err).into())
+                        .map_err(|err| NextRowError::RowDeserializationError(err).into())
                 })
             })
         };
@@ -1027,6 +1037,31 @@ where
         let value = ready_some_ok!(next_fut.poll(cx));
         Poll::Ready(Some(Ok(value)))
     }
+}
+
+/// An error returned that occurred during next page fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum NextPageError {
+    /// Failed to deserialize result metadata associated with next page response.
+    #[error("Failed to deserialize result metadata associated with next page response: {0}")]
+    ResultMetadataParseError(#[from] ResultMetadataAndRowsCountParseError),
+    // TODO: This should also include a variant representing an error that occurred during
+    // query that fetches the next page. However, as of now, it would require that we include QueryError here.
+    // This would introduce a cyclic dependency: QueryError -> NextRowError -> NextPageError -> QueryError.
+}
+
+/// An error returned by async iterator API.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum NextRowError {
+    /// Failed to fetch next page of result.
+    #[error("Failed to fetch next page of result: {0}")]
+    NextPageError(#[from] NextPageError),
+
+    /// An error occurred during row deserialization.
+    #[error("Row deserialization error: {0}")]
+    RowDeserializationError(#[from] DeserializationError),
 }
 
 mod legacy {
@@ -1040,7 +1075,7 @@ mod legacy {
     }
 
     impl Stream for LegacyRowIterator {
-        type Item = Result<Row, QueryError>;
+        type Item = Result<Row, LegacyNextRowError>;
 
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             let mut s = self.as_mut();
@@ -1050,8 +1085,8 @@ mod legacy {
 
             let next_column_iter = ready_some_ok!(next_fut.poll(cx));
 
-            let next_ready_row =
-                Row::deserialize(next_column_iter).map_err(|e| RowsParseError::from(e).into());
+            let next_ready_row = Row::deserialize(next_column_iter)
+                .map_err(LegacyNextRowError::RowDeserializationError);
 
             Poll::Ready(Some(next_ready_row))
         }
@@ -1104,7 +1139,7 @@ mod legacy {
 
     /// Couldn't get next typed row from the iterator
     #[derive(Error, Debug, Clone)]
-    pub enum NextRowError {
+    pub enum LegacyNextRowError {
         /// Query to fetch next page has failed
         #[error(transparent)]
         QueryError(#[from] QueryError),
@@ -1112,12 +1147,16 @@ mod legacy {
         /// Parsing values in row as given types failed
         #[error(transparent)]
         FromRowError(#[from] FromRowError),
+
+        /// Row deserialization error
+        #[error("Row deserialization error: {0}")]
+        RowDeserializationError(#[from] DeserializationError),
     }
 
     /// Fetching pages is asynchronous so `LegacyTypedRowIterator` does not implement the `Iterator` trait.\
     /// Instead it uses the asynchronous `Stream` trait
     impl<RowT: FromRow> Stream for LegacyTypedRowIterator<RowT> {
-        type Item = Result<RowT, NextRowError>;
+        type Item = Result<RowT, LegacyNextRowError>;
 
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             let mut s = self.as_mut();
@@ -1131,4 +1170,4 @@ mod legacy {
     // LegacyTypedRowIterator can be moved freely for any RowT so it's Unpin
     impl<RowT> Unpin for LegacyTypedRowIterator<RowT> {}
 }
-pub use legacy::{LegacyRowIterator, LegacyTypedRowIterator, NextRowError};
+pub use legacy::{LegacyNextRowError, LegacyRowIterator, LegacyTypedRowIterator};

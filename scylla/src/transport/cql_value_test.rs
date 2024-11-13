@@ -62,7 +62,6 @@ async fn test_cqlvalue_udt() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap();
 
     let (received_udt_cql_value,) = rows_result.single_row::<(CqlValue,)>().unwrap();
@@ -115,7 +114,6 @@ async fn test_cqlvalue_duration() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap();
 
     let mut rows_iter = rows_result.rows::<(CqlValue,)>().unwrap();

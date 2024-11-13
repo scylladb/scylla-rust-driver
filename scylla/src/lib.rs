@@ -82,12 +82,9 @@
 //!     .await?
 //!     .into_rows_result()?;
 //!     
-//!
-//! if let Some(rows) = query_rows {
-//!     for row in rows.rows()? {
-//!         // Parse row as int and text \
-//!         let (int_val, text_val): (i32, &str) = row?;
-//!     }
+//! for row in query_rows.rows()? {
+//!     // Parse row as int and text \
+//!     let (int_val, text_val): (i32, &str) = row?;
 //! }
 //! # Ok(())
 //! # }

@@ -115,7 +115,6 @@ async fn test_skip_result_metadata() {
                     .unwrap()
                     .into_rows_result()
                     .unwrap()
-                    .unwrap()
                     .rows::<RowT>()
                     .unwrap()
                     .collect::<Result<Vec<_>, _>>()
@@ -134,7 +133,6 @@ async fn test_skip_result_metadata() {
                         .unwrap();
                     results_from_manual_paging.extend(
                         rs_manual.into_rows_result()
-                            .unwrap()
                             .unwrap()
                             .rows::<RowT>()
                             .unwrap()

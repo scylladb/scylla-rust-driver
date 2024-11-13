@@ -202,7 +202,7 @@ loop {
         .execute_single_page(&paged_prepared, &[], paging_state)
         .await?;
 
-    let rows_res = res.into_rows_result()?.unwrap();
+    let rows_res = res.into_rows_result()?;
 
     println!(
         "Paging state response from the prepared statement execution: {:#?} ({} rows)",

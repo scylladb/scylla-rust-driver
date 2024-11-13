@@ -4,9 +4,10 @@ use rustyline::error::ReadlineError;
 use rustyline::{CompletionType, Config, Context, Editor};
 use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
 use scylla::frame::response::result::Row;
+use scylla::transport::query_result::IntoRowsResultError;
 use scylla::transport::session::Session;
 use scylla::transport::Compression;
-use scylla::QueryRowsResult;
+use scylla::QueryResult;
 use scylla::SessionBuilder;
 use std::env;
 
@@ -176,24 +177,27 @@ impl Completer for CqlHelper {
     }
 }
 
-fn print_result(result: Option<&QueryRowsResult>) {
-    if let Some(rows_result) = result {
-        for row in rows_result.rows::<Row>().unwrap() {
-            let row = row.unwrap();
-            for column in &row.columns {
-                print!("|");
-                print!(
-                    " {:16}",
-                    match column {
-                        None => "null".to_owned(),
-                        Some(value) => format!("{:?}", value),
-                    }
-                );
+fn print_result(result: QueryResult) -> Result<(), IntoRowsResultError> {
+    match result.into_rows_result() {
+        Ok(rows_result) => {
+            for row in rows_result.rows::<Row>().unwrap() {
+                let row = row.unwrap();
+                for column in &row.columns {
+                    print!("|");
+                    print!(
+                        " {:16}",
+                        match column {
+                            None => "null".to_owned(),
+                            Some(value) => format!("{:?}", value),
+                        }
+                    );
+                }
+                println!("|");
             }
-            println!("|")
+            Ok(())
         }
-    } else {
-        println!("OK");
+        Err(IntoRowsResultError::ResultNotRows(_)) => Ok(println!("OK")),
+        Err(e) => Err(e),
     }
 }
 
@@ -226,10 +230,7 @@ async fn main() -> Result<()> {
                 let maybe_res = session.query_unpaged(line, &[]).await;
                 match maybe_res {
                     Err(err) => println!("Error: {}", err),
-                    Ok(res) => {
-                        let rows_res = res.into_rows_result()?;
-                        print_result(rows_res.as_ref())
-                    }
+                    Ok(res) => print_result(res)?,
                 }
             }
             Err(ReadlineError::Interrupted) => continue,

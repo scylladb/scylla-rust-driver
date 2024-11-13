@@ -101,7 +101,6 @@ where
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .rows::<(T,)>()
             .unwrap()
             .map(Result::unwrap)
@@ -222,7 +221,6 @@ async fn test_cql_varint() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .rows::<(CqlVarint,)>()
             .unwrap()
             .map(Result::unwrap)
@@ -299,7 +297,6 @@ async fn test_counter() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .rows::<(Counter,)>()
             .unwrap()
@@ -379,7 +376,6 @@ async fn test_naive_date_04() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .rows::<(NaiveDate,)>()
             .unwrap()
             .next()
@@ -404,7 +400,6 @@ async fn test_naive_date_04() {
                 .await
                 .unwrap()
                 .into_rows_result()
-                .unwrap()
                 .unwrap()
                 .single_row::<(NaiveDate,)>()
                 .unwrap();
@@ -446,7 +441,6 @@ async fn test_cql_date() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row::<(CqlDate,)>()
             .unwrap();
@@ -533,7 +527,6 @@ async fn test_date_03() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .first_row::<(Date,)>()
             .ok()
             .map(|val| val.0);
@@ -555,7 +548,6 @@ async fn test_date_03() {
                 .await
                 .unwrap()
                 .into_rows_result()
-                .unwrap()
                 .unwrap()
                 .first_row::<(Date,)>()
                 .unwrap();
@@ -602,7 +594,6 @@ async fn test_cql_time() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .single_row::<(CqlTime,)>()
             .unwrap();
 
@@ -622,7 +613,6 @@ async fn test_cql_time() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row::<(CqlTime,)>()
             .unwrap();
@@ -704,7 +694,6 @@ async fn test_naive_time_04() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .first_row::<(NaiveTime,)>()
             .unwrap();
 
@@ -724,7 +713,6 @@ async fn test_naive_time_04() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .first_row::<(NaiveTime,)>()
             .unwrap();
@@ -790,7 +778,6 @@ async fn test_time_03() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .first_row::<(Time,)>()
             .unwrap();
 
@@ -810,7 +797,6 @@ async fn test_time_03() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .first_row::<(Time,)>()
             .unwrap();
@@ -867,7 +853,6 @@ async fn test_cql_timestamp() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .single_row::<(CqlTimestamp,)>()
             .unwrap();
 
@@ -887,7 +872,6 @@ async fn test_cql_timestamp() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row::<(CqlTimestamp,)>()
             .unwrap();
@@ -968,7 +952,6 @@ async fn test_date_time_04() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .first_row::<(DateTime<Utc>,)>()
             .unwrap();
 
@@ -988,7 +971,6 @@ async fn test_date_time_04() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .first_row::<(DateTime<Utc>,)>()
             .unwrap();
@@ -1020,7 +1002,6 @@ async fn test_date_time_04() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .first_row::<(DateTime<Utc>,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_1st_half_rounded);
@@ -1048,7 +1029,6 @@ async fn test_date_time_04() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .first_row::<(DateTime<Utc>,)>()
         .unwrap();
@@ -1141,7 +1121,6 @@ async fn test_offset_date_time_03() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .first_row::<(OffsetDateTime,)>()
             .unwrap();
 
@@ -1161,7 +1140,6 @@ async fn test_offset_date_time_03() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .first_row::<(OffsetDateTime,)>()
             .unwrap();
@@ -1193,7 +1171,6 @@ async fn test_offset_date_time_03() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .first_row::<(OffsetDateTime,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_1st_half_rounded);
@@ -1221,7 +1198,6 @@ async fn test_offset_date_time_03() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .first_row::<(OffsetDateTime,)>()
         .unwrap();
@@ -1274,7 +1250,6 @@ async fn test_timeuuid() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .single_row::<(CqlTimeuuid,)>()
             .unwrap();
 
@@ -1295,7 +1270,6 @@ async fn test_timeuuid() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row::<(CqlTimeuuid,)>()
             .unwrap();
@@ -1367,7 +1341,6 @@ async fn test_timeuuid_ordering() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .rows::<(CqlTimeuuid,)>()
         .unwrap()
@@ -1450,7 +1423,6 @@ async fn test_inet() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .single_row::<(IpAddr,)>()
             .unwrap();
 
@@ -1467,7 +1439,6 @@ async fn test_inet() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row::<(IpAddr,)>()
             .unwrap();
@@ -1522,7 +1493,6 @@ async fn test_blob() {
             .unwrap()
             .into_rows_result()
             .unwrap()
-            .unwrap()
             .single_row::<(Vec<u8>,)>()
             .unwrap();
 
@@ -1539,7 +1509,6 @@ async fn test_blob() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row::<(Vec<u8>,)>()
             .unwrap();
@@ -1631,7 +1600,6 @@ async fn test_udt_after_schema_update() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .single_row::<(UdtV1,)>()
         .unwrap();
 
@@ -1650,7 +1618,6 @@ async fn test_udt_after_schema_update() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .single_row::<(UdtV1,)>()
         .unwrap();
@@ -1674,7 +1641,6 @@ async fn test_udt_after_schema_update() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .single_row::<(UdtV2,)>()
         .unwrap();
@@ -1708,7 +1674,6 @@ async fn test_empty() {
         .unwrap()
         .into_rows_result()
         .unwrap()
-        .unwrap()
         .first_row::<(CqlValue,)>()
         .unwrap();
 
@@ -1727,7 +1692,6 @@ async fn test_empty() {
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
         .unwrap()
         .first_row::<(CqlValue,)>()
         .unwrap();
@@ -1816,7 +1780,6 @@ async fn test_udt_with_missing_field() {
             .await
             .unwrap()
             .into_rows_result()
-            .unwrap()
             .unwrap()
             .single_row::<(TR,)>()
             .unwrap()

@@ -52,7 +52,6 @@ async fn main() -> Result<()> {
             )
             .await?
             .into_rows_result()?
-            .expect("Got not Rows result")
             .single_row()?;
         assert_eq!(t, qt);
         println!("token for {}: {}", pk, t);

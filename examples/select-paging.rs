@@ -51,9 +51,7 @@ async fn main() -> Result<()> {
             .query_single_page(paged_query.clone(), &[], paging_state)
             .await?;
 
-        let res = res
-            .into_rows_result()?
-            .expect("Got result different than Rows");
+        let res = res.into_rows_result()?;
 
         println!(
             "Paging state: {:#?} ({} rows)",
@@ -85,9 +83,7 @@ async fn main() -> Result<()> {
             .execute_single_page(&paged_prepared, &[], paging_state)
             .await?;
 
-        let res = res
-            .into_rows_result()?
-            .expect("Got result different than Rows");
+        let res = res.into_rows_result()?;
 
         println!(
             "Paging state from the prepared statement execution: {:#?} ({} rows)",

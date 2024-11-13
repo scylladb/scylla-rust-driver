@@ -45,8 +45,7 @@ async fn main() -> anyhow::Result<()> {
     let rows_result = session
         .call("SELECT keyspace_name, table_name FROM system_schema.tables;".into())
         .await?
-        .into_rows_result()?
-        .expect("Got result different than Rows");
+        .into_rows_result()?;
 
     let print_text = |t: &Option<scylla::frame::response::result::CqlValue>| {
         t.as_ref()

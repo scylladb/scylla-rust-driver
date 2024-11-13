@@ -1,8 +1,10 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
-    LowLevelDeserializationError, PreparedParseError, ResultMetadataParseError, RowsParseError,
-    SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
+    LowLevelDeserializationError, PreparedMetadataParseError, PreparedParseError,
+    RawRowsAndPagingStateResponseParseError, ResultMetadataAndRowsCountParseError,
+    ResultMetadataParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
+    TableSpecParseError,
 };
 use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::event::SchemaChangeEvent;
@@ -614,7 +616,7 @@ impl Row {
 ///
 /// Flags and paging state are deserialized, remaining part of metadata
 /// as well as rows remain serialized.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RawMetadataAndRawRows {
     // Already deserialized part of metadata:
     col_count: usize,
@@ -1142,20 +1144,20 @@ impl RawMetadataAndRawRows {
     fn deserialize(
         frame: &mut FrameSlice,
         cached_metadata: Option<Arc<ResultMetadata<'static>>>,
-    ) -> StdResult<(Self, PagingStateResponse), RowsParseError> {
+    ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
         let flags = types::read_int(frame.as_slice_mut())
-            .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
+            .map_err(|err| RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into()))?;
         let global_tables_spec = flags & 0x0001 != 0;
         let has_more_pages = flags & 0x0002 != 0;
         let no_metadata = flags & 0x0004 != 0;
 
         let col_count = types::read_int_length(frame.as_slice_mut())
-            .map_err(ResultMetadataParseError::ColumnCountParseError)?;
+            .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
 
         let raw_paging_state = has_more_pages
             .then(|| {
                 types::read_bytes(frame.as_slice_mut())
-                    .map_err(ResultMetadataParseError::PagingStateParseError)
+                    .map_err(RawRowsAndPagingStateResponseParseError::PagingStateParseError)
             })
             .transpose()?;
 
@@ -1186,29 +1188,22 @@ impl RawMetadataAndRawRows {
     fn metadata_deserializer(
         col_count: usize,
         global_tables_spec: bool,
-    ) -> impl for<'frame> FnOnce(&mut &'frame [u8]) -> StdResult<ResultMetadata<'frame>, RowsParseError>
-    {
+    ) -> impl for<'frame> FnOnce(
+        &mut &'frame [u8],
+    ) -> StdResult<ResultMetadata<'frame>, ResultMetadataParseError> {
         move |buf| {
             let server_metadata = {
                 let global_table_spec = global_tables_spec
                     .then(|| deser_table_spec(buf))
-                    .transpose()
-                    .map_err(ResultMetadataParseError::from)?;
+                    .transpose()?;
 
-                let col_specs = deser_col_specs_borrowed(buf, global_table_spec, col_count)
-                    .map_err(ResultMetadataParseError::from)?;
+                let col_specs = deser_col_specs_borrowed(buf, global_table_spec, col_count)?;
 
                 ResultMetadata {
                     col_count,
                     col_specs,
                 }
             };
-            if server_metadata.col_count() != server_metadata.col_specs().len() {
-                return Err(RowsParseError::ColumnCountMismatch {
-                    col_count: server_metadata.col_count(),
-                    col_specs_count: server_metadata.col_specs().len(),
-                });
-            }
             Ok(server_metadata)
         }
     }
@@ -1217,7 +1212,9 @@ impl RawMetadataAndRawRows {
     ///
     /// If metadata is cached (in the PreparedStatement), it is reused (shared) from cache
     /// instead of deserializing.
-    pub fn deserialize_metadata(self) -> StdResult<DeserializedMetadataAndRawRows, RowsParseError> {
+    pub fn deserialize_metadata(
+        self,
+    ) -> StdResult<DeserializedMetadataAndRawRows, ResultMetadataAndRowsCountParseError> {
         let (metadata_deserialized, row_count_and_raw_rows) = match self.cached_metadata {
             Some(cached) if self.no_metadata => {
                 // Server sent no metadata, but we have metadata cached. This means that we asked the server
@@ -1262,7 +1259,7 @@ impl RawMetadataAndRawRows {
         let mut frame_slice = FrameSlice::new(&row_count_and_raw_rows);
 
         let rows_count: usize = types::read_int_length(frame_slice.as_slice_mut())
-            .map_err(RowsParseError::RowsCountParseError)?;
+            .map_err(ResultMetadataAndRowsCountParseError::RowsCountParseError)?;
 
         Ok(DeserializedMetadataAndRawRows {
             metadata: metadata_deserialized,
@@ -1274,22 +1271,22 @@ impl RawMetadataAndRawRows {
 
 fn deser_prepared_metadata(
     buf: &mut &[u8],
-) -> StdResult<PreparedMetadata, ResultMetadataParseError> {
+) -> StdResult<PreparedMetadata, PreparedMetadataParseError> {
     let flags = types::read_int(buf)
-        .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
+        .map_err(|err| PreparedMetadataParseError::FlagsParseError(err.into()))?;
     let global_tables_spec = flags & 0x0001 != 0;
 
     let col_count =
-        types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
+        types::read_int_length(buf).map_err(PreparedMetadataParseError::ColumnCountParseError)?;
 
     let pk_count: usize =
-        types::read_int_length(buf).map_err(ResultMetadataParseError::PkCountParseError)?;
+        types::read_int_length(buf).map_err(PreparedMetadataParseError::PkCountParseError)?;
 
     let mut pk_indexes = Vec::with_capacity(pk_count);
     for i in 0..pk_count {
         pk_indexes.push(PartitionKeyIndex {
             index: types::read_short(buf)
-                .map_err(|err| ResultMetadataParseError::PkIndexParseError(err.into()))?
+                .map_err(|err| PreparedMetadataParseError::PkIndexParseError(err.into()))?
                 as u16,
             sequence: i as u16,
         });
@@ -1473,7 +1470,8 @@ pub fn deser_cql_value(
 fn deser_rows(
     buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RowsParseError> {
+) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RawRowsAndPagingStateResponseParseError>
+{
     let mut frame_slice = FrameSlice::new(&buf_bytes);
     RawMetadataAndRawRows::deserialize(&mut frame_slice, cached_metadata.cloned())
 }
