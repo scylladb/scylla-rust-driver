@@ -867,6 +867,53 @@ impl<'a> Iterator for SerializedValuesIterator<'a> {
     }
 }
 
+mod doctests {
+
+    /// ```compile_fail
+    ///
+    /// #[derive(scylla_macros::SerializeRow)]
+    /// #[scylla(crate = scylla_cql, skip_name_checks)]
+    /// struct TestRow {}
+    /// ```
+    fn _test_struct_deserialization_name_check_skip_requires_enforce_order() {}
+
+    /// ```compile_fail
+    ///
+    /// #[derive(scylla_macros::SerializeRow)]
+    /// #[scylla(crate = scylla_cql, skip_name_checks)]
+    /// struct TestRow {
+    ///     #[scylla(rename = "b")]
+    ///     a: i32,
+    /// }
+    /// ```
+    fn _test_struct_deserialization_skip_name_check_conflicts_with_rename() {}
+
+    /// ```compile_fail
+    ///
+    /// #[derive(scylla_macros::SerializeRow)]
+    /// #[scylla(crate = scylla_cql)]
+    /// struct TestRow {
+    ///     #[scylla(rename = "b")]
+    ///     a: i32,
+    ///     b: String,
+    /// }
+    /// ```
+    fn _test_struct_deserialization_skip_rename_collision_with_field() {}
+
+    /// ```compile_fail
+    ///
+    /// #[derive(scylla_macros::SerializeRow)]
+    /// #[scylla(crate = scylla_cql)]
+    /// struct TestRow {
+    ///     #[scylla(rename = "c")]
+    ///     a: i32,
+    ///     #[scylla(rename = "c")]
+    ///     b: String,
+    /// }
+    /// ```
+    fn _test_struct_deserialization_rename_collision_with_another_rename() {}
+}
+
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
