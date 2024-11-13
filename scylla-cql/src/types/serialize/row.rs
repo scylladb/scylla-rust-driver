@@ -915,7 +915,7 @@ mod doctests {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::borrow::Cow;
     use std::collections::BTreeMap;
 
@@ -1037,7 +1037,7 @@ mod tests {
         assert_eq!(typed_data, erased_data);
     }
 
-    fn do_serialize<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> Vec<u8> {
+    pub(crate) fn do_serialize<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> Vec<u8> {
         let ctx = RowSerializationContext { columns };
         let mut ret = Vec::new();
         let mut builder = RowWriter::new(&mut ret);

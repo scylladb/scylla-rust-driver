@@ -251,7 +251,7 @@ fn val_str(s: &str) -> Option<Vec<u8>> {
     Some(s.as_bytes().to_vec())
 }
 
-fn deserialize<'frame, 'metadata, R>(
+pub(crate) fn deserialize<'frame, 'metadata, R>(
     specs: &'metadata [ColumnSpec<'metadata>],
     byts: &'frame Bytes,
 ) -> Result<R, DeserializationError>

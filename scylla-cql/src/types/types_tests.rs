@@ -149,4 +149,106 @@ mod derive_macros_integration {
             }
         }
     }
+
+    mod row {
+        use bytes::Bytes;
+
+        use crate::frame::response::result::ColumnType;
+        use crate::types::deserialize::row::tests::deserialize;
+        use crate::types::deserialize::tests::spec;
+        use crate::types::serialize::row::tests::do_serialize;
+
+        #[test]
+        fn derive_serialize_and_deserialize_row_loose_ordering() {
+            #[derive(
+                scylla_macros::DeserializeRow, scylla_macros::SerializeRow, PartialEq, Eq, Debug,
+            )]
+            #[scylla(crate = "crate")]
+            struct MyRow<'a> {
+                a: &'a str,
+                #[scylla(skip)]
+                x: String,
+                b: Option<i32>,
+                c: i64,
+            }
+
+            let original_row = MyRow {
+                a: "The quick brown fox",
+                x: String::from("THIS SHOULD NOT BE (DE)SERIALIZED"),
+                b: Some(42),
+                c: 2137,
+            };
+
+            let tests = [
+                // All columns present
+                (
+                    &[
+                        spec("a", ColumnType::Text),
+                        spec("b", ColumnType::Int),
+                        spec("c", ColumnType::BigInt),
+                    ][..],
+                    MyRow {
+                        x: String::new(),
+                        ..original_row
+                    },
+                ),
+                //
+                // Columns switched - should still work.
+                (
+                    &[
+                        spec("b", ColumnType::Int),
+                        spec("a", ColumnType::Text),
+                        spec("c", ColumnType::BigInt),
+                    ],
+                    MyRow {
+                        x: String::new(),
+                        ..original_row
+                    },
+                ),
+            ];
+            for (typ, expected_row) in tests {
+                let serialized_row = Bytes::from(do_serialize(&original_row, typ));
+                let deserialized_row = deserialize::<MyRow<'_>>(typ, &serialized_row).unwrap();
+
+                assert_eq!(deserialized_row, expected_row);
+            }
+        }
+
+        #[test]
+        fn derive_serialize_and_deserialize_row_strict_ordering() {
+            #[derive(
+                scylla_macros::DeserializeRow, scylla_macros::SerializeRow, PartialEq, Eq, Debug,
+            )]
+            #[scylla(crate = "crate", flavor = "enforce_order")]
+            struct MyRow<'a> {
+                a: &'a str,
+                #[scylla(skip)]
+                x: String,
+                b: Option<i32>,
+            }
+
+            let original_row = MyRow {
+                a: "The quick brown fox",
+                x: String::from("THIS SHOULD NOT BE (DE)SERIALIZED"),
+                b: Some(42),
+            };
+
+            let tests = [
+                // All columns present
+                (
+                    &[spec("a", ColumnType::Text), spec("b", ColumnType::Int)][..],
+                    MyRow {
+                        x: String::new(),
+                        ..original_row
+                    },
+                ),
+            ];
+            for (typ, expected_row) in tests {
+                let serialized_row = Bytes::from(do_serialize(&original_row, typ));
+                let deserialized_row = deserialize::<MyRow<'_>>(typ, &serialized_row).unwrap();
+
+                assert_eq!(deserialized_row, expected_row);
+            }
+        }
+    }
 }
