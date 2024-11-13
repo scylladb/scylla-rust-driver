@@ -1579,6 +1579,18 @@ mod doctests {
     /// }
     /// ```
     fn _test_udt_unordered_flavour_no_limitations_on_allow_missing() {}
+
+    /// ```
+    /// #[derive(scylla_macros::SerializeValue)]
+    /// #[scylla(crate = scylla_cql)]
+    /// struct TestUdt {
+    ///     a: i32,
+    ///     #[scylla(default_when_null)]
+    ///     b: bool,
+    ///     c: String,
+    /// }
+    /// ```
+    fn _test_udt_default_when_null_is_accepted() {}
 }
 
 #[cfg(test)]

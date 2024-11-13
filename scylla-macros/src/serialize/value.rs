@@ -72,6 +72,11 @@ struct FieldAttributes {
     #[darling(default)]
     #[darling(rename = "allow_missing")]
     ignore_missing: bool,
+
+    // Used for deserialization only. Ignored in serialization.
+    #[darling(default)]
+    #[darling(rename = "default_when_null")]
+    _default_when_null: bool,
 }
 
 struct Context {
