@@ -616,7 +616,7 @@ impl Row {
 ///
 /// Flags and paging state are deserialized, remaining part of metadata
 /// as well as rows remain serialized.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RawMetadataAndRawRows {
     // Already deserialized part of metadata:
     col_count: usize,

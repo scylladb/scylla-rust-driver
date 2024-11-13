@@ -196,7 +196,7 @@ fn print_result(result: QueryResult) -> Result<(), IntoRowsResultError> {
             }
             Ok(())
         }
-        Err(IntoRowsResultError::ResultNotRows) => Ok(println!("OK")),
+        Err(IntoRowsResultError::ResultNotRows(_)) => Ok(println!("OK")),
         Err(e) => Err(e),
     }
 }

@@ -133,7 +133,7 @@ impl<'res> ColumnSpecs<'res> {
 ///
 /// NOTE: this is a result of a single CQL request. If you use paging for your query,
 /// this will contain exactly one page.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueryResult {
     raw_metadata_and_rows: Option<RawMetadataAndRawRows>,
     tracing_id: Option<Uuid>,
@@ -219,22 +219,40 @@ impl QueryResult {
     /// # }
     ///
     /// ```
+    ///
+    /// If the response is not of Rows kind, the original [`QueryResult`] (self) is
+    /// returned back to the user in the error type. See [`IntoRowsResultError`] documentation.
+    ///
+    /// ```rust
+    /// # use scylla::transport::query_result::{QueryResult, QueryRowsResult, IntoRowsResultError};
+    /// # fn example(non_rows_query_result: QueryResult) -> Result<(), Box<dyn std::error::Error>> {
+    /// let err = non_rows_query_result.into_rows_result().unwrap_err();
+    ///
+    /// match err {
+    ///     IntoRowsResultError::ResultNotRows(query_result) => {
+    ///         // do something with original `query_result`
+    ///     }
+    ///     _ => {
+    ///         // deserialization failed - query result is not recovered
+    ///     }
+    /// }
+    ///
+    /// Ok(())
+    /// # }
+    /// ```
     pub fn into_rows_result(self) -> Result<QueryRowsResult, IntoRowsResultError> {
-        let QueryResult {
-            raw_metadata_and_rows,
-            tracing_id,
+        let Some(raw_metadata_and_rows) = self.raw_metadata_and_rows else {
+            return Err(IntoRowsResultError::ResultNotRows(self));
+        };
+        let tracing_id = self.tracing_id;
+        let warnings = self.warnings;
+
+        let raw_rows_with_metadata = raw_metadata_and_rows.deserialize_metadata()?;
+        Ok(QueryRowsResult {
+            raw_rows_with_metadata,
             warnings,
-        } = self;
-        raw_metadata_and_rows
-            .map(|raw_rows| {
-                let raw_rows_with_metadata = raw_rows.deserialize_metadata()?;
-                Ok(QueryRowsResult {
-                    raw_rows_with_metadata,
-                    warnings,
-                    tracing_id,
-                })
-            })
-            .unwrap_or(Err(IntoRowsResultError::ResultNotRows))
+            tracing_id,
+        })
     }
 
     /// Transforms itself into the legacy result type, by eagerly deserializing rows
@@ -412,11 +430,14 @@ impl QueryRowsResult {
 }
 
 /// An error returned by [`QueryResult::into_rows_result`]
+///
+/// The `ResultNotRows` variant contains original [`QueryResult`],
+/// which otherwise would be consumed and lost.
 #[derive(Debug, Error, Clone)]
 pub enum IntoRowsResultError {
     /// Result is not of Rows kind
     #[error("Result is not of Rows kind")]
-    ResultNotRows,
+    ResultNotRows(QueryResult),
 
     // transparent because the underlying error provides enough context.
     /// Failed to lazily deserialize result metadata.
@@ -572,7 +593,7 @@ mod tests {
             {
                 let rqr = QueryResult::new(None, None, Vec::new());
                 let qr = rqr.into_rows_result();
-                assert_matches!(qr, Err(IntoRowsResultError::ResultNotRows));
+                assert_matches!(qr, Err(IntoRowsResultError::ResultNotRows(_)));
             }
 
             // RESULT::Rows response -> some column specs
@@ -630,7 +651,7 @@ mod tests {
             {
                 let rqr = QueryResult::new(None, None, Vec::new());
                 let qr = rqr.into_rows_result();
-                assert_matches!(qr, Err(IntoRowsResultError::ResultNotRows));
+                assert_matches!(qr, Err(IntoRowsResultError::ResultNotRows(_)));
             }
 
             // RESULT::Rows with 0 rows
@@ -774,6 +795,42 @@ mod tests {
                         qr.single_row::<(&str, bool)>(),
                         Err(SingleRowError::UnexpectedRowCount(2))
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_query_result_returns_self_if_not_rows() {
+        // Check tracing ID
+        for tracing_id in [None, Some(Uuid::from_u128(0x_feed_dead))] {
+            let qr = QueryResult::new(None, tracing_id, vec![]);
+            let err = qr.into_rows_result().unwrap_err();
+            match err {
+                IntoRowsResultError::ResultNotRows(query_result) => {
+                    assert_eq!(query_result.tracing_id, tracing_id)
+                }
+                IntoRowsResultError::ResultMetadataLazyDeserializationError(_) => {
+                    panic!("Expected ResultNotRows error")
+                }
+            }
+        }
+
+        // Check warnings
+        {
+            let warnings = &["Ooops", "Meltdown..."];
+            let qr = QueryResult::new(
+                None,
+                None,
+                warnings.iter().copied().map(String::from).collect(),
+            );
+            let err = qr.into_rows_result().unwrap_err();
+            match err {
+                IntoRowsResultError::ResultNotRows(query_result) => {
+                    assert_eq!(query_result.warnings().collect_vec(), warnings)
+                }
+                IntoRowsResultError::ResultMetadataLazyDeserializationError(_) => {
+                    panic!("Expected ResultNotRows error")
                 }
             }
         }
