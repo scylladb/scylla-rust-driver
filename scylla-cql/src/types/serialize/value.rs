@@ -1496,6 +1496,52 @@ pub enum ValueToSerializeValueAdapterError {
     },
 }
 
+mod doctests {
+    /// ```compile_fail
+    ///
+    /// #[derive(scylla_macros::SerializeValue)]
+    /// #[scylla(crate = scylla_cql, skip_name_checks)]
+    /// struct TestUdt {}
+    /// ```
+    fn _test_udt_bad_attributes_skip_name_check_requires_enforce_order() {}
+
+    /// ```compile_fail
+    ///
+    /// #[derive(scylla_macros::SerializeValue)]
+    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
+    /// struct TestUdt {
+    ///     #[scylla(rename = "b")]
+    ///     a: i32,
+    /// }
+    /// ```
+    fn _test_udt_bad_attributes_skip_name_check_conflicts_with_rename() {}
+
+    /// ```compile_fail
+    ///
+    /// #[derive(scylla_macros::SerializeValue)]
+    /// #[scylla(crate = scylla_cql)]
+    /// struct TestUdt {
+    ///     #[scylla(rename = "b")]
+    ///     a: i32,
+    ///     b: String,
+    /// }
+    /// ```
+    fn _test_udt_bad_attributes_rename_collision_with_field() {}
+
+    /// ```compile_fail
+    ///
+    /// #[derive(scylla_macros::SerializeValue)]
+    /// #[scylla(crate = scylla_cql)]
+    /// struct TestUdt {
+    ///     #[scylla(rename = "c")]
+    ///     a: i32,
+    ///     #[scylla(rename = "c")]
+    ///     b: String,
+    /// }
+    /// ```
+    fn _test_udt_bad_attributes_rename_collision_with_another_rename() {}
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
