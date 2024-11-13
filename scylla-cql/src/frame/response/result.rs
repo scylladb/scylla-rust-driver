@@ -1,3 +1,4 @@
+#[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
@@ -607,6 +608,11 @@ pub struct Row {
 
 impl Row {
     /// Allows converting Row into tuple of rust types or custom struct deriving FromRow
+    #[deprecated(
+        since = "0.15.0",
+        note = "Legacy deserialization API is inefficient and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn into_typed<RowT: FromRow>(self) -> StdResult<RowT, FromRowError> {
         RowT::from_row(self)
     }

@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use super::result::{CqlValue, Row};
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
@@ -19,6 +21,10 @@ pub enum FromRowError {
 /// This trait defines a way to convert CqlValue or `Option<CqlValue>` into some rust type
 // We can't use From trait because impl From<Option<CqlValue>> for String {...}
 // is forbidden since neither From nor String are defined in this crate
+#[deprecated(
+    since = "0.15.0",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
 pub trait FromCqlVal<T>: Sized {
     fn from_cql(cql_val: T) -> Result<Self, FromCqlValError>;
 }
@@ -34,6 +40,10 @@ pub enum FromCqlValError {
 }
 
 /// This trait defines a way to convert CQL Row into some rust type
+#[deprecated(
+    since = "0.15.0",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
 pub trait FromRow: Sized {
     fn from_row(row: Row) -> Result<Self, FromRowError>;
 }

@@ -13,6 +13,7 @@ pub mod macros {
     // Reexports for derive(IntoUserType)
     pub use bytes::{BufMut, Bytes, BytesMut};
 
+    #[allow(deprecated)]
     pub use crate::impl_from_cql_value_from_method;
 
     pub use crate::impl_serialize_row_via_value_list;
@@ -22,12 +23,14 @@ pub mod macros {
 pub mod types;
 
 pub use crate::frame::response::cql_to_rust;
+#[allow(deprecated)]
 pub use crate::frame::response::cql_to_rust::FromRow;
 
 pub use crate::frame::types::Consistency;
 
 #[doc(hidden)]
 pub mod _macro_internal {
+    #[allow(deprecated)]
     pub use crate::frame::response::cql_to_rust::{
         FromCqlVal, FromCqlValError, FromRow, FromRowError,
     };
