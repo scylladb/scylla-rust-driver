@@ -1950,7 +1950,7 @@ impl From<UdtDeserializationErrorKind> for BuiltinDeserializationErrorKind {
 
 #[cfg(test)]
 #[path = "value_tests.rs"]
-pub(super) mod tests;
+pub(crate) mod tests;
 
 /// ```compile_fail
 ///

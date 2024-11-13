@@ -1594,7 +1594,7 @@ mod doctests {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::BTreeMap;
 
     use crate::frame::response::result::{ColumnType, CqlValue};
@@ -1654,7 +1654,7 @@ mod tests {
         t.serialize(typ, writer).map(|_| ()).map(|()| ret)
     }
 
-    fn do_serialize<T: SerializeValue>(t: T, typ: &ColumnType) -> Vec<u8> {
+    pub(crate) fn do_serialize<T: SerializeValue>(t: T, typ: &ColumnType) -> Vec<u8> {
         do_serialize_result(t, typ).unwrap()
     }
 

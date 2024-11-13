@@ -585,7 +585,7 @@ fn test_tuples() {
     );
 }
 
-fn udt_def_with_fields(
+pub(crate) fn udt_def_with_fields(
     fields: impl IntoIterator<Item = (impl Into<Cow<'static, str>>, ColumnType<'static>)>,
 ) -> ColumnType<'static> {
     ColumnType::UserDefinedType {
@@ -1044,7 +1044,7 @@ fn test_custom_type_parser() {
     assert_eq!(tup, SwappedPair("foo", 42));
 }
 
-fn deserialize<'frame, 'metadata, T>(
+pub(crate) fn deserialize<'frame, 'metadata, T>(
     typ: &'metadata ColumnType<'metadata>,
     bytes: &'frame Bytes,
 ) -> Result<T, DeserializationError>
