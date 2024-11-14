@@ -1,14 +1,14 @@
 [tool.poetry]
 name = "sphinx-docs"
 description = "ScyllaDB Documentation"
-version = "0.14"
+version = "0.15"
 authors = ["ScyllaDB Documentation Contributors"]
 package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.10"
 pygments = "^2.18.0"
-redirects_cli ="^0.1.3"
+redirects_cli = "^0.1.3"
 sphinx-scylladb-theme = "^1.8.1"
 sphinx-sitemap = "^2.6.0"
 sphinx-autobuild = "^2024.4.19"
