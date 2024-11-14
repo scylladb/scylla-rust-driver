@@ -42,7 +42,7 @@ while let Some((value,)) = iter.try_next().await? {
 
 ## chrono::NaiveTime
 
-If `chrono-04` feature is enabled, [`chrono::NaiveTime`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html)
+If the `chrono-04` feature is enabled, [`chrono::NaiveTime`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html)
 can be used to interact with the database. Although chrono can represent leap seconds, they are not supported.
 Attempts to convert [`chrono::NaiveTime`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html) with leap
 second to `CqlTime` or write it to the database will return an error.
@@ -78,7 +78,7 @@ while let Some((time_value,)) = iter.try_next().await? {
 
 ## time::Time
 
-If `time` feature is enabled, [`time::Time`](https://docs.rs/time/0.3/time/struct.Time.html) can be used to interact
+If the `time-03` feature is enabled, [`time::Time`](https://docs.rs/time/0.3/time/struct.Time.html) can be used to interact
 with the database.
 
 ```rust
