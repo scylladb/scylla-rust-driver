@@ -44,12 +44,12 @@ pub use scylla_cql::macros::IntoUserType;
 /// - serialization will succeed in "match_by_name" flavor (default). Missing
 ///   fields in the middle of UDT will be sent as NULLs, missing fields at the end will not be sent
 ///   at all.
-/// - serialization will succed if suffix of UDT fields is missing. If there are missing fields in the
+/// - serialization will succeed if suffix of UDT fields is missing. If there are missing fields in the
 ///   middle it will fail. Note that if "skip_name_checks" is enabled, and the types happen to match,
 ///   it is possible for serialization to succeed with unexpected result.
 ///
 /// This behavior is the default to support ALTERing UDTs by adding new fields.
-/// You can require exact match of fields using `force_exact_match` attribute.
+/// You can forbid excess fields in the UDT using `forbid_excess_udt_fields` attribute.
 ///
 /// In case of failure, either [`BuiltinTypeCheckError`](crate::serialize::value::BuiltinTypeCheckError)
 /// or [`BuiltinSerializationError`](crate::serialize::value::BuiltinSerializationError)
@@ -125,7 +125,7 @@ pub use scylla_cql::macros::IntoUserType;
 /// struct field names and UDT field names, i.e. it's OK if i-th field has a
 /// different name in Rust and in the UDT. Fields are still being type-checked.
 ///
-/// `#[scylla(force_exact_match)]`
+/// `#[scylla(forbid_excess_udt_fields)]`
 ///
 /// Forces Rust struct to have all the fields present in UDT, otherwise
 /// serialization fails.
@@ -307,20 +307,26 @@ pub use scylla_cql::macros::SerializeRow;
 /// macro itself, so in those cases the user must provide an alternative path
 /// to either the `scylla` or `scylla-cql` crate.
 ///
-/// `#[scylla(enforce_order)]`
 ///
-/// By default, the generated deserialization code will be insensitive
-/// to the UDT field order - when processing a field, it will look it up
-/// in the Rust struct with the corresponding field and set it. However,
-/// if the UDT field order is known to be the same both in the UDT
-/// and the Rust struct, then the `enforce_order` annotation can be used
-/// so that a more efficient implementation that does not perform lookups
-/// is be generated. The UDT field names will still be checked during the
-/// type check phase.
+/// `#[scylla(flavor = "flavor_name")]`
+///
+/// Allows to choose one of the possible "flavors", i.e. the way how the
+/// generated code will approach deserialization. Possible flavors are:
+///
+/// - `"match_by_name"` (default) - the generated implementation _does not
+///   require_ the fields in the Rust struct to be in the same order as the
+///   fields in the UDT. During deserialization, the implementation will take
+///   care to deserialize the fields in the order which the database expects.
+/// - `"enforce_order"` - the generated implementation _requires_ the fields
+///   in the Rust struct to be in the same order as the fields in the UDT.
+///   If the order is incorrect, type checking/deserialization will fail.
+///   This is a less robust flavor than `"match_by_name"`, but should be
+///   slightly more performant as it doesn't need to perform lookups by name.
+///   The UDT field names will still be checked during the type check phase.
 ///
 /// #[(scylla(skip_name_checks))]
 ///
-/// This attribute only works when used with `enforce_order`.
+/// This attribute only works when used with `flavor = "enforce_order"`.
 ///
 /// If set, the generated implementation will not verify the UDT field names at
 /// all. Because it only works with `enforce_order`, it will deserialize first
@@ -437,19 +443,25 @@ pub use scylla_macros::DeserializeValue;
 /// macro itself, so in those cases the user must provide an alternative path
 /// to either the `scylla` or `scylla-cql` crate.
 ///
-/// `#[scylla(enforce_order)]`
+/// `#[scylla(flavor = "flavor_name")]`
 ///
-/// By default, the generated deserialization code will be insensitive
-/// to the column order - when processing a column, the corresponding Rust field
-/// will be looked up and the column will be deserialized based on its type.
-/// However, if the column order and the Rust field order is known to be the
-/// same,  then the `enforce_order` annotation can be used so that a more
-/// efficient implementation that does not perform lookups is be generated.
-/// The generated code will still check that the column and field names match.
+/// Allows to choose one of the possible "flavors", i.e. the way how the
+/// generated code will approach deserialization. Possible flavors are:
+///
+/// - `"match_by_name"` (default) - the generated implementation _does not
+///   require_ the fields in the Rust struct to be in the same order as the
+///   columns in the row. During deserialization, the implementation will take
+///   care to deserialize the columns in the order which the database provided.
+/// - `"enforce_order"` - the generated implementation _requires_ the fields
+///   in the Rust struct to be in the same order as the columns in the row.
+///   If the order is incorrect, type checking/deserialization will fail.
+///   This is a less robust flavor than `"match_by_name"`, but should be
+///   slightly more performant as it doesn't need to perform lookups by name.
+///   The generated code will still check that the column and field names match.
 ///
 /// #[(scylla(skip_name_checks))]
 ///
-/// This attribute only works when used with `enforce_order`.
+/// This attribute only works when used with `flavor = "enforce_order"`.
 ///
 /// If set, the generated implementation will not verify the column names at
 /// all. Because it only works with `enforce_order`, it will deserialize first

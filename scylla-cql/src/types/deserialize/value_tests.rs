@@ -585,7 +585,7 @@ fn test_tuples() {
     );
 }
 
-fn udt_def_with_fields(
+pub(crate) fn udt_def_with_fields(
     fields: impl IntoIterator<Item = (impl Into<Cow<'static, str>>, ColumnType<'static>)>,
 ) -> ColumnType<'static> {
     ColumnType::UserDefinedType {
@@ -632,7 +632,7 @@ struct TestUdtWithNoFieldsUnordered {}
 
 #[allow(unused)]
 #[derive(scylla_macros::DeserializeValue)]
-#[scylla(crate = crate, enforce_order)]
+#[scylla(crate = crate, flavor = "enforce_order")]
 struct TestUdtWithNoFieldsOrdered {}
 
 #[test]
@@ -786,7 +786,7 @@ fn test_udt_loose_ordering() {
 #[test]
 fn test_udt_strict_ordering() {
     #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-    #[scylla(crate = "crate", enforce_order)]
+    #[scylla(crate = "crate", flavor = "enforce_order")]
     struct Udt<'a> {
         #[scylla(default_when_null)]
         a: &'a str,
@@ -860,7 +860,7 @@ fn test_udt_strict_ordering() {
     // An excess field at the end of UDT, when such are forbidden
     {
         #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-        #[scylla(crate = "crate", enforce_order, forbid_excess_udt_fields)]
+        #[scylla(crate = "crate", flavor = "enforce_order", forbid_excess_udt_fields)]
         struct Udt<'a> {
             a: &'a str,
             #[scylla(skip)]
@@ -934,7 +934,7 @@ fn test_udt_strict_ordering() {
 #[test]
 fn test_udt_no_name_check() {
     #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-    #[scylla(crate = "crate", enforce_order, skip_name_checks)]
+    #[scylla(crate = "crate", flavor = "enforce_order", skip_name_checks)]
     struct Udt<'a> {
         a: &'a str,
         #[scylla(skip)]
@@ -1044,7 +1044,7 @@ fn test_custom_type_parser() {
     assert_eq!(tup, SwappedPair("foo", 42));
 }
 
-fn deserialize<'frame, 'metadata, T>(
+pub(crate) fn deserialize<'frame, 'metadata, T>(
     typ: &'metadata ColumnType<'metadata>,
     bytes: &'frame Bytes,
 ) -> Result<T, DeserializationError>
@@ -1762,7 +1762,7 @@ fn test_udt_errors() {
     // Strict ordering
     {
         #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-        #[scylla(crate = "crate", enforce_order, forbid_excess_udt_fields)]
+        #[scylla(crate = "crate", flavor = "enforce_order", forbid_excess_udt_fields)]
         struct Udt<'a> {
             a: &'a str,
             #[scylla(skip)]

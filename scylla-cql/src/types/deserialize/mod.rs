@@ -323,7 +323,7 @@ macro_rules! make_error_replace_rust_name {
 use make_error_replace_rust_name;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use bytes::{Bytes, BytesMut};
 
     use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
@@ -342,7 +342,7 @@ mod tests {
         bytes.freeze()
     }
 
-    pub(super) const fn spec<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+    pub(crate) const fn spec<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
         ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
     }
 }
