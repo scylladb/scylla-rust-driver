@@ -41,7 +41,7 @@ full-serialization = [
 ]
 
 [dependencies]
-scylla-macros = { version = "0.6.0", path = "../scylla-macros" }
+scylla-macros = { version = "0.7.0", path = "../scylla-macros" }
 scylla-cql = { version = "0.3.0", path = "../scylla-cql" }
 byteorder = "1.3.4"
 bytes = "1.0.1"
@@ -84,7 +84,7 @@ num-bigint-04 = { package = "num-bigint", version = "0.4" }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4" }
 scylla-proxy = { version = "0.0.3", path = "../scylla-proxy" }
 ntest = "0.9.3"
-criterion = "0.4"                                              # Note: v0.5 needs at least rust 1.70.0
+criterion = "0.4"                                                      # Note: v0.5 needs at least rust 1.70.0
 tokio = { version = "1.34", features = ["test-util"] }
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 assert_matches = "1.5.0"
