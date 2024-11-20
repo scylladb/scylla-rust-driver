@@ -1,6 +1,5 @@
 use futures::Future;
 use scylla::deserialize::DeserializeValue;
-use scylla::frame::response::result::Row;
 use scylla::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use scylla::Session;
 use std::collections::HashMap;
@@ -123,19 +122,7 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
 
 #[allow(unused)]
 pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
-    let result = session
-        .query_unpaged(
-            "select column_name from system_schema.columns where
-                keyspace_name = 'system_schema'
-                and table_name = 'scylla_keyspaces'
-                and column_name = 'initial_tablets'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .into_rows_result();
-
-    result.is_ok_and(|rows_result| rows_result.single_row::<Row>().is_ok())
+    supports_feature(session, "TABLETS").await
 }
 
 // Creates a generic session builder based on conditional compilation configuration

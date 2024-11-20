@@ -1,6 +1,5 @@
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::Session;
-use scylla_cql::frame::response::result::Row;
 use std::{num::NonZeroU32, time::Duration};
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
@@ -92,19 +91,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
 }
 
 pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
-    let result = session
-        .query_unpaged(
-            "select column_name from system_schema.columns where
-                keyspace_name = 'system_schema'
-                and table_name = 'scylla_keyspaces'
-                and column_name = 'initial_tablets'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .into_rows_result();
-
-    result.is_ok_and(|rows_result| rows_result.single_row::<Row>().is_ok())
+    supports_feature(session, "TABLETS").await
 }
 
 pub(crate) fn setup_tracing() {
