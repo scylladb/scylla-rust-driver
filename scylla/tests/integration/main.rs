@@ -1,6 +1,7 @@
 mod authenticate;
 mod consistency;
 mod cql_collections;
+mod cql_types;
 mod execution_profiles;
 mod hygiene;
 mod lwt_optimisation;
