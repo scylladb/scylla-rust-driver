@@ -1,3 +1,4 @@
+mod authenticate;
 mod consistency;
 mod cql_collections;
 mod execution_profiles;
