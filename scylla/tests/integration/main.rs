@@ -3,6 +3,7 @@ mod consistency;
 mod cql_collections;
 mod cql_types;
 mod cql_value;
+mod default_policy;
 mod execution_profiles;
 mod history;
 mod hygiene;
