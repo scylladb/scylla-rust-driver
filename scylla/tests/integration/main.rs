@@ -5,6 +5,7 @@ mod cql_types;
 mod cql_value;
 mod execution_profiles;
 mod hygiene;
+mod large_batch_statements;
 mod lwt_optimisation;
 mod new_session;
 mod retries;
