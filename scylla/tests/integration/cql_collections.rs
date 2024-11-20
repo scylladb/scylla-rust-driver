@@ -1,5 +1,6 @@
 use crate::utils::{
     create_new_session_builder, setup_tracing, unique_keyspace_name, DeserializeOwnedValue,
+    PerformDDL,
 };
 use scylla::frame::response::result::CqlValue;
 use scylla::Session;
@@ -9,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 async fn connect() -> Session {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
-    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -17,13 +18,10 @@ async fn connect() -> Session {
 
 async fn create_table(session: &Session, table_name: &str, value_type: &str) {
     session
-        .query_unpaged(
-            format!(
-                "CREATE TABLE IF NOT EXISTS {} (p int PRIMARY KEY, val {})",
-                table_name, value_type
-            ),
-            (),
-        )
+        .ddl(format!(
+            "CREATE TABLE IF NOT EXISTS {} (p int PRIMARY KEY, val {})",
+            table_name, value_type
+        ))
         .await
         .unwrap();
 }

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use crate::utils::scylla_supports_tablets;
-use crate::utils::setup_tracing;
-use crate::utils::test_with_3_node_cluster;
-use crate::utils::unique_keyspace_name;
+use crate::utils::{
+    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL,
+};
 
 use futures::future::try_join_all;
 use futures::TryStreamExt;
@@ -252,25 +252,19 @@ fn count_tablet_feedbacks(
 
 async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: usize) {
     session
-        .query_unpaged(
-            format!(
-                "CREATE KEYSPACE IF NOT EXISTS {} 
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {} 
             WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 2}}
             AND tablets = {{ 'initial': {} }}",
-                ks, tablet_count
-            ),
-            &[],
-        )
+            ks, tablet_count
+        ))
         .await
         .unwrap();
     session
-        .query_unpaged(
-            format!(
-                "CREATE TABLE IF NOT EXISTS {}.{} (a int, b int, c text, primary key (a, b))",
-                ks, table
-            ),
-            &[],
-        )
+        .ddl(format!(
+            "CREATE TABLE IF NOT EXISTS {}.{} (a int, b int, c text, primary key (a, b))",
+            ks, table
+        ))
         .await
         .unwrap();
 }

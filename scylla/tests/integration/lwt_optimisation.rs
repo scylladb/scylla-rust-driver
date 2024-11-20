@@ -1,5 +1,6 @@
 use crate::utils::{
     scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL,
 };
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::transport::session::Session;
@@ -73,11 +74,11 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         if scylla_supports_tablets(&session).await {
             create_ks += " and TABLETS = { 'enabled': false}";
         }
-        session.query_unpaged(create_ks, &[]).await.unwrap();
+        session.ddl(create_ks).await.unwrap();
         session.use_keyspace(ks, false).await.unwrap();
 
         session
-            .query_unpaged("CREATE TABLE t (a int primary key, b int)", &[])
+            .ddl("CREATE TABLE t (a int primary key, b int)")
             .await
             .unwrap();
 
