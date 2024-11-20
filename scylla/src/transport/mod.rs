@@ -27,8 +27,6 @@ pub use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 
 #[cfg(test)]
 mod session_test;
-#[cfg(test)]
-mod silent_prepare_batch_test;
 
 pub use cluster::ClusterData;
 pub use node::{KnownNode, Node, NodeAddr, NodeRef};

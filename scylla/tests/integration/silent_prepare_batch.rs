@@ -1,9 +1,8 @@
-use crate::{
-    batch::Batch,
-    prepared_statement::PreparedStatement,
-    test_utils::{create_new_session_builder, setup_tracing, unique_keyspace_name},
-    Session,
-};
+use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name};
+use scylla::batch::Batch;
+use scylla::prepared_statement::PreparedStatement;
+use scylla::Session;
+
 use std::collections::BTreeSet;
 
 #[tokio::test]
