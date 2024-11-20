@@ -28,8 +28,6 @@ pub use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 #[cfg(test)]
 mod authenticate_test;
 #[cfg(test)]
-mod cql_collections_test;
-#[cfg(test)]
 mod session_test;
 #[cfg(test)]
 mod silent_prepare_batch_test;

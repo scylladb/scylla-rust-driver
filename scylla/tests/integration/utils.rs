@@ -1,4 +1,5 @@
 use futures::Future;
+use scylla::deserialize::DeserializeValue;
 use scylla::frame::response::result::Row;
 use scylla::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use scylla::Session;
@@ -172,4 +173,15 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
     session_builder
         .tracing_info_fetch_attempts(NonZeroU32::new(200).unwrap())
         .tracing_info_fetch_interval(Duration::from_millis(50))
+}
+
+// Shorthands for better readability.
+// Copied from Scylla because we don't want to make it public there.
+pub(crate) trait DeserializeOwnedValue:
+    for<'frame, 'metadata> DeserializeValue<'frame, 'metadata>
+{
+}
+impl<T> DeserializeOwnedValue for T where
+    T: for<'frame, 'metadata> DeserializeValue<'frame, 'metadata>
+{
 }

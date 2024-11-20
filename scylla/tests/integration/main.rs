@@ -1,4 +1,5 @@
 mod consistency;
+mod cql_collections;
 mod execution_profiles;
 mod hygiene;
 mod lwt_optimisation;
