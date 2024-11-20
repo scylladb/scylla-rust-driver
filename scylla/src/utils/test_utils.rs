@@ -1,9 +1,5 @@
-use scylla_cql::frame::response::result::Row;
-
-#[cfg(test)]
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::Session;
-#[cfg(test)]
 use std::{num::NonZeroU32, time::Duration};
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
@@ -12,7 +8,7 @@ use std::{
 
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-pub fn unique_keyspace_name() -> String {
+pub(crate) fn unique_keyspace_name() -> String {
     let cnt = UNIQUE_COUNTER.fetch_add(1, Ordering::SeqCst);
     let name = format!(
         "test_rust_{}_{}",
@@ -26,7 +22,6 @@ pub fn unique_keyspace_name() -> String {
     name
 }
 
-#[cfg(test)]
 pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
     // Cassandra doesn't have a concept of features, so first detect
     // if there is the `supported_features` column in system.local
@@ -44,14 +39,14 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
         return false;
     }
 
-    let (features,): (Option<String>,) = session
+    let result = session
         .query_unpaged("SELECT supported_features FROM system.local", ())
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
-        .single_row()
         .unwrap();
+
+    let (features,): (Option<&str>,) = result.single_row().unwrap();
 
     features
         .unwrap_or_default()
@@ -62,8 +57,7 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
 // Creates a generic session builder based on conditional compilation configuration
 // For SessionBuilder of DefaultMode type, adds localhost to known hosts, as all of the tests
 // connect to localhost.
-#[cfg(test)]
-pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilderKind> {
+pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilderKind> {
     let session_builder = {
         #[cfg(not(scylla_cloud_tests))]
         {
@@ -96,23 +90,10 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
         .tracing_info_fetch_interval(Duration::from_millis(50))
 }
 
-pub async fn scylla_supports_tablets(session: &Session) -> bool {
-    let result = session
-        .query_unpaged(
-            "select column_name from system_schema.columns where
-                keyspace_name = 'system_schema'
-                and table_name = 'scylla_keyspaces'
-                and column_name = 'initial_tablets'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .into_rows_result();
-
-    result.is_ok_and(|rows_result| rows_result.single_row::<Row>().is_ok())
+pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
+    supports_feature(session, "TABLETS").await
 }
 
-#[cfg(test)]
 pub(crate) fn setup_tracing() {
     let _ = tracing_subscriber::fmt::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

@@ -26,20 +26,7 @@ pub use execution_profile::ExecutionProfile;
 pub use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 
 #[cfg(test)]
-mod authenticate_test;
-#[cfg(test)]
-mod cql_collections_test;
-#[cfg(test)]
 mod session_test;
-#[cfg(test)]
-mod silent_prepare_batch_test;
-
-#[cfg(test)]
-mod cql_types_test;
-#[cfg(test)]
-mod cql_value_test;
-#[cfg(test)]
-mod large_batch_statements_test;
 
 pub use cluster::ClusterData;
 pub use node::{KnownNode, Node, NodeAddr, NodeRef};

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use crate::utils::{setup_tracing, test_with_3_node_cluster};
-use scylla::test_utils::scylla_supports_tablets;
-use scylla::{test_utils::unique_keyspace_name, SessionBuilder};
+use crate::utils::{
+    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+};
+use scylla::SessionBuilder;
 use tokio::sync::mpsc;
 
 use scylla_proxy::TargetShard;
