@@ -257,10 +257,8 @@ pub mod transport;
 
 pub(crate) mod utils;
 
-/// This module is NOT part of the public API (it is `pub` only for internal use of integration tests).
-/// Future minor releases are free to introduce breaking API changes inside it.
-#[doc(hidden)]
-pub use utils::test_utils;
+#[cfg(test)]
+pub(crate) use utils::test_utils;
 
 pub use statement::batch;
 pub use statement::prepared_statement;
