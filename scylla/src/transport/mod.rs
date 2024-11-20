@@ -31,8 +31,6 @@ mod session_test;
 mod silent_prepare_batch_test;
 
 #[cfg(test)]
-mod cql_value_test;
-#[cfg(test)]
 mod large_batch_statements_test;
 
 pub use cluster::ClusterData;

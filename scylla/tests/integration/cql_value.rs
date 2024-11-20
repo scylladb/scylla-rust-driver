@@ -1,11 +1,10 @@
 use assert_matches::assert_matches;
 
-use crate::frame::response::result::CqlValue;
-use crate::frame::value::CqlDuration;
+use scylla::frame::response::result::CqlValue;
+use scylla::frame::value::CqlDuration;
+use scylla::Session;
 
-use crate::test_utils::{create_new_session_builder, setup_tracing};
-use crate::utils::test_utils::unique_keyspace_name;
-use crate::Session;
+use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name};
 
 #[tokio::test]
 async fn test_cqlvalue_udt() {
