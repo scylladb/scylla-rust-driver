@@ -153,7 +153,6 @@ fn apply_ddl_lbp(query: &mut Query) {
 // This is just to make it easier to call the above function:
 // we'll be able to do session.ddl(...) instead of perform_ddl(&session, ...)
 // or something like that.
-#[allow(unused)]
 #[async_trait::async_trait]
 pub(crate) trait PerformDDL {
     async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError>;
