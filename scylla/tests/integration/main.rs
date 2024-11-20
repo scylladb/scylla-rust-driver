@@ -4,6 +4,7 @@ mod cql_collections;
 mod cql_types;
 mod cql_value;
 mod execution_profiles;
+mod history;
 mod hygiene;
 mod large_batch_statements;
 mod lwt_optimisation;
