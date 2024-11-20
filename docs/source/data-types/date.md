@@ -42,7 +42,7 @@ while let Some((date_value,)) = iter.try_next().await? {
 
 ## chrono::NaiveDate
 
-If full range is not required and `chrono` feature is enabled,
+If full range is not required and `chrono-04` feature is enabled,
 [`chrono::NaiveDate`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html) can be used.
 [`chrono::NaiveDate`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html) supports dates from
 -262145-01-01 to 262143-12-31.
@@ -78,7 +78,7 @@ while let Some((date_value,)) = iter.try_next().await? {
 
 ## time::Date
 
-Alternatively, `time` feature can be used to enable support of
+Alternatively, the `time-03` feature can be used to enable support of
 [`time::Date`](https://docs.rs/time/0.3/time/struct.Date.html).
 [`time::Date`](https://docs.rs/time/0.3/time/struct.Date.html)'s value range depends on feature flags, see its
 documentation to get more info.
