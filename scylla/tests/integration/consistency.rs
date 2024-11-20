@@ -1,11 +1,11 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
 
+use crate::utils::unique_keyspace_name;
 use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::prepared_statement::PreparedStatement;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::routing::{Shard, Token};
-use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::NodeRef;
 use scylla::Session;
 use scylla_cql::frame::response::result::TableSpec;

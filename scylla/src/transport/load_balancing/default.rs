@@ -3128,7 +3128,7 @@ mod latency_awareness {
         use crate::{
             load_balancing::default::NodeLocationPreference,
             routing::Shard,
-            test_utils::{create_new_session_builder, setup_tracing},
+            test_utils::setup_tracing,
             transport::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
         };
         use crate::{
@@ -3141,7 +3141,6 @@ mod latency_awareness {
                 locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
                 ClusterData, NodeAddr,
             },
-            ExecutionProfile,
         };
         use tokio::time::Instant;
 
@@ -3845,28 +3844,6 @@ mod latency_awareness {
                 )
                 .await;
             }
-        }
-
-        // This is a regression test for #696.
-        #[tokio::test]
-        #[ntest::timeout(1000)]
-        async fn latency_aware_query_completes() {
-            setup_tracing();
-            let policy = DefaultPolicy::builder()
-                .latency_awareness(LatencyAwarenessBuilder::default())
-                .build();
-            let handle = ExecutionProfile::builder()
-                .load_balancing_policy(policy)
-                .build()
-                .into_handle();
-
-            let session = create_new_session_builder()
-                .default_execution_profile_handle(handle)
-                .build()
-                .await
-                .unwrap();
-
-            session.query_unpaged("whatever", ()).await.unwrap_err();
         }
 
         #[tokio::test(start_paused = true)]

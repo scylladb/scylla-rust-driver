@@ -1,14 +1,11 @@
 use assert_matches::assert_matches;
 
-use crate::batch::BatchType;
-use crate::query::Query;
-use crate::test_utils::setup_tracing;
-use crate::transport::errors::{BadQuery, QueryError};
-use crate::{
-    batch::Batch,
-    test_utils::{create_new_session_builder, unique_keyspace_name},
-    QueryResult, Session,
-};
+use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name};
+use scylla::batch::Batch;
+use scylla::batch::BatchType;
+use scylla::query::Query;
+use scylla::transport::errors::{BadQuery, QueryError};
+use scylla::{QueryResult, Session};
 
 #[tokio::test]
 async fn test_large_batch_statements() {

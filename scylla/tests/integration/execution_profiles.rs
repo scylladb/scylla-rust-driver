@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use crate::utils::{setup_tracing, test_with_3_node_cluster};
+use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name};
 use assert_matches::assert_matches;
 use scylla::batch::BatchStatement;
 use scylla::batch::{Batch, BatchType};
@@ -13,7 +13,6 @@ use scylla::{
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
     retry_policy::{RetryPolicy, RetrySession},
     speculative_execution::SpeculativeExecutionPolicy,
-    test_utils::unique_keyspace_name,
     transport::ClusterData,
     ExecutionProfile, SessionBuilder,
 };

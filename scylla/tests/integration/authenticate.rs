@@ -1,8 +1,7 @@
-use crate::authentication::{AuthError, AuthenticatorProvider, AuthenticatorSession};
-use crate::test_utils::setup_tracing;
-use crate::utils::test_utils::unique_keyspace_name;
+use crate::utils::{setup_tracing, unique_keyspace_name};
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
+use scylla::authentication::{AuthError, AuthenticatorProvider, AuthenticatorSession};
 use std::sync::Arc;
 
 #[tokio::test]
@@ -13,7 +12,7 @@ async fn authenticate_superuser() {
 
     println!("Connecting to {} with cassandra superuser ...", uri);
 
-    let session = crate::SessionBuilder::new()
+    let session = scylla::SessionBuilder::new()
         .known_node(uri)
         .user("cassandra", "cassandra")
         .build()
@@ -72,7 +71,7 @@ async fn custom_authentication() {
 
     println!("Connecting to {} with cassandra superuser ...", uri);
 
-    let session = crate::SessionBuilder::new()
+    let session = scylla::SessionBuilder::new()
         .known_node(uri)
         .authenticator_provider(Arc::new(CustomAuthenticatorProvider))
         .build()
