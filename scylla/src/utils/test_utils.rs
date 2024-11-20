@@ -44,14 +44,14 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
         return false;
     }
 
-    let (features,): (Option<String>,) = session
+    let result = session
         .query_unpaged("SELECT supported_features FROM system.local", ())
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
-        .single_row()
         .unwrap();
+
+    let (features,): (Option<&str>,) = result.single_row().unwrap();
 
     features
         .unwrap_or_default()
