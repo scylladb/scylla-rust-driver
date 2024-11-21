@@ -1,5 +1,6 @@
 use itertools::Itertools;
-use tokio::net::lookup_host;
+use thiserror::Error;
+use tokio::net::{lookup_host, ToSocketAddrs};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -13,6 +14,7 @@ use crate::transport::errors::{ConnectionPoolError, QueryError};
 use std::fmt::Display;
 use std::io;
 use std::net::IpAddr;
+use std::time::Duration;
 use std::{
     hash::{Hash, Hasher},
     net::SocketAddr,
@@ -267,27 +269,53 @@ pub(crate) struct ResolvedContactPoint {
     pub(crate) datacenter: Option<String>,
 }
 
+#[derive(Error, Debug)]
+pub(crate) enum DnsLookupError {
+    #[error("Failed to perform DNS lookup within {0}ms")]
+    Timeout(u128),
+    #[error("Empty address list returned by DNS for {0}")]
+    EmptyAddressListForHost(String),
+    #[error(transparent)]
+    IoError(#[from] io::Error),
+}
+
+/// Performs a DNS lookup with provided optional timeout.
+async fn lookup_host_with_timeout<T: ToSocketAddrs>(
+    host: T,
+    hostname_resolution_timeout: Option<Duration>,
+) -> Result<impl Iterator<Item = SocketAddr>, DnsLookupError> {
+    if let Some(timeout) = hostname_resolution_timeout {
+        match tokio::time::timeout(timeout, lookup_host(host)).await {
+            Ok(res) => res.map_err(Into::into),
+            // Elapsed error from tokio library does not provide any context.
+            Err(_) => Err(DnsLookupError::Timeout(timeout.as_millis())),
+        }
+    } else {
+        lookup_host(host).await.map_err(Into::into)
+    }
+}
+
 // Resolve the given hostname using a DNS lookup if necessary.
 // The resolution may return multiple IPs and the function returns one of them.
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
-pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::Error> {
-    let addrs = match lookup_host(hostname).await {
+pub(crate) async fn resolve_hostname(
+    hostname: &str,
+    hostname_resolution_timeout: Option<Duration>,
+) -> Result<SocketAddr, DnsLookupError> {
+    let addrs = match lookup_host_with_timeout(hostname, hostname_resolution_timeout).await {
         Ok(addrs) => itertools::Either::Left(addrs),
         // Use a default port in case of error, but propagate the original error on failure
         Err(e) => {
-            let addrs = lookup_host((hostname, 9042)).await.or(Err(e))?;
+            let addrs = lookup_host_with_timeout((hostname, 9042), hostname_resolution_timeout)
+                .await
+                .or(Err(e))?;
             itertools::Either::Right(addrs)
         }
     };
 
     addrs
         .find_or_last(|addr| matches!(addr, SocketAddr::V4(_)))
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Empty address list returned by DNS for {}", hostname),
-            )
-        })
+        .ok_or_else(|| DnsLookupError::EmptyAddressListForHost(hostname.to_owned()))
 }
 
 /// Transforms the given [`InternalKnownNode`]s into [`ContactPoint`]s.
@@ -296,6 +324,7 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::E
 /// In case of a plain IP address, parses it and uses straight.
 pub(crate) async fn resolve_contact_points(
     known_nodes: &[InternalKnownNode],
+    hostname_resolution_timeout: Option<Duration>,
 ) -> (Vec<ResolvedContactPoint>, Vec<String>) {
     // Find IP addresses of all known nodes passed in the config
     let mut initial_peers: Vec<ResolvedContactPoint> = Vec::with_capacity(known_nodes.len());
@@ -323,7 +352,7 @@ pub(crate) async fn resolve_contact_points(
     let resolve_futures = to_resolve
         .into_iter()
         .map(|(hostname, datacenter)| async move {
-            match resolve_hostname(hostname).await {
+            match resolve_hostname(hostname, hostname_resolution_timeout).await {
                 Ok(address) => Some(ResolvedContactPoint {
                     address,
                     datacenter,

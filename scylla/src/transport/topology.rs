@@ -41,6 +41,7 @@ use super::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 pub(crate) struct MetadataReader {
     connection_config: ConnectionConfig,
     keepalive_interval: Option<Duration>,
+    hostname_resolution_timeout: Option<Duration>,
 
     control_connection_endpoint: UntranslatedEndpoint,
     control_connection: NodeConnectionPool,
@@ -470,6 +471,7 @@ impl MetadataReader {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
         initial_known_nodes: Vec<InternalKnownNode>,
+        hostname_resolution_timeout: Option<Duration>,
         control_connection_repair_requester: broadcast::Sender<()>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
@@ -479,7 +481,7 @@ impl MetadataReader {
         host_filter: &Option<Arc<dyn HostFilter>>,
     ) -> Result<Self, NewSessionError> {
         let (initial_peers, resolved_hostnames) =
-            resolve_contact_points(&initial_known_nodes).await;
+            resolve_contact_points(&initial_known_nodes, hostname_resolution_timeout).await;
         // Ensure there is at least one resolved node
         if initial_peers.is_empty() {
             return Err(NewSessionError::FailedToResolveAnyHostname(
@@ -503,6 +505,7 @@ impl MetadataReader {
             control_connection_endpoint.clone(),
             connection_config.clone(),
             keepalive_interval,
+            hostname_resolution_timeout,
             control_connection_repair_requester.clone(),
         );
 
@@ -510,6 +513,7 @@ impl MetadataReader {
             control_connection_endpoint,
             control_connection,
             keepalive_interval,
+            hostname_resolution_timeout,
             connection_config,
             known_peers: initial_peers
                 .into_iter()
@@ -570,8 +574,11 @@ impl MetadataReader {
                 // If no known peer is reachable, try falling back to initial contact points, in hope that
                 // there are some hostnames there which will resolve to reachable new addresses.
                 warn!("Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points.");
-                let (initial_peers, _hostnames) =
-                    resolve_contact_points(&self.initial_known_nodes).await;
+                let (initial_peers, _hostnames) = resolve_contact_points(
+                    &self.initial_known_nodes,
+                    self.hostname_resolution_timeout,
+                )
+                .await;
                 result = self
                     .retry_fetch_metadata_on_nodes(
                         initial,
@@ -630,6 +637,7 @@ impl MetadataReader {
                 self.control_connection_endpoint.clone(),
                 self.connection_config.clone(),
                 self.keepalive_interval,
+                self.hostname_resolution_timeout,
                 self.control_connection_repair_requester.clone(),
             );
 
@@ -730,6 +738,7 @@ impl MetadataReader {
                         self.control_connection_endpoint.clone(),
                         self.connection_config.clone(),
                         self.keepalive_interval,
+                        self.hostname_resolution_timeout,
                         self.control_connection_repair_requester.clone(),
                     );
                 }
@@ -741,11 +750,13 @@ impl MetadataReader {
         endpoint: UntranslatedEndpoint,
         connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
+        hostname_resolution_timeout: Option<Duration>,
         refresh_requester: broadcast::Sender<()>,
     ) -> NodeConnectionPool {
         let pool_config = PoolConfig {
             connection_config,
             keepalive_interval,
+            hostname_resolution_timeout,
 
             // We want to have only one connection to receive events from
             pool_size: PoolSize::PerHost(NonZeroUsize::new(1).unwrap()),

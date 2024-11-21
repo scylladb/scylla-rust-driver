@@ -167,6 +167,7 @@ impl Cluster {
 
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
+            pool_config.hostname_resolution_timeout,
             control_connection_repair_sender,
             pool_config.connection_config.clone(),
             pool_config.keepalive_interval,
