@@ -1,5 +1,12 @@
+use crate::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
+use crate::query::Query;
+use crate::routing::Shard;
+use crate::transport::connection::Connection;
+use crate::transport::errors::QueryError;
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use crate::Session;
+use crate::transport::{ClusterData, NodeRef};
+use crate::{CachingSession, ExecutionProfile, Session};
+use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
 use std::{
     sync::atomic::{AtomicUsize, Ordering},
@@ -99,4 +106,81 @@ pub(crate) fn setup_tracing() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(tracing_subscriber::fmt::TestWriter::new())
         .try_init();
+}
+
+// This LBP produces a predictable query plan - it order the nodes
+// by position in the ring.
+// This is to make sure that all DDL queries land on the same node,
+// to prevent errors from concurrent DDL queries executed on different nodes.
+#[derive(Debug)]
+struct SchemaQueriesLBP;
+
+impl LoadBalancingPolicy for SchemaQueriesLBP {
+    fn pick<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        cluster: &'a ClusterData,
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
+        // I'm not sure if Scylla can handle concurrent DDL queries to different shard,
+        // in other words if its local lock is per-node or per shard.
+        // Just to be safe, let's use explicit shard.
+        cluster.get_nodes_info().first().map(|node| (node, Some(0)))
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        cluster: &'a ClusterData,
+    ) -> FallbackPlan<'a> {
+        Box::new(cluster.get_nodes_info().iter().map(|node| (node, Some(0))))
+    }
+
+    fn name(&self) -> String {
+        "SchemaQueriesLBP".to_owned()
+    }
+}
+
+fn apply_ddl_lbp(query: &mut Query) {
+    let policy = query
+        .get_execution_profile_handle()
+        .map(|profile| profile.pointee_to_builder())
+        .unwrap_or(ExecutionProfile::builder())
+        .load_balancing_policy(Arc::new(SchemaQueriesLBP))
+        .build();
+    query.set_execution_profile_handle(Some(policy.into_handle()));
+}
+
+// This is just to make it easier to call the above function:
+// we'll be able to do session.ddl(...) instead of perform_ddl(&session, ...)
+// or something like that.
+#[async_trait::async_trait]
+pub(crate) trait PerformDDL {
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError>;
+}
+
+#[async_trait::async_trait]
+impl PerformDDL for Session {
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError> {
+        let mut query = query.into();
+        apply_ddl_lbp(&mut query);
+        self.query_unpaged(query, &[]).await.map(|_| ())
+    }
+}
+
+#[async_trait::async_trait]
+impl PerformDDL for CachingSession {
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError> {
+        let mut query = query.into();
+        apply_ddl_lbp(&mut query);
+        self.execute_unpaged(query, &[]).await.map(|_| ())
+    }
+}
+
+#[async_trait::async_trait]
+impl PerformDDL for Connection {
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError> {
+        let mut query = query.into();
+        apply_ddl_lbp(&mut query);
+        self.query_unpaged(query).await.map(|_| ())
+    }
 }

@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name};
+use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
 use assert_matches::assert_matches;
 use scylla::batch::BatchStatement;
 use scylla::batch::{Batch, BatchType};
@@ -164,14 +164,13 @@ async fn test_execution_profiles() {
         let ks = unique_keyspace_name();
 
         /* Prepare schema */
-        session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks)).await.unwrap();
         session
-            .query_unpaged(
+            .ddl(
                 format!(
                     "CREATE TABLE IF NOT EXISTS {}.t (a int, b int, c text, primary key (a, b))",
                     ks
                 ),
-                &[],
             )
             .await
             .unwrap();

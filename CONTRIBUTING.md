@@ -49,6 +49,18 @@ The above commands will leave a running ScyllaDB cluster in the background.
 To stop it, use `make down`.\
 Starting a cluster without running any test is possible with `make up`.
 
+### Writing tests that need to connect to Scylla
+
+If you test requires connecting to Scylla, there are a few things you should consider.
+
+1. Such tests are considered integration tests and should be placed in `scylla/tests/integration`.
+2. To avoid name conflicts while creating a keyspace use `unique_keyspace_name` function from `utils` module.
+3. This `utils` module (`scylla/tests/integration/utils.rs`) contains other functions that may be helpful for writing tests.
+   For example `create_new_session_builder` or `test_with_3_node_cluster`.
+4. To perform DDL queries (creating / altering / dropping a keyspace / table /type) use `ddl` method from the utils module.
+   To do this, import the `PerformDDL` trait (`use crate::utils::PerformDDL;`). Then you can call `ddl` method on a
+   `Session`.
+
 ### Tracing in tests
 
 By default cargo captures `print!` macro's output from tests and prints them for failed tests.

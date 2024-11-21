@@ -1,6 +1,4 @@
-use crate::utils::{setup_tracing, test_with_3_node_cluster};
-
-use crate::utils::unique_keyspace_name;
+use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
 use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::prepared_statement::PreparedStatement;
@@ -60,10 +58,10 @@ const CREATE_TABLE_STR: &str = "CREATE TABLE consistency_tests (a int, b int, PR
 const QUERY_STR: &str = "INSERT INTO consistency_tests (a, b) VALUES (?, 1)";
 
 async fn create_schema(session: &Session, ks: &str) {
-    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks)).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
-    session.query_unpaged(CREATE_TABLE_STR, &[]).await.unwrap();
+    session.ddl(CREATE_TABLE_STR).await.unwrap();
 }
 
 // The following functions perform a request with consistencies set directly on a statement.

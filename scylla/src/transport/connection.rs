@@ -2397,7 +2397,7 @@ mod tests {
     use crate::transport::connection::open_connection;
     use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
-    use crate::utils::test_utils::unique_keyspace_name;
+    use crate::utils::test_utils::{unique_keyspace_name, PerformDDL};
     use crate::SessionBuilder;
     use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
@@ -2452,17 +2452,14 @@ mod tests {
                 .build()
                 .await
                 .unwrap();
-            session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
+            session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
             session.use_keyspace(ks.clone(), false).await.unwrap();
             session
-                .query_unpaged("DROP TABLE IF EXISTS connection_query_iter_tab", &[])
+                .ddl("DROP TABLE IF EXISTS connection_query_iter_tab")
                 .await
                 .unwrap();
             session
-                .query_unpaged(
-                    "CREATE TABLE IF NOT EXISTS connection_query_iter_tab (p int primary key)",
-                    &[],
-                )
+                .ddl("CREATE TABLE IF NOT EXISTS connection_query_iter_tab (p int primary key)")
                 .await
                 .unwrap();
         }
@@ -2548,13 +2545,10 @@ mod tests {
                 .build()
                 .await
                 .unwrap();
-            session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
+            session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
             session.use_keyspace(ks.clone(), false).await.unwrap();
             session
-                .query_unpaged(
-                    "CREATE TABLE IF NOT EXISTS t (p int primary key, v blob)",
-                    &[],
-                )
+                .ddl("CREATE TABLE IF NOT EXISTS t (p int primary key, v blob)")
                 .await
                 .unwrap();
         }
@@ -2580,7 +2574,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            connection.query_unpaged("TRUNCATE t").await.unwrap();
+            connection.ddl("TRUNCATE t").await.unwrap();
 
             let mut futs = Vec::new();
 

@@ -329,7 +329,9 @@ where
 mod tests {
     use crate::query::Query;
     use crate::statement::PagingState;
-    use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
+    use crate::test_utils::{
+        create_new_session_builder, scylla_supports_tablets, setup_tracing, PerformDDL,
+    };
     use crate::transport::partitioner::PartitionerName;
     use crate::transport::session::Session;
     use crate::utils::test_utils::unique_keyspace_name;
@@ -358,18 +360,15 @@ mod tests {
         }
 
         session
-            .query_unpaged(create_ks, &[])
+            .ddl(create_ks)
             .await
             .expect("Could not create keyspace");
 
         session
-            .query_unpaged(
-                format!(
-                    "CREATE TABLE IF NOT EXISTS {}.test_table (a int primary key, b int)",
-                    ks
-                ),
-                &[],
-            )
+            .ddl(format!(
+                "CREATE TABLE IF NOT EXISTS {}.test_table (a int primary key, b int)",
+                ks
+            ))
             .await
             .expect("Could not create table");
 
@@ -566,10 +565,7 @@ mod tests {
         let session: CachingSession = create_caching_session().await;
 
         session
-            .execute_unpaged(
-                "CREATE TABLE IF NOT EXISTS test_batch_table (a int, b int, primary key (a, b))",
-                (),
-            )
+            .ddl("CREATE TABLE IF NOT EXISTS test_batch_table (a int, b int, primary key (a, b))")
             .await
             .unwrap();
 
@@ -689,7 +685,7 @@ mod tests {
         let session: CachingSession = CachingSession::from(new_for_test(true).await, 100);
 
         session
-            .execute_unpaged("CREATE TABLE tbl (a int PRIMARY KEY, b int)", ())
+            .ddl("CREATE TABLE tbl (a int PRIMARY KEY, b int)")
             .await
             .unwrap();
 
@@ -745,10 +741,7 @@ mod tests {
         let session: CachingSession = CachingSession::from(new_for_test(false).await, 100);
 
         session
-            .execute_unpaged(
-                "CREATE TABLE tbl (a int PRIMARY KEY) with cdc = {'enabled': true}",
-                &(),
-            )
+            .ddl("CREATE TABLE tbl (a int PRIMARY KEY) with cdc = {'enabled': true}")
             .await
             .unwrap();
 
