@@ -1,4 +1,4 @@
-use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name};
+use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 use scylla::batch::Batch;
 use scylla::prepared_statement::PreparedStatement;
 use scylla::Session;
@@ -11,14 +11,11 @@ async fn test_quietly_prepare_batch() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
-        .query_unpaged(
-            "CREATE TABLE test_batch_table (a int, b int, primary key (a, b))",
-            (),
-        )
+        .ddl("CREATE TABLE test_batch_table (a int, b int, primary key (a, b))")
         .await
         .unwrap();
 

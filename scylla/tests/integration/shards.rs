@@ -1,7 +1,9 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::utils::{
     scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL,
 };
 use scylla::SessionBuilder;
 use tokio::sync::mpsc;
@@ -17,7 +19,6 @@ use scylla_proxy::{ProxyError, RequestFrame, WorkerError};
 #[cfg(not(scylla_cloud_tests))]
 async fn test_consistent_shard_awareness() {
     setup_tracing();
-    use std::collections::HashSet;
 
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
 
@@ -43,14 +44,13 @@ async fn test_consistent_shard_awareness() {
         if scylla_supports_tablets(&session).await {
             create_ks += " and TABLETS = { 'enabled': false}";
         }
-        session.query_unpaged(create_ks, &[]).await.unwrap();
+        session.ddl(create_ks).await.unwrap();
         session
-            .query_unpaged(
+            .ddl(
                 format!(
                     "CREATE TABLE IF NOT EXISTS {}.t (a int, b int, c text, primary key (a, b))",
                     ks
                 ),
-                &[],
             )
             .await
             .unwrap();

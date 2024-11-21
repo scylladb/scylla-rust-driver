@@ -11,7 +11,7 @@ use std::str::FromStr;
 
 use crate::utils::{
     create_new_session_builder, scylla_supports_tablets, setup_tracing, unique_keyspace_name,
-    DeserializeOwnedValue,
+    DeserializeOwnedValue, PerformDDL,
 };
 
 // Used to prepare a table for test
@@ -35,22 +35,19 @@ async fn init_test_maybe_without_tablets(
         create_ks += " AND TABLETS = {'enabled': false}"
     }
 
-    session.query_unpaged(create_ks, &[]).await.unwrap();
+    session.ddl(create_ks).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
-        .query_unpaged(format!("DROP TABLE IF EXISTS {}", table_name), &[])
+        .ddl(format!("DROP TABLE IF EXISTS {}", table_name))
         .await
         .unwrap();
 
     session
-        .query_unpaged(
-            format!(
-                "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
-                table_name, type_name
-            ),
-            &[],
-        )
+        .ddl(format!(
+            "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
+            table_name, type_name
+        ))
         .await
         .unwrap();
 
@@ -173,26 +170,20 @@ async fn test_cql_varint() {
     let ks = unique_keyspace_name();
 
     session
-        .query_unpaged(
-            format!(
-                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
             {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-                ks
-            ),
-            &[],
-        )
+            ks
+        ))
         .await
         .unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
-        .query_unpaged(
-            format!(
-                "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val varint)",
-                table_name
-            ),
-            &[],
-        )
+        .ddl(format!(
+            "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val varint)",
+            table_name
+        ))
         .await
         .unwrap();
 
@@ -1285,23 +1276,17 @@ async fn test_timeuuid_ordering() {
     let ks = unique_keyspace_name();
 
     session
-        .query_unpaged(
-            format!(
-                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
             {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-                ks
-            ),
-            &[],
-        )
+            ks
+        ))
         .await
         .unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
-        .query_unpaged(
-            "CREATE TABLE tab (p int, t timeuuid, PRIMARY KEY (p, t))",
-            (),
-        )
+        .ddl("CREATE TABLE tab (p int, t timeuuid, PRIMARY KEY (p, t))")
         .await
         .unwrap();
 
@@ -1527,47 +1512,38 @@ async fn test_udt_after_schema_update() {
     let ks = unique_keyspace_name();
 
     session
-        .query_unpaged(
-            format!(
-                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
             {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-                ks
-            ),
-            &[],
-        )
+            ks
+        ))
         .await
         .unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
-        .query_unpaged(format!("DROP TABLE IF EXISTS {}", table_name), &[])
+        .ddl(format!("DROP TABLE IF EXISTS {}", table_name))
         .await
         .unwrap();
 
     session
-        .query_unpaged(format!("DROP TYPE IF EXISTS {}", type_name), &[])
+        .ddl(format!("DROP TYPE IF EXISTS {}", type_name))
         .await
         .unwrap();
 
     session
-        .query_unpaged(
-            format!(
-                "CREATE TYPE IF NOT EXISTS {} (first int, second boolean)",
-                type_name
-            ),
-            &[],
-        )
+        .ddl(format!(
+            "CREATE TYPE IF NOT EXISTS {} (first int, second boolean)",
+            type_name
+        ))
         .await
         .unwrap();
 
     session
-        .query_unpaged(
-            format!(
-                "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
-                table_name, type_name
-            ),
-            &[],
-        )
+        .ddl(format!(
+            "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
+            table_name, type_name
+        ))
         .await
         .unwrap();
 
@@ -1624,7 +1600,7 @@ async fn test_udt_after_schema_update() {
     assert_eq!(read_udt, v1);
 
     session
-        .query_unpaged(format!("ALTER TYPE {} ADD third text;", type_name), &[])
+        .ddl(format!("ALTER TYPE {} ADD third text;", type_name))
         .await
         .unwrap();
 
@@ -1708,47 +1684,38 @@ async fn test_udt_with_missing_field() {
     let ks = unique_keyspace_name();
 
     session
-        .query_unpaged(
-            format!(
-                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
             {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-                ks
-            ),
-            &[],
-        )
+            ks
+        ))
         .await
         .unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
-        .query_unpaged(format!("DROP TABLE IF EXISTS {}", table_name), &[])
+        .ddl(format!("DROP TABLE IF EXISTS {}", table_name))
         .await
         .unwrap();
 
     session
-        .query_unpaged(format!("DROP TYPE IF EXISTS {}", type_name), &[])
+        .ddl(format!("DROP TYPE IF EXISTS {}", type_name))
         .await
         .unwrap();
 
     session
-        .query_unpaged(
-            format!(
-                "CREATE TYPE IF NOT EXISTS {} (first int, second boolean, third float, fourth blob)",
-                type_name
-            ),
-            &[],
-        )
+        .ddl(format!(
+            "CREATE TYPE IF NOT EXISTS {} (first int, second boolean, third float, fourth blob)",
+            type_name
+        ))
         .await
         .unwrap();
 
     session
-        .query_unpaged(
-            format!(
-                "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
-                table_name, type_name
-            ),
-            &[],
-        )
+        .ddl(format!(
+            "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
+            table_name, type_name
+        ))
         .await
         .unwrap();
 

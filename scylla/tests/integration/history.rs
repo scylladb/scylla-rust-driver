@@ -10,7 +10,7 @@ use scylla::history::{
 use scylla::query::Query;
 use scylla::transport::errors::QueryError;
 
-use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name};
+use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 
 // Set a single time for all timestamps within StructuredHistory.
 // HistoryCollector sets the timestamp to current time which changes with each test.
@@ -211,13 +211,13 @@ async fn iterator_query_history() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
     session
-    .query_unpaged(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
+    .ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
     .await
     .unwrap();
     session.use_keyspace(ks, true).await.unwrap();
 
     session
-        .query_unpaged("CREATE TABLE t (p int primary key)", ())
+        .ddl("CREATE TABLE t (p int primary key)")
         .await
         .unwrap();
     for i in 0..32 {

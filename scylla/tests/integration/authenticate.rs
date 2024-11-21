@@ -1,4 +1,4 @@
-use crate::utils::{setup_tracing, unique_keyspace_name};
+use crate::utils::{setup_tracing, unique_keyspace_name, PerformDDL};
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use scylla::authentication::{AuthError, AuthenticatorProvider, AuthenticatorSession};
@@ -20,12 +20,9 @@ async fn authenticate_superuser() {
         .unwrap();
     let ks = unique_keyspace_name();
 
-    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
-    session
-        .query_unpaged("DROP TABLE IF EXISTS t;", &[])
-        .await
-        .unwrap();
+    session.ddl("DROP TABLE IF EXISTS t;").await.unwrap();
 
     println!("Ok.");
 }
@@ -79,12 +76,9 @@ async fn custom_authentication() {
         .unwrap();
     let ks = unique_keyspace_name();
 
-    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
-    session
-        .query_unpaged("DROP TABLE IF EXISTS t;", &[])
-        .await
-        .unwrap();
+    session.ddl("DROP TABLE IF EXISTS t;").await.unwrap();
 
     println!("Ok.");
 }
