@@ -13,6 +13,8 @@ use scylla_cql::frame::response::result::{
 
 #[allow(deprecated)]
 use super::legacy_query_result::{IntoLegacyQueryResultError, LegacyQueryResult};
+#[cfg(feature = "result-displayer")]
+use super::rows_displayer::RowsDisplayer;
 
 /// A view over specification of a table in the database.
 #[derive(Debug, Clone, Copy)]
@@ -444,6 +446,14 @@ impl QueryRowsResult {
 
         (raw_rows_with_metadata, tracing_id, warnings)
     }
+
+    /// Returns a displayer for the rows.
+    ///
+    /// This method is only available when the `result-displayer` feature is enabled.
+    #[cfg(feature = "result-displayer")]
+    pub fn rows_displayer(&self) -> RowsDisplayer<'_> {
+        RowsDisplayer::new(self)
+    }
 }
 
 /// An error returned by [`QueryResult::into_rows_result`]
@@ -528,6 +538,9 @@ mod tests {
     use itertools::Itertools as _;
     use scylla_cql::frame::response::result::ResultMetadata;
     use scylla_cql::frame::types;
+
+    #[cfg(feature = "result-displayer")]
+    use crate::response::rows_displayer::ByteDisplaying;
 
     use super::*;
 
@@ -814,6 +827,25 @@ mod tests {
                     );
                 }
             }
+        }
+
+        // use of QueryRowsResult after use of displayer
+        #[cfg(feature = "result-displayer")]
+        {
+            let rr = sample_raw_rows(2, 1);
+            let rqr = QueryResult::new(Some(rr), None, Vec::new());
+            let qr: QueryRowsResult = rqr.into_rows_result().unwrap();
+            let mut displayer = qr.rows_displayer();
+            displayer.set_terminal_width(80);
+            displayer.set_blob_displaying(ByteDisplaying::Hex);
+            displayer.use_color(true);
+            let _ = format!("{}", displayer);
+            let rows = qr.rows::<(&str, bool)>();
+
+            let mut rows_data = rows.unwrap();
+            let row = rows_data.next().unwrap().unwrap();
+
+            assert_eq!(row, ("MOCK", true));
         }
     }
 
