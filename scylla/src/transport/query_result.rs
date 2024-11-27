@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::fmt;
-use tabled::{builder::Builder, settings::Style};
+use tabled::settings::Width;
+use tabled::{builder::Builder, settings::Style,settings::{peaker::Priority}, Tabled};
 
 use thiserror::Error;
 use uuid::Uuid;
@@ -445,6 +446,7 @@ impl QueryRowsResult {
 pub struct RowsDisplayer<'a> {
     query_result: &'a QueryRowsResult,
     display_settings: RowsDisplayerSettings,
+    terminal_width: usize,
 }
 
 impl<'a> RowsDisplayer<'a>
@@ -453,7 +455,12 @@ impl<'a> RowsDisplayer<'a>
         Self {
             query_result,
             display_settings: RowsDisplayerSettings::new(),
+            terminal_width: 80,
         }
+    }
+
+    pub fn set_terminal_width(&mut self, terminal_width: usize) {
+        self.terminal_width = terminal_width;
     }
 
     pub fn display(self) {
@@ -662,7 +669,9 @@ impl fmt::Display for RowsDisplayer<'_> {
 
         // write table to the formatter
         let mut table = builder.build();
-        table.with(Style::modern_rounded());
+        table.with((Style::modern_rounded(),
+            Width::wrap(self.terminal_width).priority(Priority::max(true)),
+    ));
         write!(f, "{}", table)
     }
 }
