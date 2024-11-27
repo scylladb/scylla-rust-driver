@@ -77,11 +77,13 @@ base64 = { version = "0.22.1", optional = true }
 rand_pcg = "0.3.1"
 socket2 = { version = "0.5.3", features = ["all"] }
 lazy_static = "1"
+tabled =  { version = "0.17.0", features = ["std", "ansi"] }
+inline_colorization = { version = "0.1.6" }
+num-bigint-04 = { package = "num-bigint", version = "0.4" }
+bigdecimal-04 = { package = "bigdecimal", version = "0.4" }
 
 [dev-dependencies]
 num-bigint-03 = { package = "num-bigint", version = "0.3" }
-num-bigint-04 = { package = "num-bigint", version = "0.4" }
-bigdecimal-04 = { package = "bigdecimal", version = "0.4" }
 scylla-proxy = { version = "0.0.3", path = "../scylla-proxy" }
 ntest = "0.9.3"
 criterion = "0.4"                                                      # Note: v0.5 needs at least rust 1.70.0
