@@ -1,14 +1,16 @@
 use std::fmt::Debug;
+use std::fmt;
+use tabled::{builder::Builder, settings::Style};
 
 use thiserror::Error;
 use uuid::Uuid;
 
 use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::response::result::{
-    ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, RawMetadataAndRawRows, Row, TableSpec,
+    ColumnSpec, ColumnType, CqlValue, DeserializedMetadataAndRawRows, RawMetadataAndRawRows, Row, TableSpec
 };
 use scylla_cql::types::deserialize::result::TypedRowIterator;
-use scylla_cql::types::deserialize::row::DeserializeRow;
+use scylla_cql::types::deserialize::row::{self, DeserializeRow};
 use scylla_cql::types::deserialize::{DeserializationError, TypeCheckError};
 
 #[allow(deprecated)]
@@ -433,8 +435,271 @@ impl QueryRowsResult {
             Err(RowsError::TypeCheckFailed(err)) => Err(SingleRowError::TypeCheckFailed(err)),
         }
     }
+
+    pub fn rows_displayer<'a>(&'a self) -> RowsDisplayer<'a>
+        {
+            RowsDisplayer::new(self)
+        }
 }
 
+pub struct RowsDisplayer<'a> {
+    query_result: &'a QueryRowsResult,
+    display_settings: RowsDisplayerSettings,
+}
+
+impl<'a> RowsDisplayer<'a>
+{
+    pub fn new(query_result: &'a QueryRowsResult) -> Self {
+        Self {
+            query_result,
+            display_settings: RowsDisplayerSettings::new(),
+        }
+    }
+
+    pub fn display(self) {
+        let row_iter : TypedRowIterator<'_, '_, Row> = match self.query_result.rows::<Row>(){
+            Ok(row_iter) => row_iter,
+            Err(_) => return,
+        };
+
+        let column_names : Vec<&str> = self.query_result.column_specs().iter().map(|column_spec| column_spec.name()).collect();
+        let mut builder: Builder = Builder::new();
+        builder.push_record(column_names);
+
+        for row_result in row_iter {
+            let row_result : Row = match row_result {
+                Ok(row_result) => row_result,
+                Err(_) => return,
+            };
+            let columns : Vec<std::option::Option<CqlValue>> =  row_result.columns;
+            let mut row_values : Vec<String> = Vec::new();
+            for column in columns {
+                let item_string = self.get_item_string(column);
+                row_values.push(item_string);
+            }
+            builder.push_record(row_values);
+
+        }
+        let mut table = builder.build();
+        table.with(Style::ascii_rounded());
+        println!("{}", table.to_string());
+
+    }
+
+    fn get_item_string(&self, column: std::option::Option<CqlValue>) -> String {
+        match column {
+            Some(CqlValue::Ascii(value)) => {
+                return format!("{}", value);
+            },
+            Some(CqlValue::BigInt(value)) => {
+                self.int64_to_string(value)
+            },
+            Some(CqlValue::Blob(value)) => {
+                self.blob_to_string(value)
+            },
+            Some(CqlValue::Boolean(value)) => {
+                return format!("{}", value);
+            },
+            Some(CqlValue::Counter(value)) => {
+                return format!("{:?}", value);
+            },
+            Some(CqlValue::Decimal(value)) => {
+                return format!("{:?}", value);
+            },
+            Some(CqlValue::Double(value)) => { // TODO set formating for real numbers
+                return format!("{}", value);
+            },
+            Some(CqlValue::Float(value)) => {
+                self.float_to_string(value)
+            },
+            Some(CqlValue::Int(value)) => { // TODO set formating for integers
+                return self.int32_to_string(value);
+            },
+            Some(CqlValue::Text(value)) => {
+                return format!("{}", value);
+            },
+            Some(CqlValue::Timestamp(value)) => { // TOOD set formating for timestamp
+                return format!("{:?}", value);
+            },
+            Some(CqlValue::Uuid(value)) => {
+                return format!("{}", value);
+            },
+            Some(CqlValue::Inet(value)) => {
+                return format!("{}", value);
+            },
+            Some(CqlValue::List(value)) => { // TODO set formating for list
+                return format!("{:?}", value);
+            },
+            Some(CqlValue::Map(value)) => { // TODO set formating for map
+                return format!("{:?}", value);
+            },
+            Some(CqlValue::Set(value)) => { // TODO set formating for set
+                return format!("{:?}", value);
+            },
+            Some(CqlValue::UserDefinedType { keyspace, type_name, fields }) => { // Idk what to do with this
+                return format!("UserDefinedType: keyspace: {}, type_name: {}, fields: {:?}", keyspace, type_name, fields);
+            },
+            Some(CqlValue::Tuple(value)) => { // TODO set formating for tuple
+                return format!("{:?}", value);
+            },
+            Some(CqlValue::Date(value)) => { // TODO set formating for date
+                return format!("Date: {:?}", value);
+            },
+            Some(CqlValue::Duration(value)) => {
+                return format!("Duration: {:?}", value);
+            },
+            Some(CqlValue::Empty) => {
+                return format!("Empty");
+            },
+            Some(CqlValue::SmallInt(value)) => {
+                self.int16_to_string(value)
+            },
+            Some(CqlValue::TinyInt(value)) => {
+                self.int8_to_string(value)
+            },
+            Some(CqlValue::Varint(value)) => {
+                return format!("{:?}", value);
+            },
+            Some(CqlValue::Time(value)) => {
+                return format!("{:?}", value);
+            },
+            Some(CqlValue::Timeuuid(value)) => {
+                return format!("{:?}", value);
+            },
+            None => {
+                return format!("None");
+            },
+        }
+    }
+
+    fn blob_to_string(&self, blob: Vec<u8>) -> String {
+        let mut result = String::new();
+        for byte in blob {
+            match self.display_settings.byte_displaying {
+                ByteDisplaying::Ascii => {
+                    result.push_str(&format!("{}", byte as char));
+                },
+                ByteDisplaying::Hex => {
+                    result.push_str(&format!("{:02x}", byte));
+                },
+                ByteDisplaying::Dec => {
+                    result.push_str(&format!("{}", byte));
+                },
+            }
+        }
+        return result;
+    }
+
+    fn float_to_string(&self, float: f32) -> String {
+        if self.display_settings.exponent_displaying_floats {
+            return format!("{:e}", float);
+        } else {
+            return format!("{}", float);
+        }
+    }
+
+    fn int64_to_string(&self, int:  i64) -> String {
+        if self.display_settings.exponent_displaying_integers {
+            return format!("{:e}", int);
+        } else {
+            return format!("{}", int);
+        }
+    }
+
+    fn int32_to_string(&self, int:  i32) -> String {
+        if self.display_settings.exponent_displaying_integers {
+            return format!("{:e}", int);
+        } else {
+            return format!("{}", int);
+        }
+    }
+
+    fn int16_to_string(&self, int:  i16) -> String {
+        if self.display_settings.exponent_displaying_integers {
+            return format!("{:e}", int);
+        } else {
+            return format!("{}", int);
+        }
+    }
+
+    fn int8_to_string(&self, int:  i8) -> String {
+        if self.display_settings.exponent_displaying_integers {
+            return format!("{:e}", int);
+        } else {
+            return format!("{}", int);
+        }
+    }
+
+
+}
+
+impl fmt::Display for RowsDisplayer<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let row_iter : TypedRowIterator<'_, '_, Row> = match self.query_result.rows::<Row>(){
+            Ok(row_iter) => row_iter,
+            Err(_) => return write!(f, "Error"),
+        };
+
+        // put columns names to the table
+        let column_names : Vec<&str> = self.query_result.column_specs().iter().map(|column_spec| column_spec.name()).collect();
+        let mut builder: Builder = Builder::new();
+        builder.push_record(column_names);
+
+        // put rows to the table
+        for row_result in row_iter {
+            let row_result : Row = match row_result {
+                Ok(row_result) => row_result,
+                Err(_) => return write!(f, "Error"),
+            };
+            let columns : Vec<std::option::Option<CqlValue>> =  row_result.columns;
+            let mut row_values : Vec<String> = Vec::new();
+            for column in columns {
+                let item_string = self.get_item_string(column);
+                row_values.push(item_string);
+            }
+            builder.push_record(row_values);
+        }
+
+        // write table to the formatter
+        let mut table = builder.build();
+        table.with(Style::modern_rounded());
+        write!(f, "{}", table)
+    }
+}
+
+struct RowsDisplayerSettings {
+    byte_displaying: ByteDisplaying, // for blobs
+    exponent_displaying_floats: bool, // for floats
+    exponent_displaying_integers: bool, // for integers 
+}
+
+impl RowsDisplayerSettings {
+    fn new() -> Self {
+        Self {
+            byte_displaying: ByteDisplaying::Ascii,
+            exponent_displaying_floats: false,
+            exponent_displaying_integers: false,
+        }
+    }
+
+    fn set_byte_displaying(&mut self, byte_displaying: ByteDisplaying) {
+        self.byte_displaying = byte_displaying;
+    }
+
+    fn set_exponent_displaying_floats(&mut self, exponent_displaying_floats: bool) {
+        self.exponent_displaying_floats = exponent_displaying_floats;
+    }
+
+    fn set_exponent_displaying_integers(&mut self, exponent_displaying_integers: bool) {
+        self.exponent_displaying_integers = exponent_displaying_integers;
+    }
+}
+
+enum ByteDisplaying {
+    Ascii,
+    Hex,
+    Dec,
+}
 /// An error returned by [`QueryResult::into_rows_result`]
 ///
 /// The `ResultNotRows` variant contains original [`QueryResult`],
