@@ -40,6 +40,8 @@ jobs:
       run: cargo clippy --verbose --all-targets
     - name: Clippy check with all features
       run: cargo clippy --verbose --all-targets --all-features
+    - name: Cargo check with cpp_rust_unstable cfg
+      run: RUSTFLAGS="--cfg cpp_rust_unstable" cargo clippy --verbose --all-targets --all-features
     - name: Cargo check without features
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features ""
     - name: Cargo check with all serialization features
