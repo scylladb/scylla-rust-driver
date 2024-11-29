@@ -433,6 +433,17 @@ impl QueryRowsResult {
             Err(RowsError::TypeCheckFailed(err)) => Err(SingleRowError::TypeCheckFailed(err)),
         }
     }
+
+    #[cfg(cpp_rust_unstable)]
+    pub fn into_inner(self) -> (DeserializedMetadataAndRawRows, Option<Uuid>, Vec<String>) {
+        let Self {
+            raw_rows_with_metadata,
+            tracing_id,
+            warnings,
+        } = self;
+
+        (raw_rows_with_metadata, tracing_id, warnings)
+    }
 }
 
 /// An error returned by [`QueryResult::into_rows_result`]
