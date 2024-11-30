@@ -83,7 +83,7 @@ pub(crate) struct Connection {
     _worker_handle: RemoteHandle<()>,
 
     connect_address: SocketAddr,
-    config: ConnectionConfig,
+    config: HostConnectionConfig,
     features: ConnectionFeatures,
     router_handle: Arc<RouterHandle>,
 }
@@ -347,6 +347,11 @@ impl<'id: 'map, 'map> SelfIdentity<'id> {
     }
 }
 
+/// Configuration used for new connections.
+///
+/// Before being used for a particular connection, should be customized
+/// for a specific endpoint by converting to [HostConnectionConfig]
+/// using [ConnectionConfig::to_host_connection_config].
 #[derive(Clone)]
 pub(crate) struct ConnectionConfig {
     pub(crate) compression: Option<Compression>,
@@ -371,6 +376,92 @@ pub(crate) struct ConnectionConfig {
     pub(crate) identity: SelfIdentity<'static>,
 }
 
+impl ConnectionConfig {
+    /// Customizes the config for a specific endpoint.
+    pub(crate) fn to_host_connection_config(
+        &self,
+        // TODO: use this for the cloud case.
+        #[allow(unused)] endpoint: &UntranslatedEndpoint,
+    ) -> HostConnectionConfig {
+        HostConnectionConfig {
+            compression: self.compression,
+            tcp_nodelay: self.tcp_nodelay,
+            tcp_keepalive_interval: self.tcp_keepalive_interval,
+            timestamp_generator: self.timestamp_generator.clone(),
+            tls_config: self.tls_config.clone(),
+            connect_timeout: self.connect_timeout,
+            event_sender: self.event_sender.clone(),
+            default_consistency: self.default_consistency,
+            #[cfg(feature = "cloud")]
+            cloud_config: self.cloud_config.clone(),
+            authenticator: self.authenticator.clone(),
+            address_translator: self.address_translator.clone(),
+            enable_write_coalescing: self.enable_write_coalescing,
+            keepalive_interval: self.keepalive_interval,
+            keepalive_timeout: self.keepalive_timeout,
+            tablet_sender: self.tablet_sender.clone(),
+            identity: self.identity.clone(),
+        }
+    }
+}
+
+/// Configuration used for new connections, customized for a specific endpoint.
+///
+/// Created from [ConnectionConfig] using [ConnectionConfig::to_host_connection_config].
+#[derive(Clone)]
+pub(crate) struct HostConnectionConfig {
+    pub(crate) compression: Option<Compression>,
+    pub(crate) tcp_nodelay: bool,
+    pub(crate) tcp_keepalive_interval: Option<Duration>,
+    pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
+    pub(crate) tls_config: Option<TlsConfig>,
+    pub(crate) connect_timeout: std::time::Duration,
+    // should be Some only in control connections,
+    pub(crate) event_sender: Option<mpsc::Sender<Event>>,
+    pub(crate) default_consistency: Consistency,
+    #[cfg(feature = "cloud")]
+    pub(crate) cloud_config: Option<Arc<CloudConfig>>,
+    pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
+    pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
+    pub(crate) enable_write_coalescing: bool,
+
+    pub(crate) keepalive_interval: Option<Duration>,
+    pub(crate) keepalive_timeout: Option<Duration>,
+    pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
+
+    pub(crate) identity: SelfIdentity<'static>,
+}
+
+#[cfg(test)]
+impl Default for HostConnectionConfig {
+    fn default() -> Self {
+        Self {
+            compression: None,
+            tcp_nodelay: true,
+            tcp_keepalive_interval: None,
+            timestamp_generator: None,
+            event_sender: None,
+            tls_config: None,
+            connect_timeout: std::time::Duration::from_secs(5),
+            default_consistency: Default::default(),
+            authenticator: None,
+            address_translator: None,
+            #[cfg(feature = "cloud")]
+            cloud_config: None,
+            enable_write_coalescing: true,
+
+            // Note: this is different than SessionConfig default values.
+            keepalive_interval: None,
+            keepalive_timeout: None,
+
+            tablet_sender: None,
+
+            identity: SelfIdentity::default(),
+        }
+    }
+}
+
+#[cfg(test)]
 impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
@@ -399,7 +490,7 @@ impl Default for ConnectionConfig {
     }
 }
 
-impl ConnectionConfig {
+impl HostConnectionConfig {
     fn is_tls(&self) -> bool {
         #[cfg(feature = "cloud")]
         if self.cloud_config.is_some() {
@@ -419,7 +510,7 @@ impl Connection {
     async fn new(
         addr: SocketAddr,
         source_port: Option<u16>,
-        config: ConnectionConfig,
+        config: HostConnectionConfig,
     ) -> Result<(Self, ErrorReceiver), ConnectionError> {
         let stream_connector = match source_port {
             Some(p) => {
@@ -1355,7 +1446,7 @@ impl Connection {
     }
 
     async fn run_router(
-        config: ConnectionConfig,
+        config: HostConnectionConfig,
         stream: TcpStream,
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
@@ -1364,7 +1455,7 @@ impl Connection {
         node_address: IpAddr,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         async fn spawn_router_and_get_handle(
-            config: ConnectionConfig,
+            config: HostConnectionConfig,
             stream: (impl AsyncRead + AsyncWrite + Send + 'static),
             receiver: mpsc::Receiver<Task>,
             error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
@@ -1425,7 +1516,7 @@ impl Connection {
     }
 
     async fn router(
-        config: ConnectionConfig,
+        config: HostConnectionConfig,
         stream: (impl AsyncRead + AsyncWrite),
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
@@ -1493,7 +1584,7 @@ impl Connection {
     async fn reader(
         mut read_half: (impl AsyncRead + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
-        config: ConnectionConfig,
+        config: HostConnectionConfig,
     ) -> Result<(), BrokenConnectionError> {
         loop {
             let (params, opcode, body) = frame::read_response_frame(&mut read_half)
@@ -1860,7 +1951,7 @@ async fn maybe_translated_addr(
 pub(super) async fn open_connection(
     endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
-    config: &ConnectionConfig,
+    config: &HostConnectionConfig,
 ) -> Result<(Connection, ErrorReceiver), ConnectionError> {
     /* Translate the address, if applicable. */
     let addr = maybe_translated_addr(endpoint, config.address_translator.as_deref()).await?;
@@ -1979,13 +2070,13 @@ pub(super) async fn open_connection_to_shard_aware_port(
     endpoint: UntranslatedEndpoint,
     shard: Shard,
     sharder: Sharder,
-    connection_config: &ConnectionConfig,
+    config: &HostConnectionConfig,
 ) -> Result<(Connection, ErrorReceiver), ConnectionError> {
     // Create iterator over all possible source ports for this shard
     let source_port_iter = sharder.iter_source_ports_for_shard(shard);
 
     for port in source_port_iter {
-        let connect_result = open_connection(endpoint.clone(), Some(port), connection_config).await;
+        let connect_result = open_connection(endpoint.clone(), Some(port), config).await;
 
         match connect_result {
             Err(err) if err.is_address_unavailable_for_use() => continue, // If we can't use this port, try the next one
@@ -2253,7 +2344,7 @@ mod tests {
     use tokio::select;
     use tokio::sync::mpsc;
 
-    use super::{open_connection, ConnectionConfig};
+    use super::{open_connection, HostConnectionConfig};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
     use crate::query::Query;
@@ -2299,7 +2390,7 @@ mod tests {
                 datacenter: None,
             }),
             None,
-            &ConnectionConfig::default(),
+            &HostConnectionConfig::default(),
         )
         .await
         .unwrap();
@@ -2424,9 +2515,9 @@ mod tests {
                     datacenter: None,
                 }),
                 None,
-                &ConnectionConfig {
+                &HostConnectionConfig {
                     enable_write_coalescing: enable_coalescing,
-                    ..ConnectionConfig::default()
+                    ..HostConnectionConfig::default()
                 },
             )
             .await
@@ -2511,7 +2602,7 @@ mod tests {
 
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
 
-        let config = ConnectionConfig::default();
+        let config = HostConnectionConfig::default();
 
         let (startup_tx, mut startup_rx) = mpsc::unbounded_channel();
 
@@ -2598,7 +2689,7 @@ mod tests {
             RequestReaction::drop_frame(),
         );
 
-        let config = ConnectionConfig {
+        let config = HostConnectionConfig {
             keepalive_interval: Some(Duration::from_millis(500)),
             keepalive_timeout: Some(Duration::from_secs(1)),
             ..Default::default()
