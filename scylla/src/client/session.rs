@@ -817,7 +817,6 @@ impl Session {
             connection_config,
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
-            keepalive_interval: config.keepalive_interval,
         };
 
         let cluster = Cluster::new(

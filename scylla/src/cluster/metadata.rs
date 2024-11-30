@@ -44,7 +44,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
@@ -70,7 +70,6 @@ type PerKsTableResult<T, E> = PerKsTable<Result<T, E>>;
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
     connection_config: ConnectionConfig,
-    keepalive_interval: Option<Duration>,
 
     control_connection_endpoint: UntranslatedEndpoint,
     control_connection: NodeConnectionPool,
@@ -399,7 +398,6 @@ impl MetadataReader {
         initial_known_nodes: Vec<InternalKnownNode>,
         control_connection_repair_requester: broadcast::Sender<()>,
         mut connection_config: ConnectionConfig,
-        keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
@@ -429,14 +427,12 @@ impl MetadataReader {
         let control_connection = Self::make_control_connection_pool(
             control_connection_endpoint.clone(),
             connection_config.clone(),
-            keepalive_interval,
             control_connection_repair_requester.clone(),
         );
 
         Ok(MetadataReader {
             control_connection_endpoint,
             control_connection,
-            keepalive_interval,
             connection_config,
             known_peers: initial_peers
                 .into_iter()
@@ -547,7 +543,6 @@ impl MetadataReader {
             self.control_connection = Self::make_control_connection_pool(
                 self.control_connection_endpoint.clone(),
                 self.connection_config.clone(),
-                self.keepalive_interval,
                 self.control_connection_repair_requester.clone(),
             );
 
@@ -646,7 +641,6 @@ impl MetadataReader {
                     self.control_connection = Self::make_control_connection_pool(
                         self.control_connection_endpoint.clone(),
                         self.connection_config.clone(),
-                        self.keepalive_interval,
                         self.control_connection_repair_requester.clone(),
                     );
                 }
@@ -657,12 +651,10 @@ impl MetadataReader {
     fn make_control_connection_pool(
         endpoint: UntranslatedEndpoint,
         connection_config: ConnectionConfig,
-        keepalive_interval: Option<Duration>,
         refresh_requester: broadcast::Sender<()>,
     ) -> NodeConnectionPool {
         let pool_config = PoolConfig {
             connection_config,
-            keepalive_interval,
 
             // We want to have only one connection to receive events from
             pool_size: PoolSize::PerHost(NonZeroUsize::new(1).unwrap()),
