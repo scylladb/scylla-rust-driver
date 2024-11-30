@@ -4,7 +4,7 @@ use crate::utils::pretty::CommaSeparatedDisplayer;
 
 use super::connection::{
     open_connection, open_connection_to_shard_aware_port, Connection, ConnectionConfig,
-    ErrorReceiver, VerifiedKeyspaceName,
+    ErrorReceiver, HostConnectionConfig, VerifiedKeyspaceName,
 };
 
 use crate::errors::{
@@ -66,6 +66,34 @@ pub(crate) struct PoolConfig {
 
 #[cfg(test)]
 impl Default for PoolConfig {
+    fn default() -> Self {
+        Self {
+            connection_config: Default::default(),
+            pool_size: Default::default(),
+            can_use_shard_aware_port: true,
+        }
+    }
+}
+
+impl PoolConfig {
+    fn to_host_pool_config(&self, endpoint: &UntranslatedEndpoint) -> HostPoolConfig {
+        HostPoolConfig {
+            connection_config: self.connection_config.to_host_connection_config(endpoint),
+            pool_size: self.pool_size,
+            can_use_shard_aware_port: self.can_use_shard_aware_port,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct HostPoolConfig {
+    pub(crate) connection_config: HostConnectionConfig,
+    pub(crate) pool_size: PoolSize,
+    pub(crate) can_use_shard_aware_port: bool,
+}
+
+#[cfg(test)]
+impl Default for HostPoolConfig {
     fn default() -> Self {
         Self {
             connection_config: Default::default(),
@@ -170,6 +198,7 @@ impl std::fmt::Debug for NodeConnectionPool {
 impl NodeConnectionPool {
     pub(crate) fn new(
         endpoint: UntranslatedEndpoint,
+        // TODO: pass &PoolConfig (by shared reference)
         #[allow(unused_mut)] mut pool_config: PoolConfig, // `mut` needed only with "cloud" feature
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_empty_notifier: broadcast::Sender<()>,
@@ -202,11 +231,13 @@ impl NodeConnectionPool {
             );
         }
 
+        let host_pool_config = pool_config.to_host_pool_config(&endpoint);
+
         let arced_endpoint = Arc::new(RwLock::new(endpoint));
 
         let refiller = PoolRefiller::new(
             arced_endpoint.clone(),
-            pool_config,
+            host_pool_config,
             current_keyspace,
             pool_updated_notify.clone(),
             pool_empty_notifier,
@@ -437,7 +468,7 @@ impl RefillDelayStrategy {
 
 struct PoolRefiller {
     // Following information identify the pool and do not change
-    pool_config: PoolConfig,
+    pool_config: HostPoolConfig,
 
     // Following information is subject to updates on topology refresh
     endpoint: Arc<RwLock<UntranslatedEndpoint>>,
@@ -498,7 +529,7 @@ struct UseKeyspaceRequest {
 impl PoolRefiller {
     pub(crate) fn new(
         endpoint: Arc<RwLock<UntranslatedEndpoint>>,
-        pool_config: PoolConfig,
+        pool_config: HostPoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
         pool_empty_notifier: broadcast::Sender<()>,
@@ -1205,8 +1236,7 @@ struct OpenedConnectionEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::super::connection::open_connection_to_shard_aware_port;
-    use super::ConnectionConfig;
+    use super::super::connection::{open_connection_to_shard_aware_port, HostConnectionConfig};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
     use crate::routing::{ShardCount, Sharder};
@@ -1229,7 +1259,7 @@ mod tests {
             .next()
             .unwrap();
 
-        let connection_config = ConnectionConfig {
+        let connection_config = HostConnectionConfig {
             compression: None,
             tcp_nodelay: true,
             #[cfg(feature = "__tls")]
