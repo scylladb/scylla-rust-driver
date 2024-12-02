@@ -48,7 +48,7 @@ impl<'a> From<&'a [Arc<Node>]> for ReplicasArray<'a> {
     }
 }
 
-impl<'a> Index<usize> for ReplicasArray<'a> {
+impl Index<usize> for ReplicasArray<'_> {
     type Output = Arc<Node>;
 
     fn index(&self, index: usize) -> &Self::Output {

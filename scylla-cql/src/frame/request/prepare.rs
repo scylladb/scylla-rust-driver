@@ -13,7 +13,7 @@ pub struct Prepare<'a> {
     pub query: &'a str,
 }
 
-impl<'a> SerializableRequest for Prepare<'a> {
+impl SerializableRequest for Prepare<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Prepare;
 
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {

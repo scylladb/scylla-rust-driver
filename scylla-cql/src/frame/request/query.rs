@@ -49,7 +49,7 @@ impl SerializableRequest for Query<'_> {
     }
 }
 
-impl<'q> DeserializableRequest for Query<'q> {
+impl DeserializableRequest for Query<'_> {
     fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let contents = Cow::Owned(types::read_long_string(buf)?.to_owned());
         let parameters = QueryParameters::deserialize(buf)?;
@@ -146,7 +146,7 @@ impl QueryParameters<'_> {
     }
 }
 
-impl<'q> QueryParameters<'q> {
+impl QueryParameters<'_> {
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let consistency = types::read_consistency(buf)?;
 

@@ -204,7 +204,7 @@ pub struct WrittenCellProof<'buf> {
     _phantom: std::marker::PhantomData<*mut &'buf ()>,
 }
 
-impl<'buf> WrittenCellProof<'buf> {
+impl WrittenCellProof<'_> {
     /// A shorthand for creating the proof.
     ///
     /// Do not make it public! It's important that only the row writer defined

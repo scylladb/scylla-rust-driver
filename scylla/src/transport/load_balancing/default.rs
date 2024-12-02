@@ -707,7 +707,7 @@ impl DefaultPolicy {
         cluster: &'a ClusterData,
         statement_type: StatementType,
         table_spec: &TableSpec,
-    ) -> Option<PickedReplica> {
+    ) -> Option<PickedReplica<'a>> {
         match statement_type {
             StatementType::Lwt => {
                 self.pick_first_replica(ts, replica_location, predicate, cluster, table_spec)
@@ -744,7 +744,7 @@ impl DefaultPolicy {
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
         table_spec: &TableSpec,
-    ) -> Option<PickedReplica> {
+    ) -> Option<PickedReplica<'a>> {
         match replica_location {
             NodeLocationCriteria::Any => {
                 // ReplicaSet returned by ReplicaLocator for this case:
@@ -819,11 +819,11 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: impl Fn(NodeRef<'_>, Shard) -> bool + 'a,
+        predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
         statement_type: StatementType,
         table_spec: &TableSpec,
-    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
         let order = match statement_type {
             StatementType::Lwt => ReplicaOrder::Deterministic,
             StatementType::NonLwt => ReplicaOrder::Arbitrary,
@@ -862,7 +862,7 @@ impl DefaultPolicy {
         &'a self,
         nodes: &'a [Arc<Node>],
         predicate: impl Fn(NodeRef<'a>) -> bool,
-    ) -> Option<NodeRef<'_>> {
+    ) -> Option<NodeRef<'a>> {
         // Select the first node that matches the predicate
         Self::randomly_rotated_nodes(nodes).find(|&node| predicate(node))
     }
@@ -873,7 +873,7 @@ impl DefaultPolicy {
         &'a self,
         nodes: &'a [Arc<Node>],
         predicate: impl Fn(NodeRef<'a>) -> bool,
-    ) -> impl Iterator<Item = NodeRef<'_>> {
+    ) -> impl Iterator<Item = NodeRef<'a>> {
         Self::randomly_rotated_nodes(nodes).filter(move |node| predicate(node))
     }
 

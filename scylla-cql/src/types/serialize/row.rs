@@ -286,7 +286,7 @@ impl SerializeRow for LegacySerializedValues {
     fallback_impl_contents!();
 }
 
-impl<'b> SerializeRow for Cow<'b, LegacySerializedValues> {
+impl SerializeRow for Cow<'_, LegacySerializedValues> {
     fallback_impl_contents!();
 }
 

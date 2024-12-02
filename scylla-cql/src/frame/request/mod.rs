@@ -140,7 +140,7 @@ pub enum Request<'r> {
     Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
 }
 
-impl<'r> Request<'r> {
+impl Request<'_> {
     pub fn deserialize(
         buf: &mut &[u8],
         opcode: RequestOpcode,

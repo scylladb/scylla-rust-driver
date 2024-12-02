@@ -490,6 +490,9 @@ impl TabletsInfo {
             table_spec: &'a TableSpec<'a>,
         }
 
+        // Disable the lint, if there is more than one lifetime included.
+        // Can be removed once https://github.com/rust-lang/rust-clippy/issues/12495 is fixed.
+        #[allow(clippy::needless_lifetimes)]
         impl<'key, 'query> hashbrown::Equivalent<TableSpec<'key>> for TableSpecQueryKey<'query> {
             fn equivalent(&self, key: &TableSpec<'key>) -> bool {
                 self.table_spec == key
@@ -574,7 +577,6 @@ impl TabletsInfo {
     /// * Removing the keyspace and recreating it immediately without tablets. This seems so absurd
     ///     that we most likely don't need to worry about it, but I'm putting it here as a potential problem
     ///     for completeness.
-
     pub(crate) fn perform_maintenance(
         &mut self,
         table_predicate: &impl Fn(&TableSpec) -> bool,

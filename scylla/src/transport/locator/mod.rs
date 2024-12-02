@@ -99,14 +99,14 @@ impl ReplicaLocator {
             } else {
                 tablets.replicas_for_token(token)
             };
-            return ReplicaSet {
+            ReplicaSet {
                 inner: ReplicaSetInner::PlainSharded(replicas.unwrap_or(
                     // The table is a tablet table, but we don't have information for given token.
                     // Let's just return empty set in this case.
                     &[],
                 )),
                 token,
-            };
+            }
         } else {
             match strategy {
                 Strategy::SimpleStrategy { replication_factor } => {
