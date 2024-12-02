@@ -118,6 +118,9 @@ pub mod frame {
         pub(crate) use scylla_cql::frame::response::*;
 
         pub mod result {
+            #[cfg(cpp_rust_unstable)]
+            pub use scylla_cql::frame::response::result::DeserializedMetadataAndRawRows;
+
             pub(crate) use scylla_cql::frame::response::result::*;
             pub use scylla_cql::frame::response::result::{
                 ColumnSpec, ColumnType, CqlValue, PartitionKeyIndex, Row, TableSpec,
