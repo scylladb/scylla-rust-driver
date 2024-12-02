@@ -519,7 +519,7 @@ pub(crate) struct PartitionKey<'ps> {
     pk_values: SmallVec<[Option<PartitionKeyValue<'ps>>; PartitionKey::SMALLVEC_ON_STACK_SIZE]>,
 }
 
-impl<'ps, 'spec: 'ps> PartitionKey<'ps> {
+impl<'ps> PartitionKey<'ps> {
     const SMALLVEC_ON_STACK_SIZE: usize = 8;
 
     fn new(
