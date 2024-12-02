@@ -166,7 +166,10 @@ where
     IT: Iterator<Item = &'sr SR> + Clone,
     SR: SerializeRow + 'sr,
 {
-    type BatchValuesIter<'r> = BatchValuesIteratorFromIterator<IT> where Self: 'r;
+    type BatchValuesIter<'r>
+        = BatchValuesIteratorFromIterator<IT>
+    where
+        Self: 'r;
 
     #[inline]
     fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
@@ -176,7 +179,10 @@ where
 
 // Implement BatchValues for slices of SerializeRow types
 impl<T: SerializeRow> BatchValues for [T] {
-    type BatchValuesIter<'r> = BatchValuesIteratorFromIterator<std::slice::Iter<'r, T>> where Self: 'r;
+    type BatchValuesIter<'r>
+        = BatchValuesIteratorFromIterator<std::slice::Iter<'r, T>>
+    where
+        Self: 'r;
 
     #[inline]
     fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
@@ -186,7 +192,10 @@ impl<T: SerializeRow> BatchValues for [T] {
 
 // Implement BatchValues for Vec<SerializeRow>
 impl<T: SerializeRow> BatchValues for Vec<T> {
-    type BatchValuesIter<'r> = BatchValuesIteratorFromIterator<std::slice::Iter<'r, T>> where Self: 'r;
+    type BatchValuesIter<'r>
+        = BatchValuesIteratorFromIterator<std::slice::Iter<'r, T>>
+    where
+        Self: 'r;
 
     #[inline]
     fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
@@ -197,7 +206,10 @@ impl<T: SerializeRow> BatchValues for Vec<T> {
 // Here is an example implementation for (T0, )
 // Further variants are done using a macro
 impl<T0: SerializeRow> BatchValues for (T0,) {
-    type BatchValuesIter<'r> = BatchValuesIteratorFromIterator<std::iter::Once<&'r T0>> where Self: 'r;
+    type BatchValuesIter<'r>
+        = BatchValuesIteratorFromIterator<std::iter::Once<&'r T0>>
+    where
+        Self: 'r;
 
     #[inline]
     fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
@@ -303,7 +315,10 @@ impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T
 
 // Every &impl BatchValues should also implement BatchValues
 impl<'a, T: BatchValues + ?Sized> BatchValues for &'a T {
-    type BatchValuesIter<'r> = <T as BatchValues>::BatchValuesIter<'r> where Self: 'r;
+    type BatchValuesIter<'r>
+        = <T as BatchValues>::BatchValuesIter<'r>
+    where
+        Self: 'r;
 
     #[inline]
     fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
@@ -323,7 +338,8 @@ impl<T> BatchValues for LegacyBatchValuesAdapter<T>
 where
     T: LegacyBatchValues,
 {
-    type BatchValuesIter<'r> = LegacyBatchValuesIteratorAdapter<T::LegacyBatchValuesIter<'r>>
+    type BatchValuesIter<'r>
+        = LegacyBatchValuesIteratorAdapter<T::LegacyBatchValuesIter<'r>>
     where
         Self: 'r;
 

@@ -283,9 +283,10 @@ pub(crate) mod batch_values {
     where
         BV: BatchValues,
     {
-        type BatchValuesIter<'r> = BatchValuesFirstSerializedIterator<'r, BV::BatchValuesIter<'r>>
-    where
-        Self: 'r;
+        type BatchValuesIter<'r>
+            = BatchValuesFirstSerializedIterator<'r, BV::BatchValuesIter<'r>>
+        where
+            Self: 'r;
 
         fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
             BatchValuesFirstSerializedIterator {

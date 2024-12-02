@@ -256,7 +256,8 @@ mod tests {
     }
 
     impl<'frame, 'metadata> LendingIterator for RawRowIterator<'frame, 'metadata> {
-        type Item<'borrow> = ColumnIterator<'borrow, 'borrow>
+        type Item<'borrow>
+            = ColumnIterator<'borrow, 'borrow>
         where
             Self: 'borrow;
 

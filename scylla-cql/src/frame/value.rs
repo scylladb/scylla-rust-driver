@@ -1662,7 +1662,10 @@ where
     IT: Iterator<Item = &'a VL> + Clone,
     VL: ValueList + 'a,
 {
-    type LegacyBatchValuesIter<'r> = LegacyBatchValuesIteratorFromIterator<IT> where Self: 'r;
+    type LegacyBatchValuesIter<'r>
+        = LegacyBatchValuesIteratorFromIterator<IT>
+    where
+        Self: 'r;
     fn batch_values_iter(&self) -> Self::LegacyBatchValuesIter<'_> {
         self.it.clone().into()
     }
@@ -1670,7 +1673,10 @@ where
 
 // Implement BatchValues for slices of ValueList types
 impl<T: ValueList> LegacyBatchValues for [T] {
-    type LegacyBatchValuesIter<'r> = LegacyBatchValuesIteratorFromIterator<std::slice::Iter<'r, T>> where Self: 'r;
+    type LegacyBatchValuesIter<'r>
+        = LegacyBatchValuesIteratorFromIterator<std::slice::Iter<'r, T>>
+    where
+        Self: 'r;
     fn batch_values_iter(&self) -> Self::LegacyBatchValuesIter<'_> {
         self.iter().into()
     }
@@ -1678,7 +1684,10 @@ impl<T: ValueList> LegacyBatchValues for [T] {
 
 // Implement BatchValues for Vec<ValueList>
 impl<T: ValueList> LegacyBatchValues for Vec<T> {
-    type LegacyBatchValuesIter<'r> = LegacyBatchValuesIteratorFromIterator<std::slice::Iter<'r, T>> where Self: 'r;
+    type LegacyBatchValuesIter<'r>
+        = LegacyBatchValuesIteratorFromIterator<std::slice::Iter<'r, T>>
+    where
+        Self: 'r;
     fn batch_values_iter(&self) -> Self::LegacyBatchValuesIter<'_> {
         LegacyBatchValues::batch_values_iter(self.as_slice())
     }
@@ -1687,7 +1696,10 @@ impl<T: ValueList> LegacyBatchValues for Vec<T> {
 // Here is an example implementation for (T0, )
 // Further variants are done using a macro
 impl<T0: ValueList> LegacyBatchValues for (T0,) {
-    type LegacyBatchValuesIter<'r> = LegacyBatchValuesIteratorFromIterator<std::iter::Once<&'r T0>> where Self: 'r;
+    type LegacyBatchValuesIter<'r>
+        = LegacyBatchValuesIteratorFromIterator<std::iter::Once<&'r T0>>
+    where
+        Self: 'r;
     fn batch_values_iter(&self) -> Self::LegacyBatchValuesIter<'_> {
         std::iter::once(&self.0).into()
     }
@@ -1776,7 +1788,10 @@ impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T
 
 // Every &impl BatchValues should also implement BatchValues
 impl<'a, T: LegacyBatchValues + ?Sized> LegacyBatchValues for &'a T {
-    type LegacyBatchValuesIter<'r> = <T as LegacyBatchValues>::LegacyBatchValuesIter<'r> where Self: 'r;
+    type LegacyBatchValuesIter<'r>
+        = <T as LegacyBatchValues>::LegacyBatchValuesIter<'r>
+    where
+        Self: 'r;
     fn batch_values_iter(&self) -> Self::LegacyBatchValuesIter<'_> {
         <T as LegacyBatchValues>::batch_values_iter(*self)
     }
@@ -1806,8 +1821,10 @@ impl<'f, T: LegacyBatchValues> LegacyBatchValuesFirstSerialized<'f, T> {
 }
 
 impl<'f, BV: LegacyBatchValues> LegacyBatchValues for LegacyBatchValuesFirstSerialized<'f, BV> {
-    type LegacyBatchValuesIter<'r> =
-        LegacyBatchValuesFirstSerialized<'f, <BV as LegacyBatchValues>::LegacyBatchValuesIter<'r>> where Self: 'r;
+    type LegacyBatchValuesIter<'r>
+        = LegacyBatchValuesFirstSerialized<'f, <BV as LegacyBatchValues>::LegacyBatchValuesIter<'r>>
+    where
+        Self: 'r;
     fn batch_values_iter(&self) -> Self::LegacyBatchValuesIter<'_> {
         LegacyBatchValuesFirstSerialized {
             first: self.first,
