@@ -65,7 +65,6 @@ enum PlanState<'a> {
 ///     }
 /// }
 /// ```
-
 pub struct Plan<'a> {
     policy: &'a dyn LoadBalancingPolicy,
     routing_info: &'a RoutingInfo<'a>,

@@ -577,7 +577,6 @@ impl TabletsInfo {
     /// * Removing the keyspace and recreating it immediately without tablets. This seems so absurd
     ///     that we most likely don't need to worry about it, but I'm putting it here as a potential problem
     ///     for completeness.
-
     pub(crate) fn perform_maintenance(
         &mut self,
         table_predicate: &impl Fn(&TableSpec) -> bool,
