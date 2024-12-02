@@ -224,7 +224,7 @@ impl PreparedStatement {
     pub(crate) fn extract_partition_key<'ps>(
         &'ps self,
         bound_values: &'ps SerializedValues,
-    ) -> Result<PartitionKey, PartitionKeyExtractionError> {
+    ) -> Result<PartitionKey<'ps>, PartitionKeyExtractionError> {
         PartitionKey::new(self.get_prepared_metadata(), bound_values)
     }
 
