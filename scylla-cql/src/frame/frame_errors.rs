@@ -425,6 +425,7 @@ pub struct ColumnSpecParseError {
 pub enum ColumnSpecParseErrorKind {
     #[error("Invalid table spec: {0}")]
     TableSpecParseError(#[from] TableSpecParseError),
+    // TODO: remove this variant before the next major release.
     #[error("Table spec differs across columns - got specs: {0:?} and {1:?}")]
     TableSpecDiffersAcrossColumns(TableSpec<'static>, TableSpec<'static>),
     #[error("Malformed column name: {0}")]

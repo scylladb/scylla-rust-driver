@@ -979,12 +979,6 @@ fn mk_col_spec_parse_error(
 
 /// Deserializes table spec of a column spec in the borrowed form.
 ///
-/// Checks for equality of table specs across columns, because the protocol
-/// does not guarantee that and we want to be sure that the assumption
-/// of them being all the same is correct.
-/// To this end, the first column's table spec is written to `known_table_spec`
-/// and compared with remaining columns' table spec.
-///
 /// To avoid needless allocations, it is advised to pass `known_table_spec`
 /// in the borrowed form, so that cloning it is cheap.
 fn deser_table_spec_for_col_spec<'frame>(
@@ -997,31 +991,13 @@ fn deser_table_spec_for_col_spec<'frame>(
         // If global table spec was provided, we simply clone it to each column spec.
         Some(ref known_spec) if global_table_spec_provided => known_spec.clone(),
 
-        // Else, we deserialize the table spec for a column and, if we already know some
-        // previous spec (i.e. that of the first column), we perform equality check
-        // against it.
+        // Else, we deserialize the table spec for a column.
         Some(_) | None => {
             let table_spec =
                 deser_table_spec(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
 
-            if let Some(ref known_spec) = known_table_spec {
-                // We assume that for each column, table spec is the same.
-                // As this is not guaranteed by the CQL protocol specification but only by how
-                // Cassandra and ScyllaDB work (no support for joins), we perform a sanity check here.
-                if known_spec.table_name != table_spec.table_name
-                    || known_spec.ks_name != table_spec.ks_name
-                {
-                    return Err(mk_col_spec_parse_error(
-                        col_idx,
-                        ColumnSpecParseErrorKind::TableSpecDiffersAcrossColumns(
-                            known_spec.clone().into_owned(),
-                            table_spec.into_owned(),
-                        ),
-                    ));
-                }
-            } else {
-                // Once we have read the first column spec, we save its table spec
-                // in order to verify its equality with other columns'.
+            if known_table_spec.is_none() {
+                // Once we have read the first column spec, we save its table spec.
                 *known_table_spec = Some(table_spec.clone());
             }
 
@@ -1062,10 +1038,6 @@ fn deser_col_specs_generic<'frame, 'result>(
 /// Deserializes col specs (part of ResultMetadata or PreparedMetadata)
 /// in the borrowed form.
 ///
-/// Checks for equality of table specs across columns, because the protocol
-/// does not guarantee that and we want to be sure that the assumption
-/// of them being all the same is correct.
-///
 /// To avoid needless allocations, it is advised to pass `global_table_spec`
 /// in the borrowed form, so that cloning it is cheap.
 fn deser_col_specs_borrowed<'frame>(
@@ -1084,10 +1056,6 @@ fn deser_col_specs_borrowed<'frame>(
 
 /// Deserializes col specs (part of ResultMetadata or PreparedMetadata)
 /// in the owned form.
-///
-/// Checks for equality of table specs across columns, because the protocol
-/// does not guarantee that and we want to be sure that the assumption
-/// of them being all the same is correct.
 ///
 /// To avoid needless allocations, it is advised to pass `global_table_spec`
 /// in the borrowed form, so that cloning it is cheap.
