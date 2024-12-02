@@ -256,7 +256,7 @@ struct FieldSortingGenerator<'a> {
     ctx: &'a Context,
 }
 
-impl<'a> Generator for FieldSortingGenerator<'a> {
+impl Generator for FieldSortingGenerator<'_> {
     fn generate_serialize(&self) -> syn::TraitItemFn {
         // Need to:
         // - Check that all required fields are there and no more
@@ -449,7 +449,7 @@ struct FieldOrderedGenerator<'a> {
     ctx: &'a Context,
 }
 
-impl<'a> Generator for FieldOrderedGenerator<'a> {
+impl Generator for FieldOrderedGenerator<'_> {
     fn generate_serialize(&self) -> syn::TraitItemFn {
         let mut statements: Vec<syn::Stmt> = Vec::new();
 

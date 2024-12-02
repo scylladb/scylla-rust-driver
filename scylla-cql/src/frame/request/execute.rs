@@ -36,7 +36,7 @@ impl SerializableRequest for Execute<'_> {
     }
 }
 
-impl<'e> DeserializableRequest for Execute<'e> {
+impl DeserializableRequest for Execute<'_> {
     fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let id = types::read_short_bytes(buf)?.to_vec().into();
         let parameters = QueryParameters::deserialize(buf)?;

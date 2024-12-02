@@ -193,7 +193,7 @@ impl<'a> OrphanhoodNotifier<'a> {
     }
 }
 
-impl<'a> Drop for OrphanhoodNotifier<'a> {
+impl Drop for OrphanhoodNotifier<'_> {
     fn drop(&mut self) {
         if self.enabled {
             let _ = self.notification_sender.send(self.request_id);

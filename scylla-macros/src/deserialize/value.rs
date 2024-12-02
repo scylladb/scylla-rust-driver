@@ -222,7 +222,7 @@ impl StructDesc {
 
 struct TypeCheckAssumeOrderGenerator<'sd>(&'sd StructDesc);
 
-impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
+impl TypeCheckAssumeOrderGenerator<'_> {
     // Generates name and type validation for given Rust struct's field.
     fn generate_field_validation(&self, rust_field_idx: usize, field: &Field) -> syn::Expr {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
@@ -398,7 +398,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
 
 struct DeserializeAssumeOrderGenerator<'sd>(&'sd StructDesc);
 
-impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
+impl DeserializeAssumeOrderGenerator<'_> {
     fn generate_finalize_field(&self, field: &Field) -> syn::Expr {
         if field.skip {
             // Skipped fields are initialized with Default::default()
@@ -566,7 +566,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
 
 struct TypeCheckUnorderedGenerator<'sd>(&'sd StructDesc);
 
-impl<'sd> TypeCheckUnorderedGenerator<'sd> {
+impl TypeCheckUnorderedGenerator<'_> {
     // An identifier for a bool variable that represents whether given
     // field was already visited during type check
     fn visited_flag_variable(field: &Field) -> syn::Ident {
@@ -730,7 +730,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
 
 struct DeserializeUnorderedGenerator<'sd>(&'sd StructDesc);
 
-impl<'sd> DeserializeUnorderedGenerator<'sd> {
+impl DeserializeUnorderedGenerator<'_> {
     /// An identifier for a variable that is meant to store the parsed variable
     /// before being ultimately moved to the struct on deserialize.
     fn deserialize_field_variable(field: &Field) -> syn::Ident {

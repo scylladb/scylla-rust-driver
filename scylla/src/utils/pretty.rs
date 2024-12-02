@@ -9,7 +9,7 @@ use std::fmt::{Display, LowerHex, UpperHex};
 
 pub(crate) struct HexBytes<'a>(pub(crate) &'a [u8]);
 
-impl<'a> LowerHex for HexBytes<'a> {
+impl LowerHex for HexBytes<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for b in self.0 {
             write!(f, "{:02x}", b)?;
@@ -18,7 +18,7 @@ impl<'a> LowerHex for HexBytes<'a> {
     }
 }
 
-impl<'a> UpperHex for HexBytes<'a> {
+impl UpperHex for HexBytes<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for b in self.0 {
             write!(f, "{:02X}", b)?;
@@ -154,7 +154,7 @@ where
 
 pub(crate) struct CqlStringLiteralDisplayer<'a>(&'a str);
 
-impl<'a> Display for CqlStringLiteralDisplayer<'a> {
+impl Display for CqlStringLiteralDisplayer<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // CQL string literals use single quotes. The only character that
         // needs escaping is singular quote, and escaping is done by repeating

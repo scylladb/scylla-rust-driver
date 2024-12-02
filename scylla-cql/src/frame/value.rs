@@ -1609,7 +1609,7 @@ impl ValueList for LegacySerializedValues {
     }
 }
 
-impl<'b> ValueList for Cow<'b, LegacySerializedValues> {
+impl ValueList for Cow<'_, LegacySerializedValues> {
     fn serialized(&self) -> SerializedResult<'_> {
         Ok(Cow::Borrowed(self.as_ref()))
     }
@@ -1787,7 +1787,7 @@ impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T
                              0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15; 16);
 
 // Every &impl BatchValues should also implement BatchValues
-impl<'a, T: LegacyBatchValues + ?Sized> LegacyBatchValues for &'a T {
+impl<T: LegacyBatchValues + ?Sized> LegacyBatchValues for &T {
     type LegacyBatchValuesIter<'r>
         = <T as LegacyBatchValues>::LegacyBatchValuesIter<'r>
     where

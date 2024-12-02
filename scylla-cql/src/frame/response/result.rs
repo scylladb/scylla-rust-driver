@@ -83,7 +83,7 @@ pub enum ColumnType<'frame> {
     Varint,
 }
 
-impl<'frame> ColumnType<'frame> {
+impl ColumnType<'_> {
     pub fn into_owned(self) -> ColumnType<'static> {
         match self {
             ColumnType::Custom(cow) => ColumnType::Custom(cow.into_owned().into()),

@@ -314,7 +314,7 @@ impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T
                              0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15; 16);
 
 // Every &impl BatchValues should also implement BatchValues
-impl<'a, T: BatchValues + ?Sized> BatchValues for &'a T {
+impl<T: BatchValues + ?Sized> BatchValues for &T {
     type BatchValuesIter<'r>
         = <T as BatchValues>::BatchValuesIter<'r>
     where
