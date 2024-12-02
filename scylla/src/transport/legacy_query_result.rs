@@ -175,7 +175,7 @@ impl LegacyQueryResult {
 
     /// Returns a column specification for a column with given name, or None if not found
     #[inline]
-    pub fn get_column_spec<'a>(&'a self, name: &str) -> Option<(usize, &'a ColumnSpec<'_>)> {
+    pub fn get_column_spec<'a>(&'a self, name: &str) -> Option<(usize, &'a ColumnSpec<'a>)> {
         self.col_specs()
             .iter()
             .enumerate()

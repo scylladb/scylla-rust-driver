@@ -224,7 +224,7 @@ impl PreparedStatement {
     pub(crate) fn extract_partition_key<'ps>(
         &'ps self,
         bound_values: &'ps SerializedValues,
-    ) -> Result<PartitionKey, PartitionKeyExtractionError> {
+    ) -> Result<PartitionKey<'ps>, PartitionKeyExtractionError> {
         PartitionKey::new(self.get_prepared_metadata(), bound_values)
     }
 
@@ -519,7 +519,7 @@ pub(crate) struct PartitionKey<'ps> {
     pk_values: SmallVec<[Option<PartitionKeyValue<'ps>>; PartitionKey::SMALLVEC_ON_STACK_SIZE]>,
 }
 
-impl<'ps, 'spec: 'ps> PartitionKey<'ps> {
+impl<'ps> PartitionKey<'ps> {
     const SMALLVEC_ON_STACK_SIZE: usize = 8;
 
     fn new(

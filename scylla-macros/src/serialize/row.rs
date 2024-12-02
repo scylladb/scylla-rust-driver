@@ -194,7 +194,7 @@ struct ColumnSortingGenerator<'a> {
     ctx: &'a Context,
 }
 
-impl<'a> Generator for ColumnSortingGenerator<'a> {
+impl Generator for ColumnSortingGenerator<'_> {
     fn generate_serialize(&self) -> syn::TraitItemFn {
         // Need to:
         // - Check that all required columns are there and no more
@@ -317,7 +317,7 @@ struct ColumnOrderedGenerator<'a> {
     ctx: &'a Context,
 }
 
-impl<'a> Generator for ColumnOrderedGenerator<'a> {
+impl Generator for ColumnOrderedGenerator<'_> {
     fn generate_serialize(&self) -> syn::TraitItemFn {
         let mut statements: Vec<syn::Stmt> = Vec::new();
 

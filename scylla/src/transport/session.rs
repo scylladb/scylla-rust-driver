@@ -2272,7 +2272,7 @@ struct HistoryData<'a> {
     speculative_id: Option<history::SpeculativeId>,
 }
 
-impl<'a> ExecuteQueryContext<'a> {
+impl ExecuteQueryContext<'_> {
     fn log_attempt_start(&self, node_addr: SocketAddr) -> Option<history::AttemptId> {
         self.history_data.as_ref().map(|hd| {
             hd.listener
@@ -2423,7 +2423,7 @@ impl RequestSpan {
 
     pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [(impl Borrow<Arc<Node>>, Shard)]) {
         struct ReplicaIps<'a, N>(&'a [(N, Shard)]);
-        impl<'a, N> Display for ReplicaIps<'a, N>
+        impl<N> Display for ReplicaIps<'_, N>
         where
             N: Borrow<Arc<Node>>,
         {

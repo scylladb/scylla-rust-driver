@@ -62,7 +62,8 @@ pub trait RawBatchValuesIterator<'a> {
 
 // An implementation used by `scylla-proxy`
 impl RawBatchValues for Vec<SerializedValues> {
-    type RawBatchValuesIter<'r> = std::slice::Iter<'r, SerializedValues>
+    type RawBatchValuesIter<'r>
+        = std::slice::Iter<'r, SerializedValues>
     where
         Self: 'r;
 
@@ -117,7 +118,8 @@ where
     BV: BatchValues,
     CTX: Iterator<Item = RowSerializationContext<'ctx>> + Clone,
 {
-    type RawBatchValuesIter<'r> = RawBatchValuesIteratorAdapter<BV::BatchValuesIter<'r>, CTX>
+    type RawBatchValuesIter<'r>
+        = RawBatchValuesIteratorAdapter<BV::BatchValuesIter<'r>, CTX>
     where
         Self: 'r;
 

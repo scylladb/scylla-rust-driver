@@ -62,7 +62,7 @@ pub(crate) struct Cluster {
 /// Enables printing [Cluster] struct in a neat way, by skipping the rather useless
 /// print of channels state and printing [ClusterData] neatly.
 pub(crate) struct ClusterNeatDebug<'a>(pub(crate) &'a Cluster);
-impl<'a> std::fmt::Debug for ClusterNeatDebug<'a> {
+impl std::fmt::Debug for ClusterNeatDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cluster = self.0;
         f.debug_struct("Cluster")
@@ -81,7 +81,7 @@ pub struct ClusterData {
 /// Enables printing [ClusterData] struct in a neat way, skipping the clutter involved by
 /// [ClusterData::ring] being large and [Self::keyspaces] debug print being very verbose by default.
 pub(crate) struct ClusterDataNeatDebug<'a>(pub(crate) &'a Arc<ClusterData>);
-impl<'a> std::fmt::Debug for ClusterDataNeatDebug<'a> {
+impl std::fmt::Debug for ClusterDataNeatDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cluster_data = &self.0;
 
