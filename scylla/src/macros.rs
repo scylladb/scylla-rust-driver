@@ -360,7 +360,7 @@ pub use scylla_cql::macros::SerializeRow;
 /// If the value of the field received from DB is null, the field will be
 /// initialized with `Default::default()`.
 ///
-/// `#[scylla(rename = "field_name")`
+/// `#[scylla(rename = "field_name")]`
 ///
 /// By default, the generated implementation will try to match the Rust field
 /// to a UDT field with the same name. This attribute instead allows to match
@@ -475,7 +475,7 @@ pub use scylla_macros::DeserializeValue;
 /// The field will be completely ignored during deserialization and will
 /// be initialized with `Default::default()`.
 ///
-/// `#[scylla(rename = "field_name")`
+/// `#[scylla(rename = "field_name")]`
 ///
 /// By default, the generated implementation will try to match the Rust field
 /// to a column with the same name. This attribute allows to match to a column
