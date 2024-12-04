@@ -2824,4 +2824,32 @@ pub(crate) mod tests {
 
         assert_eq!(reference, row);
     }
+
+    #[test]
+    fn test_udt_with_non_rust_ident() {
+        #[derive(SerializeValue, Debug)]
+        #[scylla(crate = crate)]
+        struct UdtWithNonRustIdent {
+            #[scylla(rename = "a$a")]
+            a: i32,
+        }
+
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".into(),
+            keyspace: "ks".into(),
+            field_types: vec![("a$a".into(), ColumnType::Int)],
+        };
+        let value = UdtWithNonRustIdent { a: 42 };
+
+        let mut reference = Vec::new();
+        // Total length of the struct
+        reference.extend_from_slice(&8i32.to_be_bytes());
+        // Field 'a'
+        reference.extend_from_slice(&(std::mem::size_of_val(&value.a) as i32).to_be_bytes());
+        reference.extend_from_slice(&value.a.to_be_bytes());
+
+        let udt = do_serialize(value, &typ);
+
+        assert_eq!(reference, udt);
+    }
 }

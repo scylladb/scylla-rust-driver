@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use darling::FromAttributes;
 use proc_macro::TokenStream;
-use proc_macro2::Span;
 use syn::parse_quote;
 
 use crate::Flavor;
@@ -327,14 +326,14 @@ impl Generator for FieldSortingGenerator<'_> {
                 .generate_udt_type_match(parse_quote!(#crate_path::UdtTypeCheckErrorKind::NotUdt)),
         );
 
-        fn make_visited_flag_ident(field_name: &str) -> syn::Ident {
-            syn::Ident::new(&format!("visited_flag_{}", field_name), Span::call_site())
+        fn make_visited_flag_ident(field_name: &syn::Ident) -> syn::Ident {
+            syn::Ident::new(&format!("visited_flag_{}", field_name), field_name.span())
         }
 
         // Generate a "visited" flag for each field
-        let visited_flag_names = rust_field_names
+        let visited_flag_names = rust_field_idents
             .iter()
-            .map(|s| make_visited_flag_ident(s))
+            .map(make_visited_flag_ident)
             .collect::<Vec<_>>();
         statements.extend::<Vec<_>>(parse_quote! {
             #(let mut #visited_flag_names = false;)*
@@ -347,11 +346,11 @@ impl Generator for FieldSortingGenerator<'_> {
             .fields
             .iter()
             .filter(|f| !f.attrs.ignore_missing)
-            .map(|f| f.field_name());
+            .map(|f| &f.ident);
         // An iterator over visited flags of Rust fields that can't be ignored
         // (i.e., if UDT misses a corresponding field, an error should be raised).
         let nonignorable_visited_flag_names =
-            nonignorable_rust_field_names.map(|s| make_visited_flag_ident(&s));
+            nonignorable_rust_field_names.map(make_visited_flag_ident);
 
         // Generate a variable that counts down visited fields.
         let field_count = self.ctx.fields.len();
