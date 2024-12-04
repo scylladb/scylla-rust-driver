@@ -223,7 +223,7 @@ impl Generator for ColumnSortingGenerator<'_> {
         statements.push(self.ctx.generate_mk_ser_err());
 
         // Generate a "visited" flag for each field
-        let visited_flag_names = rust_field_names
+        let visited_flag_names = rust_field_idents
             .iter()
             .map(|s| syn::Ident::new(&format!("visited_flag_{}", s), Span::call_site()))
             .collect::<Vec<_>>();

@@ -1568,6 +1568,23 @@ pub(crate) mod tests {
         assert_eq!(reference, row);
     }
 
+    #[test]
+    fn test_row_serialization_with_not_rust_idents() {
+        #[derive(SerializeRow, Debug)]
+        #[scylla(crate = crate)]
+        struct RowWithTTL {
+            #[scylla(rename = "[ttl]")]
+            ttl: i32,
+        }
+
+        let spec = [col("[ttl]", ColumnType::Int)];
+
+        let reference = do_serialize((42i32,), &spec);
+        let row = do_serialize(RowWithTTL { ttl: 42 }, &spec);
+
+        assert_eq!(reference, row);
+    }
+
     #[derive(SerializeRow, Debug)]
     #[scylla(crate = crate)]
     struct TestRowWithSkippedFields {
