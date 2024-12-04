@@ -24,6 +24,9 @@ jobs:
     - name: Setup 3-node Cassandra cluster
       run: |
         docker compose -f test/cluster/cassandra/docker-compose.yml up -d --wait
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
       # A separate step for building to separate measuring time of compilation and testing
     - name: Update rust toolchain
       run: rustup update
