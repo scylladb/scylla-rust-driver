@@ -51,6 +51,7 @@ use super::iterator::QueryPager;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::QueryResult;
 use super::session::AddressTranslator;
+use super::timestamp_generator::TimestampGenerator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
 #[cfg(feature = "cloud")]
@@ -565,6 +566,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
+    pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     #[cfg(feature = "ssl")]
     pub(crate) ssl_config: Option<SslConfig>,
     pub(crate) connect_timeout: std::time::Duration,
@@ -590,6 +592,7 @@ impl Default for ConnectionConfig {
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
+            timestamp_generator: None,
             event_sender: None,
             #[cfg(feature = "ssl")]
             ssl_config: None,
