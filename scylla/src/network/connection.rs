@@ -856,6 +856,14 @@ impl Connection {
         page_size: Option<PageSize>,
         paging_state: PagingState,
     ) -> Result<QueryResponse, RequestAttemptError> {
+        let get_timestamp_from_gen = || {
+            self.config
+                .timestamp_generator
+                .as_ref()
+                .map(|gen| gen.next_timestamp())
+        };
+        let timestamp = query.get_timestamp().or_else(get_timestamp_from_gen);
+
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
             parameters: query::QueryParameters {
@@ -865,7 +873,7 @@ impl Connection {
                 page_size: page_size.map(Into::into),
                 paging_state,
                 skip_metadata: false,
-                timestamp: query.get_timestamp(),
+                timestamp,
             },
         };
 
@@ -918,6 +926,16 @@ impl Connection {
         page_size: Option<PageSize>,
         paging_state: PagingState,
     ) -> Result<QueryResponse, RequestAttemptError> {
+        let get_timestamp_from_gen = || {
+            self.config
+                .timestamp_generator
+                .as_ref()
+                .map(|gen| gen.next_timestamp())
+        };
+        let timestamp = prepared_statement
+            .get_timestamp()
+            .or_else(get_timestamp_from_gen);
+
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
@@ -925,7 +943,7 @@ impl Connection {
                 serial_consistency,
                 values: Cow::Borrowed(values),
                 page_size: page_size.map(Into::into),
-                timestamp: prepared_statement.get_timestamp(),
+                timestamp,
                 skip_metadata: prepared_statement.get_use_cached_result_metadata(),
                 paging_state,
             },
@@ -1060,13 +1078,21 @@ impl Connection {
 
         let values = RawBatchValuesAdapter::new(values, contexts);
 
+        let get_timestamp_from_gen = || {
+            self.config
+                .timestamp_generator
+                .as_ref()
+                .map(|gen| gen.next_timestamp())
+        };
+        let timestamp = batch.get_timestamp().or_else(get_timestamp_from_gen);
+
         let batch_frame = batch::Batch {
             statements: Cow::Borrowed(&batch.statements),
             values,
             batch_type: batch.get_type(),
             consistency,
             serial_consistency,
-            timestamp: batch.get_timestamp(),
+            timestamp,
         };
 
         loop {
