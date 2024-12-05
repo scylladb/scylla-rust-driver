@@ -128,3 +128,46 @@ impl TimestampGenerator for MonotonicTimestampGenerator {
         }
     }
 }
+
+#[tokio::test]
+async fn monotonic_timestamp_generator_is_monotonic() {
+    const NUMBER_OF_ITERATIONS: u32 = 1000;
+
+    let mut prev = None;
+    let mut cur;
+    let generator = MonotonicTimestampGenerator::new();
+    for _ in 0..NUMBER_OF_ITERATIONS {
+        cur = generator.next_timestamp();
+        if let Some(prev_val) = prev {
+            assert!(cur > prev_val);
+        }
+        prev = Some(cur);
+    }
+}
+
+#[tokio::test]
+async fn monotonic_timestamp_generator_is_monotonic_with_concurrency() {
+    use std::sync::Arc;
+    use tokio::sync::mpsc::unbounded_channel;
+    const NUMBER_OF_ITERATIONS: u32 = 1000;
+    let (sender, mut receiver) = unbounded_channel();
+    let mut prev = None;
+    let mut cur;
+    let generator = Arc::new(MonotonicTimestampGenerator::new());
+    for _ in 0..10 {
+        let sender = sender.clone();
+        let generator = generator.clone();
+        tokio::task::spawn(async move {
+            for _ in 0..NUMBER_OF_ITERATIONS {
+                sender.send(generator.next_timestamp()).unwrap();
+            }
+        });
+    }
+    for _ in 0..(10 * NUMBER_OF_ITERATIONS) {
+        cur = receiver.recv().await;
+        if let Some(x) = prev {
+            assert!(cur > x);
+        }
+        prev = Some(cur);
+    }
+}
