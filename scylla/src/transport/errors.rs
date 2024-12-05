@@ -1,5 +1,9 @@
 //! This module contains various errors which can be returned by [`Session`](crate::transport::session::Session).
 
+// I did not manage to silence deprecation warnings without using this module-wide.
+// TODO: remove this once deprecated items are no longer used here.
+#![allow(deprecated)]
+
 // Re-export DbError type and types that it depends on
 // so they can be found in `scylla::errors`.
 pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
@@ -34,15 +38,15 @@ use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-use super::{
-    iterator::NextRowError,
-    legacy_query_result::IntoLegacyQueryResultError,
-    query_result::{IntoRowsResultError, SingleRowError},
-};
+use super::iterator::NextRowError;
+#[allow(deprecated)]
+use super::legacy_query_result::IntoLegacyQueryResultError;
+use super::query_result::{IntoRowsResultError, SingleRowError};
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
+#[allow(deprecated)]
 pub enum QueryError {
     /// Database sent a response containing some error with a message
     #[error("Database returned an error: {0}, Error message: {1}")]
@@ -115,6 +119,11 @@ pub enum QueryError {
 
     /// Failed to convert [`QueryResult`][crate::transport::query_result::QueryResult]
     /// into [`LegacyQueryResult`][crate::transport::legacy_query_result::LegacyQueryResult].
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy deserialization API is inefficient and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     #[error("Failed to convert `QueryResult` into `LegacyQueryResult`: {0}")]
     IntoLegacyQueryResultError(#[from] IntoLegacyQueryResultError),
 }
@@ -181,6 +190,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
             QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
+            #[allow(deprecated)]
             QueryError::IntoLegacyQueryResultError(e) => {
                 NewSessionError::IntoLegacyQueryResultError(e)
             }
@@ -204,6 +214,7 @@ impl From<response::Error> for QueryError {
 /// Error that occurred during session creation
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
+#[allow(deprecated)]
 pub enum NewSessionError {
     /// Failed to resolve hostname passed in Session creation
     #[error("Couldn't resolve any hostname: {0:?}")]
@@ -286,6 +297,11 @@ pub enum NewSessionError {
 
     /// Failed to convert [`QueryResult`][crate::transport::query_result::QueryResult]
     /// into [`LegacyQueryResult`][crate::transport::legacy_query_result::LegacyQueryResult].
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy deserialization API is inefficient and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     #[error("Failed to convert `QueryResult` into `LegacyQueryResult`: {0}")]
     IntoLegacyQueryResultError(#[from] IntoLegacyQueryResultError),
 }
