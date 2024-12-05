@@ -121,3 +121,19 @@ impl TimestampGenerator for MonotonicTimestampGenerator {
         }
     }
 }
+
+#[tokio::test]
+async fn monotonic_timestamp_generator_is_monotonic() {
+    const NUMBER_OF_ITERATIONS: u32 = 1000;
+
+    let mut prev = None;
+    let mut cur;
+    let generator = MonotonicTimestampGenerator::new();
+    for _ in 0..NUMBER_OF_ITERATIONS {
+        cur = generator.next_timestamp().await;
+        if let Some(prev_val) = prev {
+            assert!(cur > prev_val);
+        }
+        prev = Some(cur);
+    }
+}
