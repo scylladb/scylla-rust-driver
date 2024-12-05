@@ -1,7 +1,8 @@
 use std::fmt::Debug;
 use std::fmt;
-use tabled::settings::Width;
-use tabled::{builder::Builder, settings::Style,settings::{peaker::Priority}, Tabled};
+use chrono::{NaiveTime, TimeZone, Utc};
+use scylla_cql::frame::value::{CqlTime, CqlTimestamp};
+use tabled::{builder::Builder, settings::Style, settings::themes::Colorization, settings::Color};
 
 use thiserror::Error;
 use uuid::Uuid;
@@ -11,7 +12,7 @@ use scylla_cql::frame::response::result::{
     ColumnSpec, ColumnType, CqlValue, DeserializedMetadataAndRawRows, RawMetadataAndRawRows, Row, TableSpec
 };
 use scylla_cql::types::deserialize::result::TypedRowIterator;
-use scylla_cql::types::deserialize::row::{self, DeserializeRow};
+use scylla_cql::types::deserialize::row::DeserializeRow;
 use scylla_cql::types::deserialize::{DeserializationError, TypeCheckError};
 
 #[allow(deprecated)]
@@ -463,128 +464,233 @@ impl<'a> RowsDisplayer<'a>
         self.terminal_width = terminal_width;
     }
 
-    pub fn display(self) {
-        let row_iter : TypedRowIterator<'_, '_, Row> = match self.query_result.rows::<Row>(){
-            Ok(row_iter) => row_iter,
-            Err(_) => return,
-        };
 
-        let column_names : Vec<&str> = self.query_result.column_specs().iter().map(|column_spec| column_spec.name()).collect();
-        let mut builder: Builder = Builder::new();
-        builder.push_record(column_names);
-
-        for row_result in row_iter {
-            let row_result : Row = match row_result {
-                Ok(row_result) => row_result,
-                Err(_) => return,
-            };
-            let columns : Vec<std::option::Option<CqlValue>> =  row_result.columns;
-            let mut row_values : Vec<String> = Vec::new();
-            for column in columns {
-                let item_string = self.get_item_string(column);
-                row_values.push(item_string);
-            }
-            builder.push_record(row_values);
-
-        }
-        let mut table = builder.build();
-        table.with(Style::ascii_rounded());
-        println!("{}", table.to_string());
-
-    }
-
-    fn get_item_string(&self, column: std::option::Option<CqlValue>) -> String {
-        match column {
+    fn get_item_wrapper(&'a self, item: &'a std::option::Option<CqlValue>) -> Box<dyn StringConvertible<'a>> {
+        match item {
             Some(CqlValue::Ascii(value)) => {
-                return format!("{}", value);
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::BigInt(value)) => {
-                self.int64_to_string(value)
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Blob(value)) => {
-                self.blob_to_string(value)
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Boolean(value)) => {
-                return format!("{}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Counter(value)) => {
-                return format!("{:?}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Decimal(value)) => {
-                return format!("{:?}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Double(value)) => { // TODO set formating for real numbers
-                return format!("{}", value);
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Float(value)) => {
-                self.float_to_string(value)
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Int(value)) => { // TODO set formating for integers
-                return self.int32_to_string(value);
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Text(value)) => {
-                return format!("{}", value);
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Timestamp(value)) => { // TOOD set formating for timestamp
-                return format!("{:?}", value);
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Uuid(value)) => {
-                return format!("{}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Inet(value)) => {
-                return format!("{}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::List(value)) => { // TODO set formating for list
-                return format!("{:?}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Map(value)) => { // TODO set formating for map
-                return format!("{:?}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Set(value)) => { // TODO set formating for set
-                return format!("{:?}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::UserDefinedType { keyspace, type_name, fields }) => { // Idk what to do with this
-                return format!("UserDefinedType: keyspace: {}, type_name: {}, fields: {:?}", keyspace, type_name, fields);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Tuple(value)) => { // TODO set formating for tuple
-                return format!("{:?}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Date(value)) => { // TODO set formating for date
-                return format!("Date: {:?}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Duration(value)) => {
-                return format!("Duration: {:?}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Empty) => {
-                return format!("Empty");
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::SmallInt(value)) => {
-                self.int16_to_string(value)
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::TinyInt(value)) => {
-                self.int8_to_string(value)
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Varint(value)) => {
-                return format!("{:?}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Time(value)) => {
-                return format!("{:?}", value);
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Timeuuid(value)) => {
-                return format!("{:?}", value);
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             None => {
-                return format!("None");
+                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
         }
     }
 
-    fn blob_to_string(&self, blob: Vec<u8>) -> String {
+
+}
+
+// wrappers for scylla datatypes implementing Display
+
+struct WrapperDisplay<'a, T: 'a>{
+    value: &'a T,
+    settings: &'a RowsDisplayerSettings,
+}
+
+// Trait bound to ensure From<WrapperDisplay<T>> for String is implemented
+trait StringConvertible<'a>: 'a {
+    fn to_string(&self) -> String;
+}
+
+// Implement the trait for types that have From<WrapperDisplay<T>> for String
+impl<'a, T> StringConvertible<'a> for WrapperDisplay<'a, T> 
+where 
+    WrapperDisplay<'a, T>: fmt::Display
+{
+    fn to_string(&self) -> String {
+        format!("{}", self)
+    }
+}
+
+// generic impl of From ... for String
+impl<'a> From<Box<dyn StringConvertible<'a>>> for String {
+    fn from(wrapper: Box<dyn StringConvertible<'a>>) -> Self {
+        wrapper.to_string()
+    }
+}
+
+impl<'a> From<&dyn StringConvertible<'a>> for String {
+    fn from(wrapper: &dyn StringConvertible<'a>) -> Self {
+        // println!("before &dyn StringConvertible<'a>");
+        wrapper.into()
+    }
+}
+
+impl<'a, T> From<WrapperDisplay<'a, T>> for String
+where
+    T: 'a,
+    WrapperDisplay<'a, T>: fmt::Display,
+{
+    fn from(wrapper: WrapperDisplay<'a, T>) -> Self {
+        // println!("before WrapperDisplay<'a, T>");
+        format!("{}", wrapper)
+    }
+}
+
+// Actual implementations of Display for scylla datatypes
+
+// none WrapperDisplay
+impl fmt::Display for WrapperDisplay<'_, std::option::Option<CqlValue>> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "None")
+    }    
+}
+
+// tiny int
+impl fmt::Display for WrapperDisplay<'_, i8> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.settings.exponent_displaying_floats {
+            write!(f, "{:e}", self.value)
+        } else {
+            write!(f, "{}", self.value)
+        }
+    }
+}
+
+// small int
+impl fmt::Display for WrapperDisplay<'_, i16> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.settings.exponent_displaying_floats {
+            write!(f, "{:e}", self.value)
+        } else {
+            write!(f, "{}", self.value)
+        }
+    }
+}
+
+// int
+impl fmt::Display for WrapperDisplay<'_, i32> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.settings.exponent_displaying_floats {
+            write!(f, "{:e}", self.value)
+        } else {
+            write!(f, "{}", self.value)
+        }
+    }
+}
+
+// bigint
+
+impl fmt::Display for WrapperDisplay<'_, i64> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.settings.exponent_displaying_floats {
+            write!(f, "{:e}", self.value)
+        } else {
+            write!(f, "{}", self.value)
+        }
+    }
+}
+
+// float
+
+impl fmt::Display for WrapperDisplay<'_, f32> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.settings.exponent_displaying_floats {
+            write!(f, "{:e}", self.value)
+        } else {
+            write!(f, "{}", self.value)
+        }
+    }
+}
+
+// double
+
+impl fmt::Display for WrapperDisplay<'_, f64> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.settings.exponent_displaying_floats {
+            write!(f, "{:e}", self.value)
+        } else {
+            write!(f, "{:.digits$}", self.value, digits = self.settings.double_precision)
+        }
+    }
+}
+
+// blob
+
+impl fmt::Display for WrapperDisplay<'_, Vec<u8>> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut result = String::new();
-        for byte in blob {
-            match self.display_settings.byte_displaying {
+        if self.settings.byte_displaying == ByteDisplaying::Hex {
+            result.push_str("0x");
+        }
+        for byte in self.value {
+            match self.settings.byte_displaying {
                 ByteDisplaying::Ascii => {
-                    result.push_str(&format!("{}", byte as char));
+                    result.push_str(&format!("{}", *byte as char));
                 },
                 ByteDisplaying::Hex => {
                     result.push_str(&format!("{:02x}", byte));
@@ -594,51 +700,62 @@ impl<'a> RowsDisplayer<'a>
                 },
             }
         }
-        return result;
+        write!(f, "{}", result)
     }
-
-    fn float_to_string(&self, float: f32) -> String {
-        if self.display_settings.exponent_displaying_floats {
-            return format!("{:e}", float);
-        } else {
-            return format!("{}", float);
-        }
-    }
-
-    fn int64_to_string(&self, int:  i64) -> String {
-        if self.display_settings.exponent_displaying_integers {
-            return format!("{:e}", int);
-        } else {
-            return format!("{}", int);
-        }
-    }
-
-    fn int32_to_string(&self, int:  i32) -> String {
-        if self.display_settings.exponent_displaying_integers {
-            return format!("{:e}", int);
-        } else {
-            return format!("{}", int);
-        }
-    }
-
-    fn int16_to_string(&self, int:  i16) -> String {
-        if self.display_settings.exponent_displaying_integers {
-            return format!("{:e}", int);
-        } else {
-            return format!("{}", int);
-        }
-    }
-
-    fn int8_to_string(&self, int:  i8) -> String {
-        if self.display_settings.exponent_displaying_integers {
-            return format!("{:e}", int);
-        } else {
-            return format!("{}", int);
-        }
-    }
-
-
 }
+
+// string
+
+impl fmt::Display for WrapperDisplay<'_, String> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
+// timestamp
+
+impl fmt::Display for WrapperDisplay<'_, CqlTimestamp> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // egzample of formating timestamp 14:30:00.000000000
+        let seconds_from_epoch = self.value.0;
+        let datetime = Utc.timestamp_millis_opt(seconds_from_epoch)
+        .single()
+        .expect("Invalid timestamp");
+    
+        write!(f, "{}.{:06}+0000", 
+            datetime.format("%Y-%m-%d %H:%M:%S"), 
+            datetime.timestamp_subsec_micros())
+    }
+}
+
+// time
+
+impl fmt::Display for WrapperDisplay<'_, CqlTime> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // egzample of formating time 14:30:00.000000000
+        let nanoseconds = self.value.0;
+        let total_seconds = nanoseconds / 1_000_000_000;
+        let hours = total_seconds / 3600;
+        let minutes = (total_seconds % 3600) / 60;
+        let seconds = total_seconds % 60;
+        let nanos = nanoseconds % 1_000_000_000;
+
+        // Create NaiveTime with the calculated components
+        let time = NaiveTime::from_hms_nano_opt(
+            hours as u32, 
+            minutes as u32, 
+            seconds as u32, 
+            nanos as u32
+        ).expect("Invalid time");
+
+        // Format the time with 9 digits of nanoseconds
+    
+        write!(f, "{}", time.format("%H:%M:%S.%9f"))
+    }
+}
+
+
+
 
 impl fmt::Display for RowsDisplayer<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -654,24 +771,27 @@ impl fmt::Display for RowsDisplayer<'_> {
 
         // put rows to the table
         for row_result in row_iter {
+            // println!("row");
             let row_result : Row = match row_result {
                 Ok(row_result) => row_result,
                 Err(_) => return write!(f, "Error"),
             };
             let columns : Vec<std::option::Option<CqlValue>> =  row_result.columns;
-            let mut row_values : Vec<String> = Vec::new();
-            for column in columns {
-                let item_string = self.get_item_string(column);
-                row_values.push(item_string);
+            let mut row_values: Vec<Box<dyn StringConvertible>> = Vec::new();
+            for item in &columns {
+                let wrapper = self.get_item_wrapper(item);
+                row_values.push(wrapper);
             }
             builder.push_record(row_values);
         }
 
         // write table to the formatter
         let mut table = builder.build();
-        table.with((Style::modern_rounded(),
-            Width::wrap(self.terminal_width).priority(Priority::max(true)),
-    ));
+        table.with(Style::psql())
+            // Width::wrap(self.terminal_width).priority(Priority::max(true)),
+            .with(Colorization::columns([Color::FG_GREEN]))
+            .with(Colorization::exact([Color::FG_MAGENTA], tabled::settings::object::Rows::first()));
+        
         write!(f, "{}", table)
     }
 }
@@ -680,14 +800,16 @@ struct RowsDisplayerSettings {
     byte_displaying: ByteDisplaying, // for blobs
     exponent_displaying_floats: bool, // for floats
     exponent_displaying_integers: bool, // for integers 
+    double_precision: usize, // for doubles
 }
 
 impl RowsDisplayerSettings {
-    fn new() -> Self {
+    fn new() -> Self { // TODO write Default trait
         Self {
-            byte_displaying: ByteDisplaying::Ascii,
+            byte_displaying: ByteDisplaying::Hex,
             exponent_displaying_floats: false,
             exponent_displaying_integers: false,
+            double_precision: 5,
         }
     }
 
@@ -704,6 +826,7 @@ impl RowsDisplayerSettings {
     }
 }
 
+#[derive(PartialEq)]
 enum ByteDisplaying {
     Ascii,
     Hex,
@@ -791,6 +914,7 @@ mod tests {
     use itertools::Itertools as _;
     use scylla_cql::frame::response::result::ResultMetadata;
     use scylla_cql::frame::types;
+use std::fmt::Write;
 
     use super::*;
 
