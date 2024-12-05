@@ -977,37 +977,6 @@ fn mk_col_spec_parse_error(
     }
 }
 
-/// Deserializes table spec of a column spec in the borrowed form.
-///
-/// To avoid needless allocations, it is advised to pass `known_table_spec`
-/// in the borrowed form, so that cloning it is cheap.
-fn deser_table_spec_for_col_spec<'frame>(
-    buf: &'_ mut &'frame [u8],
-    global_table_spec_provided: bool,
-    known_table_spec: &'_ mut Option<TableSpec<'frame>>,
-    col_idx: usize,
-) -> StdResult<TableSpec<'frame>, ColumnSpecParseError> {
-    let table_spec = match known_table_spec {
-        // If global table spec was provided, we simply clone it to each column spec.
-        Some(ref known_spec) if global_table_spec_provided => known_spec.clone(),
-
-        // Else, we deserialize the table spec for a column.
-        Some(_) | None => {
-            let table_spec =
-                deser_table_spec(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
-
-            if known_table_spec.is_none() {
-                // Once we have read the first column spec, we save its table spec.
-                *known_table_spec = Some(table_spec.clone());
-            }
-
-            table_spec
-        }
-    };
-
-    Ok(table_spec)
-}
-
 fn deser_col_specs_generic<'frame, 'result>(
     buf: &mut &'frame [u8],
     global_table_spec: Option<TableSpec<'frame>>,
@@ -1015,17 +984,15 @@ fn deser_col_specs_generic<'frame, 'result>(
     make_col_spec: fn(&'frame str, ColumnType<'result>, TableSpec<'frame>) -> ColumnSpec<'result>,
     deser_type: fn(&mut &'frame [u8]) -> StdResult<ColumnType<'result>, CqlTypeParseError>,
 ) -> StdResult<Vec<ColumnSpec<'result>>, ColumnSpecParseError> {
-    let global_table_spec_provided = global_table_spec.is_some();
-    let mut known_table_spec = global_table_spec;
-
     let mut col_specs = Vec::with_capacity(col_count);
     for col_idx in 0..col_count {
-        let table_spec = deser_table_spec_for_col_spec(
-            buf,
-            global_table_spec_provided,
-            &mut known_table_spec,
-            col_idx,
-        )?;
+        let table_spec = match global_table_spec {
+            // If global table spec was provided, we simply clone it to each column spec.
+            Some(ref known_spec) => known_spec.clone(),
+
+            // Else, we deserialize the table spec for a column.
+            None => deser_table_spec(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?,
+        };
 
         let name = types::read_string(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
         let typ = deser_type(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
