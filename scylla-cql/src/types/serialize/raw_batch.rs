@@ -145,19 +145,26 @@ where
 {
     #[inline]
     fn serialize_next(&mut self, writer: &mut RowWriter) -> Option<Result<(), SerializationError>> {
-        let ctx = self.contexts.next()?;
+        // We do `unwrap_or` because we want the iterator length to be the same
+        // as the amount of values. Limiting to length of the amount of
+        // statements (contexts) causes the caller to not be able to correctly
+        // detect that amount of statements and values is different.
+        let ctx = self
+            .contexts
+            .next()
+            .unwrap_or(RowSerializationContext::empty());
         self.batch_values_iterator.serialize_next(&ctx, writer)
     }
 
     fn is_empty_next(&mut self) -> Option<bool> {
-        self.contexts.next()?;
+        let _ = self.contexts.next();
         let ret = self.batch_values_iterator.is_empty_next()?;
         Some(ret)
     }
 
     #[inline]
     fn skip_next(&mut self) -> Option<()> {
-        self.contexts.next()?;
+        let _ = self.contexts.next();
         self.batch_values_iterator.skip_next()?;
         Some(())
     }
