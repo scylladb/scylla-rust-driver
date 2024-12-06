@@ -1,3 +1,6 @@
+// TODO: remove this once deprecated items are deleted.
+#![allow(deprecated)]
+
 use crate::frame::value::{CqlTimeuuid, CqlVarint};
 use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
 use crate::types::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};

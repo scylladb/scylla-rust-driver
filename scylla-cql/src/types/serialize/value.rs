@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
+#[allow(deprecated)]
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
     MaybeUnset, Unset, Value,
@@ -926,6 +927,10 @@ fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
 /// }
 /// impl_serialize_value_via_value!(WithGenerics<T, U: Clone>);
 /// ```
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 #[macro_export]
 macro_rules! impl_serialize_value_via_value {
     ($t:ident$(<$($targ:tt $(: $tbound:tt)?),*>)?) => {
@@ -952,8 +957,13 @@ macro_rules! impl_serialize_value_via_value {
 ///
 /// See the [`impl_serialize_value_via_value`] macro on information about
 /// the properties of the [`SerializeValue`] implementation.
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 pub struct ValueAdapter<T>(pub T);
 
+#[allow(deprecated)]
 impl<T> SerializeValue for ValueAdapter<T>
 where
     T: Value,
@@ -981,6 +991,11 @@ where
 ///
 /// See [`impl_serialize_value_via_value`] which generates a boilerplate
 /// [`SerializeValue`] implementation that uses this function.
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
+#[allow(deprecated)]
 pub fn serialize_legacy_value<'b, T: Value>(
     v: &T,
     writer: CellWriter<'b>,
@@ -1465,6 +1480,11 @@ impl Display for UdtSerializationErrorKind {
 
 /// Describes a failure to translate the output of the [`Value`] legacy trait
 /// into an output of the [`SerializeValue`] trait.
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
+#[allow(deprecated)]
 #[derive(Error, Debug)]
 pub enum ValueToSerializeValueAdapterError {
     /// The value is too bit to be serialized as it exceeds the maximum 2GB size limit.
@@ -1598,7 +1618,9 @@ pub(crate) mod tests {
     use std::collections::BTreeMap;
 
     use crate::frame::response::result::{ColumnType, CqlValue};
+    #[allow(deprecated)]
     use crate::frame::value::{Counter, MaybeUnset, Unset, Value, ValueTooBig};
+    #[allow(deprecated)]
     use crate::types::serialize::value::{
         BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
         BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind,
@@ -1612,6 +1634,7 @@ pub(crate) mod tests {
 
     use super::{SerializeValue, UdtSerializationErrorKind, UdtTypeCheckErrorKind};
 
+    #[allow(deprecated)]
     fn check_compat<V: Value + SerializeValue>(v: V) {
         let mut legacy_data = Vec::new();
         <V as Value>::serialize(&v, &mut legacy_data).unwrap();
@@ -1662,6 +1685,7 @@ pub(crate) mod tests {
         do_serialize_result(t, typ).unwrap_err()
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_legacy_wrapper() {
         struct Foo;

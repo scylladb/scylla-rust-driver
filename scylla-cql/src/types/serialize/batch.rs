@@ -4,6 +4,7 @@
 // Note: When editing above doc-comment edit the corresponding comment on
 // re-export module in scylla crate too.
 
+#[allow(deprecated)]
 use crate::frame::value::{LegacyBatchValues, LegacyBatchValuesIterator};
 
 use super::row::{RowSerializationContext, SerializeRow};
@@ -332,8 +333,13 @@ impl<T: BatchValues + ?Sized> BatchValues for &T {
 /// Note that the [`LegacyBatchValues`] trait is deprecated and will be
 /// removed in the future, and you should prefer using [`BatchValues`] as it is
 /// more type-safe.
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 pub struct LegacyBatchValuesAdapter<T>(pub T);
 
+#[allow(deprecated)]
 impl<T> BatchValues for LegacyBatchValuesAdapter<T>
 where
     T: LegacyBatchValues,
@@ -351,8 +357,13 @@ where
 
 /// A newtype wrapper which adjusts an existing types that implement
 /// [`LegacyBatchValuesIterator`] to the current [`BatchValuesIterator`] API.
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 pub struct LegacyBatchValuesIteratorAdapter<T>(pub T);
 
+#[allow(deprecated)]
 impl<'r, T> BatchValuesIterator<'r> for LegacyBatchValuesIteratorAdapter<T>
 where
     T: LegacyBatchValuesIterator<'r>,

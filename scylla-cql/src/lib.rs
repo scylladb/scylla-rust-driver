@@ -16,7 +16,9 @@ pub mod macros {
     #[allow(deprecated)]
     pub use crate::impl_from_cql_value_from_method;
 
+    #[allow(deprecated)]
     pub use crate::impl_serialize_row_via_value_list;
+    #[allow(deprecated)]
     pub use crate::impl_serialize_value_via_value;
 }
 
@@ -35,6 +37,7 @@ pub mod _macro_internal {
         FromCqlVal, FromCqlValError, FromRow, FromRowError,
     };
     pub use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row};
+    #[allow(deprecated)]
     pub use crate::frame::value::{
         LegacySerializedValues, SerializedResult, Value, ValueList, ValueTooBig,
     };

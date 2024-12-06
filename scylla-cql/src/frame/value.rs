@@ -14,12 +14,17 @@ use super::types::RawValue;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[error("Value too big to be sent in a request - max 2GiB allowed")]
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 pub struct ValueTooBig;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[error("Value is too large to fit in the CQL type")]
 pub struct ValueOverflow;
 
+#[allow(deprecated)]
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SerializeValuesError {
     #[error("Too many values to add, max 65,535 values can be sent in a request")]
@@ -664,7 +669,13 @@ pub struct CqlDuration {
     pub nanoseconds: i64,
 }
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 mod legacy {
+    #![allow(deprecated)]
+
     use super::*;
 
     /// Every value being sent in a query must implement this trait
@@ -1872,6 +1883,7 @@ mod legacy {
         }
     }
 }
+#[allow(deprecated)]
 pub use legacy::{
     LegacyBatchValues, LegacyBatchValuesFirstSerialized, LegacyBatchValuesFromIter,
     LegacyBatchValuesIterator, LegacyBatchValuesIteratorFromIterator, LegacySerializedValues,

@@ -30,6 +30,11 @@ pub use scylla_cql::macros::FromUserType;
 ///
 /// ---
 ///
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
+#[allow(deprecated)]
 pub use scylla_cql::macros::IntoUserType;
 
 /// Derive macro for the [`SerializeValue`](crate::serialize::value::SerializeValue) trait
@@ -486,6 +491,10 @@ pub use scylla_macros::DeserializeRow;
 ///
 /// ---
 ///
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 pub use scylla_cql::macros::ValueList;
 
 #[deprecated(
@@ -495,7 +504,9 @@ pub use scylla_cql::macros::ValueList;
 #[allow(deprecated)]
 pub use scylla_cql::macros::impl_from_cql_value_from_method;
 
+#[allow(deprecated)]
 pub use scylla_cql::macros::impl_serialize_row_via_value_list;
+#[allow(deprecated)]
 pub use scylla_cql::macros::impl_serialize_value_via_value;
 
 // Reexports for derive(IntoUserType)
