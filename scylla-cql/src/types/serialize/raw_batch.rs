@@ -52,11 +52,7 @@ pub trait RawBatchValuesIterator<'a> {
     where
         Self: Sized,
     {
-        let mut count = 0;
-        while self.skip_next().is_some() {
-            count += 1;
-        }
-        count
+        std::iter::from_fn(|| self.skip_next()).count()
     }
 }
 
