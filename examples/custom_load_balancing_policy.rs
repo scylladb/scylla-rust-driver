@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rand::thread_rng;
 use rand::Rng;
-use scylla::transport::NodeRef;
+use scylla::cluster::NodeRef;
 use scylla::{
     cluster::ClusterData,
     load_balancing::{LoadBalancingPolicy, RoutingInfo},

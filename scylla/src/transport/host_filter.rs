@@ -55,11 +55,11 @@ impl AllowListHostFilter {
 impl HostFilter for AllowListHostFilter {
     fn accept(&self, peer: &Peer) -> bool {
         match peer.address {
-            super::NodeAddr::Translatable(addr) => self.allowed.contains(&addr),
+            crate::cluster::NodeAddr::Translatable(addr) => self.allowed.contains(&addr),
             // If the address is Untranslatable, then the node either was originally
             // an ContactPoint, or a Translatable node for which the host filter
             // returned true.
-            super::NodeAddr::Untranslatable(_) => true,
+            crate::cluster::NodeAddr::Untranslatable(_) => true,
         }
     }
 }

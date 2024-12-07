@@ -10,10 +10,11 @@ use crate::transport::errors::{
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
 #[cfg(feature = "cloud")]
-use crate::transport::node::resolve_hostname;
+use crate::cluster::node::resolve_hostname;
+
 #[cfg(feature = "cloud")]
-use crate::transport::node::ResolvedContactPoint;
-use crate::transport::NodeAddr;
+use crate::cluster::node::ResolvedContactPoint;
+use crate::cluster::NodeAddr;
 
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
@@ -1197,9 +1198,9 @@ struct OpenedConnectionEvent {
 mod tests {
     use super::ConnectionConfig;
     use crate::cluster::metadata::UntranslatedEndpoint;
+    use crate::cluster::node::ResolvedContactPoint;
     use crate::routing::{ShardCount, Sharder};
     use crate::test_utils::setup_tracing;
-    use crate::transport::node::ResolvedContactPoint;
     use std::net::{SocketAddr, ToSocketAddrs};
 
     // Open many connections to a node

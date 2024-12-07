@@ -5,10 +5,10 @@ use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name
 use assert_matches::assert_matches;
 use scylla::batch::BatchStatement;
 use scylla::batch::{Batch, BatchType};
+use scylla::cluster::NodeRef;
 use scylla::query::Query;
 use scylla::routing::Shard;
 use scylla::statement::SerialConsistency;
-use scylla::transport::NodeRef;
 use scylla::{
     cluster::ClusterData,
     load_balancing::{LoadBalancingPolicy, RoutingInfo},

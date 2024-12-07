@@ -9,14 +9,14 @@ use futures::future::try_join_all;
 use futures::TryStreamExt;
 use itertools::Itertools;
 use scylla::cluster::ClusterData;
+use scylla::cluster::Node;
+use scylla::cluster::NodeRef;
 use scylla::load_balancing::FallbackPlan;
 use scylla::load_balancing::LoadBalancingPolicy;
 use scylla::load_balancing::RoutingInfo;
 use scylla::prepared_statement::PreparedStatement;
 use scylla::query::Query;
 use scylla::serialize::row::SerializeRow;
-use scylla::transport::Node;
-use scylla::transport::NodeRef;
 use scylla::{ExecutionProfile, QueryResult, Session};
 
 use scylla::transport::errors::QueryError;

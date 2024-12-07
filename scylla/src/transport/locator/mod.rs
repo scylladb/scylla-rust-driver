@@ -12,8 +12,8 @@ pub use token_ring::TokenRing;
 
 use self::tablets::TabletsInfo;
 
-use super::{Node, NodeRef};
 use crate::cluster::metadata::Strategy;
+use crate::cluster::{Node, NodeRef};
 use crate::routing::{Shard, Token};
 use itertools::Itertools;
 use precomputed_replicas::PrecomputedReplicas;
