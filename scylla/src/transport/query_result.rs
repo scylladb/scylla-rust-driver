@@ -1,7 +1,8 @@
 use std::fmt::Debug;
 use std::fmt;
-use chrono::{NaiveTime, TimeZone, Utc};
-use scylla_cql::frame::value::{CqlTime, CqlTimestamp};
+use chrono::{Duration, NaiveDate, NaiveTime, TimeZone, Utc};
+use scylla_cql::frame::value::{CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
+use tabled::settings::Alignment;
 use tabled::{builder::Builder, settings::Style, settings::themes::Colorization, settings::Color};
 
 use thiserror::Error;
@@ -471,7 +472,7 @@ impl<'a> RowsDisplayer<'a>
                 Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::BigInt(value)) => {
-                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Blob(value)) => {
                 Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
@@ -504,7 +505,7 @@ impl<'a> RowsDisplayer<'a>
                 Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Inet(value)) => {
-                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::List(value)) => { // TODO set formating for list
                 Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
@@ -522,16 +523,16 @@ impl<'a> RowsDisplayer<'a>
                 Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::Date(value)) => { // TODO set formating for date
-                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Duration(value)) => {
-                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Empty) => {
                 Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
             },
             Some(CqlValue::SmallInt(value)) => {
-                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::TinyInt(value)) => {
                 Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
@@ -543,7 +544,7 @@ impl<'a> RowsDisplayer<'a>
                 Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Timeuuid(value)) => {
-                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             None => {
                 Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
@@ -679,6 +680,7 @@ impl fmt::Display for WrapperDisplay<'_, f64> {
     }
 }
 
+
 // blob
 
 impl fmt::Display for WrapperDisplay<'_, Vec<u8>> {
@@ -754,6 +756,114 @@ impl fmt::Display for WrapperDisplay<'_, CqlTime> {
     }
 }
 
+// timeuuid
+
+impl fmt::Display for WrapperDisplay<'_, CqlTimeuuid> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let uuid = self.value.as_bytes();
+        
+        write!(f, "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        uuid[0], uuid[1], uuid[2], uuid[3],
+        uuid[4], uuid[5],
+        uuid[6], uuid[7],
+        uuid[8], uuid[9],
+        uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15])
+    }
+}
+
+// duration
+
+impl fmt::Display for WrapperDisplay<'_, CqlDuration> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let months = self.value.months;
+        let days = self.value.days;
+        let nanoseconds = self.value.nanoseconds;
+
+        let years = months / 12;
+        let months = months % 12;
+        let weeks = days / 7;
+        let days = days % 7;
+        let hours = nanoseconds / 3_600_000_000_000;
+        let minutes = (nanoseconds % 3_600_000_000_000) / 60_000_000_000;
+        let seconds = (nanoseconds % 60_000_000_000) / 1_000_000_000;
+        let nanoseconds = nanoseconds % 1_000_000_000;
+
+        let mut result = String::new();
+        if years != 0 {
+            result.push_str(&format!("{}y", years));
+        }
+
+        if months != 0 {
+            result.push_str(&format!("{}mo", months));
+        }
+
+        if weeks != 0 {
+            result.push_str(&format!("{}w", weeks));
+        }
+
+        if days != 0 {
+            result.push_str(&format!("{}d", days));
+        }
+
+        if hours != 0 {
+            result.push_str(&format!("{}h", hours));
+        }
+
+        if minutes != 0 {
+            result.push_str(&format!("{}m", minutes));
+        }
+
+        if seconds != 0 {
+            result.push_str(&format!("{}s", seconds));
+        }
+
+        if nanoseconds != 0 {
+            result.push_str(&format!("{}ns", nanoseconds));
+        }
+
+        // Format the time with 9 digits of nanoseconds
+        write!(f, "{}", result)
+    }
+}   
+
+
+// date
+
+impl fmt::Display for WrapperDisplay<'_, CqlDate> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // egzample of formating date 2021-12-31
+        let magic_constant = 2055453495; // it is number of days from -5877641-06-23 to -250000-01-01
+        // around -250000-01-01  is the limit of naive date
+
+        let days = self.value.0 - magic_constant;
+        println!("days: {}", days);
+        let base_date = NaiveDate::from_ymd_opt(-250000, 1, 1).unwrap();
+        
+        // Add the number of days
+        println!("days as i64: {}", days as i64);
+        let target_date = base_date + Duration::days(days as i64);
+        
+        // Format the date    
+        write!(f, "{}", target_date.format("%Y-%m-%d"))
+    }
+}
+
+// inet 
+
+impl fmt::Display for WrapperDisplay<'_, std::net::IpAddr> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ip = self.value;
+        match ip {
+            std::net::IpAddr::V4(ipv4) => {
+                write!(f, "{}", ipv4)
+            },
+            std::net::IpAddr::V6(ipv6) => {
+                write!(f, "{}", ipv6)
+            },
+        }
+    }
+}
+
 
 
 
@@ -790,7 +900,8 @@ impl fmt::Display for RowsDisplayer<'_> {
         table.with(Style::psql())
             // Width::wrap(self.terminal_width).priority(Priority::max(true)),
             .with(Colorization::columns([Color::FG_GREEN]))
-            .with(Colorization::exact([Color::FG_MAGENTA], tabled::settings::object::Rows::first()));
+            .with(Colorization::exact([Color::FG_MAGENTA], tabled::settings::object::Rows::first()))
+            .with(Alignment::right());
         
         write!(f, "{}", table)
     }
