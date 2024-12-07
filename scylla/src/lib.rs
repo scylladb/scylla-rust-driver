@@ -81,7 +81,7 @@
 //!     .query_unpaged("SELECT a, b FROM ks.tab", &[])
 //!     .await?
 //!     .into_rows_result()?;
-//!     
+//!
 //! for row in query_rows.rows()? {
 //!     // Parse row as int and text \
 //!     let (int_val, text_val): (i32, &str) = row?;
@@ -152,7 +152,10 @@ pub mod serialize {
     /// Contains the [SerializeRow][row::SerializeRow] trait and its implementations.
     pub mod row {
         // Main types
-        pub use scylla_cql::types::serialize::row::{RowSerializationContext, SerializeRow};
+        pub use scylla_cql::types::serialize::row::{
+            FieldSerializationStatus, PartialSerializeRowByName, RowSerializationContext,
+            SerializeRow, SerializeRowByName,
+        };
 
         // Errors
         pub use scylla_cql::types::serialize::row::{
