@@ -1,4 +1,5 @@
 mod authenticate;
+mod batch;
 mod consistency;
 mod cql_collections;
 mod cql_types;
