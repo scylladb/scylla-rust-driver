@@ -10,8 +10,8 @@ use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::cluster::Node;
 use crate::routing::{Shard, Token};
-use crate::transport::Node;
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
@@ -614,13 +614,13 @@ mod tests {
     use tracing::debug;
     use uuid::Uuid;
 
+    use crate::cluster::Node;
     use crate::routing::Token;
     use crate::test_utils::setup_tracing;
     use crate::transport::locator::tablets::{
         RawTablet, RawTabletReplicas, TabletParsingError, CUSTOM_PAYLOAD_TABLETS_V1_KEY,
         RAW_TABLETS_CQL_TYPE,
     };
-    use crate::transport::Node;
 
     use super::{TableTablets, Tablet, TabletReplicas, TabletsInfo};
 

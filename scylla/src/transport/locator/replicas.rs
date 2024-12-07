@@ -1,6 +1,6 @@
 use itertools::Either;
 
-use crate::transport::{Node, NodeRef};
+use crate::cluster::{Node, NodeRef};
 use std::{ops::Index, sync::Arc};
 
 /// Container holding replicas, enabling unified use of both borrowed and owned `Node` sequences.

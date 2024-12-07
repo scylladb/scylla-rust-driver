@@ -5,9 +5,10 @@ use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterData;
 use crate::{
     cluster::metadata::Strategy,
+    cluster::node::Node,
     routing::{Shard, Token},
     transport::errors::QueryError,
-    transport::{locator::ReplicaSet, node::Node},
+    transport::locator::ReplicaSet,
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -2551,10 +2552,10 @@ mod latency_awareness {
     use uuid::Uuid;
 
     use crate::{
+        cluster::node::Node,
         load_balancing::NodeRef,
         routing::Shard,
         transport::errors::{DbError, QueryError},
-        transport::node::Node,
     };
     use std::{
         collections::HashMap,
@@ -3129,6 +3130,7 @@ mod latency_awareness {
 
         use crate::{
             cluster::ClusterData,
+            cluster::NodeAddr,
             load_balancing::default::NodeLocationPreference,
             routing::Shard,
             test_utils::setup_tracing,
@@ -3140,10 +3142,7 @@ mod latency_awareness {
                 RoutingInfo,
             },
             routing::Token,
-            transport::{
-                locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
-                NodeAddr,
-            },
+            transport::locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
         };
         use tokio::time::Instant;
 

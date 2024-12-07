@@ -1,3 +1,4 @@
+use crate::cluster::node::Node;
 use crate::connection::{Connection, PoolConfig, VerifiedKeyspaceName};
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
@@ -7,7 +8,6 @@ use crate::session::TABLET_CHANNEL_SIZE;
 use crate::transport::errors::{BadQuery, NewSessionError, QueryError};
 use crate::transport::host_filter::HostFilter;
 use crate::transport::locator::ReplicaLocator;
-use crate::transport::node::Node;
 use crate::transport::partitioner::PartitionerName;
 
 use arc_swap::ArcSwap;
@@ -24,8 +24,8 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::cluster::metadata::{Keyspace, Metadata, MetadataReader, Strategy};
+use crate::cluster::node::{InternalKnownNode, NodeAddr, NodeRef};
 use crate::transport::locator::tablets::{RawTablet, Tablet, TabletsInfo};
-use crate::transport::node::{InternalKnownNode, NodeAddr, NodeRef};
 use crate::transport::partitioner::calculate_token_for_partition_key;
 
 /// Cluster manages up to date information and connections to database nodes.

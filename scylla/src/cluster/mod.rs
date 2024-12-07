@@ -7,4 +7,7 @@ mod cluster;
 pub use cluster::ClusterData;
 pub(crate) use cluster::{use_keyspace_result, Cluster, ClusterNeatDebug};
 
+pub(crate) mod node;
+pub use node::{KnownNode, Node, NodeAddr, NodeRef};
+
 pub mod metadata;

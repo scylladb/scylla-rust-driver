@@ -1,3 +1,4 @@
+use crate::cluster::node::resolve_contact_points;
 use crate::connection::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::frame::response::event::Event;
@@ -6,7 +7,6 @@ use crate::statement::query::Query;
 use crate::transport::errors::{DbError, NewSessionError, QueryError};
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::QueryPager;
-use crate::transport::node::resolve_contact_points;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
@@ -30,11 +30,11 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
+use crate::cluster::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 use crate::transport::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
     ProtocolError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
 };
-use crate::transport::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
