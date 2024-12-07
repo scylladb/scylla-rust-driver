@@ -2853,6 +2853,7 @@ mod latency_awareness {
                 | QueryError::DbError(DbError::RateLimitReached { .. }, _) => false,
 
                 // "slow" errors, i.e. ones that are returned after considerable time of query being run
+                #[allow(deprecated)]
                 QueryError::DbError(_, _)
                 | QueryError::CqlResultParseError(_)
                 | QueryError::CqlErrorParseError(_)

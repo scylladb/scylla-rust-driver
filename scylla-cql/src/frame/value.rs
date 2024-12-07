@@ -1,3 +1,7 @@
+// I did not manage to silence deprecation warnings without using this module-wide.
+// TODO: remove this once deprecated items are no longer used here.
+#![allow(deprecated)]
+
 use crate::frame::types;
 use bytes::BufMut;
 use std::borrow::Cow;
@@ -14,12 +18,21 @@ use super::types::RawValue;
 
 /// Every value being sent in a query must implement this trait
 /// serialize() should write the Value as [bytes] to the provided buffer
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
+#[allow(deprecated)]
 pub trait Value {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig>;
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[error("Value too big to be sent in a request - max 2GiB allowed")]
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 pub struct ValueTooBig;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -650,6 +663,10 @@ impl TryInto<time_03::Time> for CqlTime {
     }
 }
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 /// Keeps a buffer with serialized Values
 /// Allows adding new Values and iterating over serialized ones
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -667,6 +684,7 @@ pub struct CqlDuration {
     pub nanoseconds: i64,
 }
 
+#[allow(deprecated)]
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SerializeValuesError {
     #[error("Too many values to add, max 65,535 values can be sent in a request")]
@@ -679,10 +697,20 @@ pub enum SerializeValuesError {
     ParseError,
 }
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
+#[allow(deprecated)]
 pub type SerializedResult<'a> = Result<Cow<'a, LegacySerializedValues>, SerializeValuesError>;
 
 /// Represents list of values to be sent in a query
 /// gets serialized and but into request
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
+#[allow(deprecated)]
 pub trait ValueList {
     /// Provides a view of ValueList as LegacySerializedValues
     /// returns `Cow<LegacySerializedValues>` to make impl ValueList for LegacySerializedValues efficient
@@ -696,14 +724,21 @@ pub trait ValueList {
     }
 }
 
+#[allow(deprecated)]
 impl Default for LegacySerializedValues {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[allow(deprecated)]
 impl LegacySerializedValues {
     /// Creates empty value list
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub const fn new() -> Self {
         LegacySerializedValues {
             serialized_values: Vec::new(),
@@ -712,6 +747,11 @@ impl LegacySerializedValues {
         }
     }
 
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn with_capacity(capacity: usize) -> Self {
         LegacySerializedValues {
             serialized_values: Vec::with_capacity(capacity),
@@ -720,14 +760,29 @@ impl LegacySerializedValues {
         }
     }
 
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn has_names(&self) -> bool {
         self.contains_names
     }
 
     /// A const empty instance, useful for taking references
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub const EMPTY: &'static LegacySerializedValues = &LegacySerializedValues::new();
 
     /// Serializes value and appends it to the list
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn add_value(&mut self, val: &impl Value) -> Result<(), SerializeValuesError> {
         if self.contains_names {
             return Err(SerializeValuesError::MixingNamedAndNotNamedValues);
@@ -747,6 +802,11 @@ impl LegacySerializedValues {
         Ok(())
     }
 
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn add_named_value(
         &mut self,
         name: &str,
@@ -774,6 +834,11 @@ impl LegacySerializedValues {
         Ok(())
     }
 
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn iter(&self) -> impl Iterator<Item = RawValue> {
         LegacySerializedValuesIterator {
             serialized_values: &self.serialized_values,
@@ -781,23 +846,48 @@ impl LegacySerializedValues {
         }
     }
 
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn write_to_request(&self, buf: &mut impl BufMut) {
         buf.put_u16(self.values_num);
         buf.put(&self.serialized_values[..]);
     }
 
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn is_empty(&self) -> bool {
         self.values_num == 0
     }
 
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn len(&self) -> u16 {
         self.values_num
     }
 
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn size(&self) -> usize {
         self.serialized_values.len()
     }
 
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn iter_name_value_pairs(&self) -> impl Iterator<Item = (Option<&str>, RawValue)> {
         let mut buf = &self.serialized_values[..];
         (0..self.values_num).map(move |_| {
@@ -812,12 +902,17 @@ impl LegacySerializedValues {
     }
 }
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 #[derive(Clone, Copy)]
 pub struct LegacySerializedValuesIterator<'a> {
     serialized_values: &'a [u8],
     contains_names: bool,
 }
 
+#[allow(deprecated)]
 impl<'a> Iterator for LegacySerializedValuesIterator<'a> {
     type Item = RawValue<'a>;
 
@@ -835,6 +930,11 @@ impl<'a> Iterator for LegacySerializedValuesIterator<'a> {
     }
 }
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
+#[allow(deprecated)]
 /// Represents List of ValueList for Batch statement
 pub trait LegacyBatchValues {
     /// For some unknown reason, this type, when not resolved to a concrete type for a given async function,
@@ -855,13 +955,41 @@ pub trait LegacyBatchValues {
 /// It's just essentially making methods from `ValueList` accessible instead of being an actual iterator because of
 /// compiler limitations that would otherwise be very complex to overcome.
 /// (specifically, types being different would require yielding enums for tuple impls)
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
+#[allow(deprecated)]
 pub trait LegacyBatchValuesIterator<'a> {
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     fn next_serialized(&mut self) -> Option<SerializedResult<'a>>;
+
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     fn write_next_to_request(
         &mut self,
         buf: &mut impl BufMut,
     ) -> Option<Result<(), SerializeValuesError>>;
+
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     fn skip_next(&mut self) -> Option<()>;
+
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     fn count(mut self) -> usize
     where
         Self: Sized,
@@ -878,10 +1006,16 @@ pub trait LegacyBatchValuesIterator<'a> {
 ///
 /// Essentially used internally by this lib to provide implementers of `BatchValuesIterator` for cases
 /// that always serialize the same concrete `ValueList` type
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
+#[allow(deprecated)]
 pub struct LegacyBatchValuesIteratorFromIterator<IT: Iterator> {
     it: IT,
 }
 
+#[allow(deprecated)]
 impl<'r, 'a: 'r, IT, VL> LegacyBatchValuesIterator<'r> for LegacyBatchValuesIteratorFromIterator<IT>
 where
     IT: Iterator<Item = &'a VL>,
@@ -901,6 +1035,7 @@ where
     }
 }
 
+#[allow(deprecated)]
 impl<IT> From<IT> for LegacyBatchValuesIteratorFromIterator<IT>
 where
     IT: Iterator,
@@ -1629,6 +1764,10 @@ impl ValueList for Cow<'_, LegacySerializedValues> {
 /// The underlying iterator will always be cloned at least once, once to compute the length if it can't be known
 /// in advance, and be re-cloned at every retry.
 /// It is consequently expected that the provided iterator is cheap to clone (e.g. `slice.iter().map(...)`).
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 pub struct LegacyBatchValuesFromIter<'a, IT> {
     it: IT,
     _spooky: std::marker::PhantomData<&'a ()>,
@@ -1705,6 +1844,10 @@ impl<T0: ValueList> LegacyBatchValues for (T0,) {
     }
 }
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
 pub struct TupleValuesIter<'a, T> {
     tuple: &'a T,
     idx: usize,
@@ -1803,6 +1946,11 @@ impl<T: LegacyBatchValues + ?Sized> LegacyBatchValues for &T {
 /// Once that is done, we can use that instead of re-serializing.
 ///
 /// This struct implements both `BatchValues` and `BatchValuesIterator` for that purpose
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy serialization API is not type-safe and is going to be removed soon"
+)]
+#[allow(deprecated)]
 pub struct LegacyBatchValuesFirstSerialized<'f, T> {
     first: Option<&'f LegacySerializedValues>,
     rest: T,
