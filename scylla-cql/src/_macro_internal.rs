@@ -119,6 +119,30 @@ pub mod ser {
 
         /// Whether a field used a column to finish its serialization or not
         ///
+        /// Used when serializing by name, as a single column may not have finished a rust field in
+        /// the case of a flattened struct. Consider a flattened struct `A`, which contains multiple
+        /// fields, that is a field `a` of another struct `B`. Then, when serializing field `a`,
+        /// multiple columns are needed to consume the whole `a`.
+        ///
+        /// ```rust
+        /// # use scylla_cql::SerializeRow;
+        /// #
+        /// #[derive(SerializeRow)]
+        /// # #[scylla(crate = scylla_cql)]
+        /// struct A { // When serializing `A` as a field of `B`...
+        ///   f1: i32, // ...serialization of `f1` will return `FieldStatus::NotDone`...
+        ///   f2: f64, // ...and serialization of `f2` - `FieldStatus::Done`.
+        /// }
+        ///
+        /// #[derive(SerializeRow)]
+        /// # #[scylla(crate = scylla_cql)]
+        /// struct B {
+        ///   #[scylla(flatten)]
+        ///   a: A,
+        ///   i: i32,
+        /// }
+        /// ```
+        ///
         /// For now this enum is an implementation detail of `#[derive(SerializeRow)]` when
         /// serializing by name
         #[derive(Debug)]

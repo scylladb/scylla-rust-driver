@@ -1015,3 +1015,56 @@ fn ref_value_list() {
         ]
     );
 }
+
+#[test]
+fn test_row_serialization_nested_structs() {
+    #[derive(SerializeRow, Debug)]
+    #[scylla(crate = crate)]
+    struct InnerColumnsOne {
+        x: i32,
+        y: f64,
+    }
+
+    #[derive(SerializeRow, Debug)]
+    #[scylla(crate = crate)]
+    struct InnerColumnsTwo {
+        z: bool,
+    }
+
+    #[derive(SerializeRow, Debug)]
+    #[scylla(crate = crate)]
+    struct OuterColumns {
+        #[scylla(flatten)]
+        inner_one: InnerColumnsOne,
+        a: String,
+        #[scylla(flatten)]
+        inner_two: InnerColumnsTwo,
+    }
+
+    let spec = [
+        col("a", ColumnType::Native(NativeType::Text)),
+        col("x", ColumnType::Native(NativeType::Int)),
+        col("z", ColumnType::Native(NativeType::Boolean)),
+        col("y", ColumnType::Native(NativeType::Double)),
+    ];
+
+    let value = OuterColumns {
+        inner_one: InnerColumnsOne { x: 5, y: 1.0 },
+        a: "something".to_owned(),
+        inner_two: InnerColumnsTwo { z: true },
+    };
+
+    let reference = do_serialize(
+        (
+            &value.a,
+            &value.inner_one.x,
+            &value.inner_two.z,
+            &value.inner_one.y,
+        ),
+        &spec,
+    );
+
+    let row = do_serialize(value, &spec);
+
+    assert_eq!(reference, row);
+}
