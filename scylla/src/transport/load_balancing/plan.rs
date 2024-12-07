@@ -33,12 +33,12 @@ enum PlanState<'a> {
 ///
 /// ```
 /// # use std::sync::Arc;
+/// # use scylla::cluster::NodeRef;
+/// # use scylla::cluster::ClusterState;
+/// # use scylla::load_balancing::FallbackPlan;
 /// # use scylla::load_balancing::LoadBalancingPolicy;
 /// # use scylla::load_balancing::RoutingInfo;
-/// # use scylla::cluster::ClusterState;
-/// # use scylla::transport::NodeRef;
 /// # use scylla::routing::Shard;
-/// # use scylla::load_balancing::FallbackPlan;
 ///
 /// #[derive(Debug)]
 /// struct NonRandomLBP {
@@ -167,11 +167,9 @@ mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
     use crate::{
+        cluster::{Node, NodeAddr},
         test_utils::setup_tracing,
-        transport::{
-            locator::test::{create_locator, mock_metadata_for_token_aware_tests},
-            Node, NodeAddr,
-        },
+        transport::locator::test::{create_locator, mock_metadata_for_token_aware_tests},
     };
 
     use super::*;

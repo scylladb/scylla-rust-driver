@@ -1073,9 +1073,9 @@ mod tests {
     use scylla_cql::Consistency;
 
     use super::{Compression, SessionBuilder};
+    use crate::cluster::node::KnownNode;
     use crate::test_utils::setup_tracing;
     use crate::transport::execution_profile::{defaults, ExecutionProfile};
-    use crate::transport::node::KnownNode;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
 

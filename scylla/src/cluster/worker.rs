@@ -1,11 +1,9 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
-use crate::cluster::metadata::MetadataReader;
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::network::{PoolConfig, VerifiedKeyspaceName};
 use crate::transport::errors::{NewSessionError, QueryError};
 use crate::transport::host_filter::HostFilter;
 use crate::transport::locator::tablets::{RawTablet, TabletsInfo};
-use crate::transport::node::{InternalKnownNode, NodeAddr};
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;
@@ -17,6 +15,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 
+use super::metadata::MetadataReader;
+use super::node::{InternalKnownNode, NodeAddr};
 use super::state::{ClusterState, ClusterStateNeatDebug};
 
 /// Cluster manages up to date information and connections to database nodes.

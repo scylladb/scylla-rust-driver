@@ -4,9 +4,9 @@ use rand::Rng;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
+use scylla::cluster::NodeRef;
 use scylla::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::routing::Shard;
-use scylla::transport::NodeRef;
 use scylla::ExecutionProfile;
 use std::{env, sync::Arc};
 

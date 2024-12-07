@@ -3,8 +3,9 @@ use crate::prepared_statement::TokenCalculationError;
 use crate::routing::{Shard, Token};
 use crate::transport::errors::{BadQuery, QueryError};
 use crate::transport::host_filter::HostFilter;
+use crate::transport::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use crate::transport::locator::ReplicaLocator;
-use crate::transport::node::Node;
+use crate::transport::partitioner::calculate_token_for_partition_key;
 use crate::transport::partitioner::PartitionerName;
 
 use itertools::Itertools;
@@ -15,10 +16,8 @@ use std::sync::Arc;
 use tracing::debug;
 use uuid::Uuid;
 
-use crate::cluster::metadata::{Keyspace, Metadata, Strategy};
-use crate::transport::locator::tablets::{RawTablet, Tablet, TabletsInfo};
-use crate::transport::node::NodeRef;
-use crate::transport::partitioner::calculate_token_for_partition_key;
+use super::metadata::{Keyspace, Metadata, Strategy};
+use super::node::{Node, NodeRef};
 
 #[derive(Clone)]
 pub struct ClusterState {

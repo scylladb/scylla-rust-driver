@@ -30,7 +30,7 @@ use crate::client::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
 
-use crate::cluster::ClusterState;
+use crate::cluster::{ClusterState, NodeRef};
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row},
@@ -42,7 +42,6 @@ use crate::transport::errors::ProtocolError;
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
-use crate::transport::NodeRef;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 

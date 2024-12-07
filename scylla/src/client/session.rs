@@ -8,6 +8,9 @@ use crate::batch::{Batch, BatchStatement};
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 use crate::cluster::metadata::UntranslatedPeer;
+#[cfg(feature = "cloud")]
+use crate::cluster::node::CloudEndpoint;
+use crate::cluster::node::{InternalKnownNode, KnownNode, Node, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::frame::response::result;
 use crate::history;
@@ -37,14 +40,10 @@ use crate::transport::iterator::QueryPager;
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
-#[cfg(feature = "cloud")]
-use crate::transport::node::CloudEndpoint;
-use crate::transport::node::{InternalKnownNode, KnownNode, Node};
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
-use crate::transport::NodeRef;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
@@ -1016,7 +1015,7 @@ where
     /// # use std::error::Error;
     /// # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
     /// use scylla::client::session::{Session, SessionConfig};
-    /// use scylla::transport::KnownNode;
+    /// use scylla::cluster::KnownNode;
     ///
     /// let mut config = SessionConfig::new();
     /// config.known_nodes.push(KnownNode::Hostname("127.0.0.1:9042".to_string()));
