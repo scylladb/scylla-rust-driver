@@ -576,7 +576,7 @@ impl PoolRefiller {
                 req = use_keyspace_request_receiver.recv() => {
                     if let Some(req) = req {
                         debug!("[{}] Requested keyspace change: {}", self.endpoint_description(), req.keyspace_name.as_str());
-                        self.use_keyspace(&req.keyspace_name, req.response_sender);
+                        self.use_keyspace(req.keyspace_name, req.response_sender);
                     } else {
                         // The keyspace request channel is dropped.
                         // This means that the corresponding pool is dropped.
@@ -1077,13 +1077,12 @@ impl PoolRefiller {
     // have their keyspace set.
     fn use_keyspace(
         &mut self,
-        keyspace_name: &VerifiedKeyspaceName,
+        keyspace_name: VerifiedKeyspaceName,
         response_sender: tokio::sync::oneshot::Sender<Result<(), QueryError>>,
     ) {
         self.current_keyspace = Some(keyspace_name.clone());
 
         let mut conns = self.conns.clone();
-        let keyspace_name = keyspace_name.clone();
         let address = self.endpoint.read().unwrap().address();
         let connect_timeout = self.pool_config.connection_config.connect_timeout;
 
