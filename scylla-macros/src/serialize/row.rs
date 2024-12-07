@@ -54,6 +54,12 @@ struct FieldAttributes {
     // instead of the Rust field name.
     rename: Option<String>,
 
+    // If set, then the field is inlined into the struct, that is, it is
+    // serialized using `SerializeRow`, with the serialized fields flattened
+    // into (possibly multiple) columns as if they were in the parent struct.
+    #[darling(default)]
+    flatten: bool,
+
     // If true, then the field is not serialized at all, but simply ignored.
     // All other attributes are ignored.
     #[darling(default)]
@@ -143,6 +149,30 @@ impl Context {
             }
         }
 
+        // `flatten` annotations is not yet supported outside of `match_by_name`
+        if !matches!(self.attributes.flavor, Flavor::MatchByName) {
+            if let Some(field) = self.fields.iter().find(|f| f.attrs.flatten) {
+                let err = darling::Error::custom(
+                    "the `flatten` annotations is only supported with the `match_by_name` flavor",
+                )
+                .with_span(&field.ident);
+                errors.push(err);
+            }
+        }
+
+        // Check that no renames are attempted on flattened fields
+        let rename_flatten_errors = self
+            .fields
+            .iter()
+            .filter(|f| f.attrs.flatten && f.attrs.rename.is_some())
+            .map(|f| {
+                darling::Error::custom(
+                    "`rename` and `flatten` annotations do not make sense together",
+                )
+                .with_span(&f.ident)
+            });
+        errors.extend(rename_flatten_errors);
+
         // Check for name collisions
         let mut used_names = HashMap::<String, &Field>::new();
         for field in self.fields.iter() {
@@ -197,15 +227,26 @@ impl Generator for ColumnSortingGenerator<'_> {
         let (partial_impl_generics, partial_ty_generics, partial_where_clause) =
             partial_generics.split_for_impl();
 
-        let columns: Vec<_> = self.ctx.fields.iter().map(|f| f.column_name()).collect();
-        let fields: Vec<_> = self.ctx.fields.iter().map(|f| &f.ident).collect();
-        let tys: Vec<_> = self.ctx.fields.iter().map(|f| &f.ty).collect();
+        let flattened: Vec<_> = self.ctx.fields.iter().filter(|f| f.attrs.flatten).collect();
+        let flattened_fields: Vec<_> = flattened.iter().map(|f| &f.ident).collect();
+        let flattened_tys: Vec<_> = flattened.iter().map(|f| &f.ty).collect();
+
+        let nonflattened: Vec<_> = self
+            .ctx
+            .fields
+            .iter()
+            .filter(|f| !f.attrs.flatten)
+            .collect();
+        let nonflattened_columns: Vec<_> = nonflattened.iter().map(|f| f.column_name()).collect();
+        let nonflattened_fields: Vec<_> = nonflattened.iter().map(|f| &f.ident).collect();
+        let nonflattened_tys: Vec<_> = nonflattened.iter().map(|f| &f.ty).collect();
 
         let all_names = self.ctx.fields.iter().map(|f| f.column_name());
 
         let partial_struct: syn::ItemStruct = parse_quote! {
             pub struct #partial_struct_name #partial_generics {
-                #(#fields: &#partial_lt #tys,)*
+                #(#nonflattened_fields: &#partial_lt #nonflattened_tys,)*
+                #(#flattened_fields: <#flattened_tys as #crate_path::SerializeRowByName>::Partial<#partial_lt>,)*
                 missing: ::std::collections::HashSet<&'static str>,
             }
         };
@@ -217,13 +258,26 @@ impl Generator for ColumnSortingGenerator<'_> {
         } else {
             parse_quote! {{
                 match spec.name() {
-                    #(#columns => {
+                    #(#nonflattened_columns => {
                         #crate_path::ser::row::serialize_column::<#struct_name #ty_generics>(
-                            &self.#fields, spec, writer,
+                            &self.#nonflattened_fields, spec, writer,
                         )?;
-                        self.missing.remove(#columns);
+                        self.missing.remove(#nonflattened_columns);
                     })*
-                    _ => {
+                    _ => 'flatten_try: {
+                        #({
+                            match self.#flattened_fields.serialize_field(spec, writer)? {
+                                #crate_path::ser::row::FieldStatus::Done => {
+                                    self.missing.remove(stringify!(#flattened_fields));
+                                    break 'flatten_try;
+                                }
+                                #crate_path::ser::row::FieldStatus::NotDone => {
+                                    break 'flatten_try;
+                                }
+                                #crate_path::ser::row::FieldStatus::NotUsed => {}
+                            };
+                        })*
+
                         return ::std::result::Result::Ok(#crate_path::ser::row::FieldStatus::NotUsed);
                     }
                 }
@@ -253,9 +307,12 @@ impl Generator for ColumnSortingGenerator<'_> {
                         return ::std::result::Result::Ok(());
                     };
 
-                    ::std::result::Result::Err(#crate_path::ser::row::mk_typck_err::<#struct_name #ty_generics>(#crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
-                        name: <_ as ::std::borrow::ToOwned>::to_owned(missing),
-                    }))
+                    match missing {
+                        #(stringify!(#flattened_fields) => self.#flattened_fields.check_missing(),)*
+                        _ => ::std::result::Result::Err(#crate_path::ser::row::mk_typck_err::<#struct_name #ty_generics>(#crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
+                            name: <_ as ::std::borrow::ToOwned>::to_owned(missing),
+                        }))
+                    }
                 }
             }
         };
@@ -268,7 +325,8 @@ impl Generator for ColumnSortingGenerator<'_> {
                     use ::std::iter::FromIterator as _;
 
                     #partial_struct_name {
-                        #(#fields: &self.#fields,)*
+                        #(#nonflattened_fields: &self.#nonflattened_fields,)*
+                        #(#flattened_fields: self.#flattened_fields.partial(),)*
                         missing: ::std::collections::HashSet::from_iter([#(#all_names,)*]),
                     }
                 }
