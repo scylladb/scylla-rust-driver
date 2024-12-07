@@ -36,6 +36,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+use crate::cluster::host_filter::HostFilter;
 #[cfg(feature = "cloud")]
 use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::Node;
@@ -58,7 +59,6 @@ use crate::transport::errors::TracingProtocolError;
 use crate::transport::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
-use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};

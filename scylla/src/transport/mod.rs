@@ -1,7 +1,6 @@
 pub mod downgrading_consistency_retry_policy;
 pub mod errors;
 pub mod execution_profile;
-pub mod host_filter;
 pub mod iterator;
 pub mod legacy_query_result;
 pub mod load_balancing;

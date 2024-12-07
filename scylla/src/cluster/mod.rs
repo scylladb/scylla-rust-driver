@@ -1,5 +1,6 @@
 #[allow(clippy::module_inception)]
 mod cluster;
+pub mod host_filter;
 pub mod metadata;
 pub(crate) mod node;
 
