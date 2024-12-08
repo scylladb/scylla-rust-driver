@@ -128,6 +128,7 @@ pub(crate) fn derive_serialize_value(
     let serialize_item = gen.generate_serialize();
 
     let res = parse_quote! {
+        #[automatically_derived]
         impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
             #serialize_item
         }
