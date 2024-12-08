@@ -62,8 +62,9 @@ pub mod _macro_internal {
         BuiltinSerializationError as BuiltinRowSerializationError,
         BuiltinSerializationErrorKind as BuiltinRowSerializationErrorKind,
         BuiltinTypeCheckError as BuiltinRowTypeCheckError,
-        BuiltinTypeCheckErrorKind as BuiltinRowTypeCheckErrorKind, RowSerializationContext,
-        SerializeRow,
+        BuiltinTypeCheckErrorKind as BuiltinRowTypeCheckErrorKind,
+        FieldSerializationStatus as FieldRowSerializationStatus, PartialSerializeRowByName,
+        RowSerializationContext, SerializeRow, SerializeRowByName,
     };
     pub use crate::types::serialize::value::{
         BuiltinSerializationError as BuiltinTypeSerializationError,

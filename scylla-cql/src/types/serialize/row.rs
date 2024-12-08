@@ -85,6 +85,96 @@ pub trait SerializeRow {
     fn is_empty(&self) -> bool;
 }
 
+/// How to serialize a row column-by-column
+///
+/// For now this trait is an implementation detail of `#[derive(SerializeRow)]` when
+/// serializing by name
+#[doc(hidden)]
+pub trait PartialSerializeRowByName {
+    /// Serializes a single column in the row according to the information in the
+    /// given context
+    ///
+    /// It returns whether the column finished the serialization of the struct, did
+    /// it partially, none of at all, or errored
+    fn serialize_field(
+        &mut self,
+        spec: &ColumnSpec,
+        writer: &mut RowWriter<'_>,
+    ) -> Result<FieldSerializationStatus, SerializationError>;
+
+    /// Checks if there are any missing columns to finish the serialization
+    fn check_missing(self) -> Result<(), SerializationError>;
+}
+
+/// Represents a set of values that can be sent along a CQL statement when serializing by name
+///
+/// For now this trait is an implementation detail of `#[derive(SerializeRow)]` when
+/// serializing by name
+#[doc(hidden)]
+pub trait SerializeRowByName {
+    /// A type that can handle serialization of this struct column-by-column
+    type Partial<'d>: PartialSerializeRowByName
+    where
+        Self: 'd;
+
+    /// Returns a type that can serialize this row "column-by-column"
+    fn partial(&self) -> Self::Partial<'_>;
+
+    /// Serializes all the fields/columns by name
+    ///
+    /// Auto-implemented -- do not override
+    fn serialize_by_name(
+        &self,
+        ctx: &RowSerializationContext,
+        writer: &mut RowWriter<'_>,
+    ) -> Result<(), SerializationError> {
+        let mut partial = self.partial();
+
+        for spec in ctx.columns() {
+            let serialized = partial.serialize_field(spec, writer).map_err(|err| {
+                SerializationError::new(BuiltinSerializationError {
+                    rust_name: std::any::type_name::<Self>(),
+                    kind: BuiltinSerializationErrorKind::ColumnSerializationFailed {
+                        name: spec.name().to_owned(),
+                        err,
+                    },
+                })
+            })?;
+
+            if matches!(serialized, FieldSerializationStatus::NotUsed) {
+                return Err(SerializationError::new(BuiltinTypeCheckError {
+                    rust_name: std::any::type_name::<Self>(),
+                    kind: BuiltinTypeCheckErrorKind::NoColumnWithName {
+                        name: spec.name().to_owned(),
+                    },
+                }));
+            }
+        }
+
+        partial.check_missing()?;
+
+        Ok(())
+    }
+}
+
+/// Whether a field used a column to finish its serialization or not
+///
+/// Used when serializing by name as a single column may not have finished a rust
+/// field in the case of a flattened struct
+///
+/// For now this enum is an implementation detail of `#[derive(SerializeRow)]` when
+/// serializing by name
+#[derive(Debug)]
+#[doc(hidden)]
+pub enum FieldSerializationStatus {
+    /// The column finished the serialization for this field
+    Done,
+    /// The column was used but there are other fields not yet serialized
+    NotDone,
+    /// The column did not belong to this field
+    NotUsed,
+}
+
 macro_rules! fallback_impl_contents {
     () => {
         fn serialize(
@@ -1631,6 +1721,58 @@ pub(crate) mod tests {
 
         let reference = do_serialize((42i32, 42i32), &spec);
         let row = do_serialize(Box::new((42i32, 42i32)), &spec);
+
+        assert_eq!(reference, row);
+    }
+
+    #[test]
+    fn test_row_serialization_nested_structs() {
+        #[derive(SerializeRow, Debug)]
+        #[scylla(crate = crate)]
+        struct InnerColumnsOne {
+            x: i32,
+            y: f64,
+        }
+
+        #[derive(SerializeRow, Debug)]
+        #[scylla(crate = crate)]
+        struct InnerColumnsTwo {
+            z: bool,
+        }
+
+        #[derive(SerializeRow, Debug)]
+        #[scylla(crate = crate)]
+        struct OuterColumns {
+            #[scylla(flatten)]
+            inner_one: InnerColumnsOne,
+            a: String,
+            #[scylla(flatten)]
+            inner_two: InnerColumnsTwo,
+        }
+
+        let spec = [
+            col("a", ColumnType::Text),
+            col("x", ColumnType::Int),
+            col("z", ColumnType::Boolean),
+            col("y", ColumnType::Double),
+        ];
+
+        let value = OuterColumns {
+            inner_one: InnerColumnsOne { x: 5, y: 1.0 },
+            a: "something".to_owned(),
+            inner_two: InnerColumnsTwo { z: true },
+        };
+
+        let reference = do_serialize(
+            (
+                &value.a,
+                &value.inner_one.x,
+                &value.inner_two.z,
+                &value.inner_one.y,
+            ),
+            &spec,
+        );
+        let row = do_serialize(value, &spec);
 
         assert_eq!(reference, row);
     }
