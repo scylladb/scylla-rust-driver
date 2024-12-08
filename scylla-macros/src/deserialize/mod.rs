@@ -115,6 +115,7 @@ where
         let items = items.into_iter();
 
         parse_quote! {
+            #[automatically_derived]
             impl<#frame_lifetime, #metadata_lifetime, #impl_generics>
                 #trait_<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
             where #(#predicates),*
