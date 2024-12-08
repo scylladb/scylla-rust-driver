@@ -77,7 +77,6 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    println!("Created table examples_ks.basic2");
     session
     .query_unpaged(
         "INSERT INTO examples_ks.basic4 
@@ -87,9 +86,6 @@ async fn main() -> Result<()> {
         &[],
     )
     .await?;
-    println!("insert1 done");
-
-    println!("SELECT * FROM examples_ks.basic2");
 
     let result2 : QueryRowsResult= session
         .query_unpaged("SELECT * FROM examples_ks.basic4", &[])
@@ -134,7 +130,7 @@ async fn main() -> Result<()> {
         "INSERT INTO examples_ks.basic6 
         (a, timud, date1, ipaddr, dur) 
         VALUES
-        (4, NOW(), '2024-01-15', '192.168.0.14', 13y2w89h4m48s137ms);", // cqlsh prints this as 89.08003805555556h4.8022833333333335m48.137s137.0ms
+        (4, NOW(), '2024-01-15', '192.168.0.14', 13y2w89h4m48s137ms);", 
         &[],
     )
     .await?;
@@ -160,8 +156,13 @@ async fn main() -> Result<()> {
         .await?
         .into_rows_result()?;
    
-    let displayer = result2.rows_displayer();
+    let mut displayer = result2.rows_displayer();
     println!("DISPLAYER:");
+    println!("{}", displayer);
+    
+    displayer.set_terminal_width(80);
+    displayer.use_color(false);
+    println!("DISPLAYER no color, width = 80:");
     println!("{}", displayer);
     Ok(())
 }

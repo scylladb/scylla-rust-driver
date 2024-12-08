@@ -2,7 +2,8 @@ use std::fmt::Debug;
 use std::fmt;
 use chrono::{Duration, NaiveDate, NaiveTime, TimeZone, Utc};
 use scylla_cql::frame::value::{CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
-use tabled::settings::Alignment;
+use tabled::settings::peaker::Priority;
+use tabled::settings::{Alignment, Width};
 use tabled::{builder::Builder, settings::Style, settings::themes::Colorization, settings::Color};
 
 use thiserror::Error;
@@ -445,10 +446,43 @@ impl QueryRowsResult {
         }
 }
 
+/// A utility struct for displaying rows received from the database in a [`QueryRowsResult`].
+///
+/// This struct provides methods to configure the display settings and format the rows
+/// as a table for easier visualization. It supports various display settings such as
+/// terminal width, color usage, and formatting of different CQL value types.
+///
+/// # Example
+///
+/// ```rust
+/// # use scylla::transport::query_result::{QueryResult, QueryRowsResult, RowsDisplayer};
+/// # fn example(query_result: QueryResult) -> Result<(), Box<dyn std::error::Error>> {
+/// let rows_result = query_result.into_rows_result()?;
+/// let mut displayer = RowsDisplayer::new(&rows_result);
+/// displayer.set_terminal_width(80);
+/// displayer.use_color(true);
+/// println!("{}", displayer);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Methods
+///
+/// - `new(query_result: &'a QueryRowsResult) -> Self`
+///   Creates a new `RowsDisplayer` for the given `QueryRowsResult`.
+///
+/// - `set_terminal_width(&mut self, terminal_width: usize)`
+///   Sets the terminal width for wrapping the table output.
+///
+/// - `use_color(&mut self, use_color: bool)`
+///   Enables or disables color in the table output.
+///
+/// - `fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result`
+///   Formats the rows as a table and writes it to the given formatter.
+
 pub struct RowsDisplayer<'a> {
     query_result: &'a QueryRowsResult,
     display_settings: RowsDisplayerSettings,
-    terminal_width: usize,
 }
 
 impl<'a> RowsDisplayer<'a>
@@ -457,12 +491,15 @@ impl<'a> RowsDisplayer<'a>
         Self {
             query_result,
             display_settings: RowsDisplayerSettings::new(),
-            terminal_width: 80,
         }
     }
 
     pub fn set_terminal_width(&mut self, terminal_width: usize) {
-        self.terminal_width = terminal_width;
+        self.display_settings.terminal_width = terminal_width;
+    }
+
+    pub fn use_color(&mut self, use_color: bool) {
+        self.display_settings.print_in_color = use_color;
     }
 
 
@@ -555,6 +592,101 @@ impl<'a> RowsDisplayer<'a>
 
 }
 
+impl fmt::Display for RowsDisplayer<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let row_iter : TypedRowIterator<'_, '_, Row> = match self.query_result.rows::<Row>(){
+            Ok(row_iter) => row_iter,
+            Err(_) => return write!(f, "Error"),
+        };
+
+        // put columns names to the table
+        let column_names : Vec<&str> = self.query_result.column_specs().iter().map(|column_spec| column_spec.name()).collect();
+        let mut builder: Builder = Builder::new();
+        builder.push_record(column_names);
+
+        // put rows to the table
+        for row_result in row_iter {
+            let row_result : Row = match row_result {
+                Ok(row_result) => row_result,
+                Err(_) => return write!(f, "Error"),
+            };
+            let columns : Vec<std::option::Option<CqlValue>> =  row_result.columns;
+            let mut row_values: Vec<Box<dyn StringConvertible>> = Vec::new();
+            for item in &columns {
+                let wrapper = self.get_item_wrapper(item);
+                row_values.push(wrapper);
+            }
+            builder.push_record(row_values);
+        }
+
+        let mut table = builder.build();
+
+        let mut table = table.with(Style::psql());
+        table = table.with(Alignment::right());
+        if self.display_settings.terminal_width != 0 {
+            table = table.with( Width::wrap(self.display_settings.terminal_width).priority(Priority::max(true)));
+        }
+
+        if self.display_settings.print_in_color {
+            let colum_colors: Vec<Color> = self.query_result.column_specs().iter().map(|column_spec| 
+                if *column_spec.typ() == ColumnType::Text{
+                    Color::FG_YELLOW
+                }
+                else if *column_spec.typ() == ColumnType::Blob{
+                    Color::FG_MAGENTA
+                }
+                else {
+                    Color::FG_GREEN
+                }
+            ).collect();            
+
+            table = table.with(Colorization::columns(colum_colors))
+                .with(Colorization::exact([Color::FG_MAGENTA], tabled::settings::object::Rows::first()));
+        }
+        
+        write!(f, "{}", table)
+    }
+}
+
+
+
+/// Settings for displaying rows in a `RowsDisplayer`.
+///
+/// This struct holds various configuration options for formatting and displaying
+/// rows received from the database. It includes settings for byte display format,
+/// exponent display for floats and integers, precision for doubles, color usage,
+/// and terminal width for wrapping the table output.
+struct RowsDisplayerSettings {
+    byte_displaying: ByteDisplaying, // for blobs
+    exponent_displaying_floats: bool, // for floats
+    exponent_displaying_integers: bool, // for integers 
+    double_precision: usize, // for doubles
+    print_in_color: bool,
+    terminal_width: usize,
+}
+
+impl RowsDisplayerSettings {
+    fn new() -> Self { // TODO write Default trait
+        Self {
+            byte_displaying: ByteDisplaying::Hex,
+            exponent_displaying_floats: false,
+            exponent_displaying_integers: false,
+            double_precision: 5,
+            print_in_color: true,
+            terminal_width: 0,
+        }
+    }
+}
+
+
+
+#[derive(PartialEq)]
+enum ByteDisplaying {
+    Ascii,
+    Hex,
+    Dec,
+}
+
 // wrappers for scylla datatypes implementing Display
 
 struct WrapperDisplay<'a, T: 'a>{
@@ -586,7 +718,6 @@ impl<'a> From<Box<dyn StringConvertible<'a>>> for String {
 
 impl<'a> From<&dyn StringConvertible<'a>> for String {
     fn from(wrapper: &dyn StringConvertible<'a>) -> Self {
-        // println!("before &dyn StringConvertible<'a>");
         wrapper.into()
     }
 }
@@ -597,7 +728,6 @@ where
     WrapperDisplay<'a, T>: fmt::Display,
 {
     fn from(wrapper: WrapperDisplay<'a, T>) -> Self {
-        // println!("before WrapperDisplay<'a, T>");
         format!("{}", wrapper)
     }
 }
@@ -836,11 +966,9 @@ impl fmt::Display for WrapperDisplay<'_, CqlDate> {
         // around -250000-01-01  is the limit of naive date
 
         let days = self.value.0 - magic_constant;
-        println!("days: {}", days);
         let base_date = NaiveDate::from_ymd_opt(-250000, 1, 1).unwrap();
         
         // Add the number of days
-        println!("days as i64: {}", days as i64);
         let target_date = base_date + Duration::days(days as i64);
         
         // Format the date    
@@ -865,84 +993,6 @@ impl fmt::Display for WrapperDisplay<'_, std::net::IpAddr> {
 }
 
 
-
-
-impl fmt::Display for RowsDisplayer<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let row_iter : TypedRowIterator<'_, '_, Row> = match self.query_result.rows::<Row>(){
-            Ok(row_iter) => row_iter,
-            Err(_) => return write!(f, "Error"),
-        };
-
-        // put columns names to the table
-        let column_names : Vec<&str> = self.query_result.column_specs().iter().map(|column_spec| column_spec.name()).collect();
-        let mut builder: Builder = Builder::new();
-        builder.push_record(column_names);
-
-        // put rows to the table
-        for row_result in row_iter {
-            // println!("row");
-            let row_result : Row = match row_result {
-                Ok(row_result) => row_result,
-                Err(_) => return write!(f, "Error"),
-            };
-            let columns : Vec<std::option::Option<CqlValue>> =  row_result.columns;
-            let mut row_values: Vec<Box<dyn StringConvertible>> = Vec::new();
-            for item in &columns {
-                let wrapper = self.get_item_wrapper(item);
-                row_values.push(wrapper);
-            }
-            builder.push_record(row_values);
-        }
-
-        // write table to the formatter
-        let mut table = builder.build();
-        table.with(Style::psql())
-            // Width::wrap(self.terminal_width).priority(Priority::max(true)),
-            .with(Colorization::columns([Color::FG_GREEN]))
-            .with(Colorization::exact([Color::FG_MAGENTA], tabled::settings::object::Rows::first()))
-            .with(Alignment::right());
-        
-        write!(f, "{}", table)
-    }
-}
-
-struct RowsDisplayerSettings {
-    byte_displaying: ByteDisplaying, // for blobs
-    exponent_displaying_floats: bool, // for floats
-    exponent_displaying_integers: bool, // for integers 
-    double_precision: usize, // for doubles
-}
-
-impl RowsDisplayerSettings {
-    fn new() -> Self { // TODO write Default trait
-        Self {
-            byte_displaying: ByteDisplaying::Hex,
-            exponent_displaying_floats: false,
-            exponent_displaying_integers: false,
-            double_precision: 5,
-        }
-    }
-
-    fn set_byte_displaying(&mut self, byte_displaying: ByteDisplaying) {
-        self.byte_displaying = byte_displaying;
-    }
-
-    fn set_exponent_displaying_floats(&mut self, exponent_displaying_floats: bool) {
-        self.exponent_displaying_floats = exponent_displaying_floats;
-    }
-
-    fn set_exponent_displaying_integers(&mut self, exponent_displaying_integers: bool) {
-        self.exponent_displaying_integers = exponent_displaying_integers;
-    }
-}
-
-#[derive(PartialEq)]
-enum ByteDisplaying {
-    Ascii,
-    Hex,
-    Dec,
-}
 /// An error returned by [`QueryResult::into_rows_result`]
 ///
 /// The `ResultNotRows` variant contains original [`QueryResult`],
