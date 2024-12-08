@@ -457,12 +457,12 @@ impl QueryRowsResult {
 /// ```rust
 /// # use scylla::transport::query_result::{QueryResult, QueryRowsResult, RowsDisplayer};
 /// # fn example(query_result: QueryResult) -> Result<(), Box<dyn std::error::Error>> {
-/// let rows_result = query_result.into_rows_result()?;
-/// let mut displayer = RowsDisplayer::new(&rows_result);
-/// displayer.set_terminal_width(80);
-/// displayer.use_color(true);
-/// println!("{}", displayer);
-/// # Ok(())
+///     let rows_result = query_result.into_rows_result()?;
+///     let mut displayer = RowsDisplayer::new(&rows_result);
+///     displayer.set_terminal_width(80);
+///     displayer.use_color(true);
+///     println!("{}", displayer);
+///     # Ok(())
 /// # }
 /// ```
 ///
