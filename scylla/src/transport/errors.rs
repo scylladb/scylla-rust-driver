@@ -696,8 +696,8 @@ pub enum TranslationError {
 #[derive(Error, Debug, Clone)]
 #[error("Failed to perform a connection setup request. Request: {request_kind}, reason: {error}")]
 pub struct ConnectionSetupRequestError {
-    request_kind: CqlRequestKind,
-    error: ConnectionSetupRequestErrorKind,
+    pub request_kind: CqlRequestKind,
+    pub error: ConnectionSetupRequestErrorKind,
 }
 
 #[derive(Error, Debug, Clone)]
