@@ -37,6 +37,7 @@ use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::transport::errors::{ProtocolError, QueryError, UserRequestError};
 use crate::transport::load_balancing::{self, RoutingInfo};
+#[cfg(feature = "metrics")]
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::NodeRef;
@@ -67,6 +68,7 @@ pub(crate) struct PreparedIteratorConfig {
     pub(crate) values: SerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_data: Arc<ClusterData>,
+    #[cfg(feature = "metrics")]
     pub(crate) metrics: Arc<Metrics>,
 }
 
@@ -142,6 +144,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,
     execution_profile: Arc<ExecutionProfileInner>,
+    #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
 
     paging_state: PagingState,
@@ -236,11 +239,13 @@ where
                 self.log_attempt_error(&last_error, &retry_decision);
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
+                        #[cfg(feature = "metrics")]
                         self.metrics.inc_retries_num();
                         current_consistency = cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
                     RetryDecision::RetryNextNode(cl) => {
+                        #[cfg(feature = "metrics")]
                         self.metrics.inc_retries_num();
                         current_consistency = cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;
@@ -298,6 +303,7 @@ where
         node: NodeRef<'_>,
         request_span: &RequestSpan,
     ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, QueryError> {
+        #[cfg(feature = "metrics")]
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
 
@@ -323,6 +329,7 @@ where
                 tracing_id,
                 ..
             }) => {
+                #[cfg(feature = "metrics")]
                 let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                 self.log_attempt_success();
                 self.log_query_success();
@@ -359,6 +366,7 @@ where
             }
             Err(err) => {
                 let err = err.into();
+                #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
                 self.execution_profile
                     .load_balancing_policy
@@ -378,6 +386,7 @@ where
                 Ok(ControlFlow::Break(proof))
             }
             Ok(response) => {
+                #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
                 let err =
                     ProtocolError::UnexpectedResponse(response.response.to_response_kind()).into();
@@ -680,7 +689,7 @@ impl QueryPager {
         query: Query,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_data: Arc<ClusterData>,
-        metrics: Arc<Metrics>,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Result<Self, QueryError> {
         let (sender, receiver) = mpsc::channel(1);
 
@@ -743,6 +752,7 @@ impl QueryPager {
                 query_consistency: consistency,
                 retry_session,
                 execution_profile,
+                #[cfg(feature = "metrics")]
                 metrics,
                 paging_state: PagingState::start(),
                 history_listener: query.config.history_listener.clone(),
@@ -861,6 +871,7 @@ impl QueryPager {
                 query_consistency: consistency,
                 retry_session,
                 execution_profile: config.execution_profile,
+                #[cfg(feature = "metrics")]
                 metrics: config.metrics,
                 paging_state: PagingState::start(),
                 history_listener: config.prepared.config.history_listener.clone(),
