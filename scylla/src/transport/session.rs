@@ -53,6 +53,7 @@ use super::node::{InternalKnownNode, KnownNode};
 use super::partitioner::PartitionerName;
 use super::query_result::MaybeFirstRowError;
 use super::query_result::RowsError;
+use super::timestamp_generator::TimestampGenerator;
 use super::topology::UntranslatedPeer;
 use super::{NodeRef, SelfIdentity};
 use crate::frame::response::result;
@@ -270,6 +271,10 @@ pub struct SessionConfig {
     /// Generally, this options is best left as default (false).
     pub disallow_shard_aware_port: bool,
 
+    //  Timestamp generator used for generating timestamps on the client-side
+    //  If None, server-side timestamps are used.
+    pub timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
+
     /// If empty, fetch all keyspaces
     pub keyspaces_to_fetch: Vec<String>,
 
@@ -382,6 +387,7 @@ impl SessionConfig {
             connect_timeout: Duration::from_secs(5),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
+            timestamp_generator: None,
             keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
             keepalive_interval: Some(Duration::from_secs(30)),
@@ -1074,6 +1080,7 @@ where
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
             tcp_keepalive_interval: config.tcp_keepalive_interval,
+            timestamp_generator: config.timestamp_generator,
             #[cfg(feature = "ssl")]
             ssl_config: config.ssl_context.map(SslConfig::new_with_global_context),
             authenticator: config.authenticator.clone(),

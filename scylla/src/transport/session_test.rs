@@ -1328,6 +1328,65 @@ async fn test_timestamp() {
     assert_eq!(results, expected_results);
 }
 
+#[tokio::test]
+async fn test_timestamp_generator() {
+    setup_tracing();
+    use crate::transport::timestamp_generator::MonotonicTimestampGenerator;
+
+    let session = create_new_session_builder()
+        .timestamp_generator(Arc::new(MonotonicTimestampGenerator::new()))
+        .build()
+        .await
+        .unwrap();
+    let ks = unique_keyspace_name();
+
+    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session
+        .query_unpaged(
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t_generator (a int, b int, primary key (a))",
+                ks
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+
+    for n in 1..100 {
+        let prepared = session
+            .prepare(format!(
+                "INSERT INTO {}.t_generator (a, b) VALUES (?, ?)",
+                ks
+            ))
+            .await
+            .unwrap();
+        session.execute_unpaged(&prepared, (n, n)).await.unwrap();
+    }
+
+    let query_rows_result = session
+        .query_unpaged(
+            format!("SELECT a, b, WRITETIME(b) FROM {}.t_generator", ks),
+            &[],
+        )
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap();
+
+    let mut results = query_rows_result
+        .rows::<(i32, i32, i64)>()
+        .unwrap()
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    results.sort();
+    let timestamps = results.into_iter().map(|x| x.2).collect::<Vec<_>>();
+    let mut sorted_timestamps = timestamps.clone();
+    sorted_timestamps.sort();
+    assert_eq!(timestamps, sorted_timestamps);
+}
+
 #[ignore = "works on remote Scylla instances only (local ones are too fast)"]
 #[tokio::test]
 async fn test_request_timeout() {
