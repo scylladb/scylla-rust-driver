@@ -11,6 +11,11 @@ use uuid::Uuid;
 
 /// Trait used to implement `Vec<result::Row>::into_typed<RowT>`
 // This is the only way to add custom method to Vec
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
+#[allow(deprecated)]
 pub trait IntoTypedRows {
     fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT>;
 }
@@ -28,6 +33,10 @@ impl IntoTypedRows for Vec<result::Row> {
 
 /// Iterator over rows parsed as the given type\
 /// Returned by `rows.into_typed::<(...)>()`
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
 pub struct TypedRowIter<RowT: FromRow> {
     row_iter: std::vec::IntoIter<result::Row>,
     phantom_data: std::marker::PhantomData<RowT>,
@@ -185,6 +194,10 @@ impl LegacyQueryResult {
 
 /// An error that occurred during [`QueryResult`](crate::transport::query_result::QueryResult)
 /// to [`LegacyQueryResult`] conversion.
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
 #[non_exhaustive]
 #[derive(Error, Clone, Debug)]
 pub enum IntoLegacyQueryResultError {
@@ -205,6 +218,11 @@ pub enum IntoLegacyQueryResultError {
 /// Expected `LegacyQueryResult.rows` to be `Some`, but it was `None`.\
 /// `LegacyQueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
 /// It is `None` for queries that can't return rows (e.g `INSERT`).
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
+#[allow(deprecated)]
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(
     "LegacyQueryResult::rows() or similar function called on a bad LegacyQueryResult.
@@ -259,6 +277,11 @@ pub enum FirstRowTypedError {
     FromRowError(#[from] FromRowError),
 }
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
+#[allow(deprecated)]
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum MaybeFirstRowTypedError {
     /// [`LegacyQueryResult::maybe_first_row_typed()`](LegacyQueryResult::maybe_first_row_typed) called on a bad LegacyQueryResult.\
@@ -273,6 +296,11 @@ pub enum MaybeFirstRowTypedError {
     FromRowError(#[from] FromRowError),
 }
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
+#[allow(deprecated)]
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum SingleRowError {
     /// [`LegacyQueryResult::single_row()`](LegacyQueryResult::single_row) called on a bad LegacyQueryResult.\
@@ -287,6 +315,11 @@ pub enum SingleRowError {
     BadNumberOfRows(usize),
 }
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
+#[allow(deprecated)]
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum SingleRowTypedError {
     /// [`LegacyQueryResult::single_row_typed()`](LegacyQueryResult::single_row_typed) called on a bad LegacyQueryResult.\
