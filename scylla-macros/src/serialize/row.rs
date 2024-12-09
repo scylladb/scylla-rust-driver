@@ -270,7 +270,7 @@ impl Generator for ColumnSortingGenerator<'_> {
         let all_names = self.ctx.fields.iter().map(|f| f.column_name());
 
         let partial_struct: syn::ItemStruct = parse_quote! {
-            struct #partial_struct_name #partial_generics {
+            pub struct #partial_struct_name #partial_generics {
                 #(#unflattened_fields: &#partial_lt #unflattened_tys,)*
                 #(#flattened_fields: <#flattened_tys as #crate_path::ser::row::SerializeRowByName>::Partial<#partial_lt>,)*
                 missing: ::std::collections::HashSet<&'static str>,
