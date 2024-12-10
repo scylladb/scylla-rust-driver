@@ -1127,3 +1127,84 @@ fn test_flatten_row_serialization_with_enforced_order_and_skip_namecheck() {
 
     assert_eq!(reference, row);
 }
+
+#[test]
+fn test_name_flatten_with_lifetimes() {
+    #[derive(SerializeRow)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct Inner<'b> {
+        b: &'b bool,
+    }
+
+    #[derive(SerializeRow)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct Outer<'a, 'b> {
+        #[scylla(flatten)]
+        inner: &'a Inner<'b>,
+    }
+
+    let b = true;
+    let inner = Inner { b: &b };
+
+    let value = Outer { inner: &inner };
+    let spec = [col("b", ColumnType::Native(NativeType::Boolean))];
+
+    let reference = do_serialize((&value.inner.b,), &spec);
+    let row = do_serialize(value, &spec);
+
+    assert_eq!(reference, row);
+}
+
+#[test]
+fn test_ordered_flatten_with_lifetimes() {
+    #[derive(SerializeRow)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct Inner<'b> {
+        b: &'b bool,
+    }
+
+    #[derive(SerializeRow)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct Outer<'a, 'b> {
+        #[scylla(flatten)]
+        inner: &'a Inner<'b>,
+    }
+
+    let b = true;
+    let inner = Inner { b: &b };
+
+    let value = Outer { inner: &inner };
+    let spec = [col("b", ColumnType::Native(NativeType::Boolean))];
+
+    let reference = do_serialize((&value.inner.b,), &spec);
+    let row = do_serialize(value, &spec);
+
+    assert_eq!(reference, row);
+}
+
+#[test]
+fn test_ordered_flatten_skip_name_check_with_lifetimes() {
+    #[derive(SerializeRow)]
+    #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
+    struct Inner<'b> {
+        potato: &'b bool,
+    }
+
+    #[derive(SerializeRow)]
+    #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
+    struct Outer<'a, 'b> {
+        #[scylla(flatten)]
+        inner: &'a Inner<'b>,
+    }
+
+    let potato = true;
+    let inner = Inner { potato: &potato };
+
+    let value = Outer { inner: &inner };
+    let spec = [col("b", ColumnType::Native(NativeType::Boolean))];
+
+    let reference = do_serialize((&value.inner.potato,), &spec);
+    let row = do_serialize(value, &spec);
+
+    assert_eq!(reference, row);
+}

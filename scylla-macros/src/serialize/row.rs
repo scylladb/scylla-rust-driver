@@ -218,11 +218,30 @@ impl Generator for ColumnSortingGenerator<'_> {
             struct_name.span(),
         );
         let mut partial_generics = self.ctx.generics.clone();
-        let partial_lt: syn::LifetimeParam = syn::parse_quote!('scylla_ser_partial);
+        let partial_lt: syn::Lifetime = syn::parse_quote!('scylla_ser_partial);
+
         if !self.ctx.fields.is_empty() {
+            // all fields have to outlive the partial struct lifetime
             partial_generics
                 .params
-                .push(syn::GenericParam::Lifetime(partial_lt.clone()));
+                .iter_mut()
+                .filter_map(|p| match p {
+                    syn::GenericParam::Lifetime(lt) => Some(lt),
+                    _ => None,
+                })
+                .for_each(|lt| {
+                    lt.bounds.push(partial_lt.clone());
+                });
+
+            // now add the partial struct lifetime
+            partial_generics
+                .params
+                .push(syn::GenericParam::Lifetime(syn::LifetimeParam {
+                    attrs: vec![],
+                    lifetime: partial_lt.clone(),
+                    colon_token: None,
+                    bounds: syn::punctuated::Punctuated::new(),
+                }));
         }
 
         let flattened: Vec<_> = self.ctx.fields.iter().filter(|f| f.attrs.flatten).collect();
