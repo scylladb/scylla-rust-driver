@@ -68,6 +68,17 @@ pub mod _macro_internal {
         fn partial(&self) -> Self::Partial<'_>;
     }
 
+    impl<T: SerializeRowByName + ?Sized> SerializeRowByName for &T {
+        type Partial<'d>
+            = T::Partial<'d>
+        where
+            Self: 'd;
+
+        fn partial(&self) -> Self::Partial<'_> {
+            <T as SerializeRowByName>::partial(self)
+        }
+    }
+
     /// How to serialize a row column-by-column
     ///
     /// For now this trait is an implementation detail of `#[derive(SerializeRow)]` when
@@ -94,6 +105,16 @@ pub mod _macro_internal {
             columns: &mut self::ser::row::ByColumn<'_, '_>,
             writer: &mut RowWriter<'_>,
         ) -> Result<(), SerializationError>;
+    }
+
+    impl<T: SerializeRowInOrder + ?Sized> SerializeRowInOrder for &T {
+        fn serialize_in_order(
+            &self,
+            columns: &mut self::ser::row::ByColumn<'_, '_>,
+            writer: &mut RowWriter<'_>,
+        ) -> Result<(), SerializationError> {
+            <T as SerializeRowInOrder>::serialize_in_order(self, columns, writer)
+        }
     }
 
     pub mod ser {
