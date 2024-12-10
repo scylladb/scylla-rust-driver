@@ -88,9 +88,19 @@ pub mod _macro_internal {
         fn check_missing(self) -> Result<(), SerializationError>;
     }
 
+    pub trait SerializeRowInOrder {
+        fn serialize_in_order(
+            &self,
+            columns: &mut self::ser::row::ByColumn<'_, '_>,
+            writer: &mut RowWriter<'_>,
+        ) -> Result<(), SerializationError>;
+    }
+
     pub mod ser {
         pub mod row {
-            use super::super::{PartialSerializeRowByName, SerializeRowByName};
+            use super::super::{
+                PartialSerializeRowByName, SerializeRowByName, SerializeRowInOrder,
+            };
             use crate::{
                 frame::response::result::ColumnSpec,
                 serialize::{
@@ -146,9 +156,7 @@ pub mod _macro_internal {
                         }
                     }
 
-                    partial.check_missing()?;
-
-                    Ok(())
+                    partial.check_missing()
                 }
             }
 
@@ -166,6 +174,80 @@ pub mod _macro_internal {
                         },
                     )
                 })
+            }
+
+            pub struct ByColumn<'i, 'c> {
+                columns: std::slice::Iter<'i, ColumnSpec<'c>>,
+            }
+
+            impl ByColumn<'_, '_> {
+                pub fn next<'b, T>(
+                    &mut self,
+                    expected: &str,
+                    value: &impl SerializeValue,
+                    writer: &'b mut RowWriter<'_>,
+                ) -> Result<WrittenCellProof<'b>, SerializationError> {
+                    let spec = self.columns.next().ok_or_else(|| {
+                        mk_typck_err::<T>(BuiltinTypeCheckErrorKind::ValueMissingForColumn {
+                            name: expected.to_owned(),
+                        })
+                    })?;
+
+                    if spec.name() != expected {
+                        return Err(mk_typck_err::<T>(
+                            BuiltinTypeCheckErrorKind::ColumnNameMismatch {
+                                rust_column_name: expected.to_owned(),
+                                db_column_name: spec.name().to_owned(),
+                            },
+                        ));
+                    }
+
+                    serialize_column::<T>(value, spec, writer)
+                }
+
+                pub fn next_skip_name<'b, T>(
+                    &mut self,
+                    expected: &str,
+                    value: &impl SerializeValue,
+                    writer: &'b mut RowWriter<'_>,
+                ) -> Result<WrittenCellProof<'b>, SerializationError> {
+                    let spec = self.columns.next().ok_or_else(|| {
+                        mk_typck_err::<T>(BuiltinTypeCheckErrorKind::ValueMissingForColumn {
+                            name: expected.to_owned(),
+                        })
+                    })?;
+
+                    serialize_column::<T>(value, spec, writer)
+                }
+
+                pub fn finish<T>(&mut self) -> Result<(), SerializationError> {
+                    let Some(spec) = self.columns.next() else {
+                        return Ok(());
+                    };
+
+                    Err(mk_typck_err::<T>(
+                        BuiltinTypeCheckErrorKind::NoColumnWithName {
+                            name: spec.name().to_owned(),
+                        },
+                    ))
+                }
+            }
+
+            pub struct InOrder<'t, T: SerializeRowInOrder>(pub &'t T);
+
+            impl<T: SerializeRowInOrder> InOrder<'_, T> {
+                pub fn serialize(
+                    self,
+                    ctx: &RowSerializationContext,
+                    writer: &mut RowWriter<'_>,
+                ) -> Result<(), SerializationError> {
+                    let mut next_serializer = ByColumn {
+                        columns: ctx.columns().iter(),
+                    };
+
+                    self.0.serialize_in_order(&mut next_serializer, writer)?;
+                    next_serializer.finish::<T>()
+                }
             }
         }
     }
