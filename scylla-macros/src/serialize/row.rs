@@ -150,17 +150,6 @@ impl Context {
             }
         }
 
-        // `flatten` annotations is not yet supported outside of `match_by_name`
-        if !matches!(self.attributes.flavor, Flavor::MatchByName) {
-            if let Some(field) = self.fields.iter().find(|f| f.attrs.flatten) {
-                let err = darling::Error::custom(
-                    "the `flatten` annotations is only supported with the `match_by_name` flavor",
-                )
-                .with_span(&field.ident);
-                errors.push(err);
-            }
-        }
-
         // Check that no renames are attempted on flattened fields
         let rename_flatten_errors = self
             .fields
@@ -420,10 +409,16 @@ impl Generator for ColumnOrderedGenerator<'_> {
         let (impl_generics, ty_generics, where_clause) = self.ctx.generics.split_for_impl();
         let column_serializers = self.ctx.fields.iter().map(|f| -> syn::Stmt {
             let field = &f.ident;
-            let column = f.column_name();
-            let enforce_name = !self.ctx.attributes.skip_name_checks;
-            syn::parse_quote! {
-                #crate_path::ser::row::NextColumnSerializer::serialize::<Self, #enforce_name>(columns, #column, &self.#field, writer)?;
+            if f.attrs.flatten {
+                syn::parse_quote! {
+                    <_ as #crate_path::SerializeRowInOrder>::serialize_in_order(&self.#field, columns, writer)?;
+                }
+            } else {
+                let column = f.column_name();
+                let enforce_name = !self.ctx.attributes.skip_name_checks;
+                syn::parse_quote! {
+                    #crate_path::ser::row::NextColumnSerializer::serialize::<Self, #enforce_name>(columns, #column, &self.#field, writer)?;
+                }
             }
         });
 

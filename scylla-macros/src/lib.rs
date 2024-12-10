@@ -160,9 +160,6 @@ mod serialize;
 /// Note that the name of this field is ignored and hence the `rename` attribute does not make sense
 /// here and will cause a compilation error.
 ///
-/// Currently this is only supported for the `"match_by_name"` flavor in both the wrapper struct and
-/// this flattened struct.
-///
 #[proc_macro_derive(SerializeValue, attributes(scylla))]
 pub fn serialize_value_derive(tokens_input: TokenStream) -> TokenStream {
     match serialize::value::derive_serialize_value(tokens_input) {
