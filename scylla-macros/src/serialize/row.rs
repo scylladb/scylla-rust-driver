@@ -341,10 +341,10 @@ impl Generator for ColumnSortingGenerator<'_> {
         };
 
         parse_quote! {
-            fn serialize<'b>(
+            fn serialize<'_scylla_ser_row_writer_buffer>(
                 &self,
                 ctx: &#crate_path::RowSerializationContext,
-                writer: &mut #crate_path::RowWriter<'b>,
+                writer: &mut #crate_path::RowWriter<'_scylla_ser_row_writer_buffer>,
             ) -> ::std::result::Result<(), #crate_path::SerializationError> {
                 #partial_struct
                 #partial_serialize
@@ -400,10 +400,10 @@ impl Generator for ColumnOrderedGenerator<'_> {
         });
 
         parse_quote! {
-            fn serialize<'b>(
+            fn serialize<'_scylla_ser_row_writer_buffer>(
                 &self,
                 ctx: &#crate_path::RowSerializationContext,
-                writer: &mut #crate_path::RowWriter<'b>,
+                writer: &mut #crate_path::RowWriter<'_scylla_ser_row_writer_buffer>,
             ) -> ::std::result::Result<(), #crate_path::SerializationError> {
                 #[allow(non_local_definitions)]
                 impl #impl_generics #crate_path::SerializeRowInOrder for #struct_name #ty_generics #where_clause {
