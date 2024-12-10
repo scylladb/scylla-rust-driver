@@ -1068,3 +1068,62 @@ fn test_row_serialization_nested_structs() {
 
     assert_eq!(reference, row);
 }
+
+#[test]
+fn test_flatten_row_serialization_with_enforced_order_and_skip_namecheck() {
+    #[derive(SerializeRow, Debug)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct OuterColumns {
+        a: String,
+        #[scylla(flatten)]
+        inner_one: InnerColumnsOne,
+        d: i32,
+        #[scylla(flatten)]
+        inner_two: InnerColumnsTwo,
+    }
+
+    #[derive(SerializeRow, Debug)]
+    #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
+    struct InnerColumnsOne {
+        potato: bool,
+        carrot: f32,
+    }
+
+    #[derive(SerializeRow, Debug)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct InnerColumnsTwo {
+        e: String,
+    }
+
+    let value = OuterColumns {
+        a: "A".to_owned(),
+        inner_one: InnerColumnsOne {
+            potato: false,
+            carrot: 2.3,
+        },
+        d: 32,
+        inner_two: InnerColumnsTwo { e: "E".to_owned() },
+    };
+
+    let spec = [
+        col("a", ColumnType::Native(NativeType::Text)),
+        col("b", ColumnType::Native(NativeType::Boolean)),
+        col("c", ColumnType::Native(NativeType::Float)),
+        col("d", ColumnType::Native(NativeType::Int)),
+        col("e", ColumnType::Native(NativeType::Text)),
+    ];
+
+    let reference = do_serialize(
+        (
+            &value.a,
+            &value.inner_one.potato,
+            &value.inner_one.carrot,
+            &value.d,
+            &value.inner_two.e,
+        ),
+        &spec,
+    );
+    let row = do_serialize(value, &spec);
+
+    assert_eq!(reference, row);
+}
