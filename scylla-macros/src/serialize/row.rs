@@ -276,10 +276,10 @@ impl Generator for ColumnSortingGenerator<'_> {
         });
 
         parse_quote! {
-            fn serialize<'b>(
+            fn serialize<'_scylla_ser_row_writer_buffer>(
                 &self,
                 ctx: &#crate_path::RowSerializationContext,
-                writer: &mut #crate_path::RowWriter<'b>,
+                writer: &mut #crate_path::RowWriter<'_scylla_ser_row_writer_buffer>,
             ) -> ::std::result::Result<(), #crate_path::SerializationError> {
                 #(#statements)*
                 ::std::result::Result::Ok(())
@@ -365,10 +365,10 @@ impl Generator for ColumnOrderedGenerator<'_> {
         });
 
         parse_quote! {
-            fn serialize<'b>(
+            fn serialize<'_scylla_ser_row_writer_buffer>(
                 &self,
                 ctx: &#crate_path::RowSerializationContext,
-                writer: &mut #crate_path::RowWriter<'b>,
+                writer: &mut #crate_path::RowWriter<'_scylla_ser_row_writer_buffer>,
             ) -> ::std::result::Result<(), #crate_path::SerializationError> {
                 #(#statements)*
                 ::std::result::Result::Ok(())
