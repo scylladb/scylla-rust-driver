@@ -12,6 +12,7 @@ use std::{
     sync::Arc,
 };
 
+#[allow(deprecated)]
 use scylla_cql::{
     frame::{
         frame_errors::{
@@ -124,6 +125,7 @@ pub enum QueryError {
     IntoLegacyQueryResultError(#[from] IntoLegacyQueryResultError),
 }
 
+#[allow(deprecated)]
 impl From<SerializeValuesError> for QueryError {
     fn from(serialized_err: SerializeValuesError) -> QueryError {
         QueryError::BadQuery(BadQuery::SerializeValuesError(serialized_err))
@@ -573,7 +575,12 @@ pub enum ViewsMetadataError {
 #[non_exhaustive]
 pub enum BadQuery {
     /// Failed to serialize values passed to a query - values too big
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy serialization API is not type-safe and is going to be removed soon"
+    )]
     #[error("Serializing values failed: {0} ")]
+    #[allow(deprecated)]
     SerializeValuesError(#[from] SerializeValuesError),
 
     #[error("Serializing values failed: {0} ")]
