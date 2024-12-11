@@ -7,6 +7,7 @@ use super::session::{
     AddressTranslator, CurrentDeserializationApi, GenericSession, LegacyDeserializationApi,
     SessionConfig,
 };
+use super::timestamp_generator::TimestampGenerator;
 use super::Compression;
 
 #[cfg(feature = "cloud")]
@@ -660,6 +661,27 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn disallow_shard_aware_port(mut self, disallow: bool) -> Self {
         self.config.disallow_shard_aware_port = disallow;
+        self
+    }
+
+    /// Set the timestamp generator that will generate timestamps on the client-side.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::timestamp_generator::MonotonicTimestampGenerator;
+    /// # use std::sync::Arc;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .timestamp_generator(Arc::new(MonotonicTimestampGenerator::new()))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn timestamp_generator(mut self, timestamp_generator: Arc<dyn TimestampGenerator>) -> Self {
+        self.config.timestamp_generator = Some(timestamp_generator);
         self
     }
 
