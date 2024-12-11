@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::fmt;
 use chrono::{Duration, NaiveDate, NaiveTime, TimeZone, Utc};
-use scylla_cql::frame::value::{CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
+use scylla_cql::frame::value::{CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
 use tabled::settings::peaker::Priority;
 use tabled::settings::{Alignment, Width};
 use tabled::{builder::Builder, settings::Style, settings::themes::Colorization, settings::Color};
@@ -479,6 +479,15 @@ impl QueryRowsResult {
 ///
 /// - `fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result`
 ///   Formats the rows as a table and writes it to the given formatter.
+/// 
+/// - `set_blob_displaying(&mut self, byte_displaying: ByteDisplaying)`
+///  Sets the byte display format for blobs.
+/// 
+/// - `set_exponent_displaying_integers(&mut self, exponent_displaying_integers: bool)`
+///  Sets the exponent display for integers.
+/// 
+/// - `set_floating_point_precision(&mut self, precision: usize)`
+///  Sets the exponent display for floats and doubles.
 
 pub struct RowsDisplayer<'a> {
     query_result: &'a QueryRowsResult,
@@ -487,6 +496,11 @@ pub struct RowsDisplayer<'a> {
 
 impl<'a> RowsDisplayer<'a>
 {
+    /// Creates a new `RowsDisplayer` for the given `QueryRowsResult`.
+    /// The default settings are:
+    /// - terminal width: 0,
+    /// - color usage: true,
+    /// - byte displaying: `ByteDisplaying::Hex`
     pub fn new(query_result: &'a QueryRowsResult) -> Self {
         Self {
             query_result,
@@ -494,14 +508,40 @@ impl<'a> RowsDisplayer<'a>
         }
     }
 
+    /// Sets the terminal width for wrapping the table output.
+    /// The table will be wrapped to the given width, if possible.
+    /// If the width is set to 0, the table will not be wrapped.
+    /// The default value is 0.
     pub fn set_terminal_width(&mut self, terminal_width: usize) {
         self.display_settings.terminal_width = terminal_width;
     }
 
+    /// Enables or disables color in the table output.
     pub fn use_color(&mut self, use_color: bool) {
         self.display_settings.print_in_color = use_color;
     }
 
+    /// Sets the byte display format for blobs.
+    /// The default value is `ByteDisplaying::Hex`.
+    /// Possible values are:
+    /// - `ByteDisplaying::Ascii` - display bytes as ASCII characters,
+    /// - `ByteDisplaying::Hex` - display bytes as hexadecimal numbers,
+    /// - `ByteDisplaying::Dec` - display bytes as decimal numbers.
+    pub fn set_blob_displaying(&mut self, byte_displaying: ByteDisplaying) {
+        self.display_settings.byte_displaying = byte_displaying;
+    }
+
+    /// Sets the exponent display for integers.
+    /// If set to true, integers will be displayed in scientific notation.
+    /// The default value is false.
+    pub fn set_exponent_displaying_integers(&mut self, exponent_displaying_integers: bool) {
+        self.display_settings.exponent_displaying_integers = exponent_displaying_integers;
+    }
+
+    /// Sets the exponent display for floats and doubles.
+    pub fn set_floating_point_precision(&mut self, precision: usize) {
+        self.display_settings.double_precision = precision;
+    }
 
     fn get_item_wrapper(&'a self, item: &'a std::option::Option<CqlValue>) -> Box<dyn StringConvertible<'a>> {
         match item {
@@ -515,7 +555,7 @@ impl<'a> RowsDisplayer<'a>
                 Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Boolean(value)) => {
-                Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
+                Box::new(WrapperDisplay{value: value, settings: &self.display_settings})
             },
             Some(CqlValue::Counter(value)) => {
                 Box::new(WrapperDisplay{value: &None, settings: &self.display_settings})
@@ -681,7 +721,7 @@ impl RowsDisplayerSettings {
 
 
 #[derive(PartialEq)]
-enum ByteDisplaying {
+pub enum ByteDisplaying {
     Ascii,
     Hex,
     Dec,
@@ -775,7 +815,6 @@ impl fmt::Display for WrapperDisplay<'_, i32> {
 }
 
 // bigint
-
 impl fmt::Display for WrapperDisplay<'_, i64> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.settings.exponent_displaying_floats {
@@ -799,7 +838,6 @@ impl fmt::Display for WrapperDisplay<'_, f32> {
 }
 
 // double
-
 impl fmt::Display for WrapperDisplay<'_, f64> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.settings.exponent_displaying_floats {
@@ -812,7 +850,6 @@ impl fmt::Display for WrapperDisplay<'_, f64> {
 
 
 // blob
-
 impl fmt::Display for WrapperDisplay<'_, Vec<u8>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut result = String::new();
@@ -837,7 +874,6 @@ impl fmt::Display for WrapperDisplay<'_, Vec<u8>> {
 }
 
 // string
-
 impl fmt::Display for WrapperDisplay<'_, String> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.value)
@@ -845,7 +881,6 @@ impl fmt::Display for WrapperDisplay<'_, String> {
 }
 
 // timestamp
-
 impl fmt::Display for WrapperDisplay<'_, CqlTimestamp> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // egzample of formating timestamp 14:30:00.000000000
@@ -861,7 +896,6 @@ impl fmt::Display for WrapperDisplay<'_, CqlTimestamp> {
 }
 
 // time
-
 impl fmt::Display for WrapperDisplay<'_, CqlTime> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // egzample of formating time 14:30:00.000000000
@@ -887,7 +921,6 @@ impl fmt::Display for WrapperDisplay<'_, CqlTime> {
 }
 
 // timeuuid
-
 impl fmt::Display for WrapperDisplay<'_, CqlTimeuuid> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let uuid = self.value.as_bytes();
@@ -902,7 +935,6 @@ impl fmt::Display for WrapperDisplay<'_, CqlTimeuuid> {
 }
 
 // duration
-
 impl fmt::Display for WrapperDisplay<'_, CqlDuration> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let months = self.value.months;
@@ -958,7 +990,6 @@ impl fmt::Display for WrapperDisplay<'_, CqlDuration> {
 
 
 // date
-
 impl fmt::Display for WrapperDisplay<'_, CqlDate> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // egzample of formating date 2021-12-31
@@ -977,7 +1008,6 @@ impl fmt::Display for WrapperDisplay<'_, CqlDate> {
 }
 
 // inet 
-
 impl fmt::Display for WrapperDisplay<'_, std::net::IpAddr> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ip = self.value;
@@ -989,6 +1019,13 @@ impl fmt::Display for WrapperDisplay<'_, std::net::IpAddr> {
                 write!(f, "{}", ipv6)
             },
         }
+    }
+}
+
+// boolean
+impl fmt::Display for WrapperDisplay<'_, bool> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.value)
     }
 }
 
@@ -1075,7 +1112,6 @@ mod tests {
     use itertools::Itertools as _;
     use scylla_cql::frame::response::result::ResultMetadata;
     use scylla_cql::frame::types;
-use std::fmt::Write;
 
     use super::*;
 
@@ -1362,6 +1398,24 @@ use std::fmt::Write;
                     );
                 }
             }
+        }
+
+        // use of QueryRowsResult after use of displayer
+        { 
+            let rr = sample_raw_rows(2, 1);
+            let rqr = QueryResult::new(Some(rr), None, Vec::new());
+            let qr : QueryRowsResult = rqr.into_rows_result().unwrap();
+            let mut displayer = qr.rows_displayer();
+            displayer.set_terminal_width(80);
+            displayer.set_blob_displaying(ByteDisplaying::Hex);
+            displayer.use_color(true);
+            let _ = format!("{}", displayer);
+            let rows = qr.rows::<(&str, bool)>();
+            
+            let mut rows_data = rows.unwrap();
+            let row = rows_data.next().unwrap().unwrap();
+
+            assert_eq!(row, ("MOCK", true));
         }
     }
 
