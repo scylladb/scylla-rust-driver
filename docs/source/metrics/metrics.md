@@ -1,5 +1,7 @@
 # Driver metrics
 
+This feature is available only under the crate feature `metrics`.
+
 During operation the driver collects various metrics.
 
 They can be accessed at any moment using `Session::get_metrics()`
@@ -11,6 +13,7 @@ They can be accessed at any moment using `Session::get_metrics()`
 * Total number of paged queries
 * Number of errors during paged queries
 * Number of retries
+* Latency histogram statistics (min, max, mean, standard deviation, percentiles)
 
 ### Example
 ```rust
@@ -29,6 +32,18 @@ println!(
     "99.9 latency percentile: {}",
     metrics.get_latency_percentile_ms(99.9).unwrap()
 );
+
+let snapshot = metrics.get_snapshot().unwrap();
+println!("Min: {}", snapshot.min);
+println!("Max: {}", snapshot.max);
+println!("Mean: {}", snapshot.mean);
+println!("Standard deviation: {}", snapshot.stddev);
+println!("Median: {}", snapshot.median);
+println!("75th percentile: {}", snapshot.percentile_75);
+println!("90th percentile: {}", snapshot.percentile_90);
+println!("95th percentile: {}", snapshot.percentile_95);
+println!("99th percentile: {}", snapshot.percentile_99);
+println!("99.9th percentile: {}", snapshot.percentile_99_9);
 # Ok(())
 # }
 ```

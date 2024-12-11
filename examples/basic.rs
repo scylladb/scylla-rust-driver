@@ -100,6 +100,18 @@ async fn main() -> Result<()> {
         metrics.get_latency_percentile_ms(99.9).unwrap()
     );
 
+    let snapshot = metrics.get_snapshot().unwrap();
+    println!("Min: {}", snapshot.min);
+    println!("Max: {}", snapshot.max);
+    println!("Mean: {}", snapshot.mean);
+    println!("Standard deviation: {}", snapshot.stddev);
+    println!("Median: {}", snapshot.median);
+    println!("75th percentile: {}", snapshot.percentile_75);
+    println!("90th percentile: {}", snapshot.percentile_90);
+    println!("95th percentile: {}", snapshot.percentile_95);
+    println!("99th percentile: {}", snapshot.percentile_99);
+    println!("99.9th percentile: {}", snapshot.percentile_99_9);
+
     println!("Ok.");
 
     Ok(())

@@ -1,6 +1,6 @@
-use histogram::Histogram;
+use crate::transport::histogram::{Histogram, Snapshot};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
 
@@ -28,7 +28,7 @@ pub struct Metrics {
     errors_iter_num: AtomicU64,
     queries_iter_num: AtomicU64,
     retries_num: AtomicU64,
-    histogram: Arc<Mutex<Histogram>>,
+    histogram: Arc<Histogram>,
 }
 
 impl Metrics {
@@ -39,7 +39,7 @@ impl Metrics {
             errors_iter_num: AtomicU64::new(0),
             queries_iter_num: AtomicU64::new(0),
             retries_num: AtomicU64::new(0),
-            histogram: Arc::new(Mutex::new(Histogram::new())),
+            histogram: Arc::new(Histogram::new()),
         }
     }
 
@@ -76,15 +76,14 @@ impl Metrics {
     ///
     /// * `latency` - time in milliseconds that should be logged
     pub(crate) fn log_query_latency(&self, latency: u64) -> Result<(), MetricsError> {
-        let mut histogram_unlocked = self.histogram.lock().unwrap();
-        histogram_unlocked.increment(latency)?;
+        self.histogram.increment(latency)?;
         Ok(())
     }
 
     /// Returns average latency in milliseconds
     pub fn get_latency_avg_ms(&self) -> Result<u64, MetricsError> {
-        let histogram_unlocked = self.histogram.lock().unwrap();
-        Ok(histogram_unlocked.mean()?)
+        let mean = self.histogram.log_operation(Histogram::mean())?;
+        Ok(mean)
     }
 
     /// Returns latency from histogram for a given percentile
@@ -92,8 +91,18 @@ impl Metrics {
     ///
     /// * `percentile` - float value (0.0 - 100.0)
     pub fn get_latency_percentile_ms(&self, percentile: f64) -> Result<u64, MetricsError> {
-        let histogram_unlocked = self.histogram.lock().unwrap();
-        Ok(histogram_unlocked.percentile(percentile)?)
+        let result = self
+            .histogram
+            .log_operation(Histogram::percentile(percentile))?;
+        Ok(result)
+    }
+
+    /// Returns snapshot of histogram metrics taken at the moment of calling this function. \
+    /// Available metrics: min, max, mean, std_dev, median,
+    ///                    percentile_90, percentile_95, percentile_99, percentile_99_9.
+    pub fn get_snapshot(&self) -> Result<Snapshot, MetricsError> {
+        let snapshot = self.histogram.log_operation(Histogram::snapshot())?;
+        Ok(snapshot)
     }
 
     /// Returns counter for errors occurred in nonpaged queries

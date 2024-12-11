@@ -289,4 +289,5 @@ pub use transport::load_balancing;
 pub use transport::retry_policy;
 pub use transport::speculative_execution;
 
+#[cfg(feature = "metrics")]
 pub use transport::metrics::{Metrics, MetricsError};
