@@ -83,6 +83,7 @@ pub use crate::transport::connection_pool::PoolSize;
 
 // This re-export is to preserve backward compatibility.
 // Those items are no longer here not to clutter session.rs with legacy things.
+#[allow(deprecated)]
 pub use crate::transport::legacy_query_result::{IntoTypedRows, TypedRowIter};
 
 use crate::authentication::AuthenticatorProvider;
