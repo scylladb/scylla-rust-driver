@@ -15,12 +15,15 @@ use std::fmt::Display;
 use thiserror::Error;
 
 use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 use crate::frame::types;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
 use crate::frame::{frame_errors::LowLevelDeserializationError, value::CqlVarintBorrowed};
+use crate::frame::{
+    response::result::{deser_cql_value, ColumnType, CqlValue},
+    value::CqlDecimalBorrowed,
+};
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -267,6 +270,24 @@ impl_emptiable_strict_type!(
             val, scale,
         ))
     }
+);
+
+impl_emptiable_strict_type!(
+    CqlDecimalBorrowed<'b>,
+    Decimal,
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
+        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
+        let scale = types::read_int(&mut val).map_err(|err| {
+            mk_deser_err::<Self>(
+                typ,
+                BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
+            )
+        })?;
+        Ok(CqlDecimalBorrowed::from_signed_be_bytes_slice_and_exponent(
+            val, scale,
+        ))
+    },
+    'b
 );
 
 #[cfg(feature = "bigdecimal-04")]

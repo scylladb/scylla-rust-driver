@@ -454,6 +454,9 @@ impl From<CqlVarintBorrowed<'_>> for num_bigint_04::BigInt {
 /// - a [`CqlVarint`] value
 /// - 32-bit integer which determines the position of the decimal point
 ///
+/// This struct holds owned bytes. If you wish to borrow the bytes instead,
+/// see [`CqlDecimalBorrowed`] documentation.
+///
 /// The type is not very useful in most use cases.
 /// However, users can make use of more complex types
 /// such as `bigdecimal::BigDecimal` (v0.4).
@@ -467,6 +470,20 @@ impl From<CqlVarintBorrowed<'_>> for num_bigint_04::BigInt {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CqlDecimal {
     int_val: CqlVarint,
+    scale: i32,
+}
+
+/// Borrowed version of native CQL `decimal` representation.
+///
+/// Represented as a pair:
+/// - a [`CqlVarintBorrowed`] value
+/// - 32-bit integer which determines the position of the decimal point
+///
+/// Refer to the documentation of [`CqlDecimal`].
+/// Especially, see the disclaimer about [non-normalized values](CqlDecimal#db-data-format).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CqlDecimalBorrowed<'b> {
+    int_val: CqlVarintBorrowed<'b>,
     scale: i32,
 }
 
@@ -492,6 +509,20 @@ impl CqlDecimal {
     }
 }
 
+/// Constructors
+impl<'b> CqlDecimalBorrowed<'b> {
+    /// Creates a [`CqlDecimalBorrowed`] from a slice of bytes
+    /// representing [`CqlVarintBorrowed`] and a 32-bit scale.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_be_bytes_slice_and_exponent(bytes: &'b [u8], scale: i32) -> Self {
+        Self {
+            int_val: CqlVarintBorrowed::from_signed_bytes_be_slice(bytes),
+            scale,
+        }
+    }
+}
+
 /// Conversion to raw bytes
 impl CqlDecimal {
     /// Returns a slice of bytes in two's complement
@@ -507,9 +538,30 @@ impl CqlDecimal {
     }
 }
 
+/// Conversion to raw bytes
+impl CqlDecimalBorrowed<'_> {
+    /// Returns a slice of bytes in two's complement
+    /// binary big-endian representation and a scale.
+    pub fn as_signed_be_bytes_slice_and_exponent(&self) -> (&[u8], i32) {
+        (self.int_val.as_signed_bytes_be_slice(), self.scale)
+    }
+}
+
 #[cfg(feature = "bigdecimal-04")]
 impl From<CqlDecimal> for bigdecimal_04::BigDecimal {
     fn from(value: CqlDecimal) -> Self {
+        Self::from((
+            bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(
+                value.int_val.as_signed_bytes_be_slice(),
+            ),
+            value.scale as i64,
+        ))
+    }
+}
+
+#[cfg(feature = "bigdecimal-04")]
+impl From<CqlDecimalBorrowed<'_>> for bigdecimal_04::BigDecimal {
+    fn from(value: CqlDecimalBorrowed) -> Self {
         Self::from((
             bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(
                 value.int_val.as_signed_bytes_be_slice(),

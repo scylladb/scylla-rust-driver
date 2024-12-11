@@ -16,8 +16,8 @@ use uuid::Uuid;
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
 use crate::frame::value::{
-    Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
-    CqlVarintBorrowed, MaybeUnset, Unset, Value,
+    Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
+    CqlTimeuuid, CqlVarint, CqlVarintBorrowed, MaybeUnset, Unset, Value,
 };
 
 #[cfg(feature = "chrono-04")]
@@ -113,6 +113,18 @@ impl SerializeValue for i64 {
     });
 }
 impl SerializeValue for CqlDecimal {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Decimal);
+        let mut builder = writer.into_value_builder();
+        let (bytes, scale) = me.as_signed_be_bytes_slice_and_exponent();
+        builder.append_bytes(&scale.to_be_bytes());
+        builder.append_bytes(bytes);
+        builder
+            .finish()
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
+}
+impl SerializeValue for CqlDecimalBorrowed<'_> {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Decimal);
         let mut builder = writer.into_value_builder();
