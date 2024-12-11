@@ -17,7 +17,7 @@ use crate::frame::response::result::ColumnType;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types;
 #[allow(deprecated)]
-use crate::frame::value::{LegacySerializedValues, SerializeValuesError, ValueList};
+use crate::frame::value::{LegacySerializedValues, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::value::SerializeValue;
@@ -687,6 +687,8 @@ pub enum BuiltinSerializationErrorKind {
         /// The error that caused the column serialization to fail.
         err: SerializationError,
     },
+    /// Too many values to add, max 65,535 values can be sent in a request.
+    TooManyValues,
 }
 
 impl Display for BuiltinSerializationErrorKind {
@@ -694,6 +696,12 @@ impl Display for BuiltinSerializationErrorKind {
         match self {
             BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err } => {
                 write!(f, "failed to serialize column {name}: {err}")
+            }
+            BuiltinSerializationErrorKind::TooManyValues => {
+                write!(
+                    f,
+                    "Too many values to add, max 65,535 values can be sent in a request"
+                )
             }
         }
     }
@@ -771,9 +779,9 @@ impl SerializedValues {
         let element_count = match writer.value_count().try_into() {
             Ok(n) => n,
             Err(_) => {
-                return Err(SerializationError(Arc::new(
-                    SerializeValuesError::TooManyValues,
-                )))
+                return Err(SerializationError(Arc::new(mk_ser_err::<Self>(
+                    BuiltinSerializationErrorKind::TooManyValues,
+                ))));
             }
         };
 
@@ -829,9 +837,9 @@ impl SerializedValues {
         typ: &ColumnType,
     ) -> Result<(), SerializationError> {
         if self.element_count() == u16::MAX {
-            return Err(SerializationError(Arc::new(
-                SerializeValuesError::TooManyValues,
-            )));
+            return Err(SerializationError(Arc::new(mk_ser_err::<Self>(
+                BuiltinSerializationErrorKind::TooManyValues,
+            ))));
         }
 
         let len_before_serialize: usize = self.serialized_values.len();
@@ -1158,7 +1166,10 @@ pub(crate) mod tests {
         let err = do_serialize_err(v, &spec);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(&str, i32)>());
-        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind;
+        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind
+        else {
+            panic!("Expected BuiltinSerializationErrorKind::ColumnSerializationFailed")
+        };
         assert_eq!(name, "b");
     }
 
@@ -1185,7 +1196,10 @@ pub(crate) mod tests {
         let err = do_serialize_err(v, &spec);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<&str>>());
-        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind;
+        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind
+        else {
+            panic!("Expected BuiltinSerializationErrorKind::ColumnSerializationFailed")
+        };
         assert_eq!(name, "b");
     }
 
@@ -1219,7 +1233,10 @@ pub(crate) mod tests {
         let err = do_serialize_err(v, &spec);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, i32>>());
-        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind;
+        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind
+        else {
+            panic!("Expected BuiltinSerializationErrorKind::ColumnSerializationFailed")
+        };
         assert_eq!(name, "b");
     }
 

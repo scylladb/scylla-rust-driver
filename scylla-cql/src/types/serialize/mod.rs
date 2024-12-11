@@ -32,6 +32,8 @@ pub use writers::{CellValueBuilder, CellWriter, RowWriter};
 ///   a list of named values encoded with the legacy `ValueList` trait is passed
 ///   as an argument to the statement, and rewriting it using the new
 ///   `SerializeRow` interface fails.
+// TODO: remove mentions about legacy errors from the above description when
+// they are removed.
 #[derive(Debug, Clone, Error)]
 #[error("SerializationError: {0}")]
 pub struct SerializationError(Arc<dyn Error + Send + Sync>);
