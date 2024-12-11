@@ -3,7 +3,7 @@
 Driver supports all kinds of statements supported by ScyllaDB. The following tables aim to bridge between DB concepts and driver's API.
 They include recommendations on which API to use in what cases.
 
-## Kinds of CQL statements (from the CQL protocol point of view):
+## Kinds of CQL statements (from the CQL protocol point of view)
 
 | Kind of CQL statement | Single              | Batch                                    |
 |-----------------------|---------------------|------------------------------------------|
@@ -59,7 +59,7 @@ This is **NOT** strictly related to content of the CQL query string.
 | Load balancing       | advanced if prepared, else primitive                  | advanced if prepared **and ALL** statements in the batch target the same partition, else primitive                                                                                   |
 | Suitable operations  | most of operations                                    | - a list of operations that needs to be executed atomically (batch LightWeight Transaction)</br> - a batch of operations targetting the same partition (as an advanced optimisation) |
 
-## CQL statements - operations (based on what the CQL string contains):
+## CQL statements - operations (based on what the CQL string contains)
 
 | CQL data manipulation statement                | Recommended statement kind                                                                                                               | Recommended Session operation                                                                               |
 |------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|
@@ -86,9 +86,10 @@ This is **NOT** strictly related to content of the CQL query string.
 
 For more detailed comparison and more best practices, see [doc page about paging](paged.md).
 
-### Queries are fully asynchronous - you can run as many of them in parallel as you wish.
+### Queries are fully asynchronous - you can run as many of them in parallel as you wish
 
-## `USE KEYSPACE`:
+## `USE KEYSPACE`
+
 There is a special functionality to enable [USE keyspace](usekeyspace.md).
 
 ```{eval-rst}
@@ -106,4 +107,5 @@ There is a special functionality to enable [USE keyspace](usekeyspace.md).
    schema-agreement
    lwt
    timeouts
+   timestamp-generators
 ```

@@ -1,0 +1,41 @@
+# Timestamp generators
+
+If you want to generate timestamps on the client side you can provide
+a TimestampGenerator to a SessionBuilder when creating a Session. Then
+every executed statement will have attached a new timestamp generated
+by the provided TimestampGenerator, as longas the statement did not
+already have a timestamp provided (e.g. by using the `TIMESTAMP` clause).
+
+## Monotonic Timestamp Generator
+
+Most basic client-side timestamp generator. Guarantees monotonic timestamps
+based on the system clock, with automatic timestamp incrementation
+if the system clock timestamp would not be monotonic. If the clock skew
+exceeds warning_threshold of the generator (provided in the constructor, 1s by default)
+user will be warned with timestamp generation with warning_interval cooldown period
+(provided in the constructor, 1s by default) to not spam the user.
+
+``` rust
+# extern crate scylla;
+# use std::error::Error;
+# async fn check_only_compiles() -> Result<(), Box<dyn std::error::Error>> {
+use scylla::{Session, SessionBuilder, query::Query};
+use scylla::transport::timestamp_generator::MonotonicTimestampGenerator;
+use std::sync::Arc;
+use std::time::Duration;
+
+let session: Session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .timestamp_generator(Arc::new(MonotonicTimestampGenerator::new()))
+    .build()
+    .await?;
+
+// This query will have a timestamp generated 
+// by the monotonic timestamp generator
+let my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
+let to_insert: i32 = 12345;
+session.query_unpaged(my_query, (to_insert,)).await?;
+# Ok(())
+# }
+
+
