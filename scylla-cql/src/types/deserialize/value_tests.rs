@@ -11,6 +11,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+    CqlVarintBorrowed,
 };
 use crate::types::deserialize::value::{TupleDeserializationErrorKind, TupleTypeCheckErrorKind};
 use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
@@ -156,6 +157,12 @@ fn test_varlen_numbers() {
     assert_ser_de_identity(
         &ColumnType::Varint,
         &CqlVarint::from_signed_bytes_be_slice(b"Ala ma kota"),
+        &mut Bytes::new(),
+    );
+
+    assert_ser_de_identity(
+        &ColumnType::Varint,
+        &CqlVarintBorrowed::from_signed_bytes_be_slice(b"Ala ma kota"),
         &mut Bytes::new(),
     );
 

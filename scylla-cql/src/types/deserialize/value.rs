@@ -15,12 +15,12 @@ use std::fmt::Display;
 use thiserror::Error;
 
 use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::frame_errors::LowLevelDeserializationError;
 use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 use crate::frame::types;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
+use crate::frame::{frame_errors::LowLevelDeserializationError, value::CqlVarintBorrowed};
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -220,6 +220,16 @@ impl_emptiable_strict_type!(
         let val = ensure_not_null_slice::<Self>(typ, v)?;
         Ok(CqlVarint::from_signed_bytes_be_slice(val))
     }
+);
+
+impl_emptiable_strict_type!(
+    CqlVarintBorrowed<'b>,
+    Varint,
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        Ok(CqlVarintBorrowed::from_signed_bytes_be_slice(val))
+    },
+    'b
 );
 
 #[cfg(feature = "num-bigint-03")]

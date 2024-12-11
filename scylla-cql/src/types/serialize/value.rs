@@ -17,7 +17,7 @@ use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
-    MaybeUnset, Unset, Value,
+    CqlVarintBorrowed, MaybeUnset, Unset, Value,
 };
 
 #[cfg(feature = "chrono-04")]
@@ -245,6 +245,14 @@ impl SerializeValue for CqlTimeuuid {
     });
 }
 impl SerializeValue for CqlVarint {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Varint);
+        writer
+            .set_value(me.as_signed_bytes_be_slice())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
+}
+impl SerializeValue for CqlVarintBorrowed<'_> {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Varint);
         writer
