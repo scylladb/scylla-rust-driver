@@ -10,6 +10,11 @@ use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
+#[allow(deprecated)]
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum FromRowError {
     #[error("{err} in the column with index {column}")]
@@ -29,6 +34,10 @@ pub trait FromCqlVal<T>: Sized {
     fn from_cql(cql_val: T) -> Result<Self, FromCqlValError>;
 }
 
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum FromCqlValError {
     #[error("Bad CQL type")]
@@ -99,6 +108,10 @@ impl<T: FromCqlVal<CqlValue>> FromCqlVal<Option<CqlValue>> for Option<T> {
 ///
 /// impl_from_cql_value_from_method!(MyBytes, into_my_bytes);
 /// ```
+#[deprecated(
+    since = "0.15.1",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
 #[macro_export]
 macro_rules! impl_from_cql_value_from_method {
     ($T:ty, $convert_func:ident) => {

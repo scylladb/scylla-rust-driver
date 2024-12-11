@@ -2410,6 +2410,7 @@ mod tests {
         );
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_serialize_empty() {
         use crate::frame::value::Value;

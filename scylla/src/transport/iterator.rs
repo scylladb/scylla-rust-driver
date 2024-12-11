@@ -1154,6 +1154,10 @@ mod legacy {
     }
 
     /// Couldn't get next typed row from the iterator
+    #[deprecated(
+        since = "0.15.1",
+        note = "Legacy deserialization API is inefficient and is going to be removed soon"
+    )]
     #[derive(Error, Debug, Clone)]
     pub enum LegacyNextRowError {
         /// Query to fetch next page has failed

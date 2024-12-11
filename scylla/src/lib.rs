@@ -144,6 +144,7 @@ pub mod serialize {
         };
 
         // Legacy migration types - to be removed when removing legacy framework
+        #[allow(deprecated)]
         pub use scylla_cql::types::serialize::batch::{
             LegacyBatchValuesAdapter, LegacyBatchValuesIteratorAdapter,
         };
@@ -161,6 +162,7 @@ pub mod serialize {
         };
 
         // Legacy migration types - to be removed when removing legacy framework
+        #[allow(deprecated)]
         pub use scylla_cql::types::serialize::row::{
             // Legacy migration types - to be removed when removing legacy framework
             serialize_legacy_row,
@@ -188,6 +190,7 @@ pub mod serialize {
         };
 
         // Legacy migration types - to be removed when removing legacy framework
+        #[allow(deprecated)]
         pub use scylla_cql::types::serialize::value::{
             serialize_legacy_value, ValueAdapter, ValueToSerializeValueAdapterError,
         };
