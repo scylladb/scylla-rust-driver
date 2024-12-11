@@ -1,4 +1,4 @@
-use crate::transport::histogram::Histogram;
+use crate::transport::histogram::{Histogram, Snapshot};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -95,6 +95,14 @@ impl Metrics {
             .histogram
             .log_operation(Histogram::percentile(percentile))?;
         Ok(result)
+    }
+
+    /// Returns snapshot of histogram metrics taken at the moment of calling this function. \
+    /// Available metrics: min, max, mean, std_dev, median,
+    ///                    percentile_90, percentile_95, percentile_99, percentile_99_9.
+    pub fn get_snapshot(&self) -> Result<Snapshot, MetricsError> {
+        let snapshot = self.histogram.log_operation(Histogram::snapshot())?;
+        Ok(snapshot)
     }
 
     /// Returns counter for errors occurred in nonpaged queries
