@@ -27,6 +27,7 @@
     - [USE keyspace](queries/usekeyspace.md)
     - [Schema agreement](queries/schema-agreement.md)
     - [Query timeouts](queries/timeouts.md)
+    - [Timestamp generators](queries/timestamp-generators.md)
 
 - [Execution profiles](execution-profiles/execution-profiles.md)
     - [Creating a profile and setting it](execution-profiles/create-and-use.md)
