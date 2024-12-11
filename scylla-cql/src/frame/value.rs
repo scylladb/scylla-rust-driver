@@ -303,6 +303,32 @@ impl CqlVarint {
     }
 }
 
+/// Compares two [`CqlVarint`] values after normalization.
+///
+/// # Example
+///
+/// ```rust
+/// # use scylla_cql::frame::value::CqlVarint;
+/// let non_normalized_bytes = vec![0x00, 0x01];
+/// let normalized_bytes = vec![0x01];
+/// assert_eq!(
+///     CqlVarint::from_signed_bytes_be(non_normalized_bytes),
+///     CqlVarint::from_signed_bytes_be(normalized_bytes)
+/// );
+/// ```
+impl PartialEq for CqlVarint {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_normalized_slice() == other.as_normalized_slice()
+    }
+}
+
+/// Computes the hash of normalized [`CqlVarint`].
+impl std::hash::Hash for CqlVarint {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_normalized_slice().hash(state)
+    }
+}
+
 #[cfg(feature = "num-bigint-03")]
 impl From<num_bigint_03::BigInt> for CqlVarint {
     fn from(value: num_bigint_03::BigInt) -> Self {
@@ -328,32 +354,6 @@ impl From<num_bigint_04::BigInt> for CqlVarint {
 impl From<CqlVarint> for num_bigint_04::BigInt {
     fn from(val: CqlVarint) -> Self {
         num_bigint_04::BigInt::from_signed_bytes_be(&val.0)
-    }
-}
-
-/// Compares two [`CqlVarint`] values after normalization.
-///
-/// # Example
-///
-/// ```rust
-/// # use scylla_cql::frame::value::CqlVarint;
-/// let non_normalized_bytes = vec![0x00, 0x01];
-/// let normalized_bytes = vec![0x01];
-/// assert_eq!(
-///     CqlVarint::from_signed_bytes_be(non_normalized_bytes),
-///     CqlVarint::from_signed_bytes_be(normalized_bytes)
-/// );
-/// ```
-impl PartialEq for CqlVarint {
-    fn eq(&self, other: &Self) -> bool {
-        self.as_normalized_slice() == other.as_normalized_slice()
-    }
-}
-
-/// Computes the hash of normalized [`CqlVarint`].
-impl std::hash::Hash for CqlVarint {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.as_normalized_slice().hash(state)
     }
 }
 
