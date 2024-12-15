@@ -210,6 +210,9 @@ impl std::hash::Hash for CqlTimeuuid {
 /// The library support (e.g. conversion from [`CqlValue`]) for these types is
 /// enabled via `num-bigint-03` and `num-bigint-04` crate features.
 ///
+/// This struct holds owned bytes. If you wish to borrow the bytes instead,
+/// see [`CqlVarintBorrowed`] documentation.
+///
 /// # DB data format
 /// Notice that [constructors](CqlVarint#impl-CqlVarint)
 /// don't perform any normalization on the provided data.
@@ -222,6 +225,13 @@ impl std::hash::Hash for CqlTimeuuid {
 /// before comparison. For details, check [examples](#impl-PartialEq-for-CqlVarint).
 #[derive(Clone, Eq, Debug)]
 pub struct CqlVarint(Vec<u8>);
+
+/// A borrowed version of native CQL `varint` representation.
+///
+/// Refer to the documentation of [`CqlVarint`].
+/// Especially, see the disclaimer about [non-normalized values](CqlVarint#db-data-format).
+#[derive(Clone, Eq, Debug)]
+pub struct CqlVarintBorrowed<'b>(&'b [u8]);
 
 /// Constructors from bytes
 impl CqlVarint {
@@ -242,6 +252,17 @@ impl CqlVarint {
     }
 }
 
+/// Constructors from bytes
+impl<'b> CqlVarintBorrowed<'b> {
+    /// Creates a [`CqlVarintBorrowed`] from a slice of bytes in
+    /// two's complement binary big-endian representation.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_bytes_be_slice(digits: &'b [u8]) -> Self {
+        Self(digits)
+    }
+}
+
 /// Conversion to bytes
 impl CqlVarint {
     /// Converts [`CqlVarint`] to an array of bytes in two's
@@ -257,9 +278,39 @@ impl CqlVarint {
     }
 }
 
-impl CqlVarint {
+/// Conversion to bytes
+impl CqlVarintBorrowed<'_> {
+    /// Returns a slice of bytes in two's complement
+    /// binary big-endian representation.
+    pub fn as_signed_bytes_be_slice(&self) -> &[u8] {
+        self.0
+    }
+}
+
+/// An internal utility trait used to implement [`AsNormalizedVarintSlice`]
+/// for both [`CqlVarint`] and [`CqlVarintBorrowed`].
+trait AsVarintSlice {
+    fn as_slice(&self) -> &[u8];
+}
+impl AsVarintSlice for CqlVarint {
+    fn as_slice(&self) -> &[u8] {
+        self.as_signed_bytes_be_slice()
+    }
+}
+impl AsVarintSlice for CqlVarintBorrowed<'_> {
+    fn as_slice(&self) -> &[u8] {
+        self.as_signed_bytes_be_slice()
+    }
+}
+
+/// An internal utility trait used to implement [`PartialEq`] and [`std::hash::Hash`]
+/// for [`CqlVarint`] and [`CqlVarintBorrowed`].
+trait AsNormalizedVarintSlice {
+    fn as_normalized_slice(&self) -> &[u8];
+}
+impl<V: AsVarintSlice> AsNormalizedVarintSlice for V {
     fn as_normalized_slice(&self) -> &[u8] {
-        let digits = self.0.as_slice();
+        let digits = self.as_slice();
         if digits.is_empty() {
             // num-bigint crate normalizes empty vector to 0.
             // We will follow the same approach.
@@ -293,34 +344,6 @@ impl CqlVarint {
     }
 }
 
-#[cfg(feature = "num-bigint-03")]
-impl From<num_bigint_03::BigInt> for CqlVarint {
-    fn from(value: num_bigint_03::BigInt) -> Self {
-        Self(value.to_signed_bytes_be())
-    }
-}
-
-#[cfg(feature = "num-bigint-03")]
-impl From<CqlVarint> for num_bigint_03::BigInt {
-    fn from(val: CqlVarint) -> Self {
-        num_bigint_03::BigInt::from_signed_bytes_be(&val.0)
-    }
-}
-
-#[cfg(feature = "num-bigint-04")]
-impl From<num_bigint_04::BigInt> for CqlVarint {
-    fn from(value: num_bigint_04::BigInt) -> Self {
-        Self(value.to_signed_bytes_be())
-    }
-}
-
-#[cfg(feature = "num-bigint-04")]
-impl From<CqlVarint> for num_bigint_04::BigInt {
-    fn from(val: CqlVarint) -> Self {
-        num_bigint_04::BigInt::from_signed_bytes_be(&val.0)
-    }
-}
-
 /// Compares two [`CqlVarint`] values after normalization.
 ///
 /// # Example
@@ -347,11 +370,82 @@ impl std::hash::Hash for CqlVarint {
     }
 }
 
+/// Compares two [`CqlVarintBorrowed`] values after normalization.
+///
+/// # Example
+///
+/// ```rust
+/// # use scylla_cql::frame::value::CqlVarintBorrowed;
+/// let non_normalized_bytes = &[0x00, 0x01];
+/// let normalized_bytes = &[0x01];
+/// assert_eq!(
+///     CqlVarintBorrowed::from_signed_bytes_be_slice(non_normalized_bytes),
+///     CqlVarintBorrowed::from_signed_bytes_be_slice(normalized_bytes)
+/// );
+/// ```
+impl PartialEq for CqlVarintBorrowed<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_normalized_slice() == other.as_normalized_slice()
+    }
+}
+
+/// Computes the hash of normalized [`CqlVarintBorrowed`].
+impl std::hash::Hash for CqlVarintBorrowed<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_normalized_slice().hash(state)
+    }
+}
+
+#[cfg(feature = "num-bigint-03")]
+impl From<num_bigint_03::BigInt> for CqlVarint {
+    fn from(value: num_bigint_03::BigInt) -> Self {
+        Self(value.to_signed_bytes_be())
+    }
+}
+
+#[cfg(feature = "num-bigint-03")]
+impl From<CqlVarint> for num_bigint_03::BigInt {
+    fn from(val: CqlVarint) -> Self {
+        num_bigint_03::BigInt::from_signed_bytes_be(&val.0)
+    }
+}
+
+#[cfg(feature = "num-bigint-03")]
+impl From<CqlVarintBorrowed<'_>> for num_bigint_03::BigInt {
+    fn from(val: CqlVarintBorrowed<'_>) -> Self {
+        num_bigint_03::BigInt::from_signed_bytes_be(val.0)
+    }
+}
+
+#[cfg(feature = "num-bigint-04")]
+impl From<num_bigint_04::BigInt> for CqlVarint {
+    fn from(value: num_bigint_04::BigInt) -> Self {
+        Self(value.to_signed_bytes_be())
+    }
+}
+
+#[cfg(feature = "num-bigint-04")]
+impl From<CqlVarint> for num_bigint_04::BigInt {
+    fn from(val: CqlVarint) -> Self {
+        num_bigint_04::BigInt::from_signed_bytes_be(&val.0)
+    }
+}
+
+#[cfg(feature = "num-bigint-04")]
+impl From<CqlVarintBorrowed<'_>> for num_bigint_04::BigInt {
+    fn from(val: CqlVarintBorrowed<'_>) -> Self {
+        num_bigint_04::BigInt::from_signed_bytes_be(val.0)
+    }
+}
+
 /// Native CQL `decimal` representation.
 ///
 /// Represented as a pair:
 /// - a [`CqlVarint`] value
 /// - 32-bit integer which determines the position of the decimal point
+///
+/// This struct holds owned bytes. If you wish to borrow the bytes instead,
+/// see [`CqlDecimalBorrowed`] documentation.
 ///
 /// The type is not very useful in most use cases.
 /// However, users can make use of more complex types
@@ -366,6 +460,20 @@ impl std::hash::Hash for CqlVarint {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CqlDecimal {
     int_val: CqlVarint,
+    scale: i32,
+}
+
+/// Borrowed version of native CQL `decimal` representation.
+///
+/// Represented as a pair:
+/// - a [`CqlVarintBorrowed`] value
+/// - 32-bit integer which determines the position of the decimal point
+///
+/// Refer to the documentation of [`CqlDecimal`].
+/// Especially, see the disclaimer about [non-normalized values](CqlDecimal#db-data-format).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CqlDecimalBorrowed<'b> {
+    int_val: CqlVarintBorrowed<'b>,
     scale: i32,
 }
 
@@ -391,6 +499,20 @@ impl CqlDecimal {
     }
 }
 
+/// Constructors
+impl<'b> CqlDecimalBorrowed<'b> {
+    /// Creates a [`CqlDecimalBorrowed`] from a slice of bytes
+    /// representing [`CqlVarintBorrowed`] and a 32-bit scale.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_be_bytes_slice_and_exponent(bytes: &'b [u8], scale: i32) -> Self {
+        Self {
+            int_val: CqlVarintBorrowed::from_signed_bytes_be_slice(bytes),
+            scale,
+        }
+    }
+}
+
 /// Conversion to raw bytes
 impl CqlDecimal {
     /// Returns a slice of bytes in two's complement
@@ -406,9 +528,30 @@ impl CqlDecimal {
     }
 }
 
+/// Conversion to raw bytes
+impl CqlDecimalBorrowed<'_> {
+    /// Returns a slice of bytes in two's complement
+    /// binary big-endian representation and a scale.
+    pub fn as_signed_be_bytes_slice_and_exponent(&self) -> (&[u8], i32) {
+        (self.int_val.as_signed_bytes_be_slice(), self.scale)
+    }
+}
+
 #[cfg(feature = "bigdecimal-04")]
 impl From<CqlDecimal> for bigdecimal_04::BigDecimal {
     fn from(value: CqlDecimal) -> Self {
+        Self::from((
+            bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(
+                value.int_val.as_signed_bytes_be_slice(),
+            ),
+            value.scale as i64,
+        ))
+    }
+}
+
+#[cfg(feature = "bigdecimal-04")]
+impl From<CqlDecimalBorrowed<'_>> for bigdecimal_04::BigDecimal {
+    fn from(value: CqlDecimalBorrowed) -> Self {
         Self::from((
             bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(
                 value.int_val.as_signed_bytes_be_slice(),

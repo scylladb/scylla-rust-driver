@@ -3,7 +3,7 @@
 
 ## value::CqlDecimal
 
-Without any feature flags, the user can interact with `decimal` type by making use of `value::CqlDecimal` which is a very simple wrapper representing the value as signed binary number in big-endian order with a 32-bit scale.
+Without any feature flags, the user can interact with `decimal` type by making use of `value::CqlDecimal` or `value::CqlDecimalBorrowed` which are very simple wrappers representing the value as signed binary number in big-endian order with a 32-bit scale.
 
 ```rust
 # extern crate scylla;

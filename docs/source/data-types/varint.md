@@ -7,8 +7,7 @@ To make use of `num_bigint::BigInt` type, user should enable one of the availabl
 
 ## value::CqlVarint
 
-Without any feature flags, the user can interact with `Varint` type by making use of `value::CqlVarint` which
-is a very simple wrapper representing the value as signed binary number in big-endian order.
+Without any feature flags, the user can interact with `Varint` type by making use of `value::CqlVarint` or `value::CqlVarintBorrowed` which are very simple wrappers representing the value as signed binary number in big-endian order.
 
 ## Example
 
