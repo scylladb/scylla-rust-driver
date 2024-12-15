@@ -51,6 +51,7 @@ use super::iterator::QueryPager;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::QueryResult;
 use super::session::AddressTranslator;
+use super::timestamp_generator::TimestampGenerator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
 #[cfg(feature = "cloud")]
@@ -565,6 +566,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
+    pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     #[cfg(feature = "ssl")]
     pub(crate) ssl_config: Option<SslConfig>,
     pub(crate) connect_timeout: std::time::Duration,
@@ -590,6 +592,7 @@ impl Default for ConnectionConfig {
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
+            timestamp_generator: None,
             event_sender: None,
             #[cfg(feature = "ssl")]
             ssl_config: None,
@@ -1047,6 +1050,17 @@ impl Connection {
         page_size: Option<PageSize>,
         paging_state: PagingState,
     ) -> Result<QueryResponse, UserRequestError> {
+        let mut timestamp = None;
+        if query.get_timestamp().is_none() {
+            if let Some(x) = self.config.timestamp_generator.as_ref() {
+                timestamp = Some(x.next_timestamp().await);
+            }
+        }
+
+        if timestamp.is_none() {
+            timestamp = query.get_timestamp()
+        }
+
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
             parameters: query::QueryParameters {
@@ -1056,7 +1070,7 @@ impl Connection {
                 page_size: page_size.map(Into::into),
                 paging_state,
                 skip_metadata: false,
-                timestamp: query.get_timestamp(),
+                timestamp,
             },
         };
 
@@ -1109,6 +1123,17 @@ impl Connection {
         page_size: Option<PageSize>,
         paging_state: PagingState,
     ) -> Result<QueryResponse, UserRequestError> {
+        let mut timestamp = None;
+        if prepared_statement.get_timestamp().is_none() {
+            if let Some(x) = self.config.timestamp_generator.as_ref() {
+                timestamp = Some(x.next_timestamp().await);
+            }
+        }
+
+        if timestamp.is_none() {
+            timestamp = prepared_statement.get_timestamp()
+        }
+
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
@@ -1116,7 +1141,7 @@ impl Connection {
                 serial_consistency,
                 values: Cow::Borrowed(values),
                 page_size: page_size.map(Into::into),
-                timestamp: prepared_statement.get_timestamp(),
+                timestamp,
                 skip_metadata: prepared_statement.get_use_cached_result_metadata(),
                 paging_state,
             },
@@ -1248,6 +1273,16 @@ impl Connection {
         });
 
         let values = RawBatchValuesAdapter::new(values, contexts);
+        let mut timestamp = None;
+        if batch.get_timestamp().is_none() {
+            if let Some(x) = self.config.timestamp_generator.as_ref() {
+                timestamp = Some(x.next_timestamp().await);
+            }
+        }
+
+        if timestamp.is_none() {
+            timestamp = batch.get_timestamp()
+        }
 
         let batch_frame = batch::Batch {
             statements: Cow::Borrowed(&batch.statements),
@@ -1255,7 +1290,7 @@ impl Connection {
             batch_type: batch.get_type(),
             consistency,
             serial_consistency,
-            timestamp: batch.get_timestamp(),
+            timestamp,
         };
 
         loop {

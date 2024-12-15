@@ -18,6 +18,7 @@ pub mod retry_policy;
 pub mod session;
 pub mod session_builder;
 pub mod speculative_execution;
+pub mod timestamp_generator;
 pub mod topology;
 
 pub use crate::frame::{Authenticator, Compression};
