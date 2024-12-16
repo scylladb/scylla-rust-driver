@@ -25,9 +25,13 @@ jobs:
         ports:
           - 9042:9042
         options: --health-cmd "cqlsh --username cassandra --password cassandra --debug" --health-interval 5s --health-retries 30
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
     - uses: actions/checkout@v3
     - name: Update rust toolchain
       run: rustup update
     - name: Run tests
       run: RUST_LOG=trace cargo test --verbose authenticate_superuser -- custom_authentication --ignored
+
