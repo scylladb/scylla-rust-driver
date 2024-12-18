@@ -2,7 +2,7 @@ use super::{PageSize, StatementConfig};
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
-use crate::retry_policy::RetryPolicy;
+use crate::policies::retry::RetryPolicy;
 use std::sync::Arc;
 use std::time::Duration;
 

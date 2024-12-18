@@ -16,8 +16,7 @@
 //! - TODO
 
 pub mod address_translator;
-pub mod downgrading_consistency_retry_policy;
 pub mod host_filter;
 pub mod load_balancing;
-pub mod retry_policy;
+pub mod retry;
 pub mod speculative_execution;

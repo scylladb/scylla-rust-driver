@@ -8,8 +8,8 @@ use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
 use scylla::load_balancing::{LoadBalancingPolicy, RoutingInfo};
+use scylla::policies::retry::{RetryPolicy, RetrySession};
 use scylla::query::Query;
-use scylla::retry_policy::{RetryPolicy, RetrySession};
 use scylla::routing::Shard;
 use scylla::speculative_execution::SpeculativeExecutionPolicy;
 use scylla::statement::SerialConsistency;
@@ -88,7 +88,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
 }
 
 impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {
-    fn new_session(&self) -> Box<dyn scylla::retry_policy::RetrySession> {
+    fn new_session(&self) -> Box<dyn scylla::policies::retry::RetrySession> {
         self.report_node(Report::RetryPolicy);
         Box::new(self.clone())
     }
@@ -97,10 +97,10 @@ impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {
 impl<const NODE: u8> RetrySession for BoundToPredefinedNodePolicy<NODE> {
     fn decide_should_retry(
         &mut self,
-        query_info: scylla::retry_policy::QueryInfo,
-    ) -> scylla::retry_policy::RetryDecision {
+        query_info: scylla::policies::retry::QueryInfo,
+    ) -> scylla::policies::retry::RetryDecision {
         self.report_consistency(query_info.consistency);
-        scylla::retry_policy::RetryDecision::DontRetry
+        scylla::policies::retry::RetryDecision::DontRetry
     }
 
     fn reset(&mut self) {}

@@ -10,7 +10,7 @@ use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 
 use crate::client::execution_profile::ExecutionProfileHandle;
-use crate::{history::HistoryListener, retry_policy::RetryPolicy};
+use crate::{history::HistoryListener, retry::RetryPolicy};
 
 pub mod batch;
 pub mod prepared_statement;

@@ -167,15 +167,14 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 use arc_swap::ArcSwap;
 use scylla_cql::{frame::types::SerialConsistency, Consistency};
 
-use crate::{
-    load_balancing::LoadBalancingPolicy, retry_policy::RetryPolicy,
-    speculative_execution::SpeculativeExecutionPolicy,
-};
+use crate::load_balancing::LoadBalancingPolicy;
+use crate::policies::retry::RetryPolicy;
+use crate::speculative_execution::SpeculativeExecutionPolicy;
 
 pub(crate) mod defaults {
     use super::ExecutionProfileInner;
     use crate::load_balancing::{self, LoadBalancingPolicy};
-    use crate::retry_policy::{DefaultRetryPolicy, RetryPolicy};
+    use crate::policies::retry::{DefaultRetryPolicy, RetryPolicy};
     use crate::speculative_execution::SpeculativeExecutionPolicy;
     use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
@@ -219,7 +218,7 @@ pub(crate) mod defaults {
 ///
 /// ```
 /// # use scylla::client::execution_profile::ExecutionProfile;
-/// # use scylla::policies::retry_policy::FallthroughRetryPolicy;
+/// # use scylla::policies::retry::FallthroughRetryPolicy;
 /// # use scylla::statement::Consistency;
 /// # use std::sync::Arc;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -299,13 +298,13 @@ impl ExecutionProfileBuilder {
     }
 
     /// Sets the [`RetryPolicy`] to use by default on queries.
-    /// The default is [DefaultRetryPolicy](crate::policies::retry_policy::DefaultRetryPolicy).
+    /// The default is [DefaultRetryPolicy](crate::policies::retry::DefaultRetryPolicy).
     /// It is possible to implement a custom retry policy by implementing the trait [`RetryPolicy`].
     ///
     /// # Example
     /// ```
     /// # use scylla::client::execution_profile::ExecutionProfile;
-    /// # use scylla::policies::retry_policy::DefaultRetryPolicy;
+    /// # use scylla::policies::retry::DefaultRetryPolicy;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let profile: ExecutionProfile = ExecutionProfile::builder()
@@ -356,7 +355,7 @@ impl ExecutionProfileBuilder {
     /// # Example
     /// ```
     /// # use scylla::client::execution_profile::ExecutionProfile;
-    /// # use scylla::policies::retry_policy::DefaultRetryPolicy;
+    /// # use scylla::policies::retry::DefaultRetryPolicy;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let profile: ExecutionProfile = ExecutionProfile::builder()

@@ -3,7 +3,7 @@ use crate::utils::{
     PerformDDL,
 };
 use scylla::client::session::Session;
-use scylla::retry_policy::FallthroughRetryPolicy;
+use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla::ExecutionProfile;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::types;

@@ -24,7 +24,7 @@ use crate::network::{
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
-use crate::policies::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
