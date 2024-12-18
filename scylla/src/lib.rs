@@ -293,7 +293,6 @@ pub use session::CloudSessionBuilder;
 pub use cluster::host_filter;
 pub use execution::execution_profile;
 pub use execution::load_balancing;
-pub use execution::retries;
 pub use execution::speculative_execution;
 
 pub use transport::metrics::{Metrics, MetricsError};
