@@ -10,8 +10,11 @@
 //!   than its broadcast address (e.g., when it's behind a NAT).
 //! - LoadBalancingPolicy, which decides which nodes and shards to contact for each
 //!   request.
+//! - SpeculativeExecutionPolicy, which decides if the driver will send speculative
+//!   requests to the next hosts when the current host takes too long to respond.
 //! - TODO
 
 pub mod address_translator;
 pub mod host_filter;
 pub mod load_balancing;
+pub mod speculative_execution;

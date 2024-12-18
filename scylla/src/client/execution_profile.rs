@@ -329,7 +329,7 @@ impl ExecutionProfileBuilder {
     /// use std::{sync::Arc, time::Duration};
     /// use scylla::{
     ///     client::execution_profile::ExecutionProfile,
-    ///     transport::speculative_execution::SimpleSpeculativeExecutionPolicy,
+    ///     policies::speculative_execution::SimpleSpeculativeExecutionPolicy,
     /// };
     ///
     /// let policy = SimpleSpeculativeExecutionPolicy {

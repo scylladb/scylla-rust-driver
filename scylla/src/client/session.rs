@@ -24,6 +24,7 @@ use crate::network::{
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
+use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
@@ -41,7 +42,6 @@ use crate::transport::metrics::Metrics;
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
-use crate::transport::speculative_execution;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
