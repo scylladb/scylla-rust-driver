@@ -43,6 +43,9 @@ use crate::history::HistoryListener;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
+use crate::policies::retry_policy::QueryInfo;
+use crate::policies::retry_policy::RetryDecision;
+use crate::policies::retry_policy::RetrySession;
 use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -64,7 +67,6 @@ use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::MaybeFirstRowError;
 use crate::transport::query_result::QueryResult;
 use crate::transport::query_result::RowsError;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
