@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::execution::execution_profile::ExecutionProfileHandle;
+use crate::execution::history::HistoryListener;
 use crate::execution::retries::RetryPolicy;
-use crate::history::HistoryListener;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 
 use super::StatementConfig;

@@ -5,9 +5,11 @@
 //!     - load balancing,
 //!     - retries,
 //!     - speculative execution,
+//! - request execution history,
 //! - TODO.
 
 pub mod execution_profile;
+pub mod history;
 pub mod load_balancing;
 pub mod retries;
 pub mod speculative_execution;

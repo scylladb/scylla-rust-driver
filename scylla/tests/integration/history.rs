@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use futures::StreamExt;
-use scylla::frame::response::result::Row;
-use scylla::history::{
+use scylla::execution::history::{
     AttemptResult, HistoryCollector, QueryHistoryResult, StructuredHistory, TimePoint,
 };
+use scylla::frame::response::result::Row;
 use scylla::query::Query;
 use scylla::transport::errors::QueryError;
 

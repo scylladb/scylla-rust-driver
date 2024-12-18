@@ -7,8 +7,7 @@ use crate::cloud::CloudConfig;
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
 
-use crate::history;
-use crate::history::HistoryListener;
+use crate::execution::history::{self, HistoryListener};
 use crate::transport::errors::{
     BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
 };

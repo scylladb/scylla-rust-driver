@@ -2,8 +2,8 @@
 
 use anyhow::Result;
 use futures::StreamExt as _;
+use scylla::execution::history::{HistoryCollector, StructuredHistory};
 use scylla::frame::response::result::Row;
-use scylla::history::{HistoryCollector, StructuredHistory};
 use scylla::query::Query;
 use scylla::session::Session;
 use scylla::SessionBuilder;
