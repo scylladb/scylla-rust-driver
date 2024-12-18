@@ -34,7 +34,7 @@ use crate::cluster::ClusterData;
 use crate::cluster::NodeRef;
 use crate::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::execution::load_balancing::{self, RoutingInfo};
-use crate::execution::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::execution::retries::{QueryInfo, RetryDecision, RetrySession};
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row},

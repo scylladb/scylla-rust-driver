@@ -1,9 +1,9 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
 use scylla::cluster::NodeRef;
+use scylla::execution::retries::FallthroughRetryPolicy;
 use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::prepared_statement::PreparedStatement;
-use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::routing::{Shard, Token};
 use scylla::session::Session;
 use scylla_cql::frame::response::result::TableSpec;

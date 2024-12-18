@@ -7,10 +7,9 @@
 //!     - speculative execution,
 //! - TODO.
 
-pub mod downgrading_consistency_retry_policy;
 pub mod execution_profile;
 pub mod load_balancing;
-pub mod retry_policy;
+pub mod retries;
 pub mod speculative_execution;
 
 pub use execution_profile::ExecutionProfile;

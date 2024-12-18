@@ -53,7 +53,7 @@ use crate::execution::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
 use crate::execution::load_balancing::{self, RoutingInfo};
-use crate::execution::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::execution::retries::{QueryInfo, RetryDecision, RetrySession};
 use crate::execution::speculative_execution;
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;

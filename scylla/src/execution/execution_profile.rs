@@ -166,14 +166,14 @@ use arc_swap::ArcSwap;
 use scylla_cql::{frame::types::SerialConsistency, Consistency};
 
 use crate::{
-    load_balancing::LoadBalancingPolicy, retry_policy::RetryPolicy,
+    execution::retries::RetryPolicy, load_balancing::LoadBalancingPolicy,
     speculative_execution::SpeculativeExecutionPolicy,
 };
 
 pub(crate) mod defaults {
     use crate::execution::execution_profile::ExecutionProfileInner;
+    use crate::execution::retries::{DefaultRetryPolicy, RetryPolicy};
     use crate::load_balancing::{self, LoadBalancingPolicy};
-    use crate::retry_policy::{DefaultRetryPolicy, RetryPolicy};
     use crate::speculative_execution::SpeculativeExecutionPolicy;
     use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
@@ -216,7 +216,7 @@ pub(crate) mod defaults {
 /// # Example
 ///
 /// ```
-/// # use scylla::execution::retry_policy::FallthroughRetryPolicy;
+/// # use scylla::execution::retries::FallthroughRetryPolicy;
 /// # use scylla::execution::ExecutionProfile;
 /// # use scylla::statement::Consistency;
 /// # use std::sync::Arc;
@@ -297,12 +297,12 @@ impl ExecutionProfileBuilder {
     }
 
     /// Sets the [`RetryPolicy`] to use by default on queries.
-    /// The default is [DefaultRetryPolicy](crate::execution::retry_policy::DefaultRetryPolicy).
+    /// The default is [DefaultRetryPolicy](crate::execution::retries::DefaultRetryPolicy).
     /// It is possible to implement a custom retry policy by implementing the trait [`RetryPolicy`].
     ///
     /// # Example
     /// ```
-    /// use scylla::execution::retry_policy::DefaultRetryPolicy;
+    /// use scylla::execution::retries::DefaultRetryPolicy;
     /// # use scylla::execution::ExecutionProfile;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -353,7 +353,7 @@ impl ExecutionProfileBuilder {
     ///
     /// # Example
     /// ```
-    /// use scylla::execution::retry_policy::DefaultRetryPolicy;
+    /// use scylla::execution::retries::DefaultRetryPolicy;
     /// # use scylla::execution::ExecutionProfile;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,13 +1,11 @@
 use scylla_cql::Consistency;
 use tracing::debug;
 
-use crate::{
-    retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession},
-    transport::errors::{DbError, QueryError, WriteType},
-};
+use super::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
+use crate::transport::errors::{DbError, QueryError, WriteType};
 
 /// Downgrading consistency retry policy - retries with lower consistency level if it knows\
-/// that the initial CL is unreachable. Also, it behaves as [DefaultRetryPolicy](crate::retry_policy::DefaultRetryPolicy)
+/// that the initial CL is unreachable. Also, it behaves as [DefaultRetryPolicy](crate::execution::retries::DefaultRetryPolicy)
 /// when it believes that the initial CL is reachable.
 /// Behaviour based on [DataStax Java Driver]\
 ///(<https://docs.datastax.com/en/drivers/java/3.11/com/datastax/driver/core/policies/DowngradingConsistencyRetryPolicy.html>)

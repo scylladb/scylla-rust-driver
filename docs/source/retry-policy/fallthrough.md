@@ -12,7 +12,7 @@ To use in `Session`:
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder};
 use scylla::execution::ExecutionProfile;
-use scylla::execution::retry_policy::FallthroughRetryPolicy;
+use scylla::execution::retries::FallthroughRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
@@ -37,7 +37,7 @@ To use in a [simple query](../queries/simple.md):
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
 use scylla::execution::ExecutionProfile;
-use scylla::execution::retry_policy::FallthroughRetryPolicy;
+use scylla::execution::retries::FallthroughRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
@@ -64,7 +64,7 @@ To use in a [prepared query](../queries/prepared.md):
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
 use scylla::execution::ExecutionProfile;
-use scylla::execution::retry_policy::FallthroughRetryPolicy;
+use scylla::execution::retries::FallthroughRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
