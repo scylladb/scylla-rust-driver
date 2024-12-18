@@ -12,9 +12,12 @@
 //!   request.
 //! - SpeculativeExecutionPolicy, which decides if the driver will send speculative
 //!   requests to the next hosts when the current host takes too long to respond.
+//! - RetryPolicy, which decides whether and how to retry a request.
 //! - TODO
 
 pub mod address_translator;
+pub mod downgrading_consistency_retry_policy;
 pub mod host_filter;
 pub mod load_balancing;
+pub mod retry_policy;
 pub mod speculative_execution;
