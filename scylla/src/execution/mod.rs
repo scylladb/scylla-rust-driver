@@ -5,6 +5,7 @@
 //!     - load balancing,
 //!     - retries,
 //!     - speculative execution,
+//! - cluster-side request tracing,
 //! - request execution history,
 //! - TODO.
 
@@ -13,5 +14,6 @@ pub mod history;
 pub mod load_balancing;
 pub mod retries;
 pub mod speculative_execution;
+pub mod tracing;
 
 pub use execution_profile::ExecutionProfile;

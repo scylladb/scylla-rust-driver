@@ -261,7 +261,6 @@ pub mod execution;
 pub mod routing;
 pub mod session;
 pub mod statement;
-pub mod tracing;
 pub mod transport;
 
 pub(crate) mod utils;

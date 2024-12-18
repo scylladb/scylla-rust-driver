@@ -3,12 +3,12 @@ use crate::cluster::metadata::Strategy::NetworkTopologyStrategy;
 use crate::cluster::metadata::{CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType};
 use crate::deserialize::DeserializeOwnedValue;
 use crate::execution::retries::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
+use crate::execution::tracing::TracingInfo;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
 use crate::session::Session;
 use crate::statement::Consistency;
-use crate::tracing::TracingInfo;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{
     calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
