@@ -325,9 +325,9 @@ impl ExecutionProfileBuilder {
     /// # use std::error::Error;
     /// # fn check_only_compiles() -> Result<(), Box<dyn Error>> {
     /// use std::{sync::Arc, time::Duration};
-    /// use scylla::{
-    ///     execution::ExecutionProfile,
-    ///     transport::speculative_execution::SimpleSpeculativeExecutionPolicy,
+    /// use scylla::execution::{
+    ///     ExecutionProfile,
+    ///     speculative_execution::SimpleSpeculativeExecutionPolicy,
     /// };
     ///
     /// let policy = SimpleSpeculativeExecutionPolicy {
