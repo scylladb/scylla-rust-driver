@@ -1,7 +1,7 @@
 use anyhow::Result;
 use scylla::load_balancing;
+use scylla::policies::retry::{DefaultRetryPolicy, FallthroughRetryPolicy};
 use scylla::query::Query;
-use scylla::retry_policy::{DefaultRetryPolicy, FallthroughRetryPolicy};
 use scylla::session::ExecutionProfile;
 use scylla::session::Session;
 use scylla::speculative_execution::PercentileSpeculativeExecutionPolicy;

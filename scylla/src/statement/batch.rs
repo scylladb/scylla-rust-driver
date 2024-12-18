@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::history::HistoryListener;
-use crate::retry_policy::RetryPolicy;
+use crate::policies::retry::RetryPolicy;
 use crate::session::execution_profile::ExecutionProfileHandle;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 

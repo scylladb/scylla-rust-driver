@@ -166,13 +166,13 @@ use arc_swap::ArcSwap;
 use scylla_cql::{frame::types::SerialConsistency, Consistency};
 
 use crate::{
-    load_balancing::LoadBalancingPolicy, retry_policy::RetryPolicy,
+    load_balancing::LoadBalancingPolicy, retry::RetryPolicy,
     speculative_execution::SpeculativeExecutionPolicy,
 };
 
 pub(crate) mod defaults {
     use crate::load_balancing::{self, LoadBalancingPolicy};
-    use crate::retry_policy::{DefaultRetryPolicy, RetryPolicy};
+    use crate::retry::{DefaultRetryPolicy, RetryPolicy};
     use crate::session::execution_profile::ExecutionProfileInner;
     use crate::speculative_execution::SpeculativeExecutionPolicy;
     use scylla_cql::frame::types::SerialConsistency;
@@ -216,7 +216,7 @@ pub(crate) mod defaults {
 /// # Example
 ///
 /// ```
-/// # use scylla::policies::retry_policy::FallthroughRetryPolicy;
+/// # use scylla::policies::retry::FallthroughRetryPolicy;
 /// # use scylla::session::ExecutionProfile;
 /// # use scylla::statement::Consistency;
 /// # use std::sync::Arc;
@@ -297,12 +297,12 @@ impl ExecutionProfileBuilder {
     }
 
     /// Sets the [`RetryPolicy`] to use by default on queries.
-    /// The default is [DefaultRetryPolicy](crate::policies::retry_policy::DefaultRetryPolicy).
+    /// The default is [DefaultRetryPolicy](crate::policies::retry::DefaultRetryPolicy).
     /// It is possible to implement a custom retry policy by implementing the trait [`RetryPolicy`].
     ///
     /// # Example
     /// ```
-    /// use scylla::policies::retry_policy::DefaultRetryPolicy;
+    /// use scylla::policies::retry::DefaultRetryPolicy;
     /// # use scylla::session::ExecutionProfile;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -353,7 +353,7 @@ impl ExecutionProfileBuilder {
     ///
     /// # Example
     /// ```
-    /// use scylla::policies::retry_policy::DefaultRetryPolicy;
+    /// use scylla::policies::retry::DefaultRetryPolicy;
     /// # use scylla::session::ExecutionProfile;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {

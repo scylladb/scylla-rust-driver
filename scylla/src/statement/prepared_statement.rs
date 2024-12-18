@@ -16,7 +16,7 @@ use super::{PageSize, StatementConfig};
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
-use crate::retry_policy::RetryPolicy;
+use crate::policies::retry::RetryPolicy;
 use crate::routing::Token;
 use crate::session::execution_profile::ExecutionProfileHandle;
 use crate::transport::errors::{BadQuery, ProtocolError, QueryError};
