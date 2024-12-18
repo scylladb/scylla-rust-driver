@@ -327,7 +327,7 @@ impl ExecutionProfileBuilder {
     /// use std::{sync::Arc, time::Duration};
     /// use scylla::{
     ///     session::ExecutionProfile,
-    ///     transport::speculative_execution::SimpleSpeculativeExecutionPolicy,
+    ///     policies::speculative_execution::SimpleSpeculativeExecutionPolicy,
     /// };
     ///
     /// let policy = SimpleSpeculativeExecutionPolicy {

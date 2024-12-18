@@ -16,7 +16,7 @@ use std::{sync::Arc, time::Duration};
 use scylla::{
     Session,
     SessionBuilder,
-    speculative_execution::PercentileSpeculativeExecutionPolicy,
+    policies::speculative_execution::PercentileSpeculativeExecutionPolicy,
     session::execution_profile::ExecutionProfile,
 };
 
