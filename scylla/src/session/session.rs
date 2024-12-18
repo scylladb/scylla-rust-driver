@@ -53,6 +53,7 @@ use crate::execution::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
 use crate::execution::load_balancing::{self, RoutingInfo};
+use crate::execution::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::execution::speculative_execution;
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
@@ -69,7 +70,6 @@ use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::MaybeFirstRowError;
 use crate::transport::query_result::QueryResult;
 use crate::transport::query_result::RowsError;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::{
     batch::{Batch, BatchStatement},
     statement::StatementConfig,

@@ -11,7 +11,7 @@ use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::statement::{Consistency, SerialConsistency};
 use scylla::execution::ExecutionProfile;
 use scylla::execution::load_balancing::DefaultPolicy;
-use scylla::transport::retry_policy::FallthroughRetryPolicy;
+use scylla::execution::retry_policy::FallthroughRetryPolicy;
 use std::{sync::Arc, time::Duration};
 
 let profile = ExecutionProfile::builder()
