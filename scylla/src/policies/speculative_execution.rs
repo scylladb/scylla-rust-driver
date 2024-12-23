@@ -6,7 +6,7 @@ use scylla_cql::frame::response::error::DbError;
 use std::{future::Future, sync::Arc, time::Duration};
 use tracing::{trace_span, warn, Instrument};
 
-use crate::errors::QueryError;
+use crate::errors::{RequestAttemptError, RequestError};
 use crate::observability::metrics::Metrics;
 
 /// Context is passed as an argument to `SpeculativeExecutionPolicy` methods
@@ -85,44 +85,46 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
 ///
 /// We should ignore errors such that their presence when executing the request
 /// on one node, does not imply that the same error will appear during retry on some other node.
-fn can_be_ignored(err: &QueryError) -> bool {
+fn can_be_ignored(error: &RequestError) -> bool {
     // Do not remove this lint!
     // It's there for a reason - we don't want new variants
     // automatically fall under `_` pattern when they are introduced.
     #[deny(clippy::wildcard_enum_match_arm)]
-    match err {
-        // Errors that will almost certainly appear for other nodes as well
-        QueryError::BadQuery(_)
-        | QueryError::CqlRequestSerialization(_)
-        | QueryError::BodyExtensionsParseError(_)
-        | QueryError::CqlResultParseError(_)
-        | QueryError::CqlErrorParseError(_)
-        | QueryError::ProtocolError(_) => false,
-
+    match error {
         // There is no point in retrying on some other node, if there is
         // no such node (since the remaining plan is empty).
-        QueryError::EmptyPlan => false,
+        RequestError::EmptyPlan => false,
 
-        // Errors that should not appear here, thus should not be ignored
-        #[allow(deprecated)]
-        QueryError::NextRowError(_)
-        | QueryError::IntoLegacyQueryResultError(_)
-        | QueryError::TimeoutError
-        | QueryError::RequestTimeout(_)
-        | QueryError::MetadataError(_) => false,
+        // Can try on another node.
+        RequestError::ConnectionPoolError { .. } => true,
 
-        // Errors that can be ignored
-        QueryError::BrokenConnection(_)
-        | QueryError::UnableToAllocStreamId
-        | QueryError::ConnectionPoolError(_) => true,
-
-        // Handle DbErrors
-        QueryError::DbError(db_error, _) => {
+        RequestError::LastAttemptError(e) => {
             // Do not remove this lint!
             // It's there for a reason - we don't want new variants
             // automatically fall under `_` pattern when they are introduced.
             #[deny(clippy::wildcard_enum_match_arm)]
-            match db_error {
+            match e {
+                // Errors that will almost certainly appear for other nodes as well
+                RequestAttemptError::SerializationError(_)
+                | RequestAttemptError::CqlRequestSerialization(_)
+                | RequestAttemptError::BodyExtensionsParseError(_)
+                | RequestAttemptError::CqlResultParseError(_)
+                | RequestAttemptError::CqlErrorParseError(_)
+                | RequestAttemptError::UnexpectedResponse(_)
+                | RequestAttemptError::RepreparedIdChanged { .. }
+                | RequestAttemptError::RepreparedIdMissingInBatch => false,
+
+                // Errors that can be ignored
+                RequestAttemptError::BrokenConnectionError(_)
+                | RequestAttemptError::UnableToAllocStreamId => true,
+
+                // Handle DbErrors
+                RequestAttemptError::DbError(db_error, _) => {
+                    // Do not remove this lint!
+                    // It's there for a reason - we don't want new variants
+                    // automatically fall under `_` pattern when they are introduced.
+                    #[deny(clippy::wildcard_enum_match_arm)]
+                    match db_error {
                         // Errors that will almost certainly appear on other nodes as well
                         DbError::SyntaxError
                         | DbError::Invalid
@@ -154,6 +156,8 @@ fn can_be_ignored(err: &QueryError) -> bool {
                         | DbError::ServerError
                         | DbError::RateLimitReached { .. } => true,
                     }
+                }
+            }
         }
     }
 }
@@ -162,9 +166,9 @@ pub(crate) async fn execute<QueryFut, ResT>(
     policy: &dyn SpeculativeExecutionPolicy,
     context: &Context,
     query_runner_generator: impl Fn(bool) -> QueryFut,
-) -> Result<ResT, QueryError>
+) -> Result<ResT, RequestError>
 where
-    QueryFut: Future<Output = Result<ResT, QueryError>>,
+    QueryFut: Future<Output = Result<ResT, RequestError>>,
 {
     let mut retries_remaining = policy.max_retry_count(context);
     let retry_interval = policy.retry_interval(context);
@@ -178,7 +182,7 @@ where
     let sleep = tokio::time::sleep(retry_interval).fuse();
     tokio::pin!(sleep);
 
-    let mut last_error: QueryError;
+    let mut last_error: RequestError;
     loop {
         futures::select! {
             _ = &mut sleep => {
@@ -195,8 +199,9 @@ where
                     Ok(r) => return Ok(r),
                     Err(e) => if !can_be_ignored(&e) {
                         return Err(e);
-                    } else {
-                        last_error = e
+                    }
+                    else {
+                        last_error = e;
                     }
                 }
                 if async_tasks.is_empty() && retries_remaining == 0 {
