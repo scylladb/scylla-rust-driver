@@ -1948,11 +1948,11 @@ where
 
         let runner = async {
             let cluster_data = self.cluster.get_data();
-            let query_plan =
+            let request_plan =
                 load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
-            // If a speculative execution policy is used to run query, query_plan has to be shared
-            // between different async functions. This struct helps to wrap query_plan in mutex so it
+            // If a speculative execution policy is used to run request, request_plan has to be shared
+            // between different async functions. This struct helps to wrap request_plan in mutex so it
             // can be shared safely.
             struct SharedPlan<'a, I>
             where
@@ -1981,8 +1981,8 @@ where
 
             match speculative_policy {
                 Some(speculative) if statement_config.is_idempotent => {
-                    let shared_query_plan = SharedPlan {
-                        iter: std::sync::Mutex::new(query_plan),
+                    let shared_request_plan = SharedPlan {
+                        iter: std::sync::Mutex::new(request_plan),
                     };
 
                     let request_runner_generator = |is_speculative: bool| {
@@ -2007,7 +2007,7 @@ where
                         }
 
                         self.run_request_speculative_fiber(
-                            &shared_query_plan,
+                            &shared_request_plan,
                             &run_request_once,
                             &execution_profile,
                             ExecuteRequestContext {
@@ -2042,7 +2042,7 @@ where
                                 speculative_id: None,
                             });
                     self.run_request_speculative_fiber(
-                        query_plan,
+                        request_plan,
                         &run_request_once,
                         &execution_profile,
                         ExecuteRequestContext {
@@ -2093,7 +2093,7 @@ where
     /// Returns None, if provided plan is empty.
     async fn run_request_speculative_fiber<'a, QueryFut, ResT>(
         &'a self,
-        query_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
+        request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
@@ -2107,8 +2107,8 @@ where
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
 
-        'nodes_in_plan: for (node, shard) in query_plan {
-            let span = trace_span!("Executing query", node = %node.address);
+        'nodes_in_plan: for (node, shard) in request_plan {
+            let span = trace_span!("Executing request", node = %node.address);
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
                 let connection = match node.connection_for_shard(shard).await {
@@ -2120,14 +2120,14 @@ where
                             "Choosing connection failed"
                         );
                         last_error = Some(e.into());
-                        // Broken connection doesn't count as a failed query, don't log in metrics
+                        // Broken connection doesn't count as a failed request, don't log in metrics
                         continue 'nodes_in_plan;
                     }
                 };
                 context.request_span.record_shard_id(&connection);
 
                 self.metrics.inc_total_nonpaged_queries();
-                let query_start = std::time::Instant::now();
+                let request_start = std::time::Instant::now();
 
                 trace!(
                     parent: &span,
@@ -2136,15 +2136,15 @@ where
                 );
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connection.get_connect_address());
-                let query_result: Result<ResT, QueryError> =
+                let request_result: Result<ResT, QueryError> =
                     run_request_once(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
                         .await;
 
-                let elapsed = query_start.elapsed();
-                last_error = match query_result {
+                let elapsed = request_start.elapsed();
+                last_error = match request_result {
                     Ok(response) => {
-                        trace!(parent: &span, "Query succeeded");
+                        trace!(parent: &span, "Request succeeded");
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
                         execution_profile.load_balancing_policy.on_query_success(
@@ -2158,7 +2158,7 @@ where
                         trace!(
                             parent: &span,
                             last_error = %e,
-                            "Query failed"
+                            "Request failed"
                         );
                         self.metrics.inc_failed_nonpaged_queries();
                         execution_profile.load_balancing_policy.on_query_failure(
