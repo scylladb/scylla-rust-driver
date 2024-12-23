@@ -28,7 +28,7 @@ use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
-use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
+use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -2085,7 +2085,7 @@ where
                 };
 
                 // Use retry policy to decide what to do next
-                let query_info = QueryInfo {
+                let query_info = RequestInfo {
                     error: &request_error,
                     is_idempotent: context.is_idempotent,
                     consistency: context

@@ -37,7 +37,7 @@ use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, RoutingInfo};
-use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
+use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
@@ -223,7 +223,7 @@ where
                 };
 
                 // Use retry policy to decide what to do next
-                let query_info = QueryInfo {
+                let query_info = RequestInfo {
                     error: &request_error,
                     is_idempotent: self.query_is_idempotent,
                     consistency: self.query_consistency,

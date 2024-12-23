@@ -1,7 +1,7 @@
 use scylla_cql::Consistency;
 use tracing::debug;
 
-use super::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
+use super::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::errors::{DbError, RequestAttemptError, WriteType};
 
 /// Downgrading consistency retry policy - retries with lower consistency level if it knows\
@@ -47,10 +47,10 @@ impl Default for DowngradingConsistencyRetrySession {
 }
 
 impl RetrySession for DowngradingConsistencyRetrySession {
-    fn decide_should_retry(&mut self, query_info: QueryInfo) -> RetryDecision {
-        let cl = match query_info.consistency {
+    fn decide_should_retry(&mut self, request_info: RequestInfo) -> RetryDecision {
+        let cl = match request_info.consistency {
             Consistency::Serial | Consistency::LocalSerial => {
-                return match query_info.error {
+                return match request_info.error {
                     RequestAttemptError::DbError(DbError::Unavailable { .. }, _) => {
                         // JAVA-764: if the requested consistency level is serial, it means that the operation failed at
                         // the paxos phase of a LWT.
@@ -85,14 +85,14 @@ impl RetrySession for DowngradingConsistencyRetrySession {
             decision
         }
 
-        match query_info.error {
+        match request_info.error {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
             RequestAttemptError::BrokenConnectionError(_)
             | RequestAttemptError::DbError(DbError::Overloaded, _)
             | RequestAttemptError::DbError(DbError::ServerError, _)
             | RequestAttemptError::DbError(DbError::TruncateError, _) => {
-                if query_info.is_idempotent {
+                if request_info.is_idempotent {
                     RetryDecision::RetryNextNode(None)
                 } else {
                     RetryDecision::DontRetry
@@ -139,7 +139,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                 },
                 _,
             ) => {
-                if self.was_retry || !query_info.is_idempotent {
+                if self.was_retry || !request_info.is_idempotent {
                     RetryDecision::DontRetry
                 } else {
                     self.was_retry = true;
@@ -159,7 +159,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                     }
                 }
             }
-            // The node is still bootstrapping it can't execute the query, we should try another one
+            // The node is still bootstrapping it can't execute the request, we should try another one
             RequestAttemptError::DbError(DbError::IsBootstrapping, _) => {
                 RetryDecision::RetryNextNode(None)
             }
@@ -197,12 +197,12 @@ mod tests {
         Consistency::Two,
     ];
 
-    fn make_query_info_with_cl(
+    fn make_request_info_with_cl(
         error: &RequestAttemptError,
         is_idempotent: bool,
         cl: Consistency,
-    ) -> QueryInfo<'_> {
-        QueryInfo {
+    ) -> RequestInfo<'_> {
+        RequestInfo {
             error,
             is_idempotent,
             consistency: cl,
@@ -216,13 +216,13 @@ mod tests {
     ) {
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
         assert_eq!(
-            policy.decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+            policy.decide_should_retry(make_request_info_with_cl(&error, false, cl)),
             RetryDecision::DontRetry
         );
 
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
         assert_eq!(
-            policy.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+            policy.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
             RetryDecision::DontRetry
         );
     }
@@ -304,13 +304,13 @@ mod tests {
     ) {
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
         assert_eq!(
-            policy.decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+            policy.decide_should_retry(make_request_info_with_cl(&error, false, cl)),
             RetryDecision::DontRetry
         );
 
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
         assert_eq!(
-            policy.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+            policy.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
             RetryDecision::RetryNextNode(None)
         );
     }
@@ -358,13 +358,13 @@ mod tests {
         for &cl in CONSISTENCY_LEVELS {
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+                policy.decide_should_retry(make_request_info_with_cl(&error, false, cl)),
                 RetryDecision::RetryNextNode(None)
             );
 
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+                policy.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
                 RetryDecision::RetryNextNode(None)
             );
         }
@@ -388,22 +388,22 @@ mod tests {
             let mut policy_not_idempotent = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
                 policy_not_idempotent
-                    .decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+                    .decide_should_retry(make_request_info_with_cl(&error, false, cl)),
                 max_likely_to_work_cl(alive, cl)
             );
             assert_eq!(
                 policy_not_idempotent
-                    .decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+                    .decide_should_retry(make_request_info_with_cl(&error, false, cl)),
                 RetryDecision::DontRetry
             );
 
             let mut policy_idempotent = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy_idempotent.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+                policy_idempotent.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
                 max_likely_to_work_cl(alive, cl)
             );
             assert_eq!(
-                policy_idempotent.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+                policy_idempotent.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
                 RetryDecision::DontRetry
             );
         }
@@ -428,7 +428,7 @@ mod tests {
             // Not idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_no_data,
                     false,
                     cl
@@ -436,7 +436,7 @@ mod tests {
                 RetryDecision::RetrySameNode(None)
             );
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_no_data,
                     false,
                     cl
@@ -447,7 +447,7 @@ mod tests {
             // Idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_no_data,
                     true,
                     cl
@@ -455,7 +455,7 @@ mod tests {
                 RetryDecision::RetrySameNode(None)
             );
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_no_data,
                     true,
                     cl
@@ -479,7 +479,7 @@ mod tests {
             // Not idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_with_data,
                     false,
                     cl
@@ -490,7 +490,7 @@ mod tests {
             // Idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_with_data,
                     true,
                     cl
@@ -516,7 +516,7 @@ mod tests {
             // Not idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &not_enough_responses_with_data,
                     false,
                     cl
@@ -525,7 +525,7 @@ mod tests {
             );
             if let RetryDecision::RetrySameNode(new_cl) = expected_decision {
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &not_enough_responses_with_data,
                         false,
                         new_cl.unwrap_or(cl)
@@ -537,7 +537,7 @@ mod tests {
             // Idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &not_enough_responses_with_data,
                     true,
                     cl
@@ -546,7 +546,7 @@ mod tests {
             );
             if let RetryDecision::RetrySameNode(new_cl) = expected_decision {
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &not_enough_responses_with_data,
                         true,
                         new_cl.unwrap_or(cl)
@@ -557,7 +557,7 @@ mod tests {
         }
     }
 
-    // WriteTimeout will retry once when the query is idempotent and write_type == BatchLog
+    // WriteTimeout will retry once when the request is idempotent and write_type == BatchLog
     #[test]
     fn downgrading_consistency_write_timeout() {
         setup_tracing();
@@ -577,7 +577,7 @@ mod tests {
                 // Not idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_batchlog,
                         false,
                         cl
@@ -588,7 +588,7 @@ mod tests {
                 // Idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_batchlog,
                         true,
                         cl
@@ -596,7 +596,7 @@ mod tests {
                     RetryDecision::RetrySameNode(None)
                 );
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_batchlog,
                         true,
                         cl
@@ -620,7 +620,7 @@ mod tests {
                 // Not idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_unlogged_batch,
                         false,
                         cl
@@ -631,7 +631,7 @@ mod tests {
                 // Idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_unlogged_batch,
                         true,
                         cl
@@ -639,7 +639,7 @@ mod tests {
                     max_likely_to_work_cl(received, cl)
                 );
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_unlogged_batch,
                         true,
                         cl
@@ -663,7 +663,7 @@ mod tests {
                 // Not idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_other,
                         false,
                         cl
@@ -674,7 +674,7 @@ mod tests {
                 // Idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_other,
                         true,
                         cl
@@ -682,7 +682,7 @@ mod tests {
                     RetryDecision::IgnoreWriteError
                 );
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_other,
                         true,
                         cl

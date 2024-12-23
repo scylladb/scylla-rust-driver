@@ -9,7 +9,7 @@ use crate::cluster::metadata::{CollectionType, ColumnKind, CqlType, NativeType, 
 use crate::deserialize::DeserializeOwnedValue;
 use crate::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::observability::tracing::TracingInfo;
-use crate::policies::retry::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
+use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::partitioner::{
@@ -2725,7 +2725,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
 
     struct MyRetrySession(Arc<AtomicBool>);
     impl RetrySession for MyRetrySession {
-        fn decide_should_retry(&mut self, _: QueryInfo) -> RetryDecision {
+        fn decide_should_retry(&mut self, _: RequestInfo) -> RetryDecision {
             self.0.store(true, Ordering::Relaxed);
             RetryDecision::IgnoreWriteError
         }

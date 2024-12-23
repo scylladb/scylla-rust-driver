@@ -97,9 +97,9 @@ impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {
 impl<const NODE: u8> RetrySession for BoundToPredefinedNodePolicy<NODE> {
     fn decide_should_retry(
         &mut self,
-        query_info: scylla::policies::retry::QueryInfo,
+        request_info: scylla::policies::retry::RequestInfo,
     ) -> scylla::policies::retry::RetryDecision {
-        self.report_consistency(query_info.consistency);
+        self.report_consistency(request_info.consistency);
         scylla::policies::retry::RetryDecision::DontRetry
     }
 
