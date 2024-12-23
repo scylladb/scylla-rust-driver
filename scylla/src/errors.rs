@@ -872,32 +872,52 @@ pub enum CqlEventHandlingError {
 }
 
 /// An error type that occurred when executing one of:
-/// - QUERY
-/// - PREPARE
-/// - EXECUTE
-/// - BATCH
+/// - `QUERY`
+/// - `PREPARE`
+/// - `EXECUTE`
+/// - `BATCH`
 ///
-/// requests.
+/// requests. This error can appear during a single try
+/// of request execution. The retry decision is made based
+/// on this error.
 #[derive(Error, Debug)]
-pub(crate) enum UserRequestError {
+#[non_exhaustive]
+pub enum UserRequestError {
+    /// Failed to serialize CQL request.
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
+
+    /// Database sent a response containing some error with a message
     #[error("Database returned an error: {0}, Error message: {1}")]
     DbError(DbError, String),
+
+    /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
     CqlResultParseError(#[from] CqlResultParseError),
+
+    /// Received an ERROR server response, but failed to deserialize it.
     #[error("Failed to deserialize ERROR response: {0}")]
     CqlErrorParseError(#[from] CqlErrorParseError),
+
+    /// Received an unexpected response from the server.
     #[error(
         "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
     )]
     UnexpectedResponse(CqlResponseKind),
+
+    /// A connection has been broken during query execution.
     #[error(transparent)]
     BrokenConnectionError(#[from] BrokenConnectionError),
+
+    /// Failed to deserialize frame body extensions.
     #[error(transparent)]
     BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
+
+    /// Driver was unable to allocate a stream id to execute a query on.
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
+
+    /// Prepared statement id changed after repreparation.
     #[error(
         "Prepared statement id changed after repreparation; md5 sum (computed from the query string) should stay the same;\
         Statement: \"{statement}\"; expected id: {expected_id:?}; reprepared id: {reprepared_id:?}"
@@ -907,15 +927,22 @@ pub(crate) enum UserRequestError {
         expected_id: Vec<u8>,
         reprepared_id: Vec<u8>,
     },
+
+    /// Driver tried to reprepare a statement in the batch, but the reprepared
+    /// statement's id is not included in the batch.
     #[error("Reprepared statement's id does not exist in the batch.")]
     RepreparedIdMissingInBatch,
+
+    /// Failed to serialize query parameters. This error occurs, when user executes
+    /// a CQL `QUERY` request with non-empty parameter's value list and the serialization
+    /// of provided values fails during statement preparation.
     #[error("Failed to serialize query parameters: {0}")]
     SerializationError(#[from] SerializationError),
 }
 
 impl UserRequestError {
     /// Converts the error to [`QueryError`].
-    pub(crate) fn into_query_error(self) -> QueryError {
+    pub fn into_query_error(self) -> QueryError {
         match self {
             UserRequestError::CqlRequestSerialization(e) => e.into(),
             UserRequestError::DbError(err, msg) => QueryError::DbError(err, msg),
