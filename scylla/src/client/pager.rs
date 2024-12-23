@@ -204,7 +204,7 @@ where
                     .instrument(span.clone())
                     .await;
 
-                last_error = match queries_result {
+                let request_error: RequestAttemptError = match queries_result {
                     Ok(proof) => {
                         trace!(parent: &span, "Query succeeded");
                         // query_pages returned Ok, so we are guaranteed
@@ -218,13 +218,13 @@ where
                             error = %error,
                             "Query failed"
                         );
-                        error.into_query_error()
+                        error
                     }
                 };
 
                 // Use retry policy to decide what to do next
                 let query_info = QueryInfo {
-                    error: &last_error,
+                    error: &request_error,
                     is_idempotent: self.query_is_idempotent,
                     consistency: self.query_consistency,
                 };
@@ -234,7 +234,10 @@ where
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
+
+                last_error = request_error.into_query_error();
                 self.log_attempt_error(&last_error, &retry_decision);
+
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
                         self.metrics.inc_retries_num();

@@ -1,6 +1,6 @@
 use scylla_cql::frame::response::error::{DbError, WriteType};
 
-use crate::errors::QueryError;
+use crate::errors::RequestAttemptError;
 
 use super::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 
@@ -57,11 +57,10 @@ impl RetrySession for DefaultRetrySession {
         match query_info.error {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
-            QueryError::BrokenConnection(_)
-            | QueryError::ConnectionPoolError(_)
-            | QueryError::DbError(DbError::Overloaded, _)
-            | QueryError::DbError(DbError::ServerError, _)
-            | QueryError::DbError(DbError::TruncateError, _) => {
+            RequestAttemptError::BrokenConnectionError(_)
+            | RequestAttemptError::DbError(DbError::Overloaded, _)
+            | RequestAttemptError::DbError(DbError::ServerError, _)
+            | RequestAttemptError::DbError(DbError::TruncateError, _) => {
                 if query_info.is_idempotent {
                     RetryDecision::RetryNextNode(None)
                 } else {
@@ -73,7 +72,7 @@ impl RetrySession for DefaultRetrySession {
             // Maybe this node has network problems - try a different one.
             // Perform at most one retry - it's unlikely that two nodes
             // have network problems at the same time
-            QueryError::DbError(DbError::Unavailable { .. }, _) => {
+            RequestAttemptError::DbError(DbError::Unavailable { .. }, _) => {
                 if !self.was_unavailable_retry {
                     self.was_unavailable_retry = true;
                     RetryDecision::RetryNextNode(None)
@@ -87,7 +86,7 @@ impl RetrySession for DefaultRetrySession {
             // This happens when the coordinator picked replicas that were overloaded/dying.
             // Retried request should have some useful response because the node will detect
             // that these replicas are dead.
-            QueryError::DbError(
+            RequestAttemptError::DbError(
                 DbError::ReadTimeout {
                     received,
                     required,
@@ -107,7 +106,7 @@ impl RetrySession for DefaultRetrySession {
             // Retry at most once and only for BatchLog write.
             // Coordinator probably didn't detect the nodes as dead.
             // By the time we retry they should be detected as dead.
-            QueryError::DbError(DbError::WriteTimeout { write_type, .. }, _) => {
+            RequestAttemptError::DbError(DbError::WriteTimeout { write_type, .. }, _) => {
                 if !self.was_write_timeout_retry
                     && query_info.is_idempotent
                     && *write_type == WriteType::BatchLog
@@ -119,9 +118,11 @@ impl RetrySession for DefaultRetrySession {
                 }
             }
             // The node is still bootstrapping it can't execute the query, we should try another one
-            QueryError::DbError(DbError::IsBootstrapping, _) => RetryDecision::RetryNextNode(None),
+            RequestAttemptError::DbError(DbError::IsBootstrapping, _) => {
+                RetryDecision::RetryNextNode(None)
+            }
             // Connection to the contacted node is overloaded, try another one
-            QueryError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
+            RequestAttemptError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
@@ -135,15 +136,14 @@ impl RetrySession for DefaultRetrySession {
 #[cfg(test)]
 mod tests {
     use super::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy};
-    use crate::errors::{
-        BadQuery, BrokenConnectionErrorKind, ConnectionPoolError, ProtocolError, QueryError,
-    };
+    use crate::errors::{BrokenConnectionErrorKind, RequestAttemptError};
     use crate::errors::{DbError, WriteType};
     use crate::statement::Consistency;
     use crate::test_utils::setup_tracing;
     use bytes::Bytes;
+    use scylla_cql::frame::frame_errors::{BatchSerializationError, CqlRequestSerializationError};
 
-    fn make_query_info(error: &QueryError, is_idempotent: bool) -> QueryInfo<'_> {
+    fn make_query_info(error: &RequestAttemptError, is_idempotent: bool) -> QueryInfo<'_> {
         QueryInfo {
             error,
             is_idempotent,
@@ -152,7 +152,7 @@ mod tests {
     }
 
     // Asserts that default policy never retries for this Error
-    fn default_policy_assert_never_retries(error: QueryError) {
+    fn default_policy_assert_never_retries(error: RequestAttemptError) {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, false)),
@@ -206,19 +206,27 @@ mod tests {
         ];
 
         for dberror in never_retried_dberrors {
-            default_policy_assert_never_retries(QueryError::DbError(dberror, String::new()));
+            default_policy_assert_never_retries(RequestAttemptError::DbError(
+                dberror,
+                String::new(),
+            ));
         }
 
-        default_policy_assert_never_retries(QueryError::BadQuery(BadQuery::Other(
-            "Length of provided values must be equal to number of batch statements \
-                        (got 1 values, 2 statements)"
-                .to_owned(),
-        )));
-        default_policy_assert_never_retries(ProtocolError::NonfinishedPagingState.into());
+        default_policy_assert_never_retries(RequestAttemptError::RepreparedIdMissingInBatch);
+        default_policy_assert_never_retries(RequestAttemptError::RepreparedIdChanged {
+            statement: String::new(),
+            expected_id: vec![],
+            reprepared_id: vec![],
+        });
+        default_policy_assert_never_retries(RequestAttemptError::CqlRequestSerialization(
+            CqlRequestSerializationError::BatchSerialization(
+                BatchSerializationError::TooManyStatements(u16::MAX as usize + 1),
+            ),
+        ));
     }
 
     // Asserts that for this error policy retries on next on idempotent queries only
-    fn default_policy_assert_idempotent_next(error: QueryError) {
+    fn default_policy_assert_idempotent_next(error: RequestAttemptError) {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, false)),
@@ -236,13 +244,12 @@ mod tests {
     fn default_idempotent_next_retries() {
         setup_tracing();
         let idempotent_next_errors = vec![
-            QueryError::DbError(DbError::Overloaded, String::new()),
-            QueryError::DbError(DbError::TruncateError, String::new()),
-            QueryError::DbError(DbError::ServerError, String::new()),
-            QueryError::BrokenConnection(
+            RequestAttemptError::DbError(DbError::Overloaded, String::new()),
+            RequestAttemptError::DbError(DbError::TruncateError, String::new()),
+            RequestAttemptError::DbError(DbError::ServerError, String::new()),
+            RequestAttemptError::BrokenConnectionError(
                 BrokenConnectionErrorKind::TooManyOrphanedStreamIds(5).into(),
             ),
-            QueryError::ConnectionPoolError(ConnectionPoolError::Initializing),
         ];
 
         for error in idempotent_next_errors {
@@ -254,7 +261,7 @@ mod tests {
     #[test]
     fn default_bootstrapping() {
         setup_tracing();
-        let error = QueryError::DbError(DbError::IsBootstrapping, String::new());
+        let error = RequestAttemptError::DbError(DbError::IsBootstrapping, String::new());
 
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
@@ -273,7 +280,7 @@ mod tests {
     #[test]
     fn default_unavailable() {
         setup_tracing();
-        let error = QueryError::DbError(
+        let error = RequestAttemptError::DbError(
             DbError::Unavailable {
                 consistency: Consistency::Two,
                 required: 2,
@@ -308,7 +315,7 @@ mod tests {
     fn default_read_timeout() {
         setup_tracing();
         // Enough responses and data_present == false - coordinator received only checksums
-        let enough_responses_no_data = QueryError::DbError(
+        let enough_responses_no_data = RequestAttemptError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 2,
@@ -342,7 +349,7 @@ mod tests {
 
         // Enough responses but data_present == true - coordinator probably timed out
         // waiting for read-repair acknowledgement.
-        let enough_responses_with_data = QueryError::DbError(
+        let enough_responses_with_data = RequestAttemptError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 2,
@@ -367,7 +374,7 @@ mod tests {
         );
 
         // Not enough responses, data_present == true
-        let not_enough_responses_with_data = QueryError::DbError(
+        let not_enough_responses_with_data = RequestAttemptError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 1,
@@ -397,7 +404,7 @@ mod tests {
     fn default_write_timeout() {
         setup_tracing();
         // WriteType == BatchLog
-        let good_write_type = QueryError::DbError(
+        let good_write_type = RequestAttemptError::DbError(
             DbError::WriteTimeout {
                 consistency: Consistency::Two,
                 received: 1,
@@ -426,7 +433,7 @@ mod tests {
         );
 
         // WriteType != BatchLog
-        let bad_write_type = QueryError::DbError(
+        let bad_write_type = RequestAttemptError::DbError(
             DbError::WriteTimeout {
                 consistency: Consistency::Two,
                 received: 4,

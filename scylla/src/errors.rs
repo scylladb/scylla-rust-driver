@@ -879,7 +879,7 @@ pub enum CqlEventHandlingError {
 ///
 /// requests. The retry decision is made based
 /// on this error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum RequestAttemptError {
     /// Failed to serialize query parameters. This error occurs, when user executes

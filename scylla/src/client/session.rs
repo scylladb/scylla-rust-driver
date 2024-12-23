@@ -2055,7 +2055,7 @@ where
                         .await;
 
                 let elapsed = request_start.elapsed();
-                last_error = match request_result {
+                let request_error: RequestAttemptError = match request_result {
                     Ok(response) => {
                         trace!(parent: &span, "Request succeeded");
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
@@ -2080,14 +2080,13 @@ where
                             node,
                             &e,
                         );
-                        Some(e.into_query_error())
+                        e
                     }
                 };
 
-                let the_error: &QueryError = last_error.as_ref().unwrap();
                 // Use retry policy to decide what to do next
                 let query_info = QueryInfo {
-                    error: the_error,
+                    error: &request_error,
                     is_idempotent: context.is_idempotent,
                     consistency: context
                         .consistency_set_on_statement
@@ -2099,7 +2098,14 @@ where
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
-                context.log_attempt_error(&attempt_id, the_error, &retry_decision);
+
+                last_error = Some(request_error.into_query_error());
+                context.log_attempt_error(
+                    &attempt_id,
+                    last_error.as_ref().unwrap(),
+                    &retry_decision,
+                );
+
                 match retry_decision {
                     RetryDecision::RetrySameNode(new_cl) => {
                         self.metrics.inc_retries_num();

@@ -2,13 +2,13 @@
 //! To decide when to retry a query the `Session` can use any object which implements
 //! the `RetryPolicy` trait
 
-use crate::errors::QueryError;
+use crate::errors::RequestAttemptError;
 use crate::frame::types::Consistency;
 
 /// Information about a failed query
 pub struct QueryInfo<'a> {
     /// The error with which the query failed
-    pub error: &'a QueryError,
+    pub error: &'a RequestAttemptError,
     /// A query is idempotent if it can be applied multiple times without changing the result of the initial application\
     /// If set to `true` we can be sure that it is idempotent\
     /// If set to `false` it is unknown whether it is idempotent
