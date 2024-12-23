@@ -1931,7 +1931,7 @@ where
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         execution_profile: Arc<ExecutionProfileInner>,
-        do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
+        run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<RunRequestResult<ResT>, QueryError>
     where
@@ -2008,7 +2008,7 @@ where
 
                         self.run_request_speculative_fiber(
                             &shared_query_plan,
-                            &do_query,
+                            &run_request_once,
                             &execution_profile,
                             ExecuteRequestContext {
                                 is_idempotent: statement_config.is_idempotent,
@@ -2043,7 +2043,7 @@ where
                             });
                     self.run_request_speculative_fiber(
                         query_plan,
-                        &do_query,
+                        &run_request_once,
                         &execution_profile,
                         ExecuteRequestContext {
                             is_idempotent: statement_config.is_idempotent,
@@ -2086,7 +2086,7 @@ where
         result
     }
 
-    /// Executes the closure `do_query`, provided the load balancing plan and some information
+    /// Executes the closure `run_request_once`, provided the load balancing plan and some information
     /// about the request, including retry session.
     /// If request fails, retry session is used to perform retries.
     ///
@@ -2094,7 +2094,7 @@ where
     async fn run_request_speculative_fiber<'a, QueryFut, ResT>(
         &'a self,
         query_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
-        do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
+        run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
     ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
@@ -2137,7 +2137,7 @@ where
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connection.get_connect_address());
                 let query_result: Result<ResT, QueryError> =
-                    do_query(connection, current_consistency, execution_profile)
+                    run_request_once(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
                         .await;
 
