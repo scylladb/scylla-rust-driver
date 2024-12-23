@@ -870,6 +870,38 @@ pub enum CqlEventHandlingError {
     SendError,
 }
 
+/// Failed to execute a retriable user request.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum RetriableRequestError {
+    /// Load balancing policy returned an empty plan.
+    #[error(
+            "Load balancing policy returned an empty plan.\
+            First thing to investigate should be the logic of custom LBP implementation.\
+            If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
+            then this is most probably a driver bug!"
+        )]
+    EmptyPlan,
+
+    /// Selected node's connection pool is in invalid state.
+    #[error("No connections in the pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
+    /// Failed to execute request.
+    #[error(transparent)]
+    RequestFailure(#[from] UserRequestError),
+}
+
+impl RetriableRequestError {
+    pub fn into_query_error(self) -> QueryError {
+        match self {
+            RetriableRequestError::EmptyPlan => QueryError::EmptyPlan,
+            RetriableRequestError::ConnectionPoolError(e) => e.into(),
+            RetriableRequestError::RequestFailure(e) => e.into_query_error(),
+        }
+    }
+}
+
 /// An error type that occurred when executing one of:
 /// - `QUERY`
 /// - `PREPARE`
