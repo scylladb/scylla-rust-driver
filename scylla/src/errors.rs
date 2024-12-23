@@ -871,7 +871,47 @@ pub enum CqlEventHandlingError {
     SendError,
 }
 
-/// An error type that occurred during single attempt of:
+/// An error that occurred during execution of
+/// - `QUERY`
+/// - `PREPARE`
+/// - `EXECUTE`
+/// - `BATCH`
+///
+/// request. This error represents a definite request failure, unlike
+/// [`RequestAttemptError`] which represents a failure of a single
+/// attempt.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum RequestError {
+    /// Load balancing policy returned an empty plan.
+    #[error(
+            "Load balancing policy returned an empty plan.\
+            First thing to investigate should be the logic of custom LBP implementation.\
+            If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
+            then this is most probably a driver bug!"
+        )]
+    EmptyPlan,
+
+    /// Selected node's connection pool is in invalid state.
+    #[error("No connections in the pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
+    /// Failed to execute request.
+    #[error(transparent)]
+    LastAttemptError(#[from] RequestAttemptError),
+}
+
+impl RequestError {
+    pub fn into_query_error(self) -> QueryError {
+        match self {
+            RequestError::EmptyPlan => QueryError::EmptyPlan,
+            RequestError::ConnectionPoolError(e) => e.into(),
+            RequestError::LastAttemptError(e) => e.into_query_error(),
+        }
+    }
+}
+
+/// An error that occurred during a single attempt of:
 /// - `QUERY`
 /// - `PREPARE`
 /// - `EXECUTE`

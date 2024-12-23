@@ -15,7 +15,8 @@ use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
-    BadQuery, NewSessionError, ProtocolError, QueryError, RequestAttemptError, TracingProtocolError,
+    BadQuery, NewSessionError, ProtocolError, QueryError, RequestAttemptError, RequestError,
+    TracingProtocolError,
 };
 use crate::frame::response::result;
 #[cfg(feature = "ssl")]
@@ -1966,7 +1967,7 @@ where
                         },
                     )
                     .await
-                    .unwrap_or(Err(QueryError::EmptyPlan))
+                    .unwrap_or(Err(RequestError::EmptyPlan))
                 }
             }
         };
@@ -1977,6 +1978,7 @@ where
         let result = match effective_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
+                .map(|res| res.map_err(RequestError::into_query_error))
                 .unwrap_or_else(|e| {
                     Err(QueryError::RequestTimeout(format!(
                         "Request took longer than {}ms: {}",
@@ -1984,7 +1986,7 @@ where
                         e
                     )))
                 }),
-            None => runner.await,
+            None => runner.await.map_err(RequestError::into_query_error),
         };
 
         if let Some((history_listener, query_id)) = history_listener_and_id {
@@ -2008,12 +2010,12 @@ where
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
-    ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
+    ) -> Option<Result<RunRequestResult<ResT>, RequestError>>
     where
         QueryFut: Future<Output = Result<ResT, RequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
     {
-        let mut last_error: Option<QueryError> = None;
+        let mut last_error: Option<RequestError> = None;
         let mut current_consistency: Consistency = context
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
@@ -2097,12 +2099,12 @@ where
                     retry_decision = ?retry_decision
                 );
 
-                last_error = Some(request_error.into_query_error());
-                context.log_attempt_error(
-                    &attempt_id,
-                    last_error.as_ref().unwrap(),
-                    &retry_decision,
-                );
+                // TODO: This is a temporary measure. Will be able to remove it later in this PR
+                // once I narrow the error type in history module.
+                let q_error: QueryError = request_error.clone().into_query_error();
+                context.log_attempt_error(&attempt_id, &q_error, &retry_decision);
+
+                last_error = Some(request_error.into());
 
                 match retry_decision {
                     RetryDecision::RetrySameNode(new_cl) => {

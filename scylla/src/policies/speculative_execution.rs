@@ -6,7 +6,7 @@ use scylla_cql::frame::response::error::DbError;
 use std::{future::Future, sync::Arc, time::Duration};
 use tracing::{trace_span, warn, Instrument};
 
-use crate::errors::QueryError;
+use crate::errors::{RequestAttemptError, RequestError};
 use crate::observability::metrics::Metrics;
 
 /// Context is passed as an argument to `SpeculativeExecutionPolicy` methods
@@ -85,7 +85,7 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
 ///
 /// We should ignore errors such that their presence when executing the request
 /// on one node, does not imply that the same error will appear during retry on some other node.
-fn can_be_ignored<ResT>(result: &Result<ResT, QueryError>) -> bool {
+fn can_be_ignored<ResT>(result: &Result<ResT, RequestError>) -> bool {
     match result {
         Ok(_) => false,
         // Do not remove this lint!
@@ -93,86 +93,87 @@ fn can_be_ignored<ResT>(result: &Result<ResT, QueryError>) -> bool {
         // automatically fall under `_` pattern when they are introduced.
         #[deny(clippy::wildcard_enum_match_arm)]
         Err(e) => match e {
-            // Errors that will almost certainly appear for other nodes as well
-            QueryError::BadQuery(_)
-            | QueryError::CqlRequestSerialization(_)
-            | QueryError::BodyExtensionsParseError(_)
-            | QueryError::CqlResultParseError(_)
-            | QueryError::CqlErrorParseError(_)
-            | QueryError::ProtocolError(_) => false,
+            // This error should not appear it. Anyway, if it possibly could
+            // in the future, it should not be ignored.
+            RequestError::EmptyPlan => false,
 
-            // EmptyPlan is not returned by `Session::execute_query`.
-            // It is represented by None, which is then transformed
-            // to QueryError::EmptyPlan by the caller
-            // (either here is speculative_execution module, or for non-speculative execution).
-            // I believe this should not be ignored, since we do not expect it here.
-            QueryError::EmptyPlan => false,
+            // Can try on another node.
+            RequestError::ConnectionPoolError { .. } => true,
 
-            // Errors that should not appear here, thus should not be ignored
-            #[allow(deprecated)]
-            QueryError::NextRowError(_)
-            | QueryError::IntoLegacyQueryResultError(_)
-            | QueryError::TimeoutError
-            | QueryError::RequestTimeout(_)
-            | QueryError::MetadataError(_) => false,
-
-            // Errors that can be ignored
-            QueryError::BrokenConnection(_)
-            | QueryError::UnableToAllocStreamId
-            | QueryError::ConnectionPoolError(_) => true,
-
-            // Handle DbErrors
-            QueryError::DbError(db_error, _) => {
+            RequestError::LastAttemptError(e) => {
                 // Do not remove this lint!
                 // It's there for a reason - we don't want new variants
                 // automatically fall under `_` pattern when they are introduced.
                 #[deny(clippy::wildcard_enum_match_arm)]
-                match db_error {
-                        // Errors that will almost certainly appear on other nodes as well
-                        DbError::SyntaxError
-                        | DbError::Invalid
-                        | DbError::AlreadyExists { .. }
-                        | DbError::Unauthorized
-                        | DbError::ProtocolError => false,
+                match e {
+                    // Errors that will almost certainly appear for other nodes as well
+                    RequestAttemptError::SerializationError(_)
+                    | RequestAttemptError::CqlRequestSerialization(_)
+                    | RequestAttemptError::BodyExtensionsParseError(_)
+                    | RequestAttemptError::CqlResultParseError(_)
+                    | RequestAttemptError::CqlErrorParseError(_)
+                    | RequestAttemptError::UnexpectedResponse(_)
+                    | RequestAttemptError::RepreparedIdChanged { .. }
+                    | RequestAttemptError::RepreparedIdMissingInBatch => false,
 
-                        // Errors that should not appear there - thus, should not be ignored.
-                        DbError::AuthenticationError | DbError::Other(_) => false,
+                    // Errors that can be ignored
+                    RequestAttemptError::BrokenConnectionError(_)
+                    | RequestAttemptError::UnableToAllocStreamId => true,
 
-                        // For now, let's assume that UDF failure is not transient - don't ignore it
-                        // TODO: investigate
-                        DbError::FunctionFailure { .. } => false,
+                    // Handle DbErrors
+                    RequestAttemptError::DbError(db_error, _) => {
+                        // Do not remove this lint!
+                        // It's there for a reason - we don't want new variants
+                        // automatically fall under `_` pattern when they are introduced.
+                        #[deny(clippy::wildcard_enum_match_arm)]
+                        match db_error {
+                            // Errors that will almost certainly appear on other nodes as well
+                            DbError::SyntaxError
+                            | DbError::Invalid
+                            | DbError::AlreadyExists { .. }
+                            | DbError::Unauthorized
+                            | DbError::ProtocolError => false,
 
-                        // Not sure when these can appear - don't ignore them
-                        // TODO: Investigate these errors
-                        DbError::ConfigError | DbError::TruncateError => false,
+                            // Errors that should not appear there - thus, should not be ignored.
+                            DbError::AuthenticationError | DbError::Other(_) => false,
 
-                        // Errors that we can ignore and perform a retry on some other node
-                        DbError::Unavailable { .. }
-                        | DbError::Overloaded
-                        | DbError::IsBootstrapping
-                        | DbError::ReadTimeout { .. }
-                        | DbError::WriteTimeout { .. }
-                        | DbError::ReadFailure { .. }
-                        | DbError::WriteFailure { .. }
-                        // Preparation may succeed on some other node.
-                        | DbError::Unprepared { .. }
-                        | DbError::ServerError
-                        | DbError::RateLimitReached { .. } => true,
+                            // For now, let's assume that UDF failure is not transient - don't ignore it
+                            // TODO: investigate
+                            DbError::FunctionFailure { .. } => false,
+
+                            // Not sure when these can appear - don't ignore them
+                            // TODO: Investigate these errors
+                            DbError::ConfigError | DbError::TruncateError => false,
+
+                            // Errors that we can ignore and perform a retry on some other node
+                            DbError::Unavailable { .. }
+                            | DbError::Overloaded
+                            | DbError::IsBootstrapping
+                            | DbError::ReadTimeout { .. }
+                            | DbError::WriteTimeout { .. }
+                            | DbError::ReadFailure { .. }
+                            | DbError::WriteFailure { .. }
+                            // Preparation may succeed on some other node.
+                            | DbError::Unprepared { .. }
+                            | DbError::ServerError
+                            | DbError::RateLimitReached { .. } => true,
+                        }
                     }
+                }
             }
         },
     }
 }
 
-const EMPTY_PLAN_ERROR: QueryError = QueryError::EmptyPlan;
+const EMPTY_PLAN_ERROR: RequestError = RequestError::EmptyPlan;
 
 pub(crate) async fn execute<QueryFut, ResT>(
     policy: &dyn SpeculativeExecutionPolicy,
     context: &Context,
     query_runner_generator: impl Fn(bool) -> QueryFut,
-) -> Result<ResT, QueryError>
+) -> Result<ResT, RequestError>
 where
-    QueryFut: Future<Output = Option<Result<ResT, QueryError>>>,
+    QueryFut: Future<Output = Option<Result<ResT, RequestError>>>,
 {
     let mut retries_remaining = policy.max_retry_count(context);
     let retry_interval = policy.retry_interval(context);

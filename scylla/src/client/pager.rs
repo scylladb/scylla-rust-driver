@@ -29,7 +29,7 @@ use crate::cluster::{ClusterState, NodeRef};
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
-use crate::errors::ProtocolError;
+use crate::errors::{ProtocolError, RequestError};
 use crate::errors::{QueryError, RequestAttemptError};
 use crate::frame::response::result;
 use crate::network::Connection;
@@ -168,7 +168,7 @@ where
         let query_plan =
             load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
-        let mut last_error: QueryError = QueryError::EmptyPlan;
+        let mut last_error: RequestError = RequestError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
 
         self.log_query_start();
@@ -235,8 +235,12 @@ where
                     retry_decision = ?retry_decision
                 );
 
-                last_error = request_error.into_query_error();
-                self.log_attempt_error(&last_error, &retry_decision);
+                // TODO: This is a temporary measure. Will be able to remove it later in this PR
+                // once I narrow the error type in history module.
+                let q_error: QueryError = request_error.clone().into_query_error();
+                self.log_attempt_error(&q_error, &retry_decision);
+
+                last_error = request_error.into();
 
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
@@ -266,8 +270,9 @@ where
         }
 
         // Send last_error to QueryPager - query failed fully
-        self.log_query_error(&last_error);
-        let (proof, _) = self.sender.send(Err(last_error)).await;
+        let q_error = last_error.into_query_error();
+        self.log_query_error(&q_error);
+        let (proof, _) = self.sender.send(Err(q_error)).await;
         proof
     }
 
