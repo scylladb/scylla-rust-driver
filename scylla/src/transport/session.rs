@@ -1985,7 +1985,7 @@ where
                         iter: std::sync::Mutex::new(query_plan),
                     };
 
-                    let execute_query_generator = |is_speculative: bool| {
+                    let request_runner_generator = |is_speculative: bool| {
                         let history_data: Option<HistoryData> = history_listener_and_id
                             .as_ref()
                             .map(|(history_listener, query_id)| {
@@ -2006,11 +2006,11 @@ where
                             request_span.inc_speculative_executions();
                         }
 
-                        self.execute_query(
+                        self.run_request_speculative_fiber(
                             &shared_query_plan,
                             &do_query,
                             &execution_profile,
-                            ExecuteQueryContext {
+                            ExecuteRequestContext {
                                 is_idempotent: statement_config.is_idempotent,
                                 consistency_set_on_statement: statement_config.consistency,
                                 retry_session: retry_policy.new_session(),
@@ -2028,7 +2028,7 @@ where
                     speculative_execution::execute(
                         speculative.as_ref(),
                         &context,
-                        execute_query_generator,
+                        request_runner_generator,
                     )
                     .await
                 }
@@ -2041,11 +2041,11 @@ where
                                 query_id: *query_id,
                                 speculative_id: None,
                             });
-                    self.execute_query(
+                    self.run_request_speculative_fiber(
                         query_plan,
                         &do_query,
                         &execution_profile,
-                        ExecuteQueryContext {
+                        ExecuteRequestContext {
                             is_idempotent: statement_config.is_idempotent,
                             consistency_set_on_statement: statement_config.consistency,
                             retry_session: retry_policy.new_session(),
@@ -2086,12 +2086,17 @@ where
         result
     }
 
-    async fn execute_query<'a, QueryFut, ResT>(
+    /// Executes the closure `do_query`, provided the load balancing plan and some information
+    /// about the request, including retry session.
+    /// If request fails, retry session is used to perform retries.
+    ///
+    /// Returns None, if provided plan is empty.
+    async fn run_request_speculative_fiber<'a, QueryFut, ResT>(
         &'a self,
         query_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
-        mut context: ExecuteQueryContext<'a>,
+        mut context: ExecuteRequestContext<'a>,
     ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
     where
         QueryFut: Future<Output = Result<ResT, QueryError>>,
@@ -2244,7 +2249,7 @@ where
     }
 }
 
-// run_request, execute_query, etc have a template type called ResT.
+// run_request, run_request_speculative_fiber, etc have a template type called ResT.
 // There was a bug where ResT was set to QueryResponse, which could
 // be an error response. This was not caught by retry policy which
 // assumed all errors would come from analyzing Result<ResT, QueryError>.
@@ -2259,7 +2264,7 @@ impl AllowedRunRequestResTType for Uuid {}
 impl AllowedRunRequestResTType for QueryResult {}
 impl AllowedRunRequestResTType for NonErrorQueryResponse {}
 
-struct ExecuteQueryContext<'a> {
+struct ExecuteRequestContext<'a> {
     is_idempotent: bool,
     consistency_set_on_statement: Option<Consistency>,
     retry_session: Box<dyn RetrySession>,
@@ -2274,7 +2279,7 @@ struct HistoryData<'a> {
     speculative_id: Option<history::SpeculativeId>,
 }
 
-impl ExecuteQueryContext<'_> {
+impl ExecuteRequestContext<'_> {
     fn log_attempt_start(&self, node_addr: SocketAddr) -> Option<history::AttemptId> {
         self.history_data.as_ref().map(|hd| {
             hd.listener
