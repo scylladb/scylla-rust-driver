@@ -38,7 +38,7 @@ use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryRespo
 use crate::transport::errors::{ProtocolError, QueryError, UserRequestError};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::transport::retry_policy::{RequestInfo, RetryDecision, RetrySession};
 use crate::transport::NodeRef;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
@@ -203,7 +203,7 @@ where
                     .instrument(span.clone())
                     .await;
 
-                last_error = match queries_result {
+                let request_error: UserRequestError = match queries_result {
                     Ok(proof) => {
                         trace!(parent: &span, "Query succeeded");
                         // query_pages returned Ok, so we are guaranteed
@@ -217,13 +217,13 @@ where
                             error = %error,
                             "Query failed"
                         );
-                        error.into_query_error()
+                        error
                     }
                 };
 
                 // Use retry policy to decide what to do next
-                let query_info = QueryInfo {
-                    error: &last_error,
+                let query_info = RequestInfo {
+                    error: &request_error,
                     is_idempotent: self.query_is_idempotent,
                     consistency: self.query_consistency,
                 };
@@ -233,7 +233,10 @@ where
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
+
+                last_error = request_error.into_query_error();
                 self.log_attempt_error(&last_error, &retry_decision);
+
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
                         self.metrics.inc_retries_num();

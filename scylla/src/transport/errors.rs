@@ -879,7 +879,7 @@ pub enum CqlEventHandlingError {
 /// requests. This error can appear during a single try
 /// of request execution. The retry decision is made based
 /// on this error.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum UserRequestError {
     /// Failed to serialize CQL request.
