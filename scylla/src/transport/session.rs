@@ -71,7 +71,7 @@ use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::query_result::QueryResult;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::transport::retry_policy::{RequestInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
 use crate::{
@@ -2146,7 +2146,7 @@ where
                         .await;
 
                 let elapsed = request_start.elapsed();
-                last_error = match request_result {
+                let request_error: UserRequestError = match request_result {
                     Ok(response) => {
                         trace!(parent: &span, "Request succeeded");
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
@@ -2171,14 +2171,13 @@ where
                             node,
                             &e,
                         );
-                        Some(e.into_query_error())
+                        e
                     }
                 };
 
-                let the_error: &QueryError = last_error.as_ref().unwrap();
                 // Use retry policy to decide what to do next
-                let query_info = QueryInfo {
-                    error: the_error,
+                let query_info = RequestInfo {
+                    error: &request_error,
                     is_idempotent: context.is_idempotent,
                     consistency: context
                         .consistency_set_on_statement
@@ -2190,7 +2189,14 @@ where
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
-                context.log_attempt_error(&attempt_id, the_error, &retry_decision);
+
+                last_error = Some(request_error.into_query_error());
+                context.log_attempt_error(
+                    &attempt_id,
+                    last_error.as_ref().unwrap(),
+                    &retry_decision,
+                );
+
                 match retry_decision {
                     RetryDecision::RetrySameNode(new_cl) => {
                         self.metrics.inc_retries_num();
