@@ -559,13 +559,18 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         "DefaultPolicy".to_string()
     }
 
-    fn on_query_success(&self, _routing_info: &RoutingInfo, latency: Duration, node: NodeRef<'_>) {
+    fn on_request_success(
+        &self,
+        _routing_info: &RoutingInfo,
+        latency: Duration,
+        node: NodeRef<'_>,
+    ) {
         if let Some(latency_awareness) = self.latency_awareness.as_ref() {
-            latency_awareness.report_query(node, latency);
+            latency_awareness.report_request(node, latency);
         }
     }
 
-    fn on_query_failure(
+    fn on_request_failure(
         &self,
         _routing_info: &RoutingInfo,
         latency: Duration,
@@ -574,7 +579,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
     ) {
         if let Some(latency_awareness) = self.latency_awareness.as_ref() {
             if LatencyAwareness::reliable_latency_measure(error) {
-                latency_awareness.report_query(node, latency);
+                latency_awareness.report_request(node, latency);
             }
         }
     }
@@ -2808,7 +2813,7 @@ mod latency_awareness {
             Either::Right(skipping_penalised_targets_iterator)
         }
 
-        pub(super) fn report_query(&self, node: &Node, latency: Duration) {
+        pub(super) fn report_request(&self, node: &Node, latency: Duration) {
             let node_avgs_guard = self.node_avgs.read().unwrap();
             if let Some(previous_node_avg) = node_avgs_guard.get(&node.host_id) {
                 // The usual path, the node has been already noticed.

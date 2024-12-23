@@ -65,7 +65,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
         Box::new(std::iter::empty())
     }
 
-    fn on_query_success(
+    fn on_request_success(
         &self,
         _query: &RoutingInfo,
         _latency: std::time::Duration,
@@ -73,7 +73,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
     ) {
     }
 
-    fn on_query_failure(
+    fn on_request_failure(
         &self,
         _query: &RoutingInfo,
         _latency: std::time::Duration,

@@ -329,7 +329,7 @@ where
                 self.log_query_success();
                 self.execution_profile
                     .load_balancing_policy
-                    .on_query_success(&self.statement_info, elapsed, node);
+                    .on_request_success(&self.statement_info, elapsed, node);
 
                 request_span.record_raw_rows_fields(&rows);
 
@@ -362,7 +362,7 @@ where
                 self.metrics.inc_failed_paged_queries();
                 self.execution_profile
                     .load_balancing_policy
-                    .on_query_failure(&self.statement_info, elapsed, node, &err);
+                    .on_request_failure(&self.statement_info, elapsed, node, &err);
                 Err(err.into_query_error())
             }
             Ok(NonErrorQueryResponse {
@@ -383,7 +383,7 @@ where
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
                 self.execution_profile
                     .load_balancing_policy
-                    .on_query_failure(&self.statement_info, elapsed, node, &err);
+                    .on_request_failure(&self.statement_info, elapsed, node, &err);
                 Err(err.into_query_error())
             }
         }
