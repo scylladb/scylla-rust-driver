@@ -44,7 +44,7 @@ use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
-use super::errors::TracingProtocolError;
+use super::errors::{TracingProtocolError, UserRequestError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::iterator::QueryPager;
 #[cfg(feature = "cloud")]
@@ -2059,7 +2059,6 @@ where
                         },
                     )
                     .await
-                    .unwrap_or(Err(QueryError::EmptyPlan))
                 }
             }
         };
@@ -2070,6 +2069,7 @@ where
         let result = match effective_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
+                .map(|res| res.map_err(UserRequestError::into_query_error))
                 .unwrap_or_else(|e| {
                     Err(QueryError::RequestTimeout(format!(
                         "Request took longer than {}ms: {}",
@@ -2077,7 +2077,7 @@ where
                         e
                     )))
                 }),
-            None => runner.await,
+            None => runner.await.map_err(UserRequestError::into_query_error),
         };
 
         if let Some((history_listener, query_id)) = history_listener_and_id {
@@ -2101,12 +2101,12 @@ where
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
-    ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
+    ) -> Result<RunRequestResult<ResT>, UserRequestError>
     where
         QueryFut: Future<Output = Result<ResT, UserRequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
     {
-        let mut last_error: Option<QueryError> = None;
+        let mut last_error: UserRequestError = UserRequestError::EmptyPlan;
         let mut current_consistency: Consistency = context
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
@@ -2123,7 +2123,7 @@ where
                             error = %e,
                             "Choosing connection failed"
                         );
-                        last_error = Some(e.into());
+                        last_error = e.into();
                         // Broken connection doesn't count as a failed request, don't log in metrics
                         continue 'nodes_in_plan;
                     }
@@ -2156,7 +2156,7 @@ where
                             elapsed,
                             node,
                         );
-                        return Some(Ok(RunRequestResult::Completed(response)));
+                        return Ok(RunRequestResult::Completed(response));
                     }
                     Err(e) => {
                         trace!(
@@ -2190,12 +2190,12 @@ where
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
 
-                last_error = Some(request_error.into_query_error());
-                context.log_attempt_error(
-                    &attempt_id,
-                    last_error.as_ref().unwrap(),
-                    &retry_decision,
-                );
+                // TODO: This is a temporary measure. Will be able to remove it later in this PR
+                // once I narrow the error type in history module.
+                let q_error: QueryError = request_error.clone().into_query_error();
+                context.log_attempt_error(&attempt_id, &q_error, &retry_decision);
+
+                last_error = request_error.into();
 
                 match retry_decision {
                     RetryDecision::RetrySameNode(new_cl) => {
@@ -2211,13 +2211,13 @@ where
                     RetryDecision::DontRetry => break 'nodes_in_plan,
 
                     RetryDecision::IgnoreWriteError => {
-                        return Some(Ok(RunRequestResult::IgnoredWriteError))
+                        return Ok(RunRequestResult::IgnoredWriteError)
                     }
                 };
             }
         }
 
-        last_error.map(Result::Err)
+        Err(last_error)
     }
 
     async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, QueryError> {
