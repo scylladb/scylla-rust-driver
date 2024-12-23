@@ -2151,7 +2151,7 @@ where
                         trace!(parent: &span, "Query succeeded");
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
-                        execution_profile.load_balancing_policy.on_query_success(
+                        execution_profile.load_balancing_policy.on_request_success(
                             context.query_info,
                             elapsed,
                             node,
@@ -2165,7 +2165,7 @@ where
                             "Query failed"
                         );
                         self.metrics.inc_failed_nonpaged_queries();
-                        execution_profile.load_balancing_policy.on_query_failure(
+                        execution_profile.load_balancing_policy.on_request_failure(
                             context.query_info,
                             elapsed,
                             node,
