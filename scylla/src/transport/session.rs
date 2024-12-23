@@ -472,7 +472,7 @@ impl Default for SessionConfig {
     }
 }
 
-pub(crate) enum RunQueryResult<ResT> {
+pub(crate) enum RunRequestResult<ResT> {
     IgnoredWriteError,
     Completed(ResT),
 }
@@ -1203,8 +1203,8 @@ where
 
         let span = RequestSpan::new_query(&query.contents);
         let span_ref = &span;
-        let run_query_result = self
-            .run_query(
+        let run_request_result = self
+            .run_request(
                 statement_info,
                 &query.config,
                 execution_profile,
@@ -1257,13 +1257,13 @@ where
             .instrument(span.span().clone())
             .await?;
 
-        let response = match run_query_result {
-            RunQueryResult::IgnoredWriteError => NonErrorQueryResponse {
+        let response = match run_request_result {
+            RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
                 response: NonErrorResponse::Result(result::Result::Void),
                 tracing_id: None,
                 warnings: Vec::new(),
             },
-            RunQueryResult::Completed(response) => response,
+            RunRequestResult::Completed(response) => response,
         };
 
         self.handle_set_keyspace_response(&response).await?;
@@ -1526,8 +1526,8 @@ where
             }
         }
 
-        let run_query_result: RunQueryResult<NonErrorQueryResponse> = self
-            .run_query(
+        let run_request_result: RunRequestResult<NonErrorQueryResponse> = self
+            .run_request(
                 statement_info,
                 &prepared.config,
                 execution_profile,
@@ -1558,13 +1558,13 @@ where
             .instrument(span.span().clone())
             .await?;
 
-        let response = match run_query_result {
-            RunQueryResult::IgnoredWriteError => NonErrorQueryResponse {
+        let response = match run_request_result {
+            RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
                 response: NonErrorResponse::Result(result::Result::Void),
                 tracing_id: None,
                 warnings: Vec::new(),
             },
-            RunQueryResult::Completed(response) => response,
+            RunRequestResult::Completed(response) => response,
         };
 
         self.handle_set_keyspace_response(&response).await?;
@@ -1650,8 +1650,8 @@ where
 
         let span = RequestSpan::new_batch();
 
-        let run_query_result = self
-            .run_query(
+        let run_request_result = self
+            .run_request(
                 statement_info,
                 &batch.config,
                 execution_profile,
@@ -1678,9 +1678,9 @@ where
             .instrument(span.span().clone())
             .await?;
 
-        let result = match run_query_result {
-            RunQueryResult::IgnoredWriteError => QueryResult::mock_empty(),
-            RunQueryResult::Completed(result) => {
+        let result = match run_request_result {
+            RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(),
+            RunRequestResult::Completed(result) => {
                 span.record_result_fields(&result);
                 result
             }
@@ -1916,26 +1916,27 @@ where
         Ok(Some(tracing_info))
     }
 
-    // This method allows to easily run a query using load balancing, retry policy etc.
-    // Requires some information about the query and a closure.
-    // The closure is used to do the query itself on a connection.
-    // - query will use connection.query()
-    // - execute will use connection.execute()
-    // If this query closure fails with some errors retry policy is used to perform retries
-    // On success this query's result is returned
+    /// This method allows to easily run a request using load balancing, retry policy etc.
+    /// Requires some information about the request and a closure.
+    /// The closure is used to execute the request once on a chosen connection.
+    /// - query will use connection.query()
+    /// - execute will use connection.execute()
+    ///
+    /// If this closure fails with some errors, retry policy is used to perform retries.
+    /// On success, this request's result is returned.
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
-    async fn run_query<'a, QueryFut, ResT>(
+    async fn run_request<'a, QueryFut, ResT>(
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         execution_profile: Arc<ExecutionProfileInner>,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
-    ) -> Result<RunQueryResult<ResT>, QueryError>
+    ) -> Result<RunRequestResult<ResT>, QueryError>
     where
         QueryFut: Future<Output = Result<ResT, QueryError>>,
-        ResT: AllowedRunQueryResTType,
+        ResT: AllowedRunRequestResTType,
     {
         let history_listener_and_id: Option<(&'a dyn HistoryListener, history::QueryId)> =
             statement_config
@@ -2091,10 +2092,10 @@ where
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteQueryContext<'a>,
-    ) -> Option<Result<RunQueryResult<ResT>, QueryError>>
+    ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
     where
         QueryFut: Future<Output = Result<ResT, QueryError>>,
-        ResT: AllowedRunQueryResTType,
+        ResT: AllowedRunRequestResTType,
     {
         let mut last_error: Option<QueryError> = None;
         let mut current_consistency: Consistency = context
@@ -2146,7 +2147,7 @@ where
                             elapsed,
                             node,
                         );
-                        return Some(Ok(RunQueryResult::Completed(response)));
+                        return Some(Ok(RunRequestResult::Completed(response)));
                     }
                     Err(e) => {
                         trace!(
@@ -2195,7 +2196,7 @@ where
                     RetryDecision::DontRetry => break 'nodes_in_plan,
 
                     RetryDecision::IgnoreWriteError => {
-                        return Some(Ok(RunQueryResult::IgnoredWriteError))
+                        return Some(Ok(RunRequestResult::IgnoredWriteError))
                     }
                 };
             }
@@ -2243,20 +2244,20 @@ where
     }
 }
 
-// run_query, execute_query, etc have a template type called ResT.
+// run_request, execute_query, etc have a template type called ResT.
 // There was a bug where ResT was set to QueryResponse, which could
 // be an error response. This was not caught by retry policy which
 // assumed all errors would come from analyzing Result<ResT, QueryError>.
 // This trait is a guard to make sure that this mistake doesn't
 // happen again.
-// When using run_query make sure that the ResT type is NOT able
+// When using run_request make sure that the ResT type is NOT able
 // to contain any errors.
 // See https://github.com/scylladb/scylla-rust-driver/issues/501
-pub(crate) trait AllowedRunQueryResTType {}
+pub(crate) trait AllowedRunRequestResTType {}
 
-impl AllowedRunQueryResTType for Uuid {}
-impl AllowedRunQueryResTType for QueryResult {}
-impl AllowedRunQueryResTType for NonErrorQueryResponse {}
+impl AllowedRunRequestResTType for Uuid {}
+impl AllowedRunRequestResTType for QueryResult {}
+impl AllowedRunRequestResTType for NonErrorQueryResponse {}
 
 struct ExecuteQueryContext<'a> {
     is_idempotent: bool,
