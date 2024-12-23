@@ -1948,11 +1948,11 @@ where
 
         let runner = async {
             let cluster_data = self.cluster.get_data();
-            let query_plan =
+            let request_plan =
                 load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
-            // If a speculative execution policy is used to run query, query_plan has to be shared
-            // between different async functions. This struct helps to wrap query_plan in mutex so it
+            // If a speculative execution policy is used to run query, request_plan has to be shared
+            // between different async functions. This struct helps to wrap request_plan in mutex so it
             // can be shared safely.
             struct SharedPlan<'a, I>
             where
@@ -1981,8 +1981,8 @@ where
 
             match speculative_policy {
                 Some(speculative) if statement_config.is_idempotent => {
-                    let shared_query_plan = SharedPlan {
-                        iter: std::sync::Mutex::new(query_plan),
+                    let shared_request_plan = SharedPlan {
+                        iter: std::sync::Mutex::new(request_plan),
                     };
 
                     let request_runner_generator = |is_speculative: bool| {
@@ -2007,7 +2007,7 @@ where
                         }
 
                         self.run_request_speculative_fiber(
-                            &shared_query_plan,
+                            &shared_request_plan,
                             &run_request_once,
                             &execution_profile,
                             ExecuteRequestContext {
@@ -2042,7 +2042,7 @@ where
                                 speculative_id: None,
                             });
                     self.run_request_speculative_fiber(
-                        query_plan,
+                        request_plan,
                         &run_request_once,
                         &execution_profile,
                         ExecuteRequestContext {
@@ -2093,7 +2093,7 @@ where
     /// Returns None, if provided plan is empty.
     async fn run_request_speculative_fiber<'a, QueryFut, ResT>(
         &'a self,
-        query_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
+        request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
@@ -2107,7 +2107,7 @@ where
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
 
-        'nodes_in_plan: for (node, shard) in query_plan {
+        'nodes_in_plan: for (node, shard) in request_plan {
             let span = trace_span!("Executing query", node = %node.address);
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
