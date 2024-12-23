@@ -198,7 +198,7 @@ where
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
                 // Query pages until an error occurs
-                let queries_result: Result<PageSendAttemptedProof, QueryError> = self
+                let queries_result: Result<PageSendAttemptedProof, UserRequestError> = self
                     .query_pages(&connection, current_consistency, node)
                     .instrument(span.clone())
                     .await;
@@ -217,7 +217,7 @@ where
                             error = %error,
                             "Query failed"
                         );
-                        error
+                        error.into_query_error()
                     }
                 };
 
@@ -277,7 +277,7 @@ where
         connection: &Arc<Connection>,
         consistency: Consistency,
         node: NodeRef<'_>,
-    ) -> Result<PageSendAttemptedProof, QueryError> {
+    ) -> Result<PageSendAttemptedProof, UserRequestError> {
         loop {
             let request_span = (self.span_creator)();
             match self
@@ -297,7 +297,7 @@ where
         consistency: Consistency,
         node: NodeRef<'_>,
         request_span: &RequestSpan,
-    ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, QueryError> {
+    ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, UserRequestError> {
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
 
@@ -362,7 +362,7 @@ where
                 self.execution_profile
                     .load_balancing_policy
                     .on_request_failure(&self.statement_info, elapsed, node, &err);
-                Err(err.into_query_error())
+                Err(err)
             }
             Ok(NonErrorQueryResponse {
                 response: NonErrorResponse::Result(_),
@@ -383,7 +383,7 @@ where
                 self.execution_profile
                     .load_balancing_policy
                     .on_request_failure(&self.statement_info, elapsed, node, &err);
-                Err(err.into_query_error())
+                Err(err)
             }
         }
     }
