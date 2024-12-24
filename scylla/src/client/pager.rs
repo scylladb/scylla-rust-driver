@@ -235,10 +235,7 @@ where
                     retry_decision = ?retry_decision
                 );
 
-                // TODO: This is a temporary measure. Will be able to remove it later in this PR
-                // once I narrow the error type in history module.
-                let q_error: QueryError = request_error.clone().into_query_error();
-                self.log_attempt_error(&q_error, &retry_decision);
+                self.log_attempt_error(&request_error, &retry_decision);
 
                 last_error = request_error.into();
 
@@ -269,10 +266,8 @@ where
             }
         }
 
-        // Send last_error to QueryPager - query failed fully
-        let q_error = last_error.into_query_error();
-        self.log_query_error(&q_error);
-        let (proof, _) = self.sender.send(Err(q_error)).await;
+        self.log_query_error(&last_error);
+        let (proof, _) = self.sender.send(Err(last_error.into_query_error())).await;
         proof
     }
 
@@ -420,7 +415,7 @@ where
         history_listener.log_query_success(query_id);
     }
 
-    fn log_query_error(&mut self, error: &QueryError) {
+    fn log_query_error(&mut self, error: &RequestError) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
@@ -463,7 +458,7 @@ where
         history_listener.log_attempt_success(attempt_id);
     }
 
-    fn log_attempt_error(&mut self, error: &QueryError, retry_decision: &RetryDecision) {
+    fn log_attempt_error(&mut self, error: &RequestAttemptError, retry_decision: &RetryDecision) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
