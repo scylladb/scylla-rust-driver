@@ -246,6 +246,14 @@ pub use scylla_cql::macros::SerializeValue;
 ///
 /// Don't use the field during serialization.
 ///
+/// `#[scylla(flatten)]`
+///
+/// Use this field's `SerializeRow` implementation to serialize its columns as part
+/// of this struct. Note that the name of this field is ignored and hence the
+/// `rename` attribute does not make sense here and will cause a compilation
+/// error. Currently this is only supported for the `"match_by_name"` flavor in both
+/// the wrapper struct and this flattened struct.
+///
 /// ---
 ///
 pub use scylla_cql::macros::SerializeRow;
