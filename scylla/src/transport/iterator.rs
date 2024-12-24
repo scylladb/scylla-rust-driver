@@ -148,7 +148,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     paging_state: PagingState,
 
     history_listener: Option<Arc<dyn HistoryListener>>,
-    current_query_id: Option<history::QueryId>,
+    current_request_id: Option<history::RequestId>,
     current_attempt_id: Option<history::AttemptId>,
 
     parent_span: tracing::Span,
@@ -400,7 +400,7 @@ where
             None => return,
         };
 
-        self.current_query_id = Some(history_listener.log_query_start());
+        self.current_request_id = Some(history_listener.log_query_start());
     }
 
     fn log_query_success(&mut self) {
@@ -409,12 +409,12 @@ where
             None => return,
         };
 
-        let query_id: history::QueryId = match &self.current_query_id {
+        let request_id: history::RequestId = match &self.current_request_id {
             Some(id) => *id,
             None => return,
         };
 
-        history_listener.log_query_success(query_id);
+        history_listener.log_query_success(request_id);
     }
 
     fn log_query_error(&mut self, error: &TimeoutableRequestError) {
@@ -423,12 +423,12 @@ where
             None => return,
         };
 
-        let query_id: history::QueryId = match &self.current_query_id {
+        let request_id: history::RequestId = match &self.current_request_id {
             Some(id) => *id,
             None => return,
         };
 
-        history_listener.log_query_error(query_id, error);
+        history_listener.log_query_error(request_id, error);
     }
 
     fn log_attempt_start(&mut self, node_addr: SocketAddr) {
@@ -437,13 +437,13 @@ where
             None => return,
         };
 
-        let query_id: history::QueryId = match &self.current_query_id {
+        let request_id: history::RequestId = match &self.current_request_id {
             Some(id) => *id,
             None => return,
         };
 
         self.current_attempt_id =
-            Some(history_listener.log_attempt_start(query_id, None, node_addr));
+            Some(history_listener.log_attempt_start(request_id, None, node_addr));
     }
 
     fn log_attempt_success(&mut self) {
@@ -759,7 +759,7 @@ impl QueryPager {
                 metrics,
                 paging_state: PagingState::start(),
                 history_listener: query.config.history_listener.clone(),
-                current_query_id: None,
+                current_request_id: None,
                 current_attempt_id: None,
                 parent_span,
                 span_creator,
@@ -877,7 +877,7 @@ impl QueryPager {
                 metrics: config.metrics,
                 paging_state: PagingState::start(),
                 history_listener: config.prepared.config.history_listener.clone(),
-                current_query_id: None,
+                current_request_id: None,
                 current_attempt_id: None,
                 parent_span,
                 span_creator,
