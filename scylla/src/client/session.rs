@@ -1854,7 +1854,7 @@ where
             statement_config
                 .history_listener
                 .as_ref()
-                .map(|hl| (&**hl, hl.log_query_start()));
+                .map(|hl| (&**hl, hl.log_request_start()));
 
         let load_balancer = &execution_profile.load_balancing_policy;
 
@@ -1987,8 +1987,8 @@ where
 
         if let Some((history_listener, request_id)) = history_listener_and_id {
             match &result {
-                Ok(_) => history_listener.log_query_success(request_id),
-                Err(e) => history_listener.log_query_error(request_id, e),
+                Ok(_) => history_listener.log_request_success(request_id),
+                Err(e) => history_listener.log_request_error(request_id, e),
             }
         }
 

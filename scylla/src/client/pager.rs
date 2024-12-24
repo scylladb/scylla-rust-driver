@@ -171,7 +171,7 @@ where
         let mut last_error: RequestError = RequestError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
 
-        self.log_query_start();
+        self.log_request_start();
 
         'nodes_in_plan: for (node, shard) in query_plan {
             let span =
@@ -266,7 +266,7 @@ where
             }
         }
 
-        self.log_query_error(&last_error);
+        self.log_request_error(&last_error);
         let (proof, _) = self.sender.send(Err(last_error.into_query_error())).await;
         proof
     }
@@ -329,7 +329,7 @@ where
             }) => {
                 let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                 self.log_attempt_success();
-                self.log_query_success();
+                self.log_request_success();
                 self.execution_profile
                     .load_balancing_policy
                     .on_request_success(&self.statement_info, elapsed, node);
@@ -357,7 +357,7 @@ where
 
                 // Query succeeded, reset retry policy for future retries
                 self.retry_session.reset();
-                self.log_query_start();
+                self.log_request_start();
 
                 Ok(ControlFlow::Continue(()))
             }
@@ -392,16 +392,16 @@ where
         }
     }
 
-    fn log_query_start(&mut self) {
+    fn log_request_start(&mut self) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
         };
 
-        self.current_request_id = Some(history_listener.log_query_start());
+        self.current_request_id = Some(history_listener.log_request_start());
     }
 
-    fn log_query_success(&mut self) {
+    fn log_request_success(&mut self) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
@@ -412,10 +412,10 @@ where
             None => return,
         };
 
-        history_listener.log_query_success(request_id);
+        history_listener.log_request_success(request_id);
     }
 
-    fn log_query_error(&mut self, error: &RequestError) {
+    fn log_request_error(&mut self, error: &RequestError) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
@@ -426,7 +426,7 @@ where
             None => return,
         };
 
-        history_listener.log_query_error(request_id, error);
+        history_listener.log_request_error(request_id, error);
     }
 
     fn log_attempt_start(&mut self, node_addr: SocketAddr) {
