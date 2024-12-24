@@ -8,7 +8,7 @@ use scylla::history::{
     AttemptResult, HistoryCollector, QueryHistoryResult, StructuredHistory, TimePoint,
 };
 use scylla::query::Query;
-use scylla::transport::errors::QueryError;
+use scylla::transport::errors::{RetriableRequestError, TimeoutableRequestError, UserRequestError};
 
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 
@@ -73,22 +73,30 @@ fn set_one_node(mut history: StructuredHistory) -> StructuredHistory {
 // The error message changes between Scylla/Cassandra/their versions.
 // Setting it to one value makes it possible to run tests consistently.
 fn set_one_db_error_message(mut history: StructuredHistory) -> StructuredHistory {
-    let set_msg = |err: &mut QueryError| {
-        if let QueryError::DbError(_, msg) = err {
+    let set_msg_attempt = |err: &mut UserRequestError| {
+        if let UserRequestError::DbError(_, msg) = err {
+            *msg = "Error message from database".to_string();
+        }
+    };
+    let set_msg_request_error = |err: &mut TimeoutableRequestError| {
+        if let TimeoutableRequestError::RequestFailure(RetriableRequestError::RequestFailure(
+            UserRequestError::DbError(_, msg),
+        )) = err
+        {
             *msg = "Error message from database".to_string();
         }
     };
 
     for query in &mut history.queries {
         if let Some(QueryHistoryResult::Error(_, err)) = &mut query.result {
-            set_msg(err);
+            set_msg_request_error(err);
         }
         for fiber in std::iter::once(&mut query.non_speculative_fiber)
             .chain(query.speculative_fibers.iter_mut())
         {
             for attempt in &mut fiber.attempts {
                 if let Some(AttemptResult::Error(_, err, _)) = &mut attempt.result {
-                    set_msg(err);
+                    set_msg_attempt(err);
                 }
             }
         }
