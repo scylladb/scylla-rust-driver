@@ -1138,9 +1138,12 @@ where
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
-                                .map_err(Into::into)
+                                .map_err(UserRequestError::into_query_error)
                         } else {
-                            let prepared = connection.prepare(query_ref).await?;
+                            let prepared = connection
+                                .prepare(query_ref)
+                                .await
+                                .map_err(UserRequestError::into_query_error)?;
                             let serialized = prepared.serialize_values(values_ref)?;
                             span_ref.record_request_size(serialized.buffer_size());
                             connection
@@ -1154,7 +1157,7 @@ where
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
-                                .map_err(Into::into)
+                                .map_err(UserRequestError::into_query_error)
                         }
                     }
                 },
@@ -1175,7 +1178,9 @@ where
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
+        let (result, paging_state_response) = response
+            .into_query_result_and_paging_state()
+            .map_err(UserRequestError::into_query_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1305,7 +1310,8 @@ where
         // returns either an error or an iterator with at least one connection, so there will be at least one result.
         let first_ok: Result<PreparedStatement, UserRequestError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
-        let mut prepared: PreparedStatement = first_ok?;
+        let mut prepared: PreparedStatement =
+            first_ok.map_err(UserRequestError::into_query_error)?;
 
         // Validate prepared ids equality
         for statement in results.flatten() {
@@ -1456,7 +1462,7 @@ where
                             )
                             .await
                             .and_then(QueryResponse::into_non_error_query_response)
-                            .map_err(Into::into)
+                            .map_err(UserRequestError::into_query_error)
                     }
                 },
                 &span,
@@ -1476,7 +1482,9 @@ where
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
+        let (result, paging_state_response) = response
+            .into_query_result_and_paging_state()
+            .map_err(UserRequestError::into_query_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))

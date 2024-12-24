@@ -359,7 +359,7 @@ where
                 Ok(ControlFlow::Continue(()))
             }
             Err(err) => {
-                let err = err.into();
+                let err = err.into_query_error();
                 self.metrics.inc_failed_paged_queries();
                 self.execution_profile
                     .load_balancing_policy
@@ -497,8 +497,12 @@ where
     async fn do_work(&mut self) -> Result<PageSendAttemptedProof, QueryError> {
         let mut paging_state = PagingState::start();
         loop {
-            let result = (self.fetcher)(paging_state).await?;
-            let response = result.into_non_error_query_response()?;
+            let result = (self.fetcher)(paging_state)
+                .await
+                .map_err(UserRequestError::into_query_error)?;
+            let response = result
+                .into_non_error_query_response()
+                .map_err(UserRequestError::into_query_error)?;
             match response.response {
                 NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => {
                     let (proof, send_result) = self

@@ -824,7 +824,7 @@ impl Connection {
 
         self.query_raw_unpaged(&query)
             .await
-            .map_err(Into::into)
+            .map_err(UserRequestError::into_query_error)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -882,7 +882,7 @@ impl Connection {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values)
             .await
-            .map_err(Into::into)
+            .map_err(UserRequestError::into_query_error)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -1068,7 +1068,8 @@ impl Connection {
             let query_response = self
                 .send_request(&batch_frame, true, batch.config.tracing, None)
                 .await
-                .map_err(UserRequestError::from)?;
+                .map_err(UserRequestError::from)
+                .map_err(UserRequestError::into_query_error)?;
 
             return match query_response.response {
                 Response::Error(err) => match err.error {
@@ -1081,7 +1082,9 @@ impl Connection {
                             _ => None,
                         });
                         if let Some(p) = prepared_statement {
-                            self.reprepare(p.get_statement(), p).await?;
+                            self.reprepare(p.get_statement(), p)
+                                .await
+                                .map_err(UserRequestError::into_query_error)?;
                             continue;
                         } else {
                             return Err(ProtocolError::RepreparedIdMissingInBatch.into());
@@ -1125,7 +1128,10 @@ impl Connection {
         let mut prepared_queries = HashMap::<&str, PreparedStatement>::new();
 
         for query in &to_prepare {
-            let prepared = self.prepare(&Query::new(query.to_string())).await?;
+            let prepared = self
+                .prepare(&Query::new(query.to_string()))
+                .await
+                .map_err(UserRequestError::into_query_error)?;
             prepared_queries.insert(query, prepared);
         }
 
@@ -1157,7 +1163,10 @@ impl Connection {
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
 
-        let query_response = self.query_raw_unpaged(&query).await?;
+        let query_response = self
+            .query_raw_unpaged(&query)
+            .await
+            .map_err(UserRequestError::into_query_error)?;
         Self::verify_use_keyspace_result(keyspace_name, query_response)
     }
 

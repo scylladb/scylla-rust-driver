@@ -145,33 +145,6 @@ impl From<tokio::time::error::Elapsed> for QueryError {
     }
 }
 
-impl From<UserRequestError> for QueryError {
-    fn from(value: UserRequestError) -> Self {
-        match value {
-            UserRequestError::CqlRequestSerialization(e) => e.into(),
-            UserRequestError::DbError(err, msg) => QueryError::DbError(err, msg),
-            UserRequestError::CqlResultParseError(e) => e.into(),
-            UserRequestError::CqlErrorParseError(e) => e.into(),
-            UserRequestError::BrokenConnectionError(e) => e.into(),
-            UserRequestError::UnexpectedResponse(response) => {
-                ProtocolError::UnexpectedResponse(response).into()
-            }
-            UserRequestError::BodyExtensionsParseError(e) => e.into(),
-            UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
-            UserRequestError::RepreparedIdChanged {
-                statement,
-                expected_id,
-                reprepared_id,
-            } => ProtocolError::RepreparedIdChanged {
-                statement,
-                expected_id,
-                reprepared_id,
-            }
-            .into(),
-        }
-    }
-}
-
 impl From<QueryError> for NewSessionError {
     fn from(query_error: QueryError) -> NewSessionError {
         match query_error {
@@ -934,6 +907,34 @@ pub(crate) enum UserRequestError {
         expected_id: Vec<u8>,
         reprepared_id: Vec<u8>,
     },
+}
+
+impl UserRequestError {
+    /// Converts the error to [`QueryError`].
+    pub(crate) fn into_query_error(self) -> QueryError {
+        match self {
+            UserRequestError::CqlRequestSerialization(e) => e.into(),
+            UserRequestError::DbError(err, msg) => QueryError::DbError(err, msg),
+            UserRequestError::CqlResultParseError(e) => e.into(),
+            UserRequestError::CqlErrorParseError(e) => e.into(),
+            UserRequestError::BrokenConnectionError(e) => e.into(),
+            UserRequestError::UnexpectedResponse(response) => {
+                ProtocolError::UnexpectedResponse(response).into()
+            }
+            UserRequestError::BodyExtensionsParseError(e) => e.into(),
+            UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
+            UserRequestError::RepreparedIdChanged {
+                statement,
+                expected_id,
+                reprepared_id,
+            } => ProtocolError::RepreparedIdChanged {
+                statement,
+                expected_id,
+                reprepared_id,
+            }
+            .into(),
+        }
+    }
 }
 
 impl From<response::error::Error> for UserRequestError {

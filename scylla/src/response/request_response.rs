@@ -44,7 +44,9 @@ impl QueryResponse {
     }
 
     pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        self.into_non_error_query_response()?.into_query_result()
+        self.into_non_error_query_response()
+            .map_err(UserRequestError::into_query_error)?
+            .into_query_result()
     }
 }
 
@@ -85,7 +87,9 @@ impl NonErrorQueryResponse {
     }
 
     pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        let (result, paging_state) = self.into_query_result_and_paging_state()?;
+        let (result, paging_state) = self
+            .into_query_result_and_paging_state()
+            .map_err(UserRequestError::into_query_error)?;
 
         if !paging_state.finished() {
             error!(

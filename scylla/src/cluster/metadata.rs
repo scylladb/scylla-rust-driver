@@ -19,7 +19,7 @@
 use crate::client::pager::QueryPager;
 use crate::cluster::node::resolve_contact_points;
 use crate::deserialize::DeserializeOwnedRow;
-use crate::errors::{DbError, NewSessionError, QueryError};
+use crate::errors::{DbError, NewSessionError, QueryError, UserRequestError};
 use crate::frame::response::event::Event;
 use crate::network::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
 use crate::policies::host_filter::HostFilter;
@@ -986,7 +986,10 @@ where
             let mut query = Query::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
-            let prepared = conn.prepare(&query).await?;
+            let prepared = conn
+                .prepare(&query)
+                .await
+                .map_err(UserRequestError::into_query_error)?;
             let serialized_values = prepared.serialize_values(&keyspaces)?;
             conn.execute_iter(prepared, serialized_values).await
         }
