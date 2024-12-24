@@ -5,7 +5,7 @@ use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use futures::StreamExt;
 use scylla::frame::response::result::Row;
 use scylla::history::{
-    AttemptResult, HistoryCollector, QueryHistoryResult, StructuredHistory, TimePoint,
+    AttemptResult, HistoryCollector, RequestHistoryResult, StructuredHistory, TimePoint,
 };
 use scylla::query::Query;
 use scylla::transport::errors::{
@@ -26,11 +26,11 @@ fn set_one_time(mut history: StructuredHistory) -> StructuredHistory {
         Utc,
     );
 
-    for query in &mut history.queries {
+    for query in &mut history.requests {
         query.start_time = the_time;
         match &mut query.result {
-            Some(QueryHistoryResult::Success(succ_time)) => *succ_time = the_time,
-            Some(QueryHistoryResult::Error(err_time, _)) => *err_time = the_time,
+            Some(RequestHistoryResult::Success(succ_time)) => *succ_time = the_time,
+            Some(RequestHistoryResult::Error(err_time, _)) => *err_time = the_time,
             None => {}
         };
 
@@ -58,7 +58,7 @@ fn set_one_time(mut history: StructuredHistory) -> StructuredHistory {
 fn set_one_node(mut history: StructuredHistory) -> StructuredHistory {
     let the_node: SocketAddr = node1_addr();
 
-    for query in &mut history.queries {
+    for query in &mut history.requests {
         for fiber in std::iter::once(&mut query.non_speculative_fiber)
             .chain(query.speculative_fibers.iter_mut())
         {
@@ -89,12 +89,12 @@ fn set_one_db_error_message(mut history: StructuredHistory) -> StructuredHistory
         }
     };
 
-    for query in &mut history.queries {
-        if let Some(QueryHistoryResult::Error(_, err)) = &mut query.result {
+    for request in &mut history.requests {
+        if let Some(RequestHistoryResult::Error(_, err)) = &mut request.result {
             set_msg_request_error(err);
         }
-        for fiber in std::iter::once(&mut query.non_speculative_fiber)
-            .chain(query.speculative_fibers.iter_mut())
+        for fiber in std::iter::once(&mut request.non_speculative_fiber)
+            .chain(request.speculative_fibers.iter_mut())
         {
             for attempt in &mut fiber.attempts {
                 if let Some(AttemptResult::Error(_, err, _)) = &mut attempt.result {
@@ -254,7 +254,7 @@ async fn iterator_query_history() {
 
     let history = history_collector.clone_structured_history();
 
-    assert!(history.queries.len() >= 4);
+    assert!(history.requests.len() >= 4);
 
     let displayed_prefix = "Queries History:
 === Query #0 ===
