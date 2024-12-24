@@ -878,6 +878,34 @@ pub enum CqlEventHandlingError {
     SendError,
 }
 
+/// Failed to run a retriable request. Possibly because of a timeout.
+///
+/// This error occurs if request timed out, or it failed for some
+/// other reason before the timeout - see [`RetriableRequestError`].
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum TimeoutableRequestError {
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+            "Request execution exceeded a client timeout {}ms",
+            std::time::Duration::as_millis(.0)
+        )]
+    RequestTimeout(std::time::Duration),
+
+    /// Request failed before it timed out.
+    #[error(transparent)]
+    RequestFailure(#[from] RetriableRequestError),
+}
+
+impl TimeoutableRequestError {
+    pub fn into_query_error(self) -> QueryError {
+        match self {
+            TimeoutableRequestError::RequestTimeout(dur) => QueryError::RequestTimeout(dur),
+            TimeoutableRequestError::RequestFailure(err) => err.into_query_error(),
+        }
+    }
+}
+
 /// Failed to execute a retriable user request.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
