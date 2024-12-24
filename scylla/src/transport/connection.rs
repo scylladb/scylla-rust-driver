@@ -246,7 +246,9 @@ impl QueryResponse {
     }
 
     pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        self.into_non_error_query_response()?.into_query_result()
+        self.into_non_error_query_response()
+            .map_err(UserRequestError::into_query_error)?
+            .into_query_result()
     }
 }
 
@@ -287,7 +289,9 @@ impl NonErrorQueryResponse {
     }
 
     pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        let (result, paging_state) = self.into_query_result_and_paging_state()?;
+        let (result, paging_state) = self
+            .into_query_result_and_paging_state()
+            .map_err(UserRequestError::into_query_error)?;
 
         if !paging_state.finished() {
             error!(
@@ -1018,7 +1022,7 @@ impl Connection {
 
         self.query_raw_unpaged(&query)
             .await
-            .map_err(Into::into)
+            .map_err(UserRequestError::into_query_error)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -1076,7 +1080,7 @@ impl Connection {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values)
             .await
-            .map_err(Into::into)
+            .map_err(UserRequestError::into_query_error)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -1229,6 +1233,8 @@ impl Connection {
             batch.config.serial_consistency.flatten(),
         )
         .await
+        .map_err(UserRequestError::into_query_error)
+        .and_then(QueryResponse::into_query_result)
     }
 
     pub(crate) async fn batch_with_consistency(
@@ -1237,7 +1243,7 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResponse, UserRequestError> {
         let batch = self.prepare_batch(init_batch, &values).await?;
 
         let contexts = batch.statements.iter().map(|bs| match bs {
@@ -1278,16 +1284,15 @@ impl Connection {
                             self.reprepare(p.get_statement(), p).await?;
                             continue;
                         } else {
-                            return Err(ProtocolError::RepreparedIdMissingInBatch.into());
+                            return Err(UserRequestError::RepreparedIdMissingInBatch);
                         }
                     }
                     _ => Err(err.into()),
                 },
-                Response::Result(_) => Ok(query_response.into_query_result()?),
-                _ => Err(ProtocolError::UnexpectedResponse(
+                Response::Result(_) => Ok(query_response),
+                _ => Err(UserRequestError::UnexpectedResponse(
                     query_response.response.to_response_kind(),
-                )
-                .into()),
+                )),
             };
         }
     }
@@ -1296,7 +1301,7 @@ impl Connection {
         &self,
         init_batch: &'b Batch,
         values: impl BatchValues,
-    ) -> Result<Cow<'b, Batch>, QueryError> {
+    ) -> Result<Cow<'b, Batch>, UserRequestError> {
         let mut to_prepare = HashSet::<&str>::new();
 
         {
@@ -1351,7 +1356,10 @@ impl Connection {
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
 
-        let query_response = self.query_raw_unpaged(&query).await?;
+        let query_response = self
+            .query_raw_unpaged(&query)
+            .await
+            .map_err(UserRequestError::into_query_error)?;
         Self::verify_use_keyspace_result(keyspace_name, query_response)
     }
 

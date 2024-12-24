@@ -1,4 +1,4 @@
-//! Collecting history of query executions - retries, speculative, etc.
+//! Collecting history of request executions - retries, speculative, etc.
 use std::{
     collections::BTreeMap,
     fmt::{Debug, Display},
@@ -7,16 +7,19 @@ use std::{
     time::SystemTime,
 };
 
-use crate::{retry_policy::RetryDecision, transport::errors::QueryError};
+use crate::{
+    retry_policy::RetryDecision,
+    transport::errors::{TimeoutableRequestError, UserRequestError},
+};
 use chrono::{DateTime, Utc};
 
 use tracing::warn;
 
-/// Id of a single query, i.e. a single call to Session::{query,execute}_{unpaged,single_page}/etc.
+/// Id of a single request, i.e. a single call to Session::{query,execute}_{unpaged,single_page}/etc.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct QueryId(pub usize);
+pub struct RequestId(pub usize);
 
-/// Id of a single attempt within a query, a single request sent on some connection.
+/// Id of a single attempt within a request run - a single request sent on some connection.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct AttemptId(pub usize);
 
@@ -27,30 +30,30 @@ pub struct AttemptId(pub usize);
 pub struct SpeculativeId(pub usize);
 
 /// Any type implementing this trait can be passed to Session
-/// to collect execution history of specific queries.\
+/// to collect execution history of specific requests.\
 /// In order to use it call `set_history_listener` on
 /// `Query`, `PreparedStatement`, etc...\
-/// The listener has to generate unique IDs for new queries, attempts and speculative fibers.
+/// The listener has to generate unique IDs for new requests, attempts and speculative fibers.
 /// These ids are then used by the caller to identify them.\
-/// It's important to note that even after a query is finished there still might come events related to it.
-/// These events come from speculative futures that didn't notice the query is done already.
+/// It's important to note that even after a request is finished there still might come events related to it.
+/// These events come from speculative futures that didn't notice the request is done already.
 pub trait HistoryListener: Debug + Send + Sync {
-    /// Log that a query has started on query start - right after the call to Session::{query,execute}_*/batch.
-    fn log_query_start(&self) -> QueryId;
+    /// Log that a request has started on request start - right after the call to Session::{query,execute}_*/batch.
+    fn log_request_start(&self) -> RequestId;
 
-    /// Log that query was successful - called right before returning the result from Session::query_*, execute_*, etc.
-    fn log_query_success(&self, query_id: QueryId);
+    /// Log that request was successful - called right before returning the result from Session::query_*, execute_*, etc.
+    fn log_request_success(&self, request_id: RequestId);
 
-    /// Log that query ended with an error - called right before returning the error from Session::query_*, execute_*, etc.
-    fn log_query_error(&self, query_id: QueryId, error: &QueryError);
+    /// Log that request ended with an error - called right before returning the error from Session::query_*, execute_*, etc.
+    fn log_request_error(&self, request_id: RequestId, error: &TimeoutableRequestError);
 
     /// Log that a new speculative fiber has started.
-    fn log_new_speculative_fiber(&self, query_id: QueryId) -> SpeculativeId;
+    fn log_new_speculative_fiber(&self, request_id: RequestId) -> SpeculativeId;
 
     /// Log that an attempt has started - request has been sent on some Connection, now awaiting for an answer.
     fn log_attempt_start(
         &self,
-        query_id: QueryId,
+        request_id: RequestId,
         speculative_id: Option<SpeculativeId>,
         node_addr: SocketAddr,
     ) -> AttemptId;
@@ -62,14 +65,14 @@ pub trait HistoryListener: Debug + Send + Sync {
     fn log_attempt_error(
         &self,
         attempt_id: AttemptId,
-        error: &QueryError,
+        error: &UserRequestError,
         retry_decision: &RetryDecision,
     );
 }
 
 pub type TimePoint = DateTime<Utc>;
 
-/// HistoryCollector can be used as HistoryListener to collect all the query history events.
+/// HistoryCollector can be used as HistoryListener to collect all the request history events.
 /// Each event is marked with an UTC timestamp.
 #[derive(Debug, Default)]
 pub struct HistoryCollector {
@@ -79,27 +82,27 @@ pub struct HistoryCollector {
 #[derive(Debug, Clone)]
 pub struct HistoryCollectorData {
     events: Vec<(HistoryEvent, TimePoint)>,
-    next_query_id: QueryId,
+    next_request_id: RequestId,
     next_speculative_fiber_id: SpeculativeId,
     next_attempt_id: AttemptId,
 }
 
 #[derive(Debug, Clone)]
 pub enum HistoryEvent {
-    NewQuery(QueryId),
-    QuerySuccess(QueryId),
-    QueryError(QueryId, QueryError),
-    NewSpeculativeFiber(SpeculativeId, QueryId),
-    NewAttempt(AttemptId, QueryId, Option<SpeculativeId>, SocketAddr),
+    NewRequest(RequestId),
+    RequestSuccess(RequestId),
+    RequestError(RequestId, TimeoutableRequestError),
+    NewSpeculativeFiber(SpeculativeId, RequestId),
+    NewAttempt(AttemptId, RequestId, Option<SpeculativeId>, SocketAddr),
     AttemptSuccess(AttemptId),
-    AttemptError(AttemptId, QueryError, RetryDecision),
+    AttemptError(AttemptId, UserRequestError, RetryDecision),
 }
 
 impl HistoryCollectorData {
     fn new() -> HistoryCollectorData {
         HistoryCollectorData {
             events: Vec::new(),
-            next_query_id: QueryId(0),
+            next_request_id: RequestId(0),
             next_speculative_fiber_id: SpeculativeId(0),
             next_attempt_id: AttemptId(0),
         }
@@ -129,13 +132,13 @@ impl HistoryCollector {
     }
 
     /// Takes the data out of the collector. The collected events are cleared.\
-    /// It's possible that after finishing a query and taking out the events
-    /// new ones will still come - from queries that haven't been cancelled yet.
+    /// It's possible that after finishing a request and taking out the events
+    /// new ones will still come - from requests that haven't been cancelled yet.
     pub fn take_collected(&self) -> HistoryCollectorData {
         self.do_with_data(|data| {
             let mut data_to_swap = HistoryCollectorData {
                 events: Vec::new(),
-                next_query_id: data.next_query_id,
+                next_request_id: data.next_request_id,
                 next_speculative_fiber_id: data.next_speculative_fiber_id,
                 next_attempt_id: data.next_attempt_id,
             };
@@ -173,32 +176,34 @@ impl HistoryCollector {
 }
 
 impl HistoryListener for HistoryCollector {
-    fn log_query_start(&self) -> QueryId {
+    fn log_request_start(&self) -> RequestId {
         self.do_with_data(|data| {
-            let new_query_id: QueryId = data.next_query_id;
-            data.next_query_id.0 += 1;
-            data.add_event(HistoryEvent::NewQuery(new_query_id));
-            new_query_id
+            let new_request_id: RequestId = data.next_request_id;
+            data.next_request_id.0 += 1;
+            data.add_event(HistoryEvent::NewRequest(new_request_id));
+            new_request_id
         })
     }
 
-    fn log_query_success(&self, query_id: QueryId) {
+    fn log_request_success(&self, request_id: RequestId) {
         self.do_with_data(|data| {
-            data.add_event(HistoryEvent::QuerySuccess(query_id));
+            data.add_event(HistoryEvent::RequestSuccess(request_id));
         })
     }
 
-    fn log_query_error(&self, query_id: QueryId, error: &QueryError) {
-        self.do_with_data(|data| data.add_event(HistoryEvent::QueryError(query_id, error.clone())))
+    fn log_request_error(&self, request_id: RequestId, error: &TimeoutableRequestError) {
+        self.do_with_data(|data| {
+            data.add_event(HistoryEvent::RequestError(request_id, error.clone()))
+        })
     }
 
-    fn log_new_speculative_fiber(&self, query_id: QueryId) -> SpeculativeId {
+    fn log_new_speculative_fiber(&self, request_id: RequestId) -> SpeculativeId {
         self.do_with_data(|data| {
             let new_speculative_id: SpeculativeId = data.next_speculative_fiber_id;
             data.next_speculative_fiber_id.0 += 1;
             data.add_event(HistoryEvent::NewSpeculativeFiber(
                 new_speculative_id,
-                query_id,
+                request_id,
             ));
             new_speculative_id
         })
@@ -206,7 +211,7 @@ impl HistoryListener for HistoryCollector {
 
     fn log_attempt_start(
         &self,
-        query_id: QueryId,
+        request_id: RequestId,
         speculative_id: Option<SpeculativeId>,
         node_addr: SocketAddr,
     ) -> AttemptId {
@@ -215,7 +220,7 @@ impl HistoryListener for HistoryCollector {
             data.next_attempt_id.0 += 1;
             data.add_event(HistoryEvent::NewAttempt(
                 new_attempt_id,
-                query_id,
+                request_id,
                 speculative_id,
                 node_addr,
             ));
@@ -230,7 +235,7 @@ impl HistoryListener for HistoryCollector {
     fn log_attempt_error(
         &self,
         attempt_id: AttemptId,
-        error: &QueryError,
+        error: &UserRequestError,
         retry_decision: &RetryDecision,
     ) {
         self.do_with_data(|data| {
@@ -243,27 +248,27 @@ impl HistoryListener for HistoryCollector {
     }
 }
 
-/// Structured representation of queries history.\
+/// Structured representation of requests history.\
 /// HistoryCollector collects raw events which later can be converted
 /// to this pretty representation.\
-/// It has a `Display` impl which can be used for printing pretty query history.
+/// It has a `Display` impl which can be used for printing pretty request history.
 #[derive(Debug, Clone)]
 pub struct StructuredHistory {
-    pub queries: Vec<QueryHistory>,
+    pub requests: Vec<RequestHistory>,
 }
 
 #[derive(Debug, Clone)]
-pub struct QueryHistory {
+pub struct RequestHistory {
     pub start_time: TimePoint,
     pub non_speculative_fiber: FiberHistory,
     pub speculative_fibers: Vec<FiberHistory>,
-    pub result: Option<QueryHistoryResult>,
+    pub result: Option<RequestHistoryResult>,
 }
 
 #[derive(Debug, Clone)]
-pub enum QueryHistoryResult {
+pub enum RequestHistoryResult {
     Success(TimePoint),
-    Error(TimePoint, QueryError),
+    Error(TimePoint, TimeoutableRequestError),
 }
 
 #[derive(Debug, Clone)]
@@ -282,16 +287,16 @@ pub struct AttemptHistory {
 #[derive(Debug, Clone)]
 pub enum AttemptResult {
     Success(TimePoint),
-    Error(TimePoint, QueryError, RetryDecision),
+    Error(TimePoint, UserRequestError, RetryDecision),
 }
 
 impl From<&HistoryCollectorData> for StructuredHistory {
     fn from(data: &HistoryCollectorData) -> StructuredHistory {
         let mut attempts: BTreeMap<AttemptId, AttemptHistory> = BTreeMap::new();
-        let mut queries: BTreeMap<QueryId, QueryHistory> = BTreeMap::new();
+        let mut requests: BTreeMap<RequestId, RequestHistory> = BTreeMap::new();
         let mut fibers: BTreeMap<SpeculativeId, FiberHistory> = BTreeMap::new();
 
-        // Collect basic data about queries, attempts and speculative fibers
+        // Collect basic data about requests, attempts and speculative fibers
         for (event, event_time) in &data.events {
             match event {
                 HistoryEvent::NewAttempt(attempt_id, _, _, node_addr) => {
@@ -320,10 +325,10 @@ impl From<&HistoryCollectorData> for StructuredHistory {
                         None => warn!("StructuredHistory - attempt with id {:?} finished with an error but not created", attempt_id)
                     }
                 }
-                HistoryEvent::NewQuery(query_id) => {
-                    queries.insert(
-                        *query_id,
-                        QueryHistory {
+                HistoryEvent::NewRequest(request_id) => {
+                    requests.insert(
+                        *request_id,
+                        RequestHistory {
                             start_time: *event_time,
                             non_speculative_fiber: FiberHistory {
                                 start_time: *event_time,
@@ -334,14 +339,15 @@ impl From<&HistoryCollectorData> for StructuredHistory {
                         },
                     );
                 }
-                HistoryEvent::QuerySuccess(query_id) => {
-                    if let Some(query) = queries.get_mut(query_id) {
-                        query.result = Some(QueryHistoryResult::Success(*event_time));
+                HistoryEvent::RequestSuccess(request_id) => {
+                    if let Some(request) = requests.get_mut(request_id) {
+                        request.result = Some(RequestHistoryResult::Success(*event_time));
                     }
                 }
-                HistoryEvent::QueryError(query_id, error) => {
-                    if let Some(query) = queries.get_mut(query_id) {
-                        query.result = Some(QueryHistoryResult::Error(*event_time, error.clone()));
+                HistoryEvent::RequestError(request_id, error) => {
+                    if let Some(request) = requests.get_mut(request_id) {
+                        request.result =
+                            Some(RequestHistoryResult::Error(*event_time, error.clone()));
                     }
                 }
                 HistoryEvent::NewSpeculativeFiber(speculative_id, _) => {
@@ -358,7 +364,7 @@ impl From<&HistoryCollectorData> for StructuredHistory {
 
         // Move attempts to their speculative fibers
         for (event, _) in &data.events {
-            if let HistoryEvent::NewAttempt(attempt_id, query_id, speculative_id, _) = event {
+            if let HistoryEvent::NewAttempt(attempt_id, request_id, speculative_id, _) = event {
                 if let Some(attempt) = attempts.remove(attempt_id) {
                     match speculative_id {
                         Some(spec_id) => {
@@ -367,8 +373,8 @@ impl From<&HistoryCollectorData> for StructuredHistory {
                             }
                         }
                         None => {
-                            if let Some(query) = queries.get_mut(query_id) {
-                                query.non_speculative_fiber.attempts.push(attempt);
+                            if let Some(request) = requests.get_mut(request_id) {
+                                request.non_speculative_fiber.attempts.push(attempt);
                             }
                         }
                     }
@@ -376,33 +382,33 @@ impl From<&HistoryCollectorData> for StructuredHistory {
             }
         }
 
-        // Move speculative fibers to their queries
+        // Move speculative fibers to their requests
         for (event, _) in &data.events {
-            if let HistoryEvent::NewSpeculativeFiber(speculative_id, query_id) = event {
+            if let HistoryEvent::NewSpeculativeFiber(speculative_id, request_id) = event {
                 if let Some(fiber) = fibers.remove(speculative_id) {
-                    if let Some(query) = queries.get_mut(query_id) {
-                        query.speculative_fibers.push(fiber);
+                    if let Some(request) = requests.get_mut(request_id) {
+                        request.speculative_fibers.push(fiber);
                     }
                 }
             }
         }
 
         StructuredHistory {
-            queries: queries.into_values().collect(),
+            requests: requests.into_values().collect(),
         }
     }
 }
 
-/// StructuredHistory should be used for printing query history.
+/// StructuredHistory should be used for printing request history.
 impl Display for StructuredHistory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Queries History:")?;
-        for (i, query) in self.queries.iter().enumerate() {
-            writeln!(f, "=== Query #{} ===", i)?;
-            writeln!(f, "| start_time: {}", query.start_time)?;
+        writeln!(f, "Requests History:")?;
+        for (i, request) in self.requests.iter().enumerate() {
+            writeln!(f, "=== Request #{} ===", i)?;
+            writeln!(f, "| start_time: {}", request.start_time)?;
             writeln!(f, "| Non-speculative attempts:")?;
-            write_fiber_attempts(&query.non_speculative_fiber, f)?;
-            for (spec_i, speculative_fiber) in query.speculative_fibers.iter().enumerate() {
+            write_fiber_attempts(&request.non_speculative_fiber, f)?;
+            for (spec_i, speculative_fiber) in request.speculative_fibers.iter().enumerate() {
                 writeln!(f, "|")?;
                 writeln!(f, "|")?;
                 writeln!(f, "| > Speculative fiber #{}", spec_i)?;
@@ -410,15 +416,15 @@ impl Display for StructuredHistory {
                 write_fiber_attempts(speculative_fiber, f)?;
             }
             writeln!(f, "|")?;
-            match &query.result {
-                Some(QueryHistoryResult::Success(succ_time)) => {
-                    writeln!(f, "| Query successful at {}", succ_time)?;
+            match &request.result {
+                Some(RequestHistoryResult::Success(succ_time)) => {
+                    writeln!(f, "| Request successful at {}", succ_time)?;
                 }
-                Some(QueryHistoryResult::Error(err_time, error)) => {
-                    writeln!(f, "| Query failed at {}", err_time)?;
+                Some(RequestHistoryResult::Error(err_time, error)) => {
+                    writeln!(f, "| Request failed at {}", err_time)?;
                     writeln!(f, "| Error: {}", error)?;
                 }
-                None => writeln!(f, "| Query still running - no final result yet")?,
+                None => writeln!(f, "| Request still running - no final result yet")?,
             };
             writeln!(f, "=================")?;
         }
@@ -454,16 +460,18 @@ mod tests {
     use crate::{
         retry_policy::RetryDecision,
         test_utils::setup_tracing,
-        transport::errors::{DbError, QueryError},
+        transport::errors::{
+            DbError, RetriableRequestError, TimeoutableRequestError, UserRequestError,
+        },
     };
 
     use super::{
-        AttemptId, AttemptResult, HistoryCollector, HistoryListener, QueryHistoryResult, QueryId,
-        SpeculativeId, StructuredHistory, TimePoint,
+        AttemptId, AttemptResult, HistoryCollector, HistoryListener, RequestHistoryResult,
+        RequestId, SpeculativeId, StructuredHistory, TimePoint,
     };
     use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-    use scylla_cql::Consistency;
+    use scylla_cql::{frame::response::CqlResponseKind, Consistency};
 
     // Set a single time for all timestamps within StructuredHistory.
     // HistoryCollector sets the timestamp to current time which changes with each test.
@@ -477,16 +485,16 @@ mod tests {
             Utc,
         );
 
-        for query in &mut history.queries {
-            query.start_time = the_time;
-            match &mut query.result {
-                Some(QueryHistoryResult::Success(succ_time)) => *succ_time = the_time,
-                Some(QueryHistoryResult::Error(err_time, _)) => *err_time = the_time,
+        for request in &mut history.requests {
+            request.start_time = the_time;
+            match &mut request.result {
+                Some(RequestHistoryResult::Success(succ_time)) => *succ_time = the_time,
+                Some(RequestHistoryResult::Error(err_time, _)) => *err_time = the_time,
                 None => {}
             };
 
-            for fiber in std::iter::once(&mut query.non_speculative_fiber)
-                .chain(query.speculative_fibers.iter_mut())
+            for fiber in std::iter::once(&mut request.non_speculative_fiber)
+                .chain(request.speculative_fibers.iter_mut())
             {
                 fiber.start_time = the_time;
                 for attempt in &mut fiber.attempts {
@@ -515,12 +523,12 @@ mod tests {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)), 19042)
     }
 
-    fn timeout_error() -> QueryError {
-        QueryError::TimeoutError
+    fn unexpected_response(kind: CqlResponseKind) -> UserRequestError {
+        UserRequestError::UnexpectedResponse(kind)
     }
 
-    fn unavailable_error() -> QueryError {
-        QueryError::DbError(
+    fn unavailable_error() -> UserRequestError {
+        UserRequestError::DbError(
             DbError::Unavailable {
                 consistency: Consistency::Quorum,
                 required: 2,
@@ -530,8 +538,8 @@ mod tests {
         )
     }
 
-    fn no_stream_id_error() -> QueryError {
-        QueryError::UnableToAllocStreamId
+    fn no_stream_id_error() -> UserRequestError {
+        UserRequestError::UnableToAllocStreamId
     }
 
     #[test]
@@ -540,32 +548,35 @@ mod tests {
         let history_collector = HistoryCollector::new();
         let history: StructuredHistory = history_collector.clone_structured_history();
 
-        assert!(history.queries.is_empty());
+        assert!(history.requests.is_empty());
 
-        let displayed = "Queries History:
+        let displayed = "Requests History:
 ";
         assert_eq!(displayed, format!("{}", history));
     }
 
     #[test]
-    fn empty_query() {
+    fn empty_request() {
         setup_tracing();
         let history_collector = HistoryCollector::new();
 
-        let _query_id: QueryId = history_collector.log_query_start();
+        let _request_id: RequestId = history_collector.log_request_start();
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
-        assert_eq!(history.queries.len(), 1);
-        assert!(history.queries[0].non_speculative_fiber.attempts.is_empty());
-        assert!(history.queries[0].speculative_fibers.is_empty());
+        assert_eq!(history.requests.len(), 1);
+        assert!(history.requests[0]
+            .non_speculative_fiber
+            .attempts
+            .is_empty());
+        assert!(history.requests[0].speculative_fibers.is_empty());
 
-        let displayed = "Queries History:
-=== Query #0 ===
+        let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 |
-| Query still running - no final result yet
+| Request still running - no final result yet
 =================
 ";
 
@@ -577,31 +588,31 @@ mod tests {
         setup_tracing();
         let history_collector = HistoryCollector::new();
 
-        let query_id: QueryId = history_collector.log_query_start();
+        let request_id: RequestId = history_collector.log_request_start();
         let attempt_id: AttemptId =
-            history_collector.log_attempt_start(query_id, None, node1_addr());
+            history_collector.log_attempt_start(request_id, None, node1_addr());
         history_collector.log_attempt_success(attempt_id);
-        history_collector.log_query_success(query_id);
+        history_collector.log_request_success(request_id);
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
-        assert_eq!(history.queries.len(), 1);
-        assert_eq!(history.queries[0].non_speculative_fiber.attempts.len(), 1);
-        assert!(history.queries[0].speculative_fibers.is_empty());
+        assert_eq!(history.requests.len(), 1);
+        assert_eq!(history.requests[0].non_speculative_fiber.attempts.len(), 1);
+        assert!(history.requests[0].speculative_fibers.is_empty());
         assert_matches!(
-            history.queries[0].non_speculative_fiber.attempts[0].result,
+            history.requests[0].non_speculative_fiber.attempts[0].result,
             Some(AttemptResult::Success(_))
         );
 
-        let displayed = "Queries History:
-=== Query #0 ===
+        let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
         assert_eq!(displayed, format!("{}", set_one_time(history)));
@@ -612,37 +623,42 @@ mod tests {
         setup_tracing();
         let history_collector = HistoryCollector::new();
 
-        let query_id: QueryId = history_collector.log_query_start();
+        let request_id: RequestId = history_collector.log_request_start();
 
         let attempt_id: AttemptId =
-            history_collector.log_attempt_start(query_id, None, node1_addr());
+            history_collector.log_attempt_start(request_id, None, node1_addr());
         history_collector.log_attempt_error(
             attempt_id,
-            &QueryError::TimeoutError,
+            &unexpected_response(CqlResponseKind::Ready),
             &RetryDecision::RetrySameNode(Some(Consistency::Quorum)),
         );
 
         let second_attempt_id: AttemptId =
-            history_collector.log_attempt_start(query_id, None, node1_addr());
+            history_collector.log_attempt_start(request_id, None, node1_addr());
         history_collector.log_attempt_error(
             second_attempt_id,
             &unavailable_error(),
             &RetryDecision::DontRetry,
         );
 
-        history_collector.log_query_error(query_id, &unavailable_error());
+        history_collector.log_request_error(
+            request_id,
+            &TimeoutableRequestError::RequestFailure(RetriableRequestError::RequestFailure(
+                unavailable_error(),
+            )),
+        );
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
         let displayed =
-"Queries History:
-=== Query #0 ===
+"Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
-|   Error: Timeout Error
+|   Error: Received unexpected response from the server: READY. Expected RESULT or ERROR response.
 |   Retry decision: RetrySameNode(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.1:19042
@@ -651,7 +667,7 @@ mod tests {
 |   Error: Database returned an error: Not enough nodes are alive to satisfy required consistency level (consistency: Quorum, required: 2, alive: 1), Error message: Not enough nodes to satisfy consistency
 |   Retry decision: DontRetry
 |
-| Query failed at 2022-02-22 20:22:22 UTC
+| Request failed at 2022-02-22 20:22:22 UTC
 | Error: Database returned an error: Not enough nodes are alive to satisfy required consistency level (consistency: Quorum, required: 2, alive: 1), Error message: Not enough nodes to satisfy consistency
 =================
 ";
@@ -663,22 +679,31 @@ mod tests {
         setup_tracing();
         let history_collector = HistoryCollector::new();
 
-        let query_id: QueryId = history_collector.log_query_start();
-        history_collector.log_new_speculative_fiber(query_id);
-        history_collector.log_new_speculative_fiber(query_id);
-        history_collector.log_new_speculative_fiber(query_id);
+        let request_id: RequestId = history_collector.log_request_start();
+        history_collector.log_new_speculative_fiber(request_id);
+        history_collector.log_new_speculative_fiber(request_id);
+        history_collector.log_new_speculative_fiber(request_id);
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
-        assert_eq!(history.queries.len(), 1);
-        assert!(history.queries[0].non_speculative_fiber.attempts.is_empty());
-        assert_eq!(history.queries[0].speculative_fibers.len(), 3);
-        assert!(history.queries[0].speculative_fibers[0].attempts.is_empty());
-        assert!(history.queries[0].speculative_fibers[1].attempts.is_empty());
-        assert!(history.queries[0].speculative_fibers[2].attempts.is_empty());
+        assert_eq!(history.requests.len(), 1);
+        assert!(history.requests[0]
+            .non_speculative_fiber
+            .attempts
+            .is_empty());
+        assert_eq!(history.requests[0].speculative_fibers.len(), 3);
+        assert!(history.requests[0].speculative_fibers[0]
+            .attempts
+            .is_empty());
+        assert!(history.requests[0].speculative_fibers[1]
+            .attempts
+            .is_empty());
+        assert!(history.requests[0].speculative_fibers[2]
+            .attempts
+            .is_empty());
 
-        let displayed = "Queries History:
-=== Query #0 ===
+        let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 |
@@ -694,7 +719,7 @@ mod tests {
 | > Speculative fiber #2
 | fiber start time: 2022-02-22 20:22:22 UTC
 |
-| Query still running - no final result yet
+| Request still running - no final result yet
 =================
 ";
         assert_eq!(displayed, format!("{}", set_one_time(history)));
@@ -705,27 +730,28 @@ mod tests {
         setup_tracing();
         let history_collector = HistoryCollector::new();
 
-        let query_id: QueryId = history_collector.log_query_start();
+        let request_id: RequestId = history_collector.log_request_start();
 
-        let attempt1: AttemptId = history_collector.log_attempt_start(query_id, None, node1_addr());
+        let attempt1: AttemptId =
+            history_collector.log_attempt_start(request_id, None, node1_addr());
 
-        let speculative1: SpeculativeId = history_collector.log_new_speculative_fiber(query_id);
+        let speculative1: SpeculativeId = history_collector.log_new_speculative_fiber(request_id);
 
         let spec1_attempt1: AttemptId =
-            history_collector.log_attempt_start(query_id, Some(speculative1), node2_addr());
+            history_collector.log_attempt_start(request_id, Some(speculative1), node2_addr());
 
         history_collector.log_attempt_error(
             attempt1,
-            &timeout_error(),
+            &unexpected_response(CqlResponseKind::Event),
             &RetryDecision::RetryNextNode(Some(Consistency::Quorum)),
         );
         let _attempt2: AttemptId =
-            history_collector.log_attempt_start(query_id, None, node3_addr());
+            history_collector.log_attempt_start(request_id, None, node3_addr());
 
-        let speculative2: SpeculativeId = history_collector.log_new_speculative_fiber(query_id);
+        let speculative2: SpeculativeId = history_collector.log_new_speculative_fiber(request_id);
 
         let spec2_attempt1: AttemptId =
-            history_collector.log_attempt_start(query_id, Some(speculative2), node1_addr());
+            history_collector.log_attempt_start(request_id, Some(speculative2), node1_addr());
         history_collector.log_attempt_error(
             spec2_attempt1,
             &no_stream_id_error(),
@@ -733,10 +759,10 @@ mod tests {
         );
 
         let spec2_attempt2: AttemptId =
-            history_collector.log_attempt_start(query_id, Some(speculative2), node1_addr());
+            history_collector.log_attempt_start(request_id, Some(speculative2), node1_addr());
 
-        let _speculative3: SpeculativeId = history_collector.log_new_speculative_fiber(query_id);
-        let speculative4: SpeculativeId = history_collector.log_new_speculative_fiber(query_id);
+        let _speculative3: SpeculativeId = history_collector.log_new_speculative_fiber(request_id);
+        let speculative4: SpeculativeId = history_collector.log_new_speculative_fiber(request_id);
 
         history_collector.log_attempt_error(
             spec1_attempt1,
@@ -745,21 +771,21 @@ mod tests {
         );
 
         let _spec4_attempt1: AttemptId =
-            history_collector.log_attempt_start(query_id, Some(speculative4), node2_addr());
+            history_collector.log_attempt_start(request_id, Some(speculative4), node2_addr());
 
         history_collector.log_attempt_success(spec2_attempt2);
-        history_collector.log_query_success(query_id);
+        history_collector.log_request_success(request_id);
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
-        let displayed = "Queries History:
-=== Query #0 ===
+        let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
-|   Error: Timeout Error
+|   Error: Received unexpected response from the server: EVENT. Expected RESULT or ERROR response.
 |   Retry decision: RetryNextNode(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.3:19042
@@ -799,62 +825,62 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   No result yet
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
         assert_eq!(displayed, format!("{}", set_one_time(history)));
     }
 
     #[test]
-    fn multiple_queries() {
+    fn multiple_requests() {
         setup_tracing();
         let history_collector = HistoryCollector::new();
 
-        let query1_id: QueryId = history_collector.log_query_start();
-        let query1_attempt1: AttemptId =
-            history_collector.log_attempt_start(query1_id, None, node1_addr());
+        let request1_id: RequestId = history_collector.log_request_start();
+        let request1_attempt1: AttemptId =
+            history_collector.log_attempt_start(request1_id, None, node1_addr());
         history_collector.log_attempt_error(
-            query1_attempt1,
-            &timeout_error(),
+            request1_attempt1,
+            &unexpected_response(CqlResponseKind::Supported),
             &RetryDecision::RetryNextNode(Some(Consistency::Quorum)),
         );
-        let query1_attempt2: AttemptId =
-            history_collector.log_attempt_start(query1_id, None, node2_addr());
-        history_collector.log_attempt_success(query1_attempt2);
-        history_collector.log_query_success(query1_id);
+        let request1_attempt2: AttemptId =
+            history_collector.log_attempt_start(request1_id, None, node2_addr());
+        history_collector.log_attempt_success(request1_attempt2);
+        history_collector.log_request_success(request1_id);
 
-        let query2_id: QueryId = history_collector.log_query_start();
-        let query2_attempt1: AttemptId =
-            history_collector.log_attempt_start(query2_id, None, node1_addr());
-        history_collector.log_attempt_success(query2_attempt1);
-        history_collector.log_query_success(query2_id);
+        let request2_id: RequestId = history_collector.log_request_start();
+        let request2_attempt1: AttemptId =
+            history_collector.log_attempt_start(request2_id, None, node1_addr());
+        history_collector.log_attempt_success(request2_attempt1);
+        history_collector.log_request_success(request2_id);
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
-        let displayed = "Queries History:
-=== Query #0 ===
+        let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
-|   Error: Timeout Error
+|   Error: Received unexpected response from the server: SUPPORTED. Expected RESULT or ERROR response.
 |   Retry decision: RetryNextNode(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.2:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
-=== Query #1 ===
+=== Request #1 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
         assert_eq!(displayed, format!("{}", set_one_time(history)));

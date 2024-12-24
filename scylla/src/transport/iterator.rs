@@ -19,6 +19,7 @@ use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
+use super::errors::{RetriableRequestError, TimeoutableRequestError};
 use super::execution_profile::ExecutionProfileInner;
 use super::query_result::ColumnSpecs;
 use super::session::RequestSpan;
@@ -38,7 +39,7 @@ use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryRespo
 use crate::transport::errors::{ProtocolError, QueryError, UserRequestError};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::transport::retry_policy::{RequestInfo, RetryDecision, RetrySession};
 use crate::transport::NodeRef;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
@@ -147,7 +148,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     paging_state: PagingState,
 
     history_listener: Option<Arc<dyn HistoryListener>>,
-    current_query_id: Option<history::QueryId>,
+    current_request_id: Option<history::RequestId>,
     current_attempt_id: Option<history::AttemptId>,
 
     parent_span: tracing::Span,
@@ -167,10 +168,10 @@ where
         let query_plan =
             load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
-        let mut last_error: QueryError = QueryError::EmptyPlan;
+        let mut last_error: RetriableRequestError = RetriableRequestError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
 
-        self.log_query_start();
+        self.log_request_start();
 
         'nodes_in_plan: for (node, shard) in query_plan {
             let span =
@@ -198,12 +199,12 @@ where
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
                 // Query pages until an error occurs
-                let queries_result: Result<PageSendAttemptedProof, QueryError> = self
+                let queries_result: Result<PageSendAttemptedProof, UserRequestError> = self
                     .query_pages(&connection, current_consistency, node)
                     .instrument(span.clone())
                     .await;
 
-                last_error = match queries_result {
+                let request_error: UserRequestError = match queries_result {
                     Ok(proof) => {
                         trace!(parent: &span, "Query succeeded");
                         // query_pages returned Ok, so we are guaranteed
@@ -222,8 +223,8 @@ where
                 };
 
                 // Use retry policy to decide what to do next
-                let query_info = QueryInfo {
-                    error: &last_error,
+                let query_info = RequestInfo {
+                    error: &request_error,
                     is_idempotent: self.query_is_idempotent,
                     consistency: self.query_consistency,
                 };
@@ -233,7 +234,11 @@ where
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
-                self.log_attempt_error(&last_error, &retry_decision);
+
+                self.log_attempt_error(&request_error, &retry_decision);
+
+                last_error = request_error.into();
+
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
                         self.metrics.inc_retries_num();
@@ -261,9 +266,9 @@ where
             }
         }
 
-        // Send last_error to QueryPager - query failed fully
-        self.log_query_error(&last_error);
-        let (proof, _) = self.sender.send(Err(last_error)).await;
+        let error: TimeoutableRequestError = last_error.into();
+        self.log_request_error(&error);
+        let (proof, _) = self.sender.send(Err(error.into_query_error())).await;
         proof
     }
 
@@ -277,7 +282,7 @@ where
         connection: &Arc<Connection>,
         consistency: Consistency,
         node: NodeRef<'_>,
-    ) -> Result<PageSendAttemptedProof, QueryError> {
+    ) -> Result<PageSendAttemptedProof, UserRequestError> {
         loop {
             let request_span = (self.span_creator)();
             match self
@@ -297,7 +302,7 @@ where
         consistency: Consistency,
         node: NodeRef<'_>,
         request_span: &RequestSpan,
-    ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, QueryError> {
+    ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, UserRequestError> {
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
 
@@ -325,10 +330,10 @@ where
             }) => {
                 let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                 self.log_attempt_success();
-                self.log_query_success();
+                self.log_request_success();
                 self.execution_profile
                     .load_balancing_policy
-                    .on_query_success(&self.statement_info, elapsed, node);
+                    .on_request_success(&self.statement_info, elapsed, node);
 
                 request_span.record_raw_rows_fields(&rows);
 
@@ -353,16 +358,15 @@ where
 
                 // Query succeeded, reset retry policy for future retries
                 self.retry_session.reset();
-                self.log_query_start();
+                self.log_request_start();
 
                 Ok(ControlFlow::Continue(()))
             }
             Err(err) => {
-                let err = err.into();
                 self.metrics.inc_failed_paged_queries();
                 self.execution_profile
                     .load_balancing_policy
-                    .on_query_failure(&self.statement_info, elapsed, node, &err);
+                    .on_request_failure(&self.statement_info, elapsed, node, &err);
                 Err(err)
             }
             Ok(NonErrorQueryResponse {
@@ -380,50 +384,50 @@ where
             Ok(response) => {
                 self.metrics.inc_failed_paged_queries();
                 let err =
-                    ProtocolError::UnexpectedResponse(response.response.to_response_kind()).into();
+                    UserRequestError::UnexpectedResponse(response.response.to_response_kind());
                 self.execution_profile
                     .load_balancing_policy
-                    .on_query_failure(&self.statement_info, elapsed, node, &err);
+                    .on_request_failure(&self.statement_info, elapsed, node, &err);
                 Err(err)
             }
         }
     }
 
-    fn log_query_start(&mut self) {
+    fn log_request_start(&mut self) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
         };
 
-        self.current_query_id = Some(history_listener.log_query_start());
+        self.current_request_id = Some(history_listener.log_request_start());
     }
 
-    fn log_query_success(&mut self) {
+    fn log_request_success(&mut self) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
         };
 
-        let query_id: history::QueryId = match &self.current_query_id {
+        let request_id: history::RequestId = match &self.current_request_id {
             Some(id) => *id,
             None => return,
         };
 
-        history_listener.log_query_success(query_id);
+        history_listener.log_request_success(request_id);
     }
 
-    fn log_query_error(&mut self, error: &QueryError) {
+    fn log_request_error(&mut self, error: &TimeoutableRequestError) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
         };
 
-        let query_id: history::QueryId = match &self.current_query_id {
+        let request_id: history::RequestId = match &self.current_request_id {
             Some(id) => *id,
             None => return,
         };
 
-        history_listener.log_query_error(query_id, error);
+        history_listener.log_request_error(request_id, error);
     }
 
     fn log_attempt_start(&mut self, node_addr: SocketAddr) {
@@ -432,13 +436,13 @@ where
             None => return,
         };
 
-        let query_id: history::QueryId = match &self.current_query_id {
+        let request_id: history::RequestId = match &self.current_request_id {
             Some(id) => *id,
             None => return,
         };
 
         self.current_attempt_id =
-            Some(history_listener.log_attempt_start(query_id, None, node_addr));
+            Some(history_listener.log_attempt_start(request_id, None, node_addr));
     }
 
     fn log_attempt_success(&mut self) {
@@ -455,7 +459,7 @@ where
         history_listener.log_attempt_success(attempt_id);
     }
 
-    fn log_attempt_error(&mut self, error: &QueryError, retry_decision: &RetryDecision) {
+    fn log_attempt_error(&mut self, error: &UserRequestError, retry_decision: &RetryDecision) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
@@ -496,8 +500,12 @@ where
     async fn do_work(&mut self) -> Result<PageSendAttemptedProof, QueryError> {
         let mut paging_state = PagingState::start();
         loop {
-            let result = (self.fetcher)(paging_state).await?;
-            let response = result.into_non_error_query_response()?;
+            let result = (self.fetcher)(paging_state)
+                .await
+                .map_err(UserRequestError::into_query_error)?;
+            let response = result
+                .into_non_error_query_response()
+                .map_err(UserRequestError::into_query_error)?;
             match response.response {
                 NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => {
                     let (proof, send_result) = self
@@ -746,7 +754,7 @@ impl QueryPager {
                 metrics,
                 paging_state: PagingState::start(),
                 history_listener: query.config.history_listener.clone(),
-                current_query_id: None,
+                current_request_id: None,
                 current_attempt_id: None,
                 parent_span,
                 span_creator,
@@ -864,7 +872,7 @@ impl QueryPager {
                 metrics: config.metrics,
                 paging_state: PagingState::start(),
                 history_listener: config.prepared.config.history_listener.clone(),
-                current_query_id: None,
+                current_request_id: None,
                 current_attempt_id: None,
                 parent_span,
                 span_creator,
