@@ -878,6 +878,34 @@ pub enum CqlEventHandlingError {
     SendError,
 }
 
+/// Failed to run a user request. Possibly because of a timeout.
+///
+/// This error occurs if request timed out, or it failed for some
+/// other reason before the timeout - see [`UserRequestError`].
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum TimeoutableRequestError {
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+            "Request execution exceeded a client timeout {}ms",
+            std::time::Duration::as_millis(.0)
+        )]
+    RequestTimeout(std::time::Duration),
+
+    /// Request failed before it timed out.
+    #[error(transparent)]
+    RequestFailure(#[from] UserRequestError),
+}
+
+impl TimeoutableRequestError {
+    pub fn into_query_error(self) -> QueryError {
+        match self {
+            TimeoutableRequestError::RequestTimeout(dur) => QueryError::RequestTimeout(dur),
+            TimeoutableRequestError::RequestFailure(err) => err.into_query_error(),
+        }
+    }
+}
+
 /// An error that occurred during execution of
 /// - `QUERY`
 /// - `PREPARE`
