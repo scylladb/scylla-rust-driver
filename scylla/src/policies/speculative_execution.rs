@@ -97,6 +97,9 @@ fn can_be_ignored<ResT>(result: &Result<ResT, RequestError>) -> bool {
             // in the future, it should not be ignored.
             RequestError::EmptyPlan => false,
 
+            // Request execution timed out.
+            RequestError::RequestTimeout(_) => false,
+
             // Can try on another node.
             RequestError::ConnectionPoolError { .. } => true,
 

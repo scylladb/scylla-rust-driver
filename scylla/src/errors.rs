@@ -904,6 +904,13 @@ pub enum RequestError {
     #[error("No connections in the pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
 
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+            "Request execution exceeded a client timeout of {}ms",
+            std::time::Duration::as_millis(.0)
+        )]
+    RequestTimeout(std::time::Duration),
+
     /// Failed to execute request.
     #[error(transparent)]
     LastAttemptError(#[from] RequestAttemptError),
@@ -914,6 +921,7 @@ impl RequestError {
         match self {
             RequestError::EmptyPlan => QueryError::EmptyPlan,
             RequestError::ConnectionPoolError(e) => e.into(),
+            RequestError::RequestTimeout(dur) => QueryError::RequestTimeout(dur),
             RequestError::LastAttemptError(e) => e.into_query_error(),
         }
     }
