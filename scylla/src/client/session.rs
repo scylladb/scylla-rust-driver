@@ -1979,13 +1979,7 @@ where
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
                 .map(|res| res.map_err(RequestError::into_query_error))
-                .unwrap_or_else(|e| {
-                    Err(QueryError::RequestTimeout(format!(
-                        "Request took longer than {}ms: {}",
-                        timeout.as_millis(),
-                        e
-                    )))
-                }),
+                .unwrap_or_else(|_| Err(QueryError::RequestTimeout(timeout))),
             None => runner.await.map_err(RequestError::into_query_error),
         };
 
@@ -2144,8 +2138,8 @@ where
             self.await_schema_agreement_indefinitely(),
         )
         .await
-        .unwrap_or(Err(QueryError::RequestTimeout(
-            "schema agreement not reached in time".to_owned(),
+        .unwrap_or(Err(QueryError::SchemaAgreementTimeout(
+            self.schema_agreement_timeout,
         )))
     }
 

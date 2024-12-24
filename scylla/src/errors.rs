@@ -103,9 +103,16 @@ pub enum QueryError {
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
-    /// Client timeout occurred before any response arrived
-    #[error("Request timeout: {0}")]
-    RequestTimeout(String),
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+        "Request execution exceeded a client timeout of {}ms",
+        std::time::Duration::as_millis(.0)
+    )]
+    RequestTimeout(std::time::Duration),
+
+    /// Schema agreement timed out.
+    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
+    SchemaAgreementTimeout(std::time::Duration),
 
     // TODO: This should not belong here, but it requires changes to error types
     // returned in async iterator API. This should be handled in separate PR.
@@ -139,12 +146,6 @@ impl From<SerializationError> for QueryError {
     }
 }
 
-impl From<tokio::time::error::Elapsed> for QueryError {
-    fn from(timer_error: tokio::time::error::Elapsed) -> QueryError {
-        QueryError::RequestTimeout(format!("{}", timer_error))
-    }
-}
-
 impl From<QueryError> for NewSessionError {
     fn from(query_error: QueryError) -> NewSessionError {
         match query_error {
@@ -161,7 +162,8 @@ impl From<QueryError> for NewSessionError {
             QueryError::TimeoutError => NewSessionError::TimeoutError,
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
-            QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
+            QueryError::RequestTimeout(dur) => NewSessionError::RequestTimeout(dur),
+            QueryError::SchemaAgreementTimeout(dur) => NewSessionError::SchemaAgreementTimeout(dur),
             #[allow(deprecated)]
             QueryError::IntoLegacyQueryResultError(e) => {
                 NewSessionError::IntoLegacyQueryResultError(e)
@@ -254,10 +256,16 @@ pub enum NewSessionError {
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
-    /// Client timeout occurred before a response arrived for some query
-    /// during `Session` creation.
-    #[error("Client timeout: {0}")]
-    RequestTimeout(String),
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+        "Request execution exceeded a client timeout of {}ms",
+        std::time::Duration::as_millis(.0)
+    )]
+    RequestTimeout(std::time::Duration),
+
+    /// Schema agreement timed out.
+    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
+    SchemaAgreementTimeout(std::time::Duration),
 
     // TODO: This should not belong here, but it requires changes to error types
     // returned in async iterator API. This should be handled in separate PR.
