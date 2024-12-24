@@ -4,7 +4,7 @@ use crate::routing::Token;
 use crate::statement::query::Query;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
-use crate::transport::errors::{DbError, NewSessionError, QueryError};
+use crate::transport::errors::{DbError, NewSessionError, QueryError, UserRequestError};
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::QueryPager;
 use crate::transport::node::resolve_contact_points;
@@ -969,7 +969,10 @@ where
             let mut query = Query::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
-            let prepared = conn.prepare(&query).await?;
+            let prepared = conn
+                .prepare(&query)
+                .await
+                .map_err(UserRequestError::into_query_error)?;
             let serialized_values = prepared.serialize_values(&keyspaces)?;
             conn.execute_iter(prepared, serialized_values).await
         }
