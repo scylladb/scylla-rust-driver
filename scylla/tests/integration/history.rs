@@ -122,15 +122,15 @@ async fn successful_query_history() {
 
     let history: StructuredHistory = history_collector.clone_structured_history();
 
-    let displayed = "Queries History:
-=== Query #0 ===
+    let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
     assert_eq!(
@@ -147,24 +147,24 @@ async fn successful_query_history() {
 
     let history2: StructuredHistory = history_collector.clone_structured_history();
 
-    let displayed2 = "Queries History:
-=== Query #0 ===
+    let displayed2 = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
-=== Query #1 ===
+=== Request #1 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
     assert_eq!(
@@ -190,8 +190,8 @@ async fn failed_query_history() {
     let history: StructuredHistory = history_collector.clone_structured_history();
 
     let displayed =
-"Queries History:
-=== Query #0 ===
+"Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
@@ -200,7 +200,7 @@ async fn failed_query_history() {
 |   Error: Database returned an error: The submitted query has a syntax error, Error message: Error message from database
 |   Retry decision: DontRetry
 |
-| Query failed at 2022-02-22 20:22:22 UTC
+| Request failed at 2022-02-22 20:22:22 UTC
 | Error: Database returned an error: The submitted query has a syntax error, Error message: Error message from database
 =================
 ";
@@ -254,42 +254,42 @@ async fn iterator_query_history() {
 
     assert!(history.requests.len() >= 4);
 
-    let displayed_prefix = "Queries History:
-=== Query #0 ===
+    let displayed_prefix = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
-=== Query #1 ===
+=== Request #1 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
-=== Query #2 ===
+=== Request #2 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
-=== Query #3 ===
+=== Request #3 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
     let displayed_str = format!(
