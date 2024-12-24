@@ -1978,9 +1978,9 @@ where
         let result = match effective_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
-                .map(|res| res.map_err(RequestError::into_query_error))
-                .unwrap_or_else(|_| Err(QueryError::RequestTimeout(timeout))),
-            None => runner.await.map_err(RequestError::into_query_error),
+                .map(|res| res.map_err(RequestError::from))
+                .unwrap_or_else(|_| Err(RequestError::RequestTimeout(timeout))),
+            None => runner.await.map_err(RequestError::from),
         };
 
         if let Some((history_listener, query_id)) = history_listener_and_id {
@@ -1990,7 +1990,7 @@ where
             }
         }
 
-        result
+        result.map_err(RequestError::into_query_error)
     }
 
     /// Executes the closure `run_request_once`, provided the load balancing plan and some information
@@ -2093,10 +2093,7 @@ where
                     retry_decision = ?retry_decision
                 );
 
-                // TODO: This is a temporary measure. Will be able to remove it later in this PR
-                // once I narrow the error type in history module.
-                let q_error: QueryError = request_error.clone().into_query_error();
-                context.log_attempt_error(&attempt_id, &q_error, &retry_decision);
+                context.log_attempt_error(&attempt_id, &request_error, &retry_decision);
 
                 last_error = Some(request_error.into());
 
@@ -2217,7 +2214,7 @@ impl ExecuteRequestContext<'_> {
     fn log_attempt_error(
         &self,
         attempt_id_opt: &Option<history::AttemptId>,
-        error: &QueryError,
+        error: &RequestAttemptError,
         retry_decision: &RetryDecision,
     ) {
         let attempt_id: &history::AttemptId = match attempt_id_opt {

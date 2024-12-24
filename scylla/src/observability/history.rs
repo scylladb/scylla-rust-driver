@@ -7,7 +7,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::errors::QueryError;
+use crate::errors::{RequestAttemptError, RequestError};
 use crate::policies::retry::RetryDecision;
 use chrono::{DateTime, Utc};
 
@@ -43,7 +43,7 @@ pub trait HistoryListener: Debug + Send + Sync {
     fn log_query_success(&self, query_id: QueryId);
 
     /// Log that query ended with an error - called right before returning the error from Session::query_*, execute_*, etc.
-    fn log_query_error(&self, query_id: QueryId, error: &QueryError);
+    fn log_query_error(&self, query_id: QueryId, error: &RequestError);
 
     /// Log that a new speculative fiber has started.
     fn log_new_speculative_fiber(&self, query_id: QueryId) -> SpeculativeId;
@@ -63,7 +63,7 @@ pub trait HistoryListener: Debug + Send + Sync {
     fn log_attempt_error(
         &self,
         attempt_id: AttemptId,
-        error: &QueryError,
+        error: &RequestAttemptError,
         retry_decision: &RetryDecision,
     );
 }
@@ -89,11 +89,11 @@ pub struct HistoryCollectorData {
 pub enum HistoryEvent {
     NewQuery(QueryId),
     QuerySuccess(QueryId),
-    QueryError(QueryId, QueryError),
+    QueryError(QueryId, RequestError),
     NewSpeculativeFiber(SpeculativeId, QueryId),
     NewAttempt(AttemptId, QueryId, Option<SpeculativeId>, SocketAddr),
     AttemptSuccess(AttemptId),
-    AttemptError(AttemptId, QueryError, RetryDecision),
+    AttemptError(AttemptId, RequestAttemptError, RetryDecision),
 }
 
 impl HistoryCollectorData {
@@ -189,7 +189,7 @@ impl HistoryListener for HistoryCollector {
         })
     }
 
-    fn log_query_error(&self, query_id: QueryId, error: &QueryError) {
+    fn log_query_error(&self, query_id: QueryId, error: &RequestError) {
         self.do_with_data(|data| data.add_event(HistoryEvent::QueryError(query_id, error.clone())))
     }
 
@@ -231,7 +231,7 @@ impl HistoryListener for HistoryCollector {
     fn log_attempt_error(
         &self,
         attempt_id: AttemptId,
-        error: &QueryError,
+        error: &RequestAttemptError,
         retry_decision: &RetryDecision,
     ) {
         self.do_with_data(|data| {
@@ -264,7 +264,7 @@ pub struct QueryHistory {
 #[derive(Debug, Clone)]
 pub enum QueryHistoryResult {
     Success(TimePoint),
-    Error(TimePoint, QueryError),
+    Error(TimePoint, RequestError),
 }
 
 #[derive(Debug, Clone)]
@@ -283,7 +283,7 @@ pub struct AttemptHistory {
 #[derive(Debug, Clone)]
 pub enum AttemptResult {
     Success(TimePoint),
-    Error(TimePoint, QueryError, RetryDecision),
+    Error(TimePoint, RequestAttemptError, RetryDecision),
 }
 
 impl From<&HistoryCollectorData> for StructuredHistory {
@@ -453,7 +453,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use crate::{
-        errors::{DbError, QueryError},
+        errors::{DbError, RequestAttemptError, RequestError},
         policies::retry::RetryDecision,
         test_utils::setup_tracing,
     };
@@ -464,7 +464,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-    use scylla_cql::Consistency;
+    use scylla_cql::{frame::response::CqlResponseKind, Consistency};
 
     // Set a single time for all timestamps within StructuredHistory.
     // HistoryCollector sets the timestamp to current time which changes with each test.
@@ -516,12 +516,12 @@ mod tests {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)), 19042)
     }
 
-    fn timeout_error() -> QueryError {
-        QueryError::TimeoutError
+    fn unexpected_response(kind: CqlResponseKind) -> RequestAttemptError {
+        RequestAttemptError::UnexpectedResponse(kind)
     }
 
-    fn unavailable_error() -> QueryError {
-        QueryError::DbError(
+    fn unavailable_error() -> RequestAttemptError {
+        RequestAttemptError::DbError(
             DbError::Unavailable {
                 consistency: Consistency::Quorum,
                 required: 2,
@@ -531,8 +531,8 @@ mod tests {
         )
     }
 
-    fn no_stream_id_error() -> QueryError {
-        QueryError::UnableToAllocStreamId
+    fn no_stream_id_error() -> RequestAttemptError {
+        RequestAttemptError::UnableToAllocStreamId
     }
 
     #[test]
@@ -619,7 +619,7 @@ mod tests {
             history_collector.log_attempt_start(query_id, None, node1_addr());
         history_collector.log_attempt_error(
             attempt_id,
-            &QueryError::TimeoutError,
+            &unexpected_response(CqlResponseKind::Ready),
             &RetryDecision::RetrySameNode(Some(Consistency::Quorum)),
         );
 
@@ -631,7 +631,10 @@ mod tests {
             &RetryDecision::DontRetry,
         );
 
-        history_collector.log_query_error(query_id, &unavailable_error());
+        history_collector.log_query_error(
+            query_id,
+            &RequestError::LastAttemptError(unavailable_error()),
+        );
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
@@ -643,7 +646,7 @@ mod tests {
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
-|   Error: Timeout Error
+|   Error: Received unexpected response from the server: READY. Expected RESULT or ERROR response.
 |   Retry decision: RetrySameNode(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.1:19042
@@ -717,7 +720,7 @@ mod tests {
 
         history_collector.log_attempt_error(
             attempt1,
-            &timeout_error(),
+            &unexpected_response(CqlResponseKind::Event),
             &RetryDecision::RetryNextNode(Some(Consistency::Quorum)),
         );
         let _attempt2: AttemptId =
@@ -760,7 +763,7 @@ mod tests {
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
-|   Error: Timeout Error
+|   Error: Received unexpected response from the server: EVENT. Expected RESULT or ERROR response.
 |   Retry decision: RetryNextNode(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.3:19042
@@ -816,7 +819,7 @@ mod tests {
             history_collector.log_attempt_start(query1_id, None, node1_addr());
         history_collector.log_attempt_error(
             query1_attempt1,
-            &timeout_error(),
+            &unexpected_response(CqlResponseKind::Supported),
             &RetryDecision::RetryNextNode(Some(Consistency::Quorum)),
         );
         let query1_attempt2: AttemptId =
@@ -839,7 +842,7 @@ mod tests {
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
-|   Error: Timeout Error
+|   Error: Received unexpected response from the server: SUPPORTED. Expected RESULT or ERROR response.
 |   Retry decision: RetryNextNode(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.2:19042
