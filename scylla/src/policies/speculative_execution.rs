@@ -95,6 +95,9 @@ fn can_be_ignored(error: &RequestError) -> bool {
         // no such node (since the remaining plan is empty).
         RequestError::EmptyPlan => false,
 
+        // Request execution timed out.
+        RequestError::RequestTimeout(_) => false,
+
         // Can try on another node.
         RequestError::ConnectionPoolError { .. } => true,
 
