@@ -400,9 +400,9 @@ impl From<&HistoryCollectorData> for StructuredHistory {
 /// StructuredHistory should be used for printing query history.
 impl Display for StructuredHistory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Queries History:")?;
+        writeln!(f, "Requests History:")?;
         for (i, query) in self.requests.iter().enumerate() {
-            writeln!(f, "=== Query #{} ===", i)?;
+            writeln!(f, "=== Request #{} ===", i)?;
             writeln!(f, "| start_time: {}", query.start_time)?;
             writeln!(f, "| Non-speculative attempts:")?;
             write_fiber_attempts(&query.non_speculative_fiber, f)?;
@@ -416,13 +416,13 @@ impl Display for StructuredHistory {
             writeln!(f, "|")?;
             match &query.result {
                 Some(RequestHistoryResult::Success(succ_time)) => {
-                    writeln!(f, "| Query successful at {}", succ_time)?;
+                    writeln!(f, "| Request successful at {}", succ_time)?;
                 }
                 Some(RequestHistoryResult::Error(err_time, error)) => {
-                    writeln!(f, "| Query failed at {}", err_time)?;
+                    writeln!(f, "| Request failed at {}", err_time)?;
                     writeln!(f, "| Error: {}", error)?;
                 }
-                None => writeln!(f, "| Query still running - no final result yet")?,
+                None => writeln!(f, "| Request still running - no final result yet")?,
             };
             writeln!(f, "=================")?;
         }
@@ -546,7 +546,7 @@ mod tests {
 
         assert!(history.requests.is_empty());
 
-        let displayed = "Queries History:
+        let displayed = "Requests History:
 ";
         assert_eq!(displayed, format!("{}", history));
     }
@@ -567,12 +567,12 @@ mod tests {
             .is_empty());
         assert!(history.requests[0].speculative_fibers.is_empty());
 
-        let displayed = "Queries History:
-=== Query #0 ===
+        let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 |
-| Query still running - no final result yet
+| Request still running - no final result yet
 =================
 ";
 
@@ -600,15 +600,15 @@ mod tests {
             Some(AttemptResult::Success(_))
         );
 
-        let displayed = "Queries History:
-=== Query #0 ===
+        let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
         assert_eq!(displayed, format!("{}", set_one_time(history)));
@@ -645,8 +645,8 @@ mod tests {
         let history: StructuredHistory = history_collector.clone_structured_history();
 
         let displayed =
-"Queries History:
-=== Query #0 ===
+"Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
@@ -661,7 +661,7 @@ mod tests {
 |   Error: Database returned an error: Not enough nodes are alive to satisfy required consistency level (consistency: Quorum, required: 2, alive: 1), Error message: Not enough nodes to satisfy consistency
 |   Retry decision: DontRetry
 |
-| Query failed at 2022-02-22 20:22:22 UTC
+| Request failed at 2022-02-22 20:22:22 UTC
 | Error: Database returned an error: Not enough nodes are alive to satisfy required consistency level (consistency: Quorum, required: 2, alive: 1), Error message: Not enough nodes to satisfy consistency
 =================
 ";
@@ -696,8 +696,8 @@ mod tests {
             .attempts
             .is_empty());
 
-        let displayed = "Queries History:
-=== Query #0 ===
+        let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 |
@@ -713,7 +713,7 @@ mod tests {
 | > Speculative fiber #2
 | fiber start time: 2022-02-22 20:22:22 UTC
 |
-| Query still running - no final result yet
+| Request still running - no final result yet
 =================
 ";
         assert_eq!(displayed, format!("{}", set_one_time(history)));
@@ -772,8 +772,8 @@ mod tests {
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
-        let displayed = "Queries History:
-=== Query #0 ===
+        let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
@@ -819,7 +819,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   No result yet
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
         assert_eq!(displayed, format!("{}", set_one_time(history)));
@@ -851,8 +851,8 @@ mod tests {
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
-        let displayed = "Queries History:
-=== Query #0 ===
+        let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
@@ -865,16 +865,16 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
-=== Query #1 ===
+=== Request #1 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
         assert_eq!(displayed, format!("{}", set_one_time(history)));
