@@ -1850,7 +1850,7 @@ where
         QueryFut: Future<Output = Result<ResT, RequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
     {
-        let history_listener_and_id: Option<(&'a dyn HistoryListener, history::QueryId)> =
+        let history_listener_and_id: Option<(&'a dyn HistoryListener, history::RequestId)> =
             statement_config
                 .history_listener
                 .as_ref()
@@ -1900,16 +1900,18 @@ where
                     let request_runner_generator = |is_speculative: bool| {
                         let history_data: Option<HistoryData> = history_listener_and_id
                             .as_ref()
-                            .map(|(history_listener, query_id)| {
+                            .map(|(history_listener, request_id)| {
                                 let speculative_id: Option<history::SpeculativeId> =
                                     if is_speculative {
-                                        Some(history_listener.log_new_speculative_fiber(*query_id))
+                                        Some(
+                                            history_listener.log_new_speculative_fiber(*request_id),
+                                        )
                                     } else {
                                         None
                                     };
                                 HistoryData {
                                     listener: *history_listener,
-                                    query_id: *query_id,
+                                    request_id: *request_id,
                                     speculative_id,
                                 }
                             });
@@ -1948,9 +1950,9 @@ where
                     let history_data: Option<HistoryData> =
                         history_listener_and_id
                             .as_ref()
-                            .map(|(history_listener, query_id)| HistoryData {
+                            .map(|(history_listener, request_id)| HistoryData {
                                 listener: *history_listener,
-                                query_id: *query_id,
+                                request_id: *request_id,
                                 speculative_id: None,
                             });
                     self.run_request_speculative_fiber(
@@ -1983,10 +1985,10 @@ where
             None => runner.await.map_err(RequestError::from),
         };
 
-        if let Some((history_listener, query_id)) = history_listener_and_id {
+        if let Some((history_listener, request_id)) = history_listener_and_id {
             match &result {
-                Ok(_) => history_listener.log_query_success(query_id),
-                Err(e) => history_listener.log_query_error(query_id, e),
+                Ok(_) => history_listener.log_query_success(request_id),
+                Err(e) => history_listener.log_query_error(request_id, e),
             }
         }
 
@@ -2185,7 +2187,7 @@ struct ExecuteRequestContext<'a> {
 
 struct HistoryData<'a> {
     listener: &'a dyn HistoryListener,
-    query_id: history::QueryId,
+    request_id: history::RequestId,
     speculative_id: Option<history::SpeculativeId>,
 }
 
@@ -2193,7 +2195,7 @@ impl ExecuteRequestContext<'_> {
     fn log_attempt_start(&self, node_addr: SocketAddr) -> Option<history::AttemptId> {
         self.history_data.as_ref().map(|hd| {
             hd.listener
-                .log_attempt_start(hd.query_id, hd.speculative_id, node_addr)
+                .log_attempt_start(hd.request_id, hd.speculative_id, node_addr)
         })
     }
 
