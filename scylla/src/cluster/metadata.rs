@@ -982,7 +982,7 @@ where
             let mut query = Query::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
-            conn.query_iter(query).await
+            conn.query_iter(query).await.map_err(QueryError::from)
         } else {
             let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
             let query_str = format!("{query_str} where keyspace_name in ?");
@@ -995,7 +995,9 @@ where
                 .await
                 .map_err(RequestAttemptError::into_query_error)?;
             let serialized_values = prepared.serialize_values(&keyspaces)?;
-            conn.execute_iter(prepared, serialized_values).await
+            conn.execute_iter(prepared, serialized_values)
+                .await
+                .map_err(QueryError::from)
         }
     }
 

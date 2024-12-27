@@ -1235,6 +1235,7 @@ where
                 self.metrics.clone(),
             )
             .await
+            .map_err(QueryError::from)
         } else {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
@@ -1249,6 +1250,7 @@ where
                 metrics: self.metrics.clone(),
             })
             .await
+            .map_err(QueryError::from)
         }
     }
 
@@ -1504,6 +1506,7 @@ where
             metrics: self.metrics.clone(),
         })
         .await
+        .map_err(QueryError::from)
     }
 
     async fn do_batch(
