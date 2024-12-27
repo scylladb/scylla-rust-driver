@@ -56,7 +56,7 @@ use super::query_result::RowsError;
 use super::topology::UntranslatedPeer;
 use super::{NodeRef, SelfIdentity};
 use crate::frame::response::result;
-use crate::prepared_statement::PreparedStatement;
+use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{Shard, Token};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
@@ -1487,7 +1487,8 @@ where
         let paging_state_ref = &paging_state;
 
         let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)?
+            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)
+            .map_err(PartitionKeyError::into_query_error)?
             .unzip();
 
         let execution_profile = prepared
