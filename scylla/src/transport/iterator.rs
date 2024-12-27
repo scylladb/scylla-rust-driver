@@ -36,7 +36,7 @@ use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::statement::{Consistency, PagingState, SerialConsistency};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
-use crate::transport::errors::{ProtocolError, QueryError, UserRequestAttemptError};
+use crate::transport::errors::{QueryError, UserRequestAttemptError};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{RequestInfo, RetryDecision, RetrySession};
@@ -503,21 +503,17 @@ where
         match self.do_work().await {
             Ok(proof) => proof,
             Err(err) => {
-                let (proof, _) = self.sender.send(Err(err)).await;
+                let (proof, _) = self.sender.send(Err(err.into_query_error())).await;
                 proof
             }
         }
     }
 
-    async fn do_work(&mut self) -> Result<PageSendAttemptedProof, QueryError> {
+    async fn do_work(&mut self) -> Result<PageSendAttemptedProof, UserRequestAttemptError> {
         let mut paging_state = PagingState::start();
         loop {
-            let result = (self.fetcher)(paging_state)
-                .await
-                .map_err(UserRequestAttemptError::into_query_error)?;
-            let response = result
-                .into_non_error_query_response()
-                .map_err(UserRequestAttemptError::into_query_error)?;
+            let result = (self.fetcher)(paging_state).await?;
+            let response = result.into_non_error_query_response()?;
             match response.response {
                 NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => {
                     let (proof, send_result) = self
@@ -552,10 +548,9 @@ where
                     return Ok(proof);
                 }
                 _ => {
-                    return Err(ProtocolError::UnexpectedResponse(
+                    return Err(UserRequestAttemptError::UnexpectedResponse(
                         response.response.to_response_kind(),
-                    )
-                    .into());
+                    ));
                 }
             }
         }
