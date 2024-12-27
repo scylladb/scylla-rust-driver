@@ -31,7 +31,7 @@ use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
-use crate::prepared_statement::PreparedStatement;
+use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 #[allow(deprecated)]
 use crate::response::legacy_query_result::LegacyQueryResult;
@@ -1394,7 +1394,8 @@ where
         let paging_state_ref = &paging_state;
 
         let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)?
+            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)
+            .map_err(PartitionKeyError::into_query_error)?
             .unzip();
 
         let execution_profile = prepared

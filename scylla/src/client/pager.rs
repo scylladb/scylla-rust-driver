@@ -803,7 +803,9 @@ impl QueryPager {
                 ) {
                 Ok(res) => res.unzip(),
                 Err(err) => {
-                    let (proof, _res) = ProvingSender::from(sender).send(Err(err)).await;
+                    let (proof, _res) = ProvingSender::from(sender)
+                        .send(Err(err.into_query_error()))
+                        .await;
                     return proof;
                 }
             };
