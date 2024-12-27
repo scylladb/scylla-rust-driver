@@ -37,7 +37,7 @@ use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::statement::{Consistency, PagingState, SerialConsistency};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
-use crate::transport::errors::{QueryError, UserRequestAttemptError};
+use crate::transport::errors::UserRequestAttemptError;
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{RequestInfo, RetryDecision, RetrySession};
@@ -597,11 +597,11 @@ impl QueryPager {
     /// borrows from self.
     ///
     /// This is cancel-safe.
-    async fn next(&mut self) -> Option<Result<ColumnIterator, QueryError>> {
+    async fn next(&mut self) -> Option<Result<ColumnIterator, NextRowError>> {
         let res = std::future::poll_fn(|cx| Pin::new(&mut *self).poll_fill_page(cx)).await;
         match res {
             Some(Ok(())) => {}
-            Some(Err(err)) => return Some(Err(err.into())),
+            Some(Err(err)) => return Some(Err(err)),
             None => return None,
         }
 
@@ -610,7 +610,7 @@ impl QueryPager {
             self.current_page
                 .next()
                 .unwrap()
-                .map_err(|err| NextRowError::RowDeserializationError(err).into()),
+                .map_err(NextRowError::RowDeserializationError),
         )
     }
 
@@ -1048,14 +1048,14 @@ impl<RowT> Stream for TypedRowStream<RowT>
 where
     RowT: DeserializeOwnedRow,
 {
-    type Item = Result<RowT, QueryError>;
+    type Item = Result<RowT, NextRowError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let next_fut = async {
             self.raw_row_lending_stream.next().await.map(|res| {
                 res.and_then(|column_iterator| {
                     <RowT as DeserializeRow>::deserialize(column_iterator)
-                        .map_err(|err| NextRowError::RowDeserializationError(err).into())
+                        .map_err(NextRowError::RowDeserializationError)
                 })
             })
         };
@@ -1188,7 +1188,7 @@ mod legacy {
     pub enum LegacyNextRowError {
         /// Query to fetch next page has failed
         #[error(transparent)]
-        QueryError(#[from] QueryError),
+        NextRowError(#[from] NextRowError),
 
         /// Parsing values in row as given types failed
         #[error(transparent)]
