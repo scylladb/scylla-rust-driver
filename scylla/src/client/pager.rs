@@ -29,8 +29,7 @@ use crate::cluster::{ClusterState, NodeRef};
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
-use crate::errors::{ProtocolError, RequestError};
-use crate::errors::{QueryError, RequestAttemptError};
+use crate::errors::{QueryError, RequestAttemptError, RequestError};
 use crate::frame::response::result;
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
@@ -490,21 +489,17 @@ where
         match self.do_work().await {
             Ok(proof) => proof,
             Err(err) => {
-                let (proof, _) = self.sender.send(Err(err)).await;
+                let (proof, _) = self.sender.send(Err(err.into_query_error())).await;
                 proof
             }
         }
     }
 
-    async fn do_work(&mut self) -> Result<PageSendAttemptedProof, QueryError> {
+    async fn do_work(&mut self) -> Result<PageSendAttemptedProof, RequestAttemptError> {
         let mut paging_state = PagingState::start();
         loop {
-            let result = (self.fetcher)(paging_state)
-                .await
-                .map_err(RequestAttemptError::into_query_error)?;
-            let response = result
-                .into_non_error_query_response()
-                .map_err(RequestAttemptError::into_query_error)?;
+            let result = (self.fetcher)(paging_state).await?;
+            let response = result.into_non_error_query_response()?;
             match response.response {
                 NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => {
                     let (proof, send_result) = self
@@ -539,10 +534,9 @@ where
                     return Ok(proof);
                 }
                 _ => {
-                    return Err(ProtocolError::UnexpectedResponse(
+                    return Err(RequestAttemptError::UnexpectedResponse(
                         response.response.to_response_kind(),
-                    )
-                    .into());
+                    ));
                 }
             }
         }
