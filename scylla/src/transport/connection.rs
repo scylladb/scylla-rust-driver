@@ -47,7 +47,7 @@ use std::{
 };
 
 use super::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
-use super::iterator::QueryPager;
+use super::iterator::{NextRowError, QueryPager};
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::QueryResult;
 use super::session::AddressTranslator;
@@ -1186,7 +1186,7 @@ impl Connection {
     pub(crate) async fn query_iter(
         self: Arc<Self>,
         query: Query,
-    ) -> Result<QueryPager, QueryError> {
+    ) -> Result<QueryPager, NextRowError> {
         let consistency = query
             .config
             .determine_consistency(self.config.default_consistency);
@@ -1202,7 +1202,7 @@ impl Connection {
         self: Arc<Self>,
         prepared_statement: PreparedStatement,
         values: SerializedValues,
-    ) -> Result<QueryPager, QueryError> {
+    ) -> Result<QueryPager, NextRowError> {
         let consistency = prepared_statement
             .config
             .determine_consistency(self.config.default_consistency);
