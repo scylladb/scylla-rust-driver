@@ -268,6 +268,13 @@ where
 
         let error: TimeoutableRequestError = last_error.into();
         self.log_request_error(&error);
+
+        let error: UserRequestError = match error {
+            TimeoutableRequestError::RequestTimeout(_) => {
+                unreachable!("A driver bug! RequestTimeout should not be constructed here!")
+            }
+            TimeoutableRequestError::RequestFailure(err) => err,
+        };
         let (proof, _) = self.sender.send(Err(error.into_query_error())).await;
         proof
     }
