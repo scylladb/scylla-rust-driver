@@ -847,6 +847,7 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
             Ok::<_, QueryError>(rows_stream)
         })
         .into_stream()
+        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
@@ -864,6 +865,7 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
             Ok::<_, QueryError>(rows_stream)
         })
         .into_stream()
+        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Local, row_result)));
 
@@ -1007,7 +1009,9 @@ where
             pager.rows_stream::<R>().map_err(convert_typecheck_error)?;
         Ok::<_, QueryError>(stream)
     };
-    fut.into_stream().try_flatten()
+    fut.into_stream()
+        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
+        .try_flatten()
 }
 
 async fn query_keyspaces(
@@ -1861,6 +1865,7 @@ async fn query_table_partitioners(
             Ok::<_, QueryError>(stream)
         })
         .into_stream()
+        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
         .try_flatten();
 
     let result = rows
