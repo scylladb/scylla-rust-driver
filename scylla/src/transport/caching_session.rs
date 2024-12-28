@@ -349,6 +349,8 @@ mod tests {
     use crate::transport::partitioner::PartitionerName;
     use crate::transport::session::Session;
     use crate::utils::test_utils::unique_keyspace_name;
+    #[allow(deprecated)]
+    use crate::LegacyCachingSession;
     use crate::{
         batch::{Batch, BatchStatement},
         prepared_statement::PreparedStatement,
@@ -779,5 +781,13 @@ mod tests {
         // one can see which case failed by looking at the full backtrace
         verify_partitioner().await;
         verify_partitioner().await;
+    }
+
+    // NOTE: intentionally no `#[test]`: this is a compile-time test
+    fn _caching_session_impls_debug() {
+        fn assert_debug<T: std::fmt::Debug>() {}
+        assert_debug::<CachingSession>();
+        #[allow(deprecated)]
+        assert_debug::<LegacyCachingSession>();
     }
 }
