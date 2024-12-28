@@ -16,6 +16,7 @@ use scylla_cql::frame::response::result::{PreparedMetadata, ResultMetadata};
 use scylla_cql::types::serialize::batch::BatchValues;
 use scylla_cql::types::serialize::row::SerializeRow;
 use std::collections::hash_map::RandomState;
+use std::fmt;
 use std::hash::BuildHasher;
 use std::sync::Arc;
 
@@ -39,7 +40,6 @@ struct RawPreparedStatementData {
 }
 
 /// Provides auto caching while executing queries
-#[derive(Debug)]
 pub struct GenericCachingSession<DeserializationApi, S = RandomState>
 where
     S: Clone + BuildHasher,
@@ -51,6 +51,20 @@ where
     /// is removed from the cache
     max_capacity: usize,
     cache: DashMap<String, RawPreparedStatementData, S>,
+}
+
+impl<DeserializationApi, S> fmt::Debug for GenericCachingSession<DeserializationApi, S>
+where
+    S: Clone + BuildHasher,
+    DeserializationApi: DeserializationApiKind,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GenericCachingSession")
+            .field("session", &self.session)
+            .field("max_capacity", &self.max_capacity)
+            .field("cache", &self.cache)
+            .finish()
+    }
 }
 
 pub type CachingSession<S = RandomState> = GenericCachingSession<CurrentDeserializationApi, S>;
