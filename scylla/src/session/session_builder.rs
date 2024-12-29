@@ -1,5 +1,6 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
+use crate::connection::Compression;
 use crate::connection::SelfIdentity;
 #[allow(deprecated)]
 use crate::session::{
@@ -7,7 +8,6 @@ use crate::session::{
     SessionConfig,
 };
 use crate::transport::execution_profile::ExecutionProfileHandle;
-use crate::transport::Compression;
 
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
@@ -64,7 +64,7 @@ pub type CloudSessionBuilder = GenericSessionBuilder<CloudMode>;
 ///
 /// ```
 /// # use scylla::{Session, SessionBuilder};
-/// # use scylla::transport::Compression;
+/// # use scylla::connection::Compression;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let session: Session = SessionBuilder::new()
 ///     .known_node("127.0.0.1:9042")
@@ -188,7 +188,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
+    /// # use scylla::connection::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -216,7 +216,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// use scylla::{Session, SessionBuilder};
     /// use async_trait::async_trait;
     /// use scylla::authentication::{AuthenticatorProvider, AuthenticatorSession, AuthError};
-    /// # use scylla::transport::Compression;
+    /// # use scylla::connection::Compression;
     ///
     /// struct CustomAuthenticator;
     ///
@@ -388,7 +388,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
+    /// # use scylla::connection::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -508,7 +508,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
+    /// # use scylla::connection::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -532,7 +532,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Example
     /// ```
     /// # use scylla::{LegacySession, SessionBuilder};
-    /// # use scylla::transport::Compression;
+    /// # use scylla::connection::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -561,7 +561,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
+    /// # use scylla::connection::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -953,7 +953,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
+    /// # use scylla::connection::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -1037,11 +1037,10 @@ mod tests {
     use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
 
-    use super::SessionBuilder;
+    use super::{Compression, SessionBuilder};
     use crate::test_utils::setup_tracing;
     use crate::transport::execution_profile::{defaults, ExecutionProfile};
     use crate::transport::node::KnownNode;
-    use crate::transport::Compression;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
 
