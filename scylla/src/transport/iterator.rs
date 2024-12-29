@@ -27,8 +27,8 @@ use super::query_result::ColumnSpecs;
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
+use crate::observability::driver_tracing::RequestSpan;
 use crate::session::execution_profile::ExecutionProfileInner;
-use crate::session::RequestSpan;
 
 use crate::cluster::ClusterData;
 use crate::cluster::NodeRef;
