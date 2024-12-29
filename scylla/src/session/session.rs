@@ -42,9 +42,7 @@ use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
-use crate::policies::retry::QueryInfo;
-use crate::policies::retry::RetryDecision;
-use crate::policies::retry::RetrySession;
+use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -52,14 +50,13 @@ use crate::routing::Shard;
 use crate::session::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
+#[allow(deprecated)]
+use crate::session::pager::{LegacyRowIterator, PreparedIteratorConfig, QueryPager};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::transport::errors::TracingProtocolError;
 use crate::transport::errors::{
     BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
 };
-use crate::transport::iterator::QueryPager;
-#[allow(deprecated)]
-use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::MaybeFirstRowError;
 use crate::transport::query_result::QueryResult;
