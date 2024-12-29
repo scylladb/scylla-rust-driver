@@ -6,12 +6,14 @@
 //!     - retries,
 //!     - speculative execution,
 //! - cluster-side request tracing,
+//! - driver metrics,
 //! - request execution history,
 //! - TODO.
 
 pub mod execution_profile;
 pub mod history;
 pub mod load_balancing;
+pub(crate) mod metrics;
 pub mod retries;
 pub mod speculative_execution;
 pub mod tracing;

@@ -293,4 +293,4 @@ pub use execution::execution_profile;
 pub use execution::load_balancing;
 pub use execution::speculative_execution;
 
-pub use transport::metrics::{Metrics, MetricsError};
+pub use execution::metrics::{Metrics, MetricsError};

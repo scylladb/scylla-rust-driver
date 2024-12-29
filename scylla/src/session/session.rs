@@ -52,6 +52,7 @@ use crate::execution::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
 use crate::execution::load_balancing::{self, RoutingInfo};
+use crate::execution::metrics::Metrics;
 use crate::execution::retries::{QueryInfo, RetryDecision, RetrySession};
 use crate::execution::speculative_execution;
 use crate::execution::tracing::TracingInfo;
@@ -64,7 +65,6 @@ use crate::transport::errors::TracingProtocolError;
 use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
-use crate::transport::metrics::Metrics;
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::MaybeFirstRowError;
 use crate::transport::query_result::QueryResult;

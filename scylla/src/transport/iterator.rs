@@ -35,6 +35,7 @@ use crate::cluster::NodeRef;
 use crate::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::execution::history::{self, HistoryListener};
 use crate::execution::load_balancing::{self, RoutingInfo};
+use crate::execution::metrics::Metrics;
 use crate::execution::retries::{QueryInfo, RetryDecision, RetrySession};
 use crate::frame::response::{
     result,
@@ -42,7 +43,6 @@ use crate::frame::response::{
 };
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::errors::ProtocolError;
-use crate::transport::metrics::Metrics;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
