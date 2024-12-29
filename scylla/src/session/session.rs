@@ -49,14 +49,11 @@ use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::Shard;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-#[allow(deprecated)]
-use crate::transport::query_result::MaybeFirstRowError;
-use crate::transport::query_result::QueryResult;
-use crate::transport::query_result::RowsError;
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
 use crate::{
@@ -67,7 +64,7 @@ use crate::{
 // This re-export is to preserve backward compatibility.
 // Those items are no longer here not to clutter session.rs with legacy things.
 #[allow(deprecated)]
-pub use crate::transport::legacy_query_result::{IntoTypedRows, TypedRowIter};
+pub use crate::response::legacy_query_result::{IntoTypedRows, TypedRowIter};
 
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]

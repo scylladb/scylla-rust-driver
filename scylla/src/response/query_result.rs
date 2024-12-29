@@ -207,7 +207,7 @@ impl QueryResult {
     /// Returns an error if the response is not of Rows kind or metadata deserialization failed.
     ///
     /// ```rust
-    /// # use scylla::transport::query_result::{QueryResult, QueryRowsResult};
+    /// # use scylla::response::query_result::{QueryResult, QueryRowsResult};
     /// # fn example(query_result: QueryResult) -> Result<(), Box<dyn std::error::Error>> {
     /// let rows_result = query_result.into_rows_result()?;
     ///
@@ -225,7 +225,7 @@ impl QueryResult {
     /// returned back to the user in the error type. See [`IntoRowsResultError`] documentation.
     ///
     /// ```rust
-    /// # use scylla::transport::query_result::{QueryResult, QueryRowsResult, IntoRowsResultError};
+    /// # use scylla::response::query_result::{QueryResult, QueryRowsResult, IntoRowsResultError};
     /// # fn example(non_rows_query_result: QueryResult) -> Result<(), Box<dyn std::error::Error>> {
     /// let err = non_rows_query_result.into_rows_result().unwrap_err();
     ///
@@ -308,7 +308,7 @@ impl QueryResult {
 ///   additionally asserting that it's the only one in the response.
 ///
 /// ```rust
-/// # use scylla::transport::query_result::QueryResult;
+/// # use scylla::response::query_result::QueryResult;
 /// # fn example(query_result: QueryResult) -> Result<(), Box<dyn std::error::Error>> {
 /// let rows_result = query_result.into_rows_result()?;
 ///
