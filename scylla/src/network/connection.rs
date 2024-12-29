@@ -1,5 +1,6 @@
 use crate::authentication::AuthenticatorProvider;
 use crate::batch::{Batch, BatchStatement};
+use crate::client::pager::QueryPager;
 use crate::client::Compression;
 use crate::client::SelfIdentity;
 #[cfg(feature = "cloud")]
@@ -25,7 +26,6 @@ use crate::transport::errors::{
     QueryError, RequestError, ResponseParseError, TranslationError, UserRequestError,
 };
 use crate::transport::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
-use crate::transport::iterator::QueryPager;
 use crate::transport::locator::tablets::{RawTablet, TabletParsingError};
 use crate::transport::query_result::QueryResult;
 use bytes::Bytes;

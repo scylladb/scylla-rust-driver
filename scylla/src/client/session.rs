@@ -2,6 +2,8 @@
 //! It manages all connections to the cluster and allows to perform queries.
 
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
+#[allow(deprecated)]
+use super::pager::{LegacyRowIterator, PreparedIteratorConfig, QueryPager};
 use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::AuthenticatorProvider;
 use crate::batch::batch_values;
@@ -37,9 +39,6 @@ pub use crate::transport::errors::TranslationError;
 use crate::transport::errors::{
     BadQuery, NewSessionError, ProtocolError, QueryError, TracingProtocolError, UserRequestError,
 };
-use crate::transport::iterator::QueryPager;
-#[allow(deprecated)]
-use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 #[allow(deprecated)]

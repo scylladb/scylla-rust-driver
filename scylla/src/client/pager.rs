@@ -1,4 +1,6 @@
-//! Iterators over rows returned by paged queries
+//! Entities that provide automated transparent paging of a query.
+//! They enable consuming result of a paged query as a stream over rows,
+//! which abstracts over page boundaries.
 
 use std::future::Future;
 use std::net::SocketAddr;
@@ -22,17 +24,12 @@ use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use super::errors::{QueryError, UserRequestError};
-use super::query_result::ColumnSpecs;
 use crate::client::execution_profile::ExecutionProfileInner;
 use crate::cluster::{ClusterState, NodeRef};
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
-use crate::frame::response::{
-    result,
-    result::{ColumnSpec, Row},
-};
+use crate::frame::response::result;
 use crate::network::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
@@ -41,6 +38,8 @@ use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::errors::ProtocolError;
+use crate::transport::errors::{QueryError, UserRequestError};
+use crate::transport::query_result::ColumnSpecs;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
@@ -554,8 +553,9 @@ where
 /// A pre-0.15.0 interface is also available, although deprecated:
 /// `into_legacy()` method converts QueryPager to LegacyRowIterator,
 /// enabling Stream'ed operation on rows being eagerly deserialized
-/// to the middle-man [Row] type. This is inefficient, especially if
-/// [Row] is not the intended target type.
+/// to the middle-man [Row](scylla_cql::frame::response::result::Row) type.
+/// This is inefficient, especially if [Row](scylla_cql::frame::response::result::Row)
+/// is not the intended target type.
 pub struct QueryPager {
     current_page: RawRowLendingIterator,
     page_receiver: mpsc::Receiver<Result<ReceivedPage, QueryError>>,
@@ -666,7 +666,7 @@ impl QueryPager {
     /// Converts this iterator into an iterator over rows parsed as given type,
     /// using the legacy deserialization framework.
     /// This is inefficient, because all rows are being eagerly deserialized
-    /// to a middle-man [Row] type.
+    /// to a middle-man [Row](scylla_cql::frame::response::result::Row) type.
     #[deprecated(
         since = "0.15.0",
         note = "Legacy deserialization API is inefficient and is going to be removed soon"
@@ -1073,6 +1073,8 @@ pub enum NextRowError {
 
 mod legacy {
     #![allow(deprecated)]
+    use scylla_cql::frame::response::result::{ColumnSpec, Row};
+
     use super::*;
 
     /// Iterator over rows returned by paged queries.

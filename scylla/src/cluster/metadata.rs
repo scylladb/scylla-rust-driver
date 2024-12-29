@@ -16,6 +16,7 @@
 //!     - [CollectionType],
 //!
 
+use crate::client::pager::QueryPager;
 use crate::cluster::node::resolve_contact_points;
 use crate::deserialize::DeserializeOwnedRow;
 use crate::frame::response::event::Event;
@@ -24,7 +25,6 @@ use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::query::Query;
 use crate::transport::errors::{DbError, NewSessionError, QueryError};
-use crate::transport::iterator::QueryPager;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
@@ -994,7 +994,7 @@ where
 
     let fut = async move {
         let pager = make_keyspace_filtered_query_pager(conn, query_str, keyspaces_to_fetch).await?;
-        let stream: crate::transport::iterator::TypedRowStream<R> =
+        let stream: crate::client::pager::TypedRowStream<R> =
             pager.rows_stream::<R>().map_err(convert_typecheck_error)?;
         Ok::<_, QueryError>(stream)
     };

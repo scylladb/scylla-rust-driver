@@ -35,10 +35,10 @@ use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-use super::iterator::NextRowError;
 #[allow(deprecated)]
 use super::legacy_query_result::IntoLegacyQueryResultError;
 use super::query_result::{IntoRowsResultError, SingleRowError};
+use crate::client::pager::NextRowError;
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]

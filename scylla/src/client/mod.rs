@@ -12,8 +12,12 @@
 //!   to be sent in STARTUP message.
 //! - [ExecutionProfile](execution_profile::ExecutionProfile) - a profile that groups various configuration
 //!   options relevant when executing a request against the DB.
+//! - [QueryPager](pager::QueryPager) and [TypedRowStream](pager::TypedRowStream) - entities that provide
+//!   automated transparent paging of a query.
 
 pub mod execution_profile;
+
+pub mod pager;
 
 pub mod caching_session;
 

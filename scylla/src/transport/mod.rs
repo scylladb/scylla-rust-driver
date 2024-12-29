@@ -1,5 +1,4 @@
 pub mod errors;
-pub mod iterator;
 pub mod legacy_query_result;
 pub mod locator;
 pub mod partitioner;
