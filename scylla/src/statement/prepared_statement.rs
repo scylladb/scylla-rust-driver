@@ -19,8 +19,8 @@ use crate::execution::history::HistoryListener;
 use crate::execution::retries::RetryPolicy;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
+use crate::routing::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 use crate::routing::Token;
-use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 
 /// Represents a statement prepared on the server.
 ///

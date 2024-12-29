@@ -369,9 +369,9 @@ mod tests {
     use rand::Rng;
     use rand_pcg::Pcg32;
 
-    use crate::{test_utils::setup_tracing, transport::partitioner::PartitionerHasher};
+    use crate::test_utils::setup_tracing;
 
-    use super::{CDCPartitioner, Murmur3Partitioner, Partitioner};
+    use super::{CDCPartitioner, Murmur3Partitioner, Partitioner, PartitionerHasher};
 
     fn assert_correct_murmur3_hash(pk: &'static str, expected_hash: i64) {
         let hash = Murmur3Partitioner.hash_one(pk.as_bytes()).value();

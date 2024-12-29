@@ -63,9 +63,10 @@ use crate::execution::tracing::TracingInfo;
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, Token};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::transport::partitioner::PartitionerName;
+#[allow(deprecated)]
 use crate::transport::query_result::MaybeFirstRowError;
 use crate::transport::query_result::QueryResult;
 use crate::transport::query_result::RowsError;

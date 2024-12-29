@@ -1,3 +1,4 @@
+pub mod partitioner;
 mod sharding;
 
 pub(crate) use sharding::ShardInfo;

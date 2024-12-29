@@ -4,8 +4,8 @@ use crate::execution::errors::QueryError;
 use crate::execution::pager::LegacyRowIterator;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::routing::partitioner::PartitionerName;
 use crate::statement::{PagingState, PagingStateResponse};
-use crate::transport::partitioner::PartitionerName;
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
 use crate::QueryResult;
@@ -342,12 +342,12 @@ where
 #[cfg(test)]
 mod tests {
     use crate::query::Query;
+    use crate::routing::partitioner::PartitionerName;
     use crate::session::Session;
     use crate::statement::PagingState;
     use crate::test_utils::{
         create_new_session_builder, scylla_supports_tablets, setup_tracing, PerformDDL,
     };
-    use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
     #[allow(deprecated)]
     use crate::LegacyCachingSession;
