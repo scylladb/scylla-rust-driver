@@ -297,9 +297,9 @@ pub struct UserDefinedType {
 /// Represents a user defined type whose definition is missing from the metadata.
 #[derive(Clone, Debug, Error)]
 #[error("Missing UDT: {keyspace}, {name}")]
-pub struct MissingUserDefinedType {
-    pub name: String,
-    pub keyspace: String,
+struct MissingUserDefinedType {
+    name: String,
+    keyspace: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
