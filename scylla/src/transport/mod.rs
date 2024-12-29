@@ -17,7 +17,7 @@ pub mod query_result;
 pub mod retry_policy;
 pub mod speculative_execution;
 
-pub use crate::frame::{Authenticator, Compression};
+pub use crate::frame::Authenticator;
 pub use connection::SelfIdentity;
 pub use execution_profile::ExecutionProfile;
 pub use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};

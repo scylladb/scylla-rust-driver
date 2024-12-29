@@ -57,6 +57,7 @@ use crate::client::session::AddressTranslator;
 use crate::cloud::CloudConfig;
 
 use crate::batch::{Batch, BatchStatement};
+use crate::client::Compression;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self,
@@ -69,7 +70,6 @@ use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::transport::Compression;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";

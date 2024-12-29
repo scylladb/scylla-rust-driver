@@ -6,8 +6,8 @@ use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::frame::response::result::Row;
+use scylla::frame::Compression;
 use scylla::transport::query_result::IntoRowsResultError;
-use scylla::transport::Compression;
 use scylla::QueryResult;
 use std::env;
 
