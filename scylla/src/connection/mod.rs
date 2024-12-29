@@ -12,3 +12,5 @@ pub(crate) use connection::{
 
 pub use connection_pool::PoolSize;
 pub(crate) use connection_pool::{NodeConnectionPool, PoolConfig};
+
+pub use scylla_cql::frame::Compression;

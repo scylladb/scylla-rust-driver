@@ -41,6 +41,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+use crate::connection::Compression;
 use crate::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use crate::connection::SslConfig;
@@ -74,7 +75,6 @@ use crate::transport::query_result::QueryResult;
 use crate::transport::query_result::RowsError;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
-use crate::transport::Compression;
 use crate::transport::NodeRef;
 use crate::{
     batch::{Batch, BatchStatement},
@@ -1756,7 +1756,7 @@ where
     /// # Example
     /// ```rust
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
+    /// # use scylla::connection::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let session = SessionBuilder::new().known_node("127.0.0.1:9042").build().await?;
     /// session
