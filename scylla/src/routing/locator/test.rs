@@ -118,18 +118,18 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
     let keyspaces = [
         (
             KEYSPACE_SS_RF_2.into(),
-            Keyspace {
+            Ok(Keyspace {
                 strategy: Strategy::SimpleStrategy {
                     replication_factor: 2,
                 },
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
-            },
+            }),
         ),
         (
             KEYSPACE_NTS_RF_2.into(),
-            Keyspace {
+            Ok(Keyspace {
                 strategy: Strategy::NetworkTopologyStrategy {
                     datacenter_repfactors: [("eu".to_owned(), 2), ("us".to_owned(), 2)]
                         .into_iter()
@@ -138,11 +138,11 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
-            },
+            }),
         ),
         (
             KEYSPACE_NTS_RF_3.into(),
-            Keyspace {
+            Ok(Keyspace {
                 strategy: Strategy::NetworkTopologyStrategy {
                     datacenter_repfactors: [("eu".to_owned(), 3), ("us".to_owned(), 3)]
                         .into_iter()
@@ -151,7 +151,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
-            },
+            }),
         ),
     ]
     .iter()
@@ -199,7 +199,10 @@ pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, A
 
 pub(crate) fn create_locator(metadata: &Metadata) -> ReplicaLocator {
     let ring = create_ring(metadata);
-    let strategies = metadata.keyspaces.values().map(|ks| &ks.strategy);
+    let strategies = metadata
+        .keyspaces
+        .values()
+        .map(|ks| &ks.as_ref().unwrap().strategy);
 
     ReplicaLocator::new(ring, strategies, TabletsInfo::new())
 }
