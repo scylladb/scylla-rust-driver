@@ -262,7 +262,6 @@ pub mod response;
 pub mod routing;
 pub mod session;
 pub mod statement;
-pub mod transport;
 
 pub(crate) mod utils;
 
