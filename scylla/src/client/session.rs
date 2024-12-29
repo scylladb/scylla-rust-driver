@@ -35,10 +35,10 @@ use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::routing::partitioner::PartitionerName;
 use crate::routing::Shard;
 use crate::statement::StatementConfig;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 #[allow(deprecated)]
 use crate::LegacyQueryResult;

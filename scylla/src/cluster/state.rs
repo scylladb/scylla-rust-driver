@@ -2,11 +2,10 @@ use crate::errors::{BadQuery, QueryError};
 use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
 use crate::policies::host_filter::HostFilter;
 use crate::prepared_statement::TokenCalculationError;
+use crate::routing::partitioner::{calculate_token_for_partition_key, PartitionerName};
 use crate::routing::{Shard, Token};
 use crate::transport::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use crate::transport::locator::ReplicaLocator;
-use crate::transport::partitioner::calculate_token_for_partition_key;
-use crate::transport::partitioner::PartitionerName;
 
 use itertools::Itertools;
 use scylla_cql::frame::response::result::TableSpec;

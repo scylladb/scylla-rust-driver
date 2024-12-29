@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
 use bytes::BytesMut;
-use scylla::transport::partitioner::{calculate_token_for_partition_key, Murmur3Partitioner};
+use scylla::routing::partitioner::{calculate_token_for_partition_key, Murmur3Partitioner};
 use scylla_cql::{
     frame::{response::result::ColumnType, types},
     types::serialize::row::SerializedValues,
