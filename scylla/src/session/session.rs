@@ -5,6 +5,7 @@ use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 use crate::execution::driver_tracing::RequestSpan;
+use crate::response::{NonErrorQueryResponse, QueryResponse};
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
 
@@ -40,8 +41,8 @@ use crate::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 #[cfg(feature = "ssl")]
 use crate::connection::SslConfig;
 use crate::connection::{
-    AddressTranslator, Compression, Connection, ConnectionConfig, NonErrorQueryResponse,
-    PoolConfig, PoolSize, QueryResponse, SelfIdentity, VerifiedKeyspaceName,
+    AddressTranslator, Compression, Connection, ConnectionConfig, PoolConfig, PoolSize,
+    SelfIdentity, VerifiedKeyspaceName,
 };
 use crate::execution::errors::TracingProtocolError;
 use crate::execution::execution_profile::{

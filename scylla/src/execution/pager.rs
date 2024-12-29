@@ -32,7 +32,7 @@ use crate::transport::query_result::ColumnSpecs;
 
 use crate::cluster::ClusterData;
 use crate::cluster::NodeRef;
-use crate::connection::{Connection, NonErrorQueryResponse, QueryResponse};
+use crate::connection::Connection;
 use crate::execution::errors::ProtocolError;
 use crate::execution::history::{self, HistoryListener};
 use crate::execution::load_balancing::{self, RoutingInfo};
@@ -42,6 +42,7 @@ use crate::frame::response::{
     result,
     result::{ColumnSpec, Row},
 };
+use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;

@@ -12,10 +12,7 @@ pub use crate::execution::errors::TranslationError;
 use connection::ErrorReceiver;
 #[cfg(feature = "ssl")]
 pub(crate) use connection::SslConfig;
-pub(crate) use connection::{
-    open_connection, Connection, ConnectionConfig, NonErrorQueryResponse, QueryResponse,
-    VerifiedKeyspaceName,
-};
+pub(crate) use connection::{open_connection, Connection, ConnectionConfig, VerifiedKeyspaceName};
 pub use connection::{AddressTranslator, SelfIdentity};
 
 pub use connection_pool::PoolSize;
