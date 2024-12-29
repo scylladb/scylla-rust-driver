@@ -7,10 +7,12 @@
 //!     - retries,
 //!     - speculative execution,
 //! - cluster-side request tracing,
+//! - driver-side request tracing,
 //! - driver metrics,
 //! - request execution history,
 //! - error types.
 
+pub(crate) mod driver_tracing;
 pub mod errors;
 pub mod execution_profile;
 pub mod history;

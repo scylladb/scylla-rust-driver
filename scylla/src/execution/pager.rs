@@ -25,9 +25,9 @@ use tokio::sync::mpsc;
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
+use crate::execution::driver_tracing::RequestSpan;
 use crate::execution::errors::{QueryError, UserRequestError};
 use crate::execution::execution_profile::ExecutionProfileInner;
-use crate::session::RequestSpan;
 use crate::transport::query_result::ColumnSpecs;
 
 use crate::cluster::ClusterData;
