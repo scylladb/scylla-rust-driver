@@ -19,7 +19,7 @@ use scylla::query::Query;
 use scylla::serialize::row::SerializeRow;
 use scylla::{ExecutionProfile, QueryResult, Session};
 
-use scylla::transport::errors::QueryError;
+use scylla::execution::errors::QueryError;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule,
     ShardAwareness, TargetShard, WorkerError,

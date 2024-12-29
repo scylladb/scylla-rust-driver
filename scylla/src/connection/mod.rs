@@ -8,7 +8,7 @@
 mod connection;
 mod connection_pool;
 
-pub use crate::transport::errors::TranslationError;
+pub use crate::execution::errors::TranslationError;
 use connection::ErrorReceiver;
 #[cfg(feature = "ssl")]
 pub(crate) use connection::SslConfig;

@@ -9,8 +9,9 @@
 //! - cluster-side request tracing,
 //! - driver metrics,
 //! - request execution history,
-//! - TODO.
+//! - error types.
 
+pub mod errors;
 pub mod execution_profile;
 pub mod history;
 pub mod load_balancing;

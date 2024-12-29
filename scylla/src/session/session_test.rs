@@ -2,6 +2,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::cluster::metadata::Strategy::NetworkTopologyStrategy;
 use crate::cluster::metadata::{CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType};
 use crate::deserialize::DeserializeOwnedValue;
+use crate::execution::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::execution::retries::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::execution::tracing::TracingInfo;
 use crate::prepared_statement::PreparedStatement;
@@ -9,7 +10,6 @@ use crate::query::Query;
 use crate::routing::Token;
 use crate::session::Session;
 use crate::statement::Consistency;
-use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{
     calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
 };
@@ -2528,7 +2528,7 @@ async fn test_rate_limit_exceeded_exception() {
         }
     }
 
-    use crate::transport::errors::OperationType;
+    use crate::execution::errors::OperationType;
 
     match maybe_err.expect("Rate limit error didn't occur") {
         QueryError::DbError(DbError::RateLimitReached { op_type, .. }, _) => {

@@ -2,10 +2,10 @@
 use crate::cloud::set_ssl_config_for_scylla_cloud_host;
 
 use crate::connection::{self, Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName};
-use crate::routing::{Shard, ShardCount, Sharder};
-use crate::transport::errors::{
+use crate::execution::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, QueryError,
 };
+use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 

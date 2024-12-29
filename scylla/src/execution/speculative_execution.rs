@@ -6,8 +6,8 @@ use scylla_cql::frame::response::error::DbError;
 use std::{future::Future, sync::Arc, time::Duration};
 use tracing::{trace_span, warn, Instrument};
 
+use crate::execution::errors::QueryError;
 use crate::execution::metrics::Metrics;
-use crate::transport::errors::QueryError;
 
 /// Context is passed as an argument to `SpeculativeExecutionPolicy` methods
 pub struct Context {

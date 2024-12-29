@@ -1,6 +1,6 @@
 use scylla_cql::frame::response::error::{DbError, WriteType};
 
-use crate::transport::errors::QueryError;
+use crate::execution::errors::QueryError;
 
 use super::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 
@@ -135,12 +135,12 @@ impl RetrySession for DefaultRetrySession {
 #[cfg(test)]
 mod tests {
     use super::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy};
-    use crate::statement::Consistency;
-    use crate::test_utils::setup_tracing;
-    use crate::transport::errors::{
+    use crate::execution::errors::{
         BadQuery, BrokenConnectionErrorKind, ConnectionPoolError, ProtocolError, QueryError,
     };
-    use crate::transport::errors::{DbError, WriteType};
+    use crate::execution::errors::{DbError, WriteType};
+    use crate::statement::Consistency;
+    use crate::test_utils::setup_tracing;
     use bytes::Bytes;
 
     fn make_query_info(error: &QueryError, is_idempotent: bool) -> QueryInfo<'_> {

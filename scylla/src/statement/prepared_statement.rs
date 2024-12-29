@@ -13,13 +13,13 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::{PageSize, StatementConfig};
+use crate::execution::errors::{BadQuery, ProtocolError, QueryError};
 use crate::execution::execution_profile::ExecutionProfileHandle;
 use crate::execution::history::HistoryListener;
 use crate::execution::retries::RetryPolicy;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::routing::Token;
-use crate::transport::errors::{BadQuery, ProtocolError, QueryError};
 use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 
 /// Represents a statement prepared on the server.

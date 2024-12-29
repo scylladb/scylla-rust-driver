@@ -7,10 +7,10 @@ use crate::cloud::CloudConfig;
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
 
-use crate::execution::history::{self, HistoryListener};
-use crate::transport::errors::{
+use crate::execution::errors::{
     BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
 };
+use crate::execution::history::{self, HistoryListener};
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use futures::future::join_all;
@@ -48,6 +48,7 @@ use crate::connection::{
     AddressTranslator, Compression, Connection, ConnectionConfig, NonErrorQueryResponse,
     PoolConfig, PoolSize, QueryResponse, SelfIdentity, VerifiedKeyspaceName,
 };
+use crate::execution::errors::TracingProtocolError;
 use crate::execution::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
@@ -64,7 +65,6 @@ use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::transport::errors::TracingProtocolError;
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::MaybeFirstRowError;
 use crate::transport::query_result::QueryResult;

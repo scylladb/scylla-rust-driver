@@ -9,7 +9,7 @@ use crate::session::{
 
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
-use crate::transport::errors::NewSessionError;
+use crate::execution::errors::NewSessionError;
 #[cfg(feature = "cloud")]
 use crate::ExecutionProfile;
 

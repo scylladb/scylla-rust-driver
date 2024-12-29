@@ -1,11 +1,11 @@
 use crate::cluster::ClusterData;
 use crate::cluster::NodeRef;
 use crate::connection::Connection;
+use crate::execution::errors::QueryError;
 use crate::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::query::Query;
 use crate::routing::Shard;
 use crate::session::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use crate::transport::errors::QueryError;
 use crate::{CachingSession, ExecutionProfile, Session};
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
