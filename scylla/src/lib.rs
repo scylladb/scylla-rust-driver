@@ -260,6 +260,7 @@ pub mod connection;
 pub mod errors;
 pub mod observability;
 pub mod policies;
+pub mod response;
 pub mod routing;
 pub mod session;
 pub mod statement;
