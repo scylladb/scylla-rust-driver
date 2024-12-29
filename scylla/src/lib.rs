@@ -278,13 +278,13 @@ pub use frame::response::cql_to_rust::{self, FromRow};
 
 pub use execution::execution_profile::ExecutionProfile;
 #[allow(deprecated)]
+pub use response::legacy_query_result::LegacyQueryResult;
+pub use response::query_result::{QueryResult, QueryRowsResult};
+#[allow(deprecated)]
 pub use session::{
     CachingSession, GenericCachingSession, IntoTypedRows, LegacyCachingSession, LegacySession,
     Session, SessionBuilder, SessionConfig,
 };
-#[allow(deprecated)]
-pub use transport::legacy_query_result::LegacyQueryResult;
-pub use transport::query_result::{QueryResult, QueryRowsResult};
 
 #[cfg(feature = "cloud")]
 pub use session::CloudSessionBuilder;

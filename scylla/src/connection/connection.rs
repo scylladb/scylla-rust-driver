@@ -55,8 +55,8 @@ use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedP
 use crate::cluster::NodeAddr;
 use crate::execution::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
 use crate::execution::pager::QueryPager;
+use crate::response::query_result::QueryResult;
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
-use crate::transport::query_result::QueryResult;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::connection::Compression;

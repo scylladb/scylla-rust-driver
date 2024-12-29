@@ -35,7 +35,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
-use crate::transport::query_result::QueryRowsResult;
+use crate::response::query_result::QueryRowsResult;
 
 #[tokio::test]
 async fn test_connection_failure() {

@@ -28,7 +28,7 @@ use crate::deserialize::DeserializeOwnedRow;
 use crate::execution::driver_tracing::RequestSpan;
 use crate::execution::errors::{QueryError, UserRequestError};
 use crate::execution::execution_profile::ExecutionProfileInner;
-use crate::transport::query_result::ColumnSpecs;
+use crate::response::query_result::ColumnSpecs;
 
 use crate::cluster::ClusterData;
 use crate::cluster::NodeRef;
