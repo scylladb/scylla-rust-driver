@@ -25,17 +25,16 @@ use tokio::sync::mpsc;
 use super::errors::{QueryError, UserRequestError};
 use super::query_result::ColumnSpecs;
 use crate::client::execution_profile::ExecutionProfileInner;
-use crate::client::session::RequestSpan;
+use crate::cluster::{ClusterState, NodeRef};
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
-
-use crate::cluster::{ClusterState, NodeRef};
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row},
 };
 use crate::network::{Connection, NonErrorQueryResponse, QueryResponse};
+use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, RoutingInfo};

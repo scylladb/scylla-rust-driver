@@ -5,6 +5,7 @@
 //! - request execution history,
 //! - driver metrics.
 
+pub(crate) mod driver_tracing;
 pub mod history;
 pub mod metrics;
 pub mod tracing;
