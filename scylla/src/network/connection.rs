@@ -17,12 +17,13 @@ use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self,
     request::{self, batch, execute, query, register, SerializableRequest},
-    response::{event::Event, result, NonErrorResponse, Response, ResponseOpcode},
+    response::{event::Event, result, Response, ResponseOpcode},
     server_event_type::EventType,
     FrameParams, SerializedRequest,
 };
 use crate::policies::address_translator::AddressTranslator;
 use crate::query::Query;
+use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, QueryResponse};
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardInfo, Sharder};
 use crate::statement::prepared_statement::PreparedStatement;
@@ -206,105 +207,6 @@ struct TaskResponse {
     params: FrameParams,
     opcode: ResponseOpcode,
     body: Bytes,
-}
-
-pub(crate) struct QueryResponse {
-    pub(crate) response: Response,
-    pub(crate) tracing_id: Option<Uuid>,
-    pub(crate) warnings: Vec<String>,
-    #[allow(dead_code)] // This is not exposed to user (yet?)
-    pub(crate) custom_payload: Option<HashMap<String, Bytes>>,
-}
-
-// A QueryResponse in which response can not be Response::Error
-pub(crate) struct NonErrorQueryResponse {
-    pub(crate) response: NonErrorResponse,
-    pub(crate) tracing_id: Option<Uuid>,
-    pub(crate) warnings: Vec<String>,
-}
-
-impl QueryResponse {
-    pub(crate) fn into_non_error_query_response(
-        self,
-    ) -> Result<NonErrorQueryResponse, UserRequestError> {
-        Ok(NonErrorQueryResponse {
-            response: self.response.into_non_error_response()?,
-            tracing_id: self.tracing_id,
-            warnings: self.warnings,
-        })
-    }
-
-    pub(crate) fn into_query_result_and_paging_state(
-        self,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
-        self.into_non_error_query_response()?
-            .into_query_result_and_paging_state()
-    }
-
-    pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        self.into_non_error_query_response()?.into_query_result()
-    }
-}
-
-impl NonErrorQueryResponse {
-    pub(crate) fn as_set_keyspace(&self) -> Option<&result::SetKeyspace> {
-        match &self.response {
-            NonErrorResponse::Result(result::Result::SetKeyspace(sk)) => Some(sk),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn as_schema_change(&self) -> Option<&result::SchemaChange> {
-        match &self.response {
-            NonErrorResponse::Result(result::Result::SchemaChange(sc)) => Some(sc),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn into_query_result_and_paging_state(
-        self,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
-        let (raw_rows, paging_state_response) = match self.response {
-            NonErrorResponse::Result(result::Result::Rows((rs, paging_state_response))) => {
-                (Some(rs), paging_state_response)
-            }
-            NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages),
-            _ => {
-                return Err(UserRequestError::UnexpectedResponse(
-                    self.response.to_response_kind(),
-                ))
-            }
-        };
-
-        Ok((
-            QueryResult::new(raw_rows, self.tracing_id, self.warnings),
-            paging_state_response,
-        ))
-    }
-
-    pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        let (result, paging_state) = self.into_query_result_and_paging_state()?;
-
-        if !paging_state.finished() {
-            error!(
-                "Internal driver API misuse or a server bug: nonfinished paging state\
-                would be discarded by `NonErrorQueryResponse::into_query_result`"
-            );
-            return Err(ProtocolError::NonfinishedPagingState.into());
-        }
-
-        Ok(result)
-    }
-}
-
-pub(crate) enum NonErrorStartupResponse {
-    Ready,
-    Authenticate(response::authenticate::Authenticate),
-}
-
-pub(crate) enum NonErrorAuthResponse {
-    AuthChallenge(response::authenticate::AuthChallenge),
-    AuthSuccess(response::authenticate::AuthSuccess),
 }
 
 #[cfg(feature = "ssl")]
