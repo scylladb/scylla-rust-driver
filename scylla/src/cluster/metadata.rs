@@ -87,7 +87,7 @@ pub(crate) struct MetadataReader {
 /// Describes all metadata retrieved from the cluster
 pub(crate) struct Metadata {
     pub(crate) peers: Vec<Peer>,
-    pub(crate) keyspaces: HashMap<String, Keyspace>,
+    pub(crate) keyspaces: HashMap<String, Result<Keyspace, MissingUserDefinedType>>,
 }
 
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
@@ -297,7 +297,7 @@ pub struct UserDefinedType {
 /// Represents a user defined type whose definition is missing from the metadata.
 #[derive(Clone, Debug, Error)]
 #[error("Missing UDT: {keyspace}, {name}")]
-struct MissingUserDefinedType {
+pub(crate) struct MissingUserDefinedType {
     name: String,
     keyspace: String,
 }
@@ -799,17 +799,6 @@ async fn query_metadata(
     if peers.iter().all(|peer| peer.tokens.is_empty()) {
         return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists).into());
     }
-
-    let keyspaces = keyspaces
-        .into_iter()
-        .filter_map(|(ks_name, ks)| match ks {
-            Ok(ks) => Some((ks_name, ks)),
-            Err(e) => {
-                warn!("Error while processing keyspace \"{ks_name}\": {e}");
-                None
-            }
-        })
-        .collect();
 
     Ok(Metadata { peers, keyspaces })
 }
