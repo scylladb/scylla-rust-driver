@@ -21,8 +21,8 @@ return a `QueryResult` with rows represented as `Option<Vec<Row>>`.
 
 ## Parsing using convenience methods
 
-By calling [`QueryResult::into_rows_result`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryResult.html#method.into_rows_result),
-one can obtain  [`QueryRowsResult`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryRowsResult.html).
+By calling [`QueryResult::into_rows_result`](https://docs.rs/scylla/latest/scylla/response/query_result/struct.QueryResult.html#method.into_rows_result),
+one can obtain  [`QueryRowsResult`](https://docs.rs/scylla/latest/scylla/response/query_result/struct.QueryRowsResult.html).
 `QueryRowsResult` provides convenience methods for parsing rows.
 Here are a few of them:
 * `rows::<RowT>()` - returns the rows parsed as the given type
@@ -30,7 +30,7 @@ Here are a few of them:
 * `first_row::<RowT>()` - returns the first received row; fails if there are no rows
 * `single_row::<RowT>()` - same as `first_row`, but fails when there is more than one row
 
-Additionally, [`QueryResult`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryResult.html) has a method `result_not_rows()`, which ensures that query response was not `rows` and thus helps avoid bugs.
+Additionally, [`QueryResult`](https://docs.rs/scylla/latest/scylla/response/query_result/struct.QueryResult.html) has a method `result_not_rows()`, which ensures that query response was not `rows` and thus helps avoid bugs.
 
 ```rust
 # extern crate scylla;
@@ -59,8 +59,8 @@ session.query_unpaged("INSERT INTO ks.tab (a) VALUES (0)", &[]).await?.result_no
 # Ok(())
 # }
 ```
-For more see [`QueryResult`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryResult.html)
-and [`QueryRowsResult`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryRowsResult.html)
+For more see [`QueryResult`](https://docs.rs/scylla/latest/scylla/response/query_result/struct.QueryResult.html)
+and [`QueryRowsResult`](https://docs.rs/scylla/latest/scylla/response/query_result/struct.QueryRowsResult.html)
 
 ### `NULL` values
 `NULL` values will return an error when parsed as a Rust type. 

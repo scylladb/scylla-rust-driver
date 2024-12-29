@@ -38,9 +38,9 @@ use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
+use crate::response::query_result::ColumnSpecs;
 use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
-use crate::transport::query_result::ColumnSpecs;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 

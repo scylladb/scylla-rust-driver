@@ -32,12 +32,12 @@ use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::Shard;
 use crate::statement::StatementConfig;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::transport::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
 use arc_swap::ArcSwapOption;
@@ -63,7 +63,7 @@ use uuid::Uuid;
 // This re-export is to preserve backward compatibility.
 // Those items are no longer here not to clutter session.rs with legacy things.
 #[allow(deprecated)]
-pub use crate::transport::legacy_query_result::{IntoTypedRows, TypedRowIter};
+pub use crate::response::legacy_query_result::{IntoTypedRows, TypedRowIter};
 
 mod sealed {
     // This is a sealed trait - its whole purpose is to be unnameable.

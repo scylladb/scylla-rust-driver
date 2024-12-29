@@ -192,7 +192,7 @@ impl LegacyQueryResult {
     }
 }
 
-/// An error that occurred during [`QueryResult`](crate::transport::query_result::QueryResult)
+/// An error that occurred during [`QueryResult`](crate::response::query_result::QueryResult)
 /// to [`LegacyQueryResult`] conversion.
 #[deprecated(
     since = "0.15.1",

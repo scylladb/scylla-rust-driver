@@ -280,5 +280,5 @@ pub use statement::query;
 pub use frame::response::cql_to_rust::{self, FromRow};
 
 #[allow(deprecated)]
-pub use transport::legacy_query_result::LegacyQueryResult;
-pub use transport::query_result::{QueryResult, QueryRowsResult};
+pub use response::legacy_query_result::LegacyQueryResult;
+pub use response::query_result::{QueryResult, QueryRowsResult};

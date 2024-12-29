@@ -38,8 +38,8 @@ use crate::{authentication::AuthError, frame::response};
 #[allow(deprecated)]
 use crate::client::pager::NextRowError;
 #[allow(deprecated)]
-use crate::transport::legacy_query_result::IntoLegacyQueryResultError;
-use crate::transport::query_result::{IntoRowsResultError, SingleRowError};
+use crate::response::legacy_query_result::IntoLegacyQueryResultError;
+use crate::response::query_result::{IntoRowsResultError, SingleRowError};
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
@@ -115,8 +115,8 @@ pub enum QueryError {
     #[error("An error occurred during async iteration over rows of result: {0}")]
     NextRowError(#[from] NextRowError),
 
-    /// Failed to convert [`QueryResult`][crate::transport::query_result::QueryResult]
-    /// into [`LegacyQueryResult`][crate::transport::legacy_query_result::LegacyQueryResult].
+    /// Failed to convert [`QueryResult`][crate::response::query_result::QueryResult]
+    /// into [`LegacyQueryResult`][crate::response::legacy_query_result::LegacyQueryResult].
     #[deprecated(
         since = "0.15.1",
         note = "Legacy deserialization API is inefficient and is going to be removed soon"
@@ -294,8 +294,8 @@ pub enum NewSessionError {
     #[error("An error occurred during async iteration over rows of result: {0}")]
     NextRowError(#[from] NextRowError),
 
-    /// Failed to convert [`QueryResult`][crate::transport::query_result::QueryResult]
-    /// into [`LegacyQueryResult`][crate::transport::legacy_query_result::LegacyQueryResult].
+    /// Failed to convert [`QueryResult`][crate::response::query_result::QueryResult]
+    /// into [`LegacyQueryResult`][crate::response::legacy_query_result::LegacyQueryResult].
     #[deprecated(
         since = "0.15.1",
         note = "Legacy deserialization API is inefficient and is going to be removed soon"

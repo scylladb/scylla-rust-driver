@@ -7,7 +7,7 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::frame::response::result::Row;
 use scylla::frame::Compression;
-use scylla::transport::query_result::IntoRowsResultError;
+use scylla::response::query_result::IntoRowsResultError;
 use scylla::QueryResult;
 use std::env;
 
