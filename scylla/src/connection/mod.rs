@@ -13,9 +13,7 @@ mod connection;
 pub use connection::SelfIdentity;
 #[cfg(feature = "ssl")]
 pub(crate) use connection::SslConfig;
-pub(crate) use connection::{
-    Connection, ConnectionConfig, NonErrorQueryResponse, QueryResponse, VerifiedKeyspaceName,
-};
+pub(crate) use connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 
 mod connection_pool;
 

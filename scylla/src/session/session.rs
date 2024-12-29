@@ -30,8 +30,8 @@ use crate::cluster::{Cluster, ClusterData, ClusterNeatDebug, KnownNode, NodeRef}
 #[cfg(feature = "ssl")]
 use crate::connection::SslConfig;
 use crate::connection::{
-    Compression, Connection, ConnectionConfig, NonErrorQueryResponse, PoolConfig, PoolSize,
-    QueryResponse, SelfIdentity, VerifiedKeyspaceName,
+    Compression, Connection, ConnectionConfig, PoolConfig, PoolSize, SelfIdentity,
+    VerifiedKeyspaceName,
 };
 use crate::errors::{
     BadQuery, NewSessionError, ProtocolError, QueryError, TracingProtocolError, UserRequestError,
@@ -49,6 +49,7 @@ use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::Shard;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};

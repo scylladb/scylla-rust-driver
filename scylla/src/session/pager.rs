@@ -24,7 +24,7 @@ use tokio::sync::mpsc;
 
 use crate::cluster::ClusterData;
 use crate::cluster::NodeRef;
-use crate::connection::{Connection, NonErrorQueryResponse, QueryResponse};
+use crate::connection::Connection;
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
@@ -36,6 +36,7 @@ use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
+use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::session::execution_profile::ExecutionProfileInner;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::query_result::ColumnSpecs;
