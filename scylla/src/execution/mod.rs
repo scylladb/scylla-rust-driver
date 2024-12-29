@@ -1,5 +1,6 @@
 //! This module holds entities that control, customize, trace, and measure statement execution.
 //! This includes:
+//! - automated query pager,
 //! - execution profiles,
 //! - policies:
 //!     - load balancing,
@@ -14,6 +15,7 @@ pub mod execution_profile;
 pub mod history;
 pub mod load_balancing;
 pub(crate) mod metrics;
+pub mod pager;
 pub mod retries;
 pub mod speculative_execution;
 pub mod tracing;

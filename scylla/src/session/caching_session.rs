@@ -1,10 +1,10 @@
 use crate::batch::{Batch, BatchStatement};
+#[allow(deprecated)]
+use crate::execution::pager::LegacyRowIterator;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::statement::{PagingState, PagingStateResponse};
 use crate::transport::errors::QueryError;
-#[allow(deprecated)]
-use crate::transport::iterator::LegacyRowIterator;
 use crate::transport::partitioner::PartitionerName;
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
@@ -20,11 +20,11 @@ use std::fmt;
 use std::hash::BuildHasher;
 use std::sync::Arc;
 
+use crate::execution::pager::QueryPager;
 #[allow(deprecated)]
 use crate::session::{
     CurrentDeserializationApi, DeserializationApiKind, GenericSession, LegacyDeserializationApi,
 };
-use crate::transport::iterator::QueryPager;
 
 /// Contains just the parts of a prepared statement that were returned
 /// from the database. All remaining parts (query string, page size,

@@ -22,13 +22,13 @@ use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use super::errors::{QueryError, UserRequestError};
-use super::query_result::ColumnSpecs;
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::execution::execution_profile::ExecutionProfileInner;
 use crate::session::RequestSpan;
+use crate::transport::errors::{QueryError, UserRequestError};
+use crate::transport::query_result::ColumnSpecs;
 
 use crate::cluster::ClusterData;
 use crate::cluster::NodeRef;
