@@ -1000,9 +1000,10 @@ async fn query_keyspaces(
 
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
         let udts = query_user_defined_types(conn, keyspaces_to_fetch).await?;
+        let mut tables_schema = query_tables_schema(conn, keyspaces_to_fetch, &udts).await?;
         (
-            query_tables(conn, keyspaces_to_fetch, &udts).await?,
-            query_views(conn, keyspaces_to_fetch, &udts).await?,
+            query_tables(conn, keyspaces_to_fetch, &mut tables_schema).await?,
+            query_views(conn, keyspaces_to_fetch, &mut tables_schema).await?,
             udts,
         )
     } else {
@@ -1401,7 +1402,7 @@ mod toposort_tests {
 async fn query_tables(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
+    tables: &mut HashMap<(String, String), Table>,
 ) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
     let rows = query_filter_keyspace_name::<(String, String)>(
         conn,
@@ -1410,7 +1411,6 @@ async fn query_tables(
         |err| MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err)),
     );
     let mut result = HashMap::new();
-    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
 
     rows.map(|row_result| {
         let keyspace_and_table_name = row_result?;
@@ -1438,7 +1438,7 @@ async fn query_tables(
 async fn query_views(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
+    tables: &mut HashMap<(String, String), Table>,
 ) -> Result<HashMap<String, HashMap<String, MaterializedView>>, QueryError> {
     let rows = query_filter_keyspace_name::<(String, String, String)>(
         conn,
@@ -1448,7 +1448,6 @@ async fn query_views(
     );
 
     let mut result = HashMap::new();
-    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
 
     rows.map(|row_result| {
         let (keyspace_name, view_name, base_table_name) = row_result?;
