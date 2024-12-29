@@ -40,6 +40,7 @@ use crate::connection::{
 use crate::frame::response::result;
 use crate::observability::history;
 use crate::observability::history::HistoryListener;
+use crate::observability::metrics::Metrics;
 use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
@@ -62,7 +63,6 @@ use crate::transport::errors::{
 use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
-use crate::transport::metrics::Metrics;
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::MaybeFirstRowError;
 use crate::transport::query_result::QueryResult;

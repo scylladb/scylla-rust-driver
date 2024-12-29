@@ -276,6 +276,7 @@ pub use statement::query;
 #[allow(deprecated)]
 pub use frame::response::cql_to_rust::{self, FromRow};
 
+pub use observability::metrics::{Metrics, MetricsError};
 pub use session::execution_profile::{self, ExecutionProfile};
 
 #[cfg(feature = "cloud")]
@@ -288,5 +289,3 @@ pub use session::{
 #[allow(deprecated)]
 pub use transport::legacy_query_result::LegacyQueryResult;
 pub use transport::query_result::{QueryResult, QueryRowsResult};
-
-pub use transport::metrics::{Metrics, MetricsError};
