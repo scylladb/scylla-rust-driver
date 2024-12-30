@@ -33,7 +33,7 @@ use crate::utils::pretty::{CommaSeparatedDisplayer, DisplayUsingDebug};
 
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
-use futures::Stream;
+use futures::{Stream, TryFutureExt};
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 use scylla_macros::DeserializeRow;
@@ -686,7 +686,8 @@ async fn query_metadata(
     fetch_schema: bool,
 ) -> Result<Metadata, QueryError> {
     let peers_query = query_peers(conn, connect_port);
-    let keyspaces_query = query_keyspaces(conn, keyspace_to_fetch, fetch_schema);
+    let keyspaces_query =
+        query_keyspaces(conn, keyspace_to_fetch, fetch_schema).map_err(QueryError::MetadataError);
 
     let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
 
@@ -915,7 +916,7 @@ async fn query_keyspaces(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     fetch_schema: bool,
-) -> Result<PerKeyspaceResult<Keyspace, MissingUserDefinedType>, QueryError> {
+) -> Result<PerKeyspaceResult<Keyspace, MissingUserDefinedType>, MetadataError> {
     let rows = query_filter_keyspace_name::<(String, HashMap<String, String>)>(
         conn,
         "select keyspace_name, replication from system_schema.keyspaces",
@@ -946,13 +947,13 @@ async fn query_keyspaces(
     };
 
     rows.map(|row_result| {
-        let (keyspace_name, strategy_map) = row_result.map_err(MetadataError::FetchError)?;
+        let (keyspace_name, strategy_map) = row_result?;
 
         let strategy: Strategy = strategy_from_string_map(strategy_map).map_err(|error| {
-            MetadataError::Keyspaces(KeyspacesMetadataError::Strategy {
+            KeyspacesMetadataError::Strategy {
                 keyspace: keyspace_name.clone(),
                 error,
-            })
+            }
         })?;
         let tables = all_tables
             .remove(&keyspace_name)
@@ -965,7 +966,7 @@ async fn query_keyspaces(
             .unwrap_or_else(|| Ok(HashMap::new()));
 
         // As you can notice, in this file we generally operate on two layers of errors:
-        // - Outer (QueryError) if something went wrong with querying the cluster.
+        // - Outer (MetadataError) if something went wrong with querying the cluster.
         // - Inner (currently MissingUserDefinedType, possibly other variants in the future) if the fetched metadata
         // turned out to not be fully consistent.
         // If there is an inner error, we want to drop metadata for the whole keyspace.
