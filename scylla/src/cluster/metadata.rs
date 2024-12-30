@@ -16,7 +16,7 @@
 //!     - [CollectionType],
 //!
 
-use crate::client::pager::QueryPager;
+use crate::client::pager::{NextPageError, NextRowError, QueryPager};
 use crate::cluster::node::resolve_contact_points;
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{DbError, NewSessionError, QueryError, RequestAttemptError};
@@ -52,7 +52,7 @@ use uuid::Uuid;
 use crate::cluster::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 use crate::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
-    ProtocolError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
+    ProtocolError, RequestError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
 };
 
 type PerKeyspace<T> = HashMap<String, T>;
@@ -1874,7 +1874,15 @@ async fn query_table_partitioners(
         // that we are only interested in the ones resulting from non-existent table
         // system_schema.scylla_tables.
         // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
-        Err(QueryError::DbError(DbError::Invalid, _)) => Ok(HashMap::new()),
+        // FIXME 2: The specific error we expect here should appear in QueryError::NextRowError. Currently
+        // leaving match against both variants. This will be fixed, once `MetadataError` is further adjusted
+        // in a follow-up PR. The goal is to return MetadataError from all functions related to metadata fetch.
+        Err(QueryError::DbError(DbError::Invalid, _))
+        | Err(QueryError::NextRowError(NextRowError::NextPageError(
+            NextPageError::RequestFailure(RequestError::LastAttemptError(
+                RequestAttemptError::DbError(DbError::Invalid, _),
+            )),
+        ))) => Ok(HashMap::new()),
         result => result,
     }
 }
