@@ -33,7 +33,7 @@ use crate::utils::pretty::{CommaSeparatedDisplayer, DisplayUsingDebug};
 
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
-use futures::{Stream, TryFutureExt};
+use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 use scylla_macros::DeserializeRow;
@@ -686,8 +686,7 @@ async fn query_metadata(
     fetch_schema: bool,
 ) -> Result<Metadata, QueryError> {
     let peers_query = query_peers(conn, connect_port);
-    let keyspaces_query =
-        query_keyspaces(conn, keyspace_to_fetch, fetch_schema).map_err(QueryError::MetadataError);
+    let keyspaces_query = query_keyspaces(conn, keyspace_to_fetch, fetch_schema);
 
     let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
 
@@ -733,7 +732,10 @@ impl NodeInfoSource {
 
 const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
-async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
+async fn query_peers(
+    conn: &Arc<Connection>,
+    connect_port: u16,
+) -> Result<Vec<Peer>, MetadataError> {
     let mut peers_query =
         Query::new("select host_id, rpc_address, data_center, rack, tokens from system.peers");
     peers_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
@@ -742,14 +744,17 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
         .query_iter(peers_query)
         .map(|pager_res| {
             let pager = pager_res?;
-            let rows_stream = pager.rows_stream::<NodeInfoRow>().map_err(|err| {
-                MetadataError::Peers(PeersMetadataError::SystemPeersInvalidColumnType(err))
-            })?;
-            Ok::<_, QueryError>(rows_stream)
+            let rows_stream = pager.rows_stream::<NodeInfoRow>()?;
+            Ok::<_, MetadataFetchErrorKind>(rows_stream)
         })
         .into_stream()
-        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
+        .map(|result| result.map(|stream| stream.map_err(MetadataFetchErrorKind::NextRowError)))
         .try_flatten()
+        // Add table context to the error.
+        .map_err(|error| MetadataFetchError {
+            error,
+            table: "system.peers",
+        })
         .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
     let mut local_query =
@@ -760,14 +765,17 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
         .query_iter(local_query)
         .map(|pager_res| {
             let pager = pager_res?;
-            let rows_stream = pager.rows_stream::<NodeInfoRow>().map_err(|err| {
-                MetadataError::Peers(PeersMetadataError::SystemLocalInvalidColumnType(err))
-            })?;
-            Ok::<_, QueryError>(rows_stream)
+            let rows_stream = pager.rows_stream::<NodeInfoRow>()?;
+            Ok::<_, MetadataFetchErrorKind>(rows_stream)
         })
         .into_stream()
-        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
+        .map(|result| result.map(|stream| stream.map_err(MetadataFetchErrorKind::NextRowError)))
         .try_flatten()
+        // Add table context to the error.
+        .map_err(|error| MetadataFetchError {
+            error,
+            table: "system.local",
+        })
         .and_then(|row_result| future::ok((NodeInfoSource::Local, row_result)));
 
     let untranslated_rows = stream::select(peers_query_stream, local_query_stream);
