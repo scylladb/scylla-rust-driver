@@ -102,9 +102,16 @@ pub enum QueryError {
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
-    /// Client timeout occurred before any response arrived
-    #[error("Request timeout: {0}")]
-    RequestTimeout(String),
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+        "Request execution exceeded a client timeout {}ms",
+        std::time::Duration::as_millis(.0)
+    )]
+    RequestTimeout(std::time::Duration),
+
+    /// Schema agreement timed out.
+    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
+    SchemaAgreementTimeout(std::time::Duration),
 
     // TODO: This should not belong here, but it requires changes to error types
     // returned in async iterator API. This should be handled in separate PR.
@@ -138,39 +145,6 @@ impl From<SerializationError> for QueryError {
     }
 }
 
-impl From<tokio::time::error::Elapsed> for QueryError {
-    fn from(timer_error: tokio::time::error::Elapsed) -> QueryError {
-        QueryError::RequestTimeout(format!("{}", timer_error))
-    }
-}
-
-impl From<UserRequestError> for QueryError {
-    fn from(value: UserRequestError) -> Self {
-        match value {
-            UserRequestError::CqlRequestSerialization(e) => e.into(),
-            UserRequestError::DbError(err, msg) => QueryError::DbError(err, msg),
-            UserRequestError::CqlResultParseError(e) => e.into(),
-            UserRequestError::CqlErrorParseError(e) => e.into(),
-            UserRequestError::BrokenConnectionError(e) => e.into(),
-            UserRequestError::UnexpectedResponse(response) => {
-                ProtocolError::UnexpectedResponse(response).into()
-            }
-            UserRequestError::BodyExtensionsParseError(e) => e.into(),
-            UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
-            UserRequestError::RepreparedIdChanged {
-                statement,
-                expected_id,
-                reprepared_id,
-            } => ProtocolError::RepreparedIdChanged {
-                statement,
-                expected_id,
-                reprepared_id,
-            }
-            .into(),
-        }
-    }
-}
-
 impl From<QueryError> for NewSessionError {
     fn from(query_error: QueryError) -> NewSessionError {
         match query_error {
@@ -187,7 +161,8 @@ impl From<QueryError> for NewSessionError {
             QueryError::TimeoutError => NewSessionError::TimeoutError,
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
-            QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
+            QueryError::RequestTimeout(dur) => NewSessionError::RequestTimeout(dur),
+            QueryError::SchemaAgreementTimeout(dur) => NewSessionError::SchemaAgreementTimeout(dur),
             #[allow(deprecated)]
             QueryError::IntoLegacyQueryResultError(e) => {
                 NewSessionError::IntoLegacyQueryResultError(e)
@@ -280,10 +255,16 @@ pub enum NewSessionError {
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
-    /// Client timeout occurred before a response arrived for some query
-    /// during `Session` creation.
-    #[error("Client timeout: {0}")]
-    RequestTimeout(String),
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+        "Request execution exceeded a client timeout {}ms",
+        std::time::Duration::as_millis(.0)
+    )]
+    RequestTimeout(std::time::Duration),
+
+    /// Schema agreement timed out.
+    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
+    SchemaAgreementTimeout(std::time::Duration),
 
     // TODO: This should not belong here, but it requires changes to error types
     // returned in async iterator API. This should be handled in separate PR.
@@ -897,33 +878,126 @@ pub enum CqlEventHandlingError {
     SendError,
 }
 
-/// An error type that occurred when executing one of:
-/// - QUERY
-/// - PREPARE
-/// - EXECUTE
-/// - BATCH
+/// Failed to run a user request. Possibly because of a timeout.
 ///
-/// requests.
-#[derive(Error, Debug)]
-pub(crate) enum UserRequestError {
+/// This error occurs if request timed out, or it failed for some
+/// other reason before the timeout - see [`UserRequestError`].
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum TimeoutableRequestError {
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+            "Request execution exceeded a client timeout {}ms",
+            std::time::Duration::as_millis(.0)
+        )]
+    RequestTimeout(std::time::Duration),
+
+    /// Request failed before it timed out.
+    #[error(transparent)]
+    RequestFailure(#[from] UserRequestError),
+}
+
+impl TimeoutableRequestError {
+    pub fn into_query_error(self) -> QueryError {
+        match self {
+            TimeoutableRequestError::RequestTimeout(dur) => QueryError::RequestTimeout(dur),
+            TimeoutableRequestError::RequestFailure(err) => err.into_query_error(),
+        }
+    }
+}
+
+/// An error that occurred during execution of
+/// - `QUERY`
+/// - `PREPARE`
+/// - `EXECUTE`
+/// - `BATCH`
+///
+/// request. This error represents a definite request failure, unlike
+/// [`UserRequestAttemptError`] which represents a failure of a single
+/// attempt.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum UserRequestError {
+    /// Load balancing policy returned an empty plan.
+    #[error(
+            "Load balancing policy returned an empty plan.\
+            First thing to investigate should be the logic of custom LBP implementation.\
+            If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
+            then this is most probably a driver bug!"
+        )]
+    EmptyPlan,
+
+    /// Selected node's connection pool is in invalid state.
+    #[error("No connections in the pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
+    /// Failed to execute request.
+    #[error(transparent)]
+    LastAttemptError(#[from] UserRequestAttemptError),
+}
+
+impl UserRequestError {
+    pub fn into_query_error(self) -> QueryError {
+        match self {
+            UserRequestError::EmptyPlan => QueryError::EmptyPlan,
+            UserRequestError::ConnectionPoolError(e) => e.into(),
+            UserRequestError::LastAttemptError(e) => e.into_query_error(),
+        }
+    }
+}
+
+/// An error that occurred during a single attempt of:
+/// - `QUERY`
+/// - `PREPARE`
+/// - `EXECUTE`
+/// - `BATCH`
+///
+/// request. The retry decision is made based
+/// on this error.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum UserRequestAttemptError {
+    /// Failed to serialize query parameters. This error occurs, when user executes
+    /// a CQL `QUERY` request with non-empty parameter's value list and the serialization
+    /// of provided values fails during statement preparation.
+    #[error("Failed to serialize query parameters: {0}")]
+    SerializationError(#[from] SerializationError),
+
+    /// Failed to serialize CQL request.
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
-    #[error("Database returned an error: {0}, Error message: {1}")]
-    DbError(DbError, String),
+
+    /// Driver was unable to allocate a stream id to execute a query on.
+    #[error("Unable to allocate stream id")]
+    UnableToAllocStreamId,
+
+    /// A connection has been broken during query execution.
+    #[error(transparent)]
+    BrokenConnectionError(#[from] BrokenConnectionError),
+
+    /// Failed to deserialize frame body extensions.
+    #[error(transparent)]
+    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
+
+    /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
     CqlResultParseError(#[from] CqlResultParseError),
+
+    /// Received an ERROR server response, but failed to deserialize it.
     #[error("Failed to deserialize ERROR response: {0}")]
     CqlErrorParseError(#[from] CqlErrorParseError),
+
+    /// Database sent a response containing some error with a message
+    #[error("Database returned an error: {0}, Error message: {1}")]
+    DbError(DbError, String),
+
+    /// Received an unexpected response from the server.
     #[error(
         "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
     )]
     UnexpectedResponse(CqlResponseKind),
-    #[error(transparent)]
-    BrokenConnectionError(#[from] BrokenConnectionError),
-    #[error(transparent)]
-    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
-    #[error("Unable to allocate stream id")]
-    UnableToAllocStreamId,
+
+    /// Prepared statement id changed after repreparation.
     #[error(
         "Prepared statement id changed after repreparation; md5 sum (computed from the query string) should stay the same;\
         Statement: \"{statement}\"; expected id: {expected_id:?}; reprepared id: {reprepared_id:?}"
@@ -933,15 +1007,52 @@ pub(crate) enum UserRequestError {
         expected_id: Vec<u8>,
         reprepared_id: Vec<u8>,
     },
+
+    /// Driver tried to reprepare a statement in the batch, but the reprepared
+    /// statement's id is not included in the batch.
+    #[error("Reprepared statement's id does not exist in the batch.")]
+    RepreparedIdMissingInBatch,
 }
 
-impl From<response::error::Error> for UserRequestError {
-    fn from(value: response::error::Error) -> Self {
-        UserRequestError::DbError(value.error, value.reason)
+impl UserRequestAttemptError {
+    /// Converts the error to [`QueryError`].
+    pub fn into_query_error(self) -> QueryError {
+        match self {
+            UserRequestAttemptError::CqlRequestSerialization(e) => e.into(),
+            UserRequestAttemptError::DbError(err, msg) => QueryError::DbError(err, msg),
+            UserRequestAttemptError::CqlResultParseError(e) => e.into(),
+            UserRequestAttemptError::CqlErrorParseError(e) => e.into(),
+            UserRequestAttemptError::BrokenConnectionError(e) => e.into(),
+            UserRequestAttemptError::UnexpectedResponse(response) => {
+                ProtocolError::UnexpectedResponse(response).into()
+            }
+            UserRequestAttemptError::BodyExtensionsParseError(e) => e.into(),
+            UserRequestAttemptError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
+            UserRequestAttemptError::RepreparedIdChanged {
+                statement,
+                expected_id,
+                reprepared_id,
+            } => ProtocolError::RepreparedIdChanged {
+                statement,
+                expected_id,
+                reprepared_id,
+            }
+            .into(),
+            UserRequestAttemptError::RepreparedIdMissingInBatch => {
+                ProtocolError::RepreparedIdMissingInBatch.into()
+            }
+            UserRequestAttemptError::SerializationError(e) => e.into(),
+        }
     }
 }
 
-impl From<RequestError> for UserRequestError {
+impl From<response::error::Error> for UserRequestAttemptError {
+    fn from(value: response::error::Error) -> Self {
+        UserRequestAttemptError::DbError(value.error, value.reason)
+    }
+}
+
+impl From<RequestError> for UserRequestAttemptError {
     fn from(value: RequestError) -> Self {
         match value {
             RequestError::CqlRequestSerialization(e) => e.into(),
@@ -951,10 +1062,10 @@ impl From<RequestError> for UserRequestError {
                 // other response, treat it as unexpected response.
                 CqlResponseParseError::CqlErrorParseError(e) => e.into(),
                 CqlResponseParseError::CqlResultParseError(e) => e.into(),
-                _ => UserRequestError::UnexpectedResponse(e.to_response_kind()),
+                _ => UserRequestAttemptError::UnexpectedResponse(e.to_response_kind()),
             },
             RequestError::BrokenConnection(e) => e.into(),
-            RequestError::UnableToAllocStreamId => UserRequestError::UnableToAllocStreamId,
+            RequestError::UnableToAllocStreamId => UserRequestAttemptError::UnableToAllocStreamId,
         }
     }
 }
