@@ -444,9 +444,17 @@ pub enum MetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum PeersMetadataError {
+    /// Failed to obtain next row from response to system.peers query.
+    #[error("Failed to obtain next row from response to system.peers query: {0}")]
+    SystemPeersNextRowError(NextRowError),
+
     /// system.peers has invalid column type.
     #[error("system.peers has invalid column type: {0}")]
     SystemPeersInvalidColumnType(TypeCheckError),
+
+    /// Failed to obtain next row from response to system.local query.
+    #[error("Failed to obtain next row from response to system.local query: {0}")]
+    SystemLocalNextRowError(NextRowError),
 
     /// system.local has invalid column type.
     #[error("system.local has invalid column type: {0}")]
