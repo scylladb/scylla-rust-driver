@@ -231,14 +231,14 @@ mod tests {
         let mut metadata = mock_metadata_for_token_aware_tests();
         metadata.keyspaces = [(
             "SimpleStrategy{rf=2}".into(),
-            Keyspace {
+            Ok(Keyspace {
                 strategy: Strategy::SimpleStrategy {
                     replication_factor: 2,
                 },
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
-            },
+            }),
         )]
         .iter()
         .cloned()
@@ -251,7 +251,7 @@ mod tests {
             metadata
                 .keyspaces
                 .values()
-                .map(|keyspace| &keyspace.strategy),
+                .map(|keyspace| &keyspace.as_ref().unwrap().strategy),
         );
 
         let check = |token, replication_factor, expected_node_ids| {
@@ -293,7 +293,7 @@ mod tests {
             metadata
                 .keyspaces
                 .values()
-                .map(|keyspace| &keyspace.strategy),
+                .map(|keyspace| &keyspace.as_ref().unwrap().strategy),
         );
 
         let check = |token, dc, replication_factor, expected_node_ids| {

@@ -1410,6 +1410,7 @@ mod tests {
                 &None,
                 None,
                 TabletsInfo::new(),
+                &HashMap::new(),
             )
             .await
         }
@@ -1440,6 +1441,7 @@ mod tests {
                 &None,
                 None,
                 TabletsInfo::new(),
+                &HashMap::new(),
             )
             .await
         }
@@ -2489,6 +2491,7 @@ mod tests {
                 Some(&FHostFilter)
             },
             TabletsInfo::new(),
+            &HashMap::new(),
         )
         .await;
 

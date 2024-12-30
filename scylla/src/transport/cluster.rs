@@ -185,6 +185,7 @@ impl Cluster {
             &None,
             host_filter.as_deref(),
             TabletsInfo::new(),
+            &HashMap::new(),
         )
         .await;
         cluster_data.wait_until_all_pools_are_initialized().await;
@@ -278,6 +279,7 @@ impl ClusterData {
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
         mut tablets: TabletsInfo,
+        old_keyspaces: &HashMap<String, Keyspace>,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
@@ -323,6 +325,26 @@ impl ClusterData {
             }
         }
 
+        let keyspaces: HashMap<String, Keyspace> = metadata
+            .keyspaces
+            .into_iter()
+            .filter_map(|(ks_name, ks)| match ks {
+                Ok(ks) => Some((ks_name, ks)),
+                Err(e) => {
+                    if let Some(old_ks) = old_keyspaces.get(&ks_name) {
+                        warn!("Encountered an error while processing metadata of keyspace \"{ks_name}\": {e}.\
+                               Re-using older version of this keyspace metadata");
+                        Some((ks_name, old_ks.clone()))
+                    } else {
+                        warn!("Encountered an error while processing metadata of keyspace \"{ks_name}\": {e}.\
+                               No previous version of this keyspace metadata found, so it will not be\
+                               present in ClusterData until next refresh.");
+                        None
+                    }
+                }
+            })
+            .collect();
+
         {
             let removed_nodes = {
                 let mut removed_nodes = HashSet::new();
@@ -336,7 +358,7 @@ impl ClusterData {
             };
 
             let table_predicate = |spec: &TableSpec| {
-                if let Some(ks) = metadata.keyspaces.get(spec.ks_name()) {
+                if let Some(ks) = keyspaces.get(spec.ks_name()) {
                     ks.tables.contains_key(spec.table_name())
                 } else {
                     false
@@ -364,7 +386,6 @@ impl ClusterData {
             )
         }
 
-        let keyspaces = metadata.keyspaces;
         let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
             let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies, tablets);
@@ -706,6 +727,7 @@ impl ClusterWorker {
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
                 cluster_data.locator.tablets.clone(),
+                &cluster_data.keyspaces,
             )
             .await,
         );
