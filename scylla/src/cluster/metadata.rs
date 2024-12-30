@@ -973,17 +973,7 @@ where
 {
     let conn = conn.clone();
 
-    // This function is extracted to reduce monomorphisation penalty:
-    // query_filter_keyspace_name() is going to be monomorphised into 5 distinct functions,
-    // so it's better to extract the common part.
-    async fn make_keyspace_filtered_query_pager<E>(
-        conn: Arc<Connection>,
-        query_str: &str,
-        keyspaces_to_fetch: &[String],
-    ) -> Result<QueryPager, E::DestError>
-    where
-        E: MetadataErrorConverter,
-    {
+    let pager_fut = async move {
         if keyspaces_to_fetch.is_empty() {
             let mut query = Query::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
@@ -1009,11 +999,10 @@ where
                 .await
                 .map_err(E::convert_next_row_error)
         }
-    }
+    };
 
     let fut = async move {
-        let pager =
-            make_keyspace_filtered_query_pager::<E>(conn, query_str, keyspaces_to_fetch).await?;
+        let pager: QueryPager = pager_fut.await?;
         let stream: crate::client::pager::TypedRowStream<R> = pager
             .rows_stream::<R>()
             .map_err(E::convert_typecheck_error)?;
