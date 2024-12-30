@@ -419,6 +419,10 @@ pub enum TracingProtocolError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum MetadataError {
+    /// Control connection pool error.
+    #[error("Control connection pool error: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
     /// Bad peers metadata.
     #[error("Bad peers metadata: {0}")]
     Peers(#[from] PeersMetadataError),
