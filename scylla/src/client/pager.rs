@@ -206,7 +206,7 @@ where
 
                 let request_error: RequestAttemptError = match queries_result {
                     Ok(proof) => {
-                        trace!(parent: &span, "Query succeeded");
+                        trace!(parent: &span, "Request succeeded");
                         // query_pages returned Ok, so we are guaranteed
                         // that it attempted to send at least one page
                         // through self.sender and we can safely return now.
@@ -216,7 +216,7 @@ where
                         trace!(
                             parent: &span,
                             error = %error,
-                            "Query failed"
+                            "Request failed"
                         );
                         error
                     }
