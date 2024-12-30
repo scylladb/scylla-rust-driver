@@ -1,10 +1,9 @@
 use self::latency_awareness::LatencyAwareness;
 pub use self::latency_awareness::LatencyAwarenessBuilder;
 
-use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
+use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo, UserRequestError};
 use crate::{
     routing::{Shard, Token},
-    transport::errors::QueryError,
     transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
 };
 use itertools::{Either, Itertools};
@@ -556,22 +555,27 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         "DefaultPolicy".to_string()
     }
 
-    fn on_query_success(&self, _routing_info: &RoutingInfo, latency: Duration, node: NodeRef<'_>) {
-        if let Some(latency_awareness) = self.latency_awareness.as_ref() {
-            latency_awareness.report_query(node, latency);
-        }
-    }
-
-    fn on_query_failure(
+    fn on_request_success(
         &self,
         _routing_info: &RoutingInfo,
         latency: Duration,
         node: NodeRef<'_>,
-        error: &QueryError,
+    ) {
+        if let Some(latency_awareness) = self.latency_awareness.as_ref() {
+            latency_awareness.report_request(node, latency);
+        }
+    }
+
+    fn on_request_failure(
+        &self,
+        _routing_info: &RoutingInfo,
+        latency: Duration,
+        node: NodeRef<'_>,
+        error: &UserRequestError,
     ) {
         if let Some(latency_awareness) = self.latency_awareness.as_ref() {
             if LatencyAwareness::reliable_latency_measure(error) {
-                latency_awareness.report_query(node, latency);
+                latency_awareness.report_request(node, latency);
             }
         }
     }
@@ -2550,10 +2554,9 @@ mod latency_awareness {
     use uuid::Uuid;
 
     use crate::{
-        load_balancing::NodeRef,
+        load_balancing::{NodeRef, UserRequestError},
         routing::Shard,
-        transport::errors::{DbError, QueryError},
-        transport::node::Node,
+        transport::{errors::DbError, node::Node},
     };
     use std::{
         collections::HashMap,
@@ -2806,7 +2809,7 @@ mod latency_awareness {
             Either::Right(skipping_penalised_targets_iterator)
         }
 
-        pub(super) fn report_query(&self, node: &Node, latency: Duration) {
+        pub(super) fn report_request(&self, node: &Node, latency: Duration) {
             let node_avgs_guard = self.node_avgs.read().unwrap();
             if let Some(previous_node_avg) = node_avgs_guard.get(&node.host_id) {
                 // The usual path, the node has been already noticed.
@@ -2837,33 +2840,27 @@ mod latency_awareness {
             }
         }
 
-        pub(crate) fn reliable_latency_measure(error: &QueryError) -> bool {
+        pub(crate) fn reliable_latency_measure(error: &UserRequestError) -> bool {
             match error {
                 // "fast" errors, i.e. ones that are returned quickly after the query begins
-                QueryError::BadQuery(_)
-                | QueryError::CqlRequestSerialization(_)
-                | QueryError::BrokenConnection(_)
-                | QueryError::ConnectionPoolError(_)
-                | QueryError::EmptyPlan
-                | QueryError::UnableToAllocStreamId
-                | QueryError::DbError(DbError::IsBootstrapping, _)
-                | QueryError::DbError(DbError::Unavailable { .. }, _)
-                | QueryError::DbError(DbError::Unprepared { .. }, _)
-                | QueryError::DbError(DbError::Overloaded { .. }, _)
-                | QueryError::DbError(DbError::RateLimitReached { .. }, _) => false,
+                UserRequestError::CqlRequestSerialization(_)
+                | UserRequestError::BrokenConnectionError(_)
+                | UserRequestError::UnableToAllocStreamId
+                | UserRequestError::DbError(DbError::IsBootstrapping, _)
+                | UserRequestError::DbError(DbError::Unavailable { .. }, _)
+                | UserRequestError::DbError(DbError::Unprepared { .. }, _)
+                | UserRequestError::DbError(DbError::Overloaded { .. }, _)
+                | UserRequestError::DbError(DbError::RateLimitReached { .. }, _)
+                | UserRequestError::SerializationError(_) => false,
 
                 // "slow" errors, i.e. ones that are returned after considerable time of query being run
-                #[allow(deprecated)]
-                QueryError::DbError(_, _)
-                | QueryError::CqlResultParseError(_)
-                | QueryError::CqlErrorParseError(_)
-                | QueryError::BodyExtensionsParseError(_)
-                | QueryError::MetadataError(_)
-                | QueryError::ProtocolError(_)
-                | QueryError::TimeoutError
-                | QueryError::RequestTimeout(_)
-                | QueryError::NextRowError(_)
-                | QueryError::IntoLegacyQueryResultError(_) => true,
+                UserRequestError::DbError(_, _)
+                | UserRequestError::CqlResultParseError(_)
+                | UserRequestError::CqlErrorParseError(_)
+                | UserRequestError::BodyExtensionsParseError(_)
+                | UserRequestError::RepreparedIdChanged { .. }
+                | UserRequestError::RepreparedIdMissingInBatch
+                | UserRequestError::UnexpectedResponse(_) => true,
             }
         }
     }

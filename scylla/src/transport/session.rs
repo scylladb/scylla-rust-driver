@@ -71,7 +71,7 @@ use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::query_result::QueryResult;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::transport::retry_policy::{RequestInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
 use crate::{
@@ -1232,7 +1232,6 @@ where
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
-                                .map_err(Into::into)
                         } else {
                             let prepared = connection.prepare(query_ref).await?;
                             let serialized = prepared.serialize_values(values_ref)?;
@@ -1248,7 +1247,6 @@ where
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
-                                .map_err(Into::into)
                         }
                     }
                 },
@@ -1269,7 +1267,9 @@ where
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
+        let (result, paging_state_response) = response
+            .into_query_result_and_paging_state()
+            .map_err(UserRequestError::into_query_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1399,7 +1399,8 @@ where
         // returns either an error or an iterator with at least one connection, so there will be at least one result.
         let first_ok: Result<PreparedStatement, UserRequestError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
-        let mut prepared: PreparedStatement = first_ok?;
+        let mut prepared: PreparedStatement =
+            first_ok.map_err(UserRequestError::into_query_error)?;
 
         // Validate prepared ids equality
         for statement in results.flatten() {
@@ -1550,7 +1551,6 @@ where
                             )
                             .await
                             .and_then(QueryResponse::into_non_error_query_response)
-                            .map_err(Into::into)
                     }
                 },
                 &span,
@@ -1570,7 +1570,9 @@ where
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
+        let (result, paging_state_response) = response
+            .into_query_result_and_paging_state()
+            .map_err(UserRequestError::into_query_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1650,7 +1652,7 @@ where
 
         let span = RequestSpan::new_batch();
 
-        let run_request_result = self
+        let run_request_result: RunRequestResult<NonErrorQueryResponse> = self
             .run_request(
                 statement_info,
                 &batch.config,
@@ -1671,6 +1673,7 @@ where
                                 serial_consistency,
                             )
                             .await
+                            .and_then(QueryResponse::into_non_error_query_response)
                     }
                 },
                 &span,
@@ -1680,7 +1683,8 @@ where
 
         let result = match run_request_result {
             RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(),
-            RunRequestResult::Completed(result) => {
+            RunRequestResult::Completed(non_error_query_response) => {
+                let result = non_error_query_response.into_query_result()?;
                 span.record_result_fields(&result);
                 result
             }
@@ -1935,7 +1939,7 @@ where
         request_span: &'a RequestSpan,
     ) -> Result<RunRequestResult<ResT>, QueryError>
     where
-        QueryFut: Future<Output = Result<ResT, QueryError>>,
+        QueryFut: Future<Output = Result<ResT, UserRequestError>>,
         ResT: AllowedRunRequestResTType,
     {
         let history_listener_and_id: Option<(&'a dyn HistoryListener, history::QueryId)> =
@@ -2099,7 +2103,7 @@ where
         mut context: ExecuteRequestContext<'a>,
     ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
     where
-        QueryFut: Future<Output = Result<ResT, QueryError>>,
+        QueryFut: Future<Output = Result<ResT, UserRequestError>>,
         ResT: AllowedRunRequestResTType,
     {
         let mut last_error: Option<QueryError> = None;
@@ -2136,18 +2140,18 @@ where
                 );
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connection.get_connect_address());
-                let request_result: Result<ResT, QueryError> =
+                let request_result: Result<ResT, UserRequestError> =
                     run_request_once(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
                         .await;
 
                 let elapsed = request_start.elapsed();
-                last_error = match request_result {
+                let request_error: UserRequestError = match request_result {
                     Ok(response) => {
                         trace!(parent: &span, "Request succeeded");
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
-                        execution_profile.load_balancing_policy.on_query_success(
+                        execution_profile.load_balancing_policy.on_request_success(
                             context.query_info,
                             elapsed,
                             node,
@@ -2161,20 +2165,19 @@ where
                             "Request failed"
                         );
                         self.metrics.inc_failed_nonpaged_queries();
-                        execution_profile.load_balancing_policy.on_query_failure(
+                        execution_profile.load_balancing_policy.on_request_failure(
                             context.query_info,
                             elapsed,
                             node,
                             &e,
                         );
-                        Some(e)
+                        e
                     }
                 };
 
-                let the_error: &QueryError = last_error.as_ref().unwrap();
                 // Use retry policy to decide what to do next
-                let query_info = QueryInfo {
-                    error: the_error,
+                let query_info = RequestInfo {
+                    error: &request_error,
                     is_idempotent: context.is_idempotent,
                     consistency: context
                         .consistency_set_on_statement
@@ -2186,7 +2189,14 @@ where
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
-                context.log_attempt_error(&attempt_id, the_error, &retry_decision);
+
+                last_error = Some(request_error.into_query_error());
+                context.log_attempt_error(
+                    &attempt_id,
+                    last_error.as_ref().unwrap(),
+                    &retry_decision,
+                );
+
                 match retry_decision {
                     RetryDecision::RetrySameNode(new_cl) => {
                         self.metrics.inc_retries_num();

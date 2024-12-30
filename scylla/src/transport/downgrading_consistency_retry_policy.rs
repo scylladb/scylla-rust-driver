@@ -2,8 +2,8 @@ use scylla_cql::Consistency;
 use tracing::debug;
 
 use crate::{
-    retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession},
-    transport::errors::{DbError, QueryError, WriteType},
+    retry_policy::{RequestInfo, RetryDecision, RetryPolicy, RetrySession},
+    transport::errors::{DbError, UserRequestError, WriteType},
 };
 
 /// Downgrading consistency retry policy - retries with lower consistency level if it knows\
@@ -49,11 +49,11 @@ impl Default for DowngradingConsistencyRetrySession {
 }
 
 impl RetrySession for DowngradingConsistencyRetrySession {
-    fn decide_should_retry(&mut self, query_info: QueryInfo) -> RetryDecision {
-        let cl = match query_info.consistency {
+    fn decide_should_retry(&mut self, request_info: RequestInfo) -> RetryDecision {
+        let cl = match request_info.consistency {
             Consistency::Serial | Consistency::LocalSerial => {
-                return match query_info.error {
-                    QueryError::DbError(DbError::Unavailable { .. }, _) => {
+                return match request_info.error {
+                    UserRequestError::DbError(DbError::Unavailable { .. }, _) => {
                         // JAVA-764: if the requested consistency level is serial, it means that the operation failed at
                         // the paxos phase of a LWT.
                         // Retry on the next host, on the assumption that the initial coordinator could be network-isolated.
@@ -87,15 +87,14 @@ impl RetrySession for DowngradingConsistencyRetrySession {
             decision
         }
 
-        match query_info.error {
+        match request_info.error {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
-            QueryError::BrokenConnection(_)
-            | QueryError::ConnectionPoolError(_)
-            | QueryError::DbError(DbError::Overloaded, _)
-            | QueryError::DbError(DbError::ServerError, _)
-            | QueryError::DbError(DbError::TruncateError, _) => {
-                if query_info.is_idempotent {
+            UserRequestError::BrokenConnectionError(_)
+            | UserRequestError::DbError(DbError::Overloaded, _)
+            | UserRequestError::DbError(DbError::ServerError, _)
+            | UserRequestError::DbError(DbError::TruncateError, _) => {
+                if request_info.is_idempotent {
                     RetryDecision::RetryNextNode(None)
                 } else {
                     RetryDecision::DontRetry
@@ -103,7 +102,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
             }
             // Unavailable - the current node believes that not enough nodes
             // are alive to satisfy specified consistency requirements.
-            QueryError::DbError(DbError::Unavailable { alive, .. }, _) => {
+            UserRequestError::DbError(DbError::Unavailable { alive, .. }, _) => {
                 if !self.was_retry {
                     self.was_retry = true;
                     max_likely_to_work_cl(*alive, cl)
@@ -112,7 +111,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                 }
             }
             // ReadTimeout - coordinator didn't receive enough replies in time.
-            QueryError::DbError(
+            UserRequestError::DbError(
                 DbError::ReadTimeout {
                     received,
                     required,
@@ -134,7 +133,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                 }
             }
             // Write timeout - coordinator didn't receive enough replies in time.
-            QueryError::DbError(
+            UserRequestError::DbError(
                 DbError::WriteTimeout {
                     write_type,
                     received,
@@ -142,7 +141,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                 },
                 _,
             ) => {
-                if self.was_retry || !query_info.is_idempotent {
+                if self.was_retry || !request_info.is_idempotent {
                     RetryDecision::DontRetry
                 } else {
                     self.was_retry = true;
@@ -162,10 +161,12 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                     }
                 }
             }
-            // The node is still bootstrapping it can't execute the query, we should try another one
-            QueryError::DbError(DbError::IsBootstrapping, _) => RetryDecision::RetryNextNode(None),
+            // The node is still bootstrapping it can't execute the request, we should try another one
+            UserRequestError::DbError(DbError::IsBootstrapping, _) => {
+                RetryDecision::RetryNextNode(None)
+            }
             // Connection to the contacted node is overloaded, try another one
-            QueryError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
+            UserRequestError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
@@ -179,11 +180,10 @@ impl RetrySession for DowngradingConsistencyRetrySession {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use scylla_cql::frame::frame_errors::{BatchSerializationError, CqlRequestSerializationError};
 
     use crate::test_utils::setup_tracing;
-    use crate::transport::errors::{
-        BadQuery, BrokenConnectionErrorKind, ConnectionPoolError, ProtocolError,
-    };
+    use crate::transport::errors::BrokenConnectionErrorKind;
 
     use super::*;
 
@@ -199,12 +199,12 @@ mod tests {
         Consistency::Two,
     ];
 
-    fn make_query_info_with_cl(
-        error: &QueryError,
+    fn make_request_info_with_cl(
+        error: &UserRequestError,
         is_idempotent: bool,
         cl: Consistency,
-    ) -> QueryInfo<'_> {
-        QueryInfo {
+    ) -> RequestInfo<'_> {
+        RequestInfo {
             error,
             is_idempotent,
             consistency: cl,
@@ -212,16 +212,19 @@ mod tests {
     }
 
     // Asserts that downgrading consistency policy never retries for this Error
-    fn downgrading_consistency_policy_assert_never_retries(error: QueryError, cl: Consistency) {
+    fn downgrading_consistency_policy_assert_never_retries(
+        error: UserRequestError,
+        cl: Consistency,
+    ) {
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
         assert_eq!(
-            policy.decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+            policy.decide_should_retry(make_request_info_with_cl(&error, false, cl)),
             RetryDecision::DontRetry
         );
 
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
         assert_eq!(
-            policy.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+            policy.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
             RetryDecision::DontRetry
         );
     }
@@ -268,37 +271,48 @@ mod tests {
         for &cl in CONSISTENCY_LEVELS {
             for dberror in never_retried_dberrors.clone() {
                 downgrading_consistency_policy_assert_never_retries(
-                    QueryError::DbError(dberror, String::new()),
+                    UserRequestError::DbError(dberror, String::new()),
                     cl,
                 );
             }
 
             downgrading_consistency_policy_assert_never_retries(
-                QueryError::BadQuery(BadQuery::Other(
-                    "Length of provided values must be equal to number of batch statements \
-                        (got 1 values, 2 statements)"
-                        .to_owned(),
-                )),
+                UserRequestError::RepreparedIdMissingInBatch,
                 cl,
             );
             downgrading_consistency_policy_assert_never_retries(
-                ProtocolError::NonfinishedPagingState.into(),
+                UserRequestError::RepreparedIdChanged {
+                    statement: String::new(),
+                    expected_id: vec![],
+                    reprepared_id: vec![],
+                },
+                cl,
+            );
+            downgrading_consistency_policy_assert_never_retries(
+                UserRequestError::CqlRequestSerialization(
+                    CqlRequestSerializationError::BatchSerialization(
+                        BatchSerializationError::TooManyStatements(u16::MAX as usize + 1),
+                    ),
+                ),
                 cl,
             );
         }
     }
 
     // Asserts that for this error policy retries on next on idempotent queries only
-    fn downgrading_consistency_policy_assert_idempotent_next(error: QueryError, cl: Consistency) {
+    fn downgrading_consistency_policy_assert_idempotent_next(
+        error: UserRequestError,
+        cl: Consistency,
+    ) {
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
         assert_eq!(
-            policy.decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+            policy.decide_should_retry(make_request_info_with_cl(&error, false, cl)),
             RetryDecision::DontRetry
         );
 
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
         assert_eq!(
-            policy.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+            policy.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
             RetryDecision::RetryNextNode(None)
         );
     }
@@ -322,13 +336,12 @@ mod tests {
     fn downgrading_consistency_idempotent_next_retries() {
         setup_tracing();
         let idempotent_next_errors = vec![
-            QueryError::DbError(DbError::Overloaded, String::new()),
-            QueryError::DbError(DbError::TruncateError, String::new()),
-            QueryError::DbError(DbError::ServerError, String::new()),
-            QueryError::BrokenConnection(
+            UserRequestError::DbError(DbError::Overloaded, String::new()),
+            UserRequestError::DbError(DbError::TruncateError, String::new()),
+            UserRequestError::DbError(DbError::ServerError, String::new()),
+            UserRequestError::BrokenConnectionError(
                 BrokenConnectionErrorKind::TooManyOrphanedStreamIds(5).into(),
             ),
-            QueryError::ConnectionPoolError(ConnectionPoolError::Initializing),
         ];
 
         for &cl in CONSISTENCY_LEVELS {
@@ -342,18 +355,18 @@ mod tests {
     #[test]
     fn downgrading_consistency_bootstrapping() {
         setup_tracing();
-        let error = QueryError::DbError(DbError::IsBootstrapping, String::new());
+        let error = UserRequestError::DbError(DbError::IsBootstrapping, String::new());
 
         for &cl in CONSISTENCY_LEVELS {
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+                policy.decide_should_retry(make_request_info_with_cl(&error, false, cl)),
                 RetryDecision::RetryNextNode(None)
             );
 
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+                policy.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
                 RetryDecision::RetryNextNode(None)
             );
         }
@@ -364,7 +377,7 @@ mod tests {
     fn downgrading_consistency_unavailable() {
         setup_tracing();
         let alive = 1;
-        let error = QueryError::DbError(
+        let error = UserRequestError::DbError(
             DbError::Unavailable {
                 consistency: Consistency::Two,
                 required: 2,
@@ -377,22 +390,22 @@ mod tests {
             let mut policy_not_idempotent = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
                 policy_not_idempotent
-                    .decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+                    .decide_should_retry(make_request_info_with_cl(&error, false, cl)),
                 max_likely_to_work_cl(alive, cl)
             );
             assert_eq!(
                 policy_not_idempotent
-                    .decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+                    .decide_should_retry(make_request_info_with_cl(&error, false, cl)),
                 RetryDecision::DontRetry
             );
 
             let mut policy_idempotent = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy_idempotent.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+                policy_idempotent.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
                 max_likely_to_work_cl(alive, cl)
             );
             assert_eq!(
-                policy_idempotent.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+                policy_idempotent.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
                 RetryDecision::DontRetry
             );
         }
@@ -403,7 +416,7 @@ mod tests {
     fn downgrading_consistency_read_timeout() {
         setup_tracing();
         // Enough responses and data_present == false - coordinator received only checksums
-        let enough_responses_no_data = QueryError::DbError(
+        let enough_responses_no_data = UserRequestError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 2,
@@ -417,7 +430,7 @@ mod tests {
             // Not idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_no_data,
                     false,
                     cl
@@ -425,7 +438,7 @@ mod tests {
                 RetryDecision::RetrySameNode(None)
             );
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_no_data,
                     false,
                     cl
@@ -436,7 +449,7 @@ mod tests {
             // Idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_no_data,
                     true,
                     cl
@@ -444,7 +457,7 @@ mod tests {
                 RetryDecision::RetrySameNode(None)
             );
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_no_data,
                     true,
                     cl
@@ -454,7 +467,7 @@ mod tests {
         }
         // Enough responses but data_present == true - coordinator probably timed out
         // waiting for read-repair acknowledgement.
-        let enough_responses_with_data = QueryError::DbError(
+        let enough_responses_with_data = UserRequestError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 2,
@@ -468,7 +481,7 @@ mod tests {
             // Not idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_with_data,
                     false,
                     cl
@@ -479,7 +492,7 @@ mod tests {
             // Idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &enough_responses_with_data,
                     true,
                     cl
@@ -490,7 +503,7 @@ mod tests {
 
         // Not enough responses, data_present == true
         let received = 1;
-        let not_enough_responses_with_data = QueryError::DbError(
+        let not_enough_responses_with_data = UserRequestError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received,
@@ -505,7 +518,7 @@ mod tests {
             // Not idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &not_enough_responses_with_data,
                     false,
                     cl
@@ -514,7 +527,7 @@ mod tests {
             );
             if let RetryDecision::RetrySameNode(new_cl) = expected_decision {
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &not_enough_responses_with_data,
                         false,
                         new_cl.unwrap_or(cl)
@@ -526,7 +539,7 @@ mod tests {
             // Idempotent
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
-                policy.decide_should_retry(make_query_info_with_cl(
+                policy.decide_should_retry(make_request_info_with_cl(
                     &not_enough_responses_with_data,
                     true,
                     cl
@@ -535,7 +548,7 @@ mod tests {
             );
             if let RetryDecision::RetrySameNode(new_cl) = expected_decision {
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &not_enough_responses_with_data,
                         true,
                         new_cl.unwrap_or(cl)
@@ -546,13 +559,13 @@ mod tests {
         }
     }
 
-    // WriteTimeout will retry once when the query is idempotent and write_type == BatchLog
+    // WriteTimeout will retry once when the request is idempotent and write_type == BatchLog
     #[test]
     fn downgrading_consistency_write_timeout() {
         setup_tracing();
         for (received, required) in (1..=5).zip(2..=6) {
             // WriteType == BatchLog
-            let write_type_batchlog = QueryError::DbError(
+            let write_type_batchlog = UserRequestError::DbError(
                 DbError::WriteTimeout {
                     consistency: Consistency::Two,
                     received,
@@ -566,7 +579,7 @@ mod tests {
                 // Not idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_batchlog,
                         false,
                         cl
@@ -577,7 +590,7 @@ mod tests {
                 // Idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_batchlog,
                         true,
                         cl
@@ -585,7 +598,7 @@ mod tests {
                     RetryDecision::RetrySameNode(None)
                 );
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_batchlog,
                         true,
                         cl
@@ -595,7 +608,7 @@ mod tests {
             }
 
             // WriteType == UnloggedBatch
-            let write_type_unlogged_batch = QueryError::DbError(
+            let write_type_unlogged_batch = UserRequestError::DbError(
                 DbError::WriteTimeout {
                     consistency: Consistency::Two,
                     received,
@@ -609,7 +622,7 @@ mod tests {
                 // Not idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_unlogged_batch,
                         false,
                         cl
@@ -620,7 +633,7 @@ mod tests {
                 // Idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_unlogged_batch,
                         true,
                         cl
@@ -628,7 +641,7 @@ mod tests {
                     max_likely_to_work_cl(received, cl)
                 );
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_unlogged_batch,
                         true,
                         cl
@@ -638,7 +651,7 @@ mod tests {
             }
 
             // WriteType == other
-            let write_type_other = QueryError::DbError(
+            let write_type_other = UserRequestError::DbError(
                 DbError::WriteTimeout {
                     consistency: Consistency::Two,
                     received,
@@ -652,7 +665,7 @@ mod tests {
                 // Not idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_other,
                         false,
                         cl
@@ -663,7 +676,7 @@ mod tests {
                 // Idempotent
                 let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_other,
                         true,
                         cl
@@ -671,7 +684,7 @@ mod tests {
                     RetryDecision::IgnoreWriteError
                 );
                 assert_eq!(
-                    policy.decide_should_retry(make_query_info_with_cl(
+                    policy.decide_should_retry(make_request_info_with_cl(
                         &write_type_other,
                         true,
                         cl
