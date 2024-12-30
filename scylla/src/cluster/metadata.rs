@@ -30,7 +30,7 @@ use crate::utils::pretty::{CommaSeparatedDisplayer, DisplayUsingDebug};
 
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
-use futures::Stream;
+use futures::{Stream, TryFutureExt};
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 use scylla_cql::types::deserialize::TypeCheckError;
@@ -765,7 +765,8 @@ async fn query_metadata(
     fetch_schema: bool,
 ) -> Result<Metadata, QueryError> {
     let peers_query = query_peers(conn, connect_port);
-    let keyspaces_query = query_keyspaces(conn, keyspace_to_fetch, fetch_schema);
+    let keyspaces_query =
+        query_keyspaces(conn, keyspace_to_fetch, fetch_schema).map_err(QueryError::MetadataError);
 
     let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
 
@@ -1006,7 +1007,7 @@ async fn query_keyspaces(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     fetch_schema: bool,
-) -> Result<HashMap<String, Keyspace>, QueryError> {
+) -> Result<HashMap<String, Keyspace>, MetadataError> {
     struct SchemaKeyspacesErrorConverter;
     impl MetadataErrorConverter for SchemaKeyspacesErrorConverter {
         type DestError = KeyspacesMetadataError;
@@ -1035,13 +1036,9 @@ async fn query_keyspaces(
     );
 
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
-        let udts = query_user_defined_types(conn, keyspaces_to_fetch)
-            .await
-            .map_err(MetadataError::Udts)?;
+        let udts = query_user_defined_types(conn, keyspaces_to_fetch).await?;
         (
-            query_tables(conn, keyspaces_to_fetch, &udts)
-                .await
-                .map_err(MetadataError::Tables)?,
+            query_tables(conn, keyspaces_to_fetch, &udts).await?,
             query_views(conn, keyspaces_to_fetch, &udts).await?,
             udts,
         )
@@ -1053,10 +1050,10 @@ async fn query_keyspaces(
         let (keyspace_name, strategy_map) = row_result.map_err(MetadataError::Keyspaces)?;
 
         let strategy: Strategy = strategy_from_string_map(strategy_map).map_err(|error| {
-            MetadataError::Keyspaces(KeyspacesMetadataError::Strategy {
+            KeyspacesMetadataError::Strategy {
                 keyspace: keyspace_name.clone(),
                 error,
-            })
+            }
         })?;
         let tables = all_tables.remove(&keyspace_name).unwrap_or_default();
         let views = all_views.remove(&keyspace_name).unwrap_or_default();
