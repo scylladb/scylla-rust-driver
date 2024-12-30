@@ -164,91 +164,13 @@ pub enum NewSessionError {
     #[error("Empty known nodes list")]
     EmptyKnownNodesList,
 
-    /// Database sent a response containing some error with a message
-    #[error("Database returned an error: {0}, Error message: {1}")]
-    DbError(DbError, String),
-
-    /// Caller passed an invalid query
-    #[error(transparent)]
-    BadQuery(#[from] BadQuery),
-
-    /// Failed to serialize CQL request.
-    #[error("Failed to serialize CQL request: {0}")]
-    CqlRequestSerialization(#[from] CqlRequestSerializationError),
-
-    /// Load balancing policy returned an empty plan.
-    #[error(
-        "Load balancing policy returned an empty plan.\
-        First thing to investigate should be the logic of custom LBP implementation.\
-        If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
-        then this is most probably a driver bug!"
-    )]
-    EmptyPlan,
-
-    /// Failed to deserialize frame body extensions.
-    #[error(transparent)]
-    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
-
     /// Failed to perform initial cluster metadata fetch.
     #[error("Failed to perform initial cluster metadata fetch: {0}")]
     MetadataError(#[from] MetadataError),
 
-    /// Received a RESULT server response, but failed to deserialize it.
-    #[error(transparent)]
-    CqlResultParseError(#[from] CqlResultParseError),
-
-    /// Received an ERROR server response, but failed to deserialize it.
-    #[error("Failed to deserialize ERROR response: {0}")]
-    CqlErrorParseError(#[from] CqlErrorParseError),
-
-    /// Selected node's connection pool is in invalid state.
-    #[error("No connections in the pool: {0}")]
-    ConnectionPoolError(#[from] ConnectionPoolError),
-
-    /// Protocol error.
-    #[error("Protocol error: {0}")]
-    ProtocolError(#[from] ProtocolError),
-
-    /// A connection has been broken during query execution.
-    #[error(transparent)]
-    BrokenConnection(#[from] BrokenConnectionError),
-
-    /// Driver was unable to allocate a stream id to execute a query on.
-    #[error("Unable to allocate stream id")]
-    UnableToAllocStreamId,
-
-    /// Failed to run a request within a provided client timeout.
-    #[error(
-        "Request execution exceeded a client timeout of {}ms",
-        std::time::Duration::as_millis(.0)
-    )]
-    RequestTimeout(std::time::Duration),
-
-    /// Schema agreement timed out.
-    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
-    SchemaAgreementTimeout(std::time::Duration),
-
-    // TODO: This should not belong here, but it requires changes to error types
-    // returned in async iterator API. This should be handled in separate PR.
-    // The reason this needs to be included is that topology.rs makes use of iter API and returns QueryError.
-    // Once iter API is adjusted, we can then adjust errors returned by topology module (e.g. refactor MetadataError and not include it in QueryError).
-    /// An error occurred during async iteration over rows of result.
-    #[error("An error occurred during async iteration over rows of result: {0}")]
-    NextRowError(#[from] NextRowError),
-
     /// 'USE KEYSPACE <>' request failed.
     #[error("'USE KEYSPACE <>' request failed: {0}")]
     UseKeyspaceError(#[from] UseKeyspaceError),
-
-    /// Failed to convert [`QueryResult`][crate::response::query_result::QueryResult]
-    /// into [`LegacyQueryResult`][crate::response::legacy_query_result::LegacyQueryResult].
-    #[deprecated(
-        since = "0.15.1",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[allow(deprecated)]
-    #[error("Failed to convert `QueryResult` into `LegacyQueryResult`: {0}")]
-    IntoLegacyQueryResultError(#[from] IntoLegacyQueryResultError),
 }
 
 /// A protocol error.
