@@ -36,7 +36,6 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
-use scylla_cql::deserialize::TypeCheckError;
 use scylla_macros::DeserializeRow;
 use std::borrow::BorrowMut;
 use std::cell::Cell;
@@ -55,7 +54,7 @@ use uuid::Uuid;
 use crate::cluster::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 use crate::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
-    ProtocolError, RequestError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
+    ProtocolError, RequestError, TablesMetadataError, UdtMetadataError,
 };
 
 // Re-export of CQL types.
@@ -877,8 +876,7 @@ fn query_filter_keyspace_name<'a, R>(
     conn: &Arc<Connection>,
     query_str: &'a str,
     keyspaces_to_fetch: &'a [String],
-    convert_typecheck_error: impl FnOnce(TypeCheckError) -> MetadataError + 'a,
-) -> impl Stream<Item = Result<R, QueryError>> + 'a
+) -> impl Stream<Item = Result<R, MetadataFetchErrorKind>> + 'a
 where
     R: DeserializeOwnedRow + 'static,
 {
@@ -891,12 +889,14 @@ where
         conn: Arc<Connection>,
         query_str: &str,
         keyspaces_to_fetch: &[String],
-    ) -> Result<QueryPager, QueryError> {
+    ) -> Result<QueryPager, MetadataFetchErrorKind> {
         if keyspaces_to_fetch.is_empty() {
             let mut query = Query::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
-            conn.query_iter(query).await.map_err(QueryError::from)
+            conn.query_iter(query)
+                .await
+                .map_err(MetadataFetchErrorKind::NextRowError)
         } else {
             let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
             let query_str = format!("{query_str} where keyspace_name in ?");
@@ -904,25 +904,21 @@ where
             let mut query = Query::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
-            let prepared = conn
-                .prepare(&query)
-                .await
-                .map_err(RequestAttemptError::into_query_error)?;
+            let prepared = conn.prepare(&query).await?;
             let serialized_values = prepared.serialize_values(&keyspaces)?;
             conn.execute_iter(prepared, serialized_values)
                 .await
-                .map_err(QueryError::from)
+                .map_err(MetadataFetchErrorKind::NextRowError)
         }
     }
 
     let fut = async move {
         let pager = make_keyspace_filtered_query_pager(conn, query_str, keyspaces_to_fetch).await?;
-        let stream: crate::client::pager::TypedRowStream<R> =
-            pager.rows_stream::<R>().map_err(convert_typecheck_error)?;
-        Ok::<_, QueryError>(stream)
+        let stream: crate::client::pager::TypedRowStream<R> = pager.rows_stream::<R>()?;
+        Ok::<_, MetadataFetchErrorKind>(stream)
     };
     fut.into_stream()
-        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
+        .map(|result| result.map(|stream| stream.map_err(MetadataFetchErrorKind::NextRowError)))
         .try_flatten()
 }
 
@@ -935,12 +931,11 @@ async fn query_keyspaces(
         conn,
         "select keyspace_name, replication from system_schema.keyspaces",
         keyspaces_to_fetch,
-        |err| {
-            MetadataError::Keyspaces(KeyspacesMetadataError::SchemaKeyspacesInvalidColumnType(
-                err,
-            ))
-        },
-    );
+    )
+    .map_err(|error| MetadataFetchError {
+        error,
+        table: "system_schema.keyspaces",
+    });
 
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
         let udts = query_user_defined_types(conn, keyspaces_to_fetch).await?;
@@ -962,7 +957,7 @@ async fn query_keyspaces(
     };
 
     rows.map(|row_result| {
-        let (keyspace_name, strategy_map) = row_result?;
+        let (keyspace_name, strategy_map) = row_result.map_err(MetadataError::FetchError)?;
 
         let strategy: Strategy = strategy_from_string_map(strategy_map).map_err(|error| {
             MetadataError::Keyspaces(KeyspacesMetadataError::Strategy {
@@ -1056,12 +1051,15 @@ async fn query_user_defined_types(
         conn,
         "select keyspace_name, type_name, field_names, field_types from system_schema.types",
         keyspaces_to_fetch,
-        |err| MetadataError::Udts(UdtMetadataError::SchemaTypesInvalidColumnType(err)),
-    );
+    )
+    .map_err(|error| MetadataFetchError {
+        error,
+        table: "system_schema.types",
+    });
 
     let mut udt_rows: Vec<UdtRowWithParsedFieldTypes> = rows
         .map(|row_result| {
-            let udt_row = row_result?.try_into()?;
+            let udt_row = row_result.map_err(MetadataError::FetchError)?.try_into()?;
 
             Ok::<_, QueryError>(udt_row)
         })
@@ -1390,12 +1388,15 @@ async fn query_tables(
         conn,
         "SELECT keyspace_name, table_name FROM system_schema.tables",
         keyspaces_to_fetch,
-        |err| MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err)),
-    );
+    )
+    .map_err(|error| MetadataFetchError {
+        error,
+        table: "system_schema.tables",
+    });
     let mut result = HashMap::new();
 
     rows.map(|row_result| {
-        let keyspace_and_table_name = row_result?;
+        let keyspace_and_table_name = row_result.map_err(MetadataError::FetchError)?;
 
         let table = tables.remove(&keyspace_and_table_name).unwrap_or(Ok(Table {
             columns: HashMap::new(),
@@ -1432,13 +1433,17 @@ async fn query_views(
         conn,
         "SELECT keyspace_name, view_name, base_table_name FROM system_schema.views",
         keyspaces_to_fetch,
-        |err| MetadataError::Views(ViewsMetadataError::SchemaViewsInvalidColumnType(err)),
-    );
+    )
+    .map_err(|error| MetadataFetchError {
+        error,
+        table: "system_schema.views",
+    });
 
     let mut result = HashMap::new();
 
     rows.map(|row_result| {
-        let (keyspace_name, view_name, base_table_name) = row_result?;
+        let (keyspace_name, view_name, base_table_name) =
+            row_result.map_err(MetadataError::FetchError)?;
 
         let keyspace_and_view_name = (keyspace_name, view_name);
 
@@ -1487,18 +1492,22 @@ async fn query_tables_schema(
 
     type RowType = (String, String, String, String, i32, String);
 
-    let rows = query_filter_keyspace_name::<RowType>(conn,
-        "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns", keyspaces_to_fetch, |err| {
-            MetadataError::Tables(TablesMetadataError::SchemaColumnsInvalidColumnType(err))
-        }
-    );
+    let rows = query_filter_keyspace_name::<RowType>(
+        conn,
+        "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns",
+        keyspaces_to_fetch
+    ).map_err(|error| MetadataFetchError {
+        error,
+        table: "system_schema.columns",
+    });
 
     let empty_ok_map = Ok(HashMap::new());
 
     let mut tables_schema: HashMap<_, Result<_, MissingUserDefinedType>> = HashMap::new();
 
     rows.map(|row_result| {
-        let (keyspace_name, table_name, column_name, kind, position, type_) = row_result?;
+        let (keyspace_name, table_name, column_name, kind, position, type_) =
+            row_result.map_err(MetadataError::FetchError)?;
 
         if type_ == THRIFT_EMPTY_TYPE {
             return Ok::<_, QueryError>(());
