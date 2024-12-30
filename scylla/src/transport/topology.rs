@@ -33,8 +33,9 @@ use uuid::Uuid;
 
 use super::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
-    ProtocolError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
+    ProtocolError, TablesMetadataError, UdtMetadataError, UserRequestError, ViewsMetadataError,
 };
+use super::iterator::{NextPageError, NextRowError};
 use super::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
@@ -1760,7 +1761,15 @@ async fn query_table_partitioners(
         // that we are only interested in the ones resulting from non-existent table
         // system_schema.scylla_tables.
         // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
-        Err(QueryError::DbError(DbError::Invalid, _)) => Ok(HashMap::new()),
+        // FIXME 2: The specific error we expect here should appear in QueryError::NextRowError. Currently
+        // leaving match against both variants. This will be fixed, once `MetadataError` is further adjusted
+        // in a follow-up PR. The goal is to return MetadataError from all functions related to metadata fetch.
+        Err(QueryError::DbError(DbError::Invalid, _))
+        | Err(QueryError::NextRowError(NextRowError::NextPageError(
+            NextPageError::RequestFailure(UserRequestError::LastAttemptError(
+                UserRequestAttemptError::DbError(DbError::Invalid, _),
+            )),
+        ))) => Ok(HashMap::new()),
         result => result,
     }
 }
