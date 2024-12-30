@@ -2,7 +2,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::deserialize::DeserializeOwnedValue;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
+use crate::retry_policy::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
@@ -2726,7 +2726,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
 
     struct MyRetrySession(Arc<AtomicBool>);
     impl RetrySession for MyRetrySession {
-        fn decide_should_retry(&mut self, _: QueryInfo) -> RetryDecision {
+        fn decide_should_retry(&mut self, _: RequestInfo) -> RetryDecision {
             self.0.store(true, Ordering::Relaxed);
             RetryDecision::IgnoreWriteError
         }

@@ -6,9 +6,10 @@ use scylla_cql::frame::response::error::DbError;
 use std::{future::Future, sync::Arc, time::Duration};
 use tracing::{trace_span, warn, Instrument};
 
-use crate::transport::errors::QueryError;
-
-use super::metrics::Metrics;
+use crate::transport::{
+    errors::{UserRequestAttemptError, UserRequestError},
+    metrics::Metrics,
+};
 
 /// Context is passed as an argument to `SpeculativeExecutionPolicy` methods
 pub struct Context {
@@ -86,49 +87,45 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
 ///
 /// We should ignore errors such that their presence when executing the request
 /// on one node, does not imply that the same error will appear during retry on some other node.
-fn can_be_ignored<ResT>(result: &Result<ResT, QueryError>) -> bool {
-    match result {
-        Ok(_) => false,
-        // Do not remove this lint!
-        // It's there for a reason - we don't want new variants
-        // automatically fall under `_` pattern when they are introduced.
-        #[deny(clippy::wildcard_enum_match_arm)]
-        Err(e) => match e {
-            // Errors that will almost certainly appear for other nodes as well
-            QueryError::BadQuery(_)
-            | QueryError::CqlRequestSerialization(_)
-            | QueryError::BodyExtensionsParseError(_)
-            | QueryError::CqlResultParseError(_)
-            | QueryError::CqlErrorParseError(_)
-            | QueryError::ProtocolError(_) => false,
+fn can_be_ignored(error: &UserRequestError) -> bool {
+    // Do not remove this lint!
+    // It's there for a reason - we don't want new variants
+    // automatically fall under `_` pattern when they are introduced.
+    #[deny(clippy::wildcard_enum_match_arm)]
+    match error {
+        // No point to continue speculative execution if plan is empty.
+        UserRequestError::EmptyPlan => false,
 
-            // EmptyPlan is not returned by `Session::execute_query`.
-            // It is represented by None, which is then transformed
-            // to QueryError::EmptyPlan by the caller
-            // (either here is speculative_execution module, or for non-speculative execution).
-            // I believe this should not be ignored, since we do not expect it here.
-            QueryError::EmptyPlan => false,
+        // Can try on another node.
+        UserRequestError::ConnectionPoolError { .. } => true,
 
-            // Errors that should not appear here, thus should not be ignored
-            #[allow(deprecated)]
-            QueryError::NextRowError(_)
-            | QueryError::IntoLegacyQueryResultError(_)
-            | QueryError::TimeoutError
-            | QueryError::RequestTimeout(_)
-            | QueryError::MetadataError(_) => false,
+        UserRequestError::LastAttemptError(e) => {
+            // Do not remove this lint!
+            // It's there for a reason - we don't want new variants
+            // automatically fall under `_` pattern when they are introduced.
+            #[deny(clippy::wildcard_enum_match_arm)]
+            match e {
+                // Errors that will almost certainly appear for other nodes as well
+                UserRequestAttemptError::SerializationError(_)
+                | UserRequestAttemptError::CqlRequestSerialization(_)
+                | UserRequestAttemptError::BodyExtensionsParseError(_)
+                | UserRequestAttemptError::CqlResultParseError(_)
+                | UserRequestAttemptError::CqlErrorParseError(_)
+                | UserRequestAttemptError::UnexpectedResponse(_)
+                | UserRequestAttemptError::RepreparedIdChanged { .. }
+                | UserRequestAttemptError::RepreparedIdMissingInBatch => false,
 
-            // Errors that can be ignored
-            QueryError::BrokenConnection(_)
-            | QueryError::UnableToAllocStreamId
-            | QueryError::ConnectionPoolError(_) => true,
+                // Errors that can be ignored
+                UserRequestAttemptError::BrokenConnectionError(_)
+                | UserRequestAttemptError::UnableToAllocStreamId => true,
 
-            // Handle DbErrors
-            QueryError::DbError(db_error, _) => {
-                // Do not remove this lint!
-                // It's there for a reason - we don't want new variants
-                // automatically fall under `_` pattern when they are introduced.
-                #[deny(clippy::wildcard_enum_match_arm)]
-                match db_error {
+                // Handle DbErrors
+                UserRequestAttemptError::DbError(db_error, _) => {
+                    // Do not remove this lint!
+                    // It's there for a reason - we don't want new variants
+                    // automatically fall under `_` pattern when they are introduced.
+                    #[deny(clippy::wildcard_enum_match_arm)]
+                    match db_error {
                         // Errors that will almost certainly appear on other nodes as well
                         DbError::SyntaxError
                         | DbError::Invalid
@@ -160,20 +157,19 @@ fn can_be_ignored<ResT>(result: &Result<ResT, QueryError>) -> bool {
                         | DbError::ServerError
                         | DbError::RateLimitReached { .. } => true,
                     }
+                }
             }
-        },
+        }
     }
 }
-
-const EMPTY_PLAN_ERROR: QueryError = QueryError::EmptyPlan;
 
 pub(crate) async fn execute<QueryFut, ResT>(
     policy: &dyn SpeculativeExecutionPolicy,
     context: &Context,
     query_runner_generator: impl Fn(bool) -> QueryFut,
-) -> Result<ResT, QueryError>
+) -> Result<ResT, UserRequestError>
 where
-    QueryFut: Future<Output = Option<Result<ResT, QueryError>>>,
+    QueryFut: Future<Output = Result<ResT, UserRequestError>>,
 {
     let mut retries_remaining = policy.max_retry_count(context);
     let retry_interval = policy.retry_interval(context);
@@ -187,7 +183,7 @@ where
     let sleep = tokio::time::sleep(retry_interval).fuse();
     tokio::pin!(sleep);
 
-    let mut last_error = None;
+    let mut last_error: UserRequestError;
     loop {
         futures::select! {
             _ = &mut sleep => {
@@ -200,17 +196,17 @@ where
                 }
             }
             res = async_tasks.select_next_some() => {
-                if let Some(r) = res {
-                    if !can_be_ignored(&r) {
-                        return r;
-                    } else {
-                        last_error = Some(r)
+                match res {
+                    Ok(r) => return Ok(r),
+                    Err(e) => if !can_be_ignored(&e) {
+                        return Err(e);
+                    }
+                    else {
+                        last_error = e;
                     }
                 }
                 if async_tasks.is_empty() && retries_remaining == 0 {
-                    return last_error.unwrap_or({
-                        Err(EMPTY_PLAN_ERROR)
-                    });
+                    return Err(last_error);
                 }
             }
         }

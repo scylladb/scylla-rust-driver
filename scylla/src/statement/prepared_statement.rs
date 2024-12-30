@@ -232,25 +232,13 @@ impl PreparedStatement {
         &'ps self,
         partitioner_name: &'ps PartitionerName,
         serialized_values: &'ps SerializedValues,
-    ) -> Result<Option<(PartitionKey<'ps>, Token)>, QueryError> {
+    ) -> Result<Option<(PartitionKey<'ps>, Token)>, PartitionKeyError> {
         if !self.is_token_aware() {
             return Ok(None);
         }
 
-        let partition_key =
-            self.extract_partition_key(serialized_values)
-                .map_err(|err| match err {
-                    PartitionKeyExtractionError::NoPkIndexValue(_, _) => {
-                        ProtocolError::PartitionKeyExtraction
-                    }
-                })?;
-        let token = partition_key
-            .calculate_token(partitioner_name)
-            .map_err(|err| match err {
-                TokenCalculationError::ValueTooLong(values_len) => {
-                    QueryError::BadQuery(BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into()))
-                }
-            })?;
+        let partition_key = self.extract_partition_key(serialized_values)?;
+        let token = partition_key.calculate_token(partitioner_name)?;
 
         Ok(Some((partition_key, token)))
     }
@@ -262,7 +250,10 @@ impl PreparedStatement {
     // As this function creates a `PartitionKey`, it is intended rather for external usage (by users).
     // For internal purposes, `PartitionKey::calculate_token()` is preferred, as `PartitionKey`
     // is either way used internally, among others for display in traces.
-    pub fn calculate_token(&self, values: &impl SerializeRow) -> Result<Option<Token>, QueryError> {
+    pub fn calculate_token(
+        &self,
+        values: &impl SerializeRow,
+    ) -> Result<Option<Token>, PartitionKeyError> {
         self.calculate_token_untyped(&self.serialize_values(values)?)
     }
 
@@ -271,7 +262,7 @@ impl PreparedStatement {
     pub(crate) fn calculate_token_untyped(
         &self,
         values: &SerializedValues,
-    ) -> Result<Option<Token>, QueryError> {
+    ) -> Result<Option<Token>, PartitionKeyError> {
         self.extract_partition_key_and_calculate_token(&self.partitioner_name, values)
             .map(|opt| opt.map(|(_pk, token)| token))
     }
@@ -485,31 +476,37 @@ pub enum TokenCalculationError {
     ValueTooLong(usize),
 }
 
+/// An error returned by [`PreparedStatement::compute_partition_key()`].
 #[derive(Clone, Debug, Error)]
+#[non_exhaustive]
 pub enum PartitionKeyError {
+    /// Failed to extract partition key.
     #[error(transparent)]
-    PartitionKeyExtraction(PartitionKeyExtractionError),
+    PartitionKeyExtraction(#[from] PartitionKeyExtractionError),
+
+    /// Failed to calculate token.
     #[error(transparent)]
-    TokenCalculation(TokenCalculationError),
+    TokenCalculation(#[from] TokenCalculationError),
+
+    /// Failed to serialize values required to compute partition key.
     #[error(transparent)]
-    Serialization(SerializationError),
+    Serialization(#[from] SerializationError),
 }
 
-impl From<PartitionKeyExtractionError> for PartitionKeyError {
-    fn from(err: PartitionKeyExtractionError) -> Self {
-        Self::PartitionKeyExtraction(err)
-    }
-}
-
-impl From<TokenCalculationError> for PartitionKeyError {
-    fn from(err: TokenCalculationError) -> Self {
-        Self::TokenCalculation(err)
-    }
-}
-
-impl From<SerializationError> for PartitionKeyError {
-    fn from(err: SerializationError) -> Self {
-        Self::Serialization(err)
+impl PartitionKeyError {
+    /// Converts the error to [`QueryError`].
+    pub fn into_query_error(self) -> QueryError {
+        match self {
+            PartitionKeyError::PartitionKeyExtraction(_) => {
+                QueryError::ProtocolError(ProtocolError::PartitionKeyExtraction)
+            }
+            PartitionKeyError::TokenCalculation(TokenCalculationError::ValueTooLong(
+                values_len,
+            )) => QueryError::BadQuery(BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())),
+            PartitionKeyError::Serialization(err) => {
+                QueryError::BadQuery(BadQuery::SerializationError(err))
+            }
+        }
     }
 }
 

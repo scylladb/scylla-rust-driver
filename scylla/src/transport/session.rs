@@ -11,7 +11,7 @@ use crate::history;
 use crate::history::HistoryListener;
 pub use crate::transport::errors::TranslationError;
 use crate::transport::errors::{
-    BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
+    BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestAttemptError,
 };
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
@@ -44,7 +44,7 @@ use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
-use super::errors::TracingProtocolError;
+use super::errors::{TimeoutableRequestError, TracingProtocolError, UserRequestError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::iterator::QueryPager;
 #[cfg(feature = "cloud")]
@@ -56,7 +56,7 @@ use super::query_result::RowsError;
 use super::topology::UntranslatedPeer;
 use super::{NodeRef, SelfIdentity};
 use crate::frame::response::result;
-use crate::prepared_statement::PreparedStatement;
+use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{Shard, Token};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
@@ -71,7 +71,7 @@ use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::query_result::QueryResult;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::transport::retry_policy::{RequestInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
 use crate::{
@@ -1232,7 +1232,6 @@ where
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
-                                .map_err(Into::into)
                         } else {
                             let prepared = connection.prepare(query_ref).await?;
                             let serialized = prepared.serialize_values(values_ref)?;
@@ -1248,7 +1247,6 @@ where
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
-                                .map_err(Into::into)
                         }
                     }
                 },
@@ -1269,7 +1267,9 @@ where
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
+        let (result, paging_state_response) = response
+            .into_query_result_and_paging_state()
+            .map_err(UserRequestAttemptError::into_query_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1328,6 +1328,7 @@ where
                 self.metrics.clone(),
             )
             .await
+            .map_err(QueryError::from)
         } else {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
@@ -1342,6 +1343,7 @@ where
                 metrics: self.metrics.clone(),
             })
             .await
+            .map_err(QueryError::from)
         }
     }
 
@@ -1397,9 +1399,10 @@ where
 
         // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
         // returns either an error or an iterator with at least one connection, so there will be at least one result.
-        let first_ok: Result<PreparedStatement, UserRequestError> =
+        let first_ok: Result<PreparedStatement, UserRequestAttemptError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
-        let mut prepared: PreparedStatement = first_ok?;
+        let mut prepared: PreparedStatement =
+            first_ok.map_err(UserRequestAttemptError::into_query_error)?;
 
         // Validate prepared ids equality
         for statement in results.flatten() {
@@ -1486,7 +1489,8 @@ where
         let paging_state_ref = &paging_state;
 
         let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)?
+            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)
+            .map_err(PartitionKeyError::into_query_error)?
             .unzip();
 
         let execution_profile = prepared
@@ -1550,7 +1554,6 @@ where
                             )
                             .await
                             .and_then(QueryResponse::into_non_error_query_response)
-                            .map_err(Into::into)
                     }
                 },
                 &span,
@@ -1570,7 +1573,9 @@ where
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
+        let (result, paging_state_response) = response
+            .into_query_result_and_paging_state()
+            .map_err(UserRequestAttemptError::into_query_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1596,6 +1601,7 @@ where
             metrics: self.metrics.clone(),
         })
         .await
+        .map_err(QueryError::from)
     }
 
     async fn do_batch(
@@ -1650,7 +1656,7 @@ where
 
         let span = RequestSpan::new_batch();
 
-        let run_request_result = self
+        let run_request_result: RunRequestResult<NonErrorQueryResponse> = self
             .run_request(
                 statement_info,
                 &batch.config,
@@ -1671,6 +1677,7 @@ where
                                 serial_consistency,
                             )
                             .await
+                            .and_then(QueryResponse::into_non_error_query_response)
                     }
                 },
                 &span,
@@ -1680,7 +1687,8 @@ where
 
         let result = match run_request_result {
             RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(),
-            RunRequestResult::Completed(result) => {
+            RunRequestResult::Completed(non_error_query_response) => {
+                let result = non_error_query_response.into_query_result()?;
                 span.record_result_fields(&result);
                 result
             }
@@ -1935,14 +1943,14 @@ where
         request_span: &'a RequestSpan,
     ) -> Result<RunRequestResult<ResT>, QueryError>
     where
-        QueryFut: Future<Output = Result<ResT, QueryError>>,
+        QueryFut: Future<Output = Result<ResT, UserRequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
     {
-        let history_listener_and_id: Option<(&'a dyn HistoryListener, history::QueryId)> =
+        let history_listener_and_id: Option<(&'a dyn HistoryListener, history::RequestId)> =
             statement_config
                 .history_listener
                 .as_ref()
-                .map(|hl| (&**hl, hl.log_query_start()));
+                .map(|hl| (&**hl, hl.log_request_start()));
 
         let load_balancer = &execution_profile.load_balancing_policy;
 
@@ -1988,16 +1996,18 @@ where
                     let request_runner_generator = |is_speculative: bool| {
                         let history_data: Option<HistoryData> = history_listener_and_id
                             .as_ref()
-                            .map(|(history_listener, query_id)| {
+                            .map(|(history_listener, request_id)| {
                                 let speculative_id: Option<history::SpeculativeId> =
                                     if is_speculative {
-                                        Some(history_listener.log_new_speculative_fiber(*query_id))
+                                        Some(
+                                            history_listener.log_new_speculative_fiber(*request_id),
+                                        )
                                     } else {
                                         None
                                     };
                                 HistoryData {
                                     listener: *history_listener,
-                                    query_id: *query_id,
+                                    request_id: *request_id,
                                     speculative_id,
                                 }
                             });
@@ -2036,9 +2046,9 @@ where
                     let history_data: Option<HistoryData> =
                         history_listener_and_id
                             .as_ref()
-                            .map(|(history_listener, query_id)| HistoryData {
+                            .map(|(history_listener, request_id)| HistoryData {
                                 listener: *history_listener,
-                                query_id: *query_id,
+                                request_id: *request_id,
                                 speculative_id: None,
                             });
                     self.run_request_speculative_fiber(
@@ -2055,7 +2065,6 @@ where
                         },
                     )
                     .await
-                    .unwrap_or(Err(QueryError::EmptyPlan))
                 }
             }
         };
@@ -2066,24 +2075,19 @@ where
         let result = match effective_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
-                .unwrap_or_else(|e| {
-                    Err(QueryError::RequestTimeout(format!(
-                        "Request took longer than {}ms: {}",
-                        timeout.as_millis(),
-                        e
-                    )))
-                }),
-            None => runner.await,
+                .map(|res| res.map_err(TimeoutableRequestError::from))
+                .unwrap_or_else(|_| Err(TimeoutableRequestError::RequestTimeout(timeout))),
+            None => runner.await.map_err(TimeoutableRequestError::from),
         };
 
-        if let Some((history_listener, query_id)) = history_listener_and_id {
+        if let Some((history_listener, request_id)) = history_listener_and_id {
             match &result {
-                Ok(_) => history_listener.log_query_success(query_id),
-                Err(e) => history_listener.log_query_error(query_id, e),
+                Ok(_) => history_listener.log_request_success(request_id),
+                Err(e) => history_listener.log_request_error(request_id, e),
             }
         }
 
-        result
+        result.map_err(TimeoutableRequestError::into_query_error)
     }
 
     /// Executes the closure `run_request_once`, provided the load balancing plan and some information
@@ -2097,12 +2101,12 @@ where
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
-    ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
+    ) -> Result<RunRequestResult<ResT>, UserRequestError>
     where
-        QueryFut: Future<Output = Result<ResT, QueryError>>,
+        QueryFut: Future<Output = Result<ResT, UserRequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
     {
-        let mut last_error: Option<QueryError> = None;
+        let mut last_error: UserRequestError = UserRequestError::EmptyPlan;
         let mut current_consistency: Consistency = context
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
@@ -2119,7 +2123,7 @@ where
                             error = %e,
                             "Choosing connection failed"
                         );
-                        last_error = Some(e.into());
+                        last_error = e.into();
                         // Broken connection doesn't count as a failed request, don't log in metrics
                         continue 'nodes_in_plan;
                     }
@@ -2136,23 +2140,23 @@ where
                 );
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connection.get_connect_address());
-                let request_result: Result<ResT, QueryError> =
+                let request_result: Result<ResT, UserRequestAttemptError> =
                     run_request_once(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
                         .await;
 
                 let elapsed = request_start.elapsed();
-                last_error = match request_result {
+                let request_error: UserRequestAttemptError = match request_result {
                     Ok(response) => {
                         trace!(parent: &span, "Request succeeded");
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
-                        execution_profile.load_balancing_policy.on_query_success(
+                        execution_profile.load_balancing_policy.on_request_success(
                             context.query_info,
                             elapsed,
                             node,
                         );
-                        return Some(Ok(RunRequestResult::Completed(response)));
+                        return Ok(RunRequestResult::Completed(response));
                     }
                     Err(e) => {
                         trace!(
@@ -2161,20 +2165,19 @@ where
                             "Request failed"
                         );
                         self.metrics.inc_failed_nonpaged_queries();
-                        execution_profile.load_balancing_policy.on_query_failure(
+                        execution_profile.load_balancing_policy.on_request_failure(
                             context.query_info,
                             elapsed,
                             node,
                             &e,
                         );
-                        Some(e)
+                        e
                     }
                 };
 
-                let the_error: &QueryError = last_error.as_ref().unwrap();
                 // Use retry policy to decide what to do next
-                let query_info = QueryInfo {
-                    error: the_error,
+                let query_info = RequestInfo {
+                    error: &request_error,
                     is_idempotent: context.is_idempotent,
                     consistency: context
                         .consistency_set_on_statement
@@ -2186,7 +2189,11 @@ where
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
-                context.log_attempt_error(&attempt_id, the_error, &retry_decision);
+
+                context.log_attempt_error(&attempt_id, &request_error, &retry_decision);
+
+                last_error = request_error.into();
+
                 match retry_decision {
                     RetryDecision::RetrySameNode(new_cl) => {
                         self.metrics.inc_retries_num();
@@ -2201,13 +2208,13 @@ where
                     RetryDecision::DontRetry => break 'nodes_in_plan,
 
                     RetryDecision::IgnoreWriteError => {
-                        return Some(Ok(RunRequestResult::IgnoredWriteError))
+                        return Ok(RunRequestResult::IgnoredWriteError)
                     }
                 };
             }
         }
 
-        last_error.map(Result::Err)
+        Err(last_error)
     }
 
     async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, QueryError> {
@@ -2225,8 +2232,8 @@ where
             self.await_schema_agreement_indefinitely(),
         )
         .await
-        .unwrap_or(Err(QueryError::RequestTimeout(
-            "schema agreement not reached in time".to_owned(),
+        .unwrap_or(Err(QueryError::SchemaAgreementTimeout(
+            self.schema_agreement_timeout,
         )))
     }
 
@@ -2275,7 +2282,7 @@ struct ExecuteRequestContext<'a> {
 
 struct HistoryData<'a> {
     listener: &'a dyn HistoryListener,
-    query_id: history::QueryId,
+    request_id: history::RequestId,
     speculative_id: Option<history::SpeculativeId>,
 }
 
@@ -2283,7 +2290,7 @@ impl ExecuteRequestContext<'_> {
     fn log_attempt_start(&self, node_addr: SocketAddr) -> Option<history::AttemptId> {
         self.history_data.as_ref().map(|hd| {
             hd.listener
-                .log_attempt_start(hd.query_id, hd.speculative_id, node_addr)
+                .log_attempt_start(hd.request_id, hd.speculative_id, node_addr)
         })
     }
 
@@ -2304,7 +2311,7 @@ impl ExecuteRequestContext<'_> {
     fn log_attempt_error(
         &self,
         attempt_id_opt: &Option<history::AttemptId>,
-        error: &QueryError,
+        error: &UserRequestAttemptError,
         retry_decision: &RetryDecision,
     ) {
         let attempt_id: &history::AttemptId = match attempt_id_opt {
