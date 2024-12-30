@@ -1517,7 +1517,7 @@ async fn query_views(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
-) -> Result<HashMap<String, HashMap<String, MaterializedView>>, QueryError> {
+) -> Result<HashMap<String, HashMap<String, MaterializedView>>, MetadataError> {
     struct SchemaViewsErrorConverter;
     impl MetadataErrorConverter for SchemaViewsErrorConverter {
         type DestError = ViewsMetadataError;
@@ -1543,13 +1543,10 @@ async fn query_views(
     );
 
     let mut result = HashMap::new();
-    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts)
-        .await
-        .map_err(MetadataError::Tables)?;
+    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
 
     rows.map(|row_result| {
-        let (keyspace_name, view_name, base_table_name) =
-            row_result.map_err(MetadataError::Views)?;
+        let (keyspace_name, view_name, base_table_name) = row_result?;
 
         let keyspace_and_view_name = (keyspace_name, view_name);
 
@@ -1569,7 +1566,7 @@ async fn query_views(
             .or_insert_with(HashMap::new)
             .insert(keyspace_and_view_name.1, materialized_view);
 
-        Ok::<_, QueryError>(())
+        Ok::<_, MetadataError>(())
     })
     .try_for_each(|_| future::ok(()))
     .await?;
