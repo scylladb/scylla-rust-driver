@@ -1035,7 +1035,9 @@ async fn query_keyspaces(
     );
 
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
-        let udts = query_user_defined_types(conn, keyspaces_to_fetch).await?;
+        let udts = query_user_defined_types(conn, keyspaces_to_fetch)
+            .await
+            .map_err(MetadataError::Udts)?;
         (
             query_tables(conn, keyspaces_to_fetch, &udts)
                 .await
@@ -1117,7 +1119,7 @@ impl TryFrom<UdtRow> for UdtRowWithParsedFieldTypes {
 async fn query_user_defined_types(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-) -> Result<HashMap<String, HashMap<String, Arc<UserDefinedType>>>, QueryError> {
+) -> Result<HashMap<String, HashMap<String, Arc<UserDefinedType>>>, UdtMetadataError> {
     struct SchemaTypesErrorConverter;
     impl MetadataErrorConverter for SchemaTypesErrorConverter {
         type DestError = UdtMetadataError;
@@ -1144,18 +1146,15 @@ async fn query_user_defined_types(
 
     let mut udt_rows: Vec<UdtRowWithParsedFieldTypes> = rows
         .map(|row_result| {
-            let udt_row = row_result
-                .map_err(MetadataError::Udts)?
-                .try_into()
-                .map_err(|err: InvalidCqlType| {
-                    MetadataError::Udts(UdtMetadataError::InvalidCqlType {
-                        typ: err.type_,
-                        position: err.position,
-                        reason: err.reason,
-                    })
-                })?;
+            let udt_row = row_result?.try_into().map_err(|err: InvalidCqlType| {
+                UdtMetadataError::InvalidCqlType {
+                    typ: err.type_,
+                    position: err.position,
+                    reason: err.reason,
+                }
+            })?;
 
-            Ok::<_, QueryError>(udt_row)
+            Ok::<_, UdtMetadataError>(udt_row)
         })
         .try_collect()
         .await?;
@@ -1199,7 +1198,7 @@ async fn query_user_defined_types(
     Ok(udts)
 }
 
-fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), QueryError> {
+fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), UdtMetadataError> {
     fn do_with_referenced_udts(what: &mut impl FnMut(&str), pre_cql_type: &PreCqlType) {
         match pre_cql_type {
             PreCqlType::Native(_) => (),
@@ -1282,7 +1281,7 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), Quer
 
     if sorted.len() < indegs.len() {
         // Some UDTs could not become leaves in the graph, which implies cycles.
-        return Err(MetadataError::Udts(UdtMetadataError::CircularTypeDependency).into());
+        return Err(UdtMetadataError::CircularTypeDependency);
     }
 
     let owned_sorted = sorted.into_iter().cloned().collect::<Vec<_>>();
