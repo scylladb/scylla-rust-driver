@@ -1,7 +1,7 @@
 use self::latency_awareness::LatencyAwareness;
 pub use self::latency_awareness::LatencyAwarenessBuilder;
 
-use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo, UserRequestError};
+use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo, UserRequestAttemptError};
 use crate::{
     routing::{Shard, Token},
     transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
@@ -571,7 +571,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         _routing_info: &RoutingInfo,
         latency: Duration,
         node: NodeRef<'_>,
-        error: &UserRequestError,
+        error: &UserRequestAttemptError,
     ) {
         if let Some(latency_awareness) = self.latency_awareness.as_ref() {
             if LatencyAwareness::reliable_latency_measure(error) {
@@ -2554,7 +2554,7 @@ mod latency_awareness {
     use uuid::Uuid;
 
     use crate::{
-        load_balancing::{NodeRef, UserRequestError},
+        load_balancing::{NodeRef, UserRequestAttemptError},
         routing::Shard,
         transport::{errors::DbError, node::Node},
     };
@@ -2840,27 +2840,27 @@ mod latency_awareness {
             }
         }
 
-        pub(crate) fn reliable_latency_measure(error: &UserRequestError) -> bool {
+        pub(crate) fn reliable_latency_measure(error: &UserRequestAttemptError) -> bool {
             match error {
                 // "fast" errors, i.e. ones that are returned quickly after the query begins
-                UserRequestError::CqlRequestSerialization(_)
-                | UserRequestError::BrokenConnectionError(_)
-                | UserRequestError::UnableToAllocStreamId
-                | UserRequestError::DbError(DbError::IsBootstrapping, _)
-                | UserRequestError::DbError(DbError::Unavailable { .. }, _)
-                | UserRequestError::DbError(DbError::Unprepared { .. }, _)
-                | UserRequestError::DbError(DbError::Overloaded { .. }, _)
-                | UserRequestError::DbError(DbError::RateLimitReached { .. }, _)
-                | UserRequestError::SerializationError(_) => false,
+                UserRequestAttemptError::CqlRequestSerialization(_)
+                | UserRequestAttemptError::BrokenConnectionError(_)
+                | UserRequestAttemptError::UnableToAllocStreamId
+                | UserRequestAttemptError::DbError(DbError::IsBootstrapping, _)
+                | UserRequestAttemptError::DbError(DbError::Unavailable { .. }, _)
+                | UserRequestAttemptError::DbError(DbError::Unprepared { .. }, _)
+                | UserRequestAttemptError::DbError(DbError::Overloaded { .. }, _)
+                | UserRequestAttemptError::DbError(DbError::RateLimitReached { .. }, _)
+                | UserRequestAttemptError::SerializationError(_) => false,
 
                 // "slow" errors, i.e. ones that are returned after considerable time of query being run
-                UserRequestError::DbError(_, _)
-                | UserRequestError::CqlResultParseError(_)
-                | UserRequestError::CqlErrorParseError(_)
-                | UserRequestError::BodyExtensionsParseError(_)
-                | UserRequestError::RepreparedIdChanged { .. }
-                | UserRequestError::RepreparedIdMissingInBatch
-                | UserRequestError::UnexpectedResponse(_) => true,
+                UserRequestAttemptError::DbError(_, _)
+                | UserRequestAttemptError::CqlResultParseError(_)
+                | UserRequestAttemptError::CqlErrorParseError(_)
+                | UserRequestAttemptError::BodyExtensionsParseError(_)
+                | UserRequestAttemptError::RepreparedIdChanged { .. }
+                | UserRequestAttemptError::RepreparedIdMissingInBatch
+                | UserRequestAttemptError::UnexpectedResponse(_) => true,
             }
         }
     }

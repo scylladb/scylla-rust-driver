@@ -3,7 +3,7 @@ use tracing::debug;
 
 use crate::{
     retry_policy::{RequestInfo, RetryDecision, RetryPolicy, RetrySession},
-    transport::errors::{DbError, UserRequestError, WriteType},
+    transport::errors::{DbError, UserRequestAttemptError, WriteType},
 };
 
 /// Downgrading consistency retry policy - retries with lower consistency level if it knows\
@@ -53,7 +53,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
         let cl = match request_info.consistency {
             Consistency::Serial | Consistency::LocalSerial => {
                 return match request_info.error {
-                    UserRequestError::DbError(DbError::Unavailable { .. }, _) => {
+                    UserRequestAttemptError::DbError(DbError::Unavailable { .. }, _) => {
                         // JAVA-764: if the requested consistency level is serial, it means that the operation failed at
                         // the paxos phase of a LWT.
                         // Retry on the next host, on the assumption that the initial coordinator could be network-isolated.
@@ -90,10 +90,10 @@ impl RetrySession for DowngradingConsistencyRetrySession {
         match request_info.error {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
-            UserRequestError::BrokenConnectionError(_)
-            | UserRequestError::DbError(DbError::Overloaded, _)
-            | UserRequestError::DbError(DbError::ServerError, _)
-            | UserRequestError::DbError(DbError::TruncateError, _) => {
+            UserRequestAttemptError::BrokenConnectionError(_)
+            | UserRequestAttemptError::DbError(DbError::Overloaded, _)
+            | UserRequestAttemptError::DbError(DbError::ServerError, _)
+            | UserRequestAttemptError::DbError(DbError::TruncateError, _) => {
                 if request_info.is_idempotent {
                     RetryDecision::RetryNextNode(None)
                 } else {
@@ -102,7 +102,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
             }
             // Unavailable - the current node believes that not enough nodes
             // are alive to satisfy specified consistency requirements.
-            UserRequestError::DbError(DbError::Unavailable { alive, .. }, _) => {
+            UserRequestAttemptError::DbError(DbError::Unavailable { alive, .. }, _) => {
                 if !self.was_retry {
                     self.was_retry = true;
                     max_likely_to_work_cl(*alive, cl)
@@ -111,7 +111,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                 }
             }
             // ReadTimeout - coordinator didn't receive enough replies in time.
-            UserRequestError::DbError(
+            UserRequestAttemptError::DbError(
                 DbError::ReadTimeout {
                     received,
                     required,
@@ -133,7 +133,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                 }
             }
             // Write timeout - coordinator didn't receive enough replies in time.
-            UserRequestError::DbError(
+            UserRequestAttemptError::DbError(
                 DbError::WriteTimeout {
                     write_type,
                     received,
@@ -162,11 +162,11 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                 }
             }
             // The node is still bootstrapping it can't execute the request, we should try another one
-            UserRequestError::DbError(DbError::IsBootstrapping, _) => {
+            UserRequestAttemptError::DbError(DbError::IsBootstrapping, _) => {
                 RetryDecision::RetryNextNode(None)
             }
             // Connection to the contacted node is overloaded, try another one
-            UserRequestError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
+            UserRequestAttemptError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
@@ -200,7 +200,7 @@ mod tests {
     ];
 
     fn make_request_info_with_cl(
-        error: &UserRequestError,
+        error: &UserRequestAttemptError,
         is_idempotent: bool,
         cl: Consistency,
     ) -> RequestInfo<'_> {
@@ -213,7 +213,7 @@ mod tests {
 
     // Asserts that downgrading consistency policy never retries for this Error
     fn downgrading_consistency_policy_assert_never_retries(
-        error: UserRequestError,
+        error: UserRequestAttemptError,
         cl: Consistency,
     ) {
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
@@ -271,17 +271,17 @@ mod tests {
         for &cl in CONSISTENCY_LEVELS {
             for dberror in never_retried_dberrors.clone() {
                 downgrading_consistency_policy_assert_never_retries(
-                    UserRequestError::DbError(dberror, String::new()),
+                    UserRequestAttemptError::DbError(dberror, String::new()),
                     cl,
                 );
             }
 
             downgrading_consistency_policy_assert_never_retries(
-                UserRequestError::RepreparedIdMissingInBatch,
+                UserRequestAttemptError::RepreparedIdMissingInBatch,
                 cl,
             );
             downgrading_consistency_policy_assert_never_retries(
-                UserRequestError::RepreparedIdChanged {
+                UserRequestAttemptError::RepreparedIdChanged {
                     statement: String::new(),
                     expected_id: vec![],
                     reprepared_id: vec![],
@@ -289,7 +289,7 @@ mod tests {
                 cl,
             );
             downgrading_consistency_policy_assert_never_retries(
-                UserRequestError::CqlRequestSerialization(
+                UserRequestAttemptError::CqlRequestSerialization(
                     CqlRequestSerializationError::BatchSerialization(
                         BatchSerializationError::TooManyStatements(u16::MAX as usize + 1),
                     ),
@@ -301,7 +301,7 @@ mod tests {
 
     // Asserts that for this error policy retries on next on idempotent queries only
     fn downgrading_consistency_policy_assert_idempotent_next(
-        error: UserRequestError,
+        error: UserRequestAttemptError,
         cl: Consistency,
     ) {
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
@@ -336,10 +336,10 @@ mod tests {
     fn downgrading_consistency_idempotent_next_retries() {
         setup_tracing();
         let idempotent_next_errors = vec![
-            UserRequestError::DbError(DbError::Overloaded, String::new()),
-            UserRequestError::DbError(DbError::TruncateError, String::new()),
-            UserRequestError::DbError(DbError::ServerError, String::new()),
-            UserRequestError::BrokenConnectionError(
+            UserRequestAttemptError::DbError(DbError::Overloaded, String::new()),
+            UserRequestAttemptError::DbError(DbError::TruncateError, String::new()),
+            UserRequestAttemptError::DbError(DbError::ServerError, String::new()),
+            UserRequestAttemptError::BrokenConnectionError(
                 BrokenConnectionErrorKind::TooManyOrphanedStreamIds(5).into(),
             ),
         ];
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     fn downgrading_consistency_bootstrapping() {
         setup_tracing();
-        let error = UserRequestError::DbError(DbError::IsBootstrapping, String::new());
+        let error = UserRequestAttemptError::DbError(DbError::IsBootstrapping, String::new());
 
         for &cl in CONSISTENCY_LEVELS {
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
@@ -377,7 +377,7 @@ mod tests {
     fn downgrading_consistency_unavailable() {
         setup_tracing();
         let alive = 1;
-        let error = UserRequestError::DbError(
+        let error = UserRequestAttemptError::DbError(
             DbError::Unavailable {
                 consistency: Consistency::Two,
                 required: 2,
@@ -416,7 +416,7 @@ mod tests {
     fn downgrading_consistency_read_timeout() {
         setup_tracing();
         // Enough responses and data_present == false - coordinator received only checksums
-        let enough_responses_no_data = UserRequestError::DbError(
+        let enough_responses_no_data = UserRequestAttemptError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 2,
@@ -467,7 +467,7 @@ mod tests {
         }
         // Enough responses but data_present == true - coordinator probably timed out
         // waiting for read-repair acknowledgement.
-        let enough_responses_with_data = UserRequestError::DbError(
+        let enough_responses_with_data = UserRequestAttemptError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 2,
@@ -503,7 +503,7 @@ mod tests {
 
         // Not enough responses, data_present == true
         let received = 1;
-        let not_enough_responses_with_data = UserRequestError::DbError(
+        let not_enough_responses_with_data = UserRequestAttemptError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received,
@@ -565,7 +565,7 @@ mod tests {
         setup_tracing();
         for (received, required) in (1..=5).zip(2..=6) {
             // WriteType == BatchLog
-            let write_type_batchlog = UserRequestError::DbError(
+            let write_type_batchlog = UserRequestAttemptError::DbError(
                 DbError::WriteTimeout {
                     consistency: Consistency::Two,
                     received,
@@ -608,7 +608,7 @@ mod tests {
             }
 
             // WriteType == UnloggedBatch
-            let write_type_unlogged_batch = UserRequestError::DbError(
+            let write_type_unlogged_batch = UserRequestAttemptError::DbError(
                 DbError::WriteTimeout {
                     consistency: Consistency::Two,
                     received,
@@ -651,7 +651,7 @@ mod tests {
             }
 
             // WriteType == other
-            let write_type_other = UserRequestError::DbError(
+            let write_type_other = UserRequestAttemptError::DbError(
                 DbError::WriteTimeout {
                     consistency: Consistency::Two,
                     received,

@@ -11,7 +11,7 @@ use crate::history;
 use crate::history::HistoryListener;
 pub use crate::transport::errors::TranslationError;
 use crate::transport::errors::{
-    BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
+    BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestAttemptError,
 };
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
@@ -1269,7 +1269,7 @@ where
 
         let (result, paging_state_response) = response
             .into_query_result_and_paging_state()
-            .map_err(UserRequestError::into_query_error)?;
+            .map_err(UserRequestAttemptError::into_query_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1397,10 +1397,10 @@ where
 
         // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
         // returns either an error or an iterator with at least one connection, so there will be at least one result.
-        let first_ok: Result<PreparedStatement, UserRequestError> =
+        let first_ok: Result<PreparedStatement, UserRequestAttemptError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
         let mut prepared: PreparedStatement =
-            first_ok.map_err(UserRequestError::into_query_error)?;
+            first_ok.map_err(UserRequestAttemptError::into_query_error)?;
 
         // Validate prepared ids equality
         for statement in results.flatten() {
@@ -1572,7 +1572,7 @@ where
 
         let (result, paging_state_response) = response
             .into_query_result_and_paging_state()
-            .map_err(UserRequestError::into_query_error)?;
+            .map_err(UserRequestAttemptError::into_query_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1939,7 +1939,7 @@ where
         request_span: &'a RequestSpan,
     ) -> Result<RunRequestResult<ResT>, QueryError>
     where
-        QueryFut: Future<Output = Result<ResT, UserRequestError>>,
+        QueryFut: Future<Output = Result<ResT, UserRequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
     {
         let history_listener_and_id: Option<(&'a dyn HistoryListener, history::QueryId)> =
@@ -2103,7 +2103,7 @@ where
         mut context: ExecuteRequestContext<'a>,
     ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
     where
-        QueryFut: Future<Output = Result<ResT, UserRequestError>>,
+        QueryFut: Future<Output = Result<ResT, UserRequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
     {
         let mut last_error: Option<QueryError> = None;
@@ -2140,13 +2140,13 @@ where
                 );
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connection.get_connect_address());
-                let request_result: Result<ResT, UserRequestError> =
+                let request_result: Result<ResT, UserRequestAttemptError> =
                     run_request_once(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
                         .await;
 
                 let elapsed = request_start.elapsed();
-                let request_error: UserRequestError = match request_result {
+                let request_error: UserRequestAttemptError = match request_result {
                     Ok(response) => {
                         trace!(parent: &span, "Request succeeded");
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);

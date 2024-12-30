@@ -3,12 +3,12 @@
 //! the `RetryPolicy` trait
 
 use crate::frame::types::Consistency;
-use crate::transport::errors::{DbError, UserRequestError, WriteType};
+use crate::transport::errors::{DbError, UserRequestAttemptError, WriteType};
 
 /// Information about a failed request
 pub struct RequestInfo<'a> {
     /// The error with which the request failed
-    pub error: &'a UserRequestError,
+    pub error: &'a UserRequestAttemptError,
     /// A request is idempotent if it can be applied multiple times without changing the result of the initial application\
     /// If set to `true` we can be sure that it is idempotent\
     /// If set to `false` it is unknown whether it is idempotent
@@ -125,10 +125,10 @@ impl RetrySession for DefaultRetrySession {
         match request_info.error {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
-            UserRequestError::BrokenConnectionError(_)
-            | UserRequestError::DbError(DbError::Overloaded, _)
-            | UserRequestError::DbError(DbError::ServerError, _)
-            | UserRequestError::DbError(DbError::TruncateError, _) => {
+            UserRequestAttemptError::BrokenConnectionError(_)
+            | UserRequestAttemptError::DbError(DbError::Overloaded, _)
+            | UserRequestAttemptError::DbError(DbError::ServerError, _)
+            | UserRequestAttemptError::DbError(DbError::TruncateError, _) => {
                 if request_info.is_idempotent {
                     RetryDecision::RetryNextNode(None)
                 } else {
@@ -140,7 +140,7 @@ impl RetrySession for DefaultRetrySession {
             // Maybe this node has network problems - try a different one.
             // Perform at most one retry - it's unlikely that two nodes
             // have network problems at the same time
-            UserRequestError::DbError(DbError::Unavailable { .. }, _) => {
+            UserRequestAttemptError::DbError(DbError::Unavailable { .. }, _) => {
                 if !self.was_unavailable_retry {
                     self.was_unavailable_retry = true;
                     RetryDecision::RetryNextNode(None)
@@ -154,7 +154,7 @@ impl RetrySession for DefaultRetrySession {
             // This happens when the coordinator picked replicas that were overloaded/dying.
             // Retried request should have some useful response because the node will detect
             // that these replicas are dead.
-            UserRequestError::DbError(
+            UserRequestAttemptError::DbError(
                 DbError::ReadTimeout {
                     received,
                     required,
@@ -174,7 +174,7 @@ impl RetrySession for DefaultRetrySession {
             // Retry at most once and only for BatchLog write.
             // Coordinator probably didn't detect the nodes as dead.
             // By the time we retry they should be detected as dead.
-            UserRequestError::DbError(DbError::WriteTimeout { write_type, .. }, _) => {
+            UserRequestAttemptError::DbError(DbError::WriteTimeout { write_type, .. }, _) => {
                 if !self.was_write_timeout_retry
                     && request_info.is_idempotent
                     && *write_type == WriteType::BatchLog
@@ -186,11 +186,11 @@ impl RetrySession for DefaultRetrySession {
                 }
             }
             // The node is still bootstrapping it can't execute the request, we should try another one
-            UserRequestError::DbError(DbError::IsBootstrapping, _) => {
+            UserRequestAttemptError::DbError(DbError::IsBootstrapping, _) => {
                 RetryDecision::RetryNextNode(None)
             }
             // Connection to the contacted node is overloaded, try another one
-            UserRequestError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
+            UserRequestAttemptError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
@@ -206,12 +206,12 @@ mod tests {
     use super::{DefaultRetryPolicy, RequestInfo, RetryDecision, RetryPolicy};
     use crate::statement::Consistency;
     use crate::test_utils::setup_tracing;
-    use crate::transport::errors::{BrokenConnectionErrorKind, UserRequestError};
+    use crate::transport::errors::{BrokenConnectionErrorKind, UserRequestAttemptError};
     use crate::transport::errors::{DbError, WriteType};
     use bytes::Bytes;
     use scylla_cql::frame::frame_errors::{BatchSerializationError, CqlRequestSerializationError};
 
-    fn make_request_info(error: &UserRequestError, is_idempotent: bool) -> RequestInfo<'_> {
+    fn make_request_info(error: &UserRequestAttemptError, is_idempotent: bool) -> RequestInfo<'_> {
         RequestInfo {
             error,
             is_idempotent,
@@ -220,7 +220,7 @@ mod tests {
     }
 
     // Asserts that default policy never retries for this Error
-    fn default_policy_assert_never_retries(error: UserRequestError) {
+    fn default_policy_assert_never_retries(error: UserRequestAttemptError) {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_request_info(&error, false)),
@@ -274,16 +274,19 @@ mod tests {
         ];
 
         for dberror in never_retried_dberrors {
-            default_policy_assert_never_retries(UserRequestError::DbError(dberror, String::new()));
+            default_policy_assert_never_retries(UserRequestAttemptError::DbError(
+                dberror,
+                String::new(),
+            ));
         }
 
-        default_policy_assert_never_retries(UserRequestError::RepreparedIdMissingInBatch);
-        default_policy_assert_never_retries(UserRequestError::RepreparedIdChanged {
+        default_policy_assert_never_retries(UserRequestAttemptError::RepreparedIdMissingInBatch);
+        default_policy_assert_never_retries(UserRequestAttemptError::RepreparedIdChanged {
             statement: String::new(),
             expected_id: vec![],
             reprepared_id: vec![],
         });
-        default_policy_assert_never_retries(UserRequestError::CqlRequestSerialization(
+        default_policy_assert_never_retries(UserRequestAttemptError::CqlRequestSerialization(
             CqlRequestSerializationError::BatchSerialization(
                 BatchSerializationError::TooManyStatements(u16::MAX as usize + 1),
             ),
@@ -291,7 +294,7 @@ mod tests {
     }
 
     // Asserts that for this error policy retries on next on idempotent queries only
-    fn default_policy_assert_idempotent_next(error: UserRequestError) {
+    fn default_policy_assert_idempotent_next(error: UserRequestAttemptError) {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_request_info(&error, false)),
@@ -309,10 +312,10 @@ mod tests {
     fn default_idempotent_next_retries() {
         setup_tracing();
         let idempotent_next_errors = vec![
-            UserRequestError::DbError(DbError::Overloaded, String::new()),
-            UserRequestError::DbError(DbError::TruncateError, String::new()),
-            UserRequestError::DbError(DbError::ServerError, String::new()),
-            UserRequestError::BrokenConnectionError(
+            UserRequestAttemptError::DbError(DbError::Overloaded, String::new()),
+            UserRequestAttemptError::DbError(DbError::TruncateError, String::new()),
+            UserRequestAttemptError::DbError(DbError::ServerError, String::new()),
+            UserRequestAttemptError::BrokenConnectionError(
                 BrokenConnectionErrorKind::TooManyOrphanedStreamIds(5).into(),
             ),
         ];
@@ -326,7 +329,7 @@ mod tests {
     #[test]
     fn default_bootstrapping() {
         setup_tracing();
-        let error = UserRequestError::DbError(DbError::IsBootstrapping, String::new());
+        let error = UserRequestAttemptError::DbError(DbError::IsBootstrapping, String::new());
 
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
@@ -345,7 +348,7 @@ mod tests {
     #[test]
     fn default_unavailable() {
         setup_tracing();
-        let error = UserRequestError::DbError(
+        let error = UserRequestAttemptError::DbError(
             DbError::Unavailable {
                 consistency: Consistency::Two,
                 required: 2,
@@ -380,7 +383,7 @@ mod tests {
     fn default_read_timeout() {
         setup_tracing();
         // Enough responses and data_present == false - coordinator received only checksums
-        let enough_responses_no_data = UserRequestError::DbError(
+        let enough_responses_no_data = UserRequestAttemptError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 2,
@@ -414,7 +417,7 @@ mod tests {
 
         // Enough responses but data_present == true - coordinator probably timed out
         // waiting for read-repair acknowledgement.
-        let enough_responses_with_data = UserRequestError::DbError(
+        let enough_responses_with_data = UserRequestAttemptError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 2,
@@ -439,7 +442,7 @@ mod tests {
         );
 
         // Not enough responses, data_present == true
-        let not_enough_responses_with_data = UserRequestError::DbError(
+        let not_enough_responses_with_data = UserRequestAttemptError::DbError(
             DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 1,
@@ -469,7 +472,7 @@ mod tests {
     fn default_write_timeout() {
         setup_tracing();
         // WriteType == BatchLog
-        let good_write_type = UserRequestError::DbError(
+        let good_write_type = UserRequestAttemptError::DbError(
             DbError::WriteTimeout {
                 consistency: Consistency::Two,
                 received: 1,
@@ -498,7 +501,7 @@ mod tests {
         );
 
         // WriteType != BatchLog
-        let bad_write_type = UserRequestError::DbError(
+        let bad_write_type = UserRequestAttemptError::DbError(
             DbError::WriteTimeout {
                 consistency: Consistency::Two,
                 received: 4,

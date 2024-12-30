@@ -33,7 +33,7 @@ use crate::authentication::AuthenticatorProvider;
 use crate::transport::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
-    QueryError, RequestError, ResponseParseError, TranslationError, UserRequestError,
+    QueryError, RequestError, ResponseParseError, TranslationError, UserRequestAttemptError,
 };
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -230,7 +230,7 @@ pub(crate) struct NonErrorQueryResponse {
 impl QueryResponse {
     pub(crate) fn into_non_error_query_response(
         self,
-    ) -> Result<NonErrorQueryResponse, UserRequestError> {
+    ) -> Result<NonErrorQueryResponse, UserRequestAttemptError> {
         Ok(NonErrorQueryResponse {
             response: self.response.into_non_error_response()?,
             tracing_id: self.tracing_id,
@@ -240,14 +240,14 @@ impl QueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestAttemptError> {
         self.into_non_error_query_response()?
             .into_query_result_and_paging_state()
     }
 
     pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
         self.into_non_error_query_response()
-            .map_err(UserRequestError::into_query_error)?
+            .map_err(UserRequestAttemptError::into_query_error)?
             .into_query_result()
     }
 }
@@ -269,14 +269,14 @@ impl NonErrorQueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestAttemptError> {
         let (raw_rows, paging_state_response) = match self.response {
             NonErrorResponse::Result(result::Result::Rows((rs, paging_state_response))) => {
                 (Some(rs), paging_state_response)
             }
             NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages),
             _ => {
-                return Err(UserRequestError::UnexpectedResponse(
+                return Err(UserRequestAttemptError::UnexpectedResponse(
                     self.response.to_response_kind(),
                 ))
             }
@@ -291,7 +291,7 @@ impl NonErrorQueryResponse {
     pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
         let (result, paging_state) = self
             .into_query_result_and_paging_state()
-            .map_err(UserRequestError::into_query_error)?;
+            .map_err(UserRequestAttemptError::into_query_error)?;
 
         if !paging_state.finished() {
             error!(
@@ -850,7 +850,7 @@ impl Connection {
     pub(crate) async fn prepare(
         &self,
         query: &Query,
-    ) -> Result<PreparedStatement, UserRequestError> {
+    ) -> Result<PreparedStatement, UserRequestAttemptError> {
         let query_response = self
             .send_request(
                 &request::Prepare {
@@ -864,7 +864,7 @@ impl Connection {
 
         let mut prepared_statement = match query_response.response {
             Response::Error(error::Error { error, reason }) => {
-                return Err(UserRequestError::DbError(error, reason))
+                return Err(UserRequestAttemptError::DbError(error, reason))
             }
             Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
                 p.id,
@@ -878,7 +878,7 @@ impl Connection {
                 query.config.clone(),
             ),
             _ => {
-                return Err(UserRequestError::UnexpectedResponse(
+                return Err(UserRequestAttemptError::UnexpectedResponse(
                     query_response.response.to_response_kind(),
                 ))
             }
@@ -894,13 +894,13 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         previous_prepared: &PreparedStatement,
-    ) -> Result<(), UserRequestError> {
+    ) -> Result<(), UserRequestAttemptError> {
         let reprepare_query: Query = query.into();
         let reprepared = self.prepare(&reprepare_query).await?;
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
         if reprepared.get_id() != previous_prepared.get_id() {
-            Err(UserRequestError::RepreparedIdChanged {
+            Err(UserRequestAttemptError::RepreparedIdChanged {
                 statement: reprepare_query.contents,
                 expected_id: previous_prepared.get_id().clone().into(),
                 reprepared_id: reprepared.get_id().clone().into(),
@@ -972,7 +972,7 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestAttemptError> {
         let query: Query = query.into();
 
         // This method is used only for driver internal queries, so no need to consult execution profile here.
@@ -997,7 +997,7 @@ impl Connection {
         paging_state: PagingState,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestAttemptError> {
         let query: Query = query.into();
         let page_size = query.get_validated_page_size();
 
@@ -1022,14 +1022,14 @@ impl Connection {
 
         self.query_raw_unpaged(&query)
             .await
-            .map_err(UserRequestError::into_query_error)
+            .map_err(UserRequestAttemptError::into_query_error)
             .and_then(QueryResponse::into_query_result)
     }
 
     pub(crate) async fn query_raw_unpaged(
         &self,
         query: &Query,
-    ) -> Result<QueryResponse, UserRequestError> {
+    ) -> Result<QueryResponse, UserRequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_raw_with_consistency(
             query,
@@ -1050,7 +1050,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, UserRequestError> {
+    ) -> Result<QueryResponse, UserRequestAttemptError> {
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
             parameters: query::QueryParameters {
@@ -1080,7 +1080,7 @@ impl Connection {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values)
             .await
-            .map_err(UserRequestError::into_query_error)
+            .map_err(UserRequestAttemptError::into_query_error)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -1089,7 +1089,7 @@ impl Connection {
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
-    ) -> Result<QueryResponse, UserRequestError> {
+    ) -> Result<QueryResponse, UserRequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
             prepared,
@@ -1112,7 +1112,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, UserRequestError> {
+    ) -> Result<QueryResponse, UserRequestAttemptError> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
@@ -1233,7 +1233,7 @@ impl Connection {
             batch.config.serial_consistency.flatten(),
         )
         .await
-        .map_err(UserRequestError::into_query_error)
+        .map_err(UserRequestAttemptError::into_query_error)
         .and_then(QueryResponse::into_query_result)
     }
 
@@ -1243,7 +1243,7 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<QueryResponse, UserRequestError> {
+    ) -> Result<QueryResponse, UserRequestAttemptError> {
         let batch = self.prepare_batch(init_batch, &values).await?;
 
         let contexts = batch.statements.iter().map(|bs| match bs {
@@ -1268,7 +1268,7 @@ impl Connection {
             let query_response = self
                 .send_request(&batch_frame, true, batch.config.tracing, None)
                 .await
-                .map_err(UserRequestError::from)?;
+                .map_err(UserRequestAttemptError::from)?;
 
             return match query_response.response {
                 Response::Error(err) => match err.error {
@@ -1284,13 +1284,13 @@ impl Connection {
                             self.reprepare(p.get_statement(), p).await?;
                             continue;
                         } else {
-                            return Err(UserRequestError::RepreparedIdMissingInBatch);
+                            return Err(UserRequestAttemptError::RepreparedIdMissingInBatch);
                         }
                     }
                     _ => Err(err.into()),
                 },
                 Response::Result(_) => Ok(query_response),
-                _ => Err(UserRequestError::UnexpectedResponse(
+                _ => Err(UserRequestAttemptError::UnexpectedResponse(
                     query_response.response.to_response_kind(),
                 )),
             };
@@ -1301,7 +1301,7 @@ impl Connection {
         &self,
         init_batch: &'b Batch,
         values: impl BatchValues,
-    ) -> Result<Cow<'b, Batch>, UserRequestError> {
+    ) -> Result<Cow<'b, Batch>, UserRequestAttemptError> {
         let mut to_prepare = HashSet::<&str>::new();
 
         {
@@ -1359,7 +1359,7 @@ impl Connection {
         let query_response = self
             .query_raw_unpaged(&query)
             .await
-            .map_err(UserRequestError::into_query_error)?;
+            .map_err(UserRequestAttemptError::into_query_error)?;
         Self::verify_use_keyspace_result(keyspace_name, query_response)
     }
 
