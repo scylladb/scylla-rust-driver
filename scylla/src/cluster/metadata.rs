@@ -1034,7 +1034,7 @@ async fn query_user_defined_types(
     keyspaces_to_fetch: &[String],
 ) -> Result<
     PerKeyspaceResult<PerTable<Arc<UserDefinedType<'static>>>, MissingUserDefinedType>,
-    QueryError,
+    MetadataError,
 > {
     let rows = query_filter_keyspace_name::<UdtRow>(
         conn,
@@ -1048,18 +1048,15 @@ async fn query_user_defined_types(
 
     let mut udt_rows: Vec<UdtRowWithParsedFieldTypes> = rows
         .map(|row_result| {
-            let udt_row = row_result
-                .map_err(MetadataError::FetchError)?
-                .try_into()
-                .map_err(|err: InvalidCqlType| {
-                    MetadataError::Udts(UdtMetadataError::InvalidCqlType {
-                        typ: err.typ,
-                        position: err.position,
-                        reason: err.reason,
-                    })
-                })?;
+            let udt_row = row_result?.try_into().map_err(|err: InvalidCqlType| {
+                MetadataError::Udts(UdtMetadataError::InvalidCqlType {
+                    typ: err.typ,
+                    position: err.position,
+                    reason: err.reason,
+                })
+            })?;
 
-            Ok::<_, QueryError>(udt_row)
+            Ok::<_, MetadataError>(udt_row)
         })
         .try_collect()
         .await?;
@@ -1117,7 +1114,7 @@ async fn query_user_defined_types(
     Ok(udts)
 }
 
-fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), QueryError> {
+fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), UdtMetadataError> {
     fn do_with_referenced_udts(what: &mut impl FnMut(&str), pre_cql_type: &PreColumnType) {
         match pre_cql_type {
             PreColumnType::Native(_) => (),
@@ -1200,7 +1197,7 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), Quer
 
     if sorted.len() < indegs.len() {
         // Some UDTs could not become leaves in the graph, which implies cycles.
-        return Err(MetadataError::Udts(UdtMetadataError::CircularTypeDependency).into());
+        return Err(UdtMetadataError::CircularTypeDependency);
     }
 
     let owned_sorted = sorted.into_iter().cloned().collect::<Vec<_>>();
