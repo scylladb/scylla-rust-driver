@@ -473,6 +473,18 @@ pub enum PeersMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum KeyspacesMetadataError {
+    /// Failed to prepare system_schema.keyspaces statement.
+    #[error("Failed to prepare system_schema.keyspaces statement: {0}")]
+    SchemaKeyspacesPrepareError(RequestAttemptError),
+
+    /// Failed to serialize system_schema.keyspaces statement parameters.
+    #[error("Failed to serialize system_schema.keyspaces statement parameters: {0}")]
+    SchemaKeyspacesSerializationError(SerializationError),
+
+    /// Failed to obtain next row from response to system_schema.keyspaces query.
+    #[error("Failed to obtain next row from response to system_schema.keyspaces query: {0}")]
+    SchemaKeyspacesNextRowError(NextRowError),
+
     /// system_schema.keyspaces has invalid column type.
     #[error("system_schema.keyspaces has invalid column type: {0}")]
     SchemaKeyspacesInvalidColumnType(TypeCheckError),
@@ -511,6 +523,18 @@ pub enum KeyspaceStrategyError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum UdtMetadataError {
+    /// Failed to prepare system_schema.types statement.
+    #[error("Failed to prepare system_schema.types statement: {0}")]
+    SchemaTypesPrepareError(RequestAttemptError),
+
+    /// Failed to serialize system_schema.types statement parameters.
+    #[error("Failed to serialize system_schema.types statement parameters: {0}")]
+    SchemaTypesSerializationError(SerializationError),
+
+    /// Failed to obtain next row from response to system_schema.types query.
+    #[error("Failed to obtain next row from response to system_schema.types query: {0}")]
+    SchemaTypesNextRowError(NextRowError),
+
     /// system_schema.types has invalid column type.
     #[error("system_schema.types has invalid column type: {0}")]
     SchemaTypesInvalidColumnType(TypeCheckError),
@@ -524,6 +548,14 @@ pub enum UdtMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum TablesMetadataError {
+    /// Failed to prepare system_schema.tables statement.
+    #[error("Failed to prepare system_schema.tables statement: {0}")]
+    SchemaTablesPrepareError(RequestAttemptError),
+
+    /// Failed to serialize system_schema.tables statement parameters.
+    #[error("Failed to serialize system_schema.tables statement parameters: {0}")]
+    SchemaTablesSerializationError(SerializationError),
+
     /// Failed to obtain next row from response to system_schema.tables query.
     #[error("Failed to obtain next row from response to system_schema.tables query: {0}")]
     SchemaTablesNextRowError(NextRowError),
@@ -531,6 +563,18 @@ pub enum TablesMetadataError {
     /// system_schema.tables has invalid column type.
     #[error("system_schema.tables has invalid column type: {0}")]
     SchemaTablesInvalidColumnType(TypeCheckError),
+
+    /// Failed to prepare system_schema.columns statement.
+    #[error("Failed to prepare system_schema.columns statement: {0}")]
+    SchemaColumnsPrepareError(RequestAttemptError),
+
+    /// Failed to serialize system_schema.columns statement parameters.
+    #[error("Failed to serialize system_schema.columns statement parameters: {0}")]
+    SchemaColumnsSerializationError(SerializationError),
+
+    /// Failed to obtain next row from response to system_schema.columns query.
+    #[error("Failed to obtain next row from response to system_schema.columns query: {0}")]
+    SchemaColumnsNextRowError(NextRowError),
 
     /// system_schema.columns has invalid column type.
     #[error("system_schema.columns has invalid column type: {0}")]
@@ -550,6 +594,18 @@ pub enum TablesMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ViewsMetadataError {
+    /// Failed to prepare system_schema.views statement.
+    #[error("Failed to prepare system_schema.views statement: {0}")]
+    SchemaViewsPrepareError(RequestAttemptError),
+
+    /// Failed to serialize system_schema.views statement parameters.
+    #[error("Failed to serialize system_schema.views statement parameters: {0}")]
+    SchemaViewsSerializationError(SerializationError),
+
+    /// Failed to obtain next row from response to system_schema.views query.
+    #[error("Failed to obtain next row from response to system_schema.views query: {0}")]
+    SchemaViewsNextRowError(NextRowError),
+
     /// system_schema.views has invalid column type.
     #[error("system_schema.views has invalid column type: {0}")]
     SchemaViewsInvalidColumnType(TypeCheckError),
