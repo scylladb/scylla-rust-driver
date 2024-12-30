@@ -1037,7 +1037,9 @@ async fn query_keyspaces(
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
         let udts = query_user_defined_types(conn, keyspaces_to_fetch).await?;
         (
-            query_tables(conn, keyspaces_to_fetch, &udts).await?,
+            query_tables(conn, keyspaces_to_fetch, &udts)
+                .await
+                .map_err(MetadataError::Tables)?,
             query_views(conn, keyspaces_to_fetch, &udts).await?,
             udts,
         )
@@ -1461,7 +1463,7 @@ async fn query_tables(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
-) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
+) -> Result<HashMap<String, HashMap<String, Table>>, TablesMetadataError> {
     struct SchemaTablesErrorConverter;
     impl MetadataErrorConverter for SchemaTablesErrorConverter {
         type DestError = TablesMetadataError;
@@ -1486,12 +1488,10 @@ async fn query_tables(
         keyspaces_to_fetch,
     );
     let mut result = HashMap::new();
-    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts)
-        .await
-        .map_err(MetadataError::Tables)?;
+    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
 
     rows.map(|row_result| {
-        let keyspace_and_table_name = row_result.map_err(MetadataError::Tables)?;
+        let keyspace_and_table_name = row_result?;
 
         let table = tables.remove(&keyspace_and_table_name).unwrap_or(Table {
             columns: HashMap::new(),
@@ -1505,7 +1505,7 @@ async fn query_tables(
             .or_insert_with(HashMap::new)
             .insert(keyspace_and_table_name.1, table);
 
-        Ok::<_, QueryError>(())
+        Ok::<_, TablesMetadataError>(())
     })
     .try_for_each(|_| future::ok(()))
     .await?;
