@@ -1381,7 +1381,7 @@ async fn query_tables(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     tables: &mut PerKsTableResult<Table, MissingUserDefinedType>,
-) -> Result<PerKeyspaceResult<PerTable<Table>, MissingUserDefinedType>, QueryError> {
+) -> Result<PerKeyspaceResult<PerTable<Table>, MissingUserDefinedType>, MetadataError> {
     let rows = query_filter_keyspace_name::<(String, String)>(
         conn,
         "SELECT keyspace_name, table_name FROM system_schema.tables",
@@ -1394,7 +1394,7 @@ async fn query_tables(
     let mut result = HashMap::new();
 
     rows.map(|row_result| {
-        let keyspace_and_table_name = row_result.map_err(MetadataError::FetchError)?;
+        let keyspace_and_table_name = row_result?;
 
         let table = tables.remove(&keyspace_and_table_name).unwrap_or(Ok(Table {
             columns: HashMap::new(),
@@ -1414,7 +1414,7 @@ async fn query_tables(
             (Ok(_), Err(e)) => *entry = Err(e),
         };
 
-        Ok::<_, QueryError>(())
+        Ok::<_, MetadataError>(())
     })
     .try_for_each(|_| future::ok(()))
     .await?;
