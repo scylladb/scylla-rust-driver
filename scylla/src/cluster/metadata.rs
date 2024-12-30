@@ -1426,7 +1426,7 @@ async fn query_views(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     tables: &mut PerKsTableResult<Table, MissingUserDefinedType>,
-) -> Result<PerKeyspaceResult<PerTable<MaterializedView>, MissingUserDefinedType>, QueryError> {
+) -> Result<PerKeyspaceResult<PerTable<MaterializedView>, MissingUserDefinedType>, MetadataError> {
     let rows = query_filter_keyspace_name::<(String, String, String)>(
         conn,
         "SELECT keyspace_name, view_name, base_table_name FROM system_schema.views",
@@ -1440,8 +1440,7 @@ async fn query_views(
     let mut result = HashMap::new();
 
     rows.map(|row_result| {
-        let (keyspace_name, view_name, base_table_name) =
-            row_result.map_err(MetadataError::FetchError)?;
+        let (keyspace_name, view_name, base_table_name) = row_result?;
 
         let keyspace_and_view_name = (keyspace_name, view_name);
 
@@ -1470,7 +1469,7 @@ async fn query_views(
             (Ok(_), Err(e)) => *entry = Err(e),
         };
 
-        Ok::<_, QueryError>(())
+        Ok::<_, MetadataError>(())
     })
     .try_for_each(|_| future::ok(()))
     .await?;
