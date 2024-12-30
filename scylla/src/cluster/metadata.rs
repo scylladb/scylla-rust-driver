@@ -782,16 +782,16 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
                     "system.peers or system.local has an invalid row, skipping it: {}",
                     err
                 );
-                Ok(None)
+                None
             }
         }
     });
 
     let peers = translated_peers_futures
         .buffer_unordered(256)
-        .try_filter_map(|x| std::future::ready(Ok(x)))
-        .try_collect::<Vec<_>>()
-        .await?;
+        .filter_map(std::future::ready)
+        .collect::<Vec<_>>()
+        .await;
     Ok(peers)
 }
 
@@ -799,7 +799,7 @@ async fn create_peer_from_row(
     source: NodeInfoSource,
     row: NodeInfoRow,
     local_address: SocketAddr,
-) -> Result<Option<Peer>, QueryError> {
+) -> Option<Peer> {
     let NodeInfoRow {
         host_id,
         untranslated_ip_addr,
@@ -812,7 +812,7 @@ async fn create_peer_from_row(
         Some(host_id) => host_id,
         None => {
             warn!("{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.", source.describe(), untranslated_ip_addr, datacenter, rack);
-            return Ok(None);
+            return None;
         }
     };
 
@@ -852,13 +852,13 @@ async fn create_peer_from_row(
         }
     };
 
-    Ok(Some(Peer {
+    Some(Peer {
         host_id,
         address: node_addr,
         tokens,
         datacenter,
         rack,
-    }))
+    })
 }
 
 fn query_filter_keyspace_name<'a, R>(
