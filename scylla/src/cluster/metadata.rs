@@ -1482,7 +1482,7 @@ async fn query_tables_schema(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     udts: &PerKeyspaceResult<PerTable<Arc<UserDefinedType<'static>>>, MissingUserDefinedType>,
-) -> Result<PerKsTableResult<Table, MissingUserDefinedType>, QueryError> {
+) -> Result<PerKsTableResult<Table, MissingUserDefinedType>, MetadataError> {
     // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
     // type EmptyType for dense tables. This resolves into this CQL type name.
     // This column shouldn't be exposed to the user but is currently exposed in system tables.
@@ -1504,11 +1504,10 @@ async fn query_tables_schema(
     let mut tables_schema: HashMap<_, Result<_, MissingUserDefinedType>> = HashMap::new();
 
     rows.map(|row_result| {
-        let (keyspace_name, table_name, column_name, kind, position, type_) =
-            row_result.map_err(MetadataError::FetchError)?;
+        let (keyspace_name, table_name, column_name, kind, position, type_) = row_result?;
 
         if type_ == THRIFT_EMPTY_TYPE {
-            return Ok::<_, QueryError>(());
+            return Ok::<_, MetadataError>(());
         }
 
         let keyspace_udts: &PerTable<Arc<UserDefinedType<'static>>> =
@@ -1537,32 +1536,31 @@ async fn query_tables_schema(
                     // solution 1: but the keyspace won't be present in the result at all,
                     // which is arguably worse.
                     tables_schema.insert((keyspace_name, table_name), Err(e.clone()));
-                    return Ok::<_, QueryError>(());
+                    return Ok::<_, MetadataError>(());
                 }
             };
         let pre_cql_type = map_string_to_cql_type(&type_).map_err(|err: InvalidCqlType| {
-            MetadataError::Tables(TablesMetadataError::InvalidCqlType {
+            TablesMetadataError::InvalidCqlType {
                 typ: err.typ,
                 position: err.position,
                 reason: err.reason,
-            })
+            }
         })?;
         let cql_type = match pre_cql_type.into_cql_type(&keyspace_name, keyspace_udts) {
             Ok(t) => t,
             Err(e) => {
                 tables_schema.insert((keyspace_name, table_name), Err(e));
-                return Ok::<_, QueryError>(());
+                return Ok::<_, MetadataError>(());
             }
         };
 
-        let kind = ColumnKind::from_str(&kind).map_err(|_| {
-            MetadataError::Tables(TablesMetadataError::UnknownColumnKind {
+        let kind =
+            ColumnKind::from_str(&kind).map_err(|_| TablesMetadataError::UnknownColumnKind {
                 keyspace_name: keyspace_name.clone(),
                 table_name: table_name.clone(),
                 column_name: column_name.clone(),
                 column_kind: kind,
-            })
-        })?;
+            })?;
 
         let Ok(entry) = tables_schema
             .entry((keyspace_name, table_name))
@@ -1573,7 +1571,7 @@ async fn query_tables_schema(
             )))
         else {
             // This table was previously marked as broken, no way to insert anything.
-            return Ok::<_, QueryError>(());
+            return Ok::<_, MetadataError>(());
         };
 
         if kind == ColumnKind::PartitionKey || kind == ColumnKind::Clustering {
@@ -1593,14 +1591,12 @@ async fn query_tables_schema(
             },
         );
 
-        Ok::<_, QueryError>(())
+        Ok::<_, MetadataError>(())
     })
     .try_for_each(|_| future::ok(()))
     .await?;
 
-    let mut all_partitioners = query_table_partitioners(conn)
-        .await
-        .map_err(|err| QueryError::MetadataError(MetadataError::FetchError(err)))?;
+    let mut all_partitioners = query_table_partitioners(conn).await?;
     let mut result = HashMap::new();
 
     for ((keyspace_name, table_name), table_result) in tables_schema {
