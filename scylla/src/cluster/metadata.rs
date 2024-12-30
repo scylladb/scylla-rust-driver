@@ -20,8 +20,7 @@ use crate::client::pager::{NextPageError, NextRowError, QueryPager};
 use crate::cluster::node::resolve_contact_points;
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
-    DbError, MetadataFetchError, MetadataFetchErrorKind, NewSessionError, QueryError,
-    RequestAttemptError,
+    DbError, MetadataFetchError, MetadataFetchErrorKind, NewSessionError, RequestAttemptError,
 };
 use crate::frame::response::event::Event;
 use crate::network::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
@@ -452,7 +451,7 @@ impl MetadataReader {
     }
 
     /// Fetches current metadata from the cluster
-    pub(crate) async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, QueryError> {
+    pub(crate) async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, MetadataError> {
         let mut result = self.fetch_metadata(initial).await;
         let prev_err = match result {
             Ok(metadata) => {
@@ -530,8 +529,8 @@ impl MetadataReader {
         &mut self,
         initial: bool,
         nodes: impl Iterator<Item = UntranslatedEndpoint>,
-        prev_err: QueryError,
-    ) -> Result<Metadata, QueryError> {
+        prev_err: MetadataError,
+    ) -> Result<Metadata, MetadataError> {
         let mut result = Err(prev_err);
         for peer in nodes {
             let err = match result {
@@ -564,7 +563,7 @@ impl MetadataReader {
         result
     }
 
-    async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, QueryError> {
+    async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, MetadataError> {
         // TODO: Timeouts?
         self.control_connection.wait_until_initialized().await;
         let conn = &self.control_connection.random_connection()?;
@@ -590,7 +589,7 @@ impl MetadataReader {
             }
         }
 
-        res.map_err(QueryError::MetadataError)
+        res
     }
 
     fn update_known_peers(&mut self, metadata: &Metadata) {
