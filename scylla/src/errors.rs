@@ -176,12 +176,6 @@ impl From<QueryError> for NewSessionError {
     }
 }
 
-impl From<BadKeyspaceName> for QueryError {
-    fn from(keyspace_err: BadKeyspaceName) -> QueryError {
-        QueryError::BadQuery(BadQuery::BadKeyspaceName(keyspace_err))
-    }
-}
-
 impl From<response::Error> for QueryError {
     fn from(error: response::Error) -> QueryError {
         QueryError::DbError(error.error, error.reason)
@@ -610,10 +604,6 @@ pub enum BadQuery {
     /// Serialized values are too long to compute partition key
     #[error("Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}")]
     ValuesTooLongForKey(usize, usize),
-
-    /// Passed invalid keyspace name to use
-    #[error("Passed invalid keyspace name to use: {0}")]
-    BadKeyspaceName(#[from] BadKeyspaceName),
 
     /// Too many queries in the batch statement
     #[error("Number of Queries in Batch Statement supplied is {0} which has exceeded the max value of 65,535")]
