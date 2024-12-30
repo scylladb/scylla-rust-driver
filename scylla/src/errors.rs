@@ -328,14 +328,6 @@ pub enum ProtocolError {
     #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
     NonfinishedPagingState,
 
-    /// Failed to parse CQL type.
-    #[error("Failed to parse a CQL type '{typ}', at position {position}: {reason}")]
-    InvalidCqlType {
-        typ: String,
-        position: usize,
-        reason: String,
-    },
-
     /// Unable extract a partition key based on prepared statement's metadata.
     #[error("Unable extract a partition key based on prepared statement's metadata")]
     PartitionKeyExtraction,
@@ -554,6 +546,17 @@ pub enum UdtMetadataError {
     #[error("system_schema.types has invalid column type: {0}")]
     SchemaTypesInvalidColumnType(TypeCheckError),
 
+    /// Failed to parse CQL type returned from system_schema.types query.
+    #[error(
+        "Failed to parse a CQL type returned from system_schema.types query. \
+        Type '{typ}', at position {position}: {reason}"
+    )]
+    InvalidCqlType {
+        typ: String,
+        position: usize,
+        reason: String,
+    },
+
     /// Circular UDT dependency detected.
     #[error("Detected circular dependency between user defined types - toposort is impossible!")]
     CircularTypeDependency,
@@ -570,6 +573,17 @@ pub enum TablesMetadataError {
     /// system_schema.columns has invalid column type.
     #[error("system_schema.columns has invalid column type: {0}")]
     SchemaColumnsInvalidColumnType(TypeCheckError),
+
+    /// Failed to parse CQL type returned from system_schema.columns query.
+    #[error(
+        "Failed to parse a CQL type returned from system_schema.columns query. \
+        Type '{typ}', at position {position}: {reason}"
+    )]
+    InvalidCqlType {
+        typ: String,
+        position: usize,
+        reason: String,
+    },
 
     /// Unknown column kind.
     #[error("Unknown column kind '{column_kind}' for {keyspace_name}.{table_name}.{column_name}")]

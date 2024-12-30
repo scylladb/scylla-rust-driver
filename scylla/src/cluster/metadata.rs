@@ -53,8 +53,8 @@ use uuid::Uuid;
 
 use crate::cluster::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 use crate::errors::{
-    KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
-    ProtocolError, RequestError, TablesMetadataError, UdtMetadataError,
+    KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError, RequestError,
+    TablesMetadataError, UdtMetadataError,
 };
 
 // Re-export of CQL types.
@@ -359,17 +359,6 @@ struct InvalidCqlType {
 impl fmt::Display for InvalidCqlType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self)
-    }
-}
-
-impl From<InvalidCqlType> for QueryError {
-    fn from(e: InvalidCqlType) -> Self {
-        ProtocolError::InvalidCqlType {
-            typ: e.typ,
-            position: e.position,
-            reason: e.reason,
-        }
-        .into()
     }
 }
 
@@ -1059,7 +1048,16 @@ async fn query_user_defined_types(
 
     let mut udt_rows: Vec<UdtRowWithParsedFieldTypes> = rows
         .map(|row_result| {
-            let udt_row = row_result.map_err(MetadataError::FetchError)?.try_into()?;
+            let udt_row = row_result
+                .map_err(MetadataError::FetchError)?
+                .try_into()
+                .map_err(|err: InvalidCqlType| {
+                    MetadataError::Udts(UdtMetadataError::InvalidCqlType {
+                        typ: err.typ,
+                        position: err.position,
+                        reason: err.reason,
+                    })
+                })?;
 
             Ok::<_, QueryError>(udt_row)
         })
@@ -1542,7 +1540,13 @@ async fn query_tables_schema(
                     return Ok::<_, QueryError>(());
                 }
             };
-        let pre_cql_type = map_string_to_cql_type(&type_)?;
+        let pre_cql_type = map_string_to_cql_type(&type_).map_err(|err: InvalidCqlType| {
+            MetadataError::Tables(TablesMetadataError::InvalidCqlType {
+                typ: err.typ,
+                position: err.position,
+                reason: err.reason,
+            })
+        })?;
         let cql_type = match pre_cql_type.into_cql_type(&keyspace_name, keyspace_udts) {
             Ok(t) => t,
             Err(e) => {
