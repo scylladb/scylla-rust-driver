@@ -1486,7 +1486,9 @@ async fn query_tables(
         keyspaces_to_fetch,
     );
     let mut result = HashMap::new();
-    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
+    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts)
+        .await
+        .map_err(MetadataError::Tables)?;
 
     rows.map(|row_result| {
         let keyspace_and_table_name = row_result.map_err(MetadataError::Tables)?;
@@ -1541,7 +1543,9 @@ async fn query_views(
     );
 
     let mut result = HashMap::new();
-    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
+    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts)
+        .await
+        .map_err(MetadataError::Tables)?;
 
     rows.map(|row_result| {
         let (keyspace_name, view_name, base_table_name) =
@@ -1577,7 +1581,7 @@ async fn query_tables_schema(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
-) -> Result<HashMap<(String, String), Table>, QueryError> {
+) -> Result<HashMap<(String, String), Table>, TablesMetadataError> {
     struct SchemaColumnsErrorConverter;
     impl MetadataErrorConverter for SchemaColumnsErrorConverter {
         type DestError = TablesMetadataError;
@@ -1612,30 +1616,28 @@ async fn query_tables_schema(
     let mut tables_schema = HashMap::new();
 
     rows.map(|row_result| {
-        let (keyspace_name, table_name, column_name, kind, position, type_) =
-            row_result.map_err(MetadataError::Tables)?;
+        let (keyspace_name, table_name, column_name, kind, position, type_) = row_result?;
 
         if type_ == THRIFT_EMPTY_TYPE {
-            return Ok::<_, QueryError>(());
+            return Ok::<_, TablesMetadataError>(());
         }
 
         let pre_cql_type = map_string_to_cql_type(&type_).map_err(|err: InvalidCqlType| {
-            MetadataError::Tables(TablesMetadataError::InvalidCqlType {
+            TablesMetadataError::InvalidCqlType {
                 typ: err.type_,
                 position: err.position,
                 reason: err.reason,
-            })
+            }
         })?;
         let cql_type = pre_cql_type.into_cql_type(&keyspace_name, udts);
 
-        let kind = ColumnKind::from_str(&kind).map_err(|_| {
-            MetadataError::Tables(TablesMetadataError::UnknownColumnKind {
+        let kind =
+            ColumnKind::from_str(&kind).map_err(|_| TablesMetadataError::UnknownColumnKind {
                 keyspace_name: keyspace_name.clone(),
                 table_name: table_name.clone(),
                 column_name: column_name.clone(),
                 column_kind: kind,
-            })
-        })?;
+            })?;
 
         let entry = tables_schema.entry((keyspace_name, table_name)).or_insert((
             HashMap::new(), // columns
@@ -1660,14 +1662,12 @@ async fn query_tables_schema(
             },
         );
 
-        Ok::<_, QueryError>(())
+        Ok::<_, TablesMetadataError>(())
     })
     .try_for_each(|_| future::ok(()))
     .await?;
 
-    let mut all_partitioners = query_table_partitioners(conn)
-        .await
-        .map_err(|err| QueryError::MetadataError(MetadataError::Tables(err)))?;
+    let mut all_partitioners = query_table_partitioners(conn).await?;
     let mut result = HashMap::new();
 
     for ((keyspace_name, table_name), (columns, partition_key_columns, clustering_key_columns)) in
