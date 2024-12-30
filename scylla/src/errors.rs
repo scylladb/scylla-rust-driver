@@ -144,33 +144,6 @@ impl From<SerializationError> for QueryError {
     }
 }
 
-impl From<QueryError> for NewSessionError {
-    fn from(query_error: QueryError) -> NewSessionError {
-        match query_error {
-            QueryError::DbError(e, msg) => NewSessionError::DbError(e, msg),
-            QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
-            QueryError::CqlRequestSerialization(e) => NewSessionError::CqlRequestSerialization(e),
-            QueryError::CqlResultParseError(e) => NewSessionError::CqlResultParseError(e),
-            QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
-            QueryError::BodyExtensionsParseError(e) => NewSessionError::BodyExtensionsParseError(e),
-            QueryError::EmptyPlan => NewSessionError::EmptyPlan,
-            QueryError::MetadataError(e) => NewSessionError::MetadataError(e),
-            QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
-            QueryError::ProtocolError(e) => NewSessionError::ProtocolError(e),
-            QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
-            QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
-            QueryError::RequestTimeout(dur) => NewSessionError::RequestTimeout(dur),
-            QueryError::SchemaAgreementTimeout(dur) => NewSessionError::SchemaAgreementTimeout(dur),
-            QueryError::UseKeyspaceError(e) => NewSessionError::UseKeyspaceError(e),
-            #[allow(deprecated)]
-            QueryError::IntoLegacyQueryResultError(e) => {
-                NewSessionError::IntoLegacyQueryResultError(e)
-            }
-            QueryError::NextRowError(e) => NewSessionError::NextRowError(e),
-        }
-    }
-}
-
 impl From<response::Error> for QueryError {
     fn from(error: response::Error) -> QueryError {
         QueryError::DbError(error.error, error.reason)
