@@ -524,6 +524,10 @@ pub enum UdtMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum TablesMetadataError {
+    /// Failed to obtain next row from response to system_schema.tables query.
+    #[error("Failed to obtain next row from response to system_schema.tables query: {0}")]
+    SchemaTablesNextRowError(NextRowError),
+
     /// system_schema.tables has invalid column type.
     #[error("system_schema.tables has invalid column type: {0}")]
     SchemaTablesInvalidColumnType(TypeCheckError),

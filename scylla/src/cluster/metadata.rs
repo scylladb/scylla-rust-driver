@@ -1564,7 +1564,9 @@ async fn query_tables_schema(
     .try_for_each(|_| future::ok(()))
     .await?;
 
-    let mut all_partitioners = query_table_partitioners(conn).await?;
+    let mut all_partitioners = query_table_partitioners(conn)
+        .await
+        .map_err(|err| QueryError::MetadataError(MetadataError::Tables(err)))?;
     let mut result = HashMap::new();
 
     for ((keyspace_name, table_name), (columns, partition_key_columns, clustering_key_columns)) in
@@ -1735,7 +1737,7 @@ fn freeze_type(type_: PreCqlType) -> PreCqlType {
 
 async fn query_table_partitioners(
     conn: &Arc<Connection>,
-) -> Result<HashMap<(String, String), Option<String>>, QueryError> {
+) -> Result<HashMap<(String, String), Option<String>>, TablesMetadataError> {
     let mut partitioner_query = Query::new(
         "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
     );
@@ -1745,22 +1747,22 @@ async fn query_table_partitioners(
         .clone()
         .query_iter(partitioner_query)
         .map(|pager_res| {
-            let pager = pager_res?;
+            let pager = pager_res.map_err(TablesMetadataError::SchemaTablesNextRowError)?;
             let stream = pager
                 .rows_stream::<(String, String, Option<String>)>()
-                .map_err(|err| {
-                    MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err))
-                })?;
-            Ok::<_, QueryError>(stream)
+                // Map the error of Result<TypedRowStream, TypecheckError>
+                .map_err(TablesMetadataError::SchemaTablesInvalidColumnType)?
+                // Map the error of single stream iteration (NextRowError)
+                .map_err(TablesMetadataError::SchemaTablesNextRowError);
+            Ok::<_, TablesMetadataError>(stream)
         })
         .into_stream()
-        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
         .try_flatten();
 
     let result = rows
         .map(|row_result| {
             let (keyspace_name, table_name, partitioner) = row_result?;
-            Ok::<_, QueryError>(((keyspace_name, table_name), partitioner))
+            Ok::<_, TablesMetadataError>(((keyspace_name, table_name), partitioner))
         })
         .try_collect::<HashMap<_, _>>()
         .await;
@@ -1770,11 +1772,7 @@ async fn query_table_partitioners(
         // that we are only interested in the ones resulting from non-existent table
         // system_schema.scylla_tables.
         // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
-        // FIXME 2: The specific error we expect here should appear in QueryError::NextRowError. Currently
-        // leaving match against both variants. This will be fixed, once `MetadataError` is further adjusted
-        // in a follow-up PR. The goal is to return MetadataError from all functions related to metadata fetch.
-        Err(QueryError::DbError(DbError::Invalid, _))
-        | Err(QueryError::NextRowError(NextRowError::NextPageError(
+        Err(TablesMetadataError::SchemaTablesNextRowError(NextRowError::NextPageError(
             NextPageError::RequestFailure(RequestError::LastAttemptError(
                 RequestAttemptError::DbError(DbError::Invalid, _),
             )),
