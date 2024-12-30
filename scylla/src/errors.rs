@@ -883,27 +883,19 @@ pub enum CqlEventHandlingError {
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum UserRequestError {
+    /// Failed to serialize query parameters. This error occurs, when user executes
+    /// a CQL `QUERY` request with non-empty parameter's value list and the serialization
+    /// of provided values fails during statement preparation.
+    #[error("Failed to serialize query parameters: {0}")]
+    SerializationError(#[from] SerializationError),
+
     /// Failed to serialize CQL request.
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
 
-    /// Database sent a response containing some error with a message
-    #[error("Database returned an error: {0}, Error message: {1}")]
-    DbError(DbError, String),
-
-    /// Received a RESULT server response, but failed to deserialize it.
-    #[error(transparent)]
-    CqlResultParseError(#[from] CqlResultParseError),
-
-    /// Received an ERROR server response, but failed to deserialize it.
-    #[error("Failed to deserialize ERROR response: {0}")]
-    CqlErrorParseError(#[from] CqlErrorParseError),
-
-    /// Received an unexpected response from the server.
-    #[error(
-        "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
-    )]
-    UnexpectedResponse(CqlResponseKind),
+    /// Driver was unable to allocate a stream id to execute a query on.
+    #[error("Unable to allocate stream id")]
+    UnableToAllocStreamId,
 
     /// A connection has been broken during query execution.
     #[error(transparent)]
@@ -913,9 +905,23 @@ pub enum UserRequestError {
     #[error(transparent)]
     BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
 
-    /// Driver was unable to allocate a stream id to execute a query on.
-    #[error("Unable to allocate stream id")]
-    UnableToAllocStreamId,
+    /// Received a RESULT server response, but failed to deserialize it.
+    #[error(transparent)]
+    CqlResultParseError(#[from] CqlResultParseError),
+
+    /// Received an ERROR server response, but failed to deserialize it.
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
+
+    /// Database sent a response containing some error with a message
+    #[error("Database returned an error: {0}, Error message: {1}")]
+    DbError(DbError, String),
+
+    /// Received an unexpected response from the server.
+    #[error(
+        "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
+    )]
+    UnexpectedResponse(CqlResponseKind),
 
     /// Prepared statement id changed after repreparation.
     #[error(
@@ -932,12 +938,6 @@ pub enum UserRequestError {
     /// statement's id is not included in the batch.
     #[error("Reprepared statement's id does not exist in the batch.")]
     RepreparedIdMissingInBatch,
-
-    /// Failed to serialize query parameters. This error occurs, when user executes
-    /// a CQL `QUERY` request with non-empty parameter's value list and the serialization
-    /// of provided values fails during statement preparation.
-    #[error("Failed to serialize query parameters: {0}")]
-    SerializationError(#[from] SerializationError),
 }
 
 impl UserRequestError {
