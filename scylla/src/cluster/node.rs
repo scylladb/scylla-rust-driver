@@ -3,7 +3,7 @@ use tokio::net::lookup_host;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::errors::{ConnectionPoolError, QueryError};
+use crate::errors::{ConnectionPoolError, UseKeyspaceError};
 use crate::network::Connection;
 use crate::network::VerifiedKeyspaceName;
 use crate::network::{NodeConnectionPool, PoolConfig};
@@ -180,7 +180,7 @@ impl Node {
     pub(crate) async fn use_keyspace(
         &self,
         keyspace_name: VerifiedKeyspaceName,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), UseKeyspaceError> {
         if let Some(pool) = &self.pool {
             pool.use_keyspace(keyspace_name).await?;
         }

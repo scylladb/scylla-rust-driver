@@ -1,5 +1,5 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
-use crate::errors::{MetadataError, NewSessionError, QueryError};
+use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::network::{PoolConfig, VerifiedKeyspaceName};
 use crate::policies::host_filter::HostFilter;
@@ -101,7 +101,7 @@ struct RefreshRequest {
 #[derive(Debug)]
 struct UseKeyspaceRequest {
     keyspace_name: VerifiedKeyspaceName,
-    response_chan: tokio::sync::oneshot::Sender<Result<(), QueryError>>,
+    response_chan: tokio::sync::oneshot::Sender<Result<(), UseKeyspaceError>>,
 }
 
 impl Cluster {
@@ -202,7 +202,7 @@ impl Cluster {
     pub(crate) async fn use_keyspace(
         &self,
         keyspace_name: VerifiedKeyspaceName,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), UseKeyspaceError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
         self.use_keyspace_channel
@@ -390,12 +390,12 @@ impl ClusterWorker {
     async fn send_use_keyspace(
         cluster_data: Arc<ClusterState>,
         keyspace_name: &VerifiedKeyspaceName,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), UseKeyspaceError> {
         let use_keyspace_futures = cluster_data
             .known_peers
             .values()
             .map(|node| node.use_keyspace(keyspace_name.clone()));
-        let use_keyspace_results: Vec<Result<(), QueryError>> =
+        let use_keyspace_results: Vec<Result<(), UseKeyspaceError>> =
             join_all(use_keyspace_futures).await;
 
         use_keyspace_result(use_keyspace_results.into_iter())
@@ -438,8 +438,8 @@ impl ClusterWorker {
 ///
 /// This function assumes that `use_keyspace_results` iterator is NON-EMPTY!
 pub(crate) fn use_keyspace_result(
-    use_keyspace_results: impl Iterator<Item = Result<(), QueryError>>,
-) -> Result<(), QueryError> {
+    use_keyspace_results: impl Iterator<Item = Result<(), UseKeyspaceError>>,
+) -> Result<(), UseKeyspaceError> {
     // If there was at least one Ok and the rest were broken connection errors we can return Ok
     // keyspace name is correct and will be used on broken connection on the next reconnect
 
@@ -447,13 +447,13 @@ pub(crate) fn use_keyspace_result(
     // If there was an error different than broken connection error return this error - something is wrong
 
     let mut was_ok: bool = false;
-    let mut broken_conn_error: Option<QueryError> = None;
+    let mut broken_conn_error: Option<UseKeyspaceError> = None;
 
     for result in use_keyspace_results {
         match result {
             Ok(()) => was_ok = true,
             Err(err) => match err {
-                QueryError::BrokenConnection(_) | QueryError::ConnectionPoolError(_) => {
+                UseKeyspaceError::RequestError(RequestAttemptError::BrokenConnectionError(_)) => {
                     broken_conn_error = Some(err)
                 }
                 _ => return Err(err),

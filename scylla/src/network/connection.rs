@@ -11,7 +11,7 @@ use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
     InternalRequestError, ProtocolError, QueryError, RequestAttemptError, ResponseParseError,
-    SchemaVersionFetchError, TranslationError, UseKeyspaceProtocolError,
+    SchemaVersionFetchError, TranslationError, UseKeyspaceError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
@@ -1179,7 +1179,7 @@ impl Connection {
     pub(super) async fn use_keyspace(
         &self,
         keyspace_name: &VerifiedKeyspaceName,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), UseKeyspaceError> {
         // Trying to pass keyspace_name as bound value doesn't work
         // We have to send "USE " + keyspace_name
         let query: Query = match keyspace_name.is_case_sensitive {
@@ -1187,17 +1187,14 @@ impl Connection {
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
 
-        let query_response = self
-            .query_raw_unpaged(&query)
-            .await
-            .map_err(RequestAttemptError::into_query_error)?;
+        let query_response = self.query_raw_unpaged(&query).await?;
         Self::verify_use_keyspace_result(keyspace_name, query_response)
     }
 
     fn verify_use_keyspace_result(
         keyspace_name: &VerifiedKeyspaceName,
         query_response: QueryResponse,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), UseKeyspaceError> {
         match query_response.response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
                 if !set_keyspace
@@ -1207,24 +1204,20 @@ impl Connection {
                     let expected_keyspace_name_lowercase = keyspace_name.as_str().to_lowercase();
                     let result_keyspace_name_lowercase = set_keyspace.keyspace_name.to_lowercase();
 
-                    return Err(ProtocolError::UseKeyspace(
-                        UseKeyspaceProtocolError::KeyspaceNameMismatch {
-                            expected_keyspace_name_lowercase,
-                            result_keyspace_name_lowercase,
-                        },
-                    )
-                    .into());
+                    return Err(UseKeyspaceError::KeyspaceNameMismatch {
+                        expected_keyspace_name_lowercase,
+                        result_keyspace_name_lowercase,
+                    });
                 }
 
                 Ok(())
             }
-            Response::Error(err) => Err(err.into()),
-            _ => Err(
-                ProtocolError::UseKeyspace(UseKeyspaceProtocolError::UnexpectedResponse(
-                    query_response.response.to_response_kind(),
-                ))
-                .into(),
-            ),
+            Response::Error(err) => Err(UseKeyspaceError::RequestError(
+                RequestAttemptError::DbError(err.error, err.reason),
+            )),
+            _ => Err(UseKeyspaceError::RequestError(
+                RequestAttemptError::UnexpectedResponse(query_response.response.to_response_kind()),
+            )),
         }
     }
 

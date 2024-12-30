@@ -112,6 +112,10 @@ pub enum QueryError {
     #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
     SchemaAgreementTimeout(std::time::Duration),
 
+    /// 'USE KEYSPACE <>' request failed.
+    #[error("'USE KEYSPACE <>' request failed: {0}")]
+    UseKeyspaceError(#[from] UseKeyspaceError),
+
     // TODO: This should not belong here, but it requires changes to error types
     // returned in async iterator API. This should be handled in separate PR.
     // The reason this needs to be included is that topology.rs makes use of iter API and returns QueryError.
@@ -162,6 +166,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
             QueryError::RequestTimeout(dur) => NewSessionError::RequestTimeout(dur),
             QueryError::SchemaAgreementTimeout(dur) => NewSessionError::SchemaAgreementTimeout(dur),
+            QueryError::UseKeyspaceError(e) => NewSessionError::UseKeyspaceError(e),
             #[allow(deprecated)]
             QueryError::IntoLegacyQueryResultError(e) => {
                 NewSessionError::IntoLegacyQueryResultError(e)
@@ -273,6 +278,10 @@ pub enum NewSessionError {
     #[error("An error occurred during async iteration over rows of result: {0}")]
     NextRowError(#[from] NextRowError),
 
+    /// 'USE KEYSPACE <>' request failed.
+    #[error("'USE KEYSPACE <>' request failed: {0}")]
+    UseKeyspaceError(#[from] UseKeyspaceError),
+
     /// Failed to convert [`QueryResult`][crate::response::query_result::QueryResult]
     /// into [`LegacyQueryResult`][crate::response::legacy_query_result::LegacyQueryResult].
     #[deprecated(
@@ -316,10 +325,6 @@ pub enum ProtocolError {
         reprepared_id: Vec<u8>,
     },
 
-    /// USE KEYSPACE protocol error.
-    #[error("USE KEYSPACE protocol error: {0}")]
-    UseKeyspace(#[from] UseKeyspaceProtocolError),
-
     /// A protocol error appeared during schema version fetch.
     #[error("Schema version fetch protocol error: {0}")]
     SchemaVersionFetch(#[from] SchemaVersionFetchError),
@@ -342,17 +347,31 @@ pub enum ProtocolError {
     RepreparedIdMissingInBatch,
 }
 
-/// A protocol error that occurred during `USE KEYSPACE <>` request.
+/// An error that occurred during `USE KEYSPACE <>` request.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-pub enum UseKeyspaceProtocolError {
+pub enum UseKeyspaceError {
+    /// Passed invalid keyspace name to use.
+    #[error("Passed invalid keyspace name to use: {0}")]
+    BadKeyspaceName(#[from] BadKeyspaceName),
+
+    /// An error during request execution.
+    #[error(transparent)]
+    RequestError(#[from] RequestAttemptError),
+
+    /// Keyspace name mismatch.
     #[error("Keyspace name mismtach; expected: {expected_keyspace_name_lowercase}, received: {result_keyspace_name_lowercase}")]
     KeyspaceNameMismatch {
         expected_keyspace_name_lowercase: String,
         result_keyspace_name_lowercase: String,
     },
-    #[error("Received unexpected response: {0}. Expected RESULT:Set_keyspace")]
-    UnexpectedResponse(CqlResponseKind),
+
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+        "Request execution exceeded a client timeout of {}ms",
+        std::time::Duration::as_millis(.0)
+    )]
+    RequestTimeout(std::time::Duration),
 }
 
 /// A protocol error that occurred during schema version fetch.

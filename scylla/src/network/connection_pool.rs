@@ -7,7 +7,9 @@ use super::connection::{
     ErrorReceiver, VerifiedKeyspaceName,
 };
 
-use crate::errors::{BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, QueryError};
+use crate::errors::{
+    BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, UseKeyspaceError,
+};
 use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
@@ -317,7 +319,7 @@ impl NodeConnectionPool {
     pub(crate) async fn use_keyspace(
         &self,
         keyspace_name: VerifiedKeyspaceName,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), UseKeyspaceError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
         self.use_keyspace_request_sender
@@ -481,7 +483,7 @@ struct PoolRefiller {
 #[derive(Debug)]
 struct UseKeyspaceRequest {
     keyspace_name: VerifiedKeyspaceName,
-    response_sender: tokio::sync::oneshot::Sender<Result<(), QueryError>>,
+    response_sender: tokio::sync::oneshot::Sender<Result<(), UseKeyspaceError>>,
 }
 
 impl PoolRefiller {
@@ -1075,7 +1077,7 @@ impl PoolRefiller {
     fn use_keyspace(
         &mut self,
         keyspace_name: VerifiedKeyspaceName,
-        response_sender: tokio::sync::oneshot::Sender<Result<(), QueryError>>,
+        response_sender: tokio::sync::oneshot::Sender<Result<(), UseKeyspaceError>>,
     ) {
         self.current_keyspace = Some(keyspace_name.clone());
 
@@ -1097,12 +1099,13 @@ impl PoolRefiller {
                 return Ok(());
             }
 
-            let use_keyspace_results: Vec<Result<(), QueryError>> = tokio::time::timeout(
+            let use_keyspace_results: Vec<Result<(), UseKeyspaceError>> = tokio::time::timeout(
                 connect_timeout,
                 futures::future::join_all(use_keyspace_futures),
             )
             .await
-            .map_err(|_| QueryError::TimeoutError)?;
+            // FIXME: We could probably make USE KEYSPACE request timeout configurable in the future.
+            .map_err(|_| UseKeyspaceError::RequestTimeout(connect_timeout))?;
 
             crate::cluster::use_keyspace_result(use_keyspace_results.into_iter())
         };

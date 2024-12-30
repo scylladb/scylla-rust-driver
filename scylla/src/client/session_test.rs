@@ -9,7 +9,7 @@ use crate::cluster::metadata::{
     CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType,
 };
 use crate::deserialize::DeserializeOwnedValue;
-use crate::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
+use crate::errors::{BadKeyspaceName, DbError, QueryError, UseKeyspaceError};
 use crate::observability::tracing::TracingInfo;
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::prepared_statement::PreparedStatement;
@@ -750,24 +750,23 @@ async fn test_use_keyspace() {
     // Test that invalid keyspaces get rejected
     assert!(matches!(
         session.use_keyspace("", false).await,
-        Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(
-            BadKeyspaceName::Empty
-        )))
+        Err(UseKeyspaceError::BadKeyspaceName(BadKeyspaceName::Empty))
     ));
 
     let long_name: String = ['a'; 49].iter().collect();
     assert!(matches!(
         session.use_keyspace(long_name, false).await,
-        Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(
-            BadKeyspaceName::TooLong(_, _)
+        Err(UseKeyspaceError::BadKeyspaceName(BadKeyspaceName::TooLong(
+            _,
+            _
         )))
     ));
 
     assert!(matches!(
         session.use_keyspace("abcd;dfdsf", false).await,
-        Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(
+        Err(UseKeyspaceError::BadKeyspaceName(
             BadKeyspaceName::IllegalCharacter(_, ';')
-        )))
+        ))
     ));
 
     // Make sure that use_keyspace on SessionBuiler works
