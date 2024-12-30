@@ -19,7 +19,10 @@
 use crate::client::pager::{NextPageError, NextRowError, QueryPager};
 use crate::cluster::node::resolve_contact_points;
 use crate::deserialize::DeserializeOwnedRow;
-use crate::errors::{DbError, NewSessionError, QueryError, RequestAttemptError};
+use crate::errors::{
+    DbError, MetadataFetchError, MetadataFetchErrorKind, NewSessionError, QueryError,
+    RequestAttemptError,
+};
 use crate::frame::response::event::Event;
 use crate::network::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
 use crate::policies::host_filter::HostFilter;
@@ -1582,7 +1585,9 @@ async fn query_tables_schema(
     .try_for_each(|_| future::ok(()))
     .await?;
 
-    let mut all_partitioners = query_table_partitioners(conn).await?;
+    let mut all_partitioners = query_table_partitioners(conn)
+        .await
+        .map_err(|err| QueryError::MetadataError(MetadataError::FetchError(err)))?;
     let mut result = HashMap::new();
 
     for ((keyspace_name, table_name), table_result) in tables_schema {
@@ -1779,7 +1784,14 @@ fn freeze_type(typ: PreColumnType) -> PreColumnType {
 
 async fn query_table_partitioners(
     conn: &Arc<Connection>,
-) -> Result<PerKsTable<Option<String>>, QueryError> {
+) -> Result<PerKsTable<Option<String>>, MetadataFetchError> {
+    fn create_err(err: impl Into<MetadataFetchErrorKind>) -> MetadataFetchError {
+        MetadataFetchError {
+            error: err.into(),
+            table: "system_schema.scylla_tables",
+        }
+    }
+
     let mut partitioner_query = Query::new(
         "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
     );
@@ -1789,22 +1801,22 @@ async fn query_table_partitioners(
         .clone()
         .query_iter(partitioner_query)
         .map(|pager_res| {
-            let pager = pager_res?;
+            let pager = pager_res.map_err(create_err)?;
             let stream = pager
                 .rows_stream::<(String, String, Option<String>)>()
-                .map_err(|err| {
-                    MetadataError::Tables(TablesMetadataError::SchemaTablesInvalidColumnType(err))
-                })?;
-            Ok::<_, QueryError>(stream)
+                // Map the error of Result<TypedRowStream, TypecheckError>
+                .map_err(create_err)?
+                // Map the error of single stream iteration (NextRowError)
+                .map_err(create_err);
+            Ok::<_, MetadataFetchError>(stream)
         })
         .into_stream()
-        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
         .try_flatten();
 
     let result = rows
         .map(|row_result| {
             let (keyspace_name, table_name, partitioner) = row_result?;
-            Ok::<_, QueryError>(((keyspace_name, table_name), partitioner))
+            Ok::<_, MetadataFetchError>(((keyspace_name, table_name), partitioner))
         })
         .try_collect::<HashMap<_, _>>()
         .await;
@@ -1814,15 +1826,15 @@ async fn query_table_partitioners(
         // that we are only interested in the ones resulting from non-existent table
         // system_schema.scylla_tables.
         // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
-        // FIXME 2: The specific error we expect here should appear in QueryError::NextRowError. Currently
-        // leaving match against both variants. This will be fixed, once `MetadataError` is further adjusted
-        // in a follow-up PR. The goal is to return MetadataError from all functions related to metadata fetch.
-        Err(QueryError::DbError(DbError::Invalid, _))
-        | Err(QueryError::NextRowError(NextRowError::NextPageError(
-            NextPageError::RequestFailure(RequestError::LastAttemptError(
-                RequestAttemptError::DbError(DbError::Invalid, _),
-            )),
-        ))) => Ok(HashMap::new()),
+        Err(MetadataFetchError {
+            error:
+                MetadataFetchErrorKind::NextRowError(NextRowError::NextPageError(
+                    NextPageError::RequestFailure(RequestError::LastAttemptError(
+                        RequestAttemptError::DbError(DbError::Invalid, _),
+                    )),
+                )),
+            ..
+        }) => Ok(HashMap::new()),
         result => result,
     }
 }
