@@ -590,7 +590,7 @@ impl MetadataReader {
             }
         }
 
-        res
+        res.map_err(QueryError::MetadataError)
     }
 
     fn update_known_peers(&mut self, metadata: &Metadata) {
@@ -684,7 +684,7 @@ async fn query_metadata(
     connect_port: u16,
     keyspace_to_fetch: &[String],
     fetch_schema: bool,
-) -> Result<Metadata, QueryError> {
+) -> Result<Metadata, MetadataError> {
     let peers_query = query_peers(conn, connect_port);
     let keyspaces_query = query_keyspaces(conn, keyspace_to_fetch, fetch_schema);
 
@@ -692,12 +692,12 @@ async fn query_metadata(
 
     // There must be at least one peer
     if peers.is_empty() {
-        return Err(MetadataError::Peers(PeersMetadataError::EmptyPeers).into());
+        return Err(MetadataError::Peers(PeersMetadataError::EmptyPeers));
     }
 
     // At least one peer has to have some tokens
     if peers.iter().all(|peer| peer.tokens.is_empty()) {
-        return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists).into());
+        return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists));
     }
 
     Ok(Metadata { peers, keyspaces })
