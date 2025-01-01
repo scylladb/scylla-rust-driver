@@ -23,6 +23,7 @@ use crate::network::{
 };
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
+use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
@@ -36,7 +37,6 @@ use crate::transport::errors::{
 use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
-use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::{MaybeFirstRowError, QueryResult, RowsError};

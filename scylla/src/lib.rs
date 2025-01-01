@@ -278,15 +278,14 @@ pub use statement::query;
 #[allow(deprecated)]
 pub use frame::response::cql_to_rust::{self, FromRow};
 
-pub use policies::host_filter;
-
 pub use client::execution_profile::ExecutionProfile;
+pub use policies::host_filter;
+pub use policies::load_balancing;
 
 #[allow(deprecated)]
 pub use transport::legacy_query_result::LegacyQueryResult;
 pub use transport::query_result::{QueryResult, QueryRowsResult};
 
-pub use transport::load_balancing;
 pub use transport::retry_policy;
 pub use transport::speculative_execution;
 
