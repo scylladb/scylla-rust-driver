@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
-use crate::transport::execution_profile::ExecutionProfileHandle;
 
 use super::StatementConfig;
 use super::{Consistency, SerialConsistency};

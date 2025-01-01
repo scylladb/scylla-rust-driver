@@ -1,21 +1,20 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
+#[cfg(feature = "cloud")]
+use super::execution_profile::ExecutionProfile;
+use super::execution_profile::ExecutionProfileHandle;
 #[allow(deprecated)]
 use super::session::{
     CurrentDeserializationApi, GenericSession, LegacyDeserializationApi, SessionConfig,
 };
-use super::{Compression, PoolSize};
+use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
-use crate::client::SelfIdentity;
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::statement::Consistency;
 use crate::transport::errors::NewSessionError;
-use crate::transport::execution_profile::ExecutionProfileHandle;
-#[cfg(feature = "cloud")]
-use crate::ExecutionProfile;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 use std::borrow::Borrow;
@@ -440,7 +439,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Example
     /// ```
     /// # use scylla::statement::Consistency;
-    /// # use scylla::transport::ExecutionProfile;
+    /// # use scylla::client::execution_profile::ExecutionProfile;
     /// # use scylla::client::session::Session;
     /// # use scylla::client::session_builder::SessionBuilder;
     /// # use std::time::Duration;
@@ -1075,10 +1074,11 @@ mod tests {
     use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
 
-    use super::{Compression, SessionBuilder};
+    use super::super::Compression;
+    use super::SessionBuilder;
+    use crate::client::execution_profile::{defaults, ExecutionProfile};
     use crate::cluster::node::KnownNode;
     use crate::test_utils::setup_tracing;
-    use crate::transport::execution_profile::{defaults, ExecutionProfile};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
 

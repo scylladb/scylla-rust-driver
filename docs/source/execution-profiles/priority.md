@@ -17,7 +17,7 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::query::Query;
 use scylla::statement::Consistency;
-use scylla::transport::ExecutionProfile;
+use scylla::client::execution_profile::ExecutionProfile;
 
 let session_profile = ExecutionProfile::builder()
     .consistency(Consistency::One)

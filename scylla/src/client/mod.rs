@@ -10,6 +10,10 @@
 //!   that keeps and manages a cache of prepared statements, so that a user can be free of such considerations.
 //! - [SelfIdentity] - configuresd driver and application self-identifying information,
 //!   to be sent in STARTUP message.
+//! - [ExecutionProfile](execution_profile::ExecutionProfile) - a profile that groups various configuration
+//!   options relevant when executing a request against the DB.
+
+pub mod execution_profile;
 
 pub mod caching_session;
 

@@ -23,8 +23,8 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 use super::errors::{QueryError, UserRequestError};
-use super::execution_profile::ExecutionProfileInner;
 use super::query_result::ColumnSpecs;
+use crate::client::execution_profile::ExecutionProfileInner;
 use crate::client::session::RequestSpan;
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};

@@ -19,7 +19,7 @@
 //! use scylla::client::session::Session;
 //! use scylla::client::session_builder::SessionBuilder;
 //! use scylla::statement::Consistency;
-//! use scylla::transport::ExecutionProfile;
+//! use scylla::client::execution_profile::ExecutionProfile;
 //!
 //! let profile = ExecutionProfile::builder()
 //!     .consistency(Consistency::LocalOne)
@@ -45,7 +45,7 @@
 //! # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 //! use scylla::query::Query;
 //! use scylla::statement::Consistency;
-//! use scylla::transport::ExecutionProfile;
+//! use scylla::client::execution_profile::ExecutionProfile;
 //! use std::time::Duration;
 //!
 //! let profile = ExecutionProfile::builder()
@@ -72,7 +72,7 @@
 //! # use std::error::Error;
 //! # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 //! use scylla::statement::Consistency;
-//! use scylla::transport::ExecutionProfile;
+//! use scylla::client::execution_profile::ExecutionProfile;
 //! use std::time::Duration;
 //!
 //! let base_profile = ExecutionProfile::builder()
@@ -114,7 +114,7 @@
 //! use scylla::client::session_builder::SessionBuilder;
 //! use scylla::query::Query;
 //! use scylla::statement::Consistency;
-//! use scylla::transport::ExecutionProfile;
+//! use scylla::client::execution_profile::ExecutionProfile;
 //!
 //! let profile1 = ExecutionProfile::builder()
 //!     .consistency(Consistency::One)
@@ -173,10 +173,10 @@ use crate::{
 };
 
 pub(crate) mod defaults {
+    use super::ExecutionProfileInner;
     use crate::load_balancing::{self, LoadBalancingPolicy};
     use crate::retry_policy::{DefaultRetryPolicy, RetryPolicy};
     use crate::speculative_execution::SpeculativeExecutionPolicy;
-    use crate::transport::execution_profile::ExecutionProfileInner;
     use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
     use std::sync::Arc;
@@ -218,7 +218,8 @@ pub(crate) mod defaults {
 /// # Example
 ///
 /// ```
-/// # use scylla::transport::{ExecutionProfile, retry_policy::FallthroughRetryPolicy};
+/// # use scylla::transport::retry_policy::FallthroughRetryPolicy;
+/// # use scylla::client::execution_profile::ExecutionProfile;
 /// # use scylla::statement::Consistency;
 /// # use std::sync::Arc;
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -245,7 +246,7 @@ impl ExecutionProfileBuilder {
     ///
     /// # Example
     /// ```
-    /// # use scylla::transport::ExecutionProfile;
+    /// # use scylla::client::execution_profile::ExecutionProfile;
     /// # use std::time::Duration;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let profile: ExecutionProfile = ExecutionProfile::builder()
@@ -279,7 +280,7 @@ impl ExecutionProfileBuilder {
     ///
     /// # Example
     /// ```
-    /// # use scylla::transport::ExecutionProfile;
+    /// # use scylla::client::execution_profile::ExecutionProfile;
     /// # use scylla::transport::load_balancing::DefaultPolicy;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -304,7 +305,7 @@ impl ExecutionProfileBuilder {
     /// # Example
     /// ```
     /// use scylla::transport::retry_policy::DefaultRetryPolicy;
-    /// # use scylla::transport::ExecutionProfile;
+    /// # use scylla::client::execution_profile::ExecutionProfile;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let profile: ExecutionProfile = ExecutionProfile::builder()
@@ -327,7 +328,7 @@ impl ExecutionProfileBuilder {
     /// # fn check_only_compiles() -> Result<(), Box<dyn Error>> {
     /// use std::{sync::Arc, time::Duration};
     /// use scylla::{
-    ///     transport::ExecutionProfile,
+    ///     client::execution_profile::ExecutionProfile,
     ///     transport::speculative_execution::SimpleSpeculativeExecutionPolicy,
     /// };
     ///
@@ -355,7 +356,7 @@ impl ExecutionProfileBuilder {
     /// # Example
     /// ```
     /// use scylla::transport::retry_policy::DefaultRetryPolicy;
-    /// # use scylla::transport::ExecutionProfile;
+    /// # use scylla::client::execution_profile::ExecutionProfile;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let profile: ExecutionProfile = ExecutionProfile::builder()

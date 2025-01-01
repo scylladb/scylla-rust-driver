@@ -1,6 +1,7 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to perform queries.
 
+use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::AuthenticatorProvider;
 use crate::batch::batch_values;
@@ -31,9 +32,6 @@ use crate::tracing::TracingInfo;
 pub use crate::transport::errors::TranslationError;
 use crate::transport::errors::{
     BadQuery, NewSessionError, ProtocolError, QueryError, TracingProtocolError, UserRequestError,
-};
-use crate::transport::execution_profile::{
-    ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
 use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]

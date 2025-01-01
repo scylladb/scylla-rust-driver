@@ -52,7 +52,7 @@ The newly created execution profile is then converted to a handle using
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::load_balancing::DefaultPolicy;
-use scylla::transport::ExecutionProfile;
+use scylla::client::execution_profile::ExecutionProfile;
 use std::sync::Arc;
 
 let policy = Arc::new(DefaultPolicy::default());

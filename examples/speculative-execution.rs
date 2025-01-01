@@ -1,8 +1,8 @@
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::{
+    client::execution_profile::ExecutionProfile,
     speculative_execution::PercentileSpeculativeExecutionPolicy,
-    transport::execution_profile::ExecutionProfile,
 };
 
 use anyhow::Result;
