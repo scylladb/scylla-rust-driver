@@ -18,8 +18,8 @@ use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
 use crate::routing::Token;
+use crate::session::execution_profile::ExecutionProfileHandle;
 use crate::transport::errors::{BadQuery, ProtocolError, QueryError};
-use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 
 /// Represents a statement prepared on the server.

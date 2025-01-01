@@ -6,7 +6,7 @@ use scylla::{
     cluster::ClusterData,
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
     routing::Shard,
-    transport::ExecutionProfile,
+    session::ExecutionProfile,
     Session, SessionBuilder,
 };
 use std::{env, sync::Arc};

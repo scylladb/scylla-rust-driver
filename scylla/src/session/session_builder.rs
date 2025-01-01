@@ -2,11 +2,11 @@
 
 use crate::connection::{Compression, SelfIdentity};
 use crate::policies::address_translator::AddressTranslator;
+use crate::session::execution_profile::ExecutionProfileHandle;
 #[allow(deprecated)]
 use crate::session::{
     CurrentDeserializationApi, GenericSession, LegacyDeserializationApi, SessionConfig,
 };
-use crate::transport::execution_profile::ExecutionProfileHandle;
 
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
@@ -1039,10 +1039,11 @@ mod tests {
     use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
 
-    use super::{Compression, SessionBuilder};
+    use super::SessionBuilder;
     use crate::cluster::node::KnownNode;
+    use crate::connection::Compression;
+    use crate::session::execution_profile::{defaults, ExecutionProfile};
     use crate::test_utils::setup_tracing;
-    use crate::transport::execution_profile::{defaults, ExecutionProfile};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
 

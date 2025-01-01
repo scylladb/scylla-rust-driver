@@ -279,6 +279,8 @@ pub use frame::response::cql_to_rust::{self, FromRow};
 
 pub use policies::host_filter;
 
+pub use session::execution_profile::{self, ExecutionProfile};
+
 #[cfg(feature = "cloud")]
 pub use session::CloudSessionBuilder;
 #[allow(deprecated)]
@@ -286,12 +288,10 @@ pub use session::{
     CachingSession, GenericCachingSession, IntoTypedRows, LegacyCachingSession, LegacySession,
     Session, SessionBuilder, SessionConfig,
 };
-pub use transport::execution_profile::ExecutionProfile;
 #[allow(deprecated)]
 pub use transport::legacy_query_result::LegacyQueryResult;
 pub use transport::query_result::{QueryResult, QueryRowsResult};
 
-pub use transport::execution_profile;
 pub use transport::load_balancing;
 pub use transport::retry_policy;
 pub use transport::speculative_execution;

@@ -8,8 +8,13 @@
 //! - SessionBuilder - just a convenient builder for a Session.
 //! - CachingSession - a wrapper over a Session that keeps and manages a cache
 //!   of prepared statements, so that a user can be free of such considerations.
+//! - ExecutionProfile - a profile that groups various configuration options
+//!   relevant when executing a request against the DB.
 
 mod caching_session;
+
+pub mod execution_profile;
+pub use execution_profile::ExecutionProfile;
 
 // The purpose of session::session module is to not have any complex logic in mod.rs.
 // No code external to this module will ever see this awkward path, because the inner

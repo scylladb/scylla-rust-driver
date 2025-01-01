@@ -45,14 +45,14 @@ use crate::policies::host_filter::HostFilter;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
+use crate::session::execution_profile::{
+    ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
+};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::tracing::TracingInfo;
 use crate::transport::errors::TracingProtocolError;
 use crate::transport::errors::{
     BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
-};
-use crate::transport::execution_profile::{
-    ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
 use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]
