@@ -1,3 +1,10 @@
+//! This module holds entities representing various kinds of CQL statements,
+//! together with their execution options.
+//! The following statements are supported:
+//! - Query (unprepared statements),
+//! - PreparedStatement,
+//! - Batch.
+
 use std::{sync::Arc, time::Duration};
 
 use thiserror::Error;
