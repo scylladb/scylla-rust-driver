@@ -23,10 +23,10 @@ use crate::frame::{
 };
 use crate::policies::address_translator::AddressTranslator;
 use crate::query::Query;
+use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardInfo, Sharder};
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::transport::locator::tablets::{RawTablet, TabletParsingError};
 use crate::transport::query_result::QueryResult;
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};

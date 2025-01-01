@@ -7,8 +7,8 @@ use crate::{
     cluster::metadata::Strategy,
     cluster::node::Node,
     errors::QueryError,
+    routing::locator::ReplicaSet,
     routing::{Shard, Token},
-    transport::locator::ReplicaSet,
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -1165,8 +1165,8 @@ mod tests {
         ExpectedGroups, ExpectedGroupsBuilder,
     };
     use crate::policies::host_filter::HostFilter;
-    use crate::transport::locator::tablets::TabletsInfo;
-    use crate::transport::locator::test::{
+    use crate::routing::locator::tablets::TabletsInfo;
+    use crate::routing::locator::test::{
         id_to_invalid_addr, mock_metadata_for_token_aware_tests, TABLE_NTS_RF_2, TABLE_NTS_RF_3,
         TABLE_SS_RF_2,
     };
@@ -1182,6 +1182,9 @@ mod tests {
     use super::{DefaultPolicy, NodeLocationPreference};
 
     pub(crate) mod framework {
+        use crate::routing::locator::test::{
+            id_to_invalid_addr, mock_metadata_for_token_aware_tests,
+        };
         use std::collections::{HashMap, HashSet};
 
         use uuid::Uuid;
@@ -1194,7 +1197,6 @@ mod tests {
             policies::load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             routing::Token,
             test_utils::setup_tracing,
-            transport::locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
         };
 
         use super::TabletsInfo;
@@ -1545,7 +1547,7 @@ mod tests {
     async fn test_default_policy_with_token_aware_statements() {
         setup_tracing();
 
-        use crate::transport::locator::test::{A, B, C, D, E, F, G};
+        use crate::routing::locator::test::{A, B, C, D, E, F, G};
         let cluster = mock_cluster_data_for_token_aware_tests().await;
 
         #[derive(Debug)]
@@ -2018,7 +2020,7 @@ mod tests {
     #[tokio::test]
     async fn test_default_policy_with_lwt_statements() {
         setup_tracing();
-        use crate::transport::locator::test::{A, B, C, D, E, F, G};
+        use crate::routing::locator::test::{A, B, C, D, E, F, G};
 
         let cluster = mock_cluster_data_for_token_aware_tests().await;
         struct Test<'a> {
@@ -3134,11 +3136,11 @@ mod latency_awareness {
                 default::tests::test_default_policy_with_given_cluster_and_routing_info,
                 RoutingInfo,
             },
+            routing::locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
+            routing::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
             routing::Shard,
             routing::Token,
             test_utils::setup_tracing,
-            transport::locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
-            transport::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
         };
         use tokio::time::Instant;
 

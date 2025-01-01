@@ -3,7 +3,7 @@ use crate::errors::{NewSessionError, QueryError};
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::network::{PoolConfig, VerifiedKeyspaceName};
 use crate::policies::host_filter::HostFilter;
-use crate::transport::locator::tablets::{RawTablet, TabletsInfo};
+use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;

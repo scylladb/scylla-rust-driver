@@ -615,12 +615,12 @@ mod tests {
     use uuid::Uuid;
 
     use crate::cluster::Node;
-    use crate::routing::Token;
-    use crate::test_utils::setup_tracing;
-    use crate::transport::locator::tablets::{
+    use crate::routing::locator::tablets::{
         RawTablet, RawTabletReplicas, TabletParsingError, CUSTOM_PAYLOAD_TABLETS_V1_KEY,
         RAW_TABLETS_CQL_TYPE,
     };
+    use crate::routing::Token;
+    use crate::test_utils::setup_tracing;
 
     use super::{TableTablets, Tablet, TabletReplicas, TabletsInfo};
 
