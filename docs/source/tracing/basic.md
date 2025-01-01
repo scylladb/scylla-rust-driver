@@ -12,7 +12,7 @@ return a `QueryResult` which contains a `tracing_id` if tracing was enabled.
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
 use scylla::QueryResult;
-use scylla::tracing::TracingInfo;
+use scylla::execution::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Create a Query manually and enable tracing
@@ -40,7 +40,7 @@ if let Some(id) = tracing_id {
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
 use scylla::QueryResult;
-use scylla::tracing::TracingInfo;
+use scylla::execution::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Prepare the query
@@ -72,7 +72,7 @@ if let Some(id) = tracing_id {
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::batch::Batch;
 use scylla::QueryResult;
-use scylla::tracing::TracingInfo;
+use scylla::execution::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Create a batch statement

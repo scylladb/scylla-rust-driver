@@ -1,11 +1,11 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
+use scylla::cluster::NodeRef;
+use scylla::execution::retries::FallthroughRetryPolicy;
 use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::prepared_statement::PreparedStatement;
-use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::routing::{Shard, Token};
-use scylla::transport::NodeRef;
-use scylla::Session;
+use scylla::session::Session;
 use scylla_cql::frame::response::result::TableSpec;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -377,7 +377,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
     fn pick<'a>(
         &'a self,
         query: &'a RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
+        cluster: &'a scylla::cluster::ClusterData,
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))
@@ -388,7 +388,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
     fn fallback<'a>(
         &'a self,
         query: &'a RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
+        cluster: &'a scylla::cluster::ClusterData,
     ) -> scylla::load_balancing::FallbackPlan<'a> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))

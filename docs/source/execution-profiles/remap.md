@@ -26,7 +26,7 @@ Below, the remaps described above are followed in code.
 use scylla::{Session, SessionBuilder};
 use scylla::query::Query;
 use scylla::statement::Consistency;
-use scylla::transport::ExecutionProfile;
+use scylla::execution::ExecutionProfile;
 
 let profile1 = ExecutionProfile::builder()
     .consistency(Consistency::One)

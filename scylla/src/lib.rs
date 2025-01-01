@@ -255,11 +255,13 @@ pub mod authentication;
 #[cfg(feature = "cloud")]
 pub mod cloud;
 
-pub mod history;
+pub mod cluster;
+pub mod connection;
+pub mod execution;
+pub mod response;
 pub mod routing;
+pub mod session;
 pub mod statement;
-pub mod tracing;
-pub mod transport;
 
 pub(crate) mod utils;
 
@@ -273,23 +275,22 @@ pub use statement::query;
 #[allow(deprecated)]
 pub use frame::response::cql_to_rust::{self, FromRow};
 
+pub use execution::execution_profile::ExecutionProfile;
 #[allow(deprecated)]
-pub use transport::caching_session::{CachingSession, GenericCachingSession, LegacyCachingSession};
-pub use transport::execution_profile::ExecutionProfile;
+pub use response::legacy_query_result::LegacyQueryResult;
+pub use response::query_result::{QueryResult, QueryRowsResult};
 #[allow(deprecated)]
-pub use transport::legacy_query_result::LegacyQueryResult;
-pub use transport::query_result::{QueryResult, QueryRowsResult};
-#[allow(deprecated)]
-pub use transport::session::{IntoTypedRows, LegacySession, Session, SessionConfig};
-pub use transport::session_builder::SessionBuilder;
+pub use session::{
+    CachingSession, GenericCachingSession, IntoTypedRows, LegacyCachingSession, LegacySession,
+    Session, SessionBuilder, SessionConfig,
+};
 
 #[cfg(feature = "cloud")]
-pub use transport::session_builder::CloudSessionBuilder;
+pub use session::CloudSessionBuilder;
 
-pub use transport::execution_profile;
-pub use transport::host_filter;
-pub use transport::load_balancing;
-pub use transport::retry_policy;
-pub use transport::speculative_execution;
+pub use cluster::host_filter;
+pub use execution::execution_profile;
+pub use execution::load_balancing;
+pub use execution::speculative_execution;
 
-pub use transport::metrics::{Metrics, MetricsError};
+pub use execution::metrics::{Metrics, MetricsError};

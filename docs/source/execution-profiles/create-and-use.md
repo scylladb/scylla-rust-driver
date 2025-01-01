@@ -8,7 +8,7 @@ To create an `ExecutionProfile` and attach it as default for `Session`:
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder};
 use scylla::statement::Consistency;
-use scylla::transport::ExecutionProfile;
+use scylla::execution::ExecutionProfile;
 
 let profile = ExecutionProfile::builder()
     .consistency(Consistency::LocalOne)
@@ -34,7 +34,7 @@ To create an `ExecutionProfile` and attach it to a `Query`:
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
 use scylla::statement::Consistency;
-use scylla::transport::ExecutionProfile;
+use scylla::execution::ExecutionProfile;
 use std::time::Duration;
 
 let profile = ExecutionProfile::builder()
@@ -60,7 +60,7 @@ To create an `ExecutionProfile` based on another profile:
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::statement::Consistency;
-use scylla::transport::ExecutionProfile;
+use scylla::execution::ExecutionProfile;
 use std::time::Duration;
 
 let base_profile = ExecutionProfile::builder()

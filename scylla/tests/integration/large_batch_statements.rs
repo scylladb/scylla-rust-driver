@@ -3,8 +3,8 @@ use assert_matches::assert_matches;
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 use scylla::batch::Batch;
 use scylla::batch::BatchType;
+use scylla::execution::errors::{BadQuery, QueryError};
 use scylla::query::Query;
-use scylla::transport::errors::{BadQuery, QueryError};
 use scylla::{QueryResult, Session};
 
 #[tokio::test]

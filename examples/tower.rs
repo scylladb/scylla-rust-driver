@@ -1,5 +1,5 @@
 use scylla::frame::response::result::Row;
-use scylla::transport::session::Session;
+use scylla::session::Session;
 use std::env;
 use std::future::Future;
 use std::pin::Pin;
@@ -15,7 +15,7 @@ struct SessionService {
 // A trivial service implementation for sending parameterless simple string requests to Scylla.
 impl Service<scylla::query::Query> for SessionService {
     type Response = scylla::QueryResult;
-    type Error = scylla::transport::errors::QueryError;
+    type Error = scylla::execution::errors::QueryError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
