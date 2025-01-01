@@ -1,3 +1,13 @@
+//! Partitioners are algorithms that can compute token for a given partition key,
+//! ultimately allowing optimised routing of requests (such that a request is routed
+//! to replicas, which are nodes and shards that really own the data the request concerns).
+//! Currently, two partitioners are supported:
+//! - Murmur3Partitioner
+//!     - the default partitioner,
+//!     - modified for compatibility with Cassandra's buggy implementation.
+//! - CDCPartitioner
+//!     - the partitioner employed when using CDC (_Change Data Capture_).
+
 use bytes::Buf;
 use scylla_cql::{frame::types::RawValue, types::serialize::row::SerializedValues};
 use std::num::Wrapping;
