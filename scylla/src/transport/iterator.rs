@@ -33,6 +33,7 @@ use crate::session::RequestSpan;
 use crate::cluster::ClusterData;
 use crate::cluster::NodeRef;
 use crate::connection::{Connection, NonErrorQueryResponse, QueryResponse};
+use crate::execution::load_balancing::{self, RoutingInfo};
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row},
@@ -40,7 +41,6 @@ use crate::frame::response::{
 use crate::history::{self, HistoryListener};
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::errors::ProtocolError;
-use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use tracing::{trace, trace_span, warn, Instrument};
