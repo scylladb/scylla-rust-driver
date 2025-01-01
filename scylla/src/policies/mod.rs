@@ -8,7 +8,10 @@
 //!   not contact them at all on any condition.
 //! - AddressTranslator, which allows contacting a node through a different address
 //!   than its broadcast address (e.g., when it's behind a NAT).
+//! - LoadBalancingPolicy, which decides which nodes and shards to contact for each
+//!   request.
 //! - TODO
 
 pub mod address_translator;
 pub mod host_filter;
+pub mod load_balancing;

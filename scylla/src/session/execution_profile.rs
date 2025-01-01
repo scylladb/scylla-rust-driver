@@ -279,7 +279,7 @@ impl ExecutionProfileBuilder {
     /// # Example
     /// ```
     /// # use scylla::session::ExecutionProfile;
-    /// # use scylla::transport::load_balancing::DefaultPolicy;
+    /// # use scylla::policies::load_balancing::DefaultPolicy;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let profile: ExecutionProfile = ExecutionProfile::builder()

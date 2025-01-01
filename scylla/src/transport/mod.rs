@@ -2,7 +2,6 @@ pub mod downgrading_consistency_retry_policy;
 pub mod errors;
 pub mod iterator;
 pub mod legacy_query_result;
-pub mod load_balancing;
 pub mod locator;
 pub(crate) mod metrics;
 pub mod partitioner;
