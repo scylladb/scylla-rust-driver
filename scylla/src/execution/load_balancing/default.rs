@@ -7,8 +7,8 @@ use crate::{
     cluster::metadata::Strategy,
     cluster::node::Node,
     execution::errors::QueryError,
+    routing::locator::ReplicaSet,
     routing::{Shard, Token},
-    transport::locator::ReplicaSet,
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -1165,8 +1165,8 @@ mod tests {
         ExpectedGroups, ExpectedGroupsBuilder,
     };
     use crate::host_filter::HostFilter;
-    use crate::transport::locator::tablets::TabletsInfo;
-    use crate::transport::locator::test::{
+    use crate::routing::locator::tablets::TabletsInfo;
+    use crate::routing::locator::test::{
         id_to_invalid_addr, mock_metadata_for_token_aware_tests, TABLE_NTS_RF_2, TABLE_NTS_RF_3,
         TABLE_SS_RF_2,
     };
@@ -1192,9 +1192,9 @@ mod tests {
                 ClusterData,
             },
             load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
+            routing::locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
             routing::Token,
             test_utils::setup_tracing,
-            transport::locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
         };
 
         use super::TabletsInfo;
@@ -1545,7 +1545,7 @@ mod tests {
     async fn test_default_policy_with_token_aware_statements() {
         setup_tracing();
 
-        use crate::transport::locator::test::{A, B, C, D, E, F, G};
+        use crate::routing::locator::test::{A, B, C, D, E, F, G};
         let cluster = mock_cluster_data_for_token_aware_tests().await;
 
         #[derive(Debug)]
@@ -2018,7 +2018,7 @@ mod tests {
     #[tokio::test]
     async fn test_default_policy_with_lwt_statements() {
         setup_tracing();
-        use crate::transport::locator::test::{A, B, C, D, E, F, G};
+        use crate::routing::locator::test::{A, B, C, D, E, F, G};
 
         let cluster = mock_cluster_data_for_token_aware_tests().await;
         struct Test<'a> {
@@ -3132,17 +3132,17 @@ mod latency_awareness {
             cluster::ClusterData,
             cluster::NodeAddr,
             load_balancing::default::NodeLocationPreference,
+            routing::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
             routing::Shard,
             test_utils::setup_tracing,
-            transport::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
         };
         use crate::{
             load_balancing::{
                 default::tests::test_default_policy_with_given_cluster_and_routing_info,
                 RoutingInfo,
             },
+            routing::locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
             routing::Token,
-            transport::locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
         };
         use tokio::time::Instant;
 

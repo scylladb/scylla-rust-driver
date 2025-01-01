@@ -168,8 +168,8 @@ mod tests {
 
     use crate::{
         cluster::{Node, NodeAddr},
+        routing::locator::test::{create_locator, mock_metadata_for_token_aware_tests},
         test_utils::setup_tracing,
-        transport::locator::test::{create_locator, mock_metadata_for_token_aware_tests},
     };
 
     use super::*;

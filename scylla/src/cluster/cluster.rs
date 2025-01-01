@@ -5,10 +5,10 @@ use crate::execution::errors::{BadQuery, NewSessionError, QueryError};
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::prepared_statement::TokenCalculationError;
+use crate::routing::locator::ReplicaLocator;
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, Token};
 use crate::session::TABLET_CHANNEL_SIZE;
-use crate::transport::locator::ReplicaLocator;
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;
@@ -25,8 +25,8 @@ use uuid::Uuid;
 
 use crate::cluster::metadata::{Keyspace, Metadata, MetadataReader, Strategy};
 use crate::cluster::node::{InternalKnownNode, NodeAddr, NodeRef};
+use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use crate::routing::partitioner::calculate_token_for_partition_key;
-use crate::transport::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
