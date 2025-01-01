@@ -1,4 +1,4 @@
-//! Iterators over rows returned by paged queries
+//! Streamed async iteration over rows returned by paged queries.
 
 use std::future::Future;
 use std::net::SocketAddr;
