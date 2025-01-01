@@ -4,9 +4,9 @@ use rand::Rng;
 use scylla::cluster::NodeRef;
 use scylla::{
     cluster::ClusterData,
+    execution::ExecutionProfile,
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
     routing::Shard,
-    transport::ExecutionProfile,
     Session, SessionBuilder,
 };
 use std::{env, sync::Arc};

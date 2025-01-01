@@ -12,7 +12,7 @@ To use in `Session`:
 # use std::sync::Arc;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder};
-use scylla::transport::ExecutionProfile;
+use scylla::execution::ExecutionProfile;
 use scylla::transport::retry_policy::DefaultRetryPolicy;
 
 let handle = ExecutionProfile::builder()
@@ -37,7 +37,7 @@ To use in a [simple query](../queries/simple.md):
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::transport::ExecutionProfile;
+use scylla::execution::ExecutionProfile;
 use scylla::transport::retry_policy::DefaultRetryPolicy;
 
 // Create a Query manually and set the retry policy
@@ -66,7 +66,7 @@ To use in a [prepared query](../queries/prepared.md):
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
-use scylla::transport::ExecutionProfile;
+use scylla::execution::ExecutionProfile;
 use scylla::transport::retry_policy::DefaultRetryPolicy;
 
 // Create PreparedStatement manually and set the retry policy

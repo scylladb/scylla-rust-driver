@@ -23,11 +23,11 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 use super::errors::{QueryError, UserRequestError};
-use super::execution_profile::ExecutionProfileInner;
 use super::query_result::ColumnSpecs;
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
+use crate::execution::execution_profile::ExecutionProfileInner;
 use crate::session::RequestSpan;
 
 use crate::cluster::ClusterData;

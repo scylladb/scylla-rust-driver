@@ -1,6 +1,6 @@
 use scylla::{
-    speculative_execution::PercentileSpeculativeExecutionPolicy,
-    transport::execution_profile::ExecutionProfile, Session, SessionBuilder,
+    execution::execution_profile::ExecutionProfile,
+    speculative_execution::PercentileSpeculativeExecutionPolicy, Session, SessionBuilder,
 };
 
 use anyhow::Result;

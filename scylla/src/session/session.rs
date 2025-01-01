@@ -45,10 +45,13 @@ use crate::cluster::NodeRef;
 use crate::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 #[cfg(feature = "ssl")]
 use crate::connection::SslConfig;
-use crate::connection::{AddressTranslator, NonErrorQueryResponse, SelfIdentity};
-use crate::connection::{Compression, QueryResponse};
-use crate::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
-use crate::connection::{PoolConfig, PoolSize};
+use crate::connection::{
+    AddressTranslator, Compression, Connection, ConnectionConfig, NonErrorQueryResponse,
+    PoolConfig, PoolSize, QueryResponse, SelfIdentity, VerifiedKeyspaceName,
+};
+use crate::execution::execution_profile::{
+    ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
+};
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -56,9 +59,6 @@ use crate::routing::{Shard, Token};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::tracing::TracingInfo;
 use crate::transport::errors::TracingProtocolError;
-use crate::transport::execution_profile::{
-    ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
-};
 use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};

@@ -1,8 +1,8 @@
 use super::{PageSize, StatementConfig};
+use crate::execution::execution_profile::ExecutionProfileHandle;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
-use crate::transport::execution_profile::ExecutionProfileHandle;
 use std::sync::Arc;
 use std::time::Duration;
 
