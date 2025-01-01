@@ -1,3 +1,10 @@
+//! This module holds entities that represent connections to the cluster
+//! and management over those connections (connection pooling).
+//! This includes two main abstractions:
+//! - Connection - a single, possibly encrypted, connection to a Scylla node over CQL protocol,
+//! - NodeConnectionPool - a manager that keeps a desired number of connections opened to each shard.
+
+#[allow(clippy::module_inception)]
 mod connection;
 mod connection_pool;
 
