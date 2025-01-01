@@ -1,3 +1,18 @@
+//! This module holds entities that represent the cluster as a whole,
+//! nodes in the cluster (together with a pool of connections),
+//! the cluster's state, and logic for ruling out specific nodes.
+//!
+//! This includes:
+//! - node's representation ([Node]),
+//! - [metadata] representation, fetching and management, including:
+//!     - topology metadata,
+//!     - schema metadata,
+//      - tablet metadata,
+//! - [ClusterState], which is a snapshot of the cluster's state.
+//!   - [ClusterState] is replaced atomically upon a metadata refresh,
+//!     preventing any issues arising from mutability, including races.
+//!
+
 mod worker;
 pub(crate) use worker::{use_keyspace_result, Cluster, ClusterNeatDebug};
 
