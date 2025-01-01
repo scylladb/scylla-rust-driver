@@ -1,3 +1,14 @@
+//! This module holds entities whose goal is to enable routing requests optimally,
+//! that is, choosing a target node and a shard such that it is a replica for
+//! given token.
+//!
+//! This includes:
+//! - token representation,
+//! - shard representation and shard computing logic,
+//! - partitioners, which compute token based on a partition key,
+//! - replica locator, which finds replicas (node + shard) for a given token.
+//!
+
 pub mod locator;
 pub mod partitioner;
 mod sharding;
