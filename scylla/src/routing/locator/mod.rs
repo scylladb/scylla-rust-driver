@@ -830,7 +830,7 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{routing::Token, test_utils::setup_tracing, transport::locator::test::*};
+    use crate::{routing::locator::test::*, routing::Token, test_utils::setup_tracing};
 
     #[tokio::test]
     async fn test_replicas_ordered() {

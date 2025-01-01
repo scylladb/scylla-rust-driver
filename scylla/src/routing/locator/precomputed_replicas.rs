@@ -216,11 +216,11 @@ mod tests {
 
     use crate::{
         cluster::metadata::{Keyspace, Strategy},
-        routing::Token,
-        test_utils::setup_tracing,
-        transport::locator::test::{
+        routing::locator::test::{
             create_ring, mock_metadata_for_token_aware_tests, A, C, D, E, F, G,
         },
+        routing::Token,
+        test_utils::setup_tracing,
     };
 
     use super::{PrecomputedReplicas, ReplicationInfo};
