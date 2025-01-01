@@ -65,7 +65,7 @@ impl Display for NodeAddr {
     }
 }
 
-/// Node represents a cluster node along with it's data and connections
+/// Node represents a cluster node along with its data and connections
 ///
 /// Note: if a Node changes its broadcast address, then it is not longer
 /// represented by the same instance of Node struct, but instead
