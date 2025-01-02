@@ -1,10 +1,11 @@
+use crate::cluster::ClusterData;
+use crate::cluster::NodeRef;
+use crate::connection::Connection;
+use crate::execution::errors::QueryError;
 use crate::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::query::Query;
 use crate::routing::Shard;
-use crate::transport::connection::Connection;
-use crate::transport::errors::QueryError;
-use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use crate::transport::{ClusterData, NodeRef};
+use crate::session::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::{CachingSession, ExecutionProfile, Session};
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
@@ -77,7 +78,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
 
         #[cfg(scylla_cloud_tests)]
         {
-            use crate::transport::session_builder::CloudMode;
+            use crate::session::session_builder::CloudMode;
             use crate::CloudSessionBuilder;
             use std::path::Path;
 
@@ -181,6 +182,6 @@ impl PerformDDL for Connection {
     async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
-        self.query_unpaged(query).await.map(|_| ())
+        self.query_unpaged(query, None).await.map(|_| ())
     }
 }

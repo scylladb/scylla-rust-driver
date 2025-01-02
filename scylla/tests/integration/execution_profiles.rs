@@ -5,15 +5,15 @@ use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name
 use assert_matches::assert_matches;
 use scylla::batch::BatchStatement;
 use scylla::batch::{Batch, BatchType};
+use scylla::cluster::NodeRef;
 use scylla::query::Query;
 use scylla::routing::Shard;
 use scylla::statement::SerialConsistency;
-use scylla::transport::NodeRef;
 use scylla::{
+    cluster::ClusterData,
+    execution::retries::{RetryPolicy, RetrySession},
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
-    retry_policy::{RetryPolicy, RetrySession},
     speculative_execution::SpeculativeExecutionPolicy,
-    transport::ClusterData,
     ExecutionProfile, SessionBuilder,
 };
 use scylla_cql::Consistency;
@@ -80,7 +80,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
         _query: &RoutingInfo,
         _latency: std::time::Duration,
         _node: NodeRef<'_>,
-        _error: &scylla::transport::errors::QueryError,
+        _error: &scylla::execution::errors::QueryError,
     ) {
     }
 
@@ -90,7 +90,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
 }
 
 impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {
-    fn new_session(&self) -> Box<dyn scylla::retry_policy::RetrySession> {
+    fn new_session(&self) -> Box<dyn scylla::execution::retries::RetrySession> {
         self.report_node(Report::RetryPolicy);
         Box::new(self.clone())
     }
@@ -99,10 +99,10 @@ impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {
 impl<const NODE: u8> RetrySession for BoundToPredefinedNodePolicy<NODE> {
     fn decide_should_retry(
         &mut self,
-        query_info: scylla::retry_policy::QueryInfo,
-    ) -> scylla::retry_policy::RetryDecision {
+        query_info: scylla::execution::retries::QueryInfo,
+    ) -> scylla::execution::retries::RetryDecision {
         self.report_consistency(query_info.consistency);
-        scylla::retry_policy::RetryDecision::DontRetry
+        scylla::execution::retries::RetryDecision::DontRetry
     }
 
     fn reset(&mut self) {}

@@ -1,9 +1,17 @@
+//! This module holds entities representing various kinds of CQL statements,
+//! together with their execution options.
+//! The following statements are supported:
+//! - Query (unprepared statements),
+//! - PreparedStatement,
+//! - Batch.
+
 use std::{sync::Arc, time::Duration};
 
 use thiserror::Error;
 
-use crate::transport::execution_profile::ExecutionProfileHandle;
-use crate::{history::HistoryListener, retry_policy::RetryPolicy};
+use crate::execution::execution_profile::ExecutionProfileHandle;
+use crate::execution::history::HistoryListener;
+use crate::execution::retries::RetryPolicy;
 
 pub mod batch;
 pub mod prepared_statement;
@@ -25,7 +33,6 @@ pub(crate) struct StatementConfig {
 
     pub(crate) skip_result_metadata: bool,
     pub(crate) tracing: bool,
-    pub(crate) timestamp: Option<i64>,
     pub(crate) request_timeout: Option<Duration>,
 
     pub(crate) history_listener: Option<Arc<dyn HistoryListener>>,

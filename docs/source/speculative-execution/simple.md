@@ -17,7 +17,7 @@ use scylla::{
     Session,
     SessionBuilder,
     speculative_execution::SimpleSpeculativeExecutionPolicy,
-    transport::execution_profile::ExecutionProfile,
+    execution::execution_profile::ExecutionProfile,
 };
 
 let policy = SimpleSpeculativeExecutionPolicy {

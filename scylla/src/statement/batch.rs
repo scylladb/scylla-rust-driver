@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use crate::history::HistoryListener;
-use crate::retry_policy::RetryPolicy;
+use crate::execution::execution_profile::ExecutionProfileHandle;
+use crate::execution::history::HistoryListener;
+use crate::execution::retries::RetryPolicy;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
-use crate::transport::execution_profile::ExecutionProfileHandle;
 
 use super::StatementConfig;
 use super::{Consistency, SerialConsistency};
@@ -109,18 +109,6 @@ impl Batch {
         self.config.tracing
     }
 
-    /// Sets the default timestamp for this batch in microseconds.
-    /// If not None, it will replace the server side assigned timestamp as default timestamp for
-    /// all the statements contained in the batch.
-    pub fn set_timestamp(&mut self, timestamp: Option<i64>) {
-        self.config.timestamp = timestamp
-    }
-
-    /// Gets the default timestamp for this batch in microseconds.
-    pub fn get_timestamp(&self) -> Option<i64> {
-        self.config.timestamp
-    }
-
     /// Set the retry policy for this batch, overriding the one from execution profile if not None.
     #[inline]
     pub fn set_retry_policy(&mut self, retry_policy: Option<Arc<dyn RetryPolicy>>) {
@@ -216,8 +204,8 @@ pub(crate) mod batch_values {
     use scylla_cql::types::serialize::row::SerializedValues;
     use scylla_cql::types::serialize::{RowWriter, SerializationError};
 
+    use crate::execution::errors::QueryError;
     use crate::routing::Token;
-    use crate::transport::errors::QueryError;
 
     use super::BatchStatement;
 

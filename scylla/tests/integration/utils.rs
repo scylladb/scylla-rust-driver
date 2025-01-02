@@ -1,11 +1,12 @@
 use futures::Future;
+use scylla::cluster::ClusterData;
+use scylla::cluster::NodeRef;
 use scylla::deserialize::DeserializeValue;
+use scylla::execution::errors::QueryError;
 use scylla::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use scylla::query::Query;
 use scylla::routing::Shard;
-use scylla::transport::errors::QueryError;
-use scylla::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use scylla::transport::{ClusterData, NodeRef};
+use scylla::session::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use scylla::{ExecutionProfile, Session};
 use std::collections::HashMap;
 use std::env;
@@ -143,7 +144,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
 
         #[cfg(scylla_cloud_tests)]
         {
-            use scylla::transport::session_builder::CloudMode;
+            use scylla::session::session_builder::CloudMode;
             use scylla::CloudSessionBuilder;
             use std::path::Path;
 
