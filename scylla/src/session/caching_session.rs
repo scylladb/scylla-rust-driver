@@ -741,22 +741,16 @@ mod tests {
         let q = Query::new("INSERT INTO tbl (a, b) VALUES (?, ?)");
 
         // Insert one row with timestamp 1000
-        let mut q1 = q.clone();
-        q1.set_timestamp(Some(1000));
-
         session
-            .execute_unpaged(q1, (1, 1))
+            .execute_unpaged_with_timestamp(q.clone(), (1, 1), 1000)
             .await
             .unwrap()
             .result_not_rows()
             .unwrap();
 
         // Insert another row with timestamp 2000
-        let mut q2 = q.clone();
-        q2.set_timestamp(Some(2000));
-
         session
-            .execute_unpaged(q2, (2, 2))
+            .execute_unpaged_with_timestamp(q, (2, 2), 2000)
             .await
             .unwrap()
             .result_not_rows()

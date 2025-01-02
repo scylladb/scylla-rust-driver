@@ -956,7 +956,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-        _timestamp: Option<i64>,
+        timestamp: Option<i64>,
     ) -> Result<QueryResponse, UserRequestError> {
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
@@ -967,7 +967,7 @@ impl Connection {
                 page_size: page_size.map(Into::into),
                 paging_state,
                 skip_metadata: false,
-                timestamp: query.get_timestamp(),
+                timestamp,
             },
         };
 
@@ -1023,7 +1023,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-        _timestamp: Option<i64>,
+        timestamp: Option<i64>,
     ) -> Result<QueryResponse, UserRequestError> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
@@ -1032,7 +1032,7 @@ impl Connection {
                 serial_consistency,
                 values: Cow::Borrowed(values),
                 page_size: page_size.map(Into::into),
-                timestamp: prepared_statement.get_timestamp(),
+                timestamp,
                 skip_metadata: prepared_statement.get_use_cached_result_metadata(),
                 paging_state,
             },
@@ -1155,7 +1155,7 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-        _timestamp: Option<i64>,
+        timestamp: Option<i64>,
     ) -> Result<QueryResult, QueryError> {
         let batch = self.prepare_batch(init_batch, &values).await?;
 
@@ -1174,7 +1174,7 @@ impl Connection {
             batch_type: batch.get_type(),
             consistency,
             serial_consistency,
-            timestamp: batch.get_timestamp(),
+            timestamp,
         };
 
         loop {

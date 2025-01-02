@@ -1237,33 +1237,45 @@ async fn test_timestamp() {
 
     // test regular query timestamps
 
-    let mut regular_query = Query::new(query_str.to_string());
+    let regular_query = Query::new(query_str.to_string());
 
-    regular_query.set_timestamp(Some(420));
     session
-        .query_unpaged(regular_query.clone(), ("regular query", "higher timestamp"))
+        .query_unpaged_with_timestamp(
+            regular_query.clone(),
+            ("regular query", "higher timestamp"),
+            420,
+        )
         .await
         .unwrap();
 
-    regular_query.set_timestamp(Some(42));
     session
-        .query_unpaged(regular_query.clone(), ("regular query", "lower timestamp"))
+        .query_unpaged_with_timestamp(
+            regular_query.clone(),
+            ("regular query", "lower timestamp"),
+            42,
+        )
         .await
         .unwrap();
 
     // test prepared statement timestamps
 
-    let mut prepared_statement = session.prepare(query_str).await.unwrap();
+    let prepared_statement = session.prepare(query_str).await.unwrap();
 
-    prepared_statement.set_timestamp(Some(420));
     session
-        .execute_unpaged(&prepared_statement, ("prepared query", "higher timestamp"))
+        .execute_unpaged_with_timestamp(
+            &prepared_statement,
+            ("prepared query", "higher timestamp"),
+            420,
+        )
         .await
         .unwrap();
 
-    prepared_statement.set_timestamp(Some(42));
     session
-        .execute_unpaged(&prepared_statement, ("prepared query", "lower timestamp"))
+        .execute_unpaged_with_timestamp(
+            &prepared_statement,
+            ("prepared query", "lower timestamp"),
+            42,
+        )
         .await
         .unwrap();
 
@@ -1273,26 +1285,26 @@ async fn test_timestamp() {
     batch.append_statement(regular_query);
     batch.append_statement(prepared_statement);
 
-    batch.set_timestamp(Some(420));
     session
-        .batch(
+        .batch_with_timestamp(
             &batch,
             (
                 ("first query in batch", "higher timestamp"),
                 ("second query in batch", "higher timestamp"),
             ),
+            420,
         )
         .await
         .unwrap();
 
-    batch.set_timestamp(Some(42));
     session
-        .batch(
+        .batch_with_timestamp(
             &batch,
             (
                 ("first query in batch", "lower timestamp"),
                 ("second query in batch", "lower timestamp"),
             ),
+            42,
         )
         .await
         .unwrap();
