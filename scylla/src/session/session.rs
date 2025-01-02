@@ -465,7 +465,7 @@ impl GenericSession<CurrentDeserializationApi> {
         query: impl Into<Query>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
-        self.do_query_unpaged(&query.into(), values).await
+        self.do_query_unpaged(&query.into(), values, None).await
     }
 
     /// Queries a single page from the database, optionally continuing from a saved point.
@@ -525,7 +525,7 @@ impl GenericSession<CurrentDeserializationApi> {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
-        self.do_query_single_page(&query.into(), values, paging_state)
+        self.do_query_single_page(&query.into(), values, paging_state, None)
             .await
     }
 
@@ -622,7 +622,7 @@ impl GenericSession<CurrentDeserializationApi> {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
-        self.do_execute_unpaged(prepared, values).await
+        self.do_execute_unpaged(prepared, values, None).await
     }
 
     /// Executes a prepared statement, restricting results to single page.
@@ -687,7 +687,7 @@ impl GenericSession<CurrentDeserializationApi> {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
-        self.do_execute_single_page(prepared, values, paging_state)
+        self.do_execute_single_page(prepared, values, paging_state, None)
             .await
     }
 
@@ -789,7 +789,7 @@ impl GenericSession<CurrentDeserializationApi> {
         batch: &Batch,
         values: impl BatchValues,
     ) -> Result<QueryResult, QueryError> {
-        self.do_batch(batch, values).await
+        self.do_batch(batch, values, None).await
     }
 
     /// Creates a new Session instance that shared resources with
@@ -836,7 +836,7 @@ impl GenericSession<LegacyDeserializationApi> {
         values: impl SerializeRow,
     ) -> Result<LegacyQueryResult, QueryError> {
         Ok(self
-            .do_query_unpaged(&query.into(), values)
+            .do_query_unpaged(&query.into(), values, None)
             .await?
             .into_legacy_result()?)
     }
@@ -848,7 +848,7 @@ impl GenericSession<LegacyDeserializationApi> {
         paging_state: PagingState,
     ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
         let (result, paging_state_response) = self
-            .do_query_single_page(&query.into(), values, paging_state)
+            .do_query_single_page(&query.into(), values, paging_state, None)
             .await?;
         Ok((result.into_legacy_result()?, paging_state_response))
     }
@@ -869,7 +869,7 @@ impl GenericSession<LegacyDeserializationApi> {
         values: impl SerializeRow,
     ) -> Result<LegacyQueryResult, QueryError> {
         Ok(self
-            .do_execute_unpaged(prepared, values)
+            .do_execute_unpaged(prepared, values, None)
             .await?
             .into_legacy_result()?)
     }
@@ -881,7 +881,7 @@ impl GenericSession<LegacyDeserializationApi> {
         paging_state: PagingState,
     ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
         let (result, paging_state_response) = self
-            .do_execute_single_page(prepared, values, paging_state)
+            .do_execute_single_page(prepared, values, paging_state, None)
             .await?;
         Ok((result.into_legacy_result()?, paging_state_response))
     }
@@ -901,7 +901,10 @@ impl GenericSession<LegacyDeserializationApi> {
         batch: &Batch,
         values: impl BatchValues,
     ) -> Result<LegacyQueryResult, QueryError> {
-        Ok(self.do_batch(batch, values).await?.into_legacy_result()?)
+        Ok(self
+            .do_batch(batch, values, None)
+            .await?
+            .into_legacy_result()?)
     }
 
     /// Creates a new Session instance that shares resources with
@@ -1065,9 +1068,10 @@ where
         &self,
         query: &Query,
         values: impl SerializeRow,
+        timestamp: Option<i64>,
     ) -> Result<QueryResult, QueryError> {
         let (result, paging_state_response) = self
-            .query(query, values, None, PagingState::start())
+            .query(query, values, None, PagingState::start(), timestamp)
             .await?;
         if !paging_state_response.finished() {
             error!("Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
@@ -1081,12 +1085,14 @@ where
         query: &Query,
         values: impl SerializeRow,
         paging_state: PagingState,
+        timestamp: Option<i64>,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         self.query(
             query,
             values,
             Some(query.get_validated_page_size()),
             paging_state,
+            timestamp,
         )
         .await
     }
@@ -1108,6 +1114,7 @@ where
         values: impl SerializeRow,
         page_size: Option<PageSize>,
         paging_state: PagingState,
+        _timestamp: Option<i64>,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let execution_profile = query
             .get_execution_profile_handle()
@@ -1366,10 +1373,17 @@ where
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
+        timestamp: Option<i64>,
     ) -> Result<QueryResult, QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let (result, paging_state) = self
-            .execute(prepared, &serialized_values, None, PagingState::start())
+            .execute(
+                prepared,
+                &serialized_values,
+                None,
+                PagingState::start(),
+                timestamp,
+            )
             .await?;
         if !paging_state.finished() {
             error!("Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
@@ -1383,10 +1397,17 @@ where
         prepared: &PreparedStatement,
         values: impl SerializeRow,
         paging_state: PagingState,
+        timestamp: Option<i64>,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let page_size = prepared.get_validated_page_size();
-        self.execute(prepared, &serialized_values, Some(page_size), paging_state)
+        self.execute(
+            prepared,
+            &serialized_values,
+            Some(page_size),
+            paging_state,
+            timestamp,
+        )
             .await
     }
 
@@ -1406,6 +1427,7 @@ where
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
         paging_state: PagingState,
+        _timestamp: Option<i64>,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
@@ -1527,6 +1549,7 @@ where
         &self,
         batch: &Batch,
         values: impl BatchValues,
+        _timestamp: Option<i64>,
     ) -> Result<QueryResult, QueryError> {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
@@ -1795,8 +1818,8 @@ where
         traces_events_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.do_query_unpaged(&traces_session_query, (tracing_id,)),
-            self.do_query_unpaged(&traces_events_query, (tracing_id,))
+            self.do_query_unpaged(&traces_session_query, (tracing_id,), None),
+            self.do_query_unpaged(&traces_events_query, (tracing_id,), None)
         )?;
 
         // Get tracing info
