@@ -122,6 +122,22 @@ where
         self.session.execute_unpaged(&prepared, values).await
     }
 
+    /// Does the same thing as
+    /// [`Session::execute_unpaged_with_timestamp`](GenericSession::execute_unpaged_with_timestamp)
+    /// but uses the prepared statement cache.
+    pub async fn execute_unpaged_with_timestamp(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+        timestamp: i64,
+    ) -> Result<QueryResult, QueryError> {
+        let query = query.into();
+        let prepared = self.add_prepared_statement_owned(query).await?;
+        self.session
+            .execute_unpaged_with_timestamp(&prepared, values, timestamp)
+            .await
+    }
+
     /// Does the same thing as [`Session::execute_iter`](GenericSession::execute_iter)
     /// but uses the prepared statement cache.
     pub async fn execute_iter(
@@ -146,6 +162,23 @@ where
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session
             .execute_single_page(&prepared, values, paging_state)
+            .await
+    }
+
+    /// Does the same thing as
+    /// [`Session::execute_single_page_with_timestamp`](GenericSession::execute_single_page_with_timestamp)
+    /// but uses the prepared statement cache.
+    pub async fn execute_single_page_with_timestamp(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+        paging_state: PagingState,
+        timestamp: i64,
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+        let query = query.into();
+        let prepared = self.add_prepared_statement_owned(query).await?;
+        self.session
+            .execute_single_page_with_timestamp(&prepared, values, paging_state, timestamp)
             .await
     }
 
