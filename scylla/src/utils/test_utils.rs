@@ -182,6 +182,6 @@ impl PerformDDL for Connection {
     async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
-        self.query_unpaged(query).await.map(|_| ())
+        self.query_unpaged(query, None).await.map(|_| ())
     }
 }

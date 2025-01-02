@@ -726,6 +726,7 @@ impl QueryPager {
                             serial_consistency,
                             Some(page_size),
                             paging_state,
+                            None,
                         )
                         .await
                 }
@@ -824,6 +825,7 @@ impl QueryPager {
                         serial_consistency,
                         Some(page_size),
                         paging_state,
+                        None,
                     )
                     .await
             };
@@ -900,6 +902,7 @@ impl QueryPager {
                         serial_consistency,
                         Some(page_size),
                         paging_state,
+                        None,
                     )
                 },
             };
@@ -931,6 +934,7 @@ impl QueryPager {
                         serial_consistency,
                         Some(page_size),
                         paging_state,
+                        None,
                     )
                 },
             };

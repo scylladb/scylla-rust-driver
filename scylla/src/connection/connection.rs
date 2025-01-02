@@ -871,6 +871,7 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         paging_state: PagingState,
+        timestamp: Option<i64>,
     ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         let query: Query = query.into();
 
@@ -885,6 +886,7 @@ impl Connection {
             paging_state,
             consistency,
             serial_consistency.flatten(),
+            timestamp,
         )
         .await
     }
@@ -896,6 +898,7 @@ impl Connection {
         paging_state: PagingState,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
+        timestamp: Option<i64>,
     ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         let query: Query = query.into();
         let page_size = query.get_validated_page_size();
@@ -906,6 +909,7 @@ impl Connection {
             serial_consistency,
             Some(page_size),
             paging_state,
+            timestamp,
         )
         .await?
         .into_query_result_and_paging_state()
@@ -915,11 +919,12 @@ impl Connection {
     pub(crate) async fn query_unpaged(
         &self,
         query: impl Into<Query>,
+        timestamp: Option<i64>,
     ) -> Result<QueryResult, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         let query: Query = query.into();
 
-        self.query_raw_unpaged(&query)
+        self.query_raw_unpaged(&query, timestamp)
             .await
             .map_err(Into::into)
             .and_then(QueryResponse::into_query_result)
@@ -928,6 +933,7 @@ impl Connection {
     pub(crate) async fn query_raw_unpaged(
         &self,
         query: &Query,
+        timestamp: Option<i64>,
     ) -> Result<QueryResponse, UserRequestError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_raw_with_consistency(
@@ -938,6 +944,7 @@ impl Connection {
             query.config.serial_consistency.flatten(),
             None,
             PagingState::start(),
+            timestamp,
         )
         .await
     }
@@ -949,6 +956,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
+        _timestamp: Option<i64>,
     ) -> Result<QueryResponse, UserRequestError> {
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
@@ -975,9 +983,10 @@ impl Connection {
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
+        timestamp: Option<i64>,
     ) -> Result<QueryResult, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.execute_raw_unpaged(prepared, values)
+        self.execute_raw_unpaged(prepared, values, timestamp)
             .await
             .map_err(Into::into)
             .and_then(QueryResponse::into_query_result)
@@ -988,6 +997,7 @@ impl Connection {
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
+        timestamp: Option<i64>,
     ) -> Result<QueryResponse, UserRequestError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
@@ -999,10 +1009,12 @@ impl Connection {
             prepared.config.serial_consistency.flatten(),
             None,
             PagingState::start(),
+            timestamp,
         )
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute_raw_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
@@ -1011,6 +1023,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
+        _timestamp: Option<i64>,
     ) -> Result<QueryResponse, UserRequestError> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
@@ -1122,6 +1135,7 @@ impl Connection {
         &self,
         batch: &Batch,
         values: impl BatchValues,
+        timestamp: Option<i64>,
     ) -> Result<QueryResult, QueryError> {
         self.batch_with_consistency(
             batch,
@@ -1130,6 +1144,7 @@ impl Connection {
                 .config
                 .determine_consistency(self.config.default_consistency),
             batch.config.serial_consistency.flatten(),
+            timestamp,
         )
         .await
     }
@@ -1140,6 +1155,7 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
+        _timestamp: Option<i64>,
     ) -> Result<QueryResult, QueryError> {
         let batch = self.prepare_batch(init_batch, &values).await?;
 
@@ -1254,7 +1270,7 @@ impl Connection {
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
 
-        let query_response = self.query_raw_unpaged(&query).await?;
+        let query_response = self.query_raw_unpaged(&query, None).await?;
         Self::verify_use_keyspace_result(keyspace_name, query_response)
     }
 
@@ -1335,7 +1351,7 @@ impl Connection {
 
     pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
         let (version_id,) = self
-            .query_unpaged(LOCAL_VERSION)
+            .query_unpaged(LOCAL_VERSION, None)
             .await?
             .into_rows_result()
             .map_err(|err| {
@@ -2480,7 +2496,11 @@ mod tests {
         let mut insert_futures = Vec::new();
         for v in &values {
             let values = prepared.serialize_values(&(*v,)).unwrap();
-            let fut = async { connection.execute_raw_unpaged(&prepared, values).await };
+            let fut = async {
+                connection
+                    .execute_raw_unpaged(&prepared, values, None)
+                    .await
+            };
             insert_futures.push(fut);
         }
 
@@ -2582,8 +2602,10 @@ mod tests {
                             let values = prepared
                                 .serialize_values(&(j, vec![j as u8; j as usize]))
                                 .unwrap();
-                            let response =
-                                conn.execute_raw_unpaged(&prepared, values).await.unwrap();
+                            let response = conn
+                                .execute_raw_unpaged(&prepared, values, None)
+                                .await
+                                .unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
                             let _nonerror_response =
                                 response.into_non_error_query_response().unwrap();
@@ -2600,7 +2622,7 @@ mod tests {
             // Check that everything was written properly
             let range_end = arithmetic_sequence_sum(NUM_BATCHES);
             let mut results = connection
-                .query_unpaged("SELECT p, v FROM t")
+                .query_unpaged("SELECT p, v FROM t", None)
                 .await
                 .unwrap()
                 .into_rows_result()
@@ -2757,7 +2779,7 @@ mod tests {
         // As everything is normal, these queries should succeed.
         for _ in 0..3 {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            conn.query_unpaged("SELECT host_id FROM system.local")
+            conn.query_unpaged("SELECT host_id FROM system.local", None)
                 .await
                 .unwrap();
         }
@@ -2781,7 +2803,7 @@ mod tests {
 
         // As the router is invalidated, all further queries should immediately
         // return error.
-        conn.query_unpaged("SELECT host_id FROM system.local")
+        conn.query_unpaged("SELECT host_id FROM system.local", None)
             .await
             .unwrap_err();
 

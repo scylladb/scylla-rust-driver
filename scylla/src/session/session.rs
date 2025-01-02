@@ -1175,7 +1175,7 @@ where
         values: impl SerializeRow,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-        _timestamp: Option<i64>,
+        timestamp: Option<i64>,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let execution_profile = query
             .get_execution_profile_handle()
@@ -1222,6 +1222,7 @@ where
                                     serial_consistency,
                                     page_size,
                                     paging_state_ref.clone(),
+                                    timestamp,
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
@@ -1238,6 +1239,7 @@ where
                                     serial_consistency,
                                     page_size,
                                     paging_state_ref.clone(),
+                                    timestamp,
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
@@ -1488,7 +1490,7 @@ where
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-        _timestamp: Option<i64>,
+        timestamp: Option<i64>,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
@@ -1555,6 +1557,7 @@ where
                                 serial_consistency,
                                 page_size,
                                 paging_state_ref.clone(),
+                                timestamp,
                             )
                             .await
                             .and_then(QueryResponse::into_non_error_query_response)
@@ -1610,7 +1613,7 @@ where
         &self,
         batch: &Batch,
         values: impl BatchValues,
-        _timestamp: Option<i64>,
+        timestamp: Option<i64>,
     ) -> Result<QueryResult, QueryError> {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
@@ -1678,6 +1681,7 @@ where
                                 values_ref,
                                 consistency,
                                 serial_consistency,
+                                timestamp,
                             )
                             .await
                     }
