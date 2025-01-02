@@ -468,6 +468,18 @@ impl GenericSession<CurrentDeserializationApi> {
         self.do_query_unpaged(&query.into(), values, None).await
     }
 
+    /// Same as [`Session::query_unpaged`](GenericSession<CurrentDeserializationApi>::query_unpaged),
+    /// but with a custom timestamp set.
+    pub async fn query_unpaged_with_timestamp(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+        timestamp: i64,
+    ) -> Result<QueryResult, QueryError> {
+        self.do_query_unpaged(&query.into(), values, Some(timestamp))
+            .await
+    }
+
     /// Queries a single page from the database, optionally continuing from a saved point.
     ///
     /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
@@ -526,6 +538,19 @@ impl GenericSession<CurrentDeserializationApi> {
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         self.do_query_single_page(&query.into(), values, paging_state, None)
+            .await
+    }
+
+    /// Same as [`Session::query_single_page`](GenericSession<CurrentDeserializationApi>::query_single_page),
+    /// but with a custom timestamp set.
+    pub async fn query_single_page_with_timestamp(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+        paging_state: PagingState,
+        timestamp: i64,
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+        self.do_query_single_page(&query.into(), values, paging_state, Some(timestamp))
             .await
     }
 
@@ -625,6 +650,18 @@ impl GenericSession<CurrentDeserializationApi> {
         self.do_execute_unpaged(prepared, values, None).await
     }
 
+    /// Same as [`Session::execute_unpaged`](GenericSession<CurrentDeserializationApi>::execute_unpaged),
+    /// but with a custom timestamp set.
+    pub async fn execute_unpaged_with_timestamp(
+        &self,
+        prepared: &PreparedStatement,
+        values: impl SerializeRow,
+        timestamp: i64,
+    ) -> Result<QueryResult, QueryError> {
+        self.do_execute_unpaged(prepared, values, Some(timestamp))
+            .await
+    }
+
     /// Executes a prepared statement, restricting results to single page.
     /// Optionally continues fetching results from a saved point.
     ///
@@ -688,6 +725,19 @@ impl GenericSession<CurrentDeserializationApi> {
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         self.do_execute_single_page(prepared, values, paging_state, None)
+            .await
+    }
+
+    /// Same as [`Session::execute_single_page`](GenericSession<CurrentDeserializationApi>::execute_single_page),
+    /// but with a custom timestamp set.
+    pub async fn execute_single_page_with_timestamp(
+        &self,
+        prepared: &PreparedStatement,
+        values: impl SerializeRow,
+        paging_state: PagingState,
+        timestamp: i64,
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+        self.do_execute_single_page(prepared, values, paging_state, Some(timestamp))
             .await
     }
 
@@ -790,6 +840,17 @@ impl GenericSession<CurrentDeserializationApi> {
         values: impl BatchValues,
     ) -> Result<QueryResult, QueryError> {
         self.do_batch(batch, values, None).await
+    }
+
+    /// Same as [`Session::batch`](GenericSession<CurrentDeserializationApi>::batch),
+    /// but with a custom timestamp set.
+    pub async fn batch_with_timestamp(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+        timestamp: i64,
+    ) -> Result<QueryResult, QueryError> {
+        self.do_batch(batch, values, Some(timestamp)).await
     }
 
     /// Creates a new Session instance that shared resources with
@@ -1408,7 +1469,7 @@ where
             paging_state,
             timestamp,
         )
-            .await
+        .await
     }
 
     /// Sends a prepared request to the database, optionally continuing from a saved point.
