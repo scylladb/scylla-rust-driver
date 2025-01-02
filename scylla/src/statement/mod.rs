@@ -33,7 +33,6 @@ pub(crate) struct StatementConfig {
 
     pub(crate) skip_result_metadata: bool,
     pub(crate) tracing: bool,
-    pub(crate) timestamp: Option<i64>,
     pub(crate) request_timeout: Option<Duration>,
 
     pub(crate) history_listener: Option<Arc<dyn HistoryListener>>,

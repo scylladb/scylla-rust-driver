@@ -109,18 +109,6 @@ impl Batch {
         self.config.tracing
     }
 
-    /// Sets the default timestamp for this batch in microseconds.
-    /// If not None, it will replace the server side assigned timestamp as default timestamp for
-    /// all the statements contained in the batch.
-    pub fn set_timestamp(&mut self, timestamp: Option<i64>) {
-        self.config.timestamp = timestamp
-    }
-
-    /// Gets the default timestamp for this batch in microseconds.
-    pub fn get_timestamp(&self) -> Option<i64> {
-        self.config.timestamp
-    }
-
     /// Set the retry policy for this batch, overriding the one from execution profile if not None.
     #[inline]
     pub fn set_retry_policy(&mut self, retry_policy: Option<Arc<dyn RetryPolicy>>) {

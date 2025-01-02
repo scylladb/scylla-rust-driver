@@ -103,19 +103,6 @@ impl Query {
         self.config.tracing
     }
 
-    /// Sets the default timestamp for this statement in microseconds.
-    /// If not None, it will replace the server side assigned timestamp as default timestamp
-    /// If a statement contains a `USING TIMESTAMP` clause, calling this method won't change
-    /// anything
-    pub fn set_timestamp(&mut self, timestamp: Option<i64>) {
-        self.config.timestamp = timestamp
-    }
-
-    /// Gets the default timestamp for this statement in microseconds.
-    pub fn get_timestamp(&self) -> Option<i64> {
-        self.config.timestamp
-    }
-
     /// Sets the client-side timeout for this statement.
     /// If not None, the driver will stop waiting for the request
     /// to finish after `timeout` passed.
