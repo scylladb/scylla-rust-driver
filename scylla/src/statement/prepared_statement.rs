@@ -15,7 +15,7 @@ use uuid::Uuid;
 use super::{PageSize, StatementConfig};
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
-use crate::history::HistoryListener;
+use crate::observability::history::HistoryListener;
 use crate::policies::retry::RetryPolicy;
 use crate::routing::Token;
 use crate::session::execution_profile::ExecutionProfileHandle;

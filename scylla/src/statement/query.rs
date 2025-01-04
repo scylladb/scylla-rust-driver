@@ -1,6 +1,6 @@
 use super::{PageSize, StatementConfig};
 use crate::frame::types::{Consistency, SerialConsistency};
-use crate::history::HistoryListener;
+use crate::observability::history::HistoryListener;
 use crate::policies::retry::RetryPolicy;
 use crate::session::execution_profile::ExecutionProfileHandle;
 use std::sync::Arc;

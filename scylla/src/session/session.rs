@@ -38,8 +38,8 @@ use crate::connection::{
     QueryResponse, SelfIdentity, VerifiedKeyspaceName,
 };
 use crate::frame::response::result;
-use crate::history;
-use crate::history::HistoryListener;
+use crate::observability::history;
+use crate::observability::history::HistoryListener;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};

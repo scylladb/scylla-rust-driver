@@ -37,7 +37,7 @@ use crate::frame::response::{
     result,
     result::{ColumnSpec, Row},
 };
-use crate::history::{self, HistoryListener};
+use crate::observability::history::{self, HistoryListener};
 use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};

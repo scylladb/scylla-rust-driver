@@ -4,7 +4,7 @@ use std::sync::Arc;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use futures::StreamExt;
 use scylla::frame::response::result::Row;
-use scylla::history::{
+use scylla::observability::history::{
     AttemptResult, HistoryCollector, QueryHistoryResult, StructuredHistory, TimePoint,
 };
 use scylla::query::Query;
