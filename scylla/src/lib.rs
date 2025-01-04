@@ -258,6 +258,7 @@ pub mod cloud;
 pub mod cluster;
 pub mod connection;
 pub mod history;
+pub mod policies;
 pub mod routing;
 pub mod session;
 pub mod statement;
