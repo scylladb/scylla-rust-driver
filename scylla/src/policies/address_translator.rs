@@ -5,7 +5,7 @@ use std::str::FromStr as _;
 use async_trait::async_trait;
 
 use crate::cluster::metadata::UntranslatedPeer;
-use crate::transport::errors::TranslationError;
+use crate::errors::TranslationError;
 
 /// Translates IP addresses received from ScyllaDB nodes into locally reachable addresses.
 ///

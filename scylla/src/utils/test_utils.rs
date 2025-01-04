@@ -4,11 +4,11 @@ use crate::client::session::Session;
 use crate::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::cluster::ClusterState;
 use crate::cluster::NodeRef;
+use crate::errors::QueryError;
 use crate::network::Connection;
 use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::query::Query;
 use crate::routing::Shard;
-use crate::transport::errors::QueryError;
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
 use std::{

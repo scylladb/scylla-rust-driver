@@ -6,8 +6,8 @@ use crate::cluster::ClusterState;
 use crate::{
     cluster::metadata::Strategy,
     cluster::node::Node,
+    errors::QueryError,
     routing::{Shard, Token},
-    transport::errors::QueryError,
     transport::locator::ReplicaSet,
 };
 use itertools::{Either, Itertools};
@@ -2552,9 +2552,9 @@ mod latency_awareness {
     use uuid::Uuid;
 
     use crate::cluster::node::Node;
+    use crate::errors::{DbError, QueryError};
     use crate::policies::load_balancing::NodeRef;
     use crate::routing::Shard;
-    use crate::transport::errors::{DbError, QueryError};
     use std::{
         collections::HashMap,
         ops::Deref,

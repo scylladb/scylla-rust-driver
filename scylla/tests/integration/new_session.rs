@@ -2,7 +2,7 @@ use crate::utils::setup_tracing;
 
 use assert_matches::assert_matches;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::transport::errors::NewSessionError;
+use scylla::errors::NewSessionError;
 
 #[cfg(not(scylla_cloud_tests))]
 #[tokio::test]

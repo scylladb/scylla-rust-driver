@@ -36,9 +36,10 @@ use thiserror::Error;
 use crate::{authentication::AuthError, frame::response};
 
 #[allow(deprecated)]
-use super::legacy_query_result::IntoLegacyQueryResultError;
-use super::query_result::{IntoRowsResultError, SingleRowError};
 use crate::client::pager::NextRowError;
+#[allow(deprecated)]
+use crate::transport::legacy_query_result::IntoLegacyQueryResultError;
+use crate::transport::query_result::{IntoRowsResultError, SingleRowError};
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
@@ -1013,7 +1014,7 @@ pub(crate) enum ResponseParseError {
 mod tests {
     use scylla_cql::Consistency;
 
-    use crate::transport::errors::{DbError, QueryError, WriteType};
+    use super::{DbError, QueryError, WriteType};
 
     #[test]
     fn write_type_from_str() {

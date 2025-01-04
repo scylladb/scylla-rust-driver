@@ -29,6 +29,8 @@ use crate::cluster::{ClusterState, NodeRef};
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
+use crate::errors::ProtocolError;
+use crate::errors::{QueryError, UserRequestError};
 use crate::frame::response::result;
 use crate::network::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::observability::driver_tracing::RequestSpan;
@@ -37,8 +39,6 @@ use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
-use crate::transport::errors::ProtocolError;
-use crate::transport::errors::{QueryError, UserRequestError};
 use crate::transport::query_result::ColumnSpecs;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
@@ -78,7 +78,7 @@ mod checked_channel_sender {
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
-    use crate::transport::errors::QueryError;
+    use crate::errors::QueryError;
 
     use super::ReceivedPage;
 

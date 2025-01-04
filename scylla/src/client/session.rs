@@ -14,6 +14,9 @@ use crate::cloud::CloudConfig;
 use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
+use crate::errors::{
+    BadQuery, NewSessionError, ProtocolError, QueryError, TracingProtocolError, UserRequestError,
+};
 use crate::frame::response::result;
 use crate::network::PoolConfig;
 #[cfg(feature = "ssl")]
@@ -35,10 +38,6 @@ use crate::query::Query;
 use crate::routing::Shard;
 use crate::statement::StatementConfig;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-pub use crate::transport::errors::TranslationError;
-use crate::transport::errors::{
-    BadQuery, NewSessionError, ProtocolError, QueryError, TracingProtocolError, UserRequestError,
-};
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 #[allow(deprecated)]

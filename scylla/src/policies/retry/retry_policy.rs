@@ -2,8 +2,8 @@
 //! To decide when to retry a query the `Session` can use any object which implements
 //! the `RetryPolicy` trait
 
+use crate::errors::QueryError;
 use crate::frame::types::Consistency;
-use crate::transport::errors::QueryError;
 
 /// Information about a failed query
 pub struct QueryInfo<'a> {

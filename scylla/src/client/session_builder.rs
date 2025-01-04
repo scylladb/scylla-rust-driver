@@ -11,10 +11,10 @@ use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
+use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::statement::Consistency;
-use crate::transport::errors::NewSessionError;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 use std::borrow::Borrow;
@@ -272,8 +272,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::sync::Arc;
     /// # use scylla::client::session::Session;
     /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::client::session::TranslationError;
     /// # use scylla::cluster::metadata::UntranslatedPeer;
+    /// # use scylla::errors::TranslationError;
     /// # use scylla::policies::address_translator::AddressTranslator;
     /// struct IdentityTranslator;
     ///
@@ -303,8 +303,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::collections::HashMap;
     /// # use std::str::FromStr;
     /// # use scylla::client::session::Session;
-    /// # use scylla::client::session::TranslationError;
     /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::errors::TranslationError;
     /// # use scylla::policies::address_translator::AddressTranslator;
     /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -847,8 +847,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::client::session::Session;
-    /// # use scylla::client::session::TranslationError;
     /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::errors::TranslationError;
     /// # use scylla::policies::address_translator::AddressTranslator;
     /// # use scylla::policies::host_filter::DcHostFilter;
     ///

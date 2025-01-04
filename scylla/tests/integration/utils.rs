@@ -5,10 +5,10 @@ use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilderKind}
 use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
 use scylla::deserialize::DeserializeValue;
+use scylla::errors::QueryError;
 use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use scylla::query::Query;
 use scylla::routing::Shard;
-use scylla::transport::errors::QueryError;
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;

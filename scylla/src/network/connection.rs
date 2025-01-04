@@ -7,6 +7,12 @@ use crate::client::SelfIdentity;
 use crate::cloud::CloudConfig;
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use crate::cluster::NodeAddr;
+use crate::errors::{
+    BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
+    ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
+    ProtocolError, QueryError, RequestError, ResponseParseError, SchemaVersionFetchError,
+    TranslationError, UseKeyspaceProtocolError, UserRequestError,
+};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self,
@@ -20,12 +26,6 @@ use crate::query::Query;
 use crate::routing::{Shard, ShardInfo, Sharder};
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::transport::errors::{
-    BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
-    ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
-    QueryError, RequestError, ResponseParseError, TranslationError, UserRequestError,
-};
-use crate::transport::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
 use crate::transport::locator::tablets::{RawTablet, TabletParsingError};
 use crate::transport::query_result::QueryResult;
 use bytes::Bytes;
@@ -2598,7 +2598,7 @@ mod tests {
     #[ntest::timeout(20000)]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_is_closed_on_no_response_to_keepalives() {
-        use crate::transport::errors::BrokenConnectionErrorKind;
+        use crate::errors::BrokenConnectionErrorKind;
 
         setup_tracing();
 

@@ -7,7 +7,8 @@ use std::{
     time::SystemTime,
 };
 
-use crate::{policies::retry::RetryDecision, transport::errors::QueryError};
+use crate::errors::QueryError;
+use crate::policies::retry::RetryDecision;
 use chrono::{DateTime, Utc};
 
 use tracing::warn;
@@ -452,9 +453,9 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use crate::{
+        errors::{DbError, QueryError},
         policies::retry::RetryDecision,
         test_utils::setup_tracing,
-        transport::errors::{DbError, QueryError},
     };
 
     use super::{
