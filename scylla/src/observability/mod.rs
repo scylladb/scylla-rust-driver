@@ -4,3 +4,5 @@
 //! - cluster-side tracing,
 //! - request execution history,
 //! - driver metrics.
+
+pub mod history;

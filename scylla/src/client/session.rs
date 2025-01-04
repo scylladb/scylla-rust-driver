@@ -13,14 +13,13 @@ use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, Node, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::frame::response::result;
-use crate::history;
-use crate::history::HistoryListener;
 use crate::network::PoolConfig;
 #[cfg(feature = "ssl")]
 use crate::network::SslConfig;
 use crate::network::{
     Connection, ConnectionConfig, NonErrorQueryResponse, QueryResponse, VerifiedKeyspaceName,
 };
+use crate::observability::history::{self, HistoryListener};
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
