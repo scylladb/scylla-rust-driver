@@ -54,6 +54,10 @@ use crate::errors::{
     ProtocolError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
 };
 
+type PerKeyspace<T> = HashMap<String, T>;
+type PerTable<T> = HashMap<String, T>;
+type PerKsTable<T> = HashMap<(String, String), T>;
+
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
     connection_config: ConnectionConfig,
@@ -221,7 +225,7 @@ impl PreCqlType {
     pub(crate) fn into_cql_type(
         self,
         keyspace_name: &String,
-        keyspace_udts: &HashMap<String, Arc<UserDefinedType>>,
+        keyspace_udts: &PerTable<Arc<UserDefinedType>>,
     ) -> CqlType {
         match self {
             PreCqlType::Native(n) => CqlType::Native(n),
@@ -357,7 +361,7 @@ impl PreCollectionType {
     pub(crate) fn into_collection_type(
         self,
         keyspace_name: &String,
-        keyspace_udts: &HashMap<String, Arc<UserDefinedType>>,
+        keyspace_udts: &PerTable<Arc<UserDefinedType>>,
     ) -> CollectionType {
         match self {
             PreCollectionType::List(t) => {
@@ -998,7 +1002,7 @@ async fn query_keyspaces(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     fetch_schema: bool,
-) -> Result<HashMap<String, Keyspace>, QueryError> {
+) -> Result<PerKeyspace<Keyspace>, QueryError> {
     let rows = query_filter_keyspace_name::<(String, HashMap<String, String>)>(
         conn,
         "select keyspace_name, replication from system_schema.keyspaces",
@@ -1099,7 +1103,7 @@ impl TryFrom<UdtRow> for UdtRowWithParsedFieldTypes {
 async fn query_user_defined_types(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-) -> Result<HashMap<String, HashMap<String, Arc<UserDefinedType>>>, QueryError> {
+) -> Result<PerKeyspace<PerTable<Arc<UserDefinedType>>>, QueryError> {
     let rows = query_filter_keyspace_name::<UdtRow>(
         conn,
         "select keyspace_name, type_name, field_names, field_types from system_schema.types",
@@ -1419,8 +1423,8 @@ mod toposort_tests {
 async fn query_tables(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    tables: &mut HashMap<(String, String), Table>,
-) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
+    tables: &mut PerKsTable<Table>,
+) -> Result<PerKeyspace<PerTable<Table>>, QueryError> {
     let rows = query_filter_keyspace_name::<(String, String)>(
         conn,
         "SELECT keyspace_name, table_name FROM system_schema.tables",
@@ -1455,8 +1459,8 @@ async fn query_tables(
 async fn query_views(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    tables: &mut HashMap<(String, String), Table>,
-) -> Result<HashMap<String, HashMap<String, MaterializedView>>, QueryError> {
+    tables: &mut PerKsTable<Table>,
+) -> Result<PerKeyspace<PerTable<MaterializedView>>, QueryError> {
     let rows = query_filter_keyspace_name::<(String, String, String)>(
         conn,
         "SELECT keyspace_name, view_name, base_table_name FROM system_schema.views",
@@ -1498,8 +1502,8 @@ async fn query_views(
 async fn query_tables_schema(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
-) -> Result<HashMap<(String, String), Table>, QueryError> {
+    udts: &PerKeyspace<PerTable<Arc<UserDefinedType>>>,
+) -> Result<PerKsTable<Table>, QueryError> {
     // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
     // type EmptyType for dense tables. This resolves into this CQL type name.
     // This column shouldn't be exposed to the user but is currently exposed in system tables.
@@ -1736,7 +1740,7 @@ fn freeze_type(type_: PreCqlType) -> PreCqlType {
 
 async fn query_table_partitioners(
     conn: &Arc<Connection>,
-) -> Result<HashMap<(String, String), Option<String>>, QueryError> {
+) -> Result<PerKsTable<Option<String>>, QueryError> {
     let mut partitioner_query = Query::new(
         "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
     );
