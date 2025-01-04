@@ -260,6 +260,7 @@ pub mod cloud;
 pub mod cluster;
 pub mod history;
 mod network;
+pub mod policies;
 pub mod routing;
 pub mod statement;
 pub mod tracing;
