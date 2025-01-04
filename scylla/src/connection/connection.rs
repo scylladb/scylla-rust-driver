@@ -635,7 +635,7 @@ impl Connection {
     // Returns new connection and ErrorReceiver which can be used to wait for a fatal error
     /// Opens a connection and makes it ready to send/receive CQL frames on it,
     /// but does not yet send any frames (no OPTIONS/STARTUP handshake nor REGISTER requests).
-    pub(crate) async fn new(
+    async fn new(
         addr: SocketAddr,
         source_port: Option<u16>,
         config: ConnectionConfig,
@@ -745,7 +745,7 @@ impl Connection {
         sf.set_tcp_keepalive(&tcp_keepalive)
     }
 
-    pub(crate) async fn startup(
+    async fn startup(
         &self,
         options: HashMap<Cow<'_, str>, Cow<'_, str>>,
     ) -> Result<NonErrorStartupResponse, ConnectionSetupRequestError> {
@@ -797,9 +797,7 @@ impl Connection {
         Ok(response)
     }
 
-    pub(crate) async fn get_options(
-        &self,
-    ) -> Result<response::Supported, ConnectionSetupRequestError> {
+    async fn get_options(&self) -> Result<response::Supported, ConnectionSetupRequestError> {
         let err = |kind: ConnectionSetupRequestErrorKind| {
             ConnectionSetupRequestError::new(CqlRequestKind::Options, kind)
         };
@@ -886,7 +884,7 @@ impl Connection {
         Ok(prepared_statement)
     }
 
-    pub(crate) async fn reprepare(
+    async fn reprepare(
         &self,
         query: impl Into<Query>,
         previous_prepared: &PreparedStatement,
@@ -906,7 +904,7 @@ impl Connection {
         }
     }
 
-    pub(crate) async fn authenticate_response(
+    async fn authenticate_response(
         &self,
         response: Option<Vec<u8>>,
     ) -> Result<NonErrorAuthResponse, ConnectionSetupRequestError> {
@@ -1340,7 +1338,7 @@ impl Connection {
         Ok(batch)
     }
 
-    pub(crate) async fn use_keyspace(
+    pub(super) async fn use_keyspace(
         &self,
         keyspace_name: &VerifiedKeyspaceName,
     ) -> Result<(), QueryError> {
@@ -1984,7 +1982,7 @@ async fn maybe_translated_addr(
 /// - registers for all event types using REGISTER request (if this is control connection).
 ///
 /// At the beginning, translates node's address, if it is subject to address translation.
-pub(crate) async fn open_connection(
+pub(super) async fn open_connection(
     endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
     config: &ConnectionConfig,
