@@ -221,28 +221,25 @@ impl PreCqlType {
     pub(crate) fn into_cql_type(
         self,
         keyspace_name: &String,
-        udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
+        keyspace_udts: &HashMap<String, Arc<UserDefinedType>>,
     ) -> CqlType {
         match self {
             PreCqlType::Native(n) => CqlType::Native(n),
             PreCqlType::Collection { frozen, type_ } => CqlType::Collection {
                 frozen,
-                type_: type_.into_collection_type(keyspace_name, udts),
+                type_: type_.into_collection_type(keyspace_name, keyspace_udts),
             },
             PreCqlType::Tuple(t) => CqlType::Tuple(
                 t.into_iter()
-                    .map(|t| t.into_cql_type(keyspace_name, udts))
+                    .map(|t| t.into_cql_type(keyspace_name, keyspace_udts))
                     .collect(),
             ),
             PreCqlType::Vector { type_, dimensions } => CqlType::Vector {
-                type_: Box::new(type_.into_cql_type(keyspace_name, udts)),
+                type_: Box::new(type_.into_cql_type(keyspace_name, keyspace_udts)),
                 dimensions,
             },
             PreCqlType::UserDefinedType { frozen, name } => {
-                let definition = match udts
-                    .get(keyspace_name)
-                    .and_then(|per_keyspace_udts| per_keyspace_udts.get(&name))
-                {
+                let definition = match keyspace_udts.get(&name) {
                     Some(def) => Ok(def.clone()),
                     None => Err(MissingUserDefinedType {
                         name,
@@ -360,18 +357,18 @@ impl PreCollectionType {
     pub(crate) fn into_collection_type(
         self,
         keyspace_name: &String,
-        udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
+        keyspace_udts: &HashMap<String, Arc<UserDefinedType>>,
     ) -> CollectionType {
         match self {
             PreCollectionType::List(t) => {
-                CollectionType::List(Box::new(t.into_cql_type(keyspace_name, udts)))
+                CollectionType::List(Box::new(t.into_cql_type(keyspace_name, keyspace_udts)))
             }
             PreCollectionType::Map(tk, tv) => CollectionType::Map(
-                Box::new(tk.into_cql_type(keyspace_name, udts)),
-                Box::new(tv.into_cql_type(keyspace_name, udts)),
+                Box::new(tk.into_cql_type(keyspace_name, keyspace_udts)),
+                Box::new(tv.into_cql_type(keyspace_name, keyspace_udts)),
             ),
             PreCollectionType::Set(t) => {
-                CollectionType::Set(Box::new(t.into_cql_type(keyspace_name, udts)))
+                CollectionType::Set(Box::new(t.into_cql_type(keyspace_name, keyspace_udts)))
             }
         }
     }
@@ -1129,22 +1126,23 @@ async fn query_user_defined_types(
             field_types,
         } = udt_row;
 
+        let keyspace_name_clone = keyspace_name.clone();
+        let keyspace_entry = udts.entry(keyspace_name).or_insert_with(HashMap::new);
+
         let mut fields = Vec::with_capacity(field_names.len());
 
         for (field_name, field_type) in field_names.into_iter().zip(field_types.into_iter()) {
-            let cql_type = field_type.into_cql_type(&keyspace_name, &udts);
+            let cql_type = field_type.into_cql_type(&keyspace_name_clone, keyspace_entry);
             fields.push((field_name, cql_type));
         }
 
         let udt = Arc::new(UserDefinedType {
             name: type_name.clone(),
-            keyspace: keyspace_name.clone(),
+            keyspace: keyspace_name_clone,
             field_types: fields,
         });
 
-        udts.entry(keyspace_name)
-            .or_insert_with(HashMap::new)
-            .insert(type_name, udt);
+        keyspace_entry.insert(type_name, udt);
     }
 
     Ok(udts)
@@ -1509,6 +1507,8 @@ async fn query_tables_schema(
         }
     );
 
+    let empty_map = HashMap::new();
+
     let mut tables_schema = HashMap::new();
 
     rows.map(|row_result| {
@@ -1518,8 +1518,9 @@ async fn query_tables_schema(
             return Ok::<_, QueryError>(());
         }
 
+        let keyspace_udts = udts.get(&keyspace_name).unwrap_or(&empty_map);
         let pre_cql_type = map_string_to_cql_type(&type_)?;
-        let cql_type = pre_cql_type.into_cql_type(&keyspace_name, udts);
+        let cql_type = pre_cql_type.into_cql_type(&keyspace_name, keyspace_udts);
 
         let kind = ColumnKind::from_str(&kind).map_err(|_| {
             MetadataError::Tables(TablesMetadataError::UnknownColumnKind {
