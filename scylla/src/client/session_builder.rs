@@ -10,10 +10,10 @@ use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 use crate::client::SelfIdentity;
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
+use crate::policies::host_filter::HostFilter;
 use crate::statement::Consistency;
 use crate::transport::errors::NewSessionError;
 use crate::transport::execution_profile::ExecutionProfileHandle;
-use crate::transport::host_filter::HostFilter;
 #[cfg(feature = "cloud")]
 use crate::ExecutionProfile;
 #[cfg(feature = "ssl")]
@@ -836,7 +836,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// should be opened to the node or not. The driver will also avoid
     /// those nodes when re-establishing the control connection.
     ///
-    /// See the [host filter](crate::transport::host_filter) module for a list
+    /// See the [host filter](crate::policies::host_filter) module for a list
     /// of pre-defined filters. It is also possible to provide a custom filter
     /// by implementing the HostFilter trait.
     ///
@@ -848,7 +848,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use scylla::client::session::Session;
     /// # use scylla::client::session_builder::SessionBuilder;
     /// # use scylla::client::session::{AddressTranslator, TranslationError};
-    /// # use scylla::transport::host_filter::DcHostFilter;
+    /// # use scylla::policies::host_filter::DcHostFilter;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// // The session will only connect to nodes from "my-local-dc"

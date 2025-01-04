@@ -1,8 +1,8 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::network::{PoolConfig, VerifiedKeyspaceName};
+use crate::policies::host_filter::HostFilter;
 use crate::transport::errors::{NewSessionError, QueryError};
-use crate::transport::host_filter::HostFilter;
 use crate::transport::locator::tablets::{RawTablet, TabletsInfo};
 
 use arc_swap::ArcSwap;

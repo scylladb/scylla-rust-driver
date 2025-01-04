@@ -21,6 +21,7 @@ use crate::network::SslConfig;
 use crate::network::{
     Connection, ConnectionConfig, NonErrorQueryResponse, QueryResponse, VerifiedKeyspaceName,
 };
+use crate::policies::host_filter::HostFilter;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
@@ -34,7 +35,6 @@ use crate::transport::errors::{
 use crate::transport::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
-use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};

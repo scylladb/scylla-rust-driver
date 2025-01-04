@@ -20,10 +20,10 @@ use crate::cluster::node::resolve_contact_points;
 use crate::deserialize::DeserializeOwnedRow;
 use crate::frame::response::event::Event;
 use crate::network::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
+use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::query::Query;
 use crate::transport::errors::{DbError, NewSessionError, QueryError};
-use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::QueryPager;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
