@@ -16,8 +16,8 @@ use crate::transport::errors::NewSessionError;
 use crate::ExecutionProfile;
 
 use crate::connection::PoolSize;
+use crate::policies::host_filter::HostFilter;
 use crate::statement::Consistency;
-use crate::transport::host_filter::HostFilter;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
@@ -810,7 +810,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// should be opened to the node or not. The driver will also avoid
     /// those nodes when re-establishing the control connection.
     ///
-    /// See the [host filter](crate::transport::host_filter) module for a list
+    /// See the [host filter](crate::policies::host_filter) module for a list
     /// of pre-defined filters. It is also possible to provide a custom filter
     /// by implementing the HostFilter trait.
     ///
@@ -821,7 +821,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
     /// # use scylla::session::{AddressTranslator, TranslationError};
-    /// # use scylla::transport::host_filter::DcHostFilter;
+    /// # use scylla::policies::host_filter::DcHostFilter;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// // The session will only connect to nodes from "my-local-dc"

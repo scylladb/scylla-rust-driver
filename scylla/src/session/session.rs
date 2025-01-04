@@ -53,6 +53,7 @@ use crate::connection::{Compression, NonErrorQueryResponse, QueryResponse, SelfI
 use crate::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::connection::{PoolConfig, PoolSize};
 use crate::frame::response::result;
+use crate::policies::host_filter::HostFilter;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
@@ -62,7 +63,6 @@ use crate::transport::errors::TracingProtocolError;
 use crate::transport::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
-use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};

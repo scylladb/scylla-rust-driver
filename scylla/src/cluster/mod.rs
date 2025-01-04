@@ -11,8 +11,6 @@
 //! - ClusterData, which is a snapshot of the cluster's state.
 //!   - ClusterData is replaced atomically upon a metadata refresh,
 //!     preventing any issues arising from mutability, including races.
-//! - HostFilter, which is a way to filter out some nodes and thus
-//!   not contact them at all on any condition.
 //!
 
 // The purpose of cluster::cluster module is to not have any complex logic in mod.rs.

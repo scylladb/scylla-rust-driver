@@ -9,7 +9,7 @@ balancing plan based on the query information and the state of the cluster.
 
 Load balancing policies do not influence to which nodes connections are
 being opened. For a node connection blacklist configuration refer to
-`scylla::transport::host_filter::HostFilter`, which can be set session-wide
+`scylla::policies::host_filter::HostFilter`, which can be set session-wide
 using `SessionBuilder::host_filter` method.
 
 In this chapter, "target" will refer to a pair `<node, optional shard>`.

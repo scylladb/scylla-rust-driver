@@ -2,11 +2,11 @@ use crate::cluster::node::Node;
 use crate::connection::{Connection, PoolConfig, VerifiedKeyspaceName};
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
+use crate::policies::host_filter::HostFilter;
 use crate::prepared_statement::TokenCalculationError;
 use crate::routing::{Shard, Token};
 use crate::session::TABLET_CHANNEL_SIZE;
 use crate::transport::errors::{BadQuery, NewSessionError, QueryError};
-use crate::transport::host_filter::HostFilter;
 use crate::transport::locator::ReplicaLocator;
 use crate::transport::partitioner::PartitionerName;
 

@@ -4,4 +4,8 @@
 //! to implement a certain trait), allowing flexible customizability of the driver.
 //!
 //! This includes:
+//! - HostFilter, which is a way to filter out some nodes and thus
+//!   not contact them at all on any condition.
 //! - TODO
+
+pub mod host_filter;
