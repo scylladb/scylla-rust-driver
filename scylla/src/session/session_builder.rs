@@ -10,7 +10,7 @@ use crate::session::{
 
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
-use crate::transport::errors::NewSessionError;
+use crate::errors::NewSessionError;
 #[cfg(feature = "cloud")]
 use crate::ExecutionProfile;
 
@@ -268,7 +268,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
     /// # use scylla::policies::address_translator::AddressTranslator;
-    /// # use scylla::transport::errors::TranslationError;
+    /// # use scylla::errors::TranslationError;
     /// # use scylla::cluster::metadata::UntranslatedPeer;
     /// struct IdentityTranslator;
     ///
@@ -299,7 +299,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::str::FromStr;
     /// # use scylla::{Session, SessionBuilder};
     /// # use scylla::policies::address_translator::AddressTranslator;
-    /// # use scylla::transport::errors::TranslationError;
+    /// # use scylla::errors::TranslationError;
     /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut translation_rules = HashMap::new();
@@ -822,7 +822,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
     /// # use scylla::policies::address_translator::AddressTranslator;
-    /// # use scylla::transport::errors::TranslationError;
+    /// # use scylla::errors::TranslationError;
     /// # use scylla::policies::host_filter::DcHostFilter;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {

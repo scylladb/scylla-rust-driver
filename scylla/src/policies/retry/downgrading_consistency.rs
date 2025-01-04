@@ -2,7 +2,7 @@ use scylla_cql::Consistency;
 use tracing::debug;
 
 use super::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
-use crate::transport::errors::{DbError, QueryError, WriteType};
+use crate::errors::{DbError, QueryError, WriteType};
 
 /// Downgrading consistency retry policy - retries with lower consistency level if it knows\
 /// that the initial CL is unreachable. Also, it behaves as [DefaultRetryPolicy](crate::policies::retry::DefaultRetryPolicy)
@@ -178,10 +178,8 @@ impl RetrySession for DowngradingConsistencyRetrySession {
 mod tests {
     use bytes::Bytes;
 
+    use crate::errors::{BadQuery, BrokenConnectionErrorKind, ConnectionPoolError, ProtocolError};
     use crate::test_utils::setup_tracing;
-    use crate::transport::errors::{
-        BadQuery, BrokenConnectionErrorKind, ConnectionPoolError, ProtocolError,
-    };
 
     use super::*;
 

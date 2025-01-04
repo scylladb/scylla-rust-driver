@@ -6,8 +6,8 @@ use crate::cluster::ClusterData;
 use crate::{
     cluster::metadata::Strategy,
     cluster::node::Node,
+    errors::QueryError,
     routing::{Shard, Token},
-    transport::errors::QueryError,
     transport::locator::ReplicaSet,
 };
 use itertools::{Either, Itertools};
@@ -2553,9 +2553,9 @@ mod latency_awareness {
 
     use crate::{
         cluster::node::Node,
+        errors::{DbError, QueryError},
         policies::load_balancing::NodeRef,
         routing::Shard,
-        transport::errors::{DbError, QueryError},
     };
     use std::{
         collections::HashMap,

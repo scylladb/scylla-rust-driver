@@ -257,6 +257,7 @@ pub mod cloud;
 
 pub mod cluster;
 pub mod connection;
+pub mod errors;
 pub mod observability;
 pub mod policies;
 pub mod routing;

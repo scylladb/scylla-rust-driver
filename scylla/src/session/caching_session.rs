@@ -1,10 +1,10 @@
 use crate::batch::{Batch, BatchStatement};
+use crate::errors::QueryError;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 #[allow(deprecated)]
 use crate::session::pager::LegacyRowIterator;
 use crate::statement::{PagingState, PagingStateResponse};
-use crate::transport::errors::QueryError;
 use crate::transport::partitioner::PartitionerName;
 #[allow(deprecated)]
 use crate::LegacyQueryResult;

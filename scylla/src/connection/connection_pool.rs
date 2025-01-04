@@ -2,13 +2,12 @@
 use crate::cloud::set_ssl_config_for_scylla_cloud_host;
 
 use super::connection::{
-    open_connection, Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName,
+    open_connection, open_connection_to_shard_aware_port, Connection, ConnectionConfig,
+    ErrorReceiver, VerifiedKeyspaceName,
 };
 
+use crate::errors::{BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, QueryError};
 use crate::routing::{Shard, ShardCount, Sharder};
-use crate::transport::errors::{
-    BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, QueryError,
-};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
@@ -30,8 +29,6 @@ use std::time::Duration;
 
 use tokio::sync::{broadcast, mpsc, Notify};
 use tracing::{debug, error, trace, warn};
-
-use super::connection::open_connection_to_shard_aware_port;
 
 /// The target size of a per-node connection pool.
 #[derive(Debug, Clone, Copy)]

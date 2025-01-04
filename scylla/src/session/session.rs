@@ -33,6 +33,9 @@ use crate::connection::{
     Compression, Connection, ConnectionConfig, NonErrorQueryResponse, PoolConfig, PoolSize,
     QueryResponse, SelfIdentity, VerifiedKeyspaceName,
 };
+use crate::errors::{
+    BadQuery, NewSessionError, ProtocolError, QueryError, TracingProtocolError, UserRequestError,
+};
 use crate::frame::response::result;
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history;
@@ -47,16 +50,7 @@ use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Shard;
-use crate::session::execution_profile::{
-    ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
-};
-#[allow(deprecated)]
-use crate::session::pager::{LegacyRowIterator, PreparedIteratorConfig, QueryPager};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::transport::errors::TracingProtocolError;
-use crate::transport::errors::{
-    BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
-};
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::MaybeFirstRowError;
 use crate::transport::query_result::QueryResult;
@@ -76,6 +70,13 @@ pub use crate::transport::legacy_query_result::{IntoTypedRows, TypedRowIter};
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+
+use super::execution_profile::ExecutionProfileHandle;
+use super::execution_profile::ExecutionProfileInner;
+#[allow(deprecated)]
+use super::pager::LegacyRowIterator;
+use super::pager::{PreparedIteratorConfig, QueryPager};
+use super::ExecutionProfile;
 
 mod sealed {
     // This is a sealed trait - its whole purpose is to be unnameable.

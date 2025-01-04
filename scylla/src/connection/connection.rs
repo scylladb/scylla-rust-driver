@@ -30,12 +30,12 @@ use tokio_openssl::SslStream;
 pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
-use crate::policies::address_translator::AddressTranslator;
-use crate::transport::errors::{
+use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
     QueryError, RequestError, ResponseParseError, TranslationError, UserRequestError,
 };
+use crate::policies::address_translator::AddressTranslator;
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
@@ -51,8 +51,8 @@ use std::{
 use crate::cloud::CloudConfig;
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use crate::cluster::NodeAddr;
+use crate::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
 use crate::session::pager::QueryPager;
-use crate::transport::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
 use crate::transport::locator::tablets::{RawTablet, TabletParsingError};
 use crate::transport::query_result::QueryResult;
 
@@ -2740,7 +2740,7 @@ mod tests {
     #[ntest::timeout(20000)]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_is_closed_on_no_response_to_keepalives() {
-        use crate::transport::errors::BrokenConnectionErrorKind;
+        use crate::errors::BrokenConnectionErrorKind;
 
         setup_tracing();
 
