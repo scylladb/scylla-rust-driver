@@ -40,6 +40,7 @@ use crate::connection::{
 use crate::frame::response::result;
 use crate::observability::history;
 use crate::observability::history::HistoryListener;
+use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
@@ -54,7 +55,6 @@ use crate::session::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::tracing::TracingInfo;
 use crate::transport::errors::TracingProtocolError;
 use crate::transport::errors::{
     BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
@@ -1787,12 +1787,14 @@ where
         consistency: Option<Consistency>,
     ) -> Result<Option<TracingInfo>, QueryError> {
         // Query system_traces.sessions for TracingInfo
-        let mut traces_session_query = Query::new(crate::tracing::TRACES_SESSION_QUERY_STR);
+        let mut traces_session_query =
+            Query::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
         traces_session_query.config.consistency = consistency;
         traces_session_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
 
         // Query system_traces.events for TracingEvents
-        let mut traces_events_query = Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR);
+        let mut traces_events_query =
+            Query::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
         traces_events_query.config.consistency = consistency;
         traces_events_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
 
