@@ -7,7 +7,6 @@ use crate::batch::batch_values;
 use crate::batch::{Batch, BatchStatement};
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
-use crate::cluster::metadata::UntranslatedPeer;
 #[cfg(feature = "cloud")]
 use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, Node, NodeRef};
@@ -21,6 +20,7 @@ use crate::network::SslConfig;
 use crate::network::{
     Connection, ConnectionConfig, NonErrorQueryResponse, QueryResponse, VerifiedKeyspaceName,
 };
+use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -48,7 +48,6 @@ use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
 use arc_swap::ArcSwapOption;
-use async_trait::async_trait;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::{Either, Itertools};
@@ -60,13 +59,11 @@ use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::batch::BatchValues;
 use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use std::borrow::Borrow;
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
-use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -91,71 +88,6 @@ mod sealed {
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
 const TRACING_QUERY_PAGE_SIZE: i32 = 1024;
-
-/// Translates IP addresses received from ScyllaDB nodes into locally reachable addresses.
-///
-/// The driver auto-detects new ScyllaDB nodes added to the cluster through server side pushed
-/// notifications and through checking the system tables. For each node, the address the driver
-/// receives corresponds to the address set as `rpc_address` in the node yaml file. In most
-/// cases, this is the correct address to use by the driver and that is what is used by default.
-/// However, sometimes the addresses received through this mechanism will either not be reachable
-/// directly by the driver or should not be the preferred address to use to reach the node (for
-/// instance, the `rpc_address` set on ScyllaDB nodes might be a private IP, but some clients
-/// may have to use a public IP, or pass by a router, e.g. through NAT, to reach that node).
-/// This interface allows to deal with such cases, by allowing to translate an address as sent
-/// by a ScyllaDB node to another address to be used by the driver for connection.
-///
-/// Please note that the "known nodes" addresses provided while creating the [`Session`]
-/// instance are not translated, only IP address retrieved from or sent by Cassandra nodes
-/// to the driver are.
-#[async_trait]
-pub trait AddressTranslator: Send + Sync {
-    async fn translate_address(
-        &self,
-        untranslated_peer: &UntranslatedPeer,
-    ) -> Result<SocketAddr, TranslationError>;
-}
-
-#[async_trait]
-impl AddressTranslator for HashMap<SocketAddr, SocketAddr> {
-    async fn translate_address(
-        &self,
-        untranslated_peer: &UntranslatedPeer,
-    ) -> Result<SocketAddr, TranslationError> {
-        match self.get(&untranslated_peer.untranslated_address) {
-            Some(&translated_addr) => Ok(translated_addr),
-            None => Err(TranslationError::NoRuleForAddress(
-                untranslated_peer.untranslated_address,
-            )),
-        }
-    }
-}
-
-#[async_trait]
-// Notice: this is inefficient, but what else can we do with such poor representation as str?
-// After all, the cluster size is small enough to make this irrelevant.
-impl AddressTranslator for HashMap<&'static str, &'static str> {
-    async fn translate_address(
-        &self,
-        untranslated_peer: &UntranslatedPeer,
-    ) -> Result<SocketAddr, TranslationError> {
-        for (&rule_addr_str, &translated_addr_str) in self.iter() {
-            if let Ok(rule_addr) = SocketAddr::from_str(rule_addr_str) {
-                if rule_addr == untranslated_peer.untranslated_address {
-                    return SocketAddr::from_str(translated_addr_str).map_err(|reason| {
-                        TranslationError::InvalidAddressInRule {
-                            translated_addr_str,
-                            reason,
-                        }
-                    });
-                }
-            }
-        }
-        Err(TranslationError::NoRuleForAddress(
-            untranslated_peer.untranslated_address,
-        ))
-    }
-}
 
 pub trait DeserializationApiKind: sealed::Sealed {}
 

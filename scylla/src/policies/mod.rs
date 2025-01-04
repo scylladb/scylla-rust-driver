@@ -6,6 +6,9 @@
 //! This includes:
 //! - HostFilter, which is a way to filter out some nodes and thus
 //!   not contact them at all on any condition.
+//! - AddressTranslator, which allows contacting a node through a different address
+//!   than its broadcast address (e.g., when it's behind a NAT).
 //! - TODO
 
+pub mod address_translator;
 pub mod host_filter;

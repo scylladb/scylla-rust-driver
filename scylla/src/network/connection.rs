@@ -1,6 +1,5 @@
 use crate::authentication::AuthenticatorProvider;
 use crate::batch::{Batch, BatchStatement};
-use crate::client::session::AddressTranslator;
 use crate::client::Compression;
 use crate::client::SelfIdentity;
 #[cfg(feature = "cloud")]
@@ -15,6 +14,7 @@ use crate::frame::{
     server_event_type::EventType,
     FrameParams, SerializedRequest,
 };
+use crate::policies::address_translator::AddressTranslator;
 use crate::query::Query;
 use crate::routing::{Shard, ShardInfo, Sharder};
 use crate::statement::prepared_statement::PreparedStatement;

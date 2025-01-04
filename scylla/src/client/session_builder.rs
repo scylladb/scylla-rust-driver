@@ -2,14 +2,14 @@
 
 #[allow(deprecated)]
 use super::session::{
-    AddressTranslator, CurrentDeserializationApi, GenericSession, LegacyDeserializationApi,
-    SessionConfig,
+    CurrentDeserializationApi, GenericSession, LegacyDeserializationApi, SessionConfig,
 };
 use super::{Compression, PoolSize};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 use crate::client::SelfIdentity;
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
+use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::statement::Consistency;
 use crate::transport::errors::NewSessionError;
@@ -273,8 +273,9 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::sync::Arc;
     /// # use scylla::client::session::Session;
     /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::client::session::{AddressTranslator, TranslationError};
+    /// # use scylla::client::session::TranslationError;
     /// # use scylla::cluster::metadata::UntranslatedPeer;
+    /// # use scylla::policies::address_translator::AddressTranslator;
     /// struct IdentityTranslator;
     ///
     /// #[async_trait]
@@ -303,8 +304,9 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::collections::HashMap;
     /// # use std::str::FromStr;
     /// # use scylla::client::session::Session;
+    /// # use scylla::client::session::TranslationError;
     /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::client::session::{AddressTranslator, TranslationError};
+    /// # use scylla::policies::address_translator::AddressTranslator;
     /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut translation_rules = HashMap::new();
@@ -846,8 +848,9 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::client::session::Session;
+    /// # use scylla::client::session::TranslationError;
     /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::client::session::{AddressTranslator, TranslationError};
+    /// # use scylla::policies::address_translator::AddressTranslator;
     /// # use scylla::policies::host_filter::DcHostFilter;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
