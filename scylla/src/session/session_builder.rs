@@ -1,11 +1,10 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
-use crate::connection::Compression;
-use crate::connection::SelfIdentity;
+use crate::connection::{Compression, SelfIdentity};
+use crate::policies::address_translator::AddressTranslator;
 #[allow(deprecated)]
 use crate::session::{
-    AddressTranslator, CurrentDeserializationApi, GenericSession, LegacyDeserializationApi,
-    SessionConfig,
+    CurrentDeserializationApi, GenericSession, LegacyDeserializationApi, SessionConfig,
 };
 use crate::transport::execution_profile::ExecutionProfileHandle;
 
@@ -268,7 +267,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::session::{AddressTranslator, TranslationError};
+    /// # use scylla::policies::address_translator::AddressTranslator;
+    /// # use scylla::transport::errors::TranslationError;
     /// # use scylla::cluster::metadata::UntranslatedPeer;
     /// struct IdentityTranslator;
     ///
@@ -298,7 +298,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::collections::HashMap;
     /// # use std::str::FromStr;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::session::{AddressTranslator, TranslationError};
+    /// # use scylla::policies::address_translator::AddressTranslator;
+    /// # use scylla::transport::errors::TranslationError;
     /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut translation_rules = HashMap::new();
@@ -820,7 +821,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::session::{AddressTranslator, TranslationError};
+    /// # use scylla::policies::address_translator::AddressTranslator;
+    /// # use scylla::transport::errors::TranslationError;
     /// # use scylla::policies::host_filter::DcHostFilter;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
