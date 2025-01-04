@@ -888,7 +888,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
-    /// Set the number of attempts to fetch [TracingInfo](crate::tracing::TracingInfo)
+    /// Set the number of attempts to fetch [TracingInfo](crate::observability::tracing::TracingInfo)
     /// in [`Session::get_tracing_info`](crate::client::session::Session::get_tracing_info).
     /// The default is 5 attempts.
     ///
@@ -918,7 +918,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
-    /// Set the delay between attempts to fetch [TracingInfo](crate::tracing::TracingInfo)
+    /// Set the delay between attempts to fetch [TracingInfo](crate::observability::tracing::TracingInfo)
     /// in [`Session::get_tracing_info`](crate::client::session::Session::get_tracing_info).
     /// The default is 3 milliseconds.
     ///
@@ -948,7 +948,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
-    /// Set the consistency level of fetching [TracingInfo](crate::tracing::TracingInfo)
+    /// Set the consistency level of fetching [TracingInfo](crate::observability::tracing::TracingInfo)
     /// in [`Session::get_tracing_info`](crate::client::session::Session::get_tracing_info).
     /// The default is [`Consistency::One`].
     ///

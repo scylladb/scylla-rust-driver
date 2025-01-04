@@ -263,7 +263,6 @@ pub mod observability;
 pub mod policies;
 pub mod routing;
 pub mod statement;
-pub mod tracing;
 pub mod transport;
 
 pub(crate) mod utils;

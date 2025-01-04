@@ -10,7 +10,7 @@
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
 use scylla::prepared_statement::PreparedStatement;
-use scylla::tracing::TracingInfo;
+use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Prepare the query with tracing enabled

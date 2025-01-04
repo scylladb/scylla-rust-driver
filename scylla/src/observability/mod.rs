@@ -6,3 +6,4 @@
 //! - driver metrics.
 
 pub mod history;
+pub mod tracing;
