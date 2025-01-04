@@ -759,6 +759,55 @@ impl Connection {
         }
     }
 
+    async fn perform_authenticate(
+        &mut self,
+        authenticate: &Authenticate,
+    ) -> Result<(), ConnectionSetupRequestError> {
+        let err = |kind: ConnectionSetupRequestErrorKind| {
+            ConnectionSetupRequestError::new(CqlRequestKind::AuthResponse, kind)
+        };
+
+        let authenticator = &authenticate.authenticator_name as &str;
+
+        match self.config.authenticator {
+            Some(ref authenticator_provider) => {
+                let (mut response, mut auth_session) = authenticator_provider
+                    .start_authentication_session(authenticator)
+                    .await
+                    .map_err(|e| err(ConnectionSetupRequestErrorKind::StartAuthSessionError(e)))?;
+
+                loop {
+                    match self.authenticate_response(response).await? {
+                        NonErrorAuthResponse::AuthChallenge(challenge) => {
+                            response = auth_session
+                                .evaluate_challenge(challenge.authenticate_message.as_deref())
+                                .await
+                                .map_err(|e| {
+                                    err(
+                                        ConnectionSetupRequestErrorKind::AuthChallengeEvaluationError(
+                                            e,
+                                        ),
+                                    )
+                                })?;
+                        }
+                        NonErrorAuthResponse::AuthSuccess(success) => {
+                            auth_session
+                                .success(success.success_message.as_deref())
+                                .await
+                                .map_err(|e| {
+                                    err(ConnectionSetupRequestErrorKind::AuthFinishError(e))
+                                })?;
+                            break;
+                        }
+                    }
+                }
+            }
+            None => return Err(err(ConnectionSetupRequestErrorKind::MissingAuthentication)),
+        }
+
+        Ok(())
+    }
+
     async fn authenticate_response(
         &self,
         response: Option<Vec<u8>>,
@@ -1922,7 +1971,7 @@ pub(super) async fn open_connection(
     match startup_result {
         NonErrorStartupResponse::Ready => {}
         NonErrorStartupResponse::Authenticate(authenticate) => {
-            perform_authenticate(&mut connection, &authenticate).await?;
+            connection.perform_authenticate(&authenticate).await?;
         }
     }
 
@@ -1959,55 +2008,6 @@ pub(super) async fn open_connection_to_shard_aware_port(
 
     // Tried all source ports for that shard, give up
     Err(ConnectionError::NoSourcePortForShard(shard))
-}
-
-async fn perform_authenticate(
-    connection: &mut Connection,
-    authenticate: &Authenticate,
-) -> Result<(), ConnectionSetupRequestError> {
-    let err = |kind: ConnectionSetupRequestErrorKind| {
-        ConnectionSetupRequestError::new(CqlRequestKind::AuthResponse, kind)
-    };
-
-    let authenticator = &authenticate.authenticator_name as &str;
-
-    match connection.config.authenticator {
-        Some(ref authenticator_provider) => {
-            let (mut response, mut auth_session) = authenticator_provider
-                .start_authentication_session(authenticator)
-                .await
-                .map_err(|e| err(ConnectionSetupRequestErrorKind::StartAuthSessionError(e)))?;
-
-            loop {
-                match connection.authenticate_response(response).await? {
-                    NonErrorAuthResponse::AuthChallenge(challenge) => {
-                        response = auth_session
-                            .evaluate_challenge(challenge.authenticate_message.as_deref())
-                            .await
-                            .map_err(|e| {
-                                err(
-                                    ConnectionSetupRequestErrorKind::AuthChallengeEvaluationError(
-                                        e,
-                                    ),
-                                )
-                            })?;
-                    }
-                    NonErrorAuthResponse::AuthSuccess(success) => {
-                        auth_session
-                            .success(success.success_message.as_deref())
-                            .await
-                            .map_err(|e| {
-                                err(ConnectionSetupRequestErrorKind::AuthFinishError(e))
-                            })?;
-                        break;
-                    }
-                }
-            }
-        }
-        None => return Err(err(ConnectionSetupRequestErrorKind::MissingAuthentication)),
-    }
-
-    Ok(())
 }
 
 async fn connect_with_source_port(
