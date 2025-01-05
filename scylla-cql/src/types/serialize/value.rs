@@ -511,12 +511,6 @@ fn serialize_cql_value<'b>(
     typ: &ColumnType,
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
-    if let ColumnType::Custom(_) = typ {
-        return Err(mk_typck_err::<CqlValue>(
-            typ,
-            BuiltinTypeCheckErrorKind::CustomTypeUnsupported,
-        ));
-    }
     match value {
         CqlValue::Ascii(a) => <_ as SerializeValue>::serialize(&a, typ, writer),
         CqlValue::Boolean(b) => <_ as SerializeValue>::serialize(&b, typ, writer),
@@ -1146,10 +1140,6 @@ pub enum BuiltinTypeCheckErrorKind {
 
     /// A type check failure specific to a CQL UDT.
     UdtError(UdtTypeCheckErrorKind),
-
-    /// Custom CQL type - unsupported
-    // TODO: Should we actually support it? Counters used to be implemented like that.
-    CustomTypeUnsupported,
 }
 
 impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
@@ -1189,9 +1179,6 @@ impl Display for BuiltinTypeCheckErrorKind {
             BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::TupleError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::UdtError(err) => err.fmt(f),
-            BuiltinTypeCheckErrorKind::CustomTypeUnsupported => {
-                f.write_str("custom CQL types are unsupported")
-            }
         }
     }
 }
