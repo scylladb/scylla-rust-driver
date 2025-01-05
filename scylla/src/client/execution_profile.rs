@@ -169,13 +169,13 @@ use scylla_cql::{frame::types::SerialConsistency, Consistency};
 
 use crate::load_balancing::LoadBalancingPolicy;
 use crate::policies::retry::RetryPolicy;
-use crate::speculative_execution::SpeculativeExecutionPolicy;
+use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
 
 pub(crate) mod defaults {
     use super::ExecutionProfileInner;
     use crate::load_balancing::{self, LoadBalancingPolicy};
     use crate::policies::retry::{DefaultRetryPolicy, RetryPolicy};
-    use crate::speculative_execution::SpeculativeExecutionPolicy;
+    use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
     use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
     use std::sync::Arc;
