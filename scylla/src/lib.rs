@@ -279,7 +279,6 @@ pub use statement::query;
 pub use frame::response::cql_to_rust::{self, FromRow};
 
 pub use client::execution_profile::ExecutionProfile;
-pub use policies::host_filter;
 
 #[allow(deprecated)]
 pub use transport::legacy_query_result::LegacyQueryResult;
