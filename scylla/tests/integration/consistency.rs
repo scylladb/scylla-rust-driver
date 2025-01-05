@@ -3,7 +3,7 @@ use scylla::client::execution_profile::{ExecutionProfileBuilder, ExecutionProfil
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::NodeRef;
-use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
+use scylla::policies::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla::prepared_statement::PreparedStatement;
 use scylla::routing::{Shard, Token};
@@ -390,7 +390,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
         &'a self,
         query: &'a RoutingInfo,
         cluster: &'a scylla::cluster::ClusterState,
-    ) -> scylla::load_balancing::FallbackPlan<'a> {
+    ) -> scylla::policies::load_balancing::FallbackPlan<'a> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))
             .unwrap();

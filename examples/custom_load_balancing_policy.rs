@@ -5,14 +5,14 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
-use scylla::load_balancing::{LoadBalancingPolicy, RoutingInfo};
+use scylla::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::routing::Shard;
 use scylla::ExecutionProfile;
 use std::{env, sync::Arc};
 
 /// Example load balancing policy that prefers nodes from favorite datacenter
 /// This is, of course, very naive, as it is completely non token-aware.
-/// For more realistic implementation, see [`DefaultPolicy`](scylla::load_balancing::DefaultPolicy).
+/// For more realistic implementation, see [`DefaultPolicy`](scylla::policies::load_balancing::DefaultPolicy).
 #[derive(Debug)]
 struct CustomLoadBalancingPolicy {
     fav_datacenter_name: String,
@@ -39,7 +39,7 @@ impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
         &'a self,
         _info: &'a RoutingInfo,
         cluster: &'a ClusterState,
-    ) -> scylla::load_balancing::FallbackPlan<'a> {
+    ) -> scylla::policies::load_balancing::FallbackPlan<'a> {
         let fav_dc_nodes = cluster
             .replica_locator()
             .unique_nodes_in_datacenter_ring(&self.fav_datacenter_name);

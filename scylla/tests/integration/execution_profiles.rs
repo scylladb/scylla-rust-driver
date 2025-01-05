@@ -7,7 +7,7 @@ use scylla::batch::{Batch, BatchStatement, BatchType};
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
-use scylla::load_balancing::{LoadBalancingPolicy, RoutingInfo};
+use scylla::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::{RetryPolicy, RetrySession};
 use scylla::policies::speculative_execution::SpeculativeExecutionPolicy;
 use scylla::query::Query;
@@ -61,7 +61,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
         &'a self,
         _info: &'a RoutingInfo,
         _cluster: &'a ClusterState,
-    ) -> scylla::load_balancing::FallbackPlan<'a> {
+    ) -> scylla::policies::load_balancing::FallbackPlan<'a> {
         Box::new(std::iter::empty())
     }
 

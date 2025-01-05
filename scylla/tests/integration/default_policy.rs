@@ -1,4 +1,4 @@
-use scylla::load_balancing::{DefaultPolicy, LatencyAwarenessBuilder};
+use scylla::policies::load_balancing::{DefaultPolicy, LatencyAwarenessBuilder};
 use scylla::ExecutionProfile;
 
 use crate::utils::{create_new_session_builder, setup_tracing};

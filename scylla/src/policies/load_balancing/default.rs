@@ -930,7 +930,7 @@ impl Default for DefaultPolicy {
 /// # Example
 /// ```
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// use scylla::load_balancing::DefaultPolicy;
+/// use scylla::policies::load_balancing::DefaultPolicy;
 ///
 /// let default_policy = DefaultPolicy::builder()
 ///     .prefer_datacenter("dc1".to_string())
@@ -1172,7 +1172,7 @@ mod tests {
     };
     use crate::{
         cluster::ClusterState,
-        load_balancing::{
+        policies::load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, Plan, RoutingInfo,
         },
         routing::Token,
@@ -1191,7 +1191,7 @@ mod tests {
                 metadata::{Metadata, Peer},
                 ClusterState,
             },
-            load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
+            policies::load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             routing::Token,
             test_utils::setup_tracing,
             transport::locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
@@ -2551,12 +2551,10 @@ mod latency_awareness {
     use tracing::{trace, warn};
     use uuid::Uuid;
 
-    use crate::{
-        cluster::node::Node,
-        load_balancing::NodeRef,
-        routing::Shard,
-        transport::errors::{DbError, QueryError},
-    };
+    use crate::cluster::node::Node;
+    use crate::policies::load_balancing::NodeRef;
+    use crate::routing::Shard;
+    use crate::transport::errors::{DbError, QueryError};
     use std::{
         collections::HashMap,
         ops::Deref,
@@ -2920,7 +2918,7 @@ mod latency_awareness {
     /// # Example
     /// ```
     /// # fn example() {
-    /// use scylla::load_balancing::{
+    /// use scylla::policies::load_balancing::{
     ///     LatencyAwarenessBuilder, DefaultPolicy
     /// };
     ///
@@ -3131,18 +3129,16 @@ mod latency_awareness {
         use crate::{
             cluster::ClusterState,
             cluster::NodeAddr,
-            load_balancing::default::NodeLocationPreference,
-            routing::Shard,
-            test_utils::setup_tracing,
-            transport::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
-        };
-        use crate::{
-            load_balancing::{
+            policies::load_balancing::default::NodeLocationPreference,
+            policies::load_balancing::{
                 default::tests::test_default_policy_with_given_cluster_and_routing_info,
                 RoutingInfo,
             },
+            routing::Shard,
             routing::Token,
+            test_utils::setup_tracing,
             transport::locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
+            transport::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
         };
         use tokio::time::Instant;
 

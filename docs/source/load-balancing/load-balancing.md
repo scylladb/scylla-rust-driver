@@ -51,7 +51,7 @@ The newly created execution profile is then converted to a handle using
 # async fn check_only_compiles(uri: &str) -> Result<(), Box<dyn Error>> {
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::load_balancing::DefaultPolicy;
+use scylla::policies::load_balancing::DefaultPolicy;
 use scylla::client::execution_profile::ExecutionProfile;
 use std::sync::Arc;
 

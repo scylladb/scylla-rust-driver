@@ -2,7 +2,7 @@ use anyhow::Result;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::{Session, SessionConfig};
 use scylla::client::session_builder::SessionBuilder;
-use scylla::load_balancing;
+use scylla::policies::load_balancing;
 use scylla::policies::retry::{DefaultRetryPolicy, FallthroughRetryPolicy};
 use scylla::policies::speculative_execution::PercentileSpeculativeExecutionPolicy;
 use scylla::query::Query;
