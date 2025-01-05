@@ -279,7 +279,6 @@ pub use frame::response::cql_to_rust::{self, FromRow};
 
 pub use policies::host_filter;
 pub use policies::load_balancing;
-pub use policies::retry;
 pub use policies::speculative_execution;
 pub use session::execution_profile::{self, ExecutionProfile};
 
