@@ -1,7 +1,7 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
 use scylla::cluster::NodeRef;
 use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
-use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
+use scylla::policies::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla::prepared_statement::PreparedStatement;
 use scylla::routing::{Shard, Token};
@@ -389,7 +389,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
         &'a self,
         query: &'a RoutingInfo,
         cluster: &'a scylla::cluster::ClusterData,
-    ) -> scylla::load_balancing::FallbackPlan<'a> {
+    ) -> scylla::policies::load_balancing::FallbackPlan<'a> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))
             .unwrap();

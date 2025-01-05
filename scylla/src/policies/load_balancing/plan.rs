@@ -34,9 +34,9 @@ enum PlanState<'a> {
 /// ```
 /// # use std::sync::Arc;
 /// # use scylla::cluster::NodeRef;
-/// # use scylla::load_balancing::FallbackPlan;
-/// # use scylla::load_balancing::LoadBalancingPolicy;
-/// # use scylla::load_balancing::RoutingInfo;
+/// # use scylla::policies::load_balancing::FallbackPlan;
+/// # use scylla::policies::load_balancing::LoadBalancingPolicy;
+/// # use scylla::policies::load_balancing::RoutingInfo;
 /// # use scylla::routing::Shard;
 /// # use scylla::cluster::ClusterData;
 ///

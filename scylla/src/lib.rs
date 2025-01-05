@@ -278,7 +278,6 @@ pub use statement::query;
 pub use frame::response::cql_to_rust::{self, FromRow};
 
 pub use policies::host_filter;
-pub use policies::load_balancing;
 pub use session::execution_profile::{self, ExecutionProfile};
 
 #[cfg(feature = "cloud")]

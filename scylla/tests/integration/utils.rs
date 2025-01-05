@@ -2,7 +2,7 @@ use futures::Future;
 use scylla::cluster::ClusterData;
 use scylla::cluster::NodeRef;
 use scylla::deserialize::DeserializeValue;
-use scylla::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
+use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use scylla::query::Query;
 use scylla::routing::Shard;
 use scylla::session::session_builder::{GenericSessionBuilder, SessionBuilderKind};

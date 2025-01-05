@@ -1,7 +1,7 @@
 use crate::cluster::ClusterData;
 use crate::cluster::NodeRef;
 use crate::connection::Connection;
-use crate::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
+use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::query::Query;
 use crate::routing::Shard;
 use crate::session::session_builder::{GenericSessionBuilder, SessionBuilderKind};

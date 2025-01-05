@@ -1,5 +1,5 @@
 use anyhow::Result;
-use scylla::load_balancing;
+use scylla::policies::load_balancing;
 use scylla::policies::retry::{DefaultRetryPolicy, FallthroughRetryPolicy};
 use scylla::policies::speculative_execution::PercentileSpeculativeExecutionPolicy;
 use scylla::query::Query;

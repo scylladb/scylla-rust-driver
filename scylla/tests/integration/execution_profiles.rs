@@ -11,7 +11,7 @@ use scylla::routing::Shard;
 use scylla::statement::SerialConsistency;
 use scylla::{
     cluster::ClusterData,
-    load_balancing::{LoadBalancingPolicy, RoutingInfo},
+    policies::load_balancing::{LoadBalancingPolicy, RoutingInfo},
     policies::retry::{RetryPolicy, RetrySession},
     policies::speculative_execution::SpeculativeExecutionPolicy,
     ExecutionProfile, SessionBuilder,
@@ -63,7 +63,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
         &'a self,
         _info: &'a RoutingInfo,
         _cluster: &'a ClusterData,
-    ) -> scylla::load_balancing::FallbackPlan<'a> {
+    ) -> scylla::policies::load_balancing::FallbackPlan<'a> {
         Box::new(std::iter::empty())
     }
 
