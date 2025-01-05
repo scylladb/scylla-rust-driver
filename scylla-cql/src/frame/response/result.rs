@@ -51,7 +51,6 @@ pub struct TableSpec<'a> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColumnType<'frame> {
-    Custom(Cow<'frame, str>),
     Native(NativeType),
     List(Box<ColumnType<'frame>>),
     Map(Box<ColumnType<'frame>>, Box<ColumnType<'frame>>),
@@ -91,7 +90,6 @@ pub enum NativeType {
 impl ColumnType<'_> {
     pub fn into_owned(self) -> ColumnType<'static> {
         match self {
-            ColumnType::Custom(cow) => ColumnType::Custom(cow.into_owned().into()),
             ColumnType::Native(b) => ColumnType::Native(b),
             ColumnType::List(elem_type) => ColumnType::List(Box::new(elem_type.into_owned())),
             ColumnType::Map(key_type, value_type) => ColumnType::Map(
@@ -210,8 +208,7 @@ impl ColumnType<'_> {
             | ColumnType::List(_)
             | ColumnType::Map(_, _)
             | ColumnType::Set(_)
-            | ColumnType::UserDefinedType { .. }
-            | ColumnType::Custom(_) => false,
+            | ColumnType::UserDefinedType { .. } => false,
 
             _ => true,
         }
@@ -861,7 +858,11 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
                 types::read_string(buf).map_err(CqlTypeParseError::CustomTypeNameParseError)?;
             match type_str {
                 "org.apache.cassandra.db.marshal.DurationType" => Native(Duration),
-                _ => Custom(type_str.to_owned().into()),
+                _ => {
+                    return Err(CqlTypeParseError::CustomTypeUnsupported(
+                        type_str.to_owned(),
+                    ))
+                }
             }
         }
         0x0001 => Native(Ascii),
@@ -1257,12 +1258,6 @@ pub fn deser_cql_value(
     let v = Some(FrameSlice::new_borrowed(buf));
 
     Ok(match typ {
-        Custom(type_str) => {
-            return Err(mk_deser_err::<CqlValue>(
-                typ,
-                BuiltinDeserializationErrorKind::CustomTypeNotSupported(type_str.to_string()),
-            ))
-        }
         Native(Ascii) => {
             let s = String::deserialize(typ, v)?;
             CqlValue::Ascii(s)
@@ -1488,7 +1483,6 @@ mod test_utils {
         fn id(&self) -> u16 {
             use NativeType::*;
             match self {
-                Self::Custom(_) => 0x0000,
                 Self::Native(Ascii) => 0x0001,
                 Self::Native(BigInt) => 0x0002,
                 Self::Native(Blob) => 0x0003,
@@ -1523,10 +1517,6 @@ mod test_utils {
             types::write_short(id, buf);
 
             match self {
-                ColumnType::Custom(type_name) => {
-                    types::write_string(type_name, buf)?;
-                }
-
                 // Simple types
                 ColumnType::Native(_) => (),
 

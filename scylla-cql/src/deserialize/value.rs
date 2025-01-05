@@ -1778,9 +1778,6 @@ pub enum BuiltinDeserializationErrorKind {
     /// Failed to deserialize raw bytes of cql value.
     RawCqlBytesReadError(LowLevelDeserializationError),
 
-    /// Returned on attempt to deserialize a value of custom type.
-    CustomTypeNotSupported(String),
-
     /// Expected non-null value, got null.
     ExpectedNonNull,
 
@@ -1844,7 +1841,6 @@ impl Display for BuiltinDeserializationErrorKind {
             BuiltinDeserializationErrorKind::MapError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::TupleError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::UdtError(err) => err.fmt(f),
-            BuiltinDeserializationErrorKind::CustomTypeNotSupported(typ) => write!(f, "Support for custom types is not yet implemented: {}", typ),
         }
     }
 }
