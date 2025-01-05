@@ -1164,7 +1164,7 @@ mod tests {
         get_plan_and_collect_node_identifiers, mock_cluster_data_for_token_unaware_tests,
         ExpectedGroups, ExpectedGroupsBuilder,
     };
-    use crate::host_filter::HostFilter;
+    use crate::policies::host_filter::HostFilter;
     use crate::transport::locator::tablets::TabletsInfo;
     use crate::transport::locator::test::{
         id_to_invalid_addr, mock_metadata_for_token_aware_tests, TABLE_NTS_RF_2, TABLE_NTS_RF_3,

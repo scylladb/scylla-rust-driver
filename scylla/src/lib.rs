@@ -277,7 +277,6 @@ pub use statement::query;
 #[allow(deprecated)]
 pub use frame::response::cql_to_rust::{self, FromRow};
 
-pub use policies::host_filter;
 pub use session::execution_profile::{self, ExecutionProfile};
 
 #[cfg(feature = "cloud")]
