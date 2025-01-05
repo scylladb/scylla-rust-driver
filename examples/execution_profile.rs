@@ -1,10 +1,10 @@
 use anyhow::Result;
 use scylla::load_balancing;
 use scylla::policies::retry::{DefaultRetryPolicy, FallthroughRetryPolicy};
+use scylla::policies::speculative_execution::PercentileSpeculativeExecutionPolicy;
 use scylla::query::Query;
 use scylla::session::ExecutionProfile;
 use scylla::session::Session;
-use scylla::speculative_execution::PercentileSpeculativeExecutionPolicy;
 use scylla::statement::{Consistency, SerialConsistency};
 use scylla::{SessionBuilder, SessionConfig};
 use std::env;

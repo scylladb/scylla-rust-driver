@@ -165,16 +165,15 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 use arc_swap::ArcSwap;
 use scylla_cql::{frame::types::SerialConsistency, Consistency};
 
-use crate::{
-    load_balancing::LoadBalancingPolicy, policies::retry::RetryPolicy,
-    speculative_execution::SpeculativeExecutionPolicy,
-};
+use crate::load_balancing::LoadBalancingPolicy;
+use crate::policies::retry::RetryPolicy;
+use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
 
 pub(crate) mod defaults {
     use crate::load_balancing::{self, LoadBalancingPolicy};
     use crate::policies::retry::{DefaultRetryPolicy, RetryPolicy};
+    use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
     use crate::session::execution_profile::ExecutionProfileInner;
-    use crate::speculative_execution::SpeculativeExecutionPolicy;
     use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
     use std::sync::Arc;

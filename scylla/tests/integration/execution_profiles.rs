@@ -13,7 +13,7 @@ use scylla::{
     cluster::ClusterData,
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
     policies::retry::{RetryPolicy, RetrySession},
-    speculative_execution::SpeculativeExecutionPolicy,
+    policies::speculative_execution::SpeculativeExecutionPolicy,
     ExecutionProfile, SessionBuilder,
 };
 use scylla_cql::Consistency;
@@ -109,11 +109,14 @@ impl<const NODE: u8> RetrySession for BoundToPredefinedNodePolicy<NODE> {
 }
 
 impl<const NODE: u8> SpeculativeExecutionPolicy for BoundToPredefinedNodePolicy<NODE> {
-    fn max_retry_count(&self, _: &scylla::speculative_execution::Context) -> usize {
+    fn max_retry_count(&self, _: &scylla::policies::speculative_execution::Context) -> usize {
         1
     }
 
-    fn retry_interval(&self, _: &scylla::speculative_execution::Context) -> std::time::Duration {
+    fn retry_interval(
+        &self,
+        _: &scylla::policies::speculative_execution::Context,
+    ) -> std::time::Duration {
         self.report_node(Report::SpeculativeExecution);
         std::time::Duration::from_millis(200)
     }
