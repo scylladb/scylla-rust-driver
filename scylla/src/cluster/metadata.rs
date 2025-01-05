@@ -44,6 +44,7 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
@@ -55,8 +56,10 @@ use crate::errors::{
 };
 
 type PerKeyspace<T> = HashMap<String, T>;
+type PerKeyspaceResult<T, E> = PerKeyspace<Result<T, E>>;
 type PerTable<T> = HashMap<String, T>;
 type PerKsTable<T> = HashMap<(String, String), T>;
+type PerKsTableResult<T, E> = PerKsTable<Result<T, E>>;
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
@@ -226,31 +229,37 @@ impl PreCqlType {
         self,
         keyspace_name: &String,
         keyspace_udts: &PerTable<Arc<UserDefinedType>>,
-    ) -> CqlType {
+    ) -> Result<CqlType, MissingUserDefinedType> {
         match self {
-            PreCqlType::Native(n) => CqlType::Native(n),
-            PreCqlType::Collection { frozen, type_ } => CqlType::Collection {
-                frozen,
-                type_: type_.into_collection_type(keyspace_name, keyspace_udts),
-            },
-            PreCqlType::Tuple(t) => CqlType::Tuple(
-                t.into_iter()
-                    .map(|t| t.into_cql_type(keyspace_name, keyspace_udts))
-                    .collect(),
-            ),
-            PreCqlType::Vector { type_, dimensions } => CqlType::Vector {
-                type_: Box::new(type_.into_cql_type(keyspace_name, keyspace_udts)),
-                dimensions,
-            },
+            PreCqlType::Native(n) => Ok(CqlType::Native(n)),
+            PreCqlType::Collection { frozen, type_ } => type_
+                .into_collection_type(keyspace_name, keyspace_udts)
+                .map(|inner| CqlType::Collection {
+                    frozen,
+                    type_: inner,
+                }),
+            PreCqlType::Tuple(t) => t
+                .into_iter()
+                .map(|t| t.into_cql_type(keyspace_name, keyspace_udts))
+                .collect::<Result<Vec<CqlType>, MissingUserDefinedType>>()
+                .map(CqlType::Tuple),
+            PreCqlType::Vector { type_, dimensions } => type_
+                .into_cql_type(keyspace_name, keyspace_udts)
+                .map(|inner| CqlType::Vector {
+                    type_: Box::new(inner),
+                    dimensions,
+                }),
             PreCqlType::UserDefinedType { frozen, name } => {
                 let definition = match keyspace_udts.get(&name) {
-                    Some(def) => Ok(def.clone()),
-                    None => Err(MissingUserDefinedType {
-                        name,
-                        keyspace: keyspace_name.clone(),
-                    }),
+                    Some(def) => def.clone(),
+                    None => {
+                        return Err(MissingUserDefinedType {
+                            name,
+                            keyspace: keyspace_name.clone(),
+                        })
+                    }
                 };
-                CqlType::UserDefinedType { frozen, definition }
+                Ok(CqlType::UserDefinedType { frozen, definition })
             }
         }
     }
@@ -273,7 +282,7 @@ pub enum CqlType {
     UserDefinedType {
         frozen: bool,
         // Using Arc here in order not to have many copies of the same definition
-        definition: Result<Arc<UserDefinedType>, MissingUserDefinedType>,
+        definition: Arc<UserDefinedType>,
     },
 }
 
@@ -286,7 +295,8 @@ pub struct UserDefinedType {
 }
 
 /// Represents a user defined type whose definition is missing from the metadata.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Error)]
+#[error("Missing UDT: {keyspace}, {name}")]
 pub struct MissingUserDefinedType {
     pub name: String,
     pub keyspace: String,
@@ -362,18 +372,18 @@ impl PreCollectionType {
         self,
         keyspace_name: &String,
         keyspace_udts: &PerTable<Arc<UserDefinedType>>,
-    ) -> CollectionType {
+    ) -> Result<CollectionType, MissingUserDefinedType> {
         match self {
-            PreCollectionType::List(t) => {
-                CollectionType::List(Box::new(t.into_cql_type(keyspace_name, keyspace_udts)))
-            }
-            PreCollectionType::Map(tk, tv) => CollectionType::Map(
-                Box::new(tk.into_cql_type(keyspace_name, keyspace_udts)),
-                Box::new(tv.into_cql_type(keyspace_name, keyspace_udts)),
-            ),
-            PreCollectionType::Set(t) => {
-                CollectionType::Set(Box::new(t.into_cql_type(keyspace_name, keyspace_udts)))
-            }
+            PreCollectionType::List(t) => t
+                .into_cql_type(keyspace_name, keyspace_udts)
+                .map(|inner| CollectionType::List(Box::new(inner))),
+            PreCollectionType::Map(tk, tv) => Ok(CollectionType::Map(
+                Box::new(tk.into_cql_type(keyspace_name, keyspace_udts)?),
+                Box::new(tv.into_cql_type(keyspace_name, keyspace_udts)?),
+            )),
+            PreCollectionType::Set(t) => t
+                .into_cql_type(keyspace_name, keyspace_udts)
+                .map(|inner| CollectionType::Set(Box::new(inner))),
         }
     }
 }
@@ -790,6 +800,17 @@ async fn query_metadata(
         return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists).into());
     }
 
+    let keyspaces = keyspaces
+        .into_iter()
+        .filter_map(|(ks_name, ks)| match ks {
+            Ok(ks) => Some((ks_name, ks)),
+            Err(e) => {
+                warn!("Error while processing keyspace \"{ks_name}\": {e}");
+                None
+            }
+        })
+        .collect();
+
     Ok(Metadata { peers, keyspaces })
 }
 
@@ -1002,7 +1023,7 @@ async fn query_keyspaces(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     fetch_schema: bool,
-) -> Result<PerKeyspace<Keyspace>, QueryError> {
+) -> Result<PerKeyspaceResult<Keyspace, MissingUserDefinedType>, QueryError> {
     let rows = query_filter_keyspace_name::<(String, HashMap<String, String>)>(
         conn,
         "select keyspace_name, replication from system_schema.keyspaces",
@@ -1042,11 +1063,28 @@ async fn query_keyspaces(
                 error,
             })
         })?;
-        let tables = all_tables.remove(&keyspace_name).unwrap_or_default();
-        let views = all_views.remove(&keyspace_name).unwrap_or_default();
+        let tables = all_tables
+            .remove(&keyspace_name)
+            .unwrap_or_else(|| Ok(HashMap::new()));
+        let views = all_views
+            .remove(&keyspace_name)
+            .unwrap_or_else(|| Ok(HashMap::new()));
         let user_defined_types = all_user_defined_types
             .remove(&keyspace_name)
-            .unwrap_or_default();
+            .unwrap_or_else(|| Ok(HashMap::new()));
+
+        // As you can notice, in this file we generally operate on two layers of errors:
+        // - Outer (QueryError) if something went wrong with querying the cluster.
+        // - Inner (currently MissingUserDefinedType, possibly other variants in the future) if the fetched metadata
+        // turned out to not be fully consistent.
+        // If there is an inner error, we want to drop metadata for the whole keyspace.
+        // This logic checks if either tables views or UDTs have such inner error, and returns it if so.
+        // Notice that in the error branch, return value is wrapped in `Ok` - but this is the
+        // outer error, so it just means there was no error while querying the cluster.
+        let (tables, views, user_defined_types) = match (tables, views, user_defined_types) {
+            (Ok(t), Ok(v), Ok(u)) => (t, v, u),
+            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return Ok((keyspace_name, Err(e))),
+        };
 
         let keyspace = Keyspace {
             strategy,
@@ -1055,7 +1093,7 @@ async fn query_keyspaces(
             user_defined_types,
         };
 
-        Ok((keyspace_name, keyspace))
+        Ok((keyspace_name, Ok(keyspace)))
     })
     .try_collect()
     .await
@@ -1103,7 +1141,7 @@ impl TryFrom<UdtRow> for UdtRowWithParsedFieldTypes {
 async fn query_user_defined_types(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-) -> Result<PerKeyspace<PerTable<Arc<UserDefinedType>>>, QueryError> {
+) -> Result<PerKeyspaceResult<PerTable<Arc<UserDefinedType>>, MissingUserDefinedType>, QueryError> {
     let rows = query_filter_keyspace_name::<UdtRow>(
         conn,
         "select keyspace_name, type_name, field_names, field_types from system_schema.types",
@@ -1130,7 +1168,7 @@ async fn query_user_defined_types(
     );
 
     let mut udts = HashMap::new();
-    for udt_row in udt_rows {
+    'udts_loop: for udt_row in udt_rows {
         let UdtRowWithParsedFieldTypes {
             keyspace_name,
             type_name,
@@ -1139,13 +1177,26 @@ async fn query_user_defined_types(
         } = udt_row;
 
         let keyspace_name_clone = keyspace_name.clone();
-        let keyspace_entry = udts.entry(keyspace_name).or_insert_with(HashMap::new);
+        let keyspace_udts_result = udts
+            .entry(keyspace_name)
+            .or_insert_with(|| Ok(HashMap::new()));
+
+        // If there was previously an error in this keyspace then it makes no sense to process this UDT.
+        let keyspace_udts = match keyspace_udts_result {
+            Ok(udts) => udts,
+            Err(_) => continue,
+        };
 
         let mut fields = Vec::with_capacity(field_names.len());
 
         for (field_name, field_type) in field_names.into_iter().zip(field_types.into_iter()) {
-            let cql_type = field_type.into_cql_type(&keyspace_name_clone, keyspace_entry);
-            fields.push((field_name, cql_type));
+            match field_type.into_cql_type(&keyspace_name_clone, keyspace_udts) {
+                Ok(cql_type) => fields.push((field_name, cql_type)),
+                Err(e) => {
+                    *keyspace_udts_result = Err(e);
+                    continue 'udts_loop;
+                }
+            }
         }
 
         let udt = Arc::new(UserDefinedType {
@@ -1154,7 +1205,7 @@ async fn query_user_defined_types(
             field_types: fields,
         });
 
-        keyspace_entry.insert(type_name, udt);
+        keyspace_udts.insert(type_name, udt);
     }
 
     Ok(udts)
@@ -1423,8 +1474,8 @@ mod toposort_tests {
 async fn query_tables(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    tables: &mut PerKsTable<Table>,
-) -> Result<PerKeyspace<PerTable<Table>>, QueryError> {
+    tables: &mut PerKsTableResult<Table, MissingUserDefinedType>,
+) -> Result<PerKeyspaceResult<PerTable<Table>, MissingUserDefinedType>, QueryError> {
     let rows = query_filter_keyspace_name::<(String, String)>(
         conn,
         "SELECT keyspace_name, table_name FROM system_schema.tables",
@@ -1436,17 +1487,23 @@ async fn query_tables(
     rows.map(|row_result| {
         let keyspace_and_table_name = row_result?;
 
-        let table = tables.remove(&keyspace_and_table_name).unwrap_or(Table {
+        let table = tables.remove(&keyspace_and_table_name).unwrap_or(Ok(Table {
             columns: HashMap::new(),
             partition_key: vec![],
             clustering_key: vec![],
             partitioner: None,
-        });
+        }));
 
-        result
+        let mut entry = result
             .entry(keyspace_and_table_name.0)
-            .or_insert_with(HashMap::new)
-            .insert(keyspace_and_table_name.1, table);
+            .or_insert_with(|| Ok(HashMap::new()));
+        match (&mut entry, table) {
+            (Ok(tables), Ok(table)) => {
+                let _ = tables.insert(keyspace_and_table_name.1, table);
+            }
+            (Err(_), _) => (),
+            (Ok(_), Err(e)) => *entry = Err(e),
+        };
 
         Ok::<_, QueryError>(())
     })
@@ -1459,8 +1516,8 @@ async fn query_tables(
 async fn query_views(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    tables: &mut PerKsTable<Table>,
-) -> Result<PerKeyspace<PerTable<MaterializedView>>, QueryError> {
+    tables: &mut PerKsTableResult<Table, MissingUserDefinedType>,
+) -> Result<PerKeyspaceResult<PerTable<MaterializedView>, MissingUserDefinedType>, QueryError> {
     let rows = query_filter_keyspace_name::<(String, String, String)>(
         conn,
         "SELECT keyspace_name, view_name, base_table_name FROM system_schema.views",
@@ -1475,21 +1532,30 @@ async fn query_views(
 
         let keyspace_and_view_name = (keyspace_name, view_name);
 
-        let table = tables.remove(&keyspace_and_view_name).unwrap_or(Table {
-            columns: HashMap::new(),
-            partition_key: vec![],
-            clustering_key: vec![],
-            partitioner: None,
-        });
-        let materialized_view = MaterializedView {
-            view_metadata: table,
-            base_table_name,
-        };
+        let materialized_view = tables
+            .remove(&keyspace_and_view_name)
+            .unwrap_or(Ok(Table {
+                columns: HashMap::new(),
+                partition_key: vec![],
+                clustering_key: vec![],
+                partitioner: None,
+            }))
+            .map(|table| MaterializedView {
+                view_metadata: table,
+                base_table_name,
+            });
 
-        result
+        let mut entry = result
             .entry(keyspace_and_view_name.0)
-            .or_insert_with(HashMap::new)
-            .insert(keyspace_and_view_name.1, materialized_view);
+            .or_insert_with(|| Ok(HashMap::new()));
+
+        match (&mut entry, materialized_view) {
+            (Ok(views), Ok(view)) => {
+                let _ = views.insert(keyspace_and_view_name.1, view);
+            }
+            (Err(_), _) => (),
+            (Ok(_), Err(e)) => *entry = Err(e),
+        };
 
         Ok::<_, QueryError>(())
     })
@@ -1502,8 +1568,8 @@ async fn query_views(
 async fn query_tables_schema(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    udts: &PerKeyspace<PerTable<Arc<UserDefinedType>>>,
-) -> Result<PerKsTable<Table>, QueryError> {
+    udts: &PerKeyspaceResult<PerTable<Arc<UserDefinedType>>, MissingUserDefinedType>,
+) -> Result<PerKsTableResult<Table, MissingUserDefinedType>, QueryError> {
     // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
     // type EmptyType for dense tables. This resolves into this CQL type name.
     // This column shouldn't be exposed to the user but is currently exposed in system tables.
@@ -1517,9 +1583,9 @@ async fn query_tables_schema(
         }
     );
 
-    let empty_map = HashMap::new();
+    let empty_ok_map = Ok(HashMap::new());
 
-    let mut tables_schema = HashMap::new();
+    let mut tables_schema: HashMap<_, Result<_, MissingUserDefinedType>> = HashMap::new();
 
     rows.map(|row_result| {
         let (keyspace_name, table_name, column_name, kind, position, type_) = row_result?;
@@ -1528,9 +1594,43 @@ async fn query_tables_schema(
             return Ok::<_, QueryError>(());
         }
 
-        let keyspace_udts = udts.get(&keyspace_name).unwrap_or(&empty_map);
+        let keyspace_udts: &PerTable<Arc<UserDefinedType>> =
+            match udts.get(&keyspace_name).unwrap_or(&empty_ok_map) {
+                Ok(udts) => udts,
+                Err(e) => {
+                    // There are two things we could do here
+                    // 1. Not inserting, just returning. In that case the keyspaces containing
+                    //    tables that have a column with a broken UDT will not be present in
+                    //    the output of this function at all.
+                    // 2. Inserting an error (which requires cloning it). In that case,
+                    //    keyspace containing a table with broken UDT will have the error
+                    //    cloned from this UDT.
+                    //
+                    // Solution number 1 seems weird because it can be seen as silencing
+                    // the error: we have data for a keyspace, but we just don't put
+                    // it in the result at all.
+                    // Solution 2 is also not perfect because it:
+                    // - Returns error for the keyspace even if the broken UDT is not used in any table.
+                    // - Doesn't really distinguish between a table using a broken UDT and
+                    //   a keyspace just containing some broken UDTs.
+                    //
+                    // I chose solution 2. Its first problem is not really important because
+                    // the caller will error out the entire keyspace anyway. The second problem
+                    // is minor enough to ignore. Note that the first issue also applies to
+                    // solution 1: but the keyspace won't be present in the result at all,
+                    // which is arguably worse.
+                    tables_schema.insert((keyspace_name, table_name), Err(e.clone()));
+                    return Ok::<_, QueryError>(());
+                }
+            };
         let pre_cql_type = map_string_to_cql_type(&type_)?;
-        let cql_type = pre_cql_type.into_cql_type(&keyspace_name, keyspace_udts);
+        let cql_type = match pre_cql_type.into_cql_type(&keyspace_name, keyspace_udts) {
+            Ok(t) => t,
+            Err(e) => {
+                tables_schema.insert((keyspace_name, table_name), Err(e));
+                return Ok::<_, QueryError>(());
+            }
+        };
 
         let kind = ColumnKind::from_str(&kind).map_err(|_| {
             MetadataError::Tables(TablesMetadataError::UnknownColumnKind {
@@ -1541,11 +1641,17 @@ async fn query_tables_schema(
             })
         })?;
 
-        let entry = tables_schema.entry((keyspace_name, table_name)).or_insert((
-            HashMap::new(), // columns
-            HashMap::new(), // partition key
-            HashMap::new(), // clustering key
-        ));
+        let Ok(entry) = tables_schema
+            .entry((keyspace_name, table_name))
+            .or_insert(Ok((
+                HashMap::new(), // columns
+                HashMap::new(), // partition key
+                HashMap::new(), // clustering key
+            )))
+        else {
+            // This table was previously marked as broken, no way to insert anything.
+            return Ok::<_, QueryError>(());
+        };
 
         if kind == ColumnKind::PartitionKey || kind == ColumnKind::Clustering {
             let key_map = if kind == ColumnKind::PartitionKey {
@@ -1572,9 +1678,16 @@ async fn query_tables_schema(
     let mut all_partitioners = query_table_partitioners(conn).await?;
     let mut result = HashMap::new();
 
-    for ((keyspace_name, table_name), (columns, partition_key_columns, clustering_key_columns)) in
-        tables_schema
-    {
+    for ((keyspace_name, table_name), table_result) in tables_schema {
+        let keyspace_and_table_name = (keyspace_name, table_name);
+
+        let (columns, partition_key_columns, clustering_key_columns) = match table_result {
+            Ok(table) => table,
+            Err(e) => {
+                let _ = result.insert(keyspace_and_table_name, Err(e));
+                continue;
+            }
+        };
         let mut partition_key = vec!["".to_string(); partition_key_columns.len()];
         for (position, column_name) in partition_key_columns {
             partition_key[position as usize] = column_name;
@@ -1585,20 +1698,18 @@ async fn query_tables_schema(
             clustering_key[position as usize] = column_name;
         }
 
-        let keyspace_and_table_name = (keyspace_name, table_name);
-
         let partitioner = all_partitioners
             .remove(&keyspace_and_table_name)
             .unwrap_or_default();
 
         result.insert(
             keyspace_and_table_name,
-            Table {
+            Ok(Table {
                 columns,
                 partition_key,
                 clustering_key,
                 partitioner,
-            },
+            }),
         );
     }
 
