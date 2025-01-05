@@ -452,7 +452,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     use crate::{
-        retry::RetryDecision,
+        policies::retry::RetryDecision,
         test_utils::setup_tracing,
         transport::errors::{DbError, QueryError},
     };
