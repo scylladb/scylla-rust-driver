@@ -169,7 +169,7 @@ pub enum CqlValue {
     Set(Vec<CqlValue>),
     UserDefinedType {
         keyspace: String,
-        type_name: String,
+        name: String,
         /// Order of `fields` vector must match the order of fields as defined in the UDT. The
         /// driver does not check it by itself, so incorrect data will be written if the order is
         /// wrong.
@@ -1404,7 +1404,7 @@ pub fn deser_cql_value(
 
             CqlValue::UserDefinedType {
                 keyspace: udt.keyspace.clone().into_owned(),
-                type_name: udt.name.clone().into_owned(),
+                name: udt.name.clone().into_owned(),
                 fields,
             }
         }
@@ -2015,7 +2015,7 @@ mod tests {
 
         let cql: CqlValue = CqlValue::UserDefinedType {
             keyspace: "".to_string(),
-            type_name: "".to_string(),
+            name: "".to_string(),
             fields: my_fields,
         };
 

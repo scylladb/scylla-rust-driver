@@ -856,7 +856,7 @@ fn cqlvalue_serialization() {
     // UDTs
     let udt = CqlValue::UserDefinedType {
         keyspace: "ks".to_string(),
-        type_name: "t".to_string(),
+        name: "t".to_string(),
         fields: vec![
             ("foo".to_string(), Some(CqlValue::Int(123))),
             ("bar".to_string(), None),
@@ -886,7 +886,7 @@ fn cqlvalue_serialization() {
     // the fields
     let udt = CqlValue::UserDefinedType {
         keyspace: "ks".to_string(),
-        type_name: "t".to_string(),
+        name: "t".to_string(),
         fields: vec![
             ("bar".to_string(), None),
             ("foo".to_string(), Some(CqlValue::Int(123))),
