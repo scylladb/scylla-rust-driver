@@ -5,6 +5,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     hash::{BuildHasher, Hash},
     net::IpAddr,
+    sync::Arc,
 };
 
 use bytes::Bytes;
@@ -15,11 +16,14 @@ use std::fmt::Display;
 use thiserror::Error;
 
 use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::value::{
-    Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
-};
 use crate::frame::{frame_errors::LowLevelDeserializationError, value::CqlVarintBorrowed};
 use crate::frame::{response::result::CollectionType, types};
+use crate::frame::{
+    response::result::UserDefinedType,
+    value::{
+        Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+    },
+};
 use crate::frame::{
     response::result::{deser_cql_value, ColumnType, CqlValue, NativeType},
     value::CqlDecimalBorrowed,
@@ -1250,11 +1254,11 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for UdtIterator<'fra
     ) -> Result<Self, DeserializationError> {
         let v = ensure_not_null_frame_slice::<Self>(typ, v)?;
         let (fields, type_name, keyspace) = match typ {
-            ColumnType::UserDefinedType {
-                field_types,
-                type_name,
-                keyspace,
-            } => (field_types.as_ref(), type_name.as_ref(), keyspace.as_ref()),
+            ColumnType::UserDefinedType { definition: udt } => (
+                udt.field_types.as_ref(),
+                udt.name.as_ref(),
+                udt.keyspace.as_ref(),
+            ),
             _ => {
                 unreachable!("Typecheck should have prevented this scenario!")
             }
@@ -1280,9 +1284,11 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
             // There were some bytes but they didn't parse as correct field value
             Some(Err(err)) => Err(mk_deser_err::<Self>(
                 &ColumnType::UserDefinedType {
-                    type_name: self.type_name.into(),
-                    keyspace: self.keyspace.into(),
-                    field_types: self.all_fields.to_owned(),
+                    definition: Arc::new(UserDefinedType {
+                        name: self.type_name.into(),
+                        keyspace: self.keyspace.into(),
+                        field_types: self.all_fields.to_owned(),
+                    }),
                 },
                 BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
             )),

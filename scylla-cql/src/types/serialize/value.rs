@@ -633,11 +633,9 @@ fn serialize_udt<'b>(
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
     let (dst_type_name, dst_keyspace, field_types) = match typ {
-        ColumnType::UserDefinedType {
-            type_name,
-            keyspace,
-            field_types,
-        } => (type_name, keyspace, field_types),
+        ColumnType::UserDefinedType { definition: udt } => {
+            (&udt.name, &udt.keyspace, &udt.field_types)
+        }
         _ => return Err(mk_typck_err::<CqlValue>(typ, UdtTypeCheckErrorKind::NotUdt)),
     };
 
@@ -1630,8 +1628,11 @@ mod doctests {
 #[cfg(test)]
 pub(crate) mod tests {
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
-    use crate::frame::response::result::{CollectionType, ColumnType, CqlValue, NativeType};
+    use crate::frame::response::result::{
+        CollectionType, ColumnType, CqlValue, NativeType, UserDefinedType,
+    };
     #[allow(deprecated)]
     use crate::frame::value::{Counter, MaybeUnset, Unset, Value, ValueTooBig};
     #[allow(deprecated)]
@@ -2087,13 +2088,15 @@ pub(crate) mod tests {
             ],
         };
         let typ = ColumnType::UserDefinedType {
-            type_name: "udt2".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Int)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                ("c".into(), ColumnType::Native(NativeType::Int)),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "udt2".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Int)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    ("c".into(), ColumnType::Native(NativeType::Int)),
+                ],
+            }),
         };
         let err = do_serialize_err(v, &typ);
         let err = get_typeck_err(&err);
@@ -2120,13 +2123,15 @@ pub(crate) mod tests {
             ],
         };
         let typ = ColumnType::UserDefinedType {
-            type_name: "udt".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Int)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                // c is missing
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "udt".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Int)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    // c is missing
+                ],
+            }),
         };
         let err = do_serialize_err(v, &typ);
         let err = get_typeck_err(&err);
@@ -2154,13 +2159,15 @@ pub(crate) mod tests {
             ],
         };
         let typ = ColumnType::UserDefinedType {
-            type_name: "udt".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Int)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                ("c".into(), ColumnType::Native(NativeType::Double)),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "udt".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Int)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    ("c".into(), ColumnType::Native(NativeType::Double)),
+                ],
+            }),
         };
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
@@ -2201,20 +2208,22 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_field_sorting_correct_order() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                ],
+            }),
         };
 
         let reference = do_serialize(
@@ -2254,21 +2263,23 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_field_sorting_incorrect_order() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                // Two first columns are swapped
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    // Two first columns are swapped
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                ],
+            }),
         };
 
         let reference = do_serialize(
@@ -2312,40 +2323,44 @@ pub(crate) mod tests {
         let udt = TestUdtWithFieldSorting::default();
 
         let typ_normal = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                ],
+            }),
         };
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-                // Unexpected fields
-                ("d".into(), ColumnType::Native(NativeType::Counter)),
-                ("e".into(), ColumnType::Native(NativeType::Counter)),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                    // Unexpected fields
+                    ("d".into(), ColumnType::Native(NativeType::Counter)),
+                    ("e".into(), ColumnType::Native(NativeType::Counter)),
+                ],
+            }),
         };
 
         let result_normal = do_serialize(&udt, &typ_normal);
@@ -2380,24 +2395,26 @@ pub(crate) mod tests {
         let udt3 = TestUdtWithFieldSorting3::default();
 
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                // Unexpected fields
-                ("d".into(), ColumnType::Native(NativeType::Counter)),
-                ("e".into(), ColumnType::Native(NativeType::Float)),
-                // Remaining normal field
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    // Unexpected fields
+                    ("d".into(), ColumnType::Native(NativeType::Counter)),
+                    ("e".into(), ColumnType::Native(NativeType::Float)),
+                    // Remaining normal field
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                ],
+            }),
         };
 
         let result_1 = do_serialize(udt, &typ);
@@ -2424,13 +2441,15 @@ pub(crate) mod tests {
         );
 
         let typ_without_c = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                // Last field is missing
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    // Last field is missing
+                ],
+            }),
         };
 
         let err = udt
@@ -2445,13 +2464,15 @@ pub(crate) mod tests {
         );
 
         let typ_wrong_type = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                ("c".into(), ColumnType::Native(NativeType::TinyInt)), // Wrong column type
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    ("c".into(), ColumnType::Native(NativeType::TinyInt)), // Wrong column type
+                ],
+            }),
         };
 
         let err = udt
@@ -2478,12 +2499,14 @@ pub(crate) mod tests {
         // A minimal smoke test just to test that it works.
         fn check_with_type<T: SerializeValue>(typ: ColumnType, t: T, cql_t: CqlValue) {
             let typ = ColumnType::UserDefinedType {
-                type_name: "typ".into(),
-                keyspace: "ks".into(),
-                field_types: vec![
-                    ("a".into(), ColumnType::Native(NativeType::Text)),
-                    ("b".into(), typ),
-                ],
+                definition: Arc::new(UserDefinedType {
+                    name: "typ".into(),
+                    keyspace: "ks".into(),
+                    field_types: vec![
+                        ("a".into(), ColumnType::Native(NativeType::Text)),
+                        ("b".into(), typ),
+                    ],
+                }),
             };
             let reference = do_serialize(
                 CqlValue::UserDefinedType {
@@ -2532,20 +2555,22 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_enforced_order_correct_order() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                ],
+            }),
         };
 
         let reference = do_serialize(
@@ -2587,39 +2612,43 @@ pub(crate) mod tests {
         let udt = TestUdtWithEnforcedOrder::default();
 
         let typ_normal = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                ],
+            }),
         };
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-                // Unexpected field
-                ("d".into(), ColumnType::Native(NativeType::Counter)),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                    // Unexpected field
+                    ("d".into(), ColumnType::Native(NativeType::Counter)),
+                ],
+            }),
         };
 
         let result_normal = do_serialize(&udt, &typ_normal);
@@ -2644,21 +2673,23 @@ pub(crate) mod tests {
         );
 
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                // Two first columns are swapped
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    // Two first columns are swapped
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                ],
+            }),
         };
 
         let err =
@@ -2670,13 +2701,15 @@ pub(crate) mod tests {
         );
 
         let typ_without_c = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                // Last field is missing
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    // Last field is missing
+                ],
+            }),
         };
 
         let err =
@@ -2691,13 +2724,15 @@ pub(crate) mod tests {
         );
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                ("c".into(), ColumnType::Native(NativeType::TinyInt)), // Wrong column type
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    ("c".into(), ColumnType::Native(NativeType::TinyInt)), // Wrong column type
+                ],
+            }),
         };
 
         let err = <_ as SerializeValue>::serialize(
@@ -2734,12 +2769,14 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_field_rename() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("x".into(), ColumnType::Native(NativeType::Int)),
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("x".into(), ColumnType::Native(NativeType::Int)),
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                ],
+            }),
         };
 
         let mut reference = Vec::new();
@@ -2766,12 +2803,14 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_field_rename_and_enforce_order() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("x".into(), ColumnType::Native(NativeType::Int)),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("x".into(), ColumnType::Native(NativeType::Int)),
+                ],
+            }),
         };
 
         let mut reference = Vec::new();
@@ -2806,12 +2845,14 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_skipped_name_checks() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("x".into(), ColumnType::Native(NativeType::Int)),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("x".into(), ColumnType::Native(NativeType::Int)),
+                ],
+            }),
         };
 
         let mut reference = Vec::new();
@@ -2849,22 +2890,24 @@ pub(crate) mod tests {
         let mut data = Vec::new();
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-                // Unexpected field
-                ("d".into(), ColumnType::Native(NativeType::Counter)),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                    // Unexpected field
+                    ("d".into(), ColumnType::Native(NativeType::Counter)),
+                ],
+            }),
         };
 
         let err = udt
@@ -2877,22 +2920,24 @@ pub(crate) mod tests {
         );
 
         let typ_unexpected_field_middle = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                // Unexpected field
-                ("b_c".into(), ColumnType::Native(NativeType::Counter)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    // Unexpected field
+                    ("b_c".into(), ColumnType::Native(NativeType::Counter)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                ],
+            }),
         };
 
         let err = udt
@@ -2919,22 +2964,24 @@ pub(crate) mod tests {
         let mut data = Vec::new();
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-                // Unexpected field
-                ("d".into(), ColumnType::Native(NativeType::Counter)),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                    // Unexpected field
+                    ("d".into(), ColumnType::Native(NativeType::Counter)),
+                ],
+            }),
         };
 
         let err = <_ as SerializeValue>::serialize(
@@ -2964,20 +3011,22 @@ pub(crate) mod tests {
     #[test]
     fn test_row_serialization_with_skipped_field() {
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("a".into(), ColumnType::Native(NativeType::Text)),
-                ("b".into(), ColumnType::Native(NativeType::Int)),
-                (
-                    "c".into(),
-                    ColumnType::Collection {
-                        type_: CollectionType::List(Box::new(ColumnType::Native(
-                            NativeType::BigInt,
-                        ))),
-                    },
-                ),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), ColumnType::Native(NativeType::Int)),
+                    (
+                        "c".into(),
+                        ColumnType::Collection {
+                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::BigInt,
+                            ))),
+                        },
+                    ),
+                ],
+            }),
         };
 
         let reference = do_serialize(
@@ -3011,9 +3060,11 @@ pub(crate) mod tests {
         }
 
         let typ = ColumnType::UserDefinedType {
-            type_name: "typ".into(),
-            keyspace: "ks".into(),
-            field_types: vec![("a$a".into(), ColumnType::Native(NativeType::Int))],
+            definition: Arc::new(UserDefinedType {
+                name: "typ".into(),
+                keyspace: "ks".into(),
+                field_types: vec![("a$a".into(), ColumnType::Native(NativeType::Int))],
+            }),
         };
         let value = UdtWithNonRustIdent { a: 42 };
 
