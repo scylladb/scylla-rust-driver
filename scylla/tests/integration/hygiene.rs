@@ -110,12 +110,13 @@ macro_rules! test_crate {
             use ::std::convert::Into;
             use ::std::option::Option::Some;
             use ::std::string::ToString;
+            use ::std::sync::Arc;
             use ::std::vec;
             use ::std::vec::Vec;
             use ::tracing::info;
             use _scylla::deserialize::DeserializeValue;
             use _scylla::deserialize::FrameSlice;
-            use _scylla::frame::response::result::{ColumnType, NativeType, CqlValue};
+            use _scylla::frame::response::result::{ColumnType, NativeType, CqlValue, UserDefinedType};
             use _scylla::serialize::value::SerializeValue;
             use _scylla::serialize::writers::CellWriter;
 
@@ -128,9 +129,11 @@ macro_rules! test_crate {
                 fields: vec![("a".to_string(), Some(CqlValue::Int(16)))],
             };
             let udt_type = ColumnType::UserDefinedType {
-                type_name: "some_type".into(),
-                keyspace: "some_ks".into(),
-                field_types: vec![("a".into(), ColumnType::Native(NativeType::Int))],
+                definition: Arc::new(UserDefinedType {
+                    name: "some_type".into(),
+                    keyspace: "some_ks".into(),
+                    field_types: vec![("a".into(), ColumnType::Native(NativeType::Int))],
+                })
             };
 
             let mut buf_struct = Vec::<u8>::new();

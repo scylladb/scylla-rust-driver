@@ -1,7 +1,7 @@
 // TODO: remove this once deprecated items are deleted.
 #![allow(deprecated)]
 
-use crate::frame::response::result::{CollectionType, NativeType};
+use crate::frame::response::result::{CollectionType, NativeType, UserDefinedType};
 use crate::frame::value::{CqlTimeuuid, CqlVarint};
 use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
 use crate::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};
@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::{borrow::Cow, convert::TryInto};
 use uuid::Uuid;
 
@@ -862,12 +863,14 @@ fn cqlvalue_serialization() {
         ],
     };
     let typ = ColumnType::UserDefinedType {
-        type_name: "t".into(),
-        keyspace: "ks".into(),
-        field_types: vec![
-            ("foo".into(), ColumnType::Native(NativeType::Int)),
-            ("bar".into(), ColumnType::Native(NativeType::Text)),
-        ],
+        definition: Arc::new(UserDefinedType {
+            name: "t".into(),
+            keyspace: "ks".into(),
+            field_types: vec![
+                ("foo".into(), ColumnType::Native(NativeType::Int)),
+                ("bar".into(), ColumnType::Native(NativeType::Text)),
+            ],
+        }),
     };
 
     assert_eq!(

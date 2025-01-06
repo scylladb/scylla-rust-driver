@@ -125,7 +125,7 @@ pub mod frame {
             pub(crate) use scylla_cql::frame::response::result::*;
             pub use scylla_cql::frame::response::result::{
                 CollectionType, ColumnSpec, ColumnType, CqlValue, NativeType, PartitionKeyIndex,
-                Row, TableSpec,
+                Row, TableSpec, UserDefinedType,
             };
         }
     }

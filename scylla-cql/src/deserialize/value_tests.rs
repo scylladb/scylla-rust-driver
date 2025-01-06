@@ -7,10 +7,13 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 
 use crate::deserialize::value::{TupleDeserializationErrorKind, TupleTypeCheckErrorKind};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::response::result::{CollectionType, ColumnType, CqlValue, NativeType};
+use crate::frame::response::result::{
+    CollectionType, ColumnType, CqlValue, NativeType, UserDefinedType,
+};
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlVarint, CqlVarintBorrowed,
@@ -712,9 +715,11 @@ pub(crate) fn udt_def_with_fields(
     fields: impl IntoIterator<Item = (impl Into<Cow<'static, str>>, ColumnType<'static>)>,
 ) -> ColumnType<'static> {
     ColumnType::UserDefinedType {
-        type_name: "udt".into(),
-        keyspace: "ks".into(),
-        field_types: fields.into_iter().map(|(s, t)| (s.into(), t)).collect(),
+        definition: Arc::new(UserDefinedType {
+            name: "udt".into(),
+            keyspace: "ks".into(),
+            field_types: fields.into_iter().map(|(s, t)| (s.into(), t)).collect(),
+        }),
     }
 }
 
@@ -2295,12 +2300,14 @@ fn metadata_does_not_bound_deserialized_values() {
 
         // UDT
         let udt_typ = ColumnType::UserDefinedType {
-            type_name: "udt".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("bytes".into(), ColumnType::Native(NativeType::Blob)),
-                ("text".into(), ColumnType::Native(NativeType::Text)),
-            ],
+            definition: Arc::new(UserDefinedType {
+                name: "udt".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("bytes".into(), ColumnType::Native(NativeType::Blob)),
+                    ("text".into(), ColumnType::Native(NativeType::Text)),
+                ],
+            }),
         };
         #[derive(DeserializeValue)]
         #[scylla(crate=crate)]

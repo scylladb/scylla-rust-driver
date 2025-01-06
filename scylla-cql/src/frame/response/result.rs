@@ -56,9 +56,7 @@ pub enum ColumnType<'frame> {
         type_: CollectionType<'frame>,
     },
     UserDefinedType {
-        type_name: Cow<'frame, str>,
-        keyspace: Cow<'frame, str>,
-        field_types: Vec<(Cow<'frame, str>, ColumnType<'frame>)>,
+        definition: Arc<UserDefinedType<'frame>>,
     },
     Tuple(Vec<ColumnType<'frame>>),
 }
@@ -94,6 +92,14 @@ pub enum CollectionType<'frame> {
     Set(Box<ColumnType<'frame>>),
 }
 
+/// Definition of a user-defined type
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserDefinedType<'frame> {
+    pub name: Cow<'frame, str>,
+    pub keyspace: Cow<'frame, str>,
+    pub field_types: Vec<(Cow<'frame, str>, ColumnType<'frame>)>,
+}
+
 impl ColumnType<'_> {
     pub fn into_owned(self) -> ColumnType<'static> {
         match self {
@@ -101,18 +107,22 @@ impl ColumnType<'_> {
             ColumnType::Collection { type_: t } => ColumnType::Collection {
                 type_: t.into_owned(),
             },
-            ColumnType::UserDefinedType {
-                type_name,
-                keyspace,
-                field_types,
-            } => ColumnType::UserDefinedType {
-                type_name: type_name.into_owned().into(),
-                keyspace: keyspace.into_owned().into(),
-                field_types: field_types
-                    .into_iter()
-                    .map(|(cow, column_type)| (cow.into_owned().into(), column_type.into_owned()))
-                    .collect(),
-            },
+            ColumnType::UserDefinedType { definition: udt } => {
+                let udt = Arc::try_unwrap(udt).unwrap_or_else(|e| e.as_ref().clone());
+                ColumnType::UserDefinedType {
+                    definition: Arc::new(UserDefinedType {
+                        name: udt.name.into_owned().into(),
+                        keyspace: udt.keyspace.into_owned().into(),
+                        field_types: udt
+                            .field_types
+                            .into_iter()
+                            .map(|(cow, column_type)| {
+                                (cow.into_owned().into(), column_type.into_owned())
+                            })
+                            .collect(),
+                    }),
+                }
+            }
             ColumnType::Tuple(vec) => {
                 ColumnType::Tuple(vec.into_iter().map(ColumnType::into_owned).collect())
             }
@@ -933,9 +943,11 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
             }
 
             UserDefinedType {
-                type_name: type_name.into(),
-                keyspace: keyspace_name.into(),
-                field_types,
+                definition: Arc::new(self::UserDefinedType {
+                    name: type_name.into(),
+                    keyspace: keyspace_name.into(),
+                    field_types,
+                }),
             }
         }
         0x0031 => {
@@ -1379,11 +1391,7 @@ pub fn deser_cql_value(
             let s = Vec::<CqlValue>::deserialize(typ, v)?;
             CqlValue::Set(s)
         }
-        UserDefinedType {
-            type_name,
-            keyspace,
-            ..
-        } => {
+        UserDefinedType { definition: udt } => {
             let iter = UdtIterator::deserialize(typ, v)?;
             let fields: Vec<(String, Option<CqlValue>)> = iter
                 .map(|((col_name, col_type), res)| {
@@ -1395,8 +1403,8 @@ pub fn deser_cql_value(
                 .collect::<StdResult<_, _>>()?;
 
             CqlValue::UserDefinedType {
-                keyspace: keyspace.clone().into_owned(),
-                type_name: type_name.clone().into_owned(),
+                keyspace: udt.keyspace.clone().into_owned(),
+                type_name: udt.name.clone().into_owned(),
                 fields,
             }
         }
@@ -1574,15 +1582,11 @@ mod test_utils {
                         typ.serialize(buf)?;
                     }
                 }
-                ColumnType::UserDefinedType {
-                    type_name,
-                    keyspace,
-                    field_types,
-                } => {
-                    types::write_string(keyspace, buf)?;
-                    types::write_string(type_name, buf)?;
-                    types::write_short_length(field_types.len(), buf)?;
-                    for (field_name, field_type) in field_types {
+                ColumnType::UserDefinedType { definition: udt } => {
+                    types::write_string(&udt.keyspace, buf)?;
+                    types::write_string(&udt.name, buf)?;
+                    types::write_short_length(udt.field_types.len(), buf)?;
+                    for (field_name, field_type) in udt.field_types.iter() {
                         types::write_string(field_name, buf)?;
                         field_type.serialize(buf)?;
                     }
@@ -1699,12 +1703,13 @@ mod test_utils {
 
 #[cfg(test)]
 mod tests {
-    use super::CollectionType;
     use super::NativeType::{self, *};
+    use super::{CollectionType, UserDefinedType};
     use crate as scylla;
     use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
     use scylla::frame::response::result::{ColumnType, CqlValue};
     use std::str::FromStr;
+    use std::sync::Arc;
     use uuid::Uuid;
 
     #[test]
@@ -2534,9 +2539,11 @@ mod tests {
             ),
             (
                 ColumnType::UserDefinedType {
-                    type_name: "".into(),
-                    keyspace: "".into(),
-                    field_types: vec![],
+                    definition: Arc::new(UserDefinedType {
+                        name: "".into(),
+                        keyspace: "".into(),
+                        field_types: vec![],
+                    }),
                 },
                 CqlValue::Empty,
             ),
