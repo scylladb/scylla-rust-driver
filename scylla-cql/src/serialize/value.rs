@@ -546,7 +546,7 @@ fn serialize_cql_value<'b>(
         CqlValue::Set(s) => <_ as SerializeValue>::serialize(&s, typ, writer),
         CqlValue::UserDefinedType {
             keyspace,
-            type_name,
+            name: type_name,
             fields,
         } => serialize_udt(typ, keyspace, type_name, fields, writer),
         CqlValue::SmallInt(s) => <_ as SerializeValue>::serialize(&s, typ, writer),
@@ -2061,7 +2061,7 @@ pub(crate) mod tests {
         // Not a UDT
         let v = CqlValue::UserDefinedType {
             keyspace: "ks".to_string(),
-            type_name: "udt".to_string(),
+            name: "udt".to_string(),
             fields: vec![
                 ("a".to_string(), Some(CqlValue::Int(123_i32))),
                 ("b".to_string(), Some(CqlValue::Int(456_i32))),
@@ -2080,7 +2080,7 @@ pub(crate) mod tests {
         // Wrong type name
         let v = CqlValue::UserDefinedType {
             keyspace: "ks".to_string(),
-            type_name: "udt".to_string(),
+            name: "udt".to_string(),
             fields: vec![
                 ("a".to_string(), Some(CqlValue::Int(123_i32))),
                 ("b".to_string(), Some(CqlValue::Int(456_i32))),
@@ -2115,7 +2115,7 @@ pub(crate) mod tests {
         // Some fields are missing from the CQL type
         let v = CqlValue::UserDefinedType {
             keyspace: "ks".to_string(),
-            type_name: "udt".to_string(),
+            name: "udt".to_string(),
             fields: vec![
                 ("a".to_string(), Some(CqlValue::Int(123_i32))),
                 ("b".to_string(), Some(CqlValue::Int(456_i32))),
@@ -2151,7 +2151,7 @@ pub(crate) mod tests {
         // Error during serialization of one of the fields
         let v = CqlValue::UserDefinedType {
             keyspace: "ks".to_string(),
-            type_name: "udt".to_string(),
+            name: "udt".to_string(),
             fields: vec![
                 ("a".to_string(), Some(CqlValue::Int(123_i32))),
                 ("b".to_string(), Some(CqlValue::Int(456_i32))),
@@ -2229,7 +2229,7 @@ pub(crate) mod tests {
         let reference = do_serialize(
             CqlValue::UserDefinedType {
                 keyspace: "ks".to_string(),
-                type_name: "typ".to_string(),
+                name: "typ".to_string(),
                 fields: vec![
                     (
                         "a".to_string(),
@@ -2285,7 +2285,7 @@ pub(crate) mod tests {
         let reference = do_serialize(
             CqlValue::UserDefinedType {
                 keyspace: "ks".to_string(),
-                type_name: "typ".to_string(),
+                name: "typ".to_string(),
                 fields: vec![
                     // FIXME: UDTs in CqlValue should also honor the order
                     // For now, it's swapped here as well
@@ -2511,7 +2511,7 @@ pub(crate) mod tests {
             let reference = do_serialize(
                 CqlValue::UserDefinedType {
                     keyspace: "ks".to_string(),
-                    type_name: "typ".to_string(),
+                    name: "typ".to_string(),
                     fields: vec![
                         (
                             "a".to_string(),
@@ -2576,7 +2576,7 @@ pub(crate) mod tests {
         let reference = do_serialize(
             CqlValue::UserDefinedType {
                 keyspace: "ks".to_string(),
-                type_name: "typ".to_string(),
+                name: "typ".to_string(),
                 fields: vec![
                     (
                         "a".to_string(),

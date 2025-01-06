@@ -125,7 +125,7 @@ macro_rules! test_crate {
             let test_struct = TestStruct { a: 16 };
             let value_with_same_layout: CqlValue = CqlValue::UserDefinedType {
                 keyspace: "some_ks".to_string(),
-                type_name: "some_type".to_string(),
+                name: "some_type".to_string(),
                 fields: vec![("a".to_string(), Some(CqlValue::Int(16)))],
             };
             let udt_type = ColumnType::UserDefinedType {
