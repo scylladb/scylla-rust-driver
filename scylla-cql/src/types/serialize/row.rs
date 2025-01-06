@@ -948,7 +948,9 @@ pub(crate) mod tests {
     use std::borrow::Cow;
     use std::collections::BTreeMap;
 
-    use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
+    use crate::frame::response::result::{
+        CollectionType, ColumnSpec, ColumnType, NativeType, TableSpec,
+    };
     use crate::frame::types::RawValue;
     #[allow(deprecated)]
     use crate::frame::value::{LegacySerializedValues, MaybeUnset, SerializedResult, ValueList};
@@ -1281,7 +1283,9 @@ pub(crate) mod tests {
             col("b", ColumnType::Native(NativeType::Int)),
             col(
                 "c",
-                ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ColumnType::Collection {
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
             ),
         ];
 
@@ -1305,7 +1309,9 @@ pub(crate) mod tests {
             col("a", ColumnType::Native(NativeType::Text)),
             col(
                 "c",
-                ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ColumnType::Collection {
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
             ),
             col("b", ColumnType::Native(NativeType::Int)),
         ];
@@ -1350,7 +1356,9 @@ pub(crate) mod tests {
             col("b", ColumnType::Native(NativeType::Int)),
             col(
                 "c",
-                ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ColumnType::Collection {
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
             ),
             // Unexpected last column
             col("d", ColumnType::Native(NativeType::Counter)),
@@ -1425,7 +1433,9 @@ pub(crate) mod tests {
             col("b", ColumnType::Native(NativeType::Int)),
             col(
                 "c",
-                ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ColumnType::Collection {
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
             ),
         ];
 
@@ -1453,7 +1463,9 @@ pub(crate) mod tests {
             col("a", ColumnType::Native(NativeType::Text)),
             col(
                 "c",
-                ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ColumnType::Collection {
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
             ),
             col("b", ColumnType::Native(NativeType::Int)),
         ];
@@ -1486,7 +1498,9 @@ pub(crate) mod tests {
             col("b", ColumnType::Native(NativeType::Int)),
             col(
                 "c",
-                ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ColumnType::Collection {
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
             ),
             // Unexpected last column
             col("d", ColumnType::Native(NativeType::Counter)),
@@ -1702,7 +1716,9 @@ pub(crate) mod tests {
             col("b", ColumnType::Native(NativeType::Int)),
             col(
                 "c",
-                ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ColumnType::Collection {
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
             ),
         ];
 

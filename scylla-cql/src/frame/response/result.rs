@@ -52,9 +52,9 @@ pub struct TableSpec<'a> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColumnType<'frame> {
     Native(NativeType),
-    List(Box<ColumnType<'frame>>),
-    Map(Box<ColumnType<'frame>>, Box<ColumnType<'frame>>),
-    Set(Box<ColumnType<'frame>>),
+    Collection {
+        type_: CollectionType<'frame>,
+    },
     UserDefinedType {
         type_name: Cow<'frame, str>,
         keyspace: Cow<'frame, str>,
@@ -87,16 +87,20 @@ pub enum NativeType {
     Varint,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CollectionType<'frame> {
+    List(Box<ColumnType<'frame>>),
+    Map(Box<ColumnType<'frame>>, Box<ColumnType<'frame>>),
+    Set(Box<ColumnType<'frame>>),
+}
+
 impl ColumnType<'_> {
     pub fn into_owned(self) -> ColumnType<'static> {
         match self {
             ColumnType::Native(b) => ColumnType::Native(b),
-            ColumnType::List(elem_type) => ColumnType::List(Box::new(elem_type.into_owned())),
-            ColumnType::Map(key_type, value_type) => ColumnType::Map(
-                Box::new(key_type.into_owned()),
-                Box::new(value_type.into_owned()),
-            ),
-            ColumnType::Set(elem_type) => ColumnType::Set(Box::new(elem_type.into_owned())),
+            ColumnType::Collection { type_: t } => ColumnType::Collection {
+                type_: t.into_owned(),
+            },
             ColumnType::UserDefinedType {
                 type_name,
                 keyspace,
@@ -112,6 +116,20 @@ impl ColumnType<'_> {
             ColumnType::Tuple(vec) => {
                 ColumnType::Tuple(vec.into_iter().map(ColumnType::into_owned).collect())
             }
+        }
+    }
+}
+
+impl CollectionType<'_> {
+    fn into_owned(self) -> CollectionType<'static> {
+        match self {
+            CollectionType::List(elem_type) => {
+                CollectionType::List(Box::new(elem_type.into_owned()))
+            }
+            CollectionType::Map(key, value) => {
+                CollectionType::Map(Box::new(key.into_owned()), Box::new(value.into_owned()))
+            }
+            CollectionType::Set(elem_type) => CollectionType::Set(Box::new(elem_type.into_owned())),
         }
     }
 }
@@ -205,9 +223,7 @@ impl ColumnType<'_> {
         match self {
             ColumnType::Native(NativeType::Counter)
             | ColumnType::Native(NativeType::Duration)
-            | ColumnType::List(_)
-            | ColumnType::Map(_, _)
-            | ColumnType::Set(_)
+            | ColumnType::Collection { .. }
             | ColumnType::UserDefinedType { .. } => false,
 
             _ => true,
@@ -885,12 +901,18 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
         0x0013 => Native(SmallInt),
         0x0014 => Native(TinyInt),
         0x0015 => Native(Duration),
-        0x0020 => List(Box::new(deser_type_generic(buf, read_string)?)),
-        0x0021 => Map(
-            Box::new(deser_type_generic(buf, read_string)?),
-            Box::new(deser_type_generic(buf, read_string)?),
-        ),
-        0x0022 => Set(Box::new(deser_type_generic(buf, read_string)?)),
+        0x0020 => Collection {
+            type_: CollectionType::List(Box::new(deser_type_generic(buf, read_string)?)),
+        },
+        0x0021 => Collection {
+            type_: CollectionType::Map(
+                Box::new(deser_type_generic(buf, read_string)?),
+                Box::new(deser_type_generic(buf, read_string)?),
+            ),
+        },
+        0x0022 => Collection {
+            type_: CollectionType::Set(Box::new(deser_type_generic(buf, read_string)?)),
+        },
         0x0030 => {
             let keyspace_name =
                 read_string(buf).map_err(CqlTypeParseError::UdtKeyspaceNameParseError)?;
@@ -1338,16 +1360,22 @@ pub fn deser_cql_value(
             let vi = CqlVarint::deserialize(typ, v)?;
             CqlValue::Varint(vi)
         }
-        List(_type_name) => {
+        Collection {
+            type_: CollectionType::List(_type_name),
+        } => {
             let l = Vec::<CqlValue>::deserialize(typ, v)?;
             CqlValue::List(l)
         }
-        Map(_key_type, _value_type) => {
+        Collection {
+            type_: CollectionType::Map(_key_type, _value_type),
+        } => {
             let iter = MapIterator::<'_, '_, CqlValue, CqlValue>::deserialize(typ, v)?;
             let m: Vec<(CqlValue, CqlValue)> = iter.collect::<StdResult<_, _>>()?;
             CqlValue::Map(m)
         }
-        Set(_type_name) => {
+        Collection {
+            type_: CollectionType::Set(_type_name),
+        } => {
             let s = Vec::<CqlValue>::deserialize(typ, v)?;
             CqlValue::Set(s)
         }
@@ -1503,9 +1531,15 @@ mod test_utils {
                 Self::Native(SmallInt) => 0x0013,
                 Self::Native(TinyInt) => 0x0014,
                 Self::Native(Duration) => 0x0015,
-                Self::List(_) => 0x0020,
-                Self::Map(_, _) => 0x0021,
-                Self::Set(_) => 0x0022,
+                Self::Collection {
+                    type_: CollectionType::List(_),
+                } => 0x0020,
+                Self::Collection {
+                    type_: CollectionType::Map(_, _),
+                } => 0x0021,
+                Self::Collection {
+                    type_: CollectionType::Set(_),
+                } => 0x0022,
                 Self::UserDefinedType { .. } => 0x0030,
                 Self::Tuple(_) => 0x0031,
             }
@@ -1520,10 +1554,17 @@ mod test_utils {
                 // Simple types
                 ColumnType::Native(_) => (),
 
-                ColumnType::List(elem_type) | ColumnType::Set(elem_type) => {
+                ColumnType::Collection {
+                    type_: CollectionType::List(elem_type),
+                }
+                | ColumnType::Collection {
+                    type_: CollectionType::Set(elem_type),
+                } => {
                     elem_type.serialize(buf)?;
                 }
-                ColumnType::Map(key_type, value_type) => {
+                ColumnType::Collection {
+                    type_: CollectionType::Map(key_type, value_type),
+                } => {
                     key_type.serialize(buf)?;
                     value_type.serialize(buf)?;
                 }
@@ -1658,6 +1699,7 @@ mod test_utils {
 
 #[cfg(test)]
 mod tests {
+    use super::CollectionType;
     use super::NativeType::{self, *};
     use crate as scylla;
     use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
@@ -2470,18 +2512,24 @@ mod tests {
             (ColumnType::Native(Timestamp), CqlValue::Empty),
             (ColumnType::Native(Inet), CqlValue::Empty),
             (
-                ColumnType::List(Box::new(ColumnType::Native(Int))),
+                ColumnType::Collection {
+                    type_: CollectionType::List(Box::new(ColumnType::Native(Int))),
+                },
                 CqlValue::Empty,
             ),
             (
-                ColumnType::Map(
-                    Box::new(ColumnType::Native(Int)),
-                    Box::new(ColumnType::Native(Int)),
-                ),
+                ColumnType::Collection {
+                    type_: CollectionType::Map(
+                        Box::new(ColumnType::Native(Int)),
+                        Box::new(ColumnType::Native(Int)),
+                    ),
+                },
                 CqlValue::Empty,
             ),
             (
-                ColumnType::Set(Box::new(ColumnType::Native(Int))),
+                ColumnType::Collection {
+                    type_: CollectionType::Set(Box::new(ColumnType::Native(Int))),
+                },
                 CqlValue::Empty,
             ),
             (

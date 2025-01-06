@@ -15,11 +15,11 @@ use std::fmt::Display;
 use thiserror::Error;
 
 use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::types;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
 use crate::frame::{frame_errors::LowLevelDeserializationError, value::CqlVarintBorrowed};
+use crate::frame::{response::result::CollectionType, types};
 use crate::frame::{
     response::result::{deser_cql_value, ColumnType, CqlValue, NativeType},
     value::CqlDecimalBorrowed,
@@ -729,14 +729,17 @@ where
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
-            ColumnType::List(el_t) | ColumnType::Set(el_t) => {
-                <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t).map_err(|err| {
-                    mk_typck_err::<Self>(
-                        typ,
-                        SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
-                    )
-                })
+            ColumnType::Collection {
+                type_: CollectionType::List(el_t),
             }
+            | ColumnType::Collection {
+                type_: CollectionType::Set(el_t),
+            } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t).map_err(|err| {
+                mk_typck_err::<Self>(
+                    typ,
+                    SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
+                )
+            }),
             _ => Err(mk_typck_err::<Self>(
                 typ,
                 BuiltinTypeCheckErrorKind::SetOrListError(
@@ -751,7 +754,12 @@ where
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         let elem_typ = match typ {
-            ColumnType::List(elem_typ) | ColumnType::Set(elem_typ) => elem_typ,
+            ColumnType::Collection {
+                type_: CollectionType::List(elem_typ),
+            }
+            | ColumnType::Collection {
+                type_: CollectionType::Set(elem_typ),
+            } => elem_typ,
             _ => {
                 unreachable!("Typecheck should have prevented this scenario!")
             }
@@ -833,7 +841,9 @@ where
         // It only makes sense for Set to deserialize to BTreeSet.
         // Deserializing List straight to BTreeSet would be lossy.
         match typ {
-            ColumnType::Set(el_t) => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
+            ColumnType::Collection {
+                type_: CollectionType::Set(el_t),
+            } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
                 typ,
@@ -861,7 +871,9 @@ where
         // It only makes sense for Set to deserialize to HashSet.
         // Deserializing List straight to HashSet would be lossy.
         match typ {
-            ColumnType::Set(el_t) => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
+            ColumnType::Collection {
+                type_: CollectionType::Set(el_t),
+            } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
                 typ,
@@ -932,7 +944,9 @@ where
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
-            ColumnType::Map(k_t, v_t) => {
+            ColumnType::Collection {
+                type_: CollectionType::Map(k_t, v_t),
+            } => {
                 <K as DeserializeValue<'frame, 'metadata>>::type_check(k_t).map_err(|err| {
                     mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::KeyTypeCheckFailed(err))
                 })?;
@@ -950,7 +964,9 @@ where
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         let (k_typ, v_typ) = match typ {
-            ColumnType::Map(k_t, v_t) => (k_t, v_t),
+            ColumnType::Collection {
+                type_: CollectionType::Map(k_t, v_t),
+            } => (k_t, v_t),
             _ => {
                 unreachable!("Typecheck should have prevented this scenario!")
             }
