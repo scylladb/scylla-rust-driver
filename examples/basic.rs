@@ -2,7 +2,7 @@ use anyhow::Result;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;
 use scylla::frame::response::result::Row;
-use scylla::transport::session::Session;
+use scylla::session::Session;
 use scylla::DeserializeRow;
 use scylla::SessionBuilder;
 use std::env;
