@@ -633,9 +633,9 @@ fn serialize_udt<'b>(
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
     let (dst_type_name, dst_keyspace, field_types) = match typ {
-        ColumnType::UserDefinedType { definition: udt } => {
-            (&udt.name, &udt.keyspace, &udt.field_types)
-        }
+        ColumnType::UserDefinedType {
+            definition: udt, ..
+        } => (&udt.name, &udt.keyspace, &udt.field_types),
         _ => return Err(mk_typck_err::<CqlValue>(typ, UdtTypeCheckErrorKind::NotUdt)),
     };
 
@@ -813,9 +813,11 @@ fn serialize_sequence<'t, 'b, T: SerializeValue + 't>(
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
     let elt = match typ {
         ColumnType::Collection {
+            frozen: false,
             type_: CollectionType::List(elt),
         }
         | ColumnType::Collection {
+            frozen: false,
             type_: CollectionType::Set(elt),
         } => elt,
         _ => {
@@ -862,6 +864,7 @@ fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
     let (ktyp, vtyp) = match typ {
         ColumnType::Collection {
+            frozen: false,
             type_: CollectionType::Map(k, v),
         } => (k, v),
         _ => {
@@ -1816,6 +1819,7 @@ pub(crate) mod tests {
         // Such an array is also created instantaneously.
         let v = &[Unset; 1 << 33] as &[Unset];
         let typ = ColumnType::Collection {
+            frozen: false,
             type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
         };
         let err = do_serialize_err(v, &typ);
@@ -1832,6 +1836,7 @@ pub(crate) mod tests {
         // Error during serialization of an element
         let v = vec![123_i32];
         let typ = ColumnType::Collection {
+            frozen: false,
             type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Double))),
         };
         let err = do_serialize_err(v, &typ);
@@ -1872,6 +1877,7 @@ pub(crate) mod tests {
         // Error during serialization of a key
         let v = BTreeMap::from([(123_i32, 456_i32)]);
         let typ = ColumnType::Collection {
+            frozen: false,
             type_: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Double)),
                 Box::new(ColumnType::Native(NativeType::Int)),
@@ -1898,6 +1904,7 @@ pub(crate) mod tests {
         // Error during serialization of a value
         let v = BTreeMap::from([(123_i32, 456_i32)]);
         let typ = ColumnType::Collection {
+            frozen: false,
             type_: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Int)),
                 Box::new(ColumnType::Native(NativeType::Double)),
@@ -2088,6 +2095,7 @@ pub(crate) mod tests {
             ],
         };
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "udt2".into(),
                 keyspace: "ks".into(),
@@ -2123,6 +2131,7 @@ pub(crate) mod tests {
             ],
         };
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "udt".into(),
                 keyspace: "ks".into(),
@@ -2159,6 +2168,7 @@ pub(crate) mod tests {
             ],
         };
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "udt".into(),
                 keyspace: "ks".into(),
@@ -2208,6 +2218,7 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_field_sorting_correct_order() {
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2217,6 +2228,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2263,6 +2275,7 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_field_sorting_incorrect_order() {
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2273,6 +2286,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2323,6 +2337,7 @@ pub(crate) mod tests {
         let udt = TestUdtWithFieldSorting::default();
 
         let typ_normal = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2332,6 +2347,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2342,6 +2358,7 @@ pub(crate) mod tests {
         };
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2351,6 +2368,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2395,6 +2413,7 @@ pub(crate) mod tests {
         let udt3 = TestUdtWithFieldSorting3::default();
 
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2408,6 +2427,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2441,6 +2461,7 @@ pub(crate) mod tests {
         );
 
         let typ_without_c = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2464,6 +2485,7 @@ pub(crate) mod tests {
         );
 
         let typ_wrong_type = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2499,6 +2521,7 @@ pub(crate) mod tests {
         // A minimal smoke test just to test that it works.
         fn check_with_type<T: SerializeValue>(typ: ColumnType, t: T, cql_t: CqlValue) {
             let typ = ColumnType::UserDefinedType {
+                frozen: false,
                 definition: Arc::new(UserDefinedType {
                     name: "typ".into(),
                     keyspace: "ks".into(),
@@ -2555,6 +2578,7 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_enforced_order_correct_order() {
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2564,6 +2588,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2612,6 +2637,7 @@ pub(crate) mod tests {
         let udt = TestUdtWithEnforcedOrder::default();
 
         let typ_normal = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2621,6 +2647,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2631,6 +2658,7 @@ pub(crate) mod tests {
         };
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2640,6 +2668,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2673,6 +2702,7 @@ pub(crate) mod tests {
         );
 
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2683,6 +2713,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2701,6 +2732,7 @@ pub(crate) mod tests {
         );
 
         let typ_without_c = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2724,6 +2756,7 @@ pub(crate) mod tests {
         );
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2769,6 +2802,7 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_field_rename() {
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2803,6 +2837,7 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_field_rename_and_enforce_order() {
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2845,6 +2880,7 @@ pub(crate) mod tests {
     #[test]
     fn test_udt_serialization_with_skipped_name_checks() {
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2890,6 +2926,7 @@ pub(crate) mod tests {
         let mut data = Vec::new();
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2899,6 +2936,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2920,6 +2958,7 @@ pub(crate) mod tests {
         );
 
         let typ_unexpected_field_middle = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2931,6 +2970,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -2964,6 +3004,7 @@ pub(crate) mod tests {
         let mut data = Vec::new();
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -2973,6 +3014,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -3011,6 +3053,7 @@ pub(crate) mod tests {
     #[test]
     fn test_row_serialization_with_skipped_field() {
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),
@@ -3020,6 +3063,7 @@ pub(crate) mod tests {
                     (
                         "c".into(),
                         ColumnType::Collection {
+                            frozen: false,
                             type_: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
@@ -3060,6 +3104,7 @@ pub(crate) mod tests {
         }
 
         let typ = ColumnType::UserDefinedType {
+            frozen: false,
             definition: Arc::new(UserDefinedType {
                 name: "typ".into(),
                 keyspace: "ks".into(),

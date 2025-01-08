@@ -696,6 +696,7 @@ fn vec_set_serialization() {
         serialized(
             m,
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
             }
         ),
@@ -716,6 +717,7 @@ fn slice_set_serialization() {
         serialized(
             m.as_ref(),
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
             }
         ),
@@ -756,6 +758,7 @@ fn hashset_serialization() {
         serialized(
             m,
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
             }
         ),
@@ -777,6 +780,7 @@ fn hashmap_serialization() {
         serialized(
             m,
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::Text)),
                     Box::new(ColumnType::Native(NativeType::Int))
@@ -803,6 +807,7 @@ fn btreeset_serialization() {
         serialized(
             m,
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
             }
         ),
@@ -823,6 +828,7 @@ fn btreemap_serialization() {
         serialized(
             m,
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::Text)),
                     Box::new(ColumnType::Native(NativeType::Int))
@@ -863,6 +869,7 @@ fn cqlvalue_serialization() {
         ],
     };
     let typ = ColumnType::UserDefinedType {
+        frozen: false,
         definition: Arc::new(UserDefinedType {
             name: "t".into(),
             keyspace: "ks".into(),
