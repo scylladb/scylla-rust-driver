@@ -210,15 +210,15 @@ pub struct Column {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum PreCqlType {
+enum PreColumnType {
     Native(NativeType),
     Collection {
         frozen: bool,
         type_: PreCollectionType,
     },
-    Tuple(Vec<PreCqlType>),
+    Tuple(Vec<PreColumnType>),
     Vector {
-        type_: Box<PreCqlType>,
+        type_: Box<PreColumnType>,
         dimensions: u16,
     },
     UserDefinedType {
@@ -227,32 +227,32 @@ enum PreCqlType {
     },
 }
 
-impl PreCqlType {
+impl PreColumnType {
     pub(crate) fn into_cql_type(
         self,
         keyspace_name: &String,
         keyspace_udts: &PerTable<Arc<UserDefinedType<'static>>>,
     ) -> Result<ColumnType<'static>, MissingUserDefinedType> {
         match self {
-            PreCqlType::Native(n) => Ok(ColumnType::Native(n)),
-            PreCqlType::Collection { frozen, type_ } => type_
+            PreColumnType::Native(n) => Ok(ColumnType::Native(n)),
+            PreColumnType::Collection { frozen, type_ } => type_
                 .into_collection_type(keyspace_name, keyspace_udts)
                 .map(|inner| ColumnType::Collection {
                     frozen,
                     type_: inner,
                 }),
-            PreCqlType::Tuple(t) => t
+            PreColumnType::Tuple(t) => t
                 .into_iter()
                 .map(|t| t.into_cql_type(keyspace_name, keyspace_udts))
                 .collect::<Result<Vec<ColumnType>, MissingUserDefinedType>>()
                 .map(ColumnType::Tuple),
-            PreCqlType::Vector { type_, dimensions } => type_
+            PreColumnType::Vector { type_, dimensions } => type_
                 .into_cql_type(keyspace_name, keyspace_udts)
                 .map(|inner| ColumnType::Vector {
                     type_: Box::new(inner),
                     dimensions,
                 }),
-            PreCqlType::UserDefinedType { frozen, name } => {
+            PreColumnType::UserDefinedType { frozen, name } => {
                 let definition = match keyspace_udts.get(&name) {
                     Some(def) => def.clone(),
                     None => {
@@ -278,9 +278,9 @@ pub(crate) struct MissingUserDefinedType {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PreCollectionType {
-    List(Box<PreCqlType>),
-    Map(Box<PreCqlType>, Box<PreCqlType>),
-    Set(Box<PreCqlType>),
+    List(Box<PreColumnType>),
+    Map(Box<PreColumnType>, Box<PreColumnType>),
+    Set(Box<PreColumnType>),
 }
 
 impl PreCollectionType {
@@ -1017,7 +1017,7 @@ struct UdtRowWithParsedFieldTypes {
     keyspace_name: String,
     type_name: String,
     field_names: Vec<String>,
-    field_types: Vec<PreCqlType>,
+    field_types: Vec<PreColumnType>,
 }
 
 impl TryFrom<UdtRow> for UdtRowWithParsedFieldTypes {
@@ -1119,10 +1119,10 @@ async fn query_user_defined_types(
 }
 
 fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), QueryError> {
-    fn do_with_referenced_udts(what: &mut impl FnMut(&str), pre_cql_type: &PreCqlType) {
+    fn do_with_referenced_udts(what: &mut impl FnMut(&str), pre_cql_type: &PreColumnType) {
         match pre_cql_type {
-            PreCqlType::Native(_) => (),
-            PreCqlType::Collection { type_, .. } => match type_ {
+            PreColumnType::Native(_) => (),
+            PreColumnType::Collection { type_, .. } => match type_ {
                 PreCollectionType::List(t) | PreCollectionType::Set(t) => {
                     do_with_referenced_udts(what, t)
                 }
@@ -1131,11 +1131,11 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), Quer
                     do_with_referenced_udts(what, t2);
                 }
             },
-            PreCqlType::Tuple(types) => types
+            PreColumnType::Tuple(types) => types
                 .iter()
                 .for_each(|type_| do_with_referenced_udts(what, type_)),
-            PreCqlType::Vector { type_, .. } => do_with_referenced_udts(what, type_),
-            PreCqlType::UserDefinedType { name, .. } => what(name),
+            PreColumnType::Vector { type_, .. } => do_with_referenced_udts(what, type_),
+            PreColumnType::UserDefinedType { name, .. } => what(name),
         }
     }
 
@@ -1623,7 +1623,7 @@ async fn query_tables_schema(
     Ok(result)
 }
 
-fn map_string_to_cql_type(type_: &str) -> Result<PreCqlType, InvalidCqlType> {
+fn map_string_to_cql_type(type_: &str) -> Result<PreColumnType, InvalidCqlType> {
     match parse_cql_type(ParserState::new(type_)) {
         Err(err) => Err(InvalidCqlType {
             type_: type_.to_string(),
@@ -1639,7 +1639,7 @@ fn map_string_to_cql_type(type_: &str) -> Result<PreCqlType, InvalidCqlType> {
     }
 }
 
-fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_>)> {
+fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreColumnType, ParserState<'_>)> {
     if let Ok(p) = p.accept("frozen<") {
         let (inner_type, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
@@ -1653,7 +1653,7 @@ fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_
         let (value, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
 
-        let typ = PreCqlType::Collection {
+        let typ = PreColumnType::Collection {
             frozen: false,
             type_: PreCollectionType::Map(Box::new(key), Box::new(value)),
         };
@@ -1663,7 +1663,7 @@ fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_
         let (inner_type, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
 
-        let typ = PreCqlType::Collection {
+        let typ = PreColumnType::Collection {
             frozen: false,
             type_: PreCollectionType::List(Box::new(inner_type)),
         };
@@ -1673,7 +1673,7 @@ fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_
         let (inner_type, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
 
-        let typ = PreCqlType::Collection {
+        let typ = PreColumnType::Collection {
             frozen: false,
             type_: PreCollectionType::Set(Box::new(inner_type)),
         };
@@ -1695,7 +1695,7 @@ fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_
             }
         })?;
 
-        Ok((PreCqlType::Tuple(types), p))
+        Ok((PreColumnType::Tuple(types), p))
     } else if let Ok(p) = p.accept("vector<") {
         let (inner_type, p) = parse_cql_type(p)?;
 
@@ -1706,16 +1706,16 @@ fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_
         let p = p.skip_white();
         let p = p.accept(">")?;
 
-        let typ = PreCqlType::Vector {
+        let typ = PreColumnType::Vector {
             type_: Box::new(inner_type),
             dimensions: size,
         };
 
         Ok((typ, p))
     } else if let Ok((typ, p)) = parse_native_type(p) {
-        Ok((PreCqlType::Native(typ), p))
+        Ok((PreColumnType::Native(typ), p))
     } else if let Ok((name, p)) = parse_user_defined_type(p) {
-        let typ = PreCqlType::UserDefinedType {
+        let typ = PreColumnType::UserDefinedType {
             frozen: false,
             name: name.to_string(),
         };
@@ -1764,14 +1764,14 @@ fn parse_user_defined_type(p: ParserState) -> ParseResult<(&str, ParserState)> {
     Ok((tok, p))
 }
 
-fn freeze_type(type_: PreCqlType) -> PreCqlType {
+fn freeze_type(type_: PreColumnType) -> PreColumnType {
     match type_ {
-        PreCqlType::Collection { type_, .. } => PreCqlType::Collection {
+        PreColumnType::Collection { type_, .. } => PreColumnType::Collection {
             frozen: true,
             type_,
         },
-        PreCqlType::UserDefinedType { name, .. } => {
-            PreCqlType::UserDefinedType { frozen: true, name }
+        PreColumnType::UserDefinedType { name, .. } => {
+            PreColumnType::UserDefinedType { frozen: true, name }
         }
         other => other,
     }
@@ -1887,90 +1887,94 @@ mod tests {
     fn test_cql_type_parsing() {
         setup_tracing();
         let test_cases = [
-            ("bigint", PreCqlType::Native(NativeType::BigInt)),
+            ("bigint", PreColumnType::Native(NativeType::BigInt)),
             (
                 "list<int>",
-                PreCqlType::Collection {
+                PreColumnType::Collection {
                     frozen: false,
-                    type_: PreCollectionType::List(Box::new(PreCqlType::Native(NativeType::Int))),
+                    type_: PreCollectionType::List(Box::new(PreColumnType::Native(
+                        NativeType::Int,
+                    ))),
                 },
             ),
             (
                 "set<ascii>",
-                PreCqlType::Collection {
+                PreColumnType::Collection {
                     frozen: false,
-                    type_: PreCollectionType::Set(Box::new(PreCqlType::Native(NativeType::Ascii))),
+                    type_: PreCollectionType::Set(Box::new(PreColumnType::Native(
+                        NativeType::Ascii,
+                    ))),
                 },
             ),
             (
                 "map<blob, boolean>",
-                PreCqlType::Collection {
+                PreColumnType::Collection {
                     frozen: false,
                     type_: PreCollectionType::Map(
-                        Box::new(PreCqlType::Native(NativeType::Blob)),
-                        Box::new(PreCqlType::Native(NativeType::Boolean)),
+                        Box::new(PreColumnType::Native(NativeType::Blob)),
+                        Box::new(PreColumnType::Native(NativeType::Boolean)),
                     ),
                 },
             ),
             (
                 "frozen<map<text, text>>",
-                PreCqlType::Collection {
+                PreColumnType::Collection {
                     frozen: true,
                     type_: PreCollectionType::Map(
-                        Box::new(PreCqlType::Native(NativeType::Text)),
-                        Box::new(PreCqlType::Native(NativeType::Text)),
+                        Box::new(PreColumnType::Native(NativeType::Text)),
+                        Box::new(PreColumnType::Native(NativeType::Text)),
                     ),
                 },
             ),
             (
                 "tuple<tinyint, smallint, int, bigint, varint>",
-                PreCqlType::Tuple(vec![
-                    PreCqlType::Native(NativeType::TinyInt),
-                    PreCqlType::Native(NativeType::SmallInt),
-                    PreCqlType::Native(NativeType::Int),
-                    PreCqlType::Native(NativeType::BigInt),
-                    PreCqlType::Native(NativeType::Varint),
+                PreColumnType::Tuple(vec![
+                    PreColumnType::Native(NativeType::TinyInt),
+                    PreColumnType::Native(NativeType::SmallInt),
+                    PreColumnType::Native(NativeType::Int),
+                    PreColumnType::Native(NativeType::BigInt),
+                    PreColumnType::Native(NativeType::Varint),
                 ]),
             ),
             (
                 "vector<int, 5>",
-                PreCqlType::Vector {
-                    type_: Box::new(PreCqlType::Native(NativeType::Int)),
+                PreColumnType::Vector {
+                    type_: Box::new(PreColumnType::Native(NativeType::Int)),
                     dimensions: 5,
                 },
             ),
             (
                 "vector<text, 1234>",
-                PreCqlType::Vector {
-                    type_: Box::new(PreCqlType::Native(NativeType::Text)),
+                PreColumnType::Vector {
+                    type_: Box::new(PreColumnType::Native(NativeType::Text)),
                     dimensions: 1234,
                 },
             ),
             (
                 "com.scylladb.types.AwesomeType",
-                PreCqlType::UserDefinedType {
+                PreColumnType::UserDefinedType {
                     frozen: false,
                     name: "com.scylladb.types.AwesomeType".to_string(),
                 },
             ),
             (
                 "frozen<ks.my_udt>",
-                PreCqlType::UserDefinedType {
+                PreColumnType::UserDefinedType {
                     frozen: true,
                     name: "ks.my_udt".to_string(),
                 },
             ),
             (
                 "map<text, frozen<map<text, text>>>",
-                PreCqlType::Collection {
+                PreColumnType::Collection {
                     frozen: false,
                     type_: PreCollectionType::Map(
-                        Box::new(PreCqlType::Native(NativeType::Text)),
-                        Box::new(PreCqlType::Collection {
+                        Box::new(PreColumnType::Native(NativeType::Text)),
+                        Box::new(PreColumnType::Collection {
                             frozen: true,
                             type_: PreCollectionType::Map(
-                                Box::new(PreCqlType::Native(NativeType::Text)),
-                                Box::new(PreCqlType::Native(NativeType::Text)),
+                                Box::new(PreColumnType::Native(NativeType::Text)),
+                                Box::new(PreColumnType::Native(NativeType::Text)),
                             ),
                         }),
                     ),
@@ -1990,65 +1994,69 @@ mod tests {
                     >\
                 >",
                 // map<...>
-                PreCqlType::Collection {
+                PreColumnType::Collection {
                     frozen: false,
                     type_: PreCollectionType::Map(
-                        Box::new(PreCqlType::Collection {
+                        Box::new(PreColumnType::Collection {
                             // frozen<list<int>>
                             frozen: true,
-                            type_: PreCollectionType::List(Box::new(PreCqlType::Native(
+                            type_: PreCollectionType::List(Box::new(PreColumnType::Native(
                                 NativeType::Int,
                             ))),
                         }),
-                        Box::new(PreCqlType::Collection {
+                        Box::new(PreColumnType::Collection {
                             // set<...>
                             frozen: false,
-                            type_: PreCollectionType::Set(Box::new(PreCqlType::Collection {
+                            type_: PreCollectionType::Set(Box::new(PreColumnType::Collection {
                                 // list<tuple<...>>
                                 frozen: false,
-                                type_: PreCollectionType::List(Box::new(PreCqlType::Tuple(vec![
-                                    PreCqlType::Collection {
-                                        // list<list<text>>
-                                        frozen: false,
-                                        type_: PreCollectionType::List(Box::new(
-                                            PreCqlType::Collection {
-                                                frozen: false,
-                                                type_: PreCollectionType::List(Box::new(
-                                                    PreCqlType::Native(NativeType::Text),
-                                                )),
-                                            },
-                                        )),
-                                    },
-                                    PreCqlType::Collection {
-                                        // map<text, map<ks.my_type, blob>>
-                                        frozen: false,
-                                        type_: PreCollectionType::Map(
-                                            Box::new(PreCqlType::Native(NativeType::Text)),
-                                            Box::new(PreCqlType::Collection {
-                                                frozen: false,
-                                                type_: PreCollectionType::Map(
-                                                    Box::new(PreCqlType::UserDefinedType {
-                                                        frozen: false,
-                                                        name: "ks.my_type".to_string(),
-                                                    }),
-                                                    Box::new(PreCqlType::Native(NativeType::Blob)),
-                                                ),
-                                            }),
-                                        ),
-                                    },
-                                    PreCqlType::Collection {
-                                        // frozen<set<set<int>>>
-                                        frozen: true,
-                                        type_: PreCollectionType::Set(Box::new(
-                                            PreCqlType::Collection {
-                                                frozen: false,
-                                                type_: PreCollectionType::Set(Box::new(
-                                                    PreCqlType::Native(NativeType::Int),
-                                                )),
-                                            },
-                                        )),
-                                    },
-                                ]))),
+                                type_: PreCollectionType::List(Box::new(PreColumnType::Tuple(
+                                    vec![
+                                        PreColumnType::Collection {
+                                            // list<list<text>>
+                                            frozen: false,
+                                            type_: PreCollectionType::List(Box::new(
+                                                PreColumnType::Collection {
+                                                    frozen: false,
+                                                    type_: PreCollectionType::List(Box::new(
+                                                        PreColumnType::Native(NativeType::Text),
+                                                    )),
+                                                },
+                                            )),
+                                        },
+                                        PreColumnType::Collection {
+                                            // map<text, map<ks.my_type, blob>>
+                                            frozen: false,
+                                            type_: PreCollectionType::Map(
+                                                Box::new(PreColumnType::Native(NativeType::Text)),
+                                                Box::new(PreColumnType::Collection {
+                                                    frozen: false,
+                                                    type_: PreCollectionType::Map(
+                                                        Box::new(PreColumnType::UserDefinedType {
+                                                            frozen: false,
+                                                            name: "ks.my_type".to_string(),
+                                                        }),
+                                                        Box::new(PreColumnType::Native(
+                                                            NativeType::Blob,
+                                                        )),
+                                                    ),
+                                                }),
+                                            ),
+                                        },
+                                        PreColumnType::Collection {
+                                            // frozen<set<set<int>>>
+                                            frozen: true,
+                                            type_: PreCollectionType::Set(Box::new(
+                                                PreColumnType::Collection {
+                                                    frozen: false,
+                                                    type_: PreCollectionType::Set(Box::new(
+                                                        PreColumnType::Native(NativeType::Int),
+                                                    )),
+                                                },
+                                            )),
+                                        },
+                                    ],
+                                ))),
                             })),
                         }),
                     ),
