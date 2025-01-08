@@ -4,7 +4,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use scylla_cql::frame::request::query::PagingState;
 use scylla_cql::frame::request::SerializableRequest;
-use scylla_cql::frame::response::result::ColumnType;
+use scylla_cql::frame::response::result::{ColumnType, NativeType};
 use scylla_cql::frame::{request::query, Compression, SerializedRequest};
 use scylla_cql::serialize::row::SerializedValues;
 
@@ -28,18 +28,18 @@ fn serialized_request_make_bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("LZ4Compression.SerializedRequest");
     let query_args = [
         ("INSERT foo INTO ks.table_name (?)", {
-            values.add_value(&1234, &ColumnType::Int).unwrap();
+            values.add_value(&1234, &ColumnType::Native(NativeType::Int)).unwrap();
             values.clone()
         }),
         ("INSERT foo, bar, baz INTO ks.table_name (?, ?, ?)", {
-            values.add_value(&"a value", &ColumnType::Text).unwrap();
-            values.add_value(&"i am storing a string", &ColumnType::Text).unwrap();
+            values.add_value(&"a value", &ColumnType::Native(NativeType::Text)).unwrap();
+            values.add_value(&"i am storing a string", &ColumnType::Native(NativeType::Text)).unwrap();
             values.clone()
         }),
         (
             "INSERT foo, bar, baz, boop, blah INTO longer_keyspace.a_big_table_name (?, ?, ?, ?, 1000)",
             {
-                values.add_value(&"dc0c8cd7-d954-47c1-8722-a857941c43fb", &ColumnType::Text).unwrap();
+                values.add_value(&"dc0c8cd7-d954-47c1-8722-a857941c43fb", &ColumnType::Native(NativeType::Text)).unwrap();
                 values.clone()
             }
         ),

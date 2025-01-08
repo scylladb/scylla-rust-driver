@@ -87,7 +87,7 @@
 //! the respective trait for _all_ lifetimes, i.e.:
 //!
 //! ```rust
-//! # use scylla_cql::frame::response::result::ColumnType;
+//! # use scylla_cql::frame::response::result::{NativeType, ColumnType};
 //! # use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 //! # use scylla_cql::deserialize::value::DeserializeValue;
 //! use thiserror::Error;
@@ -101,7 +101,7 @@
 //! }
 //! impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for MyVec {
 //!     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-//!          if let ColumnType::Blob = typ {
+//!          if let ColumnType::Native(NativeType::Blob) = typ {
 //!              return Ok(());
 //!          }
 //!          Err(TypeCheckError::new(MyDeserError::ExpectedBytes))
@@ -128,7 +128,7 @@
 //! For example:
 //!
 //! ```rust
-//! # use scylla_cql::frame::response::result::ColumnType;
+//! # use scylla_cql::frame::response::result::{NativeType, ColumnType};
 //! # use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 //! # use scylla_cql::deserialize::value::DeserializeValue;
 //! use thiserror::Error;
@@ -145,7 +145,7 @@
 //!     'frame: 'a,
 //! {
 //!     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-//!          if let ColumnType::Blob = typ {
+//!          if let ColumnType::Native(NativeType::Blob) = typ {
 //!              return Ok(());
 //!          }
 //!          Err(TypeCheckError::new(MyDeserError::ExpectedBytes))
@@ -179,7 +179,7 @@
 //! Example:
 //!
 //! ```rust
-//! # use scylla_cql::frame::response::result::ColumnType;
+//! # use scylla_cql::frame::response::result::{NativeType, ColumnType};
 //! # use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 //! # use scylla_cql::deserialize::value::DeserializeValue;
 //! # use bytes::Bytes;
@@ -194,7 +194,7 @@
 //! }
 //! impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for MyBytes {
 //!     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-//!          if let ColumnType::Blob = typ {
+//!          if let ColumnType::Native(NativeType::Blob) = typ {
 //!              return Ok(());
 //!          }
 //!          Err(TypeCheckError::new(MyDeserError::ExpectedBytes))

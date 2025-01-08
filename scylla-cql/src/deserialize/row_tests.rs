@@ -4,7 +4,7 @@ use scylla_macros::DeserializeRow;
 
 use crate::deserialize::row::BuiltinDeserializationErrorKind;
 use crate::deserialize::{value, DeserializationError, FrameSlice};
-use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
+use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
 
 use super::super::tests::{serialize_cells, spec};
 use super::{BuiltinDeserializationError, ColumnIterator, CqlValue, DeserializeRow, Row};
@@ -17,7 +17,7 @@ fn test_tuple_deserialization() {
 
     // 1-elem tuple
     let (a,) = deserialize::<(i32,)>(
-        &[spec("i", ColumnType::Int)],
+        &[spec("i", ColumnType::Native(NativeType::Int))],
         &serialize_cells([val_int(123)]),
     )
     .unwrap();
@@ -26,9 +26,9 @@ fn test_tuple_deserialization() {
     // 3-elem tuple
     let (a, b, c) = deserialize::<(i32, i32, i32)>(
         &[
-            spec("i1", ColumnType::Int),
-            spec("i2", ColumnType::Int),
-            spec("i3", ColumnType::Int),
+            spec("i1", ColumnType::Native(NativeType::Int)),
+            spec("i2", ColumnType::Native(NativeType::Int)),
+            spec("i3", ColumnType::Native(NativeType::Int)),
         ],
         &serialize_cells([val_int(123), val_int(456), val_int(789)]),
     )
@@ -38,16 +38,16 @@ fn test_tuple_deserialization() {
     // Make sure that column type mismatch is detected
     deserialize::<(i32, String, i32)>(
         &[
-            spec("i1", ColumnType::Int),
-            spec("i2", ColumnType::Int),
-            spec("i3", ColumnType::Int),
+            spec("i1", ColumnType::Native(NativeType::Int)),
+            spec("i2", ColumnType::Native(NativeType::Int)),
+            spec("i3", ColumnType::Native(NativeType::Int)),
         ],
         &serialize_cells([val_int(123), val_int(456), val_int(789)]),
     )
     .unwrap_err();
 
     // Make sure that borrowing types compile and work correctly
-    let specs = &[spec("s", ColumnType::Text)];
+    let specs = &[spec("s", ColumnType::Native(NativeType::Text))];
     let byts = serialize_cells([val_str("abc")]);
     let (s,) = deserialize::<(&str,)>(specs, &byts).unwrap();
     assert_eq!(s, "abc");
@@ -56,26 +56,26 @@ fn test_tuple_deserialization() {
 #[test]
 fn test_deserialization_as_column_iterator() {
     let col_specs = [
-        spec("i1", ColumnType::Int),
-        spec("i2", ColumnType::Text),
-        spec("i3", ColumnType::Counter),
+        spec("i1", ColumnType::Native(NativeType::Int)),
+        spec("i2", ColumnType::Native(NativeType::Text)),
+        spec("i3", ColumnType::Native(NativeType::Counter)),
     ];
     let serialized_values = serialize_cells([val_int(123), val_str("ScyllaDB"), None]);
     let mut iter = deserialize::<ColumnIterator>(&col_specs, &serialized_values).unwrap();
 
     let col1 = iter.next().unwrap().unwrap();
     assert_eq!(col1.spec.name(), "i1");
-    assert_eq!(col1.spec.typ(), &ColumnType::Int);
+    assert_eq!(col1.spec.typ(), &ColumnType::Native(NativeType::Int));
     assert_eq!(col1.slice.unwrap().as_slice(), &123i32.to_be_bytes());
 
     let col2 = iter.next().unwrap().unwrap();
     assert_eq!(col2.spec.name(), "i2");
-    assert_eq!(col2.spec.typ(), &ColumnType::Text);
+    assert_eq!(col2.spec.typ(), &ColumnType::Native(NativeType::Text));
     assert_eq!(col2.slice.unwrap().as_slice(), "ScyllaDB".as_bytes());
 
     let col3 = iter.next().unwrap().unwrap();
     assert_eq!(col3.spec.name(), "i3");
-    assert_eq!(col3.spec.typ(), &ColumnType::Counter);
+    assert_eq!(col3.spec.typ(), &ColumnType::Native(NativeType::Counter));
     assert!(col3.slice.is_none());
 
     assert!(iter.next().is_none());
@@ -106,7 +106,10 @@ fn test_struct_deserialization_loose_ordering() {
     }
 
     // Original order of columns
-    let specs = &[spec("a", ColumnType::Text), spec("b", ColumnType::Int)];
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+    ];
     let byts = serialize_cells([val_str("abc"), val_int(123)]);
     let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
     assert_eq!(
@@ -119,7 +122,10 @@ fn test_struct_deserialization_loose_ordering() {
     );
 
     // Different order of columns - should still work
-    let specs = &[spec("b", ColumnType::Int), spec("a", ColumnType::Text)];
+    let specs = &[
+        spec("b", ColumnType::Native(NativeType::Int)),
+        spec("a", ColumnType::Native(NativeType::Text)),
+    ];
     let byts = serialize_cells([val_int(123), val_str("abc")]);
     let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
     assert_eq!(
@@ -132,11 +138,14 @@ fn test_struct_deserialization_loose_ordering() {
     );
 
     // Missing column
-    let specs = &[spec("a", ColumnType::Text)];
+    let specs = &[spec("a", ColumnType::Native(NativeType::Text))];
     MyRow::type_check(specs).unwrap_err();
 
     // Wrong column type
-    let specs = &[spec("a", ColumnType::Int), spec("b", ColumnType::Int)];
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Int)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+    ];
     MyRow::type_check(specs).unwrap_err();
 }
 
@@ -152,7 +161,10 @@ fn test_struct_deserialization_strict_ordering() {
     }
 
     // Correct order of columns
-    let specs = &[spec("a", ColumnType::Text), spec("b", ColumnType::Int)];
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+    ];
     let byts = serialize_cells([val_str("abc"), val_int(123)]);
     let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
     assert_eq!(
@@ -165,15 +177,21 @@ fn test_struct_deserialization_strict_ordering() {
     );
 
     // Wrong order of columns
-    let specs = &[spec("b", ColumnType::Int), spec("a", ColumnType::Text)];
+    let specs = &[
+        spec("b", ColumnType::Native(NativeType::Int)),
+        spec("a", ColumnType::Native(NativeType::Text)),
+    ];
     MyRow::type_check(specs).unwrap_err();
 
     // Missing column
-    let specs = &[spec("a", ColumnType::Text)];
+    let specs = &[spec("a", ColumnType::Native(NativeType::Text))];
     MyRow::type_check(specs).unwrap_err();
 
     // Wrong column type
-    let specs = &[spec("a", ColumnType::Int), spec("b", ColumnType::Int)];
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Int)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+    ];
     MyRow::type_check(specs).unwrap_err();
 }
 
@@ -189,7 +207,10 @@ fn test_struct_deserialization_no_name_check() {
     }
 
     // Correct order of columns
-    let specs = &[spec("a", ColumnType::Text), spec("b", ColumnType::Int)];
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+    ];
     let byts = serialize_cells([val_str("abc"), val_int(123)]);
     let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
     assert_eq!(
@@ -202,7 +223,10 @@ fn test_struct_deserialization_no_name_check() {
     );
 
     // Correct order of columns, but different names - should still succeed
-    let specs = &[spec("z", ColumnType::Text), spec("x", ColumnType::Int)];
+    let specs = &[
+        spec("z", ColumnType::Native(NativeType::Text)),
+        spec("x", ColumnType::Native(NativeType::Int)),
+    ];
     let byts = serialize_cells([val_str("abc"), val_int(123)]);
     let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
     assert_eq!(
@@ -230,7 +254,10 @@ fn test_struct_deserialization_cross_rename_fields() {
     {
         let row_bytes =
             serialize_cells(["The quick brown fox".as_bytes(), &42_i32.to_be_bytes()].map(Some));
-        let specs = [spec("a", ColumnType::Text), spec("b", ColumnType::Int)];
+        let specs = [
+            spec("a", ColumnType::Native(NativeType::Text)),
+            spec("b", ColumnType::Native(NativeType::Int)),
+        ];
 
         let row = deserialize::<TestRow>(&specs, &row_bytes).unwrap();
         assert_eq!(
@@ -293,7 +320,7 @@ fn test_tuple_errors() {
     // Column type check failure
     {
         let col_name: &str = "i";
-        let specs = &[spec(col_name, ColumnType::Int)];
+        let specs = &[spec(col_name, ColumnType::Native(NativeType::Int))];
         let err = deserialize::<(i64,)>(specs, &serialize_cells([val_int(123)])).unwrap_err();
         let err = get_typck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(i64,)>());
@@ -316,11 +343,11 @@ fn test_tuple_errors() {
         assert_eq!(column_name, col_name);
         let err = super::super::value::tests::get_typeck_err_inner(err.0.as_ref());
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
-        assert_eq!(err.cql_type, ColumnType::Int);
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
         assert_matches!(
             &err.kind,
             super::super::value::BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::BigInt]
+                expected: &[ColumnType::Native(NativeType::BigInt)]
             }
         );
     }
@@ -329,7 +356,7 @@ fn test_tuple_errors() {
     {
         let col_name: &str = "i";
         let err = deserialize::<(i64,)>(
-            &[spec(col_name, ColumnType::BigInt)],
+            &[spec(col_name, ColumnType::Native(NativeType::BigInt))],
             &serialize_cells([val_int(123)]),
         )
         .unwrap_err();
@@ -344,7 +371,7 @@ fn test_tuple_errors() {
         assert_eq!(column_name, col_name);
         let err = super::super::value::tests::get_deser_err(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
-        assert_eq!(err.cql_type, ColumnType::BigInt);
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         assert_matches!(
             err.kind,
             super::super::value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
@@ -358,7 +385,7 @@ fn test_tuple_errors() {
     {
         let col_name: &str = "i";
         let err = deserialize::<(i64,)>(
-            &[spec(col_name, ColumnType::BigInt)],
+            &[spec(col_name, ColumnType::Native(NativeType::BigInt))],
             &Bytes::from_static(b"alamakota"),
         )
         .unwrap_err();
@@ -385,7 +412,7 @@ fn test_row_errors() {
     {
         let col_name: &str = "i";
         let err = deserialize::<Row>(
-            &[spec(col_name, ColumnType::BigInt)],
+            &[spec(col_name, ColumnType::Native(NativeType::BigInt))],
             &serialize_cells([val_int(123)]),
         )
         .unwrap_err();
@@ -402,7 +429,7 @@ fn test_row_errors() {
         assert_eq!(column_name, col_name);
         let err = super::super::value::tests::get_deser_err(err);
         assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
-        assert_eq!(err.cql_type, ColumnType::BigInt);
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         let super::super::value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
             expected: 8,
             got: 4,
@@ -416,7 +443,7 @@ fn test_row_errors() {
     {
         let col_name: &str = "i";
         let err = deserialize::<Row>(
-            &[spec(col_name, ColumnType::BigInt)],
+            &[spec(col_name, ColumnType::Native(NativeType::BigInt))],
             &Bytes::from_static(b"alamakota"),
         )
         .unwrap_err();
@@ -457,7 +484,10 @@ fn test_struct_deserialization_errors() {
         {
             // Missing column
             {
-                let specs = [spec("a", ColumnType::Ascii), spec("b", ColumnType::Int)];
+                let specs = [
+                    spec("a", ColumnType::Native(NativeType::Ascii)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                ];
                 let err = MyRow::type_check(&specs).unwrap_err();
                 let err = get_typck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
@@ -474,9 +504,9 @@ fn test_struct_deserialization_errors() {
             // Duplicated column
             {
                 let specs = [
-                    spec("a", ColumnType::Ascii),
-                    spec("b", ColumnType::Int),
-                    spec("a", ColumnType::Ascii),
+                    spec("a", ColumnType::Native(NativeType::Ascii)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("a", ColumnType::Native(NativeType::Ascii)),
                 ];
 
                 let err = MyRow::type_check(&specs).unwrap_err();
@@ -497,9 +527,9 @@ fn test_struct_deserialization_errors() {
             // Unknown column
             {
                 let specs = [
-                    spec("d", ColumnType::Counter),
-                    spec("a", ColumnType::Ascii),
-                    spec("b", ColumnType::Int),
+                    spec("d", ColumnType::Native(NativeType::Counter)),
+                    spec("a", ColumnType::Native(NativeType::Ascii)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
                 ];
 
                 let err = MyRow::type_check(&specs).unwrap_err();
@@ -519,7 +549,10 @@ fn test_struct_deserialization_errors() {
 
             // Column incompatible types - column type check failed
             {
-                let specs = [spec("b", ColumnType::Int), spec("a", ColumnType::Blob)];
+                let specs = [
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("a", ColumnType::Native(NativeType::Blob)),
+                ];
                 let err = MyRow::type_check(&specs).unwrap_err();
                 let err = get_typck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
@@ -536,11 +569,14 @@ fn test_struct_deserialization_errors() {
                 assert_eq!(column_name.as_str(), "a");
                 let err = value::tests::get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<&str>());
-                assert_eq!(err.cql_type, ColumnType::Blob);
+                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
                 assert_matches!(
                     err.kind,
                     value::BuiltinTypeCheckErrorKind::MismatchedType {
-                        expected: &[ColumnType::Ascii, ColumnType::Text]
+                        expected: &[
+                            ColumnType::Native(NativeType::Ascii),
+                            ColumnType::Native(NativeType::Text)
+                        ]
                     }
                 );
             }
@@ -551,9 +587,9 @@ fn test_struct_deserialization_errors() {
             // Got null
             {
                 let specs = [
-                    spec("c", ColumnType::Boolean),
-                    spec("a", ColumnType::Blob),
-                    spec("b", ColumnType::Int),
+                    spec("c", ColumnType::Native(NativeType::Boolean)),
+                    spec("a", ColumnType::Native(NativeType::Blob)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
                 ];
 
                 let err = MyRow::deserialize(ColumnIterator::new(
@@ -578,9 +614,9 @@ fn test_struct_deserialization_errors() {
             // Column deserialization failed
             {
                 let specs = [
-                    spec("b", ColumnType::Int),
-                    spec("a", ColumnType::Ascii),
-                    spec("c", ColumnType::Boolean),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("a", ColumnType::Native(NativeType::Ascii)),
+                    spec("c", ColumnType::Native(NativeType::Boolean)),
                 ];
 
                 let row_bytes = serialize_cells(
@@ -608,7 +644,7 @@ fn test_struct_deserialization_errors() {
                 assert_eq!(column_name.as_str(), "c");
                 let err = value::tests::get_deser_err(err);
                 assert_eq!(err.rust_name, std::any::type_name::<bool>());
-                assert_eq!(err.cql_type, ColumnType::Boolean);
+                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Boolean));
                 assert_matches!(
                     err.kind,
                     value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
@@ -636,7 +672,7 @@ fn test_struct_deserialization_errors() {
         {
             // Too few columns
             {
-                let specs = [spec("a", ColumnType::Text)];
+                let specs = [spec("a", ColumnType::Native(NativeType::Text))];
                 let err = MyRow::type_check(&specs).unwrap_err();
                 let err = get_typck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
@@ -655,10 +691,10 @@ fn test_struct_deserialization_errors() {
             // Excess columns
             {
                 let specs = [
-                    spec("a", ColumnType::Text),
-                    spec("b", ColumnType::Int),
-                    spec("c", ColumnType::Boolean),
-                    spec("d", ColumnType::Counter),
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("c", ColumnType::Native(NativeType::Boolean)),
+                    spec("d", ColumnType::Native(NativeType::Counter)),
                 ];
                 let err = MyRow::type_check(&specs).unwrap_err();
                 let err = get_typck_err_inner(err.0.as_ref());
@@ -678,9 +714,9 @@ fn test_struct_deserialization_errors() {
             // Renamed column name mismatch
             {
                 let specs = [
-                    spec("a", ColumnType::Text),
-                    spec("b", ColumnType::Int),
-                    spec("d", ColumnType::Boolean),
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("d", ColumnType::Native(NativeType::Boolean)),
                 ];
                 let err = MyRow::type_check(&specs).unwrap_err();
                 let err = get_typck_err_inner(err.0.as_ref());
@@ -703,9 +739,9 @@ fn test_struct_deserialization_errors() {
             // Columns switched - column name mismatch
             {
                 let specs = [
-                    spec("b", ColumnType::Int),
-                    spec("a", ColumnType::Text),
-                    spec("c", ColumnType::Boolean),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("c", ColumnType::Native(NativeType::Boolean)),
                 ];
                 let err = MyRow::type_check(&specs).unwrap_err();
                 let err = get_typck_err_inner(err.0.as_ref());
@@ -729,9 +765,9 @@ fn test_struct_deserialization_errors() {
             // Column incompatible types - column type check failed
             {
                 let specs = [
-                    spec("a", ColumnType::Blob),
-                    spec("b", ColumnType::Int),
-                    spec("c", ColumnType::Boolean),
+                    spec("a", ColumnType::Native(NativeType::Blob)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("c", ColumnType::Native(NativeType::Boolean)),
                 ];
                 let err = MyRow::type_check(&specs).unwrap_err();
                 let err = get_typck_err_inner(err.0.as_ref());
@@ -749,11 +785,14 @@ fn test_struct_deserialization_errors() {
                 assert_eq!(column_name.as_str(), "a");
                 let err = value::tests::get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<&str>());
-                assert_eq!(err.cql_type, ColumnType::Blob);
+                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
                 assert_matches!(
                     err.kind,
                     value::BuiltinTypeCheckErrorKind::MismatchedType {
-                        expected: &[ColumnType::Ascii, ColumnType::Text]
+                        expected: &[
+                            ColumnType::Native(NativeType::Ascii),
+                            ColumnType::Native(NativeType::Text)
+                        ]
                     }
                 );
             }
@@ -764,9 +803,9 @@ fn test_struct_deserialization_errors() {
             // Too few columns
             {
                 let specs = [
-                    spec("a", ColumnType::Text),
-                    spec("b", ColumnType::Int),
-                    spec("c", ColumnType::Boolean),
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("c", ColumnType::Native(NativeType::Boolean)),
                 ];
 
                 let err = MyRow::deserialize(ColumnIterator::new(
@@ -791,9 +830,9 @@ fn test_struct_deserialization_errors() {
             // Bad field format
             {
                 let typ = [
-                    spec("a", ColumnType::Text),
-                    spec("b", ColumnType::Int),
-                    spec("c", ColumnType::Boolean),
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("c", ColumnType::Native(NativeType::Boolean)),
                 ];
 
                 let row_bytes = serialize_cells(
@@ -822,9 +861,9 @@ fn test_struct_deserialization_errors() {
             // Column deserialization failed
             {
                 let specs = [
-                    spec("a", ColumnType::Text),
-                    spec("b", ColumnType::Int),
-                    spec("c", ColumnType::Boolean),
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("c", ColumnType::Native(NativeType::Boolean)),
                 ];
 
                 let row_bytes = serialize_cells(
@@ -847,7 +886,7 @@ fn test_struct_deserialization_errors() {
                 assert_eq!(field_index, 2);
                 let err = value::tests::get_deser_err(err);
                 assert_eq!(err.rust_name, std::any::type_name::<i32>());
-                assert_eq!(err.cql_type, ColumnType::Int);
+                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
                 assert_matches!(
                     err.kind,
                     value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
@@ -884,8 +923,8 @@ fn metadata_does_not_bound_deserialized_rows() {
         }
 
         let row_typ = &[
-            col_spec("bytes", ColumnType::Blob),
-            col_spec("text", ColumnType::Text),
+            col_spec("bytes", ColumnType::Native(NativeType::Blob)),
+            col_spec("text", ColumnType::Native(NativeType::Text)),
         ];
 
         // Tuple

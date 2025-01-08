@@ -3,7 +3,7 @@ mod derive_macros_integration {
         use bytes::Bytes;
 
         use crate::deserialize::value::tests::{deserialize, udt_def_with_fields};
-        use crate::frame::response::result::ColumnType;
+        use crate::frame::response::result::{ColumnType, NativeType};
         use crate::serialize::value::tests::do_serialize;
 
         #[test]
@@ -33,9 +33,9 @@ mod derive_macros_integration {
                 // All fields present
                 (
                     udt_def_with_fields([
-                        ("a", ColumnType::Text),
-                        ("b", ColumnType::Int),
-                        ("c", ColumnType::BigInt),
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                        ("c", ColumnType::Native(NativeType::BigInt)),
                     ]),
                     Udt {
                         x: String::new(),
@@ -47,7 +47,10 @@ mod derive_macros_integration {
                 // - ignored during serialization,
                 // - default-initialized during deserialization.
                 (
-                    udt_def_with_fields([("a", ColumnType::Text), ("c", ColumnType::BigInt)]),
+                    udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("c", ColumnType::Native(NativeType::BigInt)),
+                    ]),
                     Udt {
                         x: String::new(),
                         b: None,
@@ -58,9 +61,9 @@ mod derive_macros_integration {
                 // UDT fields switched - should still work.
                 (
                     udt_def_with_fields([
-                        ("b", ColumnType::Int),
-                        ("a", ColumnType::Text),
-                        ("c", ColumnType::BigInt),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("c", ColumnType::Native(NativeType::BigInt)),
                     ]),
                     Udt {
                         x: String::new(),
@@ -101,7 +104,10 @@ mod derive_macros_integration {
             let tests = [
                 // All fields present
                 (
-                    udt_def_with_fields([("a", ColumnType::Text), ("b", ColumnType::Int)]),
+                    udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                    ]),
                     Udt {
                         x: String::new(),
                         ..original_udt
@@ -111,9 +117,9 @@ mod derive_macros_integration {
                 // An excess field at the end of UDT
                 (
                     udt_def_with_fields([
-                        ("a", ColumnType::Text),
-                        ("b", ColumnType::Int),
-                        ("d", ColumnType::Boolean),
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                        ("d", ColumnType::Native(NativeType::Boolean)),
                     ]),
                     Udt {
                         x: String::new(),
@@ -123,7 +129,7 @@ mod derive_macros_integration {
                 //
                 // Missing non-required fields
                 (
-                    udt_def_with_fields([("a", ColumnType::Text)]),
+                    udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]),
                     Udt {
                         x: String::new(),
                         b: None,
@@ -133,7 +139,7 @@ mod derive_macros_integration {
                 //
                 // An excess field at the end of UDT instead of non-required fields
                 (
-                    udt_def_with_fields([("d", ColumnType::Boolean)]),
+                    udt_def_with_fields([("d", ColumnType::Native(NativeType::Boolean))]),
                     Udt {
                         x: String::new(),
                         a: "",
@@ -155,7 +161,7 @@ mod derive_macros_integration {
 
         use crate::deserialize::row::tests::deserialize;
         use crate::deserialize::tests::spec;
-        use crate::frame::response::result::ColumnType;
+        use crate::frame::response::result::{ColumnType, NativeType};
         use crate::serialize::row::tests::do_serialize;
 
         #[test]
@@ -183,9 +189,9 @@ mod derive_macros_integration {
                 // All columns present
                 (
                     &[
-                        spec("a", ColumnType::Text),
-                        spec("b", ColumnType::Int),
-                        spec("c", ColumnType::BigInt),
+                        spec("a", ColumnType::Native(NativeType::Text)),
+                        spec("b", ColumnType::Native(NativeType::Int)),
+                        spec("c", ColumnType::Native(NativeType::BigInt)),
                     ][..],
                     MyRow {
                         x: String::new(),
@@ -196,9 +202,9 @@ mod derive_macros_integration {
                 // Columns switched - should still work.
                 (
                     &[
-                        spec("b", ColumnType::Int),
-                        spec("a", ColumnType::Text),
-                        spec("c", ColumnType::BigInt),
+                        spec("b", ColumnType::Native(NativeType::Int)),
+                        spec("a", ColumnType::Native(NativeType::Text)),
+                        spec("c", ColumnType::Native(NativeType::BigInt)),
                     ],
                     MyRow {
                         x: String::new(),
@@ -236,7 +242,10 @@ mod derive_macros_integration {
             let tests = [
                 // All columns present
                 (
-                    &[spec("a", ColumnType::Text), spec("b", ColumnType::Int)][..],
+                    &[
+                        spec("a", ColumnType::Native(NativeType::Text)),
+                        spec("b", ColumnType::Native(NativeType::Int)),
+                    ][..],
                     MyRow {
                         x: String::new(),
                         ..original_row

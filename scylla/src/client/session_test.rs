@@ -5,7 +5,9 @@ use super::session_builder::SessionBuilder;
 use crate as scylla;
 use crate::batch::{Batch, BatchStatement, BatchType};
 use crate::cluster::metadata::Strategy::NetworkTopologyStrategy;
-use crate::cluster::metadata::{CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType};
+use crate::cluster::metadata::{
+    CollectionType, ColumnKind, CqlType, NativeType as MetadataNativeType, UserDefinedType,
+};
 use crate::deserialize::DeserializeOwnedValue;
 use crate::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::observability::tracing::TracingInfo;
@@ -25,7 +27,7 @@ use assert_matches::assert_matches;
 use futures::{FutureExt, StreamExt as _, TryStreamExt};
 use itertools::Itertools;
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
-use scylla_cql::frame::response::result::{ColumnType, Row};
+use scylla_cql::frame::response::result::{ColumnType, NativeType, Row};
 use scylla_cql::frame::value::CqlVarint;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
 use scylla_cql::serialize::value::SerializeValue;
@@ -243,7 +245,8 @@ async fn test_prepared_statement() {
             .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
         let mut pk = SerializedValues::new();
-        pk.add_value(&17_i32, &ColumnType::Int).unwrap();
+        pk.add_value(&17_i32, &ColumnType::Native(NativeType::Int))
+            .unwrap();
         let cluster_data_token = session
             .get_cluster_data()
             .compute_token(&ks, "t2", &pk)
@@ -1504,9 +1507,11 @@ fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType> {
                     type_: CollectionType::Map(
                         Box::new(CqlType::Collection {
                             frozen: true,
-                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                            type_: CollectionType::List(Box::new(CqlType::Native(
+                                MetadataNativeType::Int,
+                            ))),
                         }),
-                        Box::new(CqlType::Native(NativeType::Text)),
+                        Box::new(CqlType::Native(MetadataNativeType::Text)),
                     ),
                 },
             ),
@@ -1517,11 +1522,15 @@ fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType> {
                     type_: CollectionType::Map(
                         Box::new(CqlType::Collection {
                             frozen: true,
-                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                            type_: CollectionType::List(Box::new(CqlType::Native(
+                                MetadataNativeType::Int,
+                            ))),
                         }),
                         Box::new(CqlType::Collection {
                             frozen: true,
-                            type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text))),
+                            type_: CollectionType::Set(Box::new(CqlType::Native(
+                                MetadataNativeType::Text,
+                            ))),
                         }),
                     ),
                 },
@@ -1535,8 +1544,8 @@ fn udt_type_b_def(ks: &str) -> Arc<UserDefinedType> {
         name: "type_b".to_string(),
         keyspace: ks.to_owned(),
         field_types: vec![
-            ("a".to_string(), CqlType::Native(NativeType::Int)),
-            ("b".to_string(), CqlType::Native(NativeType::Text)),
+            ("a".to_string(), CqlType::Native(MetadataNativeType::Int)),
+            ("b".to_string(), CqlType::Native(MetadataNativeType::Text)),
         ],
     })
 }
@@ -1552,7 +1561,9 @@ fn udt_type_c_def(ks: &str) -> Arc<UserDefinedType> {
                 type_: CollectionType::Map(
                     Box::new(CqlType::Collection {
                         frozen: true,
-                        type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text))),
+                        type_: CollectionType::Set(Box::new(CqlType::Native(
+                            MetadataNativeType::Text,
+                        ))),
                     }),
                     Box::new(CqlType::UserDefinedType {
                         frozen: true,
@@ -1677,9 +1688,9 @@ async fn test_schema_types_in_metadata() {
         d.type_,
         CqlType::Collection {
             type_: CollectionType::Map(
-                Box::new(CqlType::Native(NativeType::Text)),
+                Box::new(CqlType::Native(MetadataNativeType::Text)),
                 Box::new(CqlType::Collection {
-                    type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                    type_: CollectionType::List(Box::new(CqlType::Native(MetadataNativeType::Int))),
                     frozen: true
                 })
             ),
@@ -1692,8 +1703,8 @@ async fn test_schema_types_in_metadata() {
     assert_eq!(
         e.type_,
         CqlType::Tuple(vec![
-            CqlType::Native(NativeType::Int),
-            CqlType::Native(NativeType::Text)
+            CqlType::Native(MetadataNativeType::Int),
+            CqlType::Native(MetadataNativeType::Text)
         ])
     );
 
@@ -1701,7 +1712,7 @@ async fn test_schema_types_in_metadata() {
 
     let a = &table_b_columns["a"];
 
-    assert_eq!(a.type_, CqlType::Native(NativeType::Text));
+    assert_eq!(a.type_, CqlType::Native(MetadataNativeType::Text));
 
     let b = &table_b_columns["b"];
 
@@ -1709,8 +1720,8 @@ async fn test_schema_types_in_metadata() {
         b.type_,
         CqlType::Collection {
             type_: CollectionType::Map(
-                Box::new(CqlType::Native(NativeType::Int),),
-                Box::new(CqlType::Native(NativeType::Int),)
+                Box::new(CqlType::Native(MetadataNativeType::Int),),
+                Box::new(CqlType::Native(MetadataNativeType::Int),)
             ),
             frozen: true
         }
@@ -2566,9 +2577,18 @@ async fn test_refresh_metadata_after_schema_agreement() {
             keyspace: ks,
             name: "udt".to_string(),
             field_types: Vec::from([
-                ("field1".to_string(), CqlType::Native(NativeType::Int)),
-                ("field2".to_string(), CqlType::Native(NativeType::Uuid)),
-                ("field3".to_string(), CqlType::Native(NativeType::Text))
+                (
+                    "field1".to_string(),
+                    CqlType::Native(MetadataNativeType::Int)
+                ),
+                (
+                    "field2".to_string(),
+                    CqlType::Native(MetadataNativeType::Uuid)
+                ),
+                (
+                    "field3".to_string(),
+                    CqlType::Native(MetadataNativeType::Text)
+                )
             ])
         })
     );
@@ -3056,7 +3076,7 @@ async fn test_manual_primary_key_computation() {
 
         let mut pk_values_in_pk_order = SerializedValues::new();
         pk_values_in_pk_order
-            .add_value(&17_i32, &ColumnType::Int)
+            .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
             .unwrap();
         let all_values_in_query_order = (17_i32, 16_i32, "I'm prepared!!!");
 
@@ -3085,13 +3105,13 @@ async fn test_manual_primary_key_computation() {
 
         let mut pk_values_in_pk_order = SerializedValues::new();
         pk_values_in_pk_order
-            .add_value(&17_i32, &ColumnType::Int)
+            .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
             .unwrap();
         pk_values_in_pk_order
-            .add_value(&16_i32, &ColumnType::Int)
+            .add_value(&16_i32, &ColumnType::Native(NativeType::Int))
             .unwrap();
         pk_values_in_pk_order
-            .add_value(&"I'm prepared!!!", &ColumnType::Ascii)
+            .add_value(&"I'm prepared!!!", &ColumnType::Native(NativeType::Ascii))
             .unwrap();
         let all_values_in_query_order = (17_i32, "I'm prepared!!!", 16_i32);
 

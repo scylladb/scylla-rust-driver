@@ -2,7 +2,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 
 use bytes::BytesMut;
 use scylla::routing::partitioner::{calculate_token_for_partition_key, Murmur3Partitioner};
-use scylla_cql::frame::{response::result::ColumnType, types};
+use scylla_cql::frame::response::result::{ColumnType, NativeType};
+use scylla_cql::frame::types;
 use scylla_cql::serialize::row::SerializedValues;
 
 fn types_benchmark(c: &mut Criterion) {
@@ -40,45 +41,45 @@ fn types_benchmark(c: &mut Criterion) {
 fn calculate_token_bench(c: &mut Criterion) {
     let mut serialized_simple_pk = SerializedValues::new();
     serialized_simple_pk
-        .add_value(&"I'm prepared!!!", &ColumnType::Text)
+        .add_value(&"I'm prepared!!!", &ColumnType::Native(NativeType::Text))
         .unwrap();
 
     let mut serialized_simple_pk_long_column = SerializedValues::new();
     serialized_simple_pk_long_column
-        .add_value(&17_i32, &ColumnType::Int)
+        .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
         .unwrap();
     serialized_simple_pk_long_column
-        .add_value(&16_i32, &ColumnType::Int)
+        .add_value(&16_i32, &ColumnType::Native(NativeType::Int))
         .unwrap();
     serialized_simple_pk_long_column
         .add_value(
             &String::from_iter(std::iter::repeat('.').take(2000)),
-            &ColumnType::Text,
+            &ColumnType::Native(NativeType::Text),
         )
         .unwrap();
 
     let mut serialized_complex_pk = SerializedValues::new();
     serialized_complex_pk
-        .add_value(&17_i32, &ColumnType::Int)
+        .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
         .unwrap();
     serialized_complex_pk
-        .add_value(&16_i32, &ColumnType::Int)
+        .add_value(&16_i32, &ColumnType::Native(NativeType::Int))
         .unwrap();
     serialized_complex_pk
-        .add_value(&"I'm prepared!!!", &ColumnType::Text)
+        .add_value(&"I'm prepared!!!", &ColumnType::Native(NativeType::Text))
         .unwrap();
 
     let mut serialized_values_long_column = SerializedValues::new();
     serialized_values_long_column
-        .add_value(&17_i32, &ColumnType::Int)
+        .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
         .unwrap();
     serialized_values_long_column
-        .add_value(&16_i32, &ColumnType::Int)
+        .add_value(&16_i32, &ColumnType::Native(NativeType::Int))
         .unwrap();
     serialized_values_long_column
         .add_value(
             &String::from_iter(std::iter::repeat('.').take(2000)),
-            &ColumnType::Text,
+            &ColumnType::Native(NativeType::Text),
         )
         .unwrap();
 

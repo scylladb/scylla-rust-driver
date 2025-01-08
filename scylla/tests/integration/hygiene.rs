@@ -47,6 +47,7 @@ macro_rules! test_crate {
             use _scylla::deserialize::FrameSlice;
             use _scylla::frame::response::result::ColumnSpec;
             use _scylla::frame::response::result::ColumnType;
+            use _scylla::frame::response::result::NativeType;
             use _scylla::frame::response::result::TableSpec;
             use _scylla::serialize::row::RowSerializationContext;
             use _scylla::serialize::row::SerializeRow;
@@ -58,7 +59,7 @@ macro_rules! test_crate {
             let tuple_with_same_layout: (i32,) = (16,);
             let column_types = &[ColumnSpec::borrowed(
                 "a",
-                ColumnType::Int,
+                ColumnType::Native(NativeType::Int),
                 TableSpec::borrowed("ks", "table"),
             )];
             let ctx = RowSerializationContext::from_specs(column_types);
@@ -114,7 +115,7 @@ macro_rules! test_crate {
             use ::tracing::info;
             use _scylla::deserialize::DeserializeValue;
             use _scylla::deserialize::FrameSlice;
-            use _scylla::frame::response::result::{ColumnType, CqlValue};
+            use _scylla::frame::response::result::{ColumnType, NativeType, CqlValue};
             use _scylla::serialize::value::SerializeValue;
             use _scylla::serialize::writers::CellWriter;
 
@@ -129,7 +130,7 @@ macro_rules! test_crate {
             let udt_type = ColumnType::UserDefinedType {
                 type_name: "some_type".into(),
                 keyspace: "some_ks".into(),
-                field_types: vec![("a".into(), ColumnType::Int)],
+                field_types: vec![("a".into(), ColumnType::Native(NativeType::Int))],
             };
 
             let mut buf_struct = Vec::<u8>::new();

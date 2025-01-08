@@ -194,7 +194,7 @@ mod tests {
                 query::{Query, QueryParameters},
                 DeserializableRequest, SerializableRequest,
             },
-            response::result::ColumnType,
+            response::result::{ColumnType, NativeType},
             types::{self, SerialConsistency},
         },
         Consistency,
@@ -215,7 +215,8 @@ mod tests {
             skip_metadata: false,
             values: {
                 let mut vals = SerializedValues::new();
-                vals.add_value(&2137, &ColumnType::Int).unwrap();
+                vals.add_value(&2137, &ColumnType::Native(NativeType::Int))
+                    .unwrap();
                 Cow::Owned(vals)
             },
         };
@@ -243,8 +244,10 @@ mod tests {
             skip_metadata: false,
             values: {
                 let mut vals = SerializedValues::new();
-                vals.add_value(&42, &ColumnType::Int).unwrap();
-                vals.add_value(&2137, &ColumnType::Int).unwrap();
+                vals.add_value(&42, &ColumnType::Native(NativeType::Int))
+                    .unwrap();
+                vals.add_value(&2137, &ColumnType::Native(NativeType::Int))
+                    .unwrap();
                 Cow::Owned(vals)
             },
         };
