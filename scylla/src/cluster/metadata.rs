@@ -1,3 +1,21 @@
+//! This module holds entities that represent the cluster metadata,
+//! which includes:
+//! - topology metadata:
+//!   - [Peer],
+//! - schema metadata:
+//!   - [Keyspace],
+//!   - [Strategy] - replication strategy employed by a keyspace,
+//!   - [Table],
+//!   - [Column],
+//!   - [ColumnKind],
+//!   - [MaterializedView],
+//!   - CQL types:
+//!     - [CqlType],
+//!     - [NativeType],
+//!     - [UserDefinedType],
+//!     - [CollectionType],
+//!
+
 use crate::cluster::node::resolve_contact_points;
 use crate::deserialize::DeserializeOwnedRow;
 use crate::frame::response::event::Event;
