@@ -129,6 +129,7 @@ macro_rules! test_crate {
                 fields: vec![("a".to_string(), Some(CqlValue::Int(16)))],
             };
             let udt_type = ColumnType::UserDefinedType {
+                frozen: false,
                 definition: Arc::new(UserDefinedType {
                     name: "some_type".into(),
                     keyspace: "some_ks".into(),

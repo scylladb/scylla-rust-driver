@@ -734,9 +734,11 @@ where
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::List(el_t),
             }
             | ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Set(el_t),
             } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t).map_err(|err| {
                 mk_typck_err::<Self>(
@@ -759,9 +761,11 @@ where
     ) -> Result<Self, DeserializationError> {
         let elem_typ = match typ {
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::List(elem_typ),
             }
             | ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Set(elem_typ),
             } => elem_typ,
             _ => {
@@ -846,6 +850,7 @@ where
         // Deserializing List straight to BTreeSet would be lossy.
         match typ {
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Set(el_t),
             } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
                 .map_err(typck_error_replace_rust_name::<Self>),
@@ -876,6 +881,7 @@ where
         // Deserializing List straight to HashSet would be lossy.
         match typ {
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Set(el_t),
             } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
                 .map_err(typck_error_replace_rust_name::<Self>),
@@ -949,6 +955,7 @@ where
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Map(k_t, v_t),
             } => {
                 <K as DeserializeValue<'frame, 'metadata>>::type_check(k_t).map_err(|err| {
@@ -969,6 +976,7 @@ where
     ) -> Result<Self, DeserializationError> {
         let (k_typ, v_typ) = match typ {
             ColumnType::Collection {
+                frozen: false,
                 type_: CollectionType::Map(k_t, v_t),
             } => (k_t, v_t),
             _ => {
@@ -1254,7 +1262,9 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for UdtIterator<'fra
     ) -> Result<Self, DeserializationError> {
         let v = ensure_not_null_frame_slice::<Self>(typ, v)?;
         let (fields, type_name, keyspace) = match typ {
-            ColumnType::UserDefinedType { definition: udt } => (
+            ColumnType::UserDefinedType {
+                definition: udt, ..
+            } => (
                 udt.field_types.as_ref(),
                 udt.name.as_ref(),
                 udt.keyspace.as_ref(),
@@ -1284,6 +1294,7 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
             // There were some bytes but they didn't parse as correct field value
             Some(Err(err)) => Err(mk_deser_err::<Self>(
                 &ColumnType::UserDefinedType {
+                    frozen: false,
                     definition: Arc::new(UserDefinedType {
                         name: self.type_name.into(),
                         keyspace: self.keyspace.into(),

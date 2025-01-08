@@ -53,6 +53,7 @@ pub struct TableSpec<'a> {
 pub enum ColumnType<'frame> {
     Native(NativeType),
     Collection {
+        frozen: bool,
         type_: CollectionType<'frame>,
     },
     Vector {
@@ -60,6 +61,7 @@ pub enum ColumnType<'frame> {
         dimensions: u16,
     },
     UserDefinedType {
+        frozen: bool,
         definition: Arc<UserDefinedType<'frame>>,
     },
     Tuple(Vec<ColumnType<'frame>>),
@@ -108,16 +110,21 @@ impl ColumnType<'_> {
     pub fn into_owned(self) -> ColumnType<'static> {
         match self {
             ColumnType::Native(b) => ColumnType::Native(b),
-            ColumnType::Collection { type_: t } => ColumnType::Collection {
+            ColumnType::Collection { frozen, type_: t } => ColumnType::Collection {
+                frozen,
                 type_: t.into_owned(),
             },
             ColumnType::Vector { type_, dimensions } => ColumnType::Vector {
                 type_: Box::new(type_.into_owned()),
                 dimensions,
             },
-            ColumnType::UserDefinedType { definition: udt } => {
+            ColumnType::UserDefinedType {
+                frozen,
+                definition: udt,
+            } => {
                 let udt = Arc::try_unwrap(udt).unwrap_or_else(|e| e.as_ref().clone());
                 ColumnType::UserDefinedType {
+                    frozen,
                     definition: Arc::new(UserDefinedType {
                         name: udt.name.into_owned().into(),
                         keyspace: udt.keyspace.into_owned().into(),
@@ -920,15 +927,18 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
         0x0014 => Native(TinyInt),
         0x0015 => Native(Duration),
         0x0020 => Collection {
+            frozen: false,
             type_: CollectionType::List(Box::new(deser_type_generic(buf, read_string)?)),
         },
         0x0021 => Collection {
+            frozen: false,
             type_: CollectionType::Map(
                 Box::new(deser_type_generic(buf, read_string)?),
                 Box::new(deser_type_generic(buf, read_string)?),
             ),
         },
         0x0022 => Collection {
+            frozen: false,
             type_: CollectionType::Set(Box::new(deser_type_generic(buf, read_string)?)),
         },
         0x0030 => {
@@ -951,6 +961,7 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
             }
 
             UserDefinedType {
+                frozen: false,
                 definition: Arc::new(self::UserDefinedType {
                     name: type_name.into(),
                     keyspace: keyspace_name.into(),
@@ -1382,12 +1393,14 @@ pub fn deser_cql_value(
         }
         Collection {
             type_: CollectionType::List(_type_name),
+            ..
         } => {
             let l = Vec::<CqlValue>::deserialize(typ, v)?;
             CqlValue::List(l)
         }
         Collection {
             type_: CollectionType::Map(_key_type, _value_type),
+            ..
         } => {
             let iter = MapIterator::<'_, '_, CqlValue, CqlValue>::deserialize(typ, v)?;
             let m: Vec<(CqlValue, CqlValue)> = iter.collect::<StdResult<_, _>>()?;
@@ -1395,6 +1408,7 @@ pub fn deser_cql_value(
         }
         Collection {
             type_: CollectionType::Set(_type_name),
+            ..
         } => {
             let s = Vec::<CqlValue>::deserialize(typ, v)?;
             CqlValue::Set(s)
@@ -1405,7 +1419,9 @@ pub fn deser_cql_value(
                 BuiltinDeserializationErrorKind::Unsupported,
             ))
         }
-        UserDefinedType { definition: udt } => {
+        UserDefinedType {
+            definition: udt, ..
+        } => {
             let iter = UdtIterator::deserialize(typ, v)?;
             let fields: Vec<(String, Option<CqlValue>)> = iter
                 .map(|((col_name, col_type), res)| {
@@ -1555,12 +1571,15 @@ mod test_utils {
                 Self::Native(Duration) => 0x0015,
                 Self::Collection {
                     type_: CollectionType::List(_),
+                    ..
                 } => 0x0020,
                 Self::Collection {
                     type_: CollectionType::Map(_, _),
+                    ..
                 } => 0x0021,
                 Self::Collection {
                     type_: CollectionType::Set(_),
+                    ..
                 } => 0x0022,
                 Self::Vector { .. } => {
                     unimplemented!();
@@ -1581,14 +1600,17 @@ mod test_utils {
 
                 ColumnType::Collection {
                     type_: CollectionType::List(elem_type),
+                    ..
                 }
                 | ColumnType::Collection {
                     type_: CollectionType::Set(elem_type),
+                    ..
                 } => {
                     elem_type.serialize(buf)?;
                 }
                 ColumnType::Collection {
                     type_: CollectionType::Map(key_type, value_type),
+                    ..
                 } => {
                     key_type.serialize(buf)?;
                     value_type.serialize(buf)?;
@@ -1602,7 +1624,9 @@ mod test_utils {
                 ColumnType::Vector { .. } => {
                     unimplemented!()
                 }
-                ColumnType::UserDefinedType { definition: udt } => {
+                ColumnType::UserDefinedType {
+                    definition: udt, ..
+                } => {
                     types::write_string(&udt.keyspace, buf)?;
                     types::write_string(&udt.name, buf)?;
                     types::write_short_length(udt.field_types.len(), buf)?;
@@ -2538,12 +2562,14 @@ mod tests {
             (ColumnType::Native(Inet), CqlValue::Empty),
             (
                 ColumnType::Collection {
+                    frozen: false,
                     type_: CollectionType::List(Box::new(ColumnType::Native(Int))),
                 },
                 CqlValue::Empty,
             ),
             (
                 ColumnType::Collection {
+                    frozen: false,
                     type_: CollectionType::Map(
                         Box::new(ColumnType::Native(Int)),
                         Box::new(ColumnType::Native(Int)),
@@ -2553,12 +2579,14 @@ mod tests {
             ),
             (
                 ColumnType::Collection {
+                    frozen: false,
                     type_: CollectionType::Set(Box::new(ColumnType::Native(Int))),
                 },
                 CqlValue::Empty,
             ),
             (
                 ColumnType::UserDefinedType {
+                    frozen: false,
                     definition: Arc::new(UserDefinedType {
                         name: "".into(),
                         keyspace: "".into(),

@@ -1290,6 +1290,7 @@ pub(crate) mod tests {
             col(
                 "c",
                 ColumnType::Collection {
+                    frozen: false,
                     type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
@@ -1316,6 +1317,7 @@ pub(crate) mod tests {
             col(
                 "c",
                 ColumnType::Collection {
+                    frozen: false,
                     type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
@@ -1363,6 +1365,7 @@ pub(crate) mod tests {
             col(
                 "c",
                 ColumnType::Collection {
+                    frozen: false,
                     type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
@@ -1440,6 +1443,7 @@ pub(crate) mod tests {
             col(
                 "c",
                 ColumnType::Collection {
+                    frozen: false,
                     type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
@@ -1470,6 +1474,7 @@ pub(crate) mod tests {
             col(
                 "c",
                 ColumnType::Collection {
+                    frozen: false,
                     type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
@@ -1505,6 +1510,7 @@ pub(crate) mod tests {
             col(
                 "c",
                 ColumnType::Collection {
+                    frozen: false,
                     type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
@@ -1723,6 +1729,7 @@ pub(crate) mod tests {
             col(
                 "c",
                 ColumnType::Collection {
+                    frozen: false,
                     type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
