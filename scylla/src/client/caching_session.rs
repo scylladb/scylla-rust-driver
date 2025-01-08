@@ -7,8 +7,8 @@ use crate::query::Query;
 #[allow(deprecated)]
 use crate::response::legacy_query_result::LegacyQueryResult;
 use crate::response::query_result::QueryResult;
+use crate::response::{PagingState, PagingStateResponse};
 use crate::routing::partitioner::PartitionerName;
-use crate::statement::{PagingState, PagingStateResponse};
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
@@ -347,8 +347,8 @@ mod tests {
     use crate::client::session::Session;
     use crate::prepared_statement::PreparedStatement;
     use crate::query::Query;
+    use crate::response::PagingState;
     use crate::routing::partitioner::PartitionerName;
-    use crate::statement::PagingState;
     use crate::test_utils::{
         create_new_session_builder, scylla_supports_tablets, setup_tracing, PerformDDL,
     };

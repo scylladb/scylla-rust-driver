@@ -146,7 +146,7 @@ On a `Query`:
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::statement::{PagingState, PagingStateResponse};
+use scylla::response::{PagingState, PagingStateResponse};
 use std::ops::ControlFlow;
 
 let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6);
@@ -189,7 +189,7 @@ On a `PreparedStatement`:
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::statement::{PagingState, PagingStateResponse};
+use scylla::response::{PagingState, PagingStateResponse};
 use std::ops::ControlFlow;
 
 let paged_prepared = session

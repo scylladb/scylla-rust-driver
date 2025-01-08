@@ -24,11 +24,13 @@ use crate::frame::{
 use crate::policies::address_translator::AddressTranslator;
 use crate::query::Query;
 use crate::response::query_result::QueryResult;
-use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, QueryResponse};
+use crate::response::{
+    NonErrorAuthResponse, NonErrorStartupResponse, PagingState, PagingStateResponse, QueryResponse,
+};
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardInfo, Sharder};
 use crate::statement::prepared_statement::PreparedStatement;
-use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
+use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
