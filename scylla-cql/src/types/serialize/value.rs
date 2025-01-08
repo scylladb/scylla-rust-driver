@@ -13,7 +13,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::frame::response::result::{ColumnType, CqlValue};
+use crate::frame::response::result::{ColumnType, CqlValue, NativeType};
 use crate::frame::types::vint_encode;
 #[allow(deprecated)]
 use crate::frame::value::{
@@ -59,11 +59,11 @@ pub trait SerializeValue {
 macro_rules! exact_type_check {
     ($typ:ident, $($cql:tt),*) => {
         match $typ {
-            $(ColumnType::$cql)|* => {},
+            $(ColumnType::Native(NativeType::$cql))|* => {},
             _ => return Err(mk_typck_err::<Self>(
                 $typ,
                 BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[$(ColumnType::$cql),*],
+                    expected: &[$(ColumnType::Native(NativeType::$cql)),*],
                 }
             ))
         }
@@ -1637,7 +1637,7 @@ mod doctests {
 pub(crate) mod tests {
     use std::collections::BTreeMap;
 
-    use crate::frame::response::result::{ColumnType, CqlValue};
+    use crate::frame::response::result::{ColumnType, CqlValue, NativeType};
     #[allow(deprecated)]
     use crate::frame::value::{Counter, MaybeUnset, Unset, Value, ValueTooBig};
     #[allow(deprecated)]
@@ -1661,7 +1661,8 @@ pub(crate) mod tests {
 
         let mut new_data = Vec::new();
         let new_data_writer = CellWriter::new(&mut new_data);
-        <V as SerializeValue>::serialize(&v, &ColumnType::Int, new_data_writer).unwrap();
+        <V as SerializeValue>::serialize(&v, &ColumnType::Native(NativeType::Int), new_data_writer)
+            .unwrap();
 
         assert_eq!(legacy_data, new_data);
     }
@@ -1678,12 +1679,22 @@ pub(crate) mod tests {
         let v: i32 = 123;
         let mut typed_data = Vec::new();
         let typed_data_writer = CellWriter::new(&mut typed_data);
-        <_ as SerializeValue>::serialize(&v, &ColumnType::Int, typed_data_writer).unwrap();
+        <_ as SerializeValue>::serialize(
+            &v,
+            &ColumnType::Native(NativeType::Int),
+            typed_data_writer,
+        )
+        .unwrap();
 
         let v = &v as &dyn SerializeValue;
         let mut erased_data = Vec::new();
         let erased_data_writer = CellWriter::new(&mut erased_data);
-        <_ as SerializeValue>::serialize(&v, &ColumnType::Int, erased_data_writer).unwrap();
+        <_ as SerializeValue>::serialize(
+            &v,
+            &ColumnType::Native(NativeType::Int),
+            erased_data_writer,
+        )
+        .unwrap();
 
         assert_eq!(typed_data, erased_data);
     }
@@ -1718,7 +1729,7 @@ pub(crate) mod tests {
             }
         }
 
-        let buf = do_serialize(ValueAdapter(Foo), &ColumnType::Text);
+        let buf = do_serialize(ValueAdapter(Foo), &ColumnType::Native(NativeType::Text));
         let expected = vec![
             0, 0, 0, 11, // Length of the value
             65, 108, 97, 32, 109, 97, 32, 107, 111, 116, 97, // The string
@@ -1744,28 +1755,31 @@ pub(crate) mod tests {
     fn test_native_errors() {
         // Simple type mismatch
         let v = 123_i32;
-        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = do_serialize_err(v, &ColumnType::Native(NativeType::Double));
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<i32>());
-        assert_eq!(err.got, ColumnType::Double);
+        assert_eq!(err.got, ColumnType::Native(NativeType::Double));
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Int],
+                expected: &[ColumnType::Native(NativeType::Int)],
             }
         );
 
         // str (and also Uuid) are interesting because they accept two types,
         // also check str here
         let v = "Ala ma kota";
-        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = do_serialize_err(v, &ColumnType::Native(NativeType::Double));
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<&str>());
-        assert_eq!(err.got, ColumnType::Double);
+        assert_eq!(err.got, ColumnType::Native(NativeType::Double));
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Ascii, ColumnType::Text],
+                expected: &[
+                    ColumnType::Native(NativeType::Ascii),
+                    ColumnType::Native(NativeType::Text)
+                ],
             }
         );
 
@@ -1781,10 +1795,10 @@ pub(crate) mod tests {
 
         // Value overflow (type out of representable range)
         let v = BigDecimal::new(BigInt::from(123), 1i64 << 40);
-        let err = do_serialize_err(v, &ColumnType::Decimal);
+        let err = do_serialize_err(v, &ColumnType::Native(NativeType::Decimal));
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BigDecimal>());
-        assert_eq!(err.got, ColumnType::Decimal);
+        assert_eq!(err.got, ColumnType::Native(NativeType::Decimal));
         assert_matches!(err.kind, BuiltinSerializationErrorKind::ValueOverflow);
     }
 
@@ -1792,10 +1806,10 @@ pub(crate) mod tests {
     fn test_set_or_list_errors() {
         // Not a set or list
         let v = vec![123_i32];
-        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = do_serialize_err(v, &ColumnType::Native(NativeType::Double));
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<i32>>());
-        assert_eq!(err.got, ColumnType::Double);
+        assert_eq!(err.got, ColumnType::Native(NativeType::Double));
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSetOrList)
@@ -1806,7 +1820,7 @@ pub(crate) mod tests {
         // allows us to trigger the right error without going out of memory.
         // Such an array is also created instantaneously.
         let v = &[Unset; 1 << 33] as &[Unset];
-        let typ = ColumnType::List(Box::new(ColumnType::Int));
+        let typ = ColumnType::List(Box::new(ColumnType::Native(NativeType::Int)));
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<&[Unset]>());
@@ -1820,7 +1834,7 @@ pub(crate) mod tests {
 
         // Error during serialization of an element
         let v = vec![123_i32];
-        let typ = ColumnType::List(Box::new(ColumnType::Double));
+        let typ = ColumnType::List(Box::new(ColumnType::Native(NativeType::Double)));
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<i32>>());
@@ -1835,7 +1849,7 @@ pub(crate) mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Int],
+                expected: &[ColumnType::Native(NativeType::Int)],
             }
         );
     }
@@ -1844,10 +1858,10 @@ pub(crate) mod tests {
     fn test_map_errors() {
         // Not a map
         let v = BTreeMap::from([("foo", "bar")]);
-        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = do_serialize_err(v, &ColumnType::Native(NativeType::Double));
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, &str>>());
-        assert_eq!(err.got, ColumnType::Double);
+        assert_eq!(err.got, ColumnType::Native(NativeType::Double));
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::NotMap)
@@ -1858,7 +1872,10 @@ pub(crate) mod tests {
 
         // Error during serialization of a key
         let v = BTreeMap::from([(123_i32, 456_i32)]);
-        let typ = ColumnType::Map(Box::new(ColumnType::Double), Box::new(ColumnType::Int));
+        let typ = ColumnType::Map(
+            Box::new(ColumnType::Native(NativeType::Double)),
+            Box::new(ColumnType::Native(NativeType::Int)),
+        );
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<i32, i32>>());
@@ -1873,13 +1890,16 @@ pub(crate) mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Int],
+                expected: &[ColumnType::Native(NativeType::Int)],
             }
         );
 
         // Error during serialization of a value
         let v = BTreeMap::from([(123_i32, 456_i32)]);
-        let typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Double));
+        let typ = ColumnType::Map(
+            Box::new(ColumnType::Native(NativeType::Int)),
+            Box::new(ColumnType::Native(NativeType::Double)),
+        );
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<i32, i32>>());
@@ -1894,7 +1914,7 @@ pub(crate) mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Int],
+                expected: &[ColumnType::Native(NativeType::Int)],
             }
         );
     }
@@ -1903,10 +1923,10 @@ pub(crate) mod tests {
     fn test_tuple_errors() {
         // Not a tuple
         let v = (123_i32, 456_i32, 789_i32);
-        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = do_serialize_err(v, &ColumnType::Native(NativeType::Double));
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(i32, i32, i32)>());
-        assert_eq!(err.got, ColumnType::Double);
+        assert_eq!(err.got, ColumnType::Native(NativeType::Double));
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple)
@@ -1914,7 +1934,7 @@ pub(crate) mod tests {
 
         // The Rust tuple has more elements than the CQL type
         let v = (123_i32, 456_i32, 789_i32);
-        let typ = ColumnType::Tuple(vec![ColumnType::Int; 2]);
+        let typ = ColumnType::Tuple(vec![ColumnType::Native(NativeType::Int); 2]);
         let err = do_serialize_err(v, &typ);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(i32, i32, i32)>());
@@ -1929,7 +1949,11 @@ pub(crate) mod tests {
 
         // Error during serialization of one of the elements
         let v = (123_i32, "Ala ma kota", 789.0_f64);
-        let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Text, ColumnType::Uuid]);
+        let typ = ColumnType::Tuple(vec![
+            ColumnType::Native(NativeType::Int),
+            ColumnType::Native(NativeType::Text),
+            ColumnType::Native(NativeType::Uuid),
+        ]);
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(i32, &str, f64)>());
@@ -1944,7 +1968,7 @@ pub(crate) mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Double],
+                expected: &[ColumnType::Native(NativeType::Double)],
             }
         );
     }
@@ -1953,10 +1977,10 @@ pub(crate) mod tests {
     fn test_cql_value_errors() {
         // Tried to encode Empty value into a non-emptyable type
         let v = CqlValue::Empty;
-        let err = do_serialize_err(v, &ColumnType::Counter);
+        let err = do_serialize_err(v, &ColumnType::Native(NativeType::Counter));
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
-        assert_eq!(err.got, ColumnType::Counter);
+        assert_eq!(err.got, ColumnType::Native(NativeType::Counter));
         assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NotEmptyable);
 
         // Handle tuples and UDTs in separate tests, as they have some
@@ -1971,10 +1995,10 @@ pub(crate) mod tests {
             Some(CqlValue::Int(456_i32)),
             Some(CqlValue::Int(789_i32)),
         ]);
-        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = do_serialize_err(v, &ColumnType::Native(NativeType::Double));
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
-        assert_eq!(err.got, ColumnType::Double);
+        assert_eq!(err.got, ColumnType::Native(NativeType::Double));
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple)
@@ -1986,7 +2010,7 @@ pub(crate) mod tests {
             Some(CqlValue::Int(456_i32)),
             Some(CqlValue::Int(789_i32)),
         ]);
-        let typ = ColumnType::Tuple(vec![ColumnType::Int; 2]);
+        let typ = ColumnType::Tuple(vec![ColumnType::Native(NativeType::Int); 2]);
         let err = do_serialize_err(v, &typ);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
@@ -2005,7 +2029,11 @@ pub(crate) mod tests {
             Some(CqlValue::Text("Ala ma kota".to_string())),
             Some(CqlValue::Double(789_f64)),
         ]);
-        let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Text, ColumnType::Uuid]);
+        let typ = ColumnType::Tuple(vec![
+            ColumnType::Native(NativeType::Int),
+            ColumnType::Native(NativeType::Text),
+            ColumnType::Native(NativeType::Uuid),
+        ]);
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
@@ -2020,7 +2048,7 @@ pub(crate) mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Double],
+                expected: &[ColumnType::Native(NativeType::Double)],
             }
         );
     }
@@ -2037,10 +2065,10 @@ pub(crate) mod tests {
                 ("c".to_string(), Some(CqlValue::Int(789_i32))),
             ],
         };
-        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = do_serialize_err(v, &ColumnType::Native(NativeType::Double));
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
-        assert_eq!(err.got, ColumnType::Double);
+        assert_eq!(err.got, ColumnType::Native(NativeType::Double));
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt)
@@ -2060,9 +2088,9 @@ pub(crate) mod tests {
             type_name: "udt2".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Int),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Native(NativeType::Int)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                ("c".into(), ColumnType::Native(NativeType::Int)),
             ],
         };
         let err = do_serialize_err(v, &typ);
@@ -2093,8 +2121,8 @@ pub(crate) mod tests {
             type_name: "udt".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Int),
-                ("b".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Native(NativeType::Int)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
                 // c is missing
             ],
         };
@@ -2127,9 +2155,9 @@ pub(crate) mod tests {
             type_name: "udt".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Int),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::Double),
+                ("a".into(), ColumnType::Native(NativeType::Int)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                ("c".into(), ColumnType::Native(NativeType::Double)),
             ],
         };
         let err = do_serialize_err(v, &typ);
@@ -2147,7 +2175,7 @@ pub(crate) mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Int],
+                expected: &[ColumnType::Native(NativeType::Int)],
             }
         );
     }
@@ -2174,9 +2202,12 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
             ],
         };
 
@@ -2221,9 +2252,12 @@ pub(crate) mod tests {
             keyspace: "ks".into(),
             field_types: vec![
                 // Two first columns are swapped
-                ("b".into(), ColumnType::Int),
-                ("a".into(), ColumnType::Text),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
             ],
         };
 
@@ -2271,9 +2305,12 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
             ],
         };
 
@@ -2281,12 +2318,15 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
                 // Unexpected fields
-                ("d".into(), ColumnType::Counter),
-                ("e".into(), ColumnType::Counter),
+                ("d".into(), ColumnType::Native(NativeType::Counter)),
+                ("e".into(), ColumnType::Native(NativeType::Counter)),
             ],
         };
 
@@ -2325,13 +2365,16 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
                 // Unexpected fields
-                ("d".into(), ColumnType::Counter),
-                ("e".into(), ColumnType::Float),
+                ("d".into(), ColumnType::Native(NativeType::Counter)),
+                ("e".into(), ColumnType::Native(NativeType::Float)),
                 // Remaining normal field
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
             ],
         };
 
@@ -2345,7 +2388,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_udt_serialization_failing_type_check() {
-        let typ_not_udt = ColumnType::Ascii;
+        let typ_not_udt = ColumnType::Native(NativeType::Ascii);
         let udt = TestUdtWithFieldSorting::default();
         let mut data = Vec::new();
 
@@ -2362,8 +2405,8 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
                 // Last field is missing
             ],
         };
@@ -2383,9 +2426,9 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::TinyInt), // Wrong column type
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                ("c".into(), ColumnType::Native(NativeType::TinyInt)), // Wrong column type
             ],
         };
 
@@ -2415,7 +2458,10 @@ pub(crate) mod tests {
             let typ = ColumnType::UserDefinedType {
                 type_name: "typ".into(),
                 keyspace: "ks".into(),
-                field_types: vec![("a".into(), ColumnType::Text), ("b".into(), typ)],
+                field_types: vec![
+                    ("a".into(), ColumnType::Native(NativeType::Text)),
+                    ("b".into(), typ),
+                ],
             };
             let reference = do_serialize(
                 CqlValue::UserDefinedType {
@@ -2441,8 +2487,16 @@ pub(crate) mod tests {
             assert_eq!(reference, udt);
         }
 
-        check_with_type(ColumnType::Int, 123_i32, CqlValue::Int(123_i32));
-        check_with_type(ColumnType::Double, 123_f64, CqlValue::Double(123_f64));
+        check_with_type(
+            ColumnType::Native(NativeType::Int),
+            123_i32,
+            CqlValue::Int(123_i32),
+        );
+        check_with_type(
+            ColumnType::Native(NativeType::Double),
+            123_f64,
+            CqlValue::Double(123_f64),
+        );
     }
 
     #[derive(SerializeValue, Debug, PartialEq, Eq, Default)]
@@ -2459,9 +2513,12 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
             ],
         };
 
@@ -2507,9 +2564,12 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
             ],
         };
 
@@ -2517,11 +2577,14 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
                 // Unexpected field
-                ("d".into(), ColumnType::Counter),
+                ("d".into(), ColumnType::Native(NativeType::Counter)),
             ],
         };
 
@@ -2533,7 +2596,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_udt_serialization_with_enforced_order_failing_type_check() {
-        let typ_not_udt = ColumnType::Ascii;
+        let typ_not_udt = ColumnType::Native(NativeType::Ascii);
         let udt = TestUdtWithEnforcedOrder::default();
 
         let mut data = Vec::new();
@@ -2551,9 +2614,12 @@ pub(crate) mod tests {
             keyspace: "ks".into(),
             field_types: vec![
                 // Two first columns are swapped
-                ("b".into(), ColumnType::Int),
-                ("a".into(), ColumnType::Text),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
             ],
         };
 
@@ -2569,8 +2635,8 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
                 // Last field is missing
             ],
         };
@@ -2590,9 +2656,9 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::TinyInt), // Wrong column type
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                ("c".into(), ColumnType::Native(NativeType::TinyInt)), // Wrong column type
             ],
         };
 
@@ -2633,8 +2699,8 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("x".into(), ColumnType::Int),
-                ("a".into(), ColumnType::Text),
+                ("x".into(), ColumnType::Native(NativeType::Int)),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
             ],
         };
 
@@ -2665,8 +2731,8 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("x".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("x".into(), ColumnType::Native(NativeType::Int)),
             ],
         };
 
@@ -2705,8 +2771,8 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("x".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("x".into(), ColumnType::Native(NativeType::Int)),
             ],
         };
 
@@ -2748,11 +2814,14 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
                 // Unexpected field
-                ("d".into(), ColumnType::Counter),
+                ("d".into(), ColumnType::Native(NativeType::Counter)),
             ],
         };
 
@@ -2769,11 +2838,14 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
                 // Unexpected field
-                ("b_c".into(), ColumnType::Counter),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("b_c".into(), ColumnType::Native(NativeType::Counter)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
             ],
         };
 
@@ -2804,11 +2876,14 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
                 // Unexpected field
-                ("d".into(), ColumnType::Counter),
+                ("d".into(), ColumnType::Native(NativeType::Counter)),
             ],
         };
 
@@ -2842,9 +2917,12 @@ pub(crate) mod tests {
             type_name: "typ".into(),
             keyspace: "ks".into(),
             field_types: vec![
-                ("a".into(), ColumnType::Text),
-                ("b".into(), ColumnType::Int),
-                ("c".into(), ColumnType::List(Box::new(ColumnType::BigInt))),
+                ("a".into(), ColumnType::Native(NativeType::Text)),
+                ("b".into(), ColumnType::Native(NativeType::Int)),
+                (
+                    "c".into(),
+                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ),
             ],
         };
 
@@ -2881,7 +2959,7 @@ pub(crate) mod tests {
         let typ = ColumnType::UserDefinedType {
             type_name: "typ".into(),
             keyspace: "ks".into(),
-            field_types: vec![("a$a".into(), ColumnType::Int)],
+            field_types: vec![("a$a".into(), ColumnType::Native(NativeType::Int))],
         };
         let value = UdtWithNonRustIdent { a: 42 };
 

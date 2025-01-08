@@ -526,6 +526,7 @@ mod tests {
     use assert_matches::assert_matches;
     use bytes::{Bytes, BytesMut};
     use itertools::Itertools as _;
+    use scylla_cql::frame::response::result::NativeType;
     use scylla_cql::frame::response::result::ResultMetadata;
     use scylla_cql::frame::types;
 
@@ -538,9 +539,9 @@ mod tests {
             ColumnSpec::owned(
                 format!("col_{}", k),
                 match k % 3 {
-                    0 => ColumnType::Ascii,
-                    1 => ColumnType::Boolean,
-                    2 => ColumnType::Float,
+                    0 => ColumnType::Native(NativeType::Ascii),
+                    1 => ColumnType::Native(NativeType::Boolean),
+                    2 => ColumnType::Native(NativeType::Float),
                     _ => unreachable!(),
                 },
                 TABLE_SPEC,
@@ -569,9 +570,9 @@ mod tests {
             static BOOLEAN: &[u8] = &(true as i8).to_be_bytes();
             static FLOAT: &[u8] = &12341_i32.to_be_bytes();
             let cells = metadata.col_specs().iter().map(|spec| match spec.typ() {
-                ColumnType::Ascii => STRING,
-                ColumnType::Boolean => BOOLEAN,
-                ColumnType::Float => FLOAT,
+                ColumnType::Native(NativeType::Ascii) => STRING,
+                ColumnType::Native(NativeType::Boolean) => BOOLEAN,
+                ColumnType::Native(NativeType::Float) => FLOAT,
                 _ => unreachable!(),
             });
             let bytes = serialize_cells(cells.map(Some));

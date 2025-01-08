@@ -21,7 +21,7 @@ use crate::frame::value::{
 };
 use crate::frame::{frame_errors::LowLevelDeserializationError, value::CqlVarintBorrowed};
 use crate::frame::{
-    response::result::{deser_cql_value, ColumnType, CqlValue},
+    response::result::{deser_cql_value, ColumnType, CqlValue, NativeType},
     value::CqlDecimalBorrowed,
 };
 
@@ -349,7 +349,7 @@ macro_rules! impl_string_type {
 }
 
 fn check_ascii<T>(typ: &ColumnType, s: &[u8]) -> Result<(), DeserializationError> {
-    if matches!(typ, ColumnType::Ascii) && !s.is_ascii() {
+    if matches!(typ, ColumnType::Native(NativeType::Ascii)) && !s.is_ascii() {
         return Err(mk_deser_err::<T>(
             typ,
             BuiltinDeserializationErrorKind::ExpectedAscii,
@@ -1449,11 +1449,11 @@ fn mk_typck_err_named(
 macro_rules! exact_type_check {
     ($typ:ident, $($cql:tt),*) => {
         match $typ {
-            $(ColumnType::$cql)|* => {},
+            $(ColumnType::Native(NativeType::$cql))|* => {},
             _ => return Err(mk_typck_err::<Self>(
                 $typ,
                 BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[$(ColumnType::$cql),*],
+                    expected: &[$(ColumnType::Native(NativeType::$cql)),*],
                 }
             ))
         }

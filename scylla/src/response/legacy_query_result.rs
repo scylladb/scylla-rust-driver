@@ -367,6 +367,7 @@ mod tests {
     use std::sync::Arc;
 
     use assert_matches::assert_matches;
+    use result::NativeType;
     use scylla_cql::frame::response::result::{ColumnType, ResultMetadata, TableSpec};
 
     // Returns specified number of rows, each one containing one int32 value.
@@ -397,7 +398,8 @@ mod tests {
     fn make_test_metadata() -> ResultMetadata<'static> {
         let table_spec = TableSpec::borrowed("some_keyspace", "some_table");
 
-        let column_spec = ColumnSpec::borrowed("column0", ColumnType::Int, table_spec);
+        let column_spec =
+            ColumnSpec::borrowed("column0", ColumnType::Native(NativeType::Int), table_spec);
 
         ResultMetadata::new_for_test(1, vec![column_spec])
     }
