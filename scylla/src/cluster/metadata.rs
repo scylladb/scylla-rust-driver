@@ -322,40 +322,6 @@ pub enum NativeType {
     Varint,
 }
 
-/// [NativeType] parse error
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NativeTypeFromStrError;
-
-impl std::str::FromStr for NativeType {
-    type Err = NativeTypeFromStrError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "ascii" => Ok(Self::Ascii),
-            "boolean" => Ok(Self::Boolean),
-            "blob" => Ok(Self::Blob),
-            "counter" => Ok(Self::Counter),
-            "date" => Ok(Self::Date),
-            "decimal" => Ok(Self::Decimal),
-            "double" => Ok(Self::Double),
-            "duration" => Ok(Self::Duration),
-            "float" => Ok(Self::Float),
-            "int" => Ok(Self::Int),
-            "bigint" => Ok(Self::BigInt),
-            "text" => Ok(Self::Text),
-            "timestamp" => Ok(Self::Timestamp),
-            "inet" => Ok(Self::Inet),
-            "smallint" => Ok(Self::SmallInt),
-            "tinyint" => Ok(Self::TinyInt),
-            "time" => Ok(Self::Time),
-            "timeuuid" => Ok(Self::Timeuuid),
-            "uuid" => Ok(Self::Uuid),
-            "varint" => Ok(Self::Varint),
-            _ => Err(NativeTypeFromStrError),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PreCollectionType {
     List(Box<PreCqlType>),
@@ -1811,8 +1777,29 @@ fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_
 
 fn parse_native_type(p: ParserState) -> ParseResult<(NativeType, ParserState)> {
     let (tok, p) = p.take_while(|c| c.is_alphanumeric() || c == '_');
-    let typ = NativeType::from_str(tok)
-        .map_err(|_| p.error(ParseErrorCause::Other("invalid native type")))?;
+    let typ = match tok {
+        "ascii" => NativeType::Ascii,
+        "boolean" => NativeType::Boolean,
+        "blob" => NativeType::Blob,
+        "counter" => NativeType::Counter,
+        "date" => NativeType::Date,
+        "decimal" => NativeType::Decimal,
+        "double" => NativeType::Double,
+        "duration" => NativeType::Duration,
+        "float" => NativeType::Float,
+        "int" => NativeType::Int,
+        "bigint" => NativeType::BigInt,
+        "text" => NativeType::Text,
+        "timestamp" => NativeType::Timestamp,
+        "inet" => NativeType::Inet,
+        "smallint" => NativeType::SmallInt,
+        "tinyint" => NativeType::TinyInt,
+        "time" => NativeType::Time,
+        "timeuuid" => NativeType::Timeuuid,
+        "uuid" => NativeType::Uuid,
+        "varint" => NativeType::Varint,
+        _ => return Err(p.error(ParseErrorCause::Other("invalid native type"))),
+    };
     Ok((typ, p))
 }
 
