@@ -5,13 +5,12 @@ use super::session::{
     AddressTranslator, CurrentDeserializationApi, GenericSession, LegacyDeserializationApi,
     SessionConfig,
 };
-use super::Compression;
+use super::{Compression, PoolSize};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
 use crate::statement::Consistency;
 use crate::transport::connection::SelfIdentity;
-use crate::transport::connection_pool::PoolSize;
 use crate::transport::errors::NewSessionError;
 use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::host_filter::HostFilter;
@@ -627,7 +626,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::num::NonZeroUsize;
-    /// use scylla::client::session::PoolSize;
+    /// use scylla::client::PoolSize;
     ///
     /// // This session will establish 4 connections to each node.
     /// // For Scylla clusters, this number will be divided across shards

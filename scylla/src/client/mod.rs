@@ -8,3 +8,5 @@ pub mod session_builder;
 mod session_test;
 
 pub use scylla_cql::frame::Compression;
+
+pub use crate::transport::connection_pool::PoolSize;
