@@ -239,7 +239,7 @@ mod tests {
     use std::ops::Deref;
 
     use crate::frame::response::result::{
-        ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, ResultMetadata,
+        ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, NativeType, ResultMetadata,
     };
 
     use super::super::tests::{serialize_cells, spec, CELL1, CELL2};
@@ -291,8 +291,10 @@ mod tests {
         // `std::sync::LazyLock` is stable since 1.80, so once we bump MSRV enough,
         // we will be able to replace `lazy_static` with `LazyLock`.
 
-        static SPECS: &[ColumnSpec<'static>] =
-            &[spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
+        static SPECS: &[ColumnSpec<'static>] = &[
+            spec("b1", ColumnType::Native(NativeType::Blob)),
+            spec("b2", ColumnType::Native(NativeType::Blob)),
+        ];
         lazy_static::lazy_static! {
             static ref RAW_DATA: Bytes = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
         }
@@ -333,8 +335,10 @@ mod tests {
 
     #[test]
     fn test_row_iterators_too_few_rows() {
-        static SPECS: &[ColumnSpec<'static>] =
-            &[spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
+        static SPECS: &[ColumnSpec<'static>] = &[
+            spec("b1", ColumnType::Native(NativeType::Blob)),
+            spec("b2", ColumnType::Native(NativeType::Blob)),
+        ];
         lazy_static::lazy_static! {
             static ref RAW_DATA: Bytes = serialize_cells([Some(CELL1), Some(CELL2)]);
         }
@@ -363,7 +367,10 @@ mod tests {
     #[test]
     fn test_typed_row_iterator_basic_parse() {
         let raw_data = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
-        let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
+        let specs = [
+            spec("b1", ColumnType::Native(NativeType::Blob)),
+            spec("b2", ColumnType::Native(NativeType::Blob)),
+        ];
         let iter = RawRowIterator::new(2, &specs, FrameSlice::new(&raw_data));
         let mut iter = TypedRowIterator::<'_, '_, (&[u8], Vec<u8>)>::new(iter).unwrap();
 
@@ -381,7 +388,10 @@ mod tests {
     #[test]
     fn test_typed_row_iterator_wrong_type() {
         let raw_data = Bytes::new();
-        let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
+        let specs = [
+            spec("b1", ColumnType::Native(NativeType::Blob)),
+            spec("b2", ColumnType::Native(NativeType::Blob)),
+        ];
         let iter = RawRowIterator::new(0, &specs, FrameSlice::new(&raw_data));
         assert!(TypedRowIterator::<'_, '_, (i32, i64)>::new(iter).is_err());
     }

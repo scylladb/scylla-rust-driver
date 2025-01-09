@@ -21,7 +21,7 @@ You can use the builder methods to configure the desired settings and create a
 ```rust
 # extern crate scylla;
 # fn test_if_compiles() {
-use scylla::load_balancing::DefaultPolicy;
+use scylla::policies::load_balancing::DefaultPolicy;
 
 let default_policy = DefaultPolicy::builder()
         .prefer_datacenter_and_rack("dc1".to_string(), "rack1".to_string())
@@ -122,7 +122,7 @@ this mechanism may as well worsen latencies and/or throughput.
 ```rust
 # extern crate scylla;
 # fn example() {
-use scylla::load_balancing::{
+use scylla::policies::load_balancing::{
     LatencyAwarenessBuilder, DefaultPolicy
 };
 use std::time::Duration;
@@ -144,7 +144,7 @@ let policy = DefaultPolicy::builder()
 ```rust
 # extern crate scylla;
 # fn test_if_compiles() {
-use scylla::load_balancing::DefaultPolicy;
+use scylla::policies::load_balancing::DefaultPolicy;
 
 let default_policy = DefaultPolicy::builder()
         .prefer_datacenter("dc1".to_string())

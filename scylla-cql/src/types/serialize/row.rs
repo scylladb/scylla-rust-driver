@@ -948,7 +948,9 @@ pub(crate) mod tests {
     use std::borrow::Cow;
     use std::collections::BTreeMap;
 
-    use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
+    use crate::frame::response::result::{
+        CollectionType, ColumnSpec, ColumnType, NativeType, TableSpec,
+    };
     use crate::frame::types::RawValue;
     #[allow(deprecated)]
     use crate::frame::value::{LegacySerializedValues, MaybeUnset, SerializedResult, ValueList};
@@ -986,10 +988,10 @@ pub(crate) mod tests {
         let mut new_data_writer = RowWriter::new(&mut new_data);
         let ctx = RowSerializationContext {
             columns: &[
-                col_spec("a", ColumnType::Int),
-                col_spec("b", ColumnType::Text),
-                col_spec("c", ColumnType::BigInt),
-                col_spec("b", ColumnType::Ascii),
+                col_spec("a", ColumnType::Native(NativeType::Int)),
+                col_spec("b", ColumnType::Native(NativeType::Text)),
+                col_spec("c", ColumnType::Native(NativeType::BigInt)),
+                col_spec("b", ColumnType::Native(NativeType::Ascii)),
             ],
         };
         <_ as SerializeRow>::serialize(&row, &ctx, &mut new_data_writer).unwrap();
@@ -1024,10 +1026,10 @@ pub(crate) mod tests {
         let mut unsorted_row_data_writer = RowWriter::new(&mut unsorted_row_data);
         let ctx = RowSerializationContext {
             columns: &[
-                col_spec("a", ColumnType::Int),
-                col_spec("b", ColumnType::Text),
-                col_spec("c", ColumnType::BigInt),
-                col_spec("d", ColumnType::Ascii),
+                col_spec("a", ColumnType::Native(NativeType::Int)),
+                col_spec("b", ColumnType::Native(NativeType::Text)),
+                col_spec("c", ColumnType::Native(NativeType::BigInt)),
+                col_spec("d", ColumnType::Native(NativeType::Ascii)),
             ],
         };
         <_ as SerializeRow>::serialize(&unsorted_row, &ctx, &mut unsorted_row_data_writer).unwrap();
@@ -1047,10 +1049,10 @@ pub(crate) mod tests {
         );
         let ctx = RowSerializationContext {
             columns: &[
-                col_spec("a", ColumnType::Int),
-                col_spec("b", ColumnType::Text),
-                col_spec("c", ColumnType::BigInt),
-                col_spec("d", ColumnType::Ascii),
+                col_spec("a", ColumnType::Native(NativeType::Int)),
+                col_spec("b", ColumnType::Native(NativeType::Text)),
+                col_spec("c", ColumnType::Native(NativeType::BigInt)),
+                col_spec("d", ColumnType::Native(NativeType::Ascii)),
             ],
         };
 
@@ -1103,8 +1105,8 @@ pub(crate) mod tests {
         }
 
         let columns = &[
-            col_spec("a", ColumnType::Int),
-            col_spec("b", ColumnType::Int),
+            col_spec("a", ColumnType::Native(NativeType::Int)),
+            col_spec("b", ColumnType::Native(NativeType::Int)),
         ];
         let buf = do_serialize(ValueListAdapter(Foo), columns);
         let expected = vec![
@@ -1133,7 +1135,7 @@ pub(crate) mod tests {
         // Unit
         #[allow(clippy::let_unit_value)] // The let binding below is intentional
         let v = ();
-        let spec = [col("a", ColumnType::Text)];
+        let spec = [col("a", ColumnType::Native(NativeType::Text))];
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<()>());
@@ -1148,7 +1150,10 @@ pub(crate) mod tests {
         // Non-unit tuple
         // Count mismatch
         let v = ("Ala ma kota",);
-        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Text)];
+        let spec = [
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Text)),
+        ];
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(&str,)>());
@@ -1162,7 +1167,10 @@ pub(crate) mod tests {
 
         // Serialization of one of the element fails
         let v = ("Ala ma kota", 123_i32);
-        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Text)];
+        let spec = [
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Text)),
+        ];
         let err = do_serialize_err(v, &spec);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(&str, i32)>());
@@ -1178,7 +1186,10 @@ pub(crate) mod tests {
         // Non-unit tuple
         // Count mismatch
         let v = vec!["Ala ma kota"];
-        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Text)];
+        let spec = [
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Text)),
+        ];
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<&str>>());
@@ -1192,7 +1203,10 @@ pub(crate) mod tests {
 
         // Serialization of one of the element fails
         let v = vec!["Ala ma kota", "Kot ma pchły"];
-        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Int)];
+        let spec = [
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Int)),
+        ];
         let err = do_serialize_err(v, &spec);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<&str>>());
@@ -1207,7 +1221,10 @@ pub(crate) mod tests {
     fn test_map_errors() {
         // Missing value for a bind marker
         let v: BTreeMap<_, _> = vec![("a", 123_i32)].into_iter().collect();
-        let spec = [col("a", ColumnType::Int), col("b", ColumnType::Text)];
+        let spec = [
+            col("a", ColumnType::Native(NativeType::Int)),
+            col("b", ColumnType::Native(NativeType::Text)),
+        ];
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, i32>>());
@@ -1218,7 +1235,7 @@ pub(crate) mod tests {
 
         // Additional value, not present in the query
         let v: BTreeMap<_, _> = vec![("a", 123_i32), ("b", 456_i32)].into_iter().collect();
-        let spec = [col("a", ColumnType::Int)];
+        let spec = [col("a", ColumnType::Native(NativeType::Int))];
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, i32>>());
@@ -1229,7 +1246,10 @@ pub(crate) mod tests {
 
         // Serialization of one of the element fails
         let v: BTreeMap<_, _> = vec![("a", 123_i32), ("b", 456_i32)].into_iter().collect();
-        let spec = [col("a", ColumnType::Int), col("b", ColumnType::Text)];
+        let spec = [
+            col("a", ColumnType::Native(NativeType::Int)),
+            col("b", ColumnType::Native(NativeType::Text)),
+        ];
         let err = do_serialize_err(v, &spec);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, i32>>());
@@ -1259,9 +1279,15 @@ pub(crate) mod tests {
     #[test]
     fn test_row_serialization_with_column_sorting_correct_order() {
         let spec = [
-            col("a", ColumnType::Text),
-            col("b", ColumnType::Int),
-            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Int)),
+            col(
+                "c",
+                ColumnType::Collection {
+                    frozen: false,
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
+            ),
         ];
 
         let reference = do_serialize(("Ala ma kota", 42i32, vec![1i64, 2i64, 3i64]), &spec);
@@ -1281,9 +1307,15 @@ pub(crate) mod tests {
     fn test_row_serialization_with_column_sorting_incorrect_order() {
         // The order of two last columns is swapped
         let spec = [
-            col("a", ColumnType::Text),
-            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
-            col("b", ColumnType::Int),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col(
+                "c",
+                ColumnType::Collection {
+                    frozen: false,
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
+            ),
+            col("b", ColumnType::Native(NativeType::Int)),
         ];
 
         let reference = do_serialize(("Ala ma kota", vec![1i64, 2i64, 3i64], 42i32), &spec);
@@ -1306,8 +1338,8 @@ pub(crate) mod tests {
         let mut row_writer = RowWriter::new(&mut data);
 
         let spec_without_c = [
-            col("a", ColumnType::Text),
-            col("b", ColumnType::Int),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Int)),
             // Missing column c
         ];
 
@@ -1322,11 +1354,17 @@ pub(crate) mod tests {
         );
 
         let spec_duplicate_column = [
-            col("a", ColumnType::Text),
-            col("b", ColumnType::Int),
-            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Int)),
+            col(
+                "c",
+                ColumnType::Collection {
+                    frozen: false,
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
+            ),
             // Unexpected last column
-            col("d", ColumnType::Counter),
+            col("d", ColumnType::Native(NativeType::Counter)),
         ];
 
         let ctx = RowSerializationContext {
@@ -1337,9 +1375,9 @@ pub(crate) mod tests {
         assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
 
         let spec_wrong_type = [
-            col("a", ColumnType::Text),
-            col("b", ColumnType::Int),
-            col("c", ColumnType::TinyInt), // Wrong type
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Int)),
+            col("c", ColumnType::Native(NativeType::TinyInt)), // Wrong type
         ];
 
         let ctx = RowSerializationContext {
@@ -1364,7 +1402,10 @@ pub(crate) mod tests {
     fn test_row_serialization_with_generics() {
         // A minimal smoke test just to test that it works.
         fn check_with_type<T: SerializeValue + Copy>(typ: ColumnType<'static>, t: T) {
-            let spec = [col("a", ColumnType::Text), col("b", typ)];
+            let spec = [
+                col("a", ColumnType::Native(NativeType::Text)),
+                col("b", typ),
+            ];
             let reference = do_serialize(("Ala ma kota", t), &spec);
             let row = do_serialize(
                 TestRowWithGenerics {
@@ -1376,8 +1417,8 @@ pub(crate) mod tests {
             assert_eq!(reference, row);
         }
 
-        check_with_type(ColumnType::Int, 123_i32);
-        check_with_type(ColumnType::Double, 123_f64);
+        check_with_type(ColumnType::Native(NativeType::Int), 123_i32);
+        check_with_type(ColumnType::Native(NativeType::Double), 123_f64);
     }
 
     #[derive(SerializeRow, Debug, PartialEq, Eq, Default)]
@@ -1391,9 +1432,15 @@ pub(crate) mod tests {
     #[test]
     fn test_row_serialization_with_enforced_order_correct_order() {
         let spec = [
-            col("a", ColumnType::Text),
-            col("b", ColumnType::Int),
-            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Int)),
+            col(
+                "c",
+                ColumnType::Collection {
+                    frozen: false,
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
+            ),
         ];
 
         let reference = do_serialize(("Ala ma kota", 42i32, vec![1i64, 2i64, 3i64]), &spec);
@@ -1417,9 +1464,15 @@ pub(crate) mod tests {
 
         // The order of two last columns is swapped
         let spec = [
-            col("a", ColumnType::Text),
-            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
-            col("b", ColumnType::Int),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col(
+                "c",
+                ColumnType::Collection {
+                    frozen: false,
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
+            ),
+            col("b", ColumnType::Native(NativeType::Int)),
         ];
         let ctx = RowSerializationContext { columns: &spec };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
@@ -1430,8 +1483,8 @@ pub(crate) mod tests {
         );
 
         let spec_without_c = [
-            col("a", ColumnType::Text),
-            col("b", ColumnType::Int),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Int)),
             // Missing column c
         ];
 
@@ -1446,11 +1499,17 @@ pub(crate) mod tests {
         );
 
         let spec_duplicate_column = [
-            col("a", ColumnType::Text),
-            col("b", ColumnType::Int),
-            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Int)),
+            col(
+                "c",
+                ColumnType::Collection {
+                    frozen: false,
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
+            ),
             // Unexpected last column
-            col("d", ColumnType::Counter),
+            col("d", ColumnType::Native(NativeType::Counter)),
         ];
 
         let ctx = RowSerializationContext {
@@ -1461,9 +1520,9 @@ pub(crate) mod tests {
         assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
 
         let spec_wrong_type = [
-            col("a", ColumnType::Text),
-            col("b", ColumnType::Int),
-            col("c", ColumnType::TinyInt), // Wrong type
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Int)),
+            col("c", ColumnType::Native(NativeType::TinyInt)), // Wrong type
         ];
 
         let ctx = RowSerializationContext {
@@ -1489,8 +1548,12 @@ pub(crate) mod tests {
     #[test]
     fn test_serialized_values_content() {
         let mut values = SerializedValues::new();
-        values.add_value(&1234i32, &ColumnType::Int).unwrap();
-        values.add_value(&"abcdefg", &ColumnType::Ascii).unwrap();
+        values
+            .add_value(&1234i32, &ColumnType::Native(NativeType::Int))
+            .unwrap();
+        values
+            .add_value(&"abcdefg", &ColumnType::Native(NativeType::Ascii))
+            .unwrap();
         let mut buf = Vec::new();
         values.write_to_request(&mut buf);
         assert_eq!(
@@ -1508,8 +1571,12 @@ pub(crate) mod tests {
     #[test]
     fn test_serialized_values_iter() {
         let mut values = SerializedValues::new();
-        values.add_value(&1234i32, &ColumnType::Int).unwrap();
-        values.add_value(&"abcdefg", &ColumnType::Ascii).unwrap();
+        values
+            .add_value(&1234i32, &ColumnType::Native(NativeType::Int))
+            .unwrap();
+        values
+            .add_value(&"abcdefg", &ColumnType::Native(NativeType::Ascii))
+            .unwrap();
 
         let mut iter = values.iter();
         assert_eq!(iter.next(), Some(RawValue::Value(&[0, 0, 4, 210])));
@@ -1525,13 +1592,13 @@ pub(crate) mod tests {
         let mut values = SerializedValues::new();
         for _ in 0..65535 {
             values
-                .add_value(&123456789i64, &ColumnType::BigInt)
+                .add_value(&123456789i64, &ColumnType::Native(NativeType::BigInt))
                 .unwrap();
         }
 
         // Adding this value should fail, we reached max capacity
         values
-            .add_value(&123456789i64, &ColumnType::BigInt)
+            .add_value(&123456789i64, &ColumnType::Native(NativeType::BigInt))
             .unwrap_err();
 
         assert_eq!(values.iter().count(), 65535);
@@ -1558,7 +1625,10 @@ pub(crate) mod tests {
 
     #[test]
     fn test_row_serialization_with_column_rename() {
-        let spec = [col("x", ColumnType::Int), col("a", ColumnType::Text)];
+        let spec = [
+            col("x", ColumnType::Native(NativeType::Int)),
+            col("a", ColumnType::Native(NativeType::Text)),
+        ];
 
         let reference = do_serialize((42i32, "Ala ma kota"), &spec);
         let row = do_serialize(
@@ -1574,7 +1644,10 @@ pub(crate) mod tests {
 
     #[test]
     fn test_row_serialization_with_column_rename_and_enforce_order() {
-        let spec = [col("a", ColumnType::Text), col("x", ColumnType::Int)];
+        let spec = [
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("x", ColumnType::Native(NativeType::Int)),
+        ];
 
         let reference = do_serialize(("Ala ma kota", 42i32), &spec);
         let row = do_serialize(
@@ -1597,7 +1670,10 @@ pub(crate) mod tests {
 
     #[test]
     fn test_row_serialization_with_skipped_name_checks() {
-        let spec = [col("a", ColumnType::Text), col("x", ColumnType::Int)];
+        let spec = [
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("x", ColumnType::Native(NativeType::Int)),
+        ];
 
         let reference = do_serialize(("Ala ma kota", 42i32), &spec);
         let row = do_serialize(
@@ -1620,7 +1696,7 @@ pub(crate) mod tests {
             ttl: i32,
         }
 
-        let spec = [col("[ttl]", ColumnType::Int)];
+        let spec = [col("[ttl]", ColumnType::Native(NativeType::Int))];
 
         let reference = do_serialize((42i32,), &spec);
         let row = do_serialize(RowWithTTL { ttl: 42 }, &spec);
@@ -1642,9 +1718,15 @@ pub(crate) mod tests {
     #[test]
     fn test_row_serialization_with_skipped_field() {
         let spec = [
-            col("a", ColumnType::Text),
-            col("b", ColumnType::Int),
-            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Int)),
+            col(
+                "c",
+                ColumnType::Collection {
+                    frozen: false,
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
+            ),
         ];
 
         let reference = do_serialize(
@@ -1670,7 +1752,10 @@ pub(crate) mod tests {
 
     #[test]
     fn test_row_serialization_with_boxed_tuple() {
-        let spec = [col("a", ColumnType::Int), col("b", ColumnType::Int)];
+        let spec = [
+            col("a", ColumnType::Native(NativeType::Int)),
+            col("b", ColumnType::Native(NativeType::Int)),
+        ];
 
         let reference = do_serialize((42i32, 42i32), &spec);
         let row = do_serialize(Box::new((42i32, 42i32)), &spec);

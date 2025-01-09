@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 
+pub use crate::frame::Authenticator;
+
 /// Type to represent an authentication error message.
 pub type AuthError = String;
 

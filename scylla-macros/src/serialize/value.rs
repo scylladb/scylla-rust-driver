@@ -207,8 +207,8 @@ impl Context {
 
         parse_quote! {
             let (type_name, keyspace, field_types) = match typ {
-                #crate_path::ColumnType::UserDefinedType { type_name, keyspace, field_types, .. } => {
-                    (type_name, keyspace, field_types)
+                #crate_path::ColumnType::UserDefinedType { definition: udt, .. } => {
+                    (&udt.name, &udt.keyspace, &udt.field_types)
                 }
                 _ => return ::std::result::Result::Err(mk_typck_err(#err)),
             };

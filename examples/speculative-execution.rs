@@ -1,7 +1,6 @@
-use scylla::{
-    speculative_execution::PercentileSpeculativeExecutionPolicy,
-    transport::execution_profile::ExecutionProfile, Session, SessionBuilder,
-};
+use scylla::policies::speculative_execution::PercentileSpeculativeExecutionPolicy;
+use scylla::session::execution_profile::ExecutionProfile;
+use scylla::session::{Session, SessionBuilder};
 
 use anyhow::Result;
 use std::{env, sync::Arc};

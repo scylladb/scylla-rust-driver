@@ -194,7 +194,7 @@ impl StructDesc {
         let macro_internal = &self.struct_attrs().macro_internal_path();
         parse_quote!(
             match #typ_expr {
-                #macro_internal::ColumnType::UserDefinedType { field_types, .. } => field_types,
+                #macro_internal::ColumnType::UserDefinedType { definition, .. } => &definition.field_types,
                 other => return ::std::result::Result::Err(
                     #macro_internal::mk_value_typck_err::<Self>(
                         &other,

@@ -12,7 +12,7 @@ This history includes all requests sent, decisions to retry and speculative exec
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::history::{HistoryCollector, StructuredHistory};
+use scylla::observability::history::{HistoryCollector, StructuredHistory};
 use std::sync::Arc;
 
 // Create a query for which we would like to trace the history of its execution
