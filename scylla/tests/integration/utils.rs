@@ -1,4 +1,5 @@
 use futures::Future;
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use scylla::cluster::ClusterState;
@@ -8,7 +9,6 @@ use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, Routin
 use scylla::query::Query;
 use scylla::routing::Shard;
 use scylla::transport::errors::QueryError;
-use scylla::ExecutionProfile;
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;

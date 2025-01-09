@@ -10,9 +10,9 @@ use scylla::routing::{Shard, Token};
 use scylla_cql::frame::response::result::TableSpec;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::statement::batch::BatchStatement;
 use scylla::statement::query::Query;
-use scylla::ExecutionProfile;
 use scylla::{
     batch::{Batch, BatchType},
     statement::SerialConsistency,

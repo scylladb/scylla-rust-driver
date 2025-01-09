@@ -2,9 +2,9 @@ use crate::utils::{
     scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
     PerformDDL,
 };
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::policies::retry::FallthroughRetryPolicy;
-use scylla::ExecutionProfile;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::types;
 use std::sync::Arc;

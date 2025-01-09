@@ -1,4 +1,5 @@
 use crate::client::caching_session::CachingSession;
+use crate::client::execution_profile::ExecutionProfile;
 use crate::client::session::Session;
 use crate::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::cluster::ClusterState;
@@ -8,7 +9,6 @@ use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, Routing
 use crate::query::Query;
 use crate::routing::Shard;
 use crate::transport::errors::QueryError;
-use crate::ExecutionProfile;
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
 use std::{
