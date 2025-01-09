@@ -19,23 +19,24 @@ use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
+use super::errors::UserRequestError;
 use super::execution_profile::ExecutionProfileInner;
 use super::query_result::ColumnSpecs;
 use crate::client::session::RequestSpan;
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
-
 use crate::deserialize::DeserializeOwnedRow;
+
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row},
 };
 use crate::history::{self, HistoryListener};
+use crate::network::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::statement::{Consistency, PagingState, SerialConsistency};
 use crate::transport::cluster::ClusterData;
-use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
-use crate::transport::errors::{ProtocolError, QueryError, UserRequestError};
+use crate::transport::errors::{ProtocolError, QueryError};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};

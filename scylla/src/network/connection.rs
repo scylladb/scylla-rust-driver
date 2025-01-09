@@ -1,64 +1,10 @@
-use bytes::Bytes;
-use futures::{future::RemoteHandle, FutureExt};
-use scylla_cql::frame::frame_errors::CqlResponseParseError;
-use scylla_cql::frame::request::options::{self, Options};
-use scylla_cql::frame::request::CqlRequestKind;
-use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
-use scylla_cql::frame::response::Error;
-use scylla_cql::frame::response::{self, error};
-use scylla_cql::frame::types::SerialConsistency;
-use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
-use scylla_cql::types::serialize::raw_batch::RawBatchValuesAdapter;
-use scylla_cql::types::serialize::row::{RowSerializationContext, SerializedValues};
-use socket2::{SockRef, TcpKeepalive};
-use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
-use tokio::net::{TcpSocket, TcpStream};
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::Instant;
-use tracing::{debug, error, trace, warn};
-use uuid::Uuid;
-
-use std::borrow::Cow;
-#[cfg(feature = "ssl")]
-use std::pin::Pin;
-use std::sync::atomic::AtomicU64;
-use std::time::Duration;
-#[cfg(feature = "ssl")]
-use tokio_openssl::SslStream;
-
-#[cfg(feature = "ssl")]
-pub(crate) use ssl_config::SslConfig;
-
 use crate::authentication::AuthenticatorProvider;
-use crate::transport::errors::{
-    BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
-    ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
-    QueryError, RequestError, ResponseParseError, TranslationError, UserRequestError,
-};
-use scylla_cql::frame::response::authenticate::Authenticate;
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::convert::TryFrom;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
-use std::{
-    cmp::Ordering,
-    net::{Ipv4Addr, Ipv6Addr},
-};
-
-use super::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
-use super::iterator::QueryPager;
-use super::locator::tablets::{RawTablet, TabletParsingError};
-use super::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
-use super::query_result::QueryResult;
-use super::NodeAddr;
-use crate::client::session::AddressTranslator;
-#[cfg(feature = "cloud")]
-use crate::cloud::CloudConfig;
-
 use crate::batch::{Batch, BatchStatement};
+use crate::client::session::AddressTranslator;
 use crate::client::Compression;
 use crate::client::SelfIdentity;
+#[cfg(feature = "cloud")]
+use crate::cloud::CloudConfig;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self,
@@ -71,6 +17,55 @@ use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
+use crate::transport::errors::{
+    BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
+    ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
+    QueryError, RequestError, ResponseParseError, TranslationError, UserRequestError,
+};
+use crate::transport::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
+use crate::transport::iterator::QueryPager;
+use crate::transport::locator::tablets::{RawTablet, TabletParsingError};
+use crate::transport::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
+use crate::transport::query_result::QueryResult;
+use crate::transport::NodeAddr;
+use bytes::Bytes;
+use futures::{future::RemoteHandle, FutureExt};
+use scylla_cql::frame::frame_errors::CqlResponseParseError;
+use scylla_cql::frame::request::options::{self, Options};
+use scylla_cql::frame::request::CqlRequestKind;
+use scylla_cql::frame::response::authenticate::Authenticate;
+use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
+use scylla_cql::frame::response::Error;
+use scylla_cql::frame::response::{self, error};
+use scylla_cql::frame::types::SerialConsistency;
+use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
+use scylla_cql::types::serialize::raw_batch::RawBatchValuesAdapter;
+use scylla_cql::types::serialize::row::{RowSerializationContext, SerializedValues};
+use socket2::{SockRef, TcpKeepalive};
+#[cfg(feature = "ssl")]
+pub(crate) use ssl_config::SslConfig;
+use std::borrow::Cow;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::convert::TryFrom;
+use std::net::{IpAddr, SocketAddr};
+#[cfg(feature = "ssl")]
+use std::pin::Pin;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::time::Duration;
+use std::{
+    cmp::Ordering,
+    net::{Ipv4Addr, Ipv6Addr},
+};
+use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tokio::net::{TcpSocket, TcpStream};
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
+#[cfg(feature = "ssl")]
+use tokio_openssl::SslStream;
+use tracing::{debug, error, trace, warn};
+use uuid::Uuid;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
@@ -2251,11 +2246,9 @@ mod tests {
     use tokio::select;
     use tokio::sync::mpsc;
 
-    use super::ConnectionConfig;
-    use crate::client::session_builder::SessionBuilder;
+    use super::{open_connection, ConnectionConfig};
     use crate::query::Query;
     use crate::test_utils::setup_tracing;
-    use crate::transport::connection::open_connection;
     use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;
     use crate::utils::test_utils::{unique_keyspace_name, PerformDDL};
@@ -2287,6 +2280,8 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_query_iter_test() {
+        use crate::client::session_builder::SessionBuilder;
+
         setup_tracing();
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;
@@ -2388,6 +2383,8 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn test_coalescing() {
+        use crate::client::session_builder::SessionBuilder;
+
         setup_tracing();
         // It's difficult to write a reliable test that checks whether coalescing
         // works like intended or not. Instead, this is a smoke test which is supposed
@@ -2645,9 +2642,7 @@ mod tests {
         // Then, the error from keepaliver will be propagated to the error receiver.
         let err = error_receiver.await.unwrap();
         let err_inner: &BrokenConnectionErrorKind = match err {
-            crate::transport::connection::ConnectionError::BrokenConnection(ref e) => {
-                e.downcast_ref().unwrap()
-            }
+            super::ConnectionError::BrokenConnection(ref e) => e.downcast_ref().unwrap(),
             _ => panic!("Bad error type. Expected keepalive timeout."),
         };
         assert_matches!(err_inner, BrokenConnectionErrorKind::KeepaliveTimeout(_));

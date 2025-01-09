@@ -10,6 +10,12 @@ use crate::cloud::CloudConfig;
 use crate::frame::response::result;
 use crate::history;
 use crate::history::HistoryListener;
+use crate::network::PoolConfig;
+#[cfg(feature = "ssl")]
+use crate::network::SslConfig;
+use crate::network::{
+    Connection, ConnectionConfig, NonErrorQueryResponse, QueryResponse, VerifiedKeyspaceName,
+};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
@@ -17,12 +23,6 @@ use crate::statement::StatementConfig;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::tracing::TracingInfo;
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
-#[cfg(feature = "ssl")]
-use crate::transport::connection::SslConfig;
-use crate::transport::connection::{
-    Connection, ConnectionConfig, NonErrorQueryResponse, QueryResponse, VerifiedKeyspaceName,
-};
-use crate::transport::connection_pool::PoolConfig;
 pub use crate::transport::errors::TranslationError;
 use crate::transport::errors::{
     BadQuery, NewSessionError, ProtocolError, QueryError, TracingProtocolError, UserRequestError,

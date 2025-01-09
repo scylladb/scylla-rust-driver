@@ -25,4 +25,4 @@ mod session_test;
 
 pub use scylla_cql::frame::Compression;
 
-pub use crate::transport::connection_pool::PoolSize;
+pub use crate::network::PoolSize;

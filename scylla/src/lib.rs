@@ -258,6 +258,7 @@ pub mod client;
 pub mod cloud;
 
 pub mod history;
+mod network;
 pub mod routing;
 pub mod statement;
 pub mod tracing;
