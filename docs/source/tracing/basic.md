@@ -11,7 +11,7 @@ return a `QueryResult` which contains a `tracing_id` if tracing was enabled.
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::QueryResult;
+use scylla::response::query_result::QueryResult;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
@@ -39,7 +39,7 @@ if let Some(id) = tracing_id {
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
-use scylla::QueryResult;
+use scylla::response::query_result::QueryResult;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
@@ -71,7 +71,7 @@ if let Some(id) = tracing_id {
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::batch::Batch;
-use scylla::QueryResult;
+use scylla::response::query_result::QueryResult;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 

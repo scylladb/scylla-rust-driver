@@ -32,14 +32,14 @@ use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+#[allow(deprecated)]
+use crate::response::legacy_query_result::LegacyQueryResult;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::Shard;
 use crate::statement::StatementConfig;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-#[allow(deprecated)]
-use crate::LegacyQueryResult;
 use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;

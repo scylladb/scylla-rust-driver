@@ -15,7 +15,7 @@ struct SessionService {
 
 // A trivial service implementation for sending parameterless simple string requests to Scylla.
 impl Service<scylla::query::Query> for SessionService {
-    type Response = scylla::QueryResult;
+    type Response = scylla::response::query_result::QueryResult;
     type Error = scylla::errors::QueryError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 

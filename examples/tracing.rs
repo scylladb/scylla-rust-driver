@@ -7,10 +7,10 @@ use scylla::batch::Batch;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::observability::tracing::TracingInfo;
+use scylla::response::query_result::QueryResult;
 use scylla::statement::{
     prepared_statement::PreparedStatement, query::Query, Consistency, SerialConsistency,
 };
-use scylla::QueryResult;
 use std::env;
 use std::num::NonZeroU32;
 use std::time::Duration;

@@ -1,8 +1,8 @@
 use crate::cluster::node::Node;
 use crate::network::Connection;
+use crate::response::query_result::QueryResult;
 use crate::routing::{Shard, Token};
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
-use crate::QueryResult;
 use itertools::Either;
 use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec};

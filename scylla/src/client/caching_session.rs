@@ -4,11 +4,11 @@ use crate::client::pager::LegacyRowIterator;
 use crate::errors::QueryError;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+#[allow(deprecated)]
+use crate::response::legacy_query_result::LegacyQueryResult;
+use crate::response::query_result::QueryResult;
 use crate::routing::partitioner::PartitionerName;
 use crate::statement::{PagingState, PagingStateResponse};
-#[allow(deprecated)]
-use crate::LegacyQueryResult;
-use crate::QueryResult;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;

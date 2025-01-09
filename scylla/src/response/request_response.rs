@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::errors::{ProtocolError, QueryError, UserRequestError};
 use crate::frame::response::{self, result};
-use crate::QueryResult;
+use crate::response::query_result::QueryResult;
 
 pub(crate) struct QueryResponse {
     pub(crate) response: Response,

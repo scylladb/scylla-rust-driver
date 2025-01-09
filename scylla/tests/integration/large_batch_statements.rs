@@ -6,7 +6,7 @@ use scylla::batch::Batch;
 use scylla::batch::BatchType;
 use scylla::errors::{BadQuery, QueryError};
 use scylla::query::Query;
-use scylla::QueryResult;
+use scylla::response::query_result::QueryResult;
 
 #[tokio::test]
 async fn test_large_batch_statements() {
