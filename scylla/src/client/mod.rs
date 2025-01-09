@@ -1,5 +1,8 @@
 pub mod caching_session;
 
+mod self_identity;
+pub use self_identity::SelfIdentity;
+
 pub mod session;
 
 pub mod session_builder;

@@ -1,7 +1,7 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to perform queries.
 
-use super::{Compression, PoolSize};
+use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::AuthenticatorProvider;
 use crate::batch::batch_values;
 use crate::batch::{Batch, BatchStatement};
@@ -44,7 +44,7 @@ use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
-use crate::transport::{NodeRef, SelfIdentity};
+use crate::transport::NodeRef;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 #[allow(deprecated)]
 use crate::LegacyQueryResult;

@@ -7,10 +7,10 @@ use super::session::{
 };
 use super::{Compression, PoolSize};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
+use crate::client::SelfIdentity;
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
 use crate::statement::Consistency;
-use crate::transport::connection::SelfIdentity;
 use crate::transport::errors::NewSessionError;
 use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::host_filter::HostFilter;
@@ -1036,7 +1036,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     /// # use scylla::client::session::Session;
     /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::transport::SelfIdentity;
+    /// # use scylla::client::SelfIdentity;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     ///     let (app_major, app_minor, app_patch) = (2, 1, 3);
     ///     let app_version = format!("{app_major}.{app_minor}.{app_patch}");
