@@ -252,6 +252,7 @@ pub mod deserialize {
 }
 
 pub mod authentication;
+pub mod client;
 #[cfg(feature = "cloud")]
 pub mod cloud;
 
