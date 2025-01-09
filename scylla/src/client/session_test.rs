@@ -186,7 +186,7 @@ async fn test_prepared_statement() {
         .await
         .unwrap();
 
-    // Refresh metadata as `ClusterData::compute_token` use them
+    // Refresh metadata as `ClusterState::compute_token` use them
     session.await_schema_agreement().await.unwrap();
     session.refresh_metadata().await.unwrap();
 
@@ -587,7 +587,7 @@ async fn test_token_calculation() {
         .await
         .unwrap();
 
-    // Refresh metadata as `ClusterData::compute_token` use them
+    // Refresh metadata as `ClusterState::compute_token` use them
     session.await_schema_agreement().await.unwrap();
     session.refresh_metadata().await.unwrap();
 

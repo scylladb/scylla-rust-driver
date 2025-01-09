@@ -3,7 +3,7 @@
 //! See [the book](https://rust-driver.docs.scylladb.com/stable/load-balancing/load-balancing.html) for more information
 
 use super::NodeRef;
-use crate::cluster::ClusterData;
+use crate::cluster::ClusterState;
 use crate::{
     routing::{Shard, Token},
     transport::errors::QueryError,
@@ -73,12 +73,15 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
     fn pick<'a>(
         &'a self,
         query: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<Shard>)>;
 
     /// Returns all contact-appropriate nodes for a given query.
-    fn fallback<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData)
-        -> FallbackPlan<'a>;
+    fn fallback<'a>(
+        &'a self,
+        query: &'a RoutingInfo,
+        cluster: &'a ClusterState,
+    ) -> FallbackPlan<'a>;
 
     /// Invoked each time a query succeeds.
     fn on_query_success(&self, _query: &RoutingInfo, _latency: Duration, _node: NodeRef<'_>) {}

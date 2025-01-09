@@ -1,7 +1,7 @@
 use futures::Future;
 use scylla::client::session::Session;
 use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use scylla::cluster::ClusterData;
+use scylla::cluster::ClusterState;
 use scylla::deserialize::DeserializeValue;
 use scylla::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use scylla::query::Query;
@@ -186,7 +186,7 @@ impl LoadBalancingPolicy for SchemaQueriesLBP {
     fn pick<'a>(
         &'a self,
         _query: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         // I'm not sure if Scylla can handle concurrent DDL queries to different shard,
         // in other words if its local lock is per-node or per shard.
@@ -197,7 +197,7 @@ impl LoadBalancingPolicy for SchemaQueriesLBP {
     fn fallback<'a>(
         &'a self,
         _query: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> FallbackPlan<'a> {
         Box::new(cluster.get_nodes_info().iter().map(|node| (node, Some(0))))
     }

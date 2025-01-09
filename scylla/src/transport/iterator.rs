@@ -30,7 +30,7 @@ use crate::client::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
 
-use crate::cluster::ClusterData;
+use crate::cluster::ClusterState;
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row},
@@ -69,7 +69,7 @@ pub(crate) struct PreparedIteratorConfig {
     pub(crate) prepared: PreparedStatement,
     pub(crate) values: SerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
-    pub(crate) cluster_data: Arc<ClusterData>,
+    pub(crate) cluster_data: Arc<ClusterState>,
     pub(crate) metrics: Arc<Metrics>,
 }
 
@@ -164,7 +164,7 @@ where
     SpanCreator: Fn() -> RequestSpan,
 {
     // Contract: this function MUST send at least one item through self.sender
-    async fn work(mut self, cluster_data: Arc<ClusterData>) -> PageSendAttemptedProof {
+    async fn work(mut self, cluster_data: Arc<ClusterState>) -> PageSendAttemptedProof {
         let load_balancer = self.execution_profile.load_balancing_policy.clone();
         let statement_info = self.statement_info.clone();
         let query_plan =
@@ -682,7 +682,7 @@ impl QueryPager {
     pub(crate) async fn new_for_query(
         query: Query,
         execution_profile: Arc<ExecutionProfileInner>,
-        cluster_data: Arc<ClusterData>,
+        cluster_data: Arc<ClusterState>,
         metrics: Arc<Metrics>,
     ) -> Result<Self, QueryError> {
         let (sender, receiver) = mpsc::channel(1);

@@ -2,7 +2,7 @@ use rand::{thread_rng, Rng};
 use tracing::error;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
-use crate::cluster::ClusterData;
+use crate::cluster::ClusterState;
 use crate::routing::Shard;
 
 enum PlanState<'a> {
@@ -35,7 +35,7 @@ enum PlanState<'a> {
 /// # use std::sync::Arc;
 /// # use scylla::load_balancing::LoadBalancingPolicy;
 /// # use scylla::load_balancing::RoutingInfo;
-/// # use scylla::cluster::ClusterData;
+/// # use scylla::cluster::ClusterState;
 /// # use scylla::transport::NodeRef;
 /// # use scylla::routing::Shard;
 /// # use scylla::load_balancing::FallbackPlan;
@@ -48,14 +48,14 @@ enum PlanState<'a> {
 ///     fn pick<'a>(
 ///         &'a self,
 ///         info: &'a RoutingInfo,
-///         cluster: &'a ClusterData,
+///         cluster: &'a ClusterState,
 ///     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
 ///         self.inner
 ///             .pick(info, cluster)
 ///             .map(|(node, shard)| (node, shard.or(Some(0))))
 ///     }
 ///
-///     fn fallback<'a>(&'a self, info: &'a RoutingInfo, cluster: &'a ClusterData) -> FallbackPlan<'a> {
+///     fn fallback<'a>(&'a self, info: &'a RoutingInfo, cluster: &'a ClusterState) -> FallbackPlan<'a> {
 ///         Box::new(self.inner
 ///             .fallback(info, cluster)
 ///             .map(|(node, shard)| (node, shard.or(Some(0)))))
@@ -69,7 +69,7 @@ enum PlanState<'a> {
 pub struct Plan<'a> {
     policy: &'a dyn LoadBalancingPolicy,
     routing_info: &'a RoutingInfo<'a>,
-    cluster: &'a ClusterData,
+    cluster: &'a ClusterState,
 
     state: PlanState<'a>,
 }
@@ -78,7 +78,7 @@ impl<'a> Plan<'a> {
     pub fn new(
         policy: &'a dyn LoadBalancingPolicy,
         routing_info: &'a RoutingInfo<'a>,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> Self {
         Self {
             policy,
@@ -198,7 +198,7 @@ mod tests {
         fn pick<'a>(
             &'a self,
             _query: &'a RoutingInfo,
-            _cluster: &'a ClusterData,
+            _cluster: &'a ClusterState,
         ) -> Option<(NodeRef<'a>, Option<Shard>)> {
             None
         }
@@ -206,7 +206,7 @@ mod tests {
         fn fallback<'a>(
             &'a self,
             _query: &'a RoutingInfo,
-            _cluster: &'a ClusterData,
+            _cluster: &'a ClusterState,
         ) -> FallbackPlan<'a> {
             Box::new(
                 self.expected_nodes
@@ -227,7 +227,7 @@ mod tests {
             expected_nodes: expected_nodes(),
         };
         let locator = create_locator(&mock_metadata_for_token_aware_tests());
-        let cluster_data = ClusterData {
+        let cluster_data = ClusterState {
             known_peers: Default::default(),
             keyspaces: Default::default(),
             locator,

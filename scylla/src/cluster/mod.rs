@@ -4,7 +4,7 @@
 // re-exports.
 #[allow(clippy::module_inception)]
 mod cluster;
-pub use cluster::ClusterData;
+pub use cluster::ClusterState;
 pub(crate) use cluster::{use_keyspace_result, Cluster, ClusterNeatDebug};
 
 pub mod metadata;

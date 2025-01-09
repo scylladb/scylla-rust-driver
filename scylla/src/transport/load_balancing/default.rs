@@ -2,7 +2,7 @@ use self::latency_awareness::LatencyAwareness;
 pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
-use crate::cluster::ClusterData;
+use crate::cluster::ClusterState;
 use crate::{
     cluster::metadata::Strategy,
     routing::{Shard, Token},
@@ -162,7 +162,7 @@ impl LoadBalancingPolicy for DefaultPolicy {
     fn pick<'a>(
         &'a self,
         query: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         /* For prepared statements, token-aware logic is available, we know what are the replicas
          * for the statement, so that we can pick one of them. */
@@ -335,7 +335,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
     fn fallback<'a>(
         &'a self,
         query: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> FallbackPlan<'a> {
         /* For prepared statements, token-aware logic is available, we know what are the replicas
          * for the statement, so that we can pick one of them. */
@@ -589,7 +589,7 @@ impl DefaultPolicy {
     fn routing_info<'a>(
         &'a self,
         query: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> ProcessedRoutingInfo<'a> {
         let mut routing_info = ProcessedRoutingInfo::new(query, cluster);
 
@@ -602,7 +602,7 @@ impl DefaultPolicy {
 
     /// Returns all nodes in the local datacenter if one is given,
     /// or else all nodes in the cluster.
-    fn preferred_node_set<'a>(&'a self, cluster: &'a ClusterData) -> &'a [Arc<Node>] {
+    fn preferred_node_set<'a>(&'a self, cluster: &'a ClusterState) -> &'a [Arc<Node>] {
         if let Some(preferred_datacenter) = self.preferences.datacenter() {
             if let Some(nodes) = cluster
                 .replica_locator()
@@ -628,7 +628,7 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
         table_spec: &TableSpec,
     ) -> ReplicaSet<'a> {
         let datacenter = replica_location.datacenter();
@@ -676,7 +676,7 @@ impl DefaultPolicy {
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
         order: ReplicaOrder,
         table_spec: &TableSpec,
     ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
@@ -706,7 +706,7 @@ impl DefaultPolicy {
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
         statement_type: StatementType,
         table_spec: &TableSpec,
     ) -> Option<PickedReplica<'a>> {
@@ -744,7 +744,7 @@ impl DefaultPolicy {
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
         table_spec: &TableSpec,
     ) -> Option<PickedReplica<'a>> {
         match replica_location {
@@ -798,7 +798,7 @@ impl DefaultPolicy {
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
         table_spec: &TableSpec,
     ) -> Option<(NodeRef<'a>, Shard)> {
         let predicate = Self::make_sharded_rack_predicate(predicate, replica_location);
@@ -822,7 +822,7 @@ impl DefaultPolicy {
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
         statement_type: StatementType,
         table_spec: &TableSpec,
     ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
@@ -1122,7 +1122,7 @@ struct ProcessedRoutingInfo<'a> {
 }
 
 impl<'a> ProcessedRoutingInfo<'a> {
-    fn new(query: &'a RoutingInfo, cluster: &'a ClusterData) -> ProcessedRoutingInfo<'a> {
+    fn new(query: &'a RoutingInfo, cluster: &'a ClusterState) -> ProcessedRoutingInfo<'a> {
         let local_consistency = matches!(
             (query.consistency, query.serial_consistency),
             (Consistency::LocalQuorum, _)
@@ -1143,7 +1143,7 @@ struct TokenWithStrategy<'a> {
 }
 
 impl<'a> TokenWithStrategy<'a> {
-    fn new(query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<TokenWithStrategy<'a>> {
+    fn new(query: &'a RoutingInfo, cluster: &'a ClusterState) -> Option<TokenWithStrategy<'a>> {
         let token = query.token?;
         let keyspace_name = query.table?.ks_name();
         let keyspace = cluster.get_keyspace_info().get(keyspace_name)?;
@@ -1170,7 +1170,7 @@ mod tests {
         TABLE_SS_RF_2,
     };
     use crate::{
-        cluster::ClusterData,
+        cluster::ClusterState,
         load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, Plan, RoutingInfo,
         },
@@ -1188,7 +1188,7 @@ mod tests {
         use crate::{
             cluster::{
                 metadata::{Metadata, Peer},
-                ClusterData,
+                ClusterState,
             },
             load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             routing::Token,
@@ -1402,9 +1402,9 @@ mod tests {
         }
 
         // based on locator mock cluster
-        pub(crate) async fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
+        pub(crate) async fn mock_cluster_data_for_token_aware_tests() -> ClusterState {
             let metadata = mock_metadata_for_token_aware_tests();
-            ClusterData::new(
+            ClusterState::new(
                 metadata,
                 &Default::default(),
                 &HashMap::new(),
@@ -1415,9 +1415,9 @@ mod tests {
             .await
         }
 
-        // creates ClusterData with info about 5 nodes living in 2 different datacenters
+        // creates ClusterState with info about 5 nodes living in 2 different datacenters
         // ring field is minimal, not intended to influence the tests
-        pub(crate) async fn mock_cluster_data_for_token_unaware_tests() -> ClusterData {
+        pub(crate) async fn mock_cluster_data_for_token_unaware_tests() -> ClusterState {
             let peers = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)]
                 .iter()
                 .map(|(dc, id)| Peer {
@@ -1434,7 +1434,7 @@ mod tests {
                 keyspaces: HashMap::new(),
             };
 
-            ClusterData::new(
+            ClusterState::new(
                 info,
                 &Default::default(),
                 &HashMap::new(),
@@ -1448,7 +1448,7 @@ mod tests {
         pub(crate) fn get_plan_and_collect_node_identifiers(
             policy: &impl LoadBalancingPolicy,
             query_info: &RoutingInfo,
-            cluster: &ClusterData,
+            cluster: &ClusterState,
         ) -> Vec<u16> {
             let plan = Plan::new(policy, query_info, cluster);
             plan.map(|(node, _shard)| node.address.port())
@@ -1466,7 +1466,7 @@ mod tests {
 
     pub(super) async fn test_default_policy_with_given_cluster_and_routing_info(
         policy: &DefaultPolicy,
-        cluster: &ClusterData,
+        cluster: &ClusterState,
         routing_info: &RoutingInfo<'_>,
         expected_groups: &ExpectedGroups,
     ) {
@@ -2474,7 +2474,7 @@ mod tests {
             .await;
         }
 
-        let cluster_with_disabled_node_f = ClusterData::new(
+        let cluster_with_disabled_node_f = ClusterState::new(
             mock_metadata_for_token_aware_tests(),
             &Default::default(),
             &HashMap::new(),
@@ -3128,7 +3128,7 @@ mod latency_awareness {
         };
 
         use crate::{
-            cluster::ClusterData,
+            cluster::ClusterState,
             load_balancing::default::NodeLocationPreference,
             routing::Shard,
             test_utils::setup_tracing,
@@ -3150,7 +3150,7 @@ mod latency_awareness {
         trait DefaultPolicyTestExt {
             fn set_nodes_latency_stats(
                 &self,
-                cluster: &ClusterData,
+                cluster: &ClusterState,
                 averages: &[(u16, Option<TimestampedAverage>)],
             );
         }
@@ -3158,7 +3158,7 @@ mod latency_awareness {
         impl DefaultPolicyTestExt for DefaultPolicy {
             fn set_nodes_latency_stats(
                 &self,
-                cluster: &ClusterData,
+                cluster: &ClusterState,
                 averages: &[(u16, Option<TimestampedAverage>)],
             ) {
                 let addr_to_host_id: HashMap<NodeAddr, Uuid> = cluster

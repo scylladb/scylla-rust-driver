@@ -8,7 +8,7 @@ use crate::batch::{Batch, BatchStatement};
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 use crate::cluster::metadata::UntranslatedPeer;
-use crate::cluster::{Cluster, ClusterData, ClusterNeatDebug};
+use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::frame::response::result;
 use crate::history;
 use crate::history::HistoryListener;
@@ -1413,7 +1413,7 @@ where
     fn extract_partitioner_name<'a>(
         &self,
         prepared: &PreparedStatement,
-        cluster_data: &'a ClusterData,
+        cluster_data: &'a ClusterState,
     ) -> Option<&'a str> {
         let table_spec = prepared.get_table_spec()?;
         cluster_data
@@ -1799,7 +1799,7 @@ where
     /// Access cluster data collected by the driver\
     /// Driver collects various information about network topology or schema.
     /// They can be read using this method
-    pub fn get_cluster_data(&self) -> Arc<ClusterData> {
+    pub fn get_cluster_data(&self) -> Arc<ClusterState> {
         self.cluster.get_data()
     }
 

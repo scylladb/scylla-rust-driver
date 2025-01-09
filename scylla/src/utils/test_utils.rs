@@ -1,7 +1,7 @@
 use crate::client::caching_session::CachingSession;
 use crate::client::session::Session;
 use crate::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use crate::cluster::ClusterData;
+use crate::cluster::ClusterState;
 use crate::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::network::Connection;
 use crate::query::Query;
@@ -121,7 +121,7 @@ impl LoadBalancingPolicy for SchemaQueriesLBP {
     fn pick<'a>(
         &'a self,
         _query: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         // I'm not sure if Scylla can handle concurrent DDL queries to different shard,
         // in other words if its local lock is per-node or per shard.
@@ -132,7 +132,7 @@ impl LoadBalancingPolicy for SchemaQueriesLBP {
     fn fallback<'a>(
         &'a self,
         _query: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> FallbackPlan<'a> {
         Box::new(cluster.get_nodes_info().iter().map(|node| (node, Some(0))))
     }

@@ -9,7 +9,7 @@ use futures::future::try_join_all;
 use futures::TryStreamExt;
 use itertools::Itertools;
 use scylla::client::session::Session;
-use scylla::cluster::ClusterData;
+use scylla::cluster::ClusterState;
 use scylla::load_balancing::FallbackPlan;
 use scylla::load_balancing::LoadBalancingPolicy;
 use scylla::load_balancing::RoutingInfo;
@@ -164,7 +164,7 @@ impl LoadBalancingPolicy for SingleTargetLBP {
     fn pick<'a>(
         &'a self,
         _query: &'a RoutingInfo,
-        _cluster: &'a ClusterData,
+        _cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<u32>)> {
         Some((&self.target.0, self.target.1))
     }
@@ -172,7 +172,7 @@ impl LoadBalancingPolicy for SingleTargetLBP {
     fn fallback<'a>(
         &'a self,
         _query: &'a RoutingInfo,
-        _cluster: &'a ClusterData,
+        _cluster: &'a ClusterState,
     ) -> FallbackPlan<'a> {
         Box::new(std::iter::empty())
     }
@@ -184,7 +184,7 @@ impl LoadBalancingPolicy for SingleTargetLBP {
 
 async fn send_statement_everywhere(
     session: &Session,
-    cluster: &ClusterData,
+    cluster: &ClusterState,
     statement: &PreparedStatement,
     values: &dyn SerializeRow,
 ) -> Result<Vec<QueryResult>, QueryError> {
@@ -210,7 +210,7 @@ async fn send_statement_everywhere(
 
 async fn send_unprepared_query_everywhere(
     session: &Session,
-    cluster: &ClusterData,
+    cluster: &ClusterState,
     query: &Query,
 ) -> Result<Vec<QueryResult>, QueryError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {

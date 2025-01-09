@@ -3,7 +3,7 @@ use rand::thread_rng;
 use rand::Rng;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::cluster::ClusterData;
+use scylla::cluster::ClusterState;
 use scylla::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::routing::Shard;
 use scylla::transport::NodeRef;
@@ -30,7 +30,7 @@ impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
     fn pick<'a>(
         &'a self,
         _info: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         self.fallback(_info, cluster).next()
     }
@@ -38,7 +38,7 @@ impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
     fn fallback<'a>(
         &'a self,
         _info: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> scylla::load_balancing::FallbackPlan<'a> {
         let fav_dc_nodes = cluster
             .replica_locator()

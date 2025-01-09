@@ -5,7 +5,7 @@ use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name
 use assert_matches::assert_matches;
 use scylla::batch::{Batch, BatchStatement, BatchType};
 use scylla::client::session_builder::SessionBuilder;
-use scylla::cluster::ClusterData;
+use scylla::cluster::ClusterState;
 use scylla::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::query::Query;
 use scylla::retry_policy::{RetryPolicy, RetrySession};
@@ -47,7 +47,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
     fn pick<'a>(
         &'a self,
         _info: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         self.report_node(Report::LoadBalancing);
         cluster
@@ -60,7 +60,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
     fn fallback<'a>(
         &'a self,
         _info: &'a RoutingInfo,
-        _cluster: &'a ClusterData,
+        _cluster: &'a ClusterState,
     ) -> scylla::load_balancing::FallbackPlan<'a> {
         Box::new(std::iter::empty())
     }
