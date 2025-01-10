@@ -2,11 +2,11 @@
 
 use anyhow::Result;
 use futures::StreamExt as _;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::frame::response::result::Row;
-use scylla::history::{HistoryCollector, StructuredHistory};
+use scylla::observability::history::{HistoryCollector, StructuredHistory};
 use scylla::query::Query;
-use scylla::transport::session::Session;
-use scylla::SessionBuilder;
 use std::env;
 use std::sync::Arc;
 

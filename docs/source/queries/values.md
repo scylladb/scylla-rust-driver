@@ -12,7 +12,8 @@ or a custom struct which derives from `SerializeRow`.
 A few examples:
 ```rust
 # extern crate scylla;
-# use scylla::{Session, SerializeRow, frame::response::result::CqlValue};
+# use scylla::{SerializeRow, frame::response::result::CqlValue};
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::collections::HashMap;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
@@ -96,7 +97,7 @@ session
 Null values can be sent using `Option<>` - sending a `None` will make the value `NULL`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 let null_i32: Option<i32> = None;
@@ -114,7 +115,7 @@ Using `Unset` results in better performance:
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::frame::value::{MaybeUnset, Unset};

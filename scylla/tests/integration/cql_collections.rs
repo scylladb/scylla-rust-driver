@@ -2,8 +2,8 @@ use crate::utils::{
     create_new_session_builder, setup_tracing, unique_keyspace_name, DeserializeOwnedValue,
     PerformDDL,
 };
+use scylla::client::session::Session;
 use scylla::frame::response::result::CqlValue;
-use scylla::Session;
 use scylla_cql::types::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 

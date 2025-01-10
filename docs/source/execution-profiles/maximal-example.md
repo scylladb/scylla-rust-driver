@@ -7,11 +7,11 @@
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
+use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::statement::{Consistency, SerialConsistency};
-use scylla::transport::ExecutionProfile;
-use scylla::transport::load_balancing::DefaultPolicy;
-use scylla::transport::retry_policy::FallthroughRetryPolicy;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::load_balancing::DefaultPolicy;
+use scylla::policies::retry::FallthroughRetryPolicy;
 use std::{sync::Arc, time::Duration};
 
 let profile = ExecutionProfile::builder()

@@ -7,7 +7,7 @@ Also, `value::CqlTimeuuid` is a wrapper for `uuid::Uuid` with custom ordering lo
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::str::FromStr;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
@@ -47,7 +47,7 @@ and now you're gonna be able to use the `uuid::v1` features:
 # extern crate uuid;
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::str::FromStr;
 use futures::TryStreamExt;

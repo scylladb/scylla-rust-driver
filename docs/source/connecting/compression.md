@@ -12,8 +12,9 @@ An example enabling `Snappy` compression algorithm:
 ```rust
 # extern crate scylla;
 # extern crate tokio;
-use scylla::{Session, SessionBuilder};
-use scylla::transport::Compression;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::client::Compression;
 use std::error::Error;
 
 #[tokio::main]

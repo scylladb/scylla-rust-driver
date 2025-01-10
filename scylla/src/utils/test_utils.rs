@@ -1,11 +1,14 @@
-use crate::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
+use crate::client::caching_session::CachingSession;
+use crate::client::execution_profile::ExecutionProfile;
+use crate::client::session::Session;
+use crate::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
+use crate::cluster::ClusterState;
+use crate::cluster::NodeRef;
+use crate::errors::QueryError;
+use crate::network::Connection;
+use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::query::Query;
 use crate::routing::Shard;
-use crate::transport::connection::Connection;
-use crate::transport::errors::QueryError;
-use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use crate::transport::{ClusterData, NodeRef};
-use crate::{CachingSession, ExecutionProfile, Session};
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
 use std::{
@@ -68,7 +71,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
     let session_builder = {
         #[cfg(not(scylla_cloud_tests))]
         {
-            use crate::SessionBuilder;
+            use crate::client::session_builder::SessionBuilder;
 
             let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
@@ -77,8 +80,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
 
         #[cfg(scylla_cloud_tests)]
         {
-            use crate::transport::session_builder::CloudMode;
-            use crate::CloudSessionBuilder;
+            use crate::client::session_builder::{CloudMode, CloudSessionBuilder};
             use std::path::Path;
 
             std::env::var("CLOUD_CONFIG_PATH")
@@ -119,7 +121,7 @@ impl LoadBalancingPolicy for SchemaQueriesLBP {
     fn pick<'a>(
         &'a self,
         _query: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         // I'm not sure if Scylla can handle concurrent DDL queries to different shard,
         // in other words if its local lock is per-node or per shard.
@@ -130,7 +132,7 @@ impl LoadBalancingPolicy for SchemaQueriesLBP {
     fn fallback<'a>(
         &'a self,
         _query: &'a RoutingInfo,
-        cluster: &'a ClusterData,
+        cluster: &'a ClusterState,
     ) -> FallbackPlan<'a> {
         Box::new(cluster.get_nodes_info().iter().map(|node| (node, Some(0))))
     }

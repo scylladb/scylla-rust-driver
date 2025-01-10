@@ -49,7 +49,7 @@ Use `query_iter` to perform a [simple query](simple.md) with paging:
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::stream::StreamExt;
@@ -71,7 +71,7 @@ Use `execute_iter` to perform a [prepared query](prepared.md) with paging:
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
@@ -102,7 +102,7 @@ It's possible to configure the size of a single page.
 On a `Query`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
@@ -118,7 +118,7 @@ let _ = session.query_iter(query, &[]).await?; // ...
 On a `PreparedStatement`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
@@ -142,11 +142,11 @@ from where the previous one left off.
 On a `Query`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::statement::{PagingState, PagingStateResponse};
+use scylla::response::{PagingState, PagingStateResponse};
 use std::ops::ControlFlow;
 
 let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6);
@@ -185,11 +185,11 @@ loop {
 On a `PreparedStatement`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::statement::{PagingState, PagingStateResponse};
+use scylla::response::{PagingState, PagingStateResponse};
 use std::ops::ControlFlow;
 
 let paged_prepared = session

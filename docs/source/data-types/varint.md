@@ -15,7 +15,7 @@ Without any feature flags, the user can interact with `Varint` type by making us
 # extern crate scylla;
 # extern crate num_bigint;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;

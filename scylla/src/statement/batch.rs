@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use crate::history::HistoryListener;
-use crate::retry_policy::RetryPolicy;
+use crate::client::execution_profile::ExecutionProfileHandle;
+use crate::observability::history::HistoryListener;
+use crate::policies::retry::RetryPolicy;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
-use crate::transport::execution_profile::ExecutionProfileHandle;
 
 use super::StatementConfig;
 use super::{Consistency, SerialConsistency};
@@ -216,8 +216,8 @@ pub(crate) mod batch_values {
     use scylla_cql::types::serialize::row::SerializedValues;
     use scylla_cql::types::serialize::{RowWriter, SerializationError};
 
+    use crate::errors::QueryError;
     use crate::routing::Token;
-    use crate::transport::errors::QueryError;
 
     use super::BatchStatement;
 

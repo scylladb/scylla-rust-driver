@@ -22,7 +22,7 @@ In `main.rs` put:
 ```rust
 # extern crate scylla;
 # extern crate tokio;
-use scylla::Session;
+use scylla::client::session::Session;
 
 #[tokio::main]
 async fn main() {

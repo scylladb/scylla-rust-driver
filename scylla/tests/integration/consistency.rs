@@ -1,21 +1,22 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
-use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
-use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
+use scylla::client::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::cluster::NodeRef;
+use scylla::policies::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
+use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla::prepared_statement::PreparedStatement;
-use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::routing::{Shard, Token};
-use scylla::transport::NodeRef;
-use scylla::Session;
 use scylla_cql::frame::response::result::TableSpec;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::statement::batch::BatchStatement;
 use scylla::statement::query::Query;
 use scylla::{
     batch::{Batch, BatchType},
     statement::SerialConsistency,
 };
-use scylla::{ExecutionProfile, SessionBuilder};
 use scylla_cql::Consistency;
 use scylla_proxy::ShardAwareness;
 use scylla_proxy::{
@@ -377,7 +378,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
     fn pick<'a>(
         &'a self,
         query: &'a RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
+        cluster: &'a scylla::cluster::ClusterState,
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))
@@ -388,8 +389,8 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
     fn fallback<'a>(
         &'a self,
         query: &'a RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
-    ) -> scylla::load_balancing::FallbackPlan<'a> {
+        cluster: &'a scylla::cluster::ClusterState,
+    ) -> scylla::policies::load_balancing::FallbackPlan<'a> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))
             .unwrap();

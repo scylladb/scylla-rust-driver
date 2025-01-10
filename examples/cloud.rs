@@ -2,7 +2,7 @@ use std::env;
 use std::path::Path;
 
 use anyhow::Result;
-use scylla::CloudSessionBuilder;
+use scylla::client::session_builder::CloudSessionBuilder;
 
 #[tokio::main]
 async fn main() -> Result<()> {

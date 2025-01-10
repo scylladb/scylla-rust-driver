@@ -6,7 +6,7 @@ Only `INSERT`, `UPDATE` and `DELETE` statements are allowed.
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::batch::Batch;
@@ -52,7 +52,7 @@ Instead of preparing each statement individually, it's possible to prepare a who
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::batch::Batch;
@@ -80,7 +80,7 @@ You can set various options by operating on the `Batch` object.\
 For example to change consistency:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::batch::Batch;
@@ -114,7 +114,7 @@ By default this includes tuples `()` and slices `&[]` of tuples and slices which
 Example:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::batch::Batch;

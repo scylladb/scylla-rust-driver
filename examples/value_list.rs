@@ -1,6 +1,7 @@
 use anyhow::Result;
 use futures::StreamExt;
-use scylla::{Session, SessionBuilder};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use std::env;
 
 #[tokio::main]

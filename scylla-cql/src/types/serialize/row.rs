@@ -740,7 +740,7 @@ pub enum ValueListToSerializeRowAdapterError {
 /// It is not aware of the types of contained values,
 /// it is basically a byte buffer in the format expected by the CQL protocol.
 /// Usually there is no need for a user of a driver to use this struct, it is mostly internal.
-/// The exception are APIs like `ClusterData::compute_token` / `ClusterData::get_endpoints`.
+/// The exception are APIs like `ClusterState::compute_token` / `ClusterState::get_endpoints`.
 /// Allows adding new values to the buffer and iterating over the content.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SerializedValues {

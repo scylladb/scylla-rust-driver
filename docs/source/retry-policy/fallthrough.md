@@ -6,13 +6,14 @@ The `FalthroughRetryPolicy` never retries, returns errors straight to the user. 
 To use in `Session`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-use scylla::{Session, SessionBuilder};
-use scylla::transport::ExecutionProfile;
-use scylla::transport::retry_policy::FallthroughRetryPolicy;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::FallthroughRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
@@ -31,13 +32,13 @@ let session: Session = SessionBuilder::new()
 To use in a [simple query](../queries/simple.md):
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::transport::ExecutionProfile;
-use scylla::transport::retry_policy::FallthroughRetryPolicy;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::FallthroughRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Arc::new(FallthroughRetryPolicy::new()))
@@ -58,13 +59,13 @@ session.query_unpaged(my_query, (to_insert,)).await?;
 To use in a [prepared query](../queries/prepared.md):
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
-use scylla::transport::ExecutionProfile;
-use scylla::transport::retry_policy::FallthroughRetryPolicy;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::FallthroughRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Arc::new(FallthroughRetryPolicy::new()))

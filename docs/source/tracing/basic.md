@@ -7,12 +7,12 @@ return a `QueryResult` which contains a `tracing_id` if tracing was enabled.
 ```rust
 # extern crate scylla;
 # extern crate uuid;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::QueryResult;
-use scylla::tracing::TracingInfo;
+use scylla::response::query_result::QueryResult;
+use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Create a Query manually and enable tracing
@@ -35,12 +35,12 @@ if let Some(id) = tracing_id {
 ```rust
 # extern crate scylla;
 # extern crate uuid;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
-use scylla::QueryResult;
-use scylla::tracing::TracingInfo;
+use scylla::response::query_result::QueryResult;
+use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Prepare the query
@@ -67,12 +67,12 @@ if let Some(id) = tracing_id {
 ```rust
 # extern crate scylla;
 # extern crate uuid;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::batch::Batch;
-use scylla::QueryResult;
-use scylla::tracing::TracingInfo;
+use scylla::response::query_result::QueryResult;
+use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Create a batch statement

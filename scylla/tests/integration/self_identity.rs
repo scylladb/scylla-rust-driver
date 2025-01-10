@@ -1,15 +1,15 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
-use scylla::{Session, SessionBuilder};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::client::SelfIdentity;
 use scylla_cql::frame::request::options;
 use scylla_cql::frame::types;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-
-use scylla::transport::SelfIdentity;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, ShardAwareness,
     WorkerError,
 };
+use std::sync::Arc;
+use tokio::sync::mpsc;
 
 #[tokio::test]
 #[ntest::timeout(20000)]

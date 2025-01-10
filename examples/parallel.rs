@@ -1,5 +1,6 @@
 use anyhow::Result;
-use scylla::{Session, SessionBuilder};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use std::env;
 use std::sync::Arc;
 

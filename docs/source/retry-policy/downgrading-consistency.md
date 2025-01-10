@@ -48,13 +48,14 @@ The behaviour is the same.
 To use in `Session`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-use scylla::{Session, SessionBuilder};
-use scylla::transport::ExecutionProfile;
-use scylla::transport::downgrading_consistency_retry_policy::DowngradingConsistencyRetryPolicy;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::DowngradingConsistencyRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
@@ -73,13 +74,13 @@ let session: Session = SessionBuilder::new()
 To use in a [simple query](../queries/simple.md):
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::transport::ExecutionProfile;
-use scylla::transport::downgrading_consistency_retry_policy::DowngradingConsistencyRetryPolicy;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::DowngradingConsistencyRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))
@@ -100,13 +101,13 @@ session.query_unpaged(my_query, (to_insert,)).await?;
 To use in a [prepared query](../queries/prepared.md):
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
-use scylla::transport::ExecutionProfile;
-use scylla::transport::downgrading_consistency_retry_policy::DowngradingConsistencyRetryPolicy;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::policies::retry::DowngradingConsistencyRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Arc::new(DowngradingConsistencyRetryPolicy::new()))

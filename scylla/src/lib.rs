@@ -13,11 +13,12 @@
 //!
 //! # Driver overview
 //! ### Connecting
-//! All driver activity revolves around the [Session]\
+//! All driver activity revolves around the [Session](crate::client::session::Session)\
 //! `Session` is created by specifying a few known nodes and connecting to them:
 //!
 //! ```rust,no_run
-//! use scylla::{Session, SessionBuilder};
+//! use scylla::client::session::Session;
+//! use scylla::client::session_builder::SessionBuilder;
 //! use std::error::Error;
 //!
 //! #[tokio::main]
@@ -31,17 +32,17 @@
 //!    Ok(())
 //! }
 //! ```
-//! `Session` is usually created using the [SessionBuilder].\
+//! `Session` is usually created using the [SessionBuilder](crate::client::session_builder::SessionBuilder).\
 //! All configuration options for a `Session` can be specified while building.
 //!
 //! ### Making queries
 //! After successfully connecting to the cluster we can make queries.\
 //! The driver supports multiple query types:
-//! * [Simple](crate::Session::query_unpaged)
-//! * [Simple paged](crate::Session::query_iter)
-//! * [Prepared](crate::Session::execute_unpaged) (need to be [prepared](crate::Session::prepare) before use)
-//! * [Prepared paged](crate::Session::execute_iter)
-//! * [Batch](crate::Session::batch)
+//! * [Simple](crate::client::session::Session::query_unpaged)
+//! * [Simple paged](crate::client::session::Session::query_iter)
+//! * [Prepared](crate::client::session::Session::execute_unpaged) (need to be [prepared](crate::client::session::Session::prepare) before use)
+//! * [Prepared paged](crate::client::session::Session::execute_iter)
+//! * [Batch](crate::client::session::Session::batch)
 //!
 //! To specify options for a single query create the query object and configure it:
 //! * For simple: [Query](crate::query::Query)
@@ -50,7 +51,7 @@
 //!
 //! The easiest way to specify bound values in a query is using a tuple:
 //! ```rust
-//! # use scylla::Session;
+//! # use scylla::client::session::Session;
 //! # use std::error::Error;
 //! # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 //! // Insert an int and text into the table
@@ -69,7 +70,7 @@
 //! The easiest way to read rows returned by a query is to cast each row to a tuple of values:
 //!
 //! ```rust
-//! # use scylla::Session;
+//! # use scylla::client::session::Session;
 //! # use std::error::Error;
 //! # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 //!
@@ -252,14 +253,18 @@ pub mod deserialize {
 }
 
 pub mod authentication;
+pub mod client;
 #[cfg(feature = "cloud")]
 pub mod cloud;
 
-pub mod history;
+pub mod cluster;
+pub mod errors;
+mod network;
+pub mod observability;
+pub mod policies;
+pub mod response;
 pub mod routing;
 pub mod statement;
-pub mod tracing;
-pub mod transport;
 
 pub(crate) mod utils;
 
@@ -272,24 +277,3 @@ pub use statement::query;
 
 #[allow(deprecated)]
 pub use frame::response::cql_to_rust::{self, FromRow};
-
-#[allow(deprecated)]
-pub use transport::caching_session::{CachingSession, GenericCachingSession, LegacyCachingSession};
-pub use transport::execution_profile::ExecutionProfile;
-#[allow(deprecated)]
-pub use transport::legacy_query_result::LegacyQueryResult;
-pub use transport::query_result::{QueryResult, QueryRowsResult};
-#[allow(deprecated)]
-pub use transport::session::{IntoTypedRows, LegacySession, Session, SessionConfig};
-pub use transport::session_builder::SessionBuilder;
-
-#[cfg(feature = "cloud")]
-pub use transport::session_builder::CloudSessionBuilder;
-
-pub use transport::execution_profile;
-pub use transport::host_filter;
-pub use transport::load_balancing;
-pub use transport::retry_policy;
-pub use transport::speculative_execution;
-
-pub use transport::metrics::{Metrics, MetricsError};

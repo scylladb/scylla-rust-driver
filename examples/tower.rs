@@ -1,5 +1,6 @@
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::frame::response::result::Row;
-use scylla::transport::session::Session;
 use std::env;
 use std::future::Future;
 use std::pin::Pin;
@@ -14,8 +15,8 @@ struct SessionService {
 
 // A trivial service implementation for sending parameterless simple string requests to Scylla.
 impl Service<scylla::query::Query> for SessionService {
-    type Response = scylla::QueryResult;
-    type Error = scylla::transport::errors::QueryError;
+    type Response = scylla::response::query_result::QueryResult;
+    type Error = scylla::errors::QueryError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -34,12 +35,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Connecting to {} ...", uri);
     let mut session: SessionService = SessionService {
-        session: Arc::new(
-            scylla::SessionBuilder::new()
-                .known_node(uri)
-                .build()
-                .await?,
-        ),
+        session: Arc::new(SessionBuilder::new().known_node(uri).build().await?),
     };
 
     let rows_result = session

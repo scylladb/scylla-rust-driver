@@ -9,15 +9,15 @@ given percentile.
 To use this policy in `Session`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use std::{sync::Arc, time::Duration};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::{
-    Session,
-    SessionBuilder,
-    speculative_execution::PercentileSpeculativeExecutionPolicy,
-    transport::execution_profile::ExecutionProfile,
+    policies::speculative_execution::PercentileSpeculativeExecutionPolicy,
+    client::execution_profile::ExecutionProfile,
 };
 
 let policy = PercentileSpeculativeExecutionPolicy  {

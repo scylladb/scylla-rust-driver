@@ -2,9 +2,9 @@ use crate::utils::{
     scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
     PerformDDL,
 };
-use scylla::retry_policy::FallthroughRetryPolicy;
-use scylla::transport::session::Session;
-use scylla::{ExecutionProfile, SessionBuilder};
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::client::session::Session;
+use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::types;
 use std::sync::Arc;
@@ -19,6 +19,8 @@ use scylla_proxy::{
 #[ntest::timeout(20000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optimally() {
+    use scylla::client::session_builder::SessionBuilder;
+
     setup_tracing();
 
     // This is just to increase the likelihood that only intended prepared statements (which contain this mark) are captured by the proxy.

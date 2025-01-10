@@ -9,7 +9,8 @@ Fetching database schema occurs periodically, but it can also be done on-demand.
 # extern crate scylla;
 # extern crate tokio;
 # use std::error::Error;
-# use scylla::{Session, SessionBuilder};
+# use scylla::client::session::Session;
+# use scylla::client::session_builder::SessionBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -42,7 +43,8 @@ Example showing how to print obtained schema information:
 # extern crate scylla;
 # extern crate tokio;
 # use std::error::Error;
-# use scylla::{Session, SessionBuilder};
+# use scylla::client::session::Session;
+# use scylla::client::session_builder::SessionBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {

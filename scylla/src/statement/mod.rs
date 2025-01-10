@@ -1,17 +1,23 @@
+//! This module holds entities representing various kinds of CQL statements,
+//! together with their execution options.
+//! The following statements are supported:
+//! - Query (unprepared statements),
+//! - PreparedStatement,
+//! - Batch.
+
 use std::{sync::Arc, time::Duration};
 
 use thiserror::Error;
 
-use crate::transport::execution_profile::ExecutionProfileHandle;
-use crate::{history::HistoryListener, retry_policy::RetryPolicy};
+use crate::client::execution_profile::ExecutionProfileHandle;
+use crate::observability::history::HistoryListener;
+use crate::policies::retry::RetryPolicy;
 
 pub mod batch;
 pub mod prepared_statement;
 pub mod query;
 
 pub use crate::frame::types::{Consistency, SerialConsistency};
-
-pub use crate::frame::request::query::{PagingState, PagingStateResponse};
 
 // This is the default common to drivers.
 const DEFAULT_PAGE_SIZE: i32 = 5000;

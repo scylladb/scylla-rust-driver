@@ -11,7 +11,7 @@ and after creating all the tables rather than after every query. Therefore, the 
 
 ```rust
 # extern crate scylla;
-# use scylla::SessionBuilder;
+# use scylla::client::session_builder::SessionBuilder;
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 let session = SessionBuilder::new()
@@ -31,7 +31,7 @@ the return value is `Err(QueryError::RequestTimeout)`, otherwise it is `Ok(schem
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 session.await_schema_agreement().await?;
@@ -46,7 +46,7 @@ but it can be changed with `SessionBuilder::schema_agreement_interval`.
 
 ```rust
 # extern crate scylla;
-# use scylla::SessionBuilder;
+# use scylla::client::session_builder::SessionBuilder;
 # use std::error::Error;
 # use std::time::Duration;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
@@ -65,7 +65,7 @@ If you want to check if schema is in agreement now, without retrying after failu
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 if session.check_schema_agreement().await?.is_some() {

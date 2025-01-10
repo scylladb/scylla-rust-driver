@@ -8,18 +8,20 @@ use crate::utils::{
 use futures::future::try_join_all;
 use futures::TryStreamExt;
 use itertools::Itertools;
-use scylla::load_balancing::FallbackPlan;
-use scylla::load_balancing::LoadBalancingPolicy;
-use scylla::load_balancing::RoutingInfo;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::client::session::Session;
+use scylla::cluster::ClusterState;
+use scylla::cluster::Node;
+use scylla::cluster::NodeRef;
+use scylla::policies::load_balancing::FallbackPlan;
+use scylla::policies::load_balancing::LoadBalancingPolicy;
+use scylla::policies::load_balancing::RoutingInfo;
 use scylla::prepared_statement::PreparedStatement;
 use scylla::query::Query;
+use scylla::response::query_result::QueryResult;
 use scylla::serialize::row::SerializeRow;
-use scylla::transport::ClusterData;
-use scylla::transport::Node;
-use scylla::transport::NodeRef;
-use scylla::{ExecutionProfile, QueryResult, Session};
 
-use scylla::transport::errors::QueryError;
+use scylla::errors::QueryError;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule,
     ShardAwareness, TargetShard, WorkerError,
@@ -163,7 +165,7 @@ impl LoadBalancingPolicy for SingleTargetLBP {
     fn pick<'a>(
         &'a self,
         _query: &'a RoutingInfo,
-        _cluster: &'a ClusterData,
+        _cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<u32>)> {
         Some((&self.target.0, self.target.1))
     }
@@ -171,7 +173,7 @@ impl LoadBalancingPolicy for SingleTargetLBP {
     fn fallback<'a>(
         &'a self,
         _query: &'a RoutingInfo,
-        _cluster: &'a ClusterData,
+        _cluster: &'a ClusterState,
     ) -> FallbackPlan<'a> {
         Box::new(std::iter::empty())
     }
@@ -183,7 +185,7 @@ impl LoadBalancingPolicy for SingleTargetLBP {
 
 async fn send_statement_everywhere(
     session: &Session,
-    cluster: &ClusterData,
+    cluster: &ClusterState,
     statement: &PreparedStatement,
     values: &dyn SerializeRow,
 ) -> Result<Vec<QueryResult>, QueryError> {
@@ -209,7 +211,7 @@ async fn send_statement_everywhere(
 
 async fn send_unprepared_query_everywhere(
     session: &Session,
-    cluster: &ClusterData,
+    cluster: &ClusterState,
     query: &Query,
 ) -> Result<Vec<QueryResult>, QueryError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
@@ -288,7 +290,7 @@ async fn test_default_policy_is_tablet_aware() {
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
-            let session = scylla::SessionBuilder::new()
+            let session = scylla::client::session_builder::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
                 .build()
@@ -419,7 +421,7 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
-            let session = scylla::SessionBuilder::new()
+            let session = scylla::client::session_builder::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
                 .build()
@@ -491,7 +493,7 @@ async fn test_lwt_optimization_works_with_tablets() {
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
-            let session = scylla::SessionBuilder::new()
+            let session = scylla::client::session_builder::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
                 .build()

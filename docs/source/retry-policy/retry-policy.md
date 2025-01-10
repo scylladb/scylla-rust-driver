@@ -21,7 +21,7 @@ Idempotent queries can be retried in situations where retrying non idempotent qu
 Idempotence has to be specified manually, the driver is not able to figure it out by itself.
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
