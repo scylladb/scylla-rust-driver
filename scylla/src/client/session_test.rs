@@ -3169,6 +3169,8 @@ async fn test_vector_type_metadata() {
 #[cfg(cassandra_tests)]
 #[tokio::test]
 async fn test_vector_type_unprepared() {
+    use std::vec;
+
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
@@ -3186,16 +3188,32 @@ async fn test_vector_type_unprepared() {
 
     session
         .query_unpaged(
-            format!(
-                "INSERT INTO {}.t (a, b, c) VALUES (1, [1, 2, 3, 4], ['foo', 'bar'])",
-                ks
-            ),
-            &[],
+            format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks),
+            &(1, vec![1, 2, 3, 4], vec!["foo", "bar"]),
         )
         .await
         .unwrap();
 
-    // TODO: Implement and test SELECT statements and bind values (`?`)
+    let query_result = session
+        .query_unpaged(format!("SELECT * FROM {}.t", ks), &[])
+        .await
+        .unwrap();
+
+    let rows: Vec<(i32, Vec<i32>, Vec<String>)> = query_result
+        .into_rows_result()
+        .unwrap()
+        .rows::<(i32, Vec<i32>, Vec<String>)>()
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(
+        rows[0],
+        (
+            1,
+            vec![1, 2, 3, 4],
+            vec!["foo".to_string(), "bar".to_string()]
+        )
+    );
 }
 
 #[cfg(cassandra_tests)]
@@ -3217,16 +3235,35 @@ async fn test_vector_type_prepared() {
         .unwrap();
 
     let prepared_statement = session
-        .prepare(format!(
-            "INSERT INTO {}.t (a, b, c) VALUES (?, [11, 12, 13, 14], ['afoo', 'abar'])",
-            ks
-        ))
+        .prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks))
         .await
         .unwrap();
     session
-        .execute_unpaged(&prepared_statement, &(2,))
+        .execute_unpaged(
+            &prepared_statement,
+            &(2, vec![11, 12, 13, 14], vec!["afoo", "abar"]),
+        )
         .await
         .unwrap();
 
-    // TODO: Implement and test SELECT statements and bind values (`?`)
+    let query_result = session
+        .query_unpaged(format!("SELECT * FROM {}.t", ks), &[])
+        .await
+        .unwrap();
+
+    let rows: Vec<(i32, Vec<i32>, Vec<String>)> = query_result
+        .into_rows_result()
+        .unwrap()
+        .rows::<(i32, Vec<i32>, Vec<String>)>()
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(
+        rows[0],
+        (
+            2,
+            vec![11, 12, 13, 14],
+            vec!["afoo".to_string(), "abar".to_string()]
+        )
+    );
 }

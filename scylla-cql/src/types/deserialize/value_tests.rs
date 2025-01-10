@@ -9,6 +9,7 @@ use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::frame::response::result::{ColumnType, CqlValue};
+use crate::frame::response::type_parser::TypeParser;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlVarint, CqlVarintBorrowed,
@@ -25,6 +26,16 @@ use super::{
     SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind, UdtDeserializationErrorKind,
     UdtTypeCheckErrorKind,
 };
+
+#[test]
+fn test_cassandra_type_parser() {
+    let type_name =
+        "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, 5)";
+    assert_eq!(
+        TypeParser::parse(Cow::Borrowed(type_name)).unwrap(),
+        ColumnType::Vector(Box::new(ColumnType::Int), 5)
+    )
+}
 
 #[test]
 fn test_deserialize_bytes() {
@@ -47,6 +58,36 @@ fn test_deserialize_bytes() {
 
     // Empty blob
     assert_ser_de_identity(&ColumnType::Blob, &(&[] as &[u8]), &mut Bytes::new());
+}
+
+#[test]
+fn test_deserialize_vector() {
+    // ser/de identity
+
+    assert_ser_de_identity(
+        &ColumnType::Vector(Box::new(ColumnType::Int), 2),
+        &vec![1, 2],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector(Box::new(ColumnType::Ascii), 3),
+        &vec!["ala", "ma", "kota"],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector(
+            Box::new(ColumnType::Vector(Box::new(ColumnType::Int), 2)),
+            2,
+        ),
+        &vec![vec![1, 2], vec![3, 4]],
+        &mut Bytes::new(),
+    );
+    let vec: Vec<bool> = vec![];
+    assert_ser_de_identity(
+        &ColumnType::Vector(Box::new(ColumnType::Boolean), 0),
+        &vec,
+        &mut Bytes::new(),
+    );
 }
 
 #[test]
