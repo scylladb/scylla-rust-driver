@@ -12,6 +12,8 @@ use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
+use crate::observability::metrics::Metrics;
+
 #[cfg(feature = "cloud")]
 use crate::cluster::node::resolve_hostname;
 
@@ -61,6 +63,11 @@ pub(crate) struct PoolConfig {
     pub(crate) pool_size: PoolSize,
     pub(crate) can_use_shard_aware_port: bool,
     pub(crate) keepalive_interval: Option<Duration>,
+    // TODO: The metrics should definitely not be stored here,
+    //       but it was the easiest way to pass it to the refiller.
+    //       It could be refactored to be passed as a parameter to the refiller,
+    //       but it would require a lot of changes in the code.
+    pub(crate) metrics: Option<Arc<Metrics>>,
 }
 
 impl Default for PoolConfig {
@@ -70,6 +77,7 @@ impl Default for PoolConfig {
             pool_size: Default::default(),
             can_use_shard_aware_port: true,
             keepalive_interval: None,
+            metrics: None,
         }
     }
 }
@@ -922,6 +930,8 @@ impl PoolRefiller {
         // As this may may involve resolving a hostname, the whole operation is async.
         let endpoint_fut = self.maybe_translate_for_serverless(endpoint);
 
+        let metrics = self.pool_config.metrics.clone();
+
         let fut = match (self.sharder.clone(), self.shard_aware_port, shard) {
             (Some(sharder), Some(port), Some(shard)) => async move {
                 let shard_aware_endpoint = {
@@ -934,6 +944,7 @@ impl PoolRefiller {
                     shard,
                     sharder.clone(),
                     &cfg,
+                    metrics,
                 )
                 .await;
                 OpenedConnectionEvent {
@@ -946,6 +957,15 @@ impl PoolRefiller {
             _ => async move {
                 let non_shard_aware_endpoint = endpoint_fut.await;
                 let result = open_connection(non_shard_aware_endpoint, None, &cfg).await;
+
+                if let Some(metrics) = metrics {
+                    if result.is_ok() {
+                        metrics.inc_total_connections();
+                    } else if let Err(ConnectionError::ConnectTimeout) = &result {
+                        metrics.inc_connection_timeouts();
+                    }
+                }
+
                 OpenedConnectionEvent {
                     result,
                     requested_shard: None,
@@ -1022,6 +1042,11 @@ impl PoolRefiller {
             match maybe_idx {
                 Some(idx) => {
                     v.swap_remove(idx);
+                    self.pool_config
+                        .metrics
+                        .as_ref()
+                        .unwrap()
+                        .dec_total_connections();
                     true
                 }
                 None => false,
@@ -1242,6 +1267,7 @@ mod tests {
                 0,
                 sharder.clone(),
                 &connection_config,
+                None,
             ));
         }
 

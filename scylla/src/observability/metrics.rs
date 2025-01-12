@@ -180,6 +180,9 @@ pub struct Metrics {
     retries_num: AtomicU64,
     histogram: Arc<LockFreeHistogram>,
     meter: Arc<Meter>,
+    total_connections: AtomicU64,
+    connection_timeouts: AtomicU64,
+    request_timeouts: AtomicU64,
 }
 
 impl Metrics {
@@ -192,6 +195,9 @@ impl Metrics {
             retries_num: AtomicU64::new(0),
             histogram: Arc::new(LockFreeHistogram::default()),
             meter: Arc::new(Meter::new()),
+            total_connections: AtomicU64::new(0),
+            connection_timeouts: AtomicU64::new(0),
+            request_timeouts: AtomicU64::new(0),
         }
     }
 
@@ -221,6 +227,26 @@ impl Metrics {
     /// Increments counter measuring how many times a retry policy has decided to retry a query
     pub(crate) fn inc_retries_num(&self) {
         self.retries_num.fetch_add(1, ORDER_TYPE);
+    }
+
+    /// Increments counter for total number of connections
+    pub(crate) fn inc_total_connections(&self) {
+        self.total_connections.fetch_add(1, ORDER_TYPE);
+    }
+
+    /// Decrements counter for total number of connections
+    pub(crate) fn dec_total_connections(&self) {
+        self.total_connections.fetch_sub(1, ORDER_TYPE);
+    }
+
+    /// Increments counter for connection timeouts
+    pub(crate) fn inc_connection_timeouts(&self) {
+        self.connection_timeouts.fetch_add(1, ORDER_TYPE);
+    }
+
+    /// Increments counter for request timeouts
+    pub(crate) fn inc_request_timeouts(&self) {
+        self.request_timeouts.fetch_add(1, ORDER_TYPE);
     }
 
     /// Saves to histogram latency of completing single query.
@@ -322,6 +348,21 @@ impl Metrics {
     /// Returns fifteen-minute rate of queries per second
     pub fn get_fifteen_minute_rate(&self) -> f64 {
         self.meter.fifteen_minute_rate()
+    }
+
+    /// Returns total number of active connections
+    pub fn get_total_connections(&self) -> u64 {
+        self.total_connections.load(ORDER_TYPE)
+    }
+
+    /// Returns counter for connection timeouts
+    pub fn get_connection_timeouts(&self) -> u64 {
+        self.connection_timeouts.load(ORDER_TYPE)
+    }
+
+    /// Returns counter for request timeouts
+    pub fn get_request_timeouts(&self) -> u64 {
+        self.request_timeouts.load(ORDER_TYPE)
     }
 
     // Metric implementations
