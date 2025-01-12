@@ -1420,6 +1420,7 @@ mod tests {
                 None,
                 TabletsInfo::new(),
                 &HashMap::new(),
+                &Default::default(),
             )
             .await
         }
@@ -1451,6 +1452,7 @@ mod tests {
                 None,
                 TabletsInfo::new(),
                 &HashMap::new(),
+                &Default::default(),
             )
             .await
         }
@@ -2501,6 +2503,7 @@ mod tests {
             },
             TabletsInfo::new(),
             &HashMap::new(),
+            &Default::default(),
         )
         .await;
 

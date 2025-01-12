@@ -187,6 +187,7 @@ pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, A
             pool_config.clone(),
             None,
             true,
+            Default::default(),
         ));
 
         for token in &peer.tokens {

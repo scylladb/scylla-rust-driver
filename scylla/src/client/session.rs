@@ -820,6 +820,8 @@ impl Session {
             keepalive_interval: config.keepalive_interval,
         };
 
+        let metrics = Arc::new(Metrics::new());
+
         let cluster = Cluster::new(
             known_nodes,
             pool_config,
@@ -828,6 +830,7 @@ impl Session {
             config.host_filter,
             config.cluster_metadata_refresh_interval,
             tablet_receiver,
+            metrics.clone(),
         )
         .await?;
 
@@ -837,7 +840,7 @@ impl Session {
             cluster,
             default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
-            metrics: Arc::new(Metrics::new()),
+            metrics,
             schema_agreement_timeout: config.schema_agreement_timeout,
             schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
             refresh_metadata_on_auto_schema_agreement: config
@@ -1797,7 +1800,10 @@ impl Session {
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
                 .map(|res| res.map_err(RequestError::from))
-                .unwrap_or_else(|_| Err(RequestError::RequestTimeout(timeout))),
+                .unwrap_or_else(|_: tokio::time::error::Elapsed| {
+                    self.metrics.inc_request_timeouts();
+                    Err(RequestError::RequestTimeout(timeout))
+                }),
             None => runner.await.map_err(RequestError::from),
         };
 
