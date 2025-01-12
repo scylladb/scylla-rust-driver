@@ -1,6 +1,6 @@
 use histogram::{AtomicHistogram, Histogram};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
@@ -33,6 +33,174 @@ pub struct Snapshot {
     pub percentile_99_9: u64,
 }
 
+/// The interval in seconds for which the rate is calculated.
+const INTERVAL: u64 = 5;
+
+/// An implementation of an Exponentially Weighted Moving Average (EWMA).
+#[derive(Debug)]
+struct ExponentiallyWeightedMovingAverage {
+    /// Smoothing factor, a value between 0 and 1.
+    alpha: f64,
+    /// Atomic counter to keep track of the number of requests. \
+    /// Indicates the number of requests that have not been accounted for EWMA yet.
+    uncounted: AtomicU64,
+    /// To check if the EWMA has been initialized.
+    is_initialized: Mutex<bool>,
+    ///  Atomic value representing the current rate of requests per second. \
+    ///  AtomicU64 is used to store a floating point number as a bit representation.
+    rate: AtomicU64,
+}
+
+impl ExponentiallyWeightedMovingAverage {
+    fn new(alpha: f64) -> Self {
+        Self {
+            alpha,
+            uncounted: AtomicU64::new(0),
+            is_initialized: Mutex::new(false),
+            rate: AtomicU64::new(0),
+        }
+    }
+
+    /// Returns the current `rate` as a floating point number.
+    fn rate(&self) -> f64 {
+        f64::from_bits(self.rate.load(Ordering::Acquire))
+    }
+
+    /// Increments the `uncounted` requests counter. \
+    /// Should be called every time a new request is made.
+    fn update(&self) {
+        self.uncounted.fetch_add(1, ORDER_TYPE);
+    }
+
+    /// Updates the `rate` based on the current number of requests. \
+    /// Should be called every time the interval has passed.
+    ///
+    /// The rate is updated using the formula: \
+    /// `rate = rate + alpha * (instant_rate - rate)` \
+    /// where `instant_rate` is the number of requests in the last interval.
+    ///
+    /// The first time this function is called, the `rate` is set to the `instant_rate`.
+    fn tick(&self) {
+        let mut is_initialized = self.is_initialized.lock().unwrap();
+
+        let count = self.uncounted.swap(0, ORDER_TYPE);
+        let instant_rate = count as f64 / INTERVAL as f64;
+
+        if *is_initialized {
+            let rate = f64::from_bits(self.rate.load(Ordering::Acquire));
+            self.rate.store(
+                f64::to_bits(rate + self.alpha * (instant_rate - rate)),
+                Ordering::Release,
+            );
+        } else {
+            self.rate
+                .store(f64::to_bits(instant_rate), Ordering::Release);
+            *is_initialized = true;
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RequestRateMeter {
+    one_minute_rate: ExponentiallyWeightedMovingAverage,
+    five_minute_rate: ExponentiallyWeightedMovingAverage,
+    fifteen_minute_rate: ExponentiallyWeightedMovingAverage,
+    count: AtomicU64,
+    start_time: std::time::Instant,
+    last_tick: AtomicU64,
+}
+
+impl RequestRateMeter {
+    fn new() -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            one_minute_rate: ExponentiallyWeightedMovingAverage::new(
+                1.0 - (-(INTERVAL as f64) / 60.0 / 1.0).exp(),
+            ),
+            five_minute_rate: ExponentiallyWeightedMovingAverage::new(
+                1.0 - (-(INTERVAL as f64) / 60.0 / 5.0).exp(),
+            ),
+            fifteen_minute_rate: ExponentiallyWeightedMovingAverage::new(
+                1.0 - (-(INTERVAL as f64) / 60.0 / 15.0).exp(),
+            ),
+            count: AtomicU64::new(0),
+            start_time: now,
+            last_tick: AtomicU64::new(now.elapsed().as_nanos() as u64),
+        }
+    }
+
+    fn mark(&self) {
+        self.tick_if_necessary();
+        self.count.fetch_add(1, ORDER_TYPE);
+        self.one_minute_rate.update();
+        self.five_minute_rate.update();
+        self.fifteen_minute_rate.update();
+    }
+
+    fn one_minute_rate(&self) -> f64 {
+        self.one_minute_rate.rate()
+    }
+
+    fn five_minute_rate(&self) -> f64 {
+        self.five_minute_rate.rate()
+    }
+
+    fn fifteen_minute_rate(&self) -> f64 {
+        self.fifteen_minute_rate.rate()
+    }
+
+    fn mean_rate(&self) -> f64 {
+        let count = self.count();
+        if count == 0 {
+            0.0
+        } else {
+            let elapsed = self.start_time.elapsed().as_secs_f64();
+            count as f64 / elapsed
+        }
+    }
+
+    fn count(&self) -> u64 {
+        self.count.load(ORDER_TYPE)
+    }
+
+    fn tick_if_necessary(&self) {
+        // Multiple threads could read the same `old_tick`...
+        let old_tick = self.last_tick.load(ORDER_TYPE);
+        let new_tick = self.start_time.elapsed().as_nanos() as u64;
+        let elapsed = new_tick - old_tick;
+
+        // _"Problematic"_ `if` - see a comment below.
+        if elapsed > INTERVAL * 1_000_000_000 {
+            let new_interval_start_tick = new_tick - elapsed % (INTERVAL * 1_000_000_000);
+            // But then only one will succeed in the following COMPARE EXCHANGE operation.
+            if self
+                .last_tick
+                .compare_exchange(old_tick, new_interval_start_tick, ORDER_TYPE, ORDER_TYPE)
+                .is_ok()
+            {
+                let required_ticks = elapsed / (INTERVAL * 1_000_000_000);
+                // So only one thread will do the following ticks.
+                // The only concern is that this loop might take so long that another thread
+                // enters the _"problematic"_ `if` and then we have two threads in `tick()`.
+                // This is extremely unlikely, because then the loop would have to take
+                // 5 seconds! (INTERVAL * 1e9), BUT even it it happens, we have a mutex
+                // in ECMA to guard against logical race.
+                for _ in 0..required_ticks {
+                    self.one_minute_rate.tick();
+                    self.five_minute_rate.tick();
+                    self.fifteen_minute_rate.tick();
+                }
+            }
+        }
+    }
+}
+
+impl Default for RequestRateMeter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Metrics {
     errors_num: AtomicU64,
     queries_num: AtomicU64,
@@ -40,6 +208,7 @@ pub struct Metrics {
     queries_iter_num: AtomicU64,
     retries_num: AtomicU64,
     histogram: Arc<AtomicHistogram>,
+    meter: Arc<RequestRateMeter>,
 }
 
 impl Metrics {
@@ -55,6 +224,7 @@ impl Metrics {
     /// Increments counter for nonpaged queries.
     pub(crate) fn inc_total_nonpaged_queries(&self) {
         self.queries_num.fetch_add(1, ORDER_TYPE);
+        self.meter.mark();
     }
 
     /// Increments counter for errors that occurred in paged queries.
@@ -66,6 +236,7 @@ impl Metrics {
     /// If query_iter would return 4 pages then this counter should be incremented 4 times.
     pub(crate) fn inc_total_paged_queries(&self) {
         self.queries_iter_num.fetch_add(1, ORDER_TYPE);
+        self.meter.mark();
     }
 
     /// Increments counter measuring how many times a retry policy has decided to retry a query
@@ -166,6 +337,26 @@ impl Metrics {
     /// Returns counter measuring how many times a retry policy has decided to retry a query
     pub fn get_retries_num(&self) -> u64 {
         self.retries_num.load(ORDER_TYPE)
+    }
+
+    /// Returns mean rate of queries per second
+    pub fn get_mean_rate(&self) -> f64 {
+        self.meter.mean_rate()
+    }
+
+    /// Returns one-minute rate of queries per second
+    pub fn get_one_minute_rate(&self) -> f64 {
+        self.meter.one_minute_rate()
+    }
+
+    /// Returns five-minute rate of queries per second
+    pub fn get_five_minute_rate(&self) -> f64 {
+        self.meter.five_minute_rate()
+    }
+
+    /// Returns fifteen-minute rate of queries per second
+    pub fn get_fifteen_minute_rate(&self) -> f64 {
+        self.meter.fifteen_minute_rate()
     }
 
     // Metric implementations
@@ -274,6 +465,7 @@ impl Default for Metrics {
             queries_iter_num: AtomicU64::new(0),
             retries_num: AtomicU64::new(0),
             histogram: Arc::new(AtomicHistogram::new(grouping_power, max_value_power).unwrap()),
+            meter: Arc::new(RequestRateMeter::new()),
         }
     }
 }
@@ -288,6 +480,7 @@ impl std::fmt::Debug for Metrics {
             .field("queries_iter_num", &self.queries_iter_num)
             .field("retries_num", &self.retries_num)
             .field("histogram", &h)
+            .field("meter", &self.meter)
             .finish()
     }
 }
