@@ -833,7 +833,7 @@ pub enum BrokenConnectionErrorKind {
 
     /// Driver sent a keepalive request to the database, but request execution failed.
     #[error("Failed to execute keepalive query: {0}")]
-    KeepaliveQueryError(RequestError),
+    KeepaliveQueryError(Arc<dyn Error + Sync + Send>),
 
     /// Failed to deserialize response frame header.
     #[error("Failed to deserialize frame: {0}")]
