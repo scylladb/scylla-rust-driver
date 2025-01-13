@@ -10,7 +10,7 @@ use crate::cluster::NodeAddr;
 use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
-    ProtocolError, QueryError, RequestError, ResponseParseError, SchemaVersionFetchError,
+    InternalRequestError, ProtocolError, QueryError, ResponseParseError, SchemaVersionFetchError,
     TranslationError, UseKeyspaceProtocolError, UserRequestError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -116,7 +116,7 @@ impl RouterHandle {
         request: &impl SerializableRequest,
         compression: Option<Compression>,
         tracing: bool,
-    ) -> Result<TaskResponse, RequestError> {
+    ) -> Result<TaskResponse, InternalRequestError> {
         let serialized_request = SerializedRequest::make(request, compression, tracing)?;
         let request_id = self.allocate_request_id();
 
@@ -163,7 +163,7 @@ pub(crate) struct ConnectionFeatures {
 type RequestId = u64;
 
 struct ResponseHandler {
-    response_sender: oneshot::Sender<Result<TaskResponse, RequestError>>,
+    response_sender: oneshot::Sender<Result<TaskResponse, InternalRequestError>>,
     request_id: RequestId,
 }
 
@@ -531,9 +531,9 @@ impl Connection {
                 }
             },
             Err(e) => match e {
-                RequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
-                RequestError::BodyExtensionsParseError(e) => return Err(err(e.into())),
-                RequestError::CqlResponseParseError(e) => match e {
+                InternalRequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
+                InternalRequestError::BodyExtensionsParseError(e) => return Err(err(e.into())),
+                InternalRequestError::CqlResponseParseError(e) => match e {
                     // Parsing of READY response cannot fail, since its body is empty.
                     // Remaining valid responses are AUTHENTICATE and ERROR.
                     CqlResponseParseError::CqlAuthenticateParseError(e) => {
@@ -546,8 +546,8 @@ impl Connection {
                         )))
                     }
                 },
-                RequestError::BrokenConnection(e) => return Err(err(e.into())),
-                RequestError::UnableToAllocStreamId => {
+                InternalRequestError::BrokenConnection(e) => return Err(err(e.into())),
+                InternalRequestError::UnableToAllocStreamId => {
                     return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
                 }
             },
@@ -579,9 +579,9 @@ impl Connection {
                 }
             },
             Err(e) => match e {
-                RequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
-                RequestError::BodyExtensionsParseError(e) => return Err(err(e.into())),
-                RequestError::CqlResponseParseError(e) => match e {
+                InternalRequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
+                InternalRequestError::BodyExtensionsParseError(e) => return Err(err(e.into())),
+                InternalRequestError::CqlResponseParseError(e) => match e {
                     CqlResponseParseError::CqlSupportedParseError(e) => return Err(err(e.into())),
                     CqlResponseParseError::CqlErrorParseError(e) => return Err(err(e.into())),
                     _ => {
@@ -590,8 +590,8 @@ impl Connection {
                         )))
                     }
                 },
-                RequestError::BrokenConnection(e) => return Err(err(e.into())),
-                RequestError::UnableToAllocStreamId => {
+                InternalRequestError::BrokenConnection(e) => return Err(err(e.into())),
+                InternalRequestError::UnableToAllocStreamId => {
                     return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
                 }
             },
@@ -743,9 +743,9 @@ impl Connection {
                 }
             },
             Err(e) => match e {
-                RequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
-                RequestError::BodyExtensionsParseError(e) => return Err(err(e.into())),
-                RequestError::CqlResponseParseError(e) => match e {
+                InternalRequestError::CqlRequestSerialization(e) => return Err(err(e.into())),
+                InternalRequestError::BodyExtensionsParseError(e) => return Err(err(e.into())),
+                InternalRequestError::CqlResponseParseError(e) => match e {
                     CqlResponseParseError::CqlAuthSuccessParseError(e) => {
                         return Err(err(e.into()))
                     }
@@ -759,8 +759,8 @@ impl Connection {
                         )))
                     }
                 },
-                RequestError::BrokenConnection(e) => return Err(err(e.into())),
-                RequestError::UnableToAllocStreamId => {
+                InternalRequestError::BrokenConnection(e) => return Err(err(e.into())),
+                InternalRequestError::UnableToAllocStreamId => {
                     return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
                 }
             },
@@ -1219,17 +1219,17 @@ impl Connection {
                 ))),
             },
             Err(e) => match e {
-                RequestError::CqlRequestSerialization(e) => Err(err(e.into())),
-                RequestError::BodyExtensionsParseError(e) => Err(err(e.into())),
-                RequestError::CqlResponseParseError(e) => match e {
+                InternalRequestError::CqlRequestSerialization(e) => Err(err(e.into())),
+                InternalRequestError::BodyExtensionsParseError(e) => Err(err(e.into())),
+                InternalRequestError::CqlResponseParseError(e) => match e {
                     // Parsing the READY response cannot fail. Only remaining valid response is ERROR.
                     CqlResponseParseError::CqlErrorParseError(e) => Err(err(e.into())),
                     _ => Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
                         e.to_response_kind(),
                     ))),
                 },
-                RequestError::BrokenConnection(e) => Err(err(e.into())),
-                RequestError::UnableToAllocStreamId => {
+                InternalRequestError::BrokenConnection(e) => Err(err(e.into())),
+                InternalRequestError::UnableToAllocStreamId => {
                     Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
                 }
             },
@@ -1260,7 +1260,7 @@ impl Connection {
         compress: bool,
         tracing: bool,
         cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-    ) -> Result<QueryResponse, RequestError> {
+    ) -> Result<QueryResponse, InternalRequestError> {
         let compression = if compress {
             self.config.compression
         } else {
@@ -1503,7 +1503,7 @@ impl Connection {
                 error!("Could not allocate stream id");
                 let _ = response_handler
                     .response_sender
-                    .send(Err(RequestError::UnableToAllocStreamId));
+                    .send(Err(InternalRequestError::UnableToAllocStreamId));
                 None
             }
         }

@@ -942,20 +942,20 @@ impl From<response::error::Error> for UserRequestError {
     }
 }
 
-impl From<RequestError> for UserRequestError {
-    fn from(value: RequestError) -> Self {
+impl From<InternalRequestError> for UserRequestError {
+    fn from(value: InternalRequestError) -> Self {
         match value {
-            RequestError::CqlRequestSerialization(e) => e.into(),
-            RequestError::BodyExtensionsParseError(e) => e.into(),
-            RequestError::CqlResponseParseError(e) => match e {
+            InternalRequestError::CqlRequestSerialization(e) => e.into(),
+            InternalRequestError::BodyExtensionsParseError(e) => e.into(),
+            InternalRequestError::CqlResponseParseError(e) => match e {
                 // Only possible responses are RESULT and ERROR. If we failed parsing
                 // other response, treat it as unexpected response.
                 CqlResponseParseError::CqlErrorParseError(e) => e.into(),
                 CqlResponseParseError::CqlResultParseError(e) => e.into(),
                 _ => UserRequestError::UnexpectedResponse(e.to_response_kind()),
             },
-            RequestError::BrokenConnection(e) => e.into(),
-            RequestError::UnableToAllocStreamId => UserRequestError::UnableToAllocStreamId,
+            InternalRequestError::BrokenConnection(e) => e.into(),
+            InternalRequestError::UnableToAllocStreamId => UserRequestError::UnableToAllocStreamId,
         }
     }
 }
@@ -967,9 +967,12 @@ impl From<RequestError> for UserRequestError {
 /// - Response's frame header deserialization error
 /// - CQL response (frame body) deserialization error
 /// - Driver was unable to allocate a stream id for a request
+///
+/// This is driver's internal low-level error type. It can occur
+/// during any request execution in connection layer.
 #[derive(Error, Debug)]
 #[non_exhaustive]
-pub enum RequestError {
+pub(crate) enum InternalRequestError {
     /// Failed to serialize CQL request.
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
@@ -991,7 +994,7 @@ pub enum RequestError {
     UnableToAllocStreamId,
 }
 
-impl From<ResponseParseError> for RequestError {
+impl From<ResponseParseError> for InternalRequestError {
     fn from(value: ResponseParseError) -> Self {
         match value {
             ResponseParseError::BodyExtensionsParseError(e) => e.into(),
