@@ -3,7 +3,7 @@ use super::execution_profile::ExecutionProfile;
 use super::session::Session;
 use super::session_builder::SessionBuilder;
 use crate as scylla;
-use crate::batch::{Batch, BatchStatement};
+use crate::batch::{Batch, BatchStatement, BatchType};
 use crate::cluster::metadata::Strategy::NetworkTopologyStrategy;
 use crate::cluster::metadata::{CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType};
 use crate::deserialize::DeserializeOwnedValue;
@@ -32,7 +32,7 @@ use scylla_cql::types::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, HashMap};
 use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
@@ -1325,6 +1325,88 @@ async fn test_timestamp() {
     .collect::<Vec<_>>();
 
     assert_eq!(results, expected_results);
+}
+
+#[tokio::test]
+async fn test_timestamp_generator() {
+    use crate::policies::timestamp_generator::TimestampGenerator;
+    use rand::random;
+
+    setup_tracing();
+    struct LocalTimestampGenerator {
+        generated_timestamps: Arc<Mutex<HashSet<i64>>>,
+    }
+
+    impl TimestampGenerator for LocalTimestampGenerator {
+        fn next_timestamp(&self) -> i64 {
+            let timestamp = random::<i64>().abs();
+            self.generated_timestamps.lock().unwrap().insert(timestamp);
+            timestamp
+        }
+    }
+
+    let timestamps = Arc::new(Mutex::new(HashSet::new()));
+    let generator = LocalTimestampGenerator {
+        generated_timestamps: timestamps.clone(),
+    };
+
+    let session = create_new_session_builder()
+        .timestamp_generator(Arc::new(generator))
+        .build()
+        .await
+        .unwrap();
+    let ks = unique_keyspace_name();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session
+        .ddl(format!(
+            "CREATE TABLE IF NOT EXISTS {}.t_generator (a int primary key, b int)",
+            ks
+        ))
+        .await
+        .unwrap();
+
+    let prepared = session
+        .prepare(format!(
+            "INSERT INTO {}.t_generator (a, b) VALUES (1, 1)",
+            ks
+        ))
+        .await
+        .unwrap();
+    session.execute_unpaged(&prepared, []).await.unwrap();
+
+    let unprepared = Query::new(format!(
+        "INSERT INTO {}.t_generator (a, b) VALUES (2, 2)",
+        ks
+    ));
+    session.query_unpaged(unprepared, []).await.unwrap();
+
+    let mut batch = Batch::new(BatchType::Unlogged);
+    let stmt = session
+        .prepare(format!(
+            "INSERT INTO {}.t_generator (a, b) VALUES (3, 3)",
+            ks
+        ))
+        .await
+        .unwrap();
+    batch.append_statement(stmt);
+    session.batch(&batch, &((),)).await.unwrap();
+
+    let query_rows_result = session
+        .query_unpaged(
+            format!("SELECT a, b, WRITETIME(b) FROM {}.t_generator", ks),
+            &[],
+        )
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap();
+
+    let timestamps_locked = timestamps.lock().unwrap();
+    assert!(query_rows_result
+        .rows::<(i32, i32, i64)>()
+        .unwrap()
+        .map(|row_result| row_result.unwrap())
+        .all(|(_a, _b, writetime)| timestamps_locked.contains(&writetime)));
 }
 
 #[ignore = "works on remote Scylla instances only (local ones are too fast)"]
