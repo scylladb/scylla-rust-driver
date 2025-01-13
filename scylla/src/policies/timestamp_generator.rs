@@ -145,3 +145,56 @@ impl TimestampGenerator for MonotonicTimestampGenerator {
         }
     }
 }
+
+#[test]
+fn monotonic_timestamp_generator_is_monotonic() {
+    const NUMBER_OF_ITERATIONS: u32 = 1000;
+
+    let mut prev = None;
+    let mut cur;
+    let generator = MonotonicTimestampGenerator::new();
+    for _ in 0..NUMBER_OF_ITERATIONS {
+        cur = generator.next_timestamp();
+        if let Some(prev_val) = prev {
+            assert!(cur > prev_val);
+        }
+        prev = Some(cur);
+    }
+}
+
+#[test]
+fn monotonic_timestamp_generator_is_monotonic_with_concurrency() {
+    use std::collections::HashSet;
+    use std::sync::Arc;
+
+    const NUMBER_OF_ITERATIONS: usize = 1000;
+    const NUMBER_OF_THREADS: usize = 10;
+    let generator = Arc::new(MonotonicTimestampGenerator::new());
+    let timestamps_sets: Vec<_> = std::thread::scope(|s| {
+        (0..NUMBER_OF_THREADS)
+            .map(|_| {
+                s.spawn(|| {
+                    let timestamps: Vec<i64> = (0..NUMBER_OF_ITERATIONS)
+                        .map(|_| generator.next_timestamp())
+                        .collect();
+                    assert!(timestamps.windows(2).all(|w| w[0] < w[1]));
+                    let timestamps_set: HashSet<i64> = HashSet::from_iter(timestamps);
+                    assert_eq!(
+                        timestamps_set.len(),
+                        NUMBER_OF_ITERATIONS,
+                        "Colliding values in a single thread"
+                    );
+                    timestamps_set
+                })
+            })
+            .map(|handle| handle.join().unwrap())
+            .collect()
+    });
+
+    let full_set: HashSet<i64> = timestamps_sets.iter().flatten().copied().collect();
+    assert_eq!(
+        full_set.len(),
+        NUMBER_OF_ITERATIONS * NUMBER_OF_THREADS,
+        "Colliding values between threads"
+    );
+}
