@@ -22,6 +22,7 @@ use crate::frame::{
     FrameParams, SerializedRequest,
 };
 use crate::policies::address_translator::AddressTranslator;
+use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::query::Query;
 use crate::response::query_result::QueryResult;
 use crate::response::{
@@ -324,6 +325,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
+    pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     #[cfg(feature = "ssl")]
     pub(crate) ssl_config: Option<SslConfig>,
     pub(crate) connect_timeout: std::time::Duration,
@@ -349,6 +351,7 @@ impl Default for ConnectionConfig {
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
+            timestamp_generator: None,
             event_sender: None,
             #[cfg(feature = "ssl")]
             ssl_config: None,

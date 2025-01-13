@@ -988,6 +988,7 @@ where
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
             tcp_keepalive_interval: config.tcp_keepalive_interval,
+            timestamp_generator: config.timestamp_generator,
             #[cfg(feature = "ssl")]
             ssl_config: config.ssl_context.map(SslConfig::new_with_global_context),
             authenticator: config.authenticator.clone(),
