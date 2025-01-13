@@ -1608,8 +1608,8 @@ impl Connection {
                 .send_request(&Options, None, false)
                 .await
                 .map(|_| ())
-                .map_err(|q_err| {
-                    BrokenConnectionErrorKind::KeepaliveQueryError(Arc::new(q_err)).into()
+                .map_err(|req_err| {
+                    BrokenConnectionErrorKind::KeepaliveRequestError(Arc::new(req_err)).into()
                 })
         }
 
