@@ -14,6 +14,7 @@ use crate::cloud::{CloudConfig, CloudConfigError};
 use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
+use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::statement::Consistency;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
@@ -681,6 +682,28 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn disallow_shard_aware_port(mut self, disallow: bool) -> Self {
         self.config.disallow_shard_aware_port = disallow;
+        self
+    }
+
+    /// Set the timestamp generator that will generate timestamps on the client-side.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::policies::timestamp_generator::SimpleTimestampGenerator;
+    /// # use std::sync::Arc;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .timestamp_generator(Arc::new(SimpleTimestampGenerator::new()))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn timestamp_generator(mut self, timestamp_generator: Arc<dyn TimestampGenerator>) -> Self {
+        self.config.timestamp_generator = Some(timestamp_generator);
         self
     }
 

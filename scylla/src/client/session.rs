@@ -30,6 +30,7 @@ use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
+use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 #[allow(deprecated)]
@@ -180,6 +181,10 @@ pub struct SessionConfig {
     /// Generally, this options is best left as default (false).
     pub disallow_shard_aware_port: bool,
 
+    ///  Timestamp generator used for generating timestamps on the client-side
+    ///  If None, server-side timestamps are used.
+    pub timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
+
     /// If empty, fetch all keyspaces
     pub keyspaces_to_fetch: Vec<String>,
 
@@ -292,6 +297,7 @@ impl SessionConfig {
             connect_timeout: Duration::from_secs(5),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
+            timestamp_generator: None,
             keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
             keepalive_interval: Some(Duration::from_secs(30)),
