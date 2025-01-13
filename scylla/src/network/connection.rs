@@ -21,6 +21,7 @@ use crate::frame::{
     server_event_type::EventType,
     FrameParams, SerializedRequest,
 };
+#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::address_translator::AddressTranslator;
 use crate::query::Query;
@@ -1904,7 +1905,7 @@ pub(super) async fn open_connection_to_shard_aware_port(
     shard: Shard,
     sharder: Sharder,
     connection_config: &ConnectionConfig,
-    metrics: Option<Arc<Metrics>>,
+    #[cfg(feature = "metrics")] metrics: Option<Arc<Metrics>>,
 ) -> Result<(Connection, ErrorReceiver), ConnectionError> {
     // Create iterator over all possible source ports for this shard
     let source_port_iter = sharder.iter_source_ports_for_shard(shard);
@@ -1912,6 +1913,7 @@ pub(super) async fn open_connection_to_shard_aware_port(
     for port in source_port_iter {
         let connect_result = open_connection(endpoint.clone(), Some(port), connection_config).await;
 
+        #[cfg(feature = "metrics")]
         if let Some(metrics) = &metrics {
             if connect_result.is_ok() {
                 metrics.inc_total_connections();

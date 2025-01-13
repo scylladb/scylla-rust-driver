@@ -23,6 +23,7 @@ use crate::network::SslConfig;
 use crate::network::{Connection, ConnectionConfig, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
+#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
@@ -100,6 +101,7 @@ where
     cluster: Cluster,
     default_execution_profile_handle: ExecutionProfileHandle,
     schema_agreement_interval: Duration,
+    #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
     schema_agreement_timeout: Duration,
     schema_agreement_automatic_waiting: bool,
@@ -125,6 +127,7 @@ impl<DeserApi> std::fmt::Debug for GenericSession<DeserApi>
 where
     DeserApi: DeserializationApiKind,
 {
+    #[cfg(feature = "metrics")]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
             .field("cluster", &ClusterNeatDebug(&self.cluster))
@@ -134,6 +137,22 @@ where
             )
             .field("schema_agreement_interval", &self.schema_agreement_interval)
             .field("metrics", &self.metrics)
+            .field(
+                "auto_await_schema_agreement_timeout",
+                &self.schema_agreement_timeout,
+            )
+            .finish()
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("cluster", &ClusterNeatDebug(&self.cluster))
+            .field(
+                "default_execution_profile_handle",
+                &self.default_execution_profile_handle,
+            )
+            .field("schema_agreement_interval", &self.schema_agreement_interval)
             .field(
                 "auto_await_schema_agreement_timeout",
                 &self.schema_agreement_timeout,
@@ -790,6 +809,7 @@ impl GenericSession<CurrentDeserializationApi> {
         LegacySession {
             cluster: self.cluster.clone(),
             default_execution_profile_handle: self.default_execution_profile_handle.clone(),
+            #[cfg(feature = "metrics")]
             metrics: self.metrics.clone(),
             refresh_metadata_on_auto_schema_agreement: self
                 .refresh_metadata_on_auto_schema_agreement,
@@ -900,6 +920,7 @@ impl GenericSession<LegacyDeserializationApi> {
         Session {
             cluster: self.cluster.clone(),
             default_execution_profile_handle: self.default_execution_profile_handle.clone(),
+            #[cfg(feature = "metrics")]
             metrics: self.metrics.clone(),
             refresh_metadata_on_auto_schema_agreement: self
                 .refresh_metadata_on_auto_schema_agreement,
@@ -997,6 +1018,7 @@ where
             identity: config.identity,
         };
 
+        #[cfg(feature = "metrics")]
         let metrics = Arc::new(Metrics::new());
 
         let pool_config = PoolConfig {
@@ -1004,6 +1026,7 @@ where
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
             keepalive_interval: config.keepalive_interval,
+            #[cfg(feature = "metrics")]
             metrics: Some(metrics.clone()),
         };
 
@@ -1024,6 +1047,7 @@ where
             cluster,
             default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
+            #[cfg(feature = "metrics")]
             metrics,
             schema_agreement_timeout: config.schema_agreement_timeout,
             schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
@@ -1234,6 +1258,7 @@ where
                 query,
                 execution_profile,
                 self.cluster.get_data(),
+                #[cfg(feature = "metrics")]
                 self.metrics.clone(),
             )
             .await
@@ -1248,6 +1273,7 @@ where
                 values,
                 execution_profile,
                 cluster_data: self.cluster.get_data(),
+                #[cfg(feature = "metrics")]
                 metrics: self.metrics.clone(),
             })
             .await
@@ -1502,6 +1528,7 @@ where
             values: serialized_values,
             execution_profile,
             cluster_data: self.cluster.get_data(),
+            #[cfg(feature = "metrics")]
             metrics: self.metrics.clone(),
         })
         .await
@@ -1715,6 +1742,7 @@ where
     /// Access metrics collected by the driver\
     /// Driver collects various metrics like number of queries or query latencies.
     /// They can be read using this method
+    #[cfg(feature = "metrics")]
     pub fn get_metrics(&self) -> Arc<Metrics> {
         self.metrics.clone()
     }
@@ -1936,6 +1964,7 @@ where
                     };
 
                     let context = speculative_execution::Context {
+                        #[cfg(feature = "metrics")]
                         metrics: self.metrics.clone(),
                     };
 
@@ -1981,6 +2010,7 @@ where
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
                 .unwrap_or_else(|e| {
+                    #[cfg(feature = "metrics")]
                     self.metrics.inc_request_timeouts();
                     Err(QueryError::RequestTimeout(format!(
                         "Request took longer than {}ms: {}",
@@ -2041,6 +2071,7 @@ where
                 };
                 context.request_span.record_shard_id(&connection);
 
+                #[cfg(feature = "metrics")]
                 self.metrics.inc_total_nonpaged_queries();
                 let request_start = std::time::Instant::now();
 
@@ -2060,6 +2091,7 @@ where
                 let request_error: RequestAttemptError = match request_result {
                     Ok(response) => {
                         trace!(parent: &span, "Request succeeded");
+                        #[cfg(feature = "metrics")]
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
                         execution_profile.load_balancing_policy.on_request_success(
@@ -2075,6 +2107,7 @@ where
                             last_error = %e,
                             "Request failed"
                         );
+                        #[cfg(feature = "metrics")]
                         self.metrics.inc_failed_nonpaged_queries();
                         execution_profile.load_balancing_policy.on_request_failure(
                             context.query_info,
@@ -2110,11 +2143,13 @@ where
 
                 match retry_decision {
                     RetryDecision::RetrySameNode(new_cl) => {
+                        #[cfg(feature = "metrics")]
                         self.metrics.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
                     RetryDecision::RetryNextNode(new_cl) => {
+                        #[cfg(feature = "metrics")]
                         self.metrics.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;

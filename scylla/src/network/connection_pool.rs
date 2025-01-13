@@ -12,6 +12,7 @@ use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
+#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 
 #[cfg(feature = "cloud")]
@@ -63,6 +64,7 @@ pub(crate) struct PoolConfig {
     pub(crate) pool_size: PoolSize,
     pub(crate) can_use_shard_aware_port: bool,
     pub(crate) keepalive_interval: Option<Duration>,
+    #[cfg(feature = "metrics")]
     // TODO: The metrics should definitely not be stored here,
     //       but it was the easiest way to pass it to the refiller.
     //       It could be refactored to be passed as a parameter to the refiller,
@@ -77,6 +79,7 @@ impl Default for PoolConfig {
             pool_size: Default::default(),
             can_use_shard_aware_port: true,
             keepalive_interval: None,
+            #[cfg(feature = "metrics")]
             metrics: None,
         }
     }
@@ -930,6 +933,7 @@ impl PoolRefiller {
         // As this may may involve resolving a hostname, the whole operation is async.
         let endpoint_fut = self.maybe_translate_for_serverless(endpoint);
 
+        #[cfg(feature = "metrics")]
         let metrics = self.pool_config.metrics.clone();
 
         let fut = match (self.sharder.clone(), self.shard_aware_port, shard) {
@@ -944,6 +948,7 @@ impl PoolRefiller {
                     shard,
                     sharder.clone(),
                     &cfg,
+                    #[cfg(feature = "metrics")]
                     metrics,
                 )
                 .await;
@@ -958,6 +963,7 @@ impl PoolRefiller {
                 let non_shard_aware_endpoint = endpoint_fut.await;
                 let result = open_connection(non_shard_aware_endpoint, None, &cfg).await;
 
+                #[cfg(feature = "metrics")]
                 if let Some(metrics) = metrics {
                     if result.is_ok() {
                         metrics.inc_total_connections();
@@ -1042,6 +1048,7 @@ impl PoolRefiller {
             match maybe_idx {
                 Some(idx) => {
                     v.swap_remove(idx);
+                    #[cfg(feature = "metrics")]
                     self.pool_config
                         .metrics
                         .as_ref()
@@ -1267,6 +1274,7 @@ mod tests {
                 0,
                 sharder.clone(),
                 &connection_config,
+                #[cfg(feature = "metrics")]
                 None,
             ));
         }

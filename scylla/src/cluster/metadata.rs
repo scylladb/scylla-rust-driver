@@ -763,6 +763,7 @@ impl MetadataReader {
             // so explicitly disable it here
             can_use_shard_aware_port: false,
 
+            #[cfg(feature = "metrics")]
             // TODO: This should probably be changed or removed depending on
             //       how we want to pass the metrics to the PoolRefiller
             metrics: None,

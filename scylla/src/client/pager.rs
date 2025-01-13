@@ -35,6 +35,7 @@ use crate::frame::response::result;
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
+#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
@@ -68,6 +69,7 @@ pub(crate) struct PreparedIteratorConfig {
     pub(crate) values: SerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_data: Arc<ClusterState>,
+    #[cfg(feature = "metrics")]
     pub(crate) metrics: Arc<Metrics>,
 }
 
@@ -143,6 +145,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,
     execution_profile: Arc<ExecutionProfileInner>,
+    #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
 
     paging_state: PagingState,
@@ -240,11 +243,13 @@ where
 
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
+                        #[cfg(feature = "metrics")]
                         self.metrics.inc_retries_num();
                         current_consistency = cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
                     RetryDecision::RetryNextNode(cl) => {
+                        #[cfg(feature = "metrics")]
                         self.metrics.inc_retries_num();
                         current_consistency = cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;
@@ -302,6 +307,7 @@ where
         node: NodeRef<'_>,
         request_span: &RequestSpan,
     ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, RequestAttemptError> {
+        #[cfg(feature = "metrics")]
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
 
@@ -327,6 +333,7 @@ where
                 tracing_id,
                 ..
             }) => {
+                #[cfg(feature = "metrics")]
                 let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                 self.log_attempt_success();
                 self.log_query_success();
@@ -362,6 +369,7 @@ where
                 Ok(ControlFlow::Continue(()))
             }
             Err(err) => {
+                #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
                 self.execution_profile
                     .load_balancing_policy
@@ -381,6 +389,7 @@ where
                 Ok(ControlFlow::Break(proof))
             }
             Ok(response) => {
+                #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
                 let err =
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
@@ -688,7 +697,7 @@ impl QueryPager {
         query: Query,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_data: Arc<ClusterState>,
-        metrics: Arc<Metrics>,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Result<Self, QueryError> {
         let (sender, receiver) = mpsc::channel(1);
 
@@ -751,6 +760,7 @@ impl QueryPager {
                 query_consistency: consistency,
                 retry_session,
                 execution_profile,
+                #[cfg(feature = "metrics")]
                 metrics,
                 paging_state: PagingState::start(),
                 history_listener: query.config.history_listener.clone(),
@@ -869,6 +879,7 @@ impl QueryPager {
                 query_consistency: consistency,
                 retry_session,
                 execution_profile: config.execution_profile,
+                #[cfg(feature = "metrics")]
                 metrics: config.metrics,
                 paging_state: PagingState::start(),
                 history_listener: config.prepared.config.history_listener.clone(),
