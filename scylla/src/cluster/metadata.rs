@@ -876,9 +876,10 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
 
     let peers = translated_peers_futures
         .buffer_unordered(256)
+        .try_filter_map(|x| std::future::ready(Ok(x)))
         .try_collect::<Vec<_>>()
         .await?;
-    Ok(peers.into_iter().flatten().collect())
+    Ok(peers)
 }
 
 async fn create_peer_from_row(
