@@ -1966,7 +1966,6 @@ where
                         },
                     )
                     .await
-                    .unwrap_or(Err(QueryError::EmptyPlan))
                 }
             }
         };
@@ -2008,12 +2007,12 @@ where
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
-    ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
+    ) -> Result<RunRequestResult<ResT>, QueryError>
     where
         QueryFut: Future<Output = Result<ResT, RequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
     {
-        let mut last_error: Option<QueryError> = None;
+        let mut last_error: QueryError = QueryError::EmptyPlan;
         let mut current_consistency: Consistency = context
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
@@ -2030,7 +2029,7 @@ where
                             error = %e,
                             "Choosing connection failed"
                         );
-                        last_error = Some(e.into());
+                        last_error = e.into();
                         // Broken connection doesn't count as a failed request, don't log in metrics
                         continue 'nodes_in_plan;
                     }
@@ -2063,7 +2062,7 @@ where
                             elapsed,
                             node,
                         );
-                        return Some(Ok(RunRequestResult::Completed(response)));
+                        return Ok(RunRequestResult::Completed(response));
                     }
                     Err(e) => {
                         trace!(
@@ -2097,12 +2096,8 @@ where
                     retry_decision = ?retry_decision
                 );
 
-                last_error = Some(request_error.into_query_error());
-                context.log_attempt_error(
-                    &attempt_id,
-                    last_error.as_ref().unwrap(),
-                    &retry_decision,
-                );
+                last_error = request_error.into_query_error();
+                context.log_attempt_error(&attempt_id, &last_error, &retry_decision);
 
                 match retry_decision {
                     RetryDecision::RetrySameNode(new_cl) => {
@@ -2118,13 +2113,13 @@ where
                     RetryDecision::DontRetry => break 'nodes_in_plan,
 
                     RetryDecision::IgnoreWriteError => {
-                        return Some(Ok(RunRequestResult::IgnoredWriteError))
+                        return Ok(RunRequestResult::IgnoredWriteError)
                     }
                 };
             }
         }
 
-        last_error.map(Result::Err)
+        Err(last_error)
     }
 
     async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, QueryError> {

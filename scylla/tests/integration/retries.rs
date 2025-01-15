@@ -1,10 +1,16 @@
-use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
+use crate::utils::{
+    create_new_session_builder, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL,
+};
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::cluster::{ClusterState, NodeRef};
+use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::query::Query;
+use scylla::routing::Shard;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
@@ -231,4 +237,76 @@ async fn speculative_execution_panic_regression_test() {
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
     }
+}
+
+/// This is a regression test.
+/// We check that speculative execution does not retry when the load balancing policy returns an empty plan.
+/// The test timeout is set to 5 seconds, so the speculative execution policy with a retry interval 6s cannot retry.
+#[tokio::test]
+#[ntest::timeout(5000)]
+#[cfg(not(scylla_cloud_tests))]
+async fn speculative_execution_does_not_retry_on_emtpy_plan_regression_test() {
+    setup_tracing();
+
+    #[derive(Debug)]
+    struct AlwaysEmptyLBP;
+    impl LoadBalancingPolicy for AlwaysEmptyLBP {
+        fn pick<'a>(
+            &'a self,
+            _request: &'a RoutingInfo,
+            _cluster: &'a ClusterState,
+        ) -> Option<(NodeRef<'a>, Option<Shard>)> {
+            None
+        }
+
+        fn fallback<'a>(
+            &'a self,
+            _request: &'a RoutingInfo,
+            _cluster: &'a ClusterState,
+        ) -> FallbackPlan<'a> {
+            Box::new(std::iter::empty())
+        }
+
+        fn name(&self) -> String {
+            "AlwaysEmptyLBP".to_string()
+        }
+    }
+
+    let session: Session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
+            ks
+        ))
+        .await
+        .unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
+    session
+        .ddl("CREATE TABLE t (a int primary key)")
+        .await
+        .unwrap();
+
+    // 3 retries with 6 seconds interval
+    // The test should finish in less than 5 seconds, so the speculative execution should not retry.
+    let se = SimpleSpeculativeExecutionPolicy {
+        max_retry_count: 3,
+        retry_interval: Duration::from_millis(6000),
+    };
+    let profile = ExecutionProfile::builder()
+        .speculative_execution_policy(Some(Arc::new(se)))
+        .load_balancing_policy(Arc::new(AlwaysEmptyLBP))
+        .build();
+
+    let mut prepared = session
+        .prepare("INSERT INTO t (a) VALUES (?)")
+        .await
+        .unwrap();
+    prepared.set_execution_profile_handle(Some(profile.into_handle()));
+    // To enable speculative execution.
+    prepared.set_is_idempotent(true);
+
+    let result = session.execute_unpaged(&prepared, (2,)).await;
+    assert!(matches!(result, Err(scylla::errors::QueryError::EmptyPlan)));
 }
