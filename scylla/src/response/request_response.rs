@@ -6,7 +6,7 @@ use scylla_cql::frame::response::{NonErrorResponse, Response};
 use tracing::error;
 use uuid::Uuid;
 
-use crate::errors::{ProtocolError, QueryError, UserRequestError};
+use crate::errors::{ProtocolError, QueryError, RequestAttemptError};
 use crate::frame::response::{self, result};
 use crate::response::query_result::QueryResult;
 
@@ -28,7 +28,7 @@ pub(crate) struct NonErrorQueryResponse {
 impl QueryResponse {
     pub(crate) fn into_non_error_query_response(
         self,
-    ) -> Result<NonErrorQueryResponse, UserRequestError> {
+    ) -> Result<NonErrorQueryResponse, RequestAttemptError> {
         Ok(NonErrorQueryResponse {
             response: self.response.into_non_error_response()?,
             tracing_id: self.tracing_id,
@@ -38,14 +38,14 @@ impl QueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), RequestAttemptError> {
         self.into_non_error_query_response()?
             .into_query_result_and_paging_state()
     }
 
     pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
         self.into_non_error_query_response()
-            .map_err(UserRequestError::into_query_error)?
+            .map_err(RequestAttemptError::into_query_error)?
             .into_query_result()
     }
 }
@@ -67,14 +67,14 @@ impl NonErrorQueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), RequestAttemptError> {
         let (raw_rows, paging_state_response) = match self.response {
             NonErrorResponse::Result(result::Result::Rows((rs, paging_state_response))) => {
                 (Some(rs), paging_state_response)
             }
             NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages),
             _ => {
-                return Err(UserRequestError::UnexpectedResponse(
+                return Err(RequestAttemptError::UnexpectedResponse(
                     self.response.to_response_kind(),
                 ))
             }
@@ -89,7 +89,7 @@ impl NonErrorQueryResponse {
     pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
         let (result, paging_state) = self
             .into_query_result_and_paging_state()
-            .map_err(UserRequestError::into_query_error)?;
+            .map_err(RequestAttemptError::into_query_error)?;
 
         if !paging_state.finished() {
             error!(

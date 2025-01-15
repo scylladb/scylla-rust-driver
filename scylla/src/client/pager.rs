@@ -30,7 +30,7 @@ use crate::cluster::{ClusterState, NodeRef};
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::ProtocolError;
-use crate::errors::{QueryError, UserRequestError};
+use crate::errors::{QueryError, RequestAttemptError};
 use crate::frame::response::result;
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
@@ -135,7 +135,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     sender: ProvingSender<Result<ReceivedPage, QueryError>>,
 
     // Closure used to perform a single page query
-    // AsyncFn(Arc<Connection>, Option<Arc<[u8]>>) -> Result<QueryResponse, UserRequestError>
+    // AsyncFn(Arc<Connection>, Option<Arc<[u8]>>) -> Result<QueryResponse, RequestAttemptError>
     page_query: QueryFunc,
 
     statement_info: RoutingInfo<'a>,
@@ -158,7 +158,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
 impl<QueryFunc, QueryFut, SpanCreator> PagerWorker<'_, QueryFunc, SpanCreator>
 where
     QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
-    QueryFut: Future<Output = Result<QueryResponse, UserRequestError>>,
+    QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     SpanCreator: Fn() -> RequestSpan,
 {
     // Contract: this function MUST send at least one item through self.sender
@@ -482,7 +482,7 @@ struct SingleConnectionPagerWorker<Fetcher> {
 impl<Fetcher, FetchFut> SingleConnectionPagerWorker<Fetcher>
 where
     Fetcher: Fn(PagingState) -> FetchFut + Send + Sync,
-    FetchFut: Future<Output = Result<QueryResponse, UserRequestError>> + Send,
+    FetchFut: Future<Output = Result<QueryResponse, RequestAttemptError>> + Send,
 {
     async fn work(mut self) -> PageSendAttemptedProof {
         match self.do_work().await {
@@ -499,10 +499,10 @@ where
         loop {
             let result = (self.fetcher)(paging_state)
                 .await
-                .map_err(UserRequestError::into_query_error)?;
+                .map_err(RequestAttemptError::into_query_error)?;
             let response = result
                 .into_non_error_query_response()
-                .map_err(UserRequestError::into_query_error)?;
+                .map_err(RequestAttemptError::into_query_error)?;
             match response.response {
                 NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => {
                     let (proof, send_result) = self

@@ -871,18 +871,17 @@ pub enum CqlEventHandlingError {
     SendError,
 }
 
-/// An error type that occurred when executing one of:
+/// An error type that occurred during single attempt of:
 /// - `QUERY`
 /// - `PREPARE`
 /// - `EXECUTE`
 /// - `BATCH`
 ///
-/// requests. This error can appear during a single try
-/// of request execution. The retry decision is made based
+/// requests. The retry decision is made based
 /// on this error.
 #[derive(Error, Debug)]
 #[non_exhaustive]
-pub enum UserRequestError {
+pub enum RequestAttemptError {
     /// Failed to serialize query parameters. This error occurs, when user executes
     /// a CQL `QUERY` request with non-empty parameter's value list and the serialization
     /// of provided values fails during statement preparation.
@@ -940,21 +939,21 @@ pub enum UserRequestError {
     RepreparedIdMissingInBatch,
 }
 
-impl UserRequestError {
+impl RequestAttemptError {
     /// Converts the error to [`QueryError`].
     pub fn into_query_error(self) -> QueryError {
         match self {
-            UserRequestError::CqlRequestSerialization(e) => e.into(),
-            UserRequestError::DbError(err, msg) => QueryError::DbError(err, msg),
-            UserRequestError::CqlResultParseError(e) => e.into(),
-            UserRequestError::CqlErrorParseError(e) => e.into(),
-            UserRequestError::BrokenConnectionError(e) => e.into(),
-            UserRequestError::UnexpectedResponse(response) => {
+            RequestAttemptError::CqlRequestSerialization(e) => e.into(),
+            RequestAttemptError::DbError(err, msg) => QueryError::DbError(err, msg),
+            RequestAttemptError::CqlResultParseError(e) => e.into(),
+            RequestAttemptError::CqlErrorParseError(e) => e.into(),
+            RequestAttemptError::BrokenConnectionError(e) => e.into(),
+            RequestAttemptError::UnexpectedResponse(response) => {
                 ProtocolError::UnexpectedResponse(response).into()
             }
-            UserRequestError::BodyExtensionsParseError(e) => e.into(),
-            UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
-            UserRequestError::RepreparedIdChanged {
+            RequestAttemptError::BodyExtensionsParseError(e) => e.into(),
+            RequestAttemptError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
+            RequestAttemptError::RepreparedIdChanged {
                 statement,
                 expected_id,
                 reprepared_id,
@@ -964,21 +963,21 @@ impl UserRequestError {
                 reprepared_id,
             }
             .into(),
-            UserRequestError::RepreparedIdMissingInBatch => {
+            RequestAttemptError::RepreparedIdMissingInBatch => {
                 ProtocolError::RepreparedIdMissingInBatch.into()
             }
-            UserRequestError::SerializationError(e) => e.into(),
+            RequestAttemptError::SerializationError(e) => e.into(),
         }
     }
 }
 
-impl From<response::error::Error> for UserRequestError {
+impl From<response::error::Error> for RequestAttemptError {
     fn from(value: response::error::Error) -> Self {
-        UserRequestError::DbError(value.error, value.reason)
+        RequestAttemptError::DbError(value.error, value.reason)
     }
 }
 
-impl From<InternalRequestError> for UserRequestError {
+impl From<InternalRequestError> for RequestAttemptError {
     fn from(value: InternalRequestError) -> Self {
         match value {
             InternalRequestError::CqlRequestSerialization(e) => e.into(),
@@ -988,10 +987,12 @@ impl From<InternalRequestError> for UserRequestError {
                 // other response, treat it as unexpected response.
                 CqlResponseParseError::CqlErrorParseError(e) => e.into(),
                 CqlResponseParseError::CqlResultParseError(e) => e.into(),
-                _ => UserRequestError::UnexpectedResponse(e.to_response_kind()),
+                _ => RequestAttemptError::UnexpectedResponse(e.to_response_kind()),
             },
             InternalRequestError::BrokenConnection(e) => e.into(),
-            InternalRequestError::UnableToAllocStreamId => UserRequestError::UnableToAllocStreamId,
+            InternalRequestError::UnableToAllocStreamId => {
+                RequestAttemptError::UnableToAllocStreamId
+            }
         }
     }
 }

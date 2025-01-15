@@ -15,7 +15,7 @@ use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
-    BadQuery, NewSessionError, ProtocolError, QueryError, TracingProtocolError, UserRequestError,
+    BadQuery, NewSessionError, ProtocolError, QueryError, RequestAttemptError, TracingProtocolError,
 };
 use crate::frame::response::result;
 #[cfg(feature = "ssl")]
@@ -1175,7 +1175,7 @@ where
 
         let (result, paging_state_response) = response
             .into_query_result_and_paging_state()
-            .map_err(UserRequestError::into_query_error)?;
+            .map_err(RequestAttemptError::into_query_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1303,10 +1303,10 @@ where
 
         // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
         // returns either an error or an iterator with at least one connection, so there will be at least one result.
-        let first_ok: Result<PreparedStatement, UserRequestError> =
+        let first_ok: Result<PreparedStatement, RequestAttemptError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
         let mut prepared: PreparedStatement =
-            first_ok.map_err(UserRequestError::into_query_error)?;
+            first_ok.map_err(RequestAttemptError::into_query_error)?;
 
         // Validate prepared ids equality
         for statement in results.flatten() {
@@ -1478,7 +1478,7 @@ where
 
         let (result, paging_state_response) = response
             .into_query_result_and_paging_state()
-            .map_err(UserRequestError::into_query_error)?;
+            .map_err(RequestAttemptError::into_query_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1848,7 +1848,7 @@ where
         request_span: &'a RequestSpan,
     ) -> Result<RunRequestResult<ResT>, QueryError>
     where
-        QueryFut: Future<Output = Result<ResT, UserRequestError>>,
+        QueryFut: Future<Output = Result<ResT, RequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
     {
         let history_listener_and_id: Option<(&'a dyn HistoryListener, history::QueryId)> =
@@ -2012,7 +2012,7 @@ where
         mut context: ExecuteRequestContext<'a>,
     ) -> Option<Result<RunRequestResult<ResT>, QueryError>>
     where
-        QueryFut: Future<Output = Result<ResT, UserRequestError>>,
+        QueryFut: Future<Output = Result<ResT, RequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
     {
         let mut last_error: Option<QueryError> = None;
@@ -2049,7 +2049,7 @@ where
                 );
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connection.get_connect_address());
-                let request_result: Result<ResT, UserRequestError> =
+                let request_result: Result<ResT, RequestAttemptError> =
                     run_request_once(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
                         .await;

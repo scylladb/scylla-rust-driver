@@ -10,8 +10,8 @@ use crate::cluster::NodeAddr;
 use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
-    InternalRequestError, ProtocolError, QueryError, ResponseParseError, SchemaVersionFetchError,
-    TranslationError, UseKeyspaceProtocolError, UserRequestError,
+    InternalRequestError, ProtocolError, QueryError, RequestAttemptError, ResponseParseError,
+    SchemaVersionFetchError, TranslationError, UseKeyspaceProtocolError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
@@ -603,7 +603,7 @@ impl Connection {
     pub(crate) async fn prepare(
         &self,
         query: &Query,
-    ) -> Result<PreparedStatement, UserRequestError> {
+    ) -> Result<PreparedStatement, RequestAttemptError> {
         let query_response = self
             .send_request(
                 &request::Prepare {
@@ -617,7 +617,7 @@ impl Connection {
 
         let mut prepared_statement = match query_response.response {
             Response::Error(error::Error { error, reason }) => {
-                return Err(UserRequestError::DbError(error, reason))
+                return Err(RequestAttemptError::DbError(error, reason))
             }
             Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
                 p.id,
@@ -631,7 +631,7 @@ impl Connection {
                 query.config.clone(),
             ),
             _ => {
-                return Err(UserRequestError::UnexpectedResponse(
+                return Err(RequestAttemptError::UnexpectedResponse(
                     query_response.response.to_response_kind(),
                 ))
             }
@@ -647,13 +647,13 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         previous_prepared: &PreparedStatement,
-    ) -> Result<(), UserRequestError> {
+    ) -> Result<(), RequestAttemptError> {
         let reprepare_query: Query = query.into();
         let reprepared = self.prepare(&reprepare_query).await?;
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
         if reprepared.get_id() != previous_prepared.get_id() {
-            Err(UserRequestError::RepreparedIdChanged {
+            Err(RequestAttemptError::RepreparedIdChanged {
                 statement: reprepare_query.contents,
                 expected_id: previous_prepared.get_id().clone().into(),
                 reprepared_id: reprepared.get_id().clone().into(),
@@ -774,7 +774,7 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), RequestAttemptError> {
         let query: Query = query.into();
 
         // This method is used only for driver internal queries, so no need to consult execution profile here.
@@ -799,7 +799,7 @@ impl Connection {
         paging_state: PagingState,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), RequestAttemptError> {
         let query: Query = query.into();
         let page_size = query.get_validated_page_size();
 
@@ -824,14 +824,14 @@ impl Connection {
 
         self.query_raw_unpaged(&query)
             .await
-            .map_err(UserRequestError::into_query_error)
+            .map_err(RequestAttemptError::into_query_error)
             .and_then(QueryResponse::into_query_result)
     }
 
     pub(crate) async fn query_raw_unpaged(
         &self,
         query: &Query,
-    ) -> Result<QueryResponse, UserRequestError> {
+    ) -> Result<QueryResponse, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_raw_with_consistency(
             query,
@@ -852,7 +852,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, UserRequestError> {
+    ) -> Result<QueryResponse, RequestAttemptError> {
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
             parameters: query::QueryParameters {
@@ -882,7 +882,7 @@ impl Connection {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values)
             .await
-            .map_err(UserRequestError::into_query_error)
+            .map_err(RequestAttemptError::into_query_error)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -891,7 +891,7 @@ impl Connection {
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
-    ) -> Result<QueryResponse, UserRequestError> {
+    ) -> Result<QueryResponse, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
             prepared,
@@ -914,7 +914,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, UserRequestError> {
+    ) -> Result<QueryResponse, RequestAttemptError> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
@@ -1035,7 +1035,7 @@ impl Connection {
             batch.config.serial_consistency.flatten(),
         )
         .await
-        .map_err(UserRequestError::into_query_error)
+        .map_err(RequestAttemptError::into_query_error)
         .and_then(QueryResponse::into_query_result)
     }
 
@@ -1045,7 +1045,7 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<QueryResponse, UserRequestError> {
+    ) -> Result<QueryResponse, RequestAttemptError> {
         let batch = self.prepare_batch(init_batch, &values).await?;
 
         let contexts = batch.statements.iter().map(|bs| match bs {
@@ -1070,7 +1070,7 @@ impl Connection {
             let query_response = self
                 .send_request(&batch_frame, true, batch.config.tracing, None)
                 .await
-                .map_err(UserRequestError::from)?;
+                .map_err(RequestAttemptError::from)?;
 
             return match query_response.response {
                 Response::Error(err) => match err.error {
@@ -1086,13 +1086,13 @@ impl Connection {
                             self.reprepare(p.get_statement(), p).await?;
                             continue;
                         } else {
-                            return Err(UserRequestError::RepreparedIdMissingInBatch);
+                            return Err(RequestAttemptError::RepreparedIdMissingInBatch);
                         }
                     }
                     _ => Err(err.into()),
                 },
                 Response::Result(_) => Ok(query_response),
-                _ => Err(UserRequestError::UnexpectedResponse(
+                _ => Err(RequestAttemptError::UnexpectedResponse(
                     query_response.response.to_response_kind(),
                 )),
             };
@@ -1103,7 +1103,7 @@ impl Connection {
         &self,
         init_batch: &'b Batch,
         values: impl BatchValues,
-    ) -> Result<Cow<'b, Batch>, UserRequestError> {
+    ) -> Result<Cow<'b, Batch>, RequestAttemptError> {
         let mut to_prepare = HashSet::<&str>::new();
 
         {
@@ -1161,7 +1161,7 @@ impl Connection {
         let query_response = self
             .query_raw_unpaged(&query)
             .await
-            .map_err(UserRequestError::into_query_error)?;
+            .map_err(RequestAttemptError::into_query_error)?;
         Self::verify_use_keyspace_result(keyspace_name, query_response)
     }
 
