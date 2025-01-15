@@ -11,7 +11,7 @@ openssl = "0.10.70"
 rustyline = "9"
 rustyline-derive = "0.6"
 scylla = { path = "../scylla", features = [
-    "ssl",
+    "openssl-010",
     "cloud",
     "chrono-04",
     "time-03",

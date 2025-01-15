@@ -13,7 +13,7 @@ use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::statement::Consistency;
-#[cfg(feature = "ssl")]
+#[cfg(feature = "openssl-010")]
 use openssl::ssl::SslContext;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
@@ -350,7 +350,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "ssl")]
+    #[cfg(feature = "openssl-010")]
     pub fn ssl_context(mut self, ssl_context: Option<SslContext>) -> Self {
         self.config.ssl_context = ssl_context;
         self
