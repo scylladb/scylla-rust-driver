@@ -856,7 +856,7 @@ impl QueryPager {
                     serialized_values_size,
                 );
                 if let Some(replicas) = replicas.as_ref() {
-                    span.record_replicas(replicas);
+                    span.record_replicas(replicas.iter().map(|(node, shard)| (node, *shard)));
                 }
                 span
             };

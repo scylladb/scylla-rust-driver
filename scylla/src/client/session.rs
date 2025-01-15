@@ -1429,7 +1429,7 @@ where
                 let replicas: smallvec::SmallVec<[_; 8]> = cluster_data
                     .get_token_endpoints_iter(table_spec, token)
                     .collect();
-                span.record_replicas(&replicas)
+                span.record_replicas(replicas.iter().map(|&(node, shard)| (node, shard)))
             }
         }
 
