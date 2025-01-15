@@ -502,7 +502,7 @@ dependencies = [
  "clap",
  "env_logger",
  "futures",
- "openssl",
+ "openssl-010",
  "rand",
  "rustyline",
  "rustyline-derive",
@@ -1060,7 +1060,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ab1bc2a289d34bd04a330323ac98a1b4bc82c9d9fcb1e66b63caa84da26b575"
 
 [[package]]
-name = "openssl"
+name = "openssl-010"
 version = "0.10.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5e534d133a060a3c19daec1eb3e98ec6f4685978834f2dbadfe2ec215bab64e"
@@ -1486,7 +1486,7 @@ dependencies = [
  "ntest",
  "num-bigint 0.3.3",
  "num-bigint 0.4.5",
- "openssl",
+ "openssl-010",
  "rand",
  "rand_chacha",
  "rand_pcg",
@@ -1900,7 +1900,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ffab79df67727f6acf57f1ff743091873c24c579b1e2ce4d8f53e47ded4d63d"
 dependencies = [
  "futures-util",
- "openssl",
+ "openssl-010",
  "openssl-sys",
  "tokio",
 ]
