@@ -30,14 +30,14 @@ use crate::cluster::{ClusterState, NodeRef};
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::ProtocolError;
-use crate::errors::{QueryError, UserRequestError};
+use crate::errors::{QueryError, RequestAttemptError};
 use crate::frame::response::result;
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, RoutingInfo};
-use crate::policies::retry::{QueryInfo, RetryDecision, RetrySession};
+use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
@@ -135,7 +135,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     sender: ProvingSender<Result<ReceivedPage, QueryError>>,
 
     // Closure used to perform a single page query
-    // AsyncFn(Arc<Connection>, Option<Arc<[u8]>>) -> Result<QueryResponse, UserRequestError>
+    // AsyncFn(Arc<Connection>, Option<Arc<[u8]>>) -> Result<QueryResponse, RequestAttemptError>
     page_query: QueryFunc,
 
     statement_info: RoutingInfo<'a>,
@@ -158,7 +158,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
 impl<QueryFunc, QueryFut, SpanCreator> PagerWorker<'_, QueryFunc, SpanCreator>
 where
     QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
-    QueryFut: Future<Output = Result<QueryResponse, UserRequestError>>,
+    QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     SpanCreator: Fn() -> RequestSpan,
 {
     // Contract: this function MUST send at least one item through self.sender
@@ -199,14 +199,14 @@ where
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
                 // Query pages until an error occurs
-                let queries_result: Result<PageSendAttemptedProof, QueryError> = self
+                let queries_result: Result<PageSendAttemptedProof, RequestAttemptError> = self
                     .query_pages(&connection, current_consistency, node)
                     .instrument(span.clone())
                     .await;
 
-                last_error = match queries_result {
+                let request_error: RequestAttemptError = match queries_result {
                     Ok(proof) => {
-                        trace!(parent: &span, "Query succeeded");
+                        trace!(parent: &span, "Request succeeded");
                         // query_pages returned Ok, so we are guaranteed
                         // that it attempted to send at least one page
                         // through self.sender and we can safely return now.
@@ -216,15 +216,15 @@ where
                         trace!(
                             parent: &span,
                             error = %error,
-                            "Query failed"
+                            "Request failed"
                         );
                         error
                     }
                 };
 
                 // Use retry policy to decide what to do next
-                let query_info = QueryInfo {
-                    error: &last_error,
+                let query_info = RequestInfo {
+                    error: &request_error,
                     is_idempotent: self.query_is_idempotent,
                     consistency: self.query_consistency,
                 };
@@ -234,7 +234,10 @@ where
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
+
+                last_error = request_error.into_query_error();
                 self.log_attempt_error(&last_error, &retry_decision);
+
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
                         self.metrics.inc_retries_num();
@@ -278,7 +281,7 @@ where
         connection: &Arc<Connection>,
         consistency: Consistency,
         node: NodeRef<'_>,
-    ) -> Result<PageSendAttemptedProof, QueryError> {
+    ) -> Result<PageSendAttemptedProof, RequestAttemptError> {
         loop {
             let request_span = (self.span_creator)();
             match self
@@ -298,7 +301,7 @@ where
         consistency: Consistency,
         node: NodeRef<'_>,
         request_span: &RequestSpan,
-    ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, QueryError> {
+    ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, RequestAttemptError> {
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
 
@@ -329,7 +332,7 @@ where
                 self.log_query_success();
                 self.execution_profile
                     .load_balancing_policy
-                    .on_query_success(&self.statement_info, elapsed, node);
+                    .on_request_success(&self.statement_info, elapsed, node);
 
                 request_span.record_raw_rows_fields(&rows);
 
@@ -359,11 +362,10 @@ where
                 Ok(ControlFlow::Continue(()))
             }
             Err(err) => {
-                let err = err.into();
                 self.metrics.inc_failed_paged_queries();
                 self.execution_profile
                     .load_balancing_policy
-                    .on_query_failure(&self.statement_info, elapsed, node, &err);
+                    .on_request_failure(&self.statement_info, elapsed, node, &err);
                 Err(err)
             }
             Ok(NonErrorQueryResponse {
@@ -381,10 +383,10 @@ where
             Ok(response) => {
                 self.metrics.inc_failed_paged_queries();
                 let err =
-                    ProtocolError::UnexpectedResponse(response.response.to_response_kind()).into();
+                    RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
                 self.execution_profile
                     .load_balancing_policy
-                    .on_query_failure(&self.statement_info, elapsed, node, &err);
+                    .on_request_failure(&self.statement_info, elapsed, node, &err);
                 Err(err)
             }
         }
@@ -482,7 +484,7 @@ struct SingleConnectionPagerWorker<Fetcher> {
 impl<Fetcher, FetchFut> SingleConnectionPagerWorker<Fetcher>
 where
     Fetcher: Fn(PagingState) -> FetchFut + Send + Sync,
-    FetchFut: Future<Output = Result<QueryResponse, UserRequestError>> + Send,
+    FetchFut: Future<Output = Result<QueryResponse, RequestAttemptError>> + Send,
 {
     async fn work(mut self) -> PageSendAttemptedProof {
         match self.do_work().await {
@@ -497,8 +499,12 @@ where
     async fn do_work(&mut self) -> Result<PageSendAttemptedProof, QueryError> {
         let mut paging_state = PagingState::start();
         loop {
-            let result = (self.fetcher)(paging_state).await?;
-            let response = result.into_non_error_query_response()?;
+            let result = (self.fetcher)(paging_state)
+                .await
+                .map_err(RequestAttemptError::into_query_error)?;
+            let response = result
+                .into_non_error_query_response()
+                .map_err(RequestAttemptError::into_query_error)?;
             match response.response {
                 NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => {
                     let (proof, send_result) = self

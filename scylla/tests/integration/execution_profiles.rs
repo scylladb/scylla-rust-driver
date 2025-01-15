@@ -65,7 +65,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
         Box::new(std::iter::empty())
     }
 
-    fn on_query_success(
+    fn on_request_success(
         &self,
         _query: &RoutingInfo,
         _latency: std::time::Duration,
@@ -73,12 +73,12 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
     ) {
     }
 
-    fn on_query_failure(
+    fn on_request_failure(
         &self,
         _query: &RoutingInfo,
         _latency: std::time::Duration,
         _node: NodeRef<'_>,
-        _error: &scylla::errors::QueryError,
+        _error: &scylla::errors::RequestAttemptError,
     ) {
     }
 
@@ -97,9 +97,9 @@ impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {
 impl<const NODE: u8> RetrySession for BoundToPredefinedNodePolicy<NODE> {
     fn decide_should_retry(
         &mut self,
-        query_info: scylla::policies::retry::QueryInfo,
+        request_info: scylla::policies::retry::RequestInfo,
     ) -> scylla::policies::retry::RetryDecision {
-        self.report_consistency(query_info.consistency);
+        self.report_consistency(request_info.consistency);
         scylla::policies::retry::RetryDecision::DontRetry
     }
 

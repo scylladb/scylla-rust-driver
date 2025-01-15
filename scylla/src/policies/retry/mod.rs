@@ -8,4 +8,4 @@ pub use downgrading_consistency::{
     DowngradingConsistencyRetryPolicy, DowngradingConsistencyRetrySession,
 };
 pub use fallthrough::{FallthroughRetryPolicy, FallthroughRetrySession};
-pub use retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
+pub use retry_policy::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};

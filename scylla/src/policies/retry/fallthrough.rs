@@ -1,4 +1,4 @@
-use super::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
+use super::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 
 /// Forwards all errors directly to the user, never retries
 #[derive(Debug)]
@@ -24,7 +24,7 @@ impl RetryPolicy for FallthroughRetryPolicy {
 }
 
 impl RetrySession for FallthroughRetrySession {
-    fn decide_should_retry(&mut self, _query_info: QueryInfo) -> RetryDecision {
+    fn decide_should_retry(&mut self, _query_info: RequestInfo) -> RetryDecision {
         RetryDecision::DontRetry
     }
 

@@ -1,19 +1,19 @@
-//! Query retries configurations\
-//! To decide when to retry a query the `Session` can use any object which implements
+//! Request retries configurations\
+//! To decide when to retry a request the `Session` can use any object which implements
 //! the `RetryPolicy` trait
 
-use crate::errors::QueryError;
+use crate::errors::RequestAttemptError;
 use crate::frame::types::Consistency;
 
-/// Information about a failed query
-pub struct QueryInfo<'a> {
-    /// The error with which the query failed
-    pub error: &'a QueryError,
-    /// A query is idempotent if it can be applied multiple times without changing the result of the initial application\
+/// Information about a failed request
+pub struct RequestInfo<'a> {
+    /// The error with which the request failed
+    pub error: &'a RequestAttemptError,
+    /// A request is idempotent if it can be applied multiple times without changing the result of the initial application\
     /// If set to `true` we can be sure that it is idempotent\
     /// If set to `false` it is unknown whether it is idempotent
     pub is_idempotent: bool,
-    /// Consistency with which the query failed
+    /// Consistency with which the request failed
     pub consistency: Consistency,
 }
 
@@ -25,18 +25,18 @@ pub enum RetryDecision {
     IgnoreWriteError,
 }
 
-/// Specifies a policy used to decide when to retry a query
+/// Specifies a policy used to decide when to retry a request
 pub trait RetryPolicy: std::fmt::Debug + Send + Sync {
-    /// Called for each new query, starts a session of deciding about retries
+    /// Called for each new request, starts a session of deciding about retries
     fn new_session(&self) -> Box<dyn RetrySession>;
 }
 
-/// Used throughout a single query to decide when to retry it
-/// After this query is finished it is destroyed or reset
+/// Used throughout a single request to decide when to retry it
+/// After this request is finished it is destroyed or reset
 pub trait RetrySession: Send + Sync {
-    /// Called after the query failed - decide what to do next
-    fn decide_should_retry(&mut self, query_info: QueryInfo) -> RetryDecision;
+    /// Called after the request failed - decide what to do next
+    fn decide_should_retry(&mut self, request_info: RequestInfo) -> RetryDecision;
 
-    /// Reset before using for a new query
+    /// Reset before using for a new request
     fn reset(&mut self);
 }

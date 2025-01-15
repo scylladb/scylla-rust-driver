@@ -4,7 +4,7 @@
 
 use crate::cluster::{ClusterState, NodeRef};
 use crate::{
-    errors::QueryError,
+    errors::RequestAttemptError,
     routing::{Shard, Token},
 };
 use scylla_cql::frame::{response::result::TableSpec, types};
@@ -19,8 +19,8 @@ pub use plan::Plan;
 /// Represents info about statement that can be used by load balancing policies.
 #[derive(Default, Clone, Debug)]
 pub struct RoutingInfo<'a> {
-    /// Requested consistency information allows to route queries to the appropriate
-    /// datacenters. E.g. queries with a LOCAL_ONE consistency should be routed to the same
+    /// Requested consistency information allows to route requests to the appropriate
+    /// datacenters. E.g. requests with a LOCAL_ONE consistency should be routed to the same
     /// datacenter.
     pub consistency: types::Consistency,
     pub serial_consistency: Option<types::SerialConsistency>,
@@ -33,65 +33,65 @@ pub struct RoutingInfo<'a> {
 
     /// If, while preparing, we received from the cluster information that the statement is an LWT,
     /// then we can use this information for routing optimisation. Namely, an optimisation
-    /// can be performed: the query should be routed to the replicas in a predefined order
+    /// can be performed: the request should be routed to the replicas in a predefined order
     /// (i. e. always try first to contact replica A, then B if it fails, then C, etc.).
-    /// If false, the query should be routed normally.
+    /// If false, the request should be routed normally.
     /// Note: this a Scylla-specific optimisation. Therefore, the flag will be always false for Cassandra.
     pub is_confirmed_lwt: bool,
 }
 
-/// The fallback list of nodes in the query plan.
+/// The fallback list of nodes in the request plan.
 ///
 /// It is computed on-demand, only if querying the most preferred node fails
 /// (or when speculative execution is triggered).
 pub type FallbackPlan<'a> =
     Box<dyn Iterator<Item = (NodeRef<'a>, Option<Shard>)> + Send + Sync + 'a>;
 
-/// Policy that decides which nodes and shards to contact for each query.
+/// Policy that decides which nodes and shards to contact for each request.
 ///
-/// When a query is prepared to be sent to ScyllaDB/Cassandra, a `LoadBalancingPolicy`
+/// When a request is prepared to be sent to ScyllaDB/Cassandra, a `LoadBalancingPolicy`
 /// implementation constructs a load balancing plan. That plan is a list of
 /// targets (target is a node + an optional shard) to which
-/// the driver will try to send the query. The first elements of the plan are the targets which are
+/// the driver will try to send the request. The first elements of the plan are the targets which are
 /// the best to contact (e.g. they might have the lowest latency).
 ///
-/// Most queries are sent on the first try, so the query execution layer rarely needs to know more
+/// Most requests are sent on the first try, so the request execution layer rarely needs to know more
 /// than one target from plan. To better optimize that case, `LoadBalancingPolicy` has two methods:
-/// `pick` and `fallback`. `pick` returns the first target to contact for a given query, `fallback`
+/// `pick` and `fallback`. `pick` returns the first target to contact for a given request, `fallback`
 /// returns the rest of the load balancing plan.
 ///
 /// `fallback` is called not only if a send to `pick`ed node failed (or when executing
 /// speculatively), but also if `pick` returns `None`.
 ///
-/// Usually the driver needs only the first node from load balancing plan (most queries are send
+/// Usually the driver needs only the first node from load balancing plan (most requests are send
 /// successfully, and there is no need to retry).
 ///
-/// This trait is used to produce an iterator of nodes to contact for a given query.
+/// This trait is used to produce an iterator of nodes to contact for a given request.
 pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
-    /// Returns the first node to contact for a given query.
+    /// Returns the first node to contact for a given request.
     fn pick<'a>(
         &'a self,
-        query: &'a RoutingInfo,
+        request: &'a RoutingInfo,
         cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<Shard>)>;
 
-    /// Returns all contact-appropriate nodes for a given query.
+    /// Returns all contact-appropriate nodes for a given request.
     fn fallback<'a>(
         &'a self,
-        query: &'a RoutingInfo,
+        request: &'a RoutingInfo,
         cluster: &'a ClusterState,
     ) -> FallbackPlan<'a>;
 
-    /// Invoked each time a query succeeds.
-    fn on_query_success(&self, _query: &RoutingInfo, _latency: Duration, _node: NodeRef<'_>) {}
+    /// Invoked each time a request succeeds.
+    fn on_request_success(&self, _request: &RoutingInfo, _latency: Duration, _node: NodeRef<'_>) {}
 
-    /// Invoked each time a query fails.
-    fn on_query_failure(
+    /// Invoked each time a request fails.
+    fn on_request_failure(
         &self,
-        _query: &RoutingInfo,
+        _request: &RoutingInfo,
         _latency: Duration,
         _node: NodeRef<'_>,
-        _error: &QueryError,
+        _error: &RequestAttemptError,
     ) {
     }
 

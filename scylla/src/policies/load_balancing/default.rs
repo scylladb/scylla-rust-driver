@@ -6,7 +6,7 @@ use crate::cluster::ClusterState;
 use crate::{
     cluster::metadata::Strategy,
     cluster::node::Node,
-    errors::QueryError,
+    errors::RequestAttemptError,
     routing::locator::ReplicaSet,
     routing::{Shard, Token},
 };
@@ -559,22 +559,27 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         "DefaultPolicy".to_string()
     }
 
-    fn on_query_success(&self, _routing_info: &RoutingInfo, latency: Duration, node: NodeRef<'_>) {
-        if let Some(latency_awareness) = self.latency_awareness.as_ref() {
-            latency_awareness.report_query(node, latency);
-        }
-    }
-
-    fn on_query_failure(
+    fn on_request_success(
         &self,
         _routing_info: &RoutingInfo,
         latency: Duration,
         node: NodeRef<'_>,
-        error: &QueryError,
+    ) {
+        if let Some(latency_awareness) = self.latency_awareness.as_ref() {
+            latency_awareness.report_request(node, latency);
+        }
+    }
+
+    fn on_request_failure(
+        &self,
+        _routing_info: &RoutingInfo,
+        latency: Duration,
+        node: NodeRef<'_>,
+        error: &RequestAttemptError,
     ) {
         if let Some(latency_awareness) = self.latency_awareness.as_ref() {
             if LatencyAwareness::reliable_latency_measure(error) {
-                latency_awareness.report_query(node, latency);
+                latency_awareness.report_request(node, latency);
             }
         }
     }
@@ -2554,7 +2559,7 @@ mod latency_awareness {
     use uuid::Uuid;
 
     use crate::cluster::node::Node;
-    use crate::errors::{DbError, QueryError};
+    use crate::errors::{DbError, RequestAttemptError};
     use crate::policies::load_balancing::NodeRef;
     use crate::routing::Shard;
     use std::{
@@ -2808,7 +2813,7 @@ mod latency_awareness {
             Either::Right(skipping_penalised_targets_iterator)
         }
 
-        pub(super) fn report_query(&self, node: &Node, latency: Duration) {
+        pub(super) fn report_request(&self, node: &Node, latency: Duration) {
             let node_avgs_guard = self.node_avgs.read().unwrap();
             if let Some(previous_node_avg) = node_avgs_guard.get(&node.host_id) {
                 // The usual path, the node has been already noticed.
@@ -2839,33 +2844,27 @@ mod latency_awareness {
             }
         }
 
-        pub(crate) fn reliable_latency_measure(error: &QueryError) -> bool {
+        pub(crate) fn reliable_latency_measure(error: &RequestAttemptError) -> bool {
             match error {
                 // "fast" errors, i.e. ones that are returned quickly after the query begins
-                QueryError::BadQuery(_)
-                | QueryError::CqlRequestSerialization(_)
-                | QueryError::BrokenConnection(_)
-                | QueryError::ConnectionPoolError(_)
-                | QueryError::EmptyPlan
-                | QueryError::UnableToAllocStreamId
-                | QueryError::DbError(DbError::IsBootstrapping, _)
-                | QueryError::DbError(DbError::Unavailable { .. }, _)
-                | QueryError::DbError(DbError::Unprepared { .. }, _)
-                | QueryError::DbError(DbError::Overloaded { .. }, _)
-                | QueryError::DbError(DbError::RateLimitReached { .. }, _) => false,
+                RequestAttemptError::CqlRequestSerialization(_)
+                | RequestAttemptError::BrokenConnectionError(_)
+                | RequestAttemptError::UnableToAllocStreamId
+                | RequestAttemptError::DbError(DbError::IsBootstrapping, _)
+                | RequestAttemptError::DbError(DbError::Unavailable { .. }, _)
+                | RequestAttemptError::DbError(DbError::Unprepared { .. }, _)
+                | RequestAttemptError::DbError(DbError::Overloaded { .. }, _)
+                | RequestAttemptError::DbError(DbError::RateLimitReached { .. }, _)
+                | RequestAttemptError::SerializationError(_) => false,
 
                 // "slow" errors, i.e. ones that are returned after considerable time of query being run
-                #[allow(deprecated)]
-                QueryError::DbError(_, _)
-                | QueryError::CqlResultParseError(_)
-                | QueryError::CqlErrorParseError(_)
-                | QueryError::BodyExtensionsParseError(_)
-                | QueryError::MetadataError(_)
-                | QueryError::ProtocolError(_)
-                | QueryError::TimeoutError
-                | QueryError::RequestTimeout(_)
-                | QueryError::NextRowError(_)
-                | QueryError::IntoLegacyQueryResultError(_) => true,
+                RequestAttemptError::DbError(_, _)
+                | RequestAttemptError::CqlResultParseError(_)
+                | RequestAttemptError::CqlErrorParseError(_)
+                | RequestAttemptError::BodyExtensionsParseError(_)
+                | RequestAttemptError::RepreparedIdChanged { .. }
+                | RequestAttemptError::RepreparedIdMissingInBatch
+                | RequestAttemptError::UnexpectedResponse(_) => true,
             }
         }
     }
