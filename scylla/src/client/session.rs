@@ -2096,7 +2096,7 @@ where
                 let retry_decision = context.retry_session.decide_should_retry(query_info);
                 trace!(
                     parent: &span,
-                    retry_decision = format!("{:?}", retry_decision).as_str()
+                    retry_decision = ?retry_decision
                 );
 
                 last_error = Some(request_error.into_query_error());

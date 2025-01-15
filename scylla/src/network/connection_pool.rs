@@ -587,7 +587,7 @@ impl PoolRefiller {
                 }
             }
             trace!(
-                pool_state = format!("{:?}", ShardedConnectionVectorWrapper(&self.conns)).as_str()
+                pool_state = ?ShardedConnectionVectorWrapper(&self.conns)
             );
 
             // Schedule refilling here

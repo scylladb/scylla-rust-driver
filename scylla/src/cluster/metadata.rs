@@ -633,11 +633,9 @@ impl MetadataReader {
             };
 
             warn!(
-                control_connection_address = self
+                control_connection_address = tracing::field::display(self
                     .control_connection_endpoint
-                    .address()
-                    .to_string()
-                    .as_str(),
+                    .address()),
                 error = %err,
                 "Failed to fetch metadata using current control connection"
             );
