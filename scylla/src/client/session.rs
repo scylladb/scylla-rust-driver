@@ -19,7 +19,7 @@ use crate::errors::{
     TracingProtocolError,
 };
 use crate::frame::response::result;
-#[cfg(feature = "ssl")]
+#[cfg(feature = "openssl")]
 use crate::network::SslConfig;
 use crate::network::{Connection, ConnectionConfig, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::driver_tracing::RequestSpan;
@@ -45,7 +45,7 @@ use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
-#[cfg(feature = "ssl")]
+#[cfg(feature = "openssl")]
 use openssl::ssl::SslContext;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::serialize::batch::BatchValues;
@@ -167,7 +167,7 @@ pub struct SessionConfig {
     pub keyspace_case_sensitive: bool,
 
     /// Provide our Session with TLS
-    #[cfg(feature = "ssl")]
+    #[cfg(feature = "openssl")]
     pub ssl_context: Option<SslContext>,
 
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
@@ -292,7 +292,7 @@ impl SessionConfig {
                 .into_handle(),
             used_keyspace: None,
             keyspace_case_sensitive: false,
-            #[cfg(feature = "ssl")]
+            #[cfg(feature = "openssl")]
             ssl_context: None,
             authenticator: None,
             connect_timeout: Duration::from_secs(5),

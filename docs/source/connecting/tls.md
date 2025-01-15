@@ -10,12 +10,12 @@ It was chosen because [`rustls`](https://github.com/ctz/rustls) doesn't support 
 
 To enable the `tls` feature add in `Cargo.toml`:
 ```toml
-scylla = { version = "0.4", features = ["ssl"] }
+scylla = { version = "0.4", features = ["openssl"] }
 openssl = "0.10.32"
 ```
 
 Then install the package with `openssl`:
-* Debian/Ubuntu: 
+* Debian/Ubuntu:
     ```bash
     apt install libssl-dev pkg-config
     ```
@@ -23,7 +23,7 @@ Then install the package with `openssl`:
     ```bash
     dnf install openssl-devel
     ```
-<!-- 
+<!--
  scylla-rust-driver doesn't build on Alpine, some strange cc linker errors in proc-macro-hack 0_o
  TODO: try building and add the section
 
@@ -38,7 +38,7 @@ Then install the package with `openssl`:
     ```
 
 ### Using TLS
-To use tls you will have to create an openssl 
+To use tls you will have to create an openssl
 [`SslContext`](https://docs.rs/openssl/0.10.33/openssl/ssl/struct.SslContext.html)
 and pass it to `SessionBuilder`
 

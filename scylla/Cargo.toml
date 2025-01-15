@@ -16,9 +16,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
-ssl = ["dep:tokio-openssl", "dep:openssl"]
+openssl = ["dep:tokio-openssl", "dep:openssl"]
 cloud = [
-    "ssl",
     "scylla-cql/serde",
     "dep:serde_yaml",
     "dep:serde",
