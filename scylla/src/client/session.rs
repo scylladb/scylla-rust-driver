@@ -1426,10 +1426,8 @@ where
         if !span.span().is_disabled() {
             if let (Some(table_spec), Some(token)) = (statement_info.table, token) {
                 let cluster_data = self.get_cluster_data();
-                let replicas: smallvec::SmallVec<[_; 8]> = cluster_data
-                    .get_token_endpoints_iter(table_spec, token)
-                    .collect();
-                span.record_replicas(replicas.iter().map(|&(node, shard)| (node, shard)))
+                let replicas = cluster_data.get_token_endpoints_iter(table_spec, token);
+                span.record_replicas(replicas)
             }
         }
 

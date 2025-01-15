@@ -217,7 +217,7 @@ impl ClusterState {
         &self,
         table_spec: &TableSpec,
         token: Token,
-    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
+    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> + Clone {
         let keyspace = self.keyspaces.get(table_spec.ks_name());
         let strategy = keyspace
             .map(|k| &k.strategy)
