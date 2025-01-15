@@ -1232,7 +1232,7 @@ mod tests {
         let connection_config = ConnectionConfig {
             compression: None,
             tcp_nodelay: true,
-            #[cfg(feature = "ssl")]
+            #[cfg(feature = "openssl-010")]
             ssl_config: None,
             ..Default::default()
         };
