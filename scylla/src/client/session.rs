@@ -19,8 +19,8 @@ use crate::errors::{
     TracingProtocolError,
 };
 use crate::frame::response::result;
-#[cfg(feature = "openssl")]
-use crate::network::SslConfig;
+#[cfg(feature = "__tls")]
+use crate::network::TlsConfig;
 use crate::network::{Connection, ConnectionConfig, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
@@ -45,8 +45,6 @@ use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
-#[cfg(feature = "openssl")]
-use openssl::ssl::SslContext;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
@@ -144,6 +142,21 @@ where
     }
 }
 
+#[cfg(feature = "__tls")]
+#[derive(Clone)]
+#[non_exhaustive]
+pub enum TlsContext {
+    #[cfg(feature = "openssl")]
+    OpenSsl(openssl::ssl::SslContext),
+
+#[cfg(feature = "openssl")]
+impl From<openssl::ssl::SslContext> for TlsContext {
+    fn from(value: openssl::ssl::SslContext) -> Self {
+        TlsContext::OpenSsl(value)
+    }
+}
+}
+
 /// Configuration options for [`Session`].
 /// Can be created manually, but usually it's easier to use
 /// [SessionBuilder](super::session_builder::SessionBuilder)
@@ -167,8 +180,8 @@ pub struct SessionConfig {
     pub keyspace_case_sensitive: bool,
 
     /// Provide our Session with TLS
-    #[cfg(feature = "openssl")]
-    pub ssl_context: Option<SslContext>,
+    #[cfg(feature = "__tls")]
+    pub tls_context: Option<TlsContext>,
 
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
 
@@ -292,8 +305,8 @@ impl SessionConfig {
                 .into_handle(),
             used_keyspace: None,
             keyspace_case_sensitive: false,
-            #[cfg(feature = "openssl")]
-            ssl_context: None,
+            #[cfg(feature = "__tls")]
+            tls_context: None,
             authenticator: None,
             connect_timeout: Duration::from_secs(5),
             connection_pool_size: Default::default(),
@@ -989,8 +1002,8 @@ where
             tcp_nodelay: config.tcp_nodelay,
             tcp_keepalive_interval: config.tcp_keepalive_interval,
             timestamp_generator: config.timestamp_generator,
-            #[cfg(feature = "ssl")]
-            ssl_config: config.ssl_context.map(SslConfig::new_with_global_context),
+            #[cfg(feature = "__tls")]
+            tls_config: config.tls_context.map(TlsConfig::new_with_global_context),
             authenticator: config.authenticator.clone(),
             connect_timeout: config.connect_timeout,
             event_sender: None,

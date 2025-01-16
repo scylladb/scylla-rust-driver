@@ -1220,8 +1220,8 @@ mod tests {
         let connection_config = ConnectionConfig {
             compression: None,
             tcp_nodelay: true,
-            #[cfg(feature = "openssl")]
-            ssl_config: None,
+            #[cfg(feature = "__tls")]
+            tls_config: None,
             ..Default::default()
         };
 

@@ -46,13 +46,11 @@ use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
 use scylla_cql::serialize::raw_batch::RawBatchValuesAdapter;
 use scylla_cql::serialize::row::{RowSerializationContext, SerializedValues};
 use socket2::{SockRef, TcpKeepalive};
-#[cfg(feature = "openssl")]
-pub(crate) use ssl_config::SslConfig;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
 use std::net::{IpAddr, SocketAddr};
-#[cfg(feature = "openssl")]
+#[cfg(feature = "__tls")]
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -62,12 +60,14 @@ use std::{
     cmp::Ordering,
     net::{Ipv4Addr, Ipv6Addr},
 };
+#[cfg(feature = "__tls")]
+pub use tls_config::TlsError;
+#[cfg(feature = "__tls")]
+pub(crate) use tls_config::{Tls, TlsConfig};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
-#[cfg(feature = "openssl")]
-use tokio_openssl::SslStream;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -212,14 +212,14 @@ struct TaskResponse {
     body: Bytes,
 }
 
-#[cfg(feature = "openssl")]
-mod ssl_config {
-    use openssl::{
-        error::ErrorStack,
-        ssl::{Ssl, SslContext},
-    };
+#[cfg(feature = "__tls")]
+mod tls_config {
+    use std::{fmt, io};
+
     #[cfg(feature = "cloud")]
     use uuid::Uuid;
+
+    use crate::client::session::TlsContext;
 
     /// This struct encapsulates all Ssl-regarding configuration and helps pass it tidily through the code.
     //
@@ -232,15 +232,65 @@ mod ssl_config {
     // for the particular node. (The SslConfig must be different, because SNIs differ for different nodes.)
     // Thenceforth, all connections to that node share the same SslConfig.
     #[derive(Clone)]
-    pub(crate) struct SslConfig {
-        context: SslContext,
+    pub(crate) struct TlsConfig {
+        context: TlsContext,
         #[cfg(feature = "cloud")]
         sni: Option<String>,
     }
 
-    impl SslConfig {
+    pub(crate) enum Tls {
+        #[cfg(feature = "openssl")]
+        OpenSsl(openssl::ssl::Ssl),
+    }
+
+    /// A wrapper around a TLS error
+    ///
+    /// The original error came from one of the supported TLS backends. This wrapper is meant to be
+    /// transparent, meaning that error formatting and source is obtained directly from the source
+    /// error
+    #[derive(Debug)]
+    pub enum TlsError {
+        #[cfg(feature = "openssl")]
+        OpenSsl(openssl::error::ErrorStack),
+    }
+
+    impl std::error::Error for TlsError {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            match self {
+                #[cfg(feature = "openssl")]
+                TlsError::OpenSsl(e) => e.source(),
+            }
+        }
+    }
+
+    impl fmt::Display for TlsError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                #[cfg(feature = "openssl")]
+                TlsError::OpenSsl(e) => e.fmt(f),
+            }
+        }
+    }
+
+    impl From<TlsError> for io::Error {
+        fn from(value: TlsError) -> Self {
+            match value {
+                #[cfg(feature = "openssl")]
+                TlsError::OpenSsl(e) => e.into(),
+            }
+        }
+    }
+
+    #[cfg(feature = "openssl")]
+    impl From<openssl::error::ErrorStack> for TlsError {
+        fn from(error: openssl::error::ErrorStack) -> Self {
+            TlsError::OpenSsl(error)
+        }
+    }
+
+    impl TlsConfig {
         // Used in case when the user provided their own SslContext to be used in all connections.
-        pub(crate) fn new_with_global_context(context: SslContext) -> Self {
+        pub(crate) fn new_with_global_context(context: TlsContext) -> Self {
             Self {
                 context,
                 #[cfg(feature = "cloud")]
@@ -251,7 +301,7 @@ mod ssl_config {
         // Used in case of Serverless Cloud connections.
         #[cfg(feature = "cloud")]
         pub(crate) fn new_for_sni(
-            context: SslContext,
+            context: TlsContext,
             domain_name: &str,
             host_id: Option<Uuid>,
         ) -> Self {
@@ -267,14 +317,21 @@ mod ssl_config {
         }
 
         // Produces a new Ssl object that is able to wrap a TCP stream.
-        pub(crate) fn new_ssl(&self) -> Result<Ssl, ErrorStack> {
-            #[allow(unused_mut)]
-            let mut ssl = Ssl::new(&self.context)?;
-            #[cfg(feature = "cloud")]
-            if let Some(sni) = self.sni.as_ref() {
-                ssl.set_hostname(sni)?;
-            }
-            Ok(ssl)
+        pub(crate) fn new_tls(&self) -> Result<Tls, TlsError> {
+            let tls = match &self.context {
+                #[cfg(feature = "openssl")]
+                TlsContext::OpenSsl(context) => {
+                    #[allow(unused_mut)]
+                    let mut ssl = openssl::ssl::Ssl::new(context)?;
+                    #[cfg(feature = "cloud")]
+                    if let Some(sni) = self.sni.as_ref() {
+                        ssl.set_hostname(sni)?;
+                    }
+                    Tls::OpenSsl(ssl)
+                }
+            };
+
+            Ok(tls)
         }
     }
 }
@@ -326,8 +383,8 @@ pub(crate) struct ConnectionConfig {
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
     pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
-    #[cfg(feature = "openssl")]
-    pub(crate) ssl_config: Option<SslConfig>,
+    #[cfg(feature = "__tls")]
+    pub(crate) tls_config: Option<TlsConfig>,
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub(crate) event_sender: Option<mpsc::Sender<Event>>,
@@ -353,8 +410,8 @@ impl Default for ConnectionConfig {
             tcp_keepalive_interval: None,
             timestamp_generator: None,
             event_sender: None,
-            #[cfg(feature = "openssl")]
-            ssl_config: None,
+            #[cfg(feature = "__tls")]
+            tls_config: None,
             connect_timeout: std::time::Duration::from_secs(5),
             default_consistency: Default::default(),
             authenticator: None,
@@ -375,16 +432,16 @@ impl Default for ConnectionConfig {
 }
 
 impl ConnectionConfig {
-    #[cfg(feature = "openssl")]
+    #[cfg(feature = "__tls")]
     fn is_ssl(&self) -> bool {
         #[cfg(feature = "cloud")]
         if self.cloud_config.is_some() {
             return true;
         }
-        self.ssl_config.is_some()
+        self.tls_config.is_some()
     }
 
-    #[cfg(not(feature = "openssl"))]
+    #[cfg(not(feature = "__tls"))]
     fn is_ssl(&self) -> bool {
         false
     }
@@ -1358,10 +1415,13 @@ impl Connection {
         router_handle: Arc<RouterHandle>,
         node_address: IpAddr,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
-        #[cfg(feature = "openssl")]
-        if let Some(ssl_config) = &config.ssl_config {
-            let ssl = ssl_config.new_ssl()?;
-            let mut stream = SslStream::new(ssl, stream)?;
+        #[cfg(feature = "__tls")]
+        if let Some(tls_config) = &config.tls_config {
+            let mut stream = match tls_config.new_tls()? {
+                #[cfg(feature = "openssl")]
+                Tls::OpenSsl(ssl) => tokio_openssl::SslStream::new(ssl, stream)?,
+            };
+
             let _pin = Pin::new(&mut stream).connect().await;
 
             let (task, handle) = Self::router(

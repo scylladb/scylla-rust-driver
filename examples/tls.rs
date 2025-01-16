@@ -1,6 +1,7 @@
 use anyhow::Result;
 use futures::TryStreamExt as _;
 use scylla::client::session::Session;
+use scylla::client::session::TlsContext;
 use scylla::client::session_builder::SessionBuilder;
 use std::env;
 use std::fs;
@@ -46,7 +47,7 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
-        .ssl_context(Some(context_builder.build()))
+        .tls_context(Some(TlsContext::OpenSsl(context_builder.build())))
         .build()
         .await?;
 

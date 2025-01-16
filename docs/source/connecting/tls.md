@@ -59,7 +59,7 @@ context_builder.set_verify(SslVerifyMode::PEER);
 
 let session: Session = SessionBuilder::new()
     .known_node("127.0.0.1:9142") // The the port is now 9142
-    .ssl_context(Some(context_builder.build()))
+    .tls_context(Some(context_builder.build()))
     .build()
     .await?;
 
