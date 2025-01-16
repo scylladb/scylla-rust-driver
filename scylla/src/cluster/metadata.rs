@@ -47,7 +47,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
@@ -91,6 +91,7 @@ pub(crate) enum SingleKeyspaceMetadataError {
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
     control_connection_pool_config: PoolConfig,
+    request_serverside_timeout: Option<Duration>,
 
     control_connection_endpoint: UntranslatedEndpoint,
     control_connection: NodeConnectionPool,
@@ -425,6 +426,7 @@ impl MetadataReader {
         initial_known_nodes: Vec<InternalKnownNode>,
         control_connection_repair_requester: broadcast::Sender<()>,
         mut connection_config: ConnectionConfig,
+        request_serverside_timeout: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
@@ -475,6 +477,7 @@ impl MetadataReader {
             control_connection_pool_config,
             control_connection_endpoint,
             control_connection,
+            request_serverside_timeout,
             known_peers: initial_peers
                 .into_iter()
                 .map(UntranslatedEndpoint::ContactPoint)
@@ -604,7 +607,7 @@ impl MetadataReader {
         // TODO: Timeouts?
         self.control_connection.wait_until_initialized().await;
         let conn = ControlConnection::new(self.control_connection.random_connection()?)
-            .override_serverside_timeout(None);
+            .override_serverside_timeout(self.request_serverside_timeout);
 
         let res = conn
             .query_metadata(
