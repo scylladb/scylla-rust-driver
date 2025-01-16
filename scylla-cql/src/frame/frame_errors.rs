@@ -454,6 +454,8 @@ pub enum CqlTypeParseError {
     TupleLengthParseError(LowLevelDeserializationError),
     #[error("CQL Type not yet implemented, id: {0}")]
     TypeNotImplemented(u16),
+    #[error("Failed to parse abstract type")]
+    AbstractTypeParseError(),
 }
 
 /// A low level deserialization error.
@@ -485,6 +487,8 @@ pub enum LowLevelDeserializationError {
     InvalidInetLength(u8),
     #[error("UTF8 deserialization failed: {0}")]
     UTF8DeserializationError(#[from] std::str::Utf8Error),
+    #[error(transparent)]
+    ParseIntError(#[from] std::num::ParseIntError),
 }
 
 impl From<std::io::Error> for LowLevelDeserializationError {

@@ -5,6 +5,8 @@
 
 use thiserror::Error;
 
+use crate::frame::types;
+
 use super::row::SerializedValues;
 
 /// An interface that facilitates writing values for a CQL query.
@@ -74,6 +76,8 @@ impl<'buf> RowWriter<'buf> {
 /// in nothing being written.
 pub struct CellWriter<'buf> {
     buf: &'buf mut Vec<u8>,
+    cell_len: Option<usize>,
+    size_as_uvarint: bool,
 }
 
 impl<'buf> CellWriter<'buf> {
@@ -82,7 +86,28 @@ impl<'buf> CellWriter<'buf> {
     /// The newly created row writer will append data to the end of the vec.
     #[inline]
     pub fn new(buf: &'buf mut Vec<u8>) -> Self {
-        Self { buf }
+        Self {
+            buf,
+            cell_len: None,
+            size_as_uvarint: false,
+        }
+    }
+    /// Creates a new cell writer based on an existing Vec, for fixed-length cells.
+    /// This cell writer will serialize each cell directly, without prepending it
+    /// with cell length.  
+    ///
+    /// The newly created row writer will append data to the end of the vec
+    #[inline]
+    pub fn with_cell_len(
+        buf: &'buf mut Vec<u8>,
+        cell_len: Option<usize>,
+        size_as_uvarint: bool,
+    ) -> Self {
+        Self {
+            buf,
+            cell_len,
+            size_as_uvarint,
+        }
     }
 
     /// Sets this value to be null, consuming this object.
@@ -110,7 +135,18 @@ impl<'buf> CellWriter<'buf> {
     #[inline]
     pub fn set_value(self, contents: &[u8]) -> Result<WrittenCellProof<'buf>, CellOverflowError> {
         let value_len: i32 = contents.len().try_into().map_err(|_| CellOverflowError)?;
-        self.buf.extend_from_slice(&value_len.to_be_bytes());
+        match self.cell_len {
+            Some(cell_len) => assert_eq!(cell_len, contents.len()),
+            None => {
+                if !self.size_as_uvarint {
+                    self.buf.extend_from_slice(&value_len.to_be_bytes())
+                } else {
+                    let mut len = Vec::new();
+                    types::unsigned_vint_encode(value_len.try_into().unwrap(), &mut len);
+                    self.buf.extend_from_slice(&len);
+                }
+            }
+        }
         self.buf.extend_from_slice(contents);
         Ok(WrittenCellProof::new())
     }
@@ -123,7 +159,25 @@ impl<'buf> CellWriter<'buf> {
     /// or UDTs.
     #[inline]
     pub fn into_value_builder(self) -> CellValueBuilder<'buf> {
-        CellValueBuilder::new(self.buf)
+        CellValueBuilder::new(self.buf, self.size_as_uvarint)
+    }
+
+    /// Turns this writer into a [`CellValueBuilder`] which can be used
+    /// to gradually initialize the CQL value of CQL vector type.
+    ///
+    /// The length of the value is fixed and known upfront.
+    #[inline]
+    pub fn into_fixed_len_value_builder(self, len: usize) -> CellValueBuilder<'buf> {
+        CellValueBuilder::fixed_len(self.buf, len, self.size_as_uvarint)
+    }
+
+    /// Turns this writer into a [`CellValueBuilder`] which can be used
+    /// to gradually initialize the CQL value of CQL vector type.
+    ///
+    ///
+    #[inline]
+    pub fn into_variable_len_value_builder(self) -> CellValueBuilder<'buf> {
+        CellValueBuilder::variable_len(self.buf, self.size_as_uvarint)
     }
 }
 
@@ -135,15 +189,24 @@ impl<'buf> CellWriter<'buf> {
 /// data to be misinterpreted.
 pub struct CellValueBuilder<'buf> {
     // Buffer that this value should be serialized to.
-    buf: &'buf mut Vec<u8>,
+    pub(crate) buf: &'buf mut Vec<u8>,
 
     // Starting position of the value in the buffer.
     starting_pos: usize,
+
+    // If writing to a fixed length type vector, the type length.
+    cell_len: Option<usize>,
+
+    //If serializing a variable length vector cell, the size is encoded as a varint.
+    is_variable_length: bool,
+
+    // Buffer for variable length vector cell.
+    variable_length_buffer: Option<Vec<u8>>,
 }
 
 impl<'buf> CellValueBuilder<'buf> {
     #[inline]
-    fn new(buf: &'buf mut Vec<u8>) -> Self {
+    fn new(buf: &'buf mut Vec<u8>, size_as_uvar_int: bool) -> Self {
         // "Length" of a [bytes] frame can either be a non-negative i32,
         // -1 (null) or -1 (not set). Push an invalid value here. It will be
         // overwritten eventually either by set_null, set_unset or Drop.
@@ -151,21 +214,86 @@ impl<'buf> CellValueBuilder<'buf> {
         // an error on the DB side and the serialized data
         // won't be misinterpreted.
         let starting_pos = buf.len();
-        buf.extend_from_slice(&(-3i32).to_be_bytes());
-        Self { buf, starting_pos }
+        if !size_as_uvar_int {
+            buf.extend_from_slice(&(-3i32).to_be_bytes());
+        }
+
+        Self {
+            buf,
+            starting_pos,
+            cell_len: None,
+            is_variable_length: false,
+            variable_length_buffer: if size_as_uvar_int {
+                Some(Vec::new())
+            } else {
+                None
+            },
+        }
+    }
+
+    #[inline]
+    fn fixed_len(buf: &'buf mut Vec<u8>, cell_len: usize, size_as_uvar_int: bool) -> Self {
+        // "Length" of a [bytes] frame can either be a non-negative i32,
+        // -1 (null) or -1 (not set). Push an invalid value here. It will be
+        // overwritten eventually either by set_null, set_unset or Drop.
+        // If the CellSerializer is not dropped as it should, this will trigger
+        // an error on the DB side and the serialized data
+        // won't be misinterpreted.
+        let starting_pos = buf.len();
+        if !size_as_uvar_int {
+            buf.extend_from_slice(&(-3i32).to_be_bytes());
+        }
+        Self {
+            buf,
+            starting_pos,
+            cell_len: Some(cell_len),
+            is_variable_length: false,
+            variable_length_buffer: if size_as_uvar_int {
+                Some(Vec::new())
+            } else {
+                None
+            },
+        }
+    }
+
+    #[inline]
+    fn variable_len(buf: &'buf mut Vec<u8>, size_as_uvar_int: bool) -> Self {
+        let starting_pos = buf.len();
+        if !size_as_uvar_int {
+            buf.extend_from_slice(&(-3i32).to_be_bytes());
+        }
+        Self {
+            buf,
+            starting_pos,
+            cell_len: None,
+            is_variable_length: true,
+            variable_length_buffer: if size_as_uvar_int {
+                Some(Vec::new())
+            } else {
+                None
+            },
+        }
     }
 
     /// Appends raw bytes to this cell.
     #[inline]
     pub fn append_bytes(&mut self, bytes: &[u8]) {
-        self.buf.extend_from_slice(bytes);
+        if let Some(buffer) = &mut self.variable_length_buffer {
+            buffer.extend_from_slice(bytes);
+        } else {
+            self.buf.extend_from_slice(bytes);
+        }
     }
 
     /// Appends a sub-value to the end of the current contents of the cell
     /// and returns an object that allows to fill it in.
     #[inline]
     pub fn make_sub_writer(&mut self) -> CellWriter<'_> {
-        CellWriter::new(self.buf)
+        if let Some(buffer) = &mut self.variable_length_buffer {
+            CellWriter::with_cell_len(buffer, self.cell_len, self.is_variable_length)
+        } else {
+            CellWriter::with_cell_len(self.buf, self.cell_len, self.is_variable_length)
+        }
     }
 
     /// Finishes serializing the value.
@@ -174,11 +302,19 @@ impl<'buf> CellValueBuilder<'buf> {
     /// CQL cell size (which is i32::MAX).
     #[inline]
     pub fn finish(self) -> Result<WrittenCellProof<'buf>, CellOverflowError> {
-        let value_len: i32 = (self.buf.len() - self.starting_pos - 4)
-            .try_into()
-            .map_err(|_| CellOverflowError)?;
-        self.buf[self.starting_pos..self.starting_pos + 4]
-            .copy_from_slice(&value_len.to_be_bytes());
+        if let Some(buffer) = self.variable_length_buffer {
+            let value_len = buffer.len();
+            let mut len = Vec::new();
+            types::unsigned_vint_encode(value_len as u64, &mut len);
+            self.buf.extend_from_slice(&len);
+            self.buf.extend_from_slice(&buffer);
+        } else {
+            let value_len: i32 = (self.buf.len() - self.starting_pos - 4)
+                .try_into()
+                .map_err(|_| CellOverflowError)?;
+            self.buf[self.starting_pos..self.starting_pos + 4]
+                .copy_from_slice(&value_len.to_be_bytes());
+        }
         Ok(WrittenCellProof::new())
     }
 }

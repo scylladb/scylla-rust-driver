@@ -4,6 +4,7 @@ pub mod error;
 pub mod event;
 pub mod result;
 pub mod supported;
+pub mod type_parser;
 
 use std::sync::Arc;
 

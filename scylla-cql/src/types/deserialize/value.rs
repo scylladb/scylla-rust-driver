@@ -5,14 +5,13 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     hash::{BuildHasher, Hash},
     net::IpAddr,
+    sync::Arc,
 };
 
 use bytes::Bytes;
 use uuid::Uuid;
 
 use std::fmt::Display;
-
-use thiserror::Error;
 
 use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::types;
@@ -24,6 +23,7 @@ use crate::frame::{
     response::result::{deser_cql_value, ColumnType, CqlValue},
     value::CqlDecimalBorrowed,
 };
+use thiserror::Error;
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -810,18 +810,52 @@ where
     T: DeserializeValue<'frame, 'metadata>,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-        // It makes sense for both Set and List to deserialize to Vec.
-        ListlikeIterator::<'frame, 'metadata, T>::type_check(typ)
-            .map_err(typck_error_replace_rust_name::<Self>)
+        // It makes sense for both Set, List and Vector to deserialize to Vec.
+        match typ {
+            ColumnType::List(_) | ColumnType::Set(_) => {
+                ListlikeIterator::<'frame, 'metadata, T>::type_check(typ)
+                    .map_err(typck_error_replace_rust_name::<Self>)
+            }
+            ColumnType::Vector(el_t, _) if el_t.type_size().is_some() => {
+                ConstLengthVectorIterator::<'frame, 'metadata, T>::type_check(typ)
+                    .map_err(typck_error_replace_rust_name::<Self>)
+            }
+            ColumnType::Vector(_, _) => {
+                VariableLengthVectorIterator::<'frame, 'metadata, T>::type_check(typ)
+                    .map_err(typck_error_replace_rust_name::<Self>)
+            }
+            _ => Err(mk_typck_err::<Self>(
+                typ,
+                BuiltinTypeCheckErrorKind::SetOrListError(
+                    SetOrListTypeCheckErrorKind::NotSetOrList,
+                ),
+            )),
+        }
     }
 
     fn deserialize(
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
-            .and_then(|it| it.collect::<Result<_, DeserializationError>>())
-            .map_err(deser_error_replace_rust_name::<Self>)
+        match typ {
+            ColumnType::List(_) | ColumnType::Set(_) => {
+                ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
+                    .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+                    .map_err(deser_error_replace_rust_name::<Self>)
+            }
+
+            ColumnType::Vector(el_t, _) if el_t.type_size().is_some() => {
+                ConstLengthVectorIterator::<'frame, 'metadata, T>::deserialize(typ, v)
+                    .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+                    .map_err(deser_error_replace_rust_name::<Self>)
+            }
+            ColumnType::Vector(_, _) => {
+                VariableLengthVectorIterator::<'frame, 'metadata, T>::deserialize(typ, v)
+                    .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+                    .map_err(deser_error_replace_rust_name::<Self>)
+            }
+            _ => unreachable!("Should be prevented by typecheck"),
+        }
     }
 }
 
@@ -877,6 +911,206 @@ where
         ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
             .and_then(|it| it.collect::<Result<_, DeserializationError>>())
             .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
+pub struct ConstLengthVectorIterator<'frame, 'metadata, T> {
+    coll_typ: &'metadata ColumnType<'metadata>,
+    elem_typ: &'metadata ColumnType<'metadata>,
+    raw_iter: VectorBytesSequenceIterator<'frame>,
+    phantom_data: std::marker::PhantomData<T>,
+}
+
+impl<'frame, 'metadata, T> ConstLengthVectorIterator<'frame, 'metadata, T> {
+    fn new(
+        coll_typ: &'metadata ColumnType<'metadata>,
+        elem_typ: &'metadata ColumnType<'metadata>,
+        count: usize,
+        elem_len: usize,
+        slice: FrameSlice<'frame>,
+    ) -> Self {
+        Self {
+            coll_typ,
+            elem_typ,
+            raw_iter: VectorBytesSequenceIterator::new(count, elem_len, slice),
+            phantom_data: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata>
+    for ConstLengthVectorIterator<'frame, 'metadata, T>
+where
+    T: DeserializeValue<'frame, 'metadata>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        match typ {
+            ColumnType::Vector(t, _) => {
+                if t.type_size().is_none() {
+                    return Err(mk_typck_err::<Self>(
+                        typ,
+                        VectorTypeCheckErrorKind::ElementSizeUnknown,
+                    ));
+                }
+                <T as DeserializeValue<'frame, 'metadata>>::type_check(t).map_err(|err| {
+                    mk_typck_err::<Self>(typ, VectorTypeCheckErrorKind::ElementTypeCheckFailed(err))
+                })?;
+                Ok(())
+            }
+            _ => Err(mk_typck_err::<Self>(
+                typ,
+                VectorTypeCheckErrorKind::NotVector,
+            )),
+        }
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        let (t, dim) = match typ {
+            ColumnType::Vector(t, dim) => (t, dim),
+            _ => {
+                unreachable!("Typecheck should have prevented this scenario!")
+            }
+        };
+
+        let v = ensure_not_null_frame_slice::<Self>(typ, v)?;
+
+        Ok(Self::new(typ, t, *dim as usize, t.type_size().unwrap(), v))
+    }
+}
+
+impl<'frame, 'metadata, T> Iterator for ConstLengthVectorIterator<'frame, 'metadata, T>
+where
+    T: DeserializeValue<'frame, 'metadata>,
+{
+    type Item = Result<T, DeserializationError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let raw = self.raw_iter.next()?.map_err(|err| {
+            mk_deser_err::<Self>(
+                self.coll_typ,
+                BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
+            )
+        });
+        Some(raw.and_then(|raw| {
+            T::deserialize(self.elem_typ, raw).map_err(|err| {
+                mk_deser_err::<Self>(
+                    self.coll_typ,
+                    VectorDeserializationErrorKind::ElementDeserializationFailed(err),
+                )
+            })
+        }))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.raw_iter.size_hint()
+    }
+}
+
+pub struct VariableLengthVectorIterator<'frame, 'metadata, T> {
+    coll_typ: &'metadata ColumnType<'metadata>,
+    elem_typ: &'metadata ColumnType<'metadata>,
+    remaining: usize,
+    slice: FrameSlice<'frame>,
+    phantom_data: std::marker::PhantomData<T>,
+}
+impl<'frame, 'metadata, T> VariableLengthVectorIterator<'frame, 'metadata, T> {
+    fn new(
+        coll_typ: &'metadata ColumnType<'metadata>,
+        elem_typ: &'metadata ColumnType<'metadata>,
+        count: usize,
+        slice: FrameSlice<'frame>,
+    ) -> Self {
+        Self {
+            coll_typ,
+            elem_typ,
+            remaining: count,
+            slice,
+            phantom_data: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata>
+    for VariableLengthVectorIterator<'frame, 'metadata, T>
+where
+    T: DeserializeValue<'frame, 'metadata>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        match typ {
+            ColumnType::Vector(t, _) => {
+                if t.type_size().is_some() {
+                    return Err(mk_typck_err::<Self>(
+                        typ,
+                        VectorTypeCheckErrorKind::ElementSizeUnknown,
+                    ));
+                }
+                <T as DeserializeValue<'frame, 'metadata>>::type_check(t).map_err(|err| {
+                    mk_typck_err::<Self>(typ, VectorTypeCheckErrorKind::ElementTypeCheckFailed(err))
+                })?;
+                Ok(())
+            }
+            _ => Err(mk_typck_err::<Self>(
+                typ,
+                VectorTypeCheckErrorKind::NotVector,
+            )),
+        }
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        let (t, dim) = match typ {
+            ColumnType::Vector(t, dim) => (t, dim),
+            _ => {
+                unreachable!("Typecheck should have prevented this scenario!")
+            }
+        };
+
+        let v = ensure_not_null_frame_slice::<Self>(typ, v)?;
+
+        Ok(Self::new(typ, t, *dim as usize, v))
+    }
+}
+impl<'frame, 'metadata, T> Iterator for VariableLengthVectorIterator<'frame, 'metadata, T>
+where
+    T: DeserializeValue<'frame, 'metadata>,
+{
+    type Item = Result<T, DeserializationError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.remaining = self.remaining.checked_sub(1)?;
+        let size = types::unsigned_vint_decode(self.slice.as_slice_mut()).map_err(|err| {
+            mk_deser_err::<Self>(
+                self.coll_typ,
+                BuiltinDeserializationErrorKind::RawCqlBytesReadError(
+                    LowLevelDeserializationError::IoError(Arc::new(err)),
+                ),
+            )
+        });
+        let raw = size.and_then(|size| {
+            self.slice
+                .read_subslice(size.try_into().unwrap())
+                .map_err(|err| {
+                    mk_deser_err::<Self>(
+                        self.coll_typ,
+                        BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
+                    )
+                })
+        });
+
+        Some(raw.and_then(|raw| {
+            T::deserialize(self.elem_typ, raw).map_err(|err| {
+                mk_deser_err::<Self>(
+                    self.coll_typ,
+                    VectorDeserializationErrorKind::ElementDeserializationFailed(err),
+                )
+            })
+        }))
     }
 }
 
@@ -1409,6 +1643,38 @@ impl<'frame> Iterator for BytesSequenceIterator<'frame> {
     }
 }
 
+/// Iterates over a sequence of CQL vector items from a frame subslice, expecting
+/// a particular number of items.
+///
+/// The iterator does not consider it to be an error if there are some bytes
+/// remaining in the slice after parsing requested amount of items.
+#[derive(Clone, Copy, Debug)]
+pub struct VectorBytesSequenceIterator<'frame> {
+    slice: FrameSlice<'frame>,
+    elem_len: usize,
+    remaining: usize,
+}
+
+impl<'frame> VectorBytesSequenceIterator<'frame> {
+    fn new(count: usize, elem_len: usize, slice: FrameSlice<'frame>) -> Self {
+        Self {
+            slice,
+            elem_len,
+            remaining: count,
+        }
+    }
+}
+
+impl<'frame> Iterator for VectorBytesSequenceIterator<'frame> {
+    type Item = Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.remaining = self.remaining.checked_sub(1)?;
+        Some(self.slice.read_subslice(self.elem_len))
+    }
+}
+
 // Error facilities
 
 /// Type checking of one of the built-in types failed.
@@ -1474,6 +1740,9 @@ pub enum BuiltinTypeCheckErrorKind {
     /// A type check failure specific to a CQL set or list.
     SetOrListError(SetOrListTypeCheckErrorKind),
 
+    /// A type check failure specific to a CQL vector.
+    VectorError(VectorTypeCheckErrorKind),
+
     /// A type check failure specific to a CQL map.
     MapError(MapTypeCheckErrorKind),
 
@@ -1488,6 +1757,13 @@ impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
     #[inline]
     fn from(value: SetOrListTypeCheckErrorKind) -> Self {
         BuiltinTypeCheckErrorKind::SetOrListError(value)
+    }
+}
+
+impl From<VectorTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    #[inline]
+    fn from(value: VectorTypeCheckErrorKind) -> Self {
+        BuiltinTypeCheckErrorKind::VectorError(value)
     }
 }
 
@@ -1519,6 +1795,7 @@ impl Display for BuiltinTypeCheckErrorKind {
                 write!(f, "expected one of the CQL types: {expected:?}")
             }
             BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
+            BuiltinTypeCheckErrorKind::VectorError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::TupleError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::UdtError(err) => err.fmt(f),
@@ -1549,6 +1826,38 @@ impl Display for SetOrListTypeCheckErrorKind {
             }
             SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err) => {
                 write!(f, "the set or list element types between the CQL type and the Rust type failed to type check against each other: {}", err)
+            }
+        }
+    }
+}
+
+/// Describes why type checking a vector type failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum VectorTypeCheckErrorKind {
+    NotVector,
+    /// Incompatible element types.
+    ElementTypeCheckFailed(TypeCheckError),
+    /// The size of the elements in the vector is unknown.
+    ElementSizeUnknown,
+    // The size of the elements in the vector is known.
+    ElementSizeKnown,
+}
+
+impl Display for VectorTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VectorTypeCheckErrorKind::NotVector => {
+                f.write_str("the CQL type the Rust type was attempted to be type checked against was not a vector")
+            }
+            VectorTypeCheckErrorKind::ElementTypeCheckFailed(err) => {
+                write!(f, "the vector element types between the CQL type and the Rust type failed to type check against each other: {}", err)
+            }
+            VectorTypeCheckErrorKind::ElementSizeUnknown => {
+                f.write_str("the size of the elements in the vector is unknown")
+            }
+            VectorTypeCheckErrorKind::ElementSizeKnown => {
+                f.write_str("the size of the elements in the vector is known")
             }
         }
     }
@@ -1803,6 +2112,9 @@ pub enum BuiltinDeserializationErrorKind {
     /// A deserialization failure specific to a CQL set or list.
     SetOrListError(SetOrListDeserializationErrorKind),
 
+    /// A deserialization failure specific to a CQL vector.
+    VectorError(VectorDeserializationErrorKind),
+
     /// A deserialization failure specific to a CQL map.
     MapError(MapDeserializationErrorKind),
 
@@ -1841,6 +2153,7 @@ impl Display for BuiltinDeserializationErrorKind {
                 "the length of read value in bytes ({got}) is not suitable for IP address; expected 4 or 16"
             ),
             BuiltinDeserializationErrorKind::SetOrListError(err) => err.fmt(f),
+            BuiltinDeserializationErrorKind::VectorError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::MapError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::TupleError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::UdtError(err) => err.fmt(f),
@@ -1877,6 +2190,31 @@ impl From<SetOrListDeserializationErrorKind> for BuiltinDeserializationErrorKind
     #[inline]
     fn from(err: SetOrListDeserializationErrorKind) -> Self {
         Self::SetOrListError(err)
+    }
+}
+
+/// Describes why deserialization of a vector type failed.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum VectorDeserializationErrorKind {
+    /// One of the elements of the vector failed to deserialize.
+    ElementDeserializationFailed(DeserializationError),
+}
+
+impl Display for VectorDeserializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VectorDeserializationErrorKind::ElementDeserializationFailed(err) => {
+                write!(f, "failed to deserialize one of the elements: {}", err)
+            }
+        }
+    }
+}
+
+impl From<VectorDeserializationErrorKind> for BuiltinDeserializationErrorKind {
+    #[inline]
+    fn from(err: VectorDeserializationErrorKind) -> Self {
+        Self::VectorError(err)
     }
 }
 

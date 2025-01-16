@@ -1,3 +1,4 @@
+use super::type_parser;
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
@@ -16,7 +17,8 @@ use crate::frame::value::{
 use crate::types::deserialize::result::{RawRowIterator, TypedRowIterator};
 use crate::types::deserialize::row::DeserializeRow;
 use crate::types::deserialize::value::{
-    mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
+    mk_deser_err, BuiltinDeserializationErrorKind, ConstLengthVectorIterator, DeserializeValue,
+    MapIterator, UdtIterator, VariableLengthVectorIterator,
 };
 use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use bytes::{Buf, Bytes};
@@ -81,6 +83,7 @@ pub enum ColumnType<'frame> {
     Tuple(Vec<ColumnType<'frame>>),
     Uuid,
     Varint,
+    Vector(Box<ColumnType<'frame>>, u32),
 }
 
 impl ColumnType<'_> {
@@ -128,6 +131,43 @@ impl ColumnType<'_> {
             }
             ColumnType::Uuid => ColumnType::Uuid,
             ColumnType::Varint => ColumnType::Varint,
+            ColumnType::Vector(elem_type, dim) => {
+                ColumnType::Vector(Box::new(elem_type.into_owned()), dim)
+            }
+        }
+    }
+
+    pub fn type_size(&self) -> Option<usize> {
+        match self {
+            ColumnType::Custom(_) => None,
+            ColumnType::Ascii => None,
+            ColumnType::Boolean => Some(1),
+            ColumnType::Blob => None,
+            ColumnType::Counter => None,
+            ColumnType::Date => Some(8),
+            ColumnType::Decimal => None,
+            ColumnType::Double => Some(8),
+            ColumnType::Duration => None,
+            ColumnType::Float => Some(4),
+            ColumnType::Int => Some(4),
+            ColumnType::BigInt => Some(8),
+            ColumnType::Text => None,
+            ColumnType::Timestamp => Some(8),
+            ColumnType::Inet => None,
+            ColumnType::List(_) => None,
+            ColumnType::Map(_, _) => None,
+            ColumnType::Set(_) => None,
+            ColumnType::UserDefinedType { .. } => None,
+            // Note that although SmallInt and TinyInt is of a fixed size,
+            // Cassandra (erroneously) treats it as a variable-size
+            ColumnType::SmallInt => None,
+            ColumnType::TinyInt => None,
+            ColumnType::Time => Some(8),
+            ColumnType::Timeuuid => Some(16),
+            ColumnType::Tuple(_) => None,
+            ColumnType::Uuid => Some(16),
+            ColumnType::Varint => None,
+            ColumnType::Vector(_, _) => None,
         }
     }
 }
@@ -171,6 +211,7 @@ pub enum CqlValue {
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
     Varint(CqlVarint),
+    Vector(Vec<CqlValue>),
 }
 
 impl<'a> TableSpec<'a> {
@@ -438,10 +479,18 @@ impl CqlValue {
         }
     }
 
+    pub fn as_vector(&self) -> Option<&Vec<CqlValue>> {
+        match self {
+            Self::Vector(s) => Some(s),
+            _ => None,
+        }
+    }
+
     pub fn into_vec(self) -> Option<Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
             Self::Set(s) => Some(s),
+            Self::Vector(s) => Some(s),
             _ => None,
         }
     }
@@ -864,17 +913,12 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
         types::read_short(buf).map_err(|err| CqlTypeParseError::TypeIdParseError(err.into()))?;
     Ok(match id {
         0x0000 => {
-            // We use types::read_string instead of read_string argument here on purpose.
-            // Chances are the underlying string is `...DurationType`, in which case
-            // we don't need to allocate it at all. Only for Custom types
-            // (which we don't support anyway) do we need to allocate.
-            // OTOH, the provided `read_string` function deserializes borrowed OR owned string;
-            // here we want to always deserialize borrowed string.
-            let type_str =
-                types::read_string(buf).map_err(CqlTypeParseError::CustomTypeNameParseError)?;
-            match type_str {
-                "org.apache.cassandra.db.marshal.DurationType" => Duration,
-                _ => Custom(type_str.to_owned().into()),
+            let type_str = read_string(buf).map_err(CqlTypeParseError::CustomTypeNameParseError)?;
+            let type_cow: Cow<'result, str> = type_str.into();
+            if let Ok(typ) = type_parser::TypeParser::parse(type_cow.clone()) {
+                typ
+            } else {
+                Custom(type_cow)
             }
         }
         0x0001 => Ascii,
@@ -1405,6 +1449,16 @@ pub fn deser_cql_value(
                 .collect::<StdResult<_, _>>()?;
             CqlValue::Tuple(t)
         }
+        Vector(elem_type, _dimensions) if elem_type.type_size().is_some() => {
+            let v = ConstLengthVectorIterator::<'_, '_, CqlValue>::deserialize(typ, v)?;
+            let v: Vec<CqlValue> = v.collect::<StdResult<_, _>>()?;
+            CqlValue::Vector(v)
+        }
+        Vector(_, _) => {
+            let v = VariableLengthVectorIterator::<'_, '_, CqlValue>::deserialize(typ, v)?;
+            let v: Vec<CqlValue> = v.collect::<StdResult<_, _>>()?;
+            CqlValue::Vector(v)
+        }
     })
 }
 
@@ -1525,6 +1579,7 @@ mod test_utils {
                 Self::Set(_) => 0x0022,
                 Self::UserDefinedType { .. } => 0x0030,
                 Self::Tuple(_) => 0x0031,
+                Self::Vector(_, _) => 0x0000,
             }
         }
 
@@ -1562,6 +1617,10 @@ mod test_utils {
 
                 ColumnType::List(elem_type) | ColumnType::Set(elem_type) => {
                     elem_type.serialize(buf)?;
+                }
+                ColumnType::Vector(elem_type, dimensions) => {
+                    elem_type.serialize(buf)?;
+                    types::write_short_length(*dimensions as usize, buf)?;
                 }
                 ColumnType::Map(key_type, value_type) => {
                     key_type.serialize(buf)?;
