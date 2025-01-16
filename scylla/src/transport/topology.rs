@@ -794,6 +794,54 @@ impl NodeInfoSource {
     }
 }
 
+mod control_connection {
+    use scylla_cql::types::serialize::row::SerializedValues;
+
+    use crate::prepared_statement::PreparedStatement;
+    use crate::transport::errors::UserRequestError;
+
+    use super::*;
+
+    #[derive(Clone)]
+    pub(super) struct ControlConnection {
+        conn: Arc<Connection>,
+    }
+
+    impl ControlConnection {
+        pub(super) fn new(conn: Arc<Connection>) -> Self {
+            Self { conn }
+        }
+
+        pub(super) fn get_connect_address(&self) -> SocketAddr {
+            self.conn.get_connect_address()
+        }
+
+        /// Executes a query and fetches its results over multiple pages, using
+        /// the asynchronous iterator interface.
+        pub(super) async fn query_iter(self, query: Query) -> Result<QueryPager, QueryError> {
+            self.conn.query_iter(query).await
+        }
+
+        pub(crate) async fn prepare(
+            &self,
+            query: Query,
+        ) -> Result<PreparedStatement, UserRequestError> {
+            self.conn.prepare(&query).await
+        }
+
+        /// Executes a prepared statements and fetches its results over multiple pages, using
+        /// the asynchronous iterator interface.
+        pub(crate) async fn execute_iter(
+            self,
+            prepared_statement: PreparedStatement,
+            values: SerializedValues,
+        ) -> Result<QueryPager, QueryError> {
+            self.conn.execute_iter(prepared_statement, values).await
+        }
+    }
+}
+use control_connection::ControlConnection;
+
 const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
 async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
