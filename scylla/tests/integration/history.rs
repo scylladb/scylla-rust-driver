@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use futures::StreamExt;
-use scylla::errors::QueryError;
+use scylla::errors::{RequestAttemptError, RequestError};
 use scylla::frame::response::result::Row;
 use scylla::observability::history::{
-    AttemptResult, HistoryCollector, QueryHistoryResult, StructuredHistory, TimePoint,
+    AttemptResult, HistoryCollector, RequestHistoryResult, StructuredHistory, TimePoint,
 };
 use scylla::query::Query;
 
@@ -24,11 +24,11 @@ fn set_one_time(mut history: StructuredHistory) -> StructuredHistory {
         Utc,
     );
 
-    for query in &mut history.queries {
+    for query in &mut history.requests {
         query.start_time = the_time;
         match &mut query.result {
-            Some(QueryHistoryResult::Success(succ_time)) => *succ_time = the_time,
-            Some(QueryHistoryResult::Error(err_time, _)) => *err_time = the_time,
+            Some(RequestHistoryResult::Success(succ_time)) => *succ_time = the_time,
+            Some(RequestHistoryResult::Error(err_time, _)) => *err_time = the_time,
             None => {}
         };
 
@@ -56,7 +56,7 @@ fn set_one_time(mut history: StructuredHistory) -> StructuredHistory {
 fn set_one_node(mut history: StructuredHistory) -> StructuredHistory {
     let the_node: SocketAddr = node1_addr();
 
-    for query in &mut history.queries {
+    for query in &mut history.requests {
         for fiber in std::iter::once(&mut query.non_speculative_fiber)
             .chain(query.speculative_fibers.iter_mut())
         {
@@ -73,22 +73,27 @@ fn set_one_node(mut history: StructuredHistory) -> StructuredHistory {
 // The error message changes between Scylla/Cassandra/their versions.
 // Setting it to one value makes it possible to run tests consistently.
 fn set_one_db_error_message(mut history: StructuredHistory) -> StructuredHistory {
-    let set_msg = |err: &mut QueryError| {
-        if let QueryError::DbError(_, msg) = err {
+    let set_msg_attempt = |err: &mut RequestAttemptError| {
+        if let RequestAttemptError::DbError(_, msg) = err {
+            *msg = "Error message from database".to_string();
+        }
+    };
+    let set_msg_request_error = |err: &mut RequestError| {
+        if let RequestError::LastAttemptError(RequestAttemptError::DbError(_, msg)) = err {
             *msg = "Error message from database".to_string();
         }
     };
 
-    for query in &mut history.queries {
-        if let Some(QueryHistoryResult::Error(_, err)) = &mut query.result {
-            set_msg(err);
+    for request in &mut history.requests {
+        if let Some(RequestHistoryResult::Error(_, err)) = &mut request.result {
+            set_msg_request_error(err);
         }
-        for fiber in std::iter::once(&mut query.non_speculative_fiber)
-            .chain(query.speculative_fibers.iter_mut())
+        for fiber in std::iter::once(&mut request.non_speculative_fiber)
+            .chain(request.speculative_fibers.iter_mut())
         {
             for attempt in &mut fiber.attempts {
                 if let Some(AttemptResult::Error(_, err, _)) = &mut attempt.result {
-                    set_msg(err);
+                    set_msg_attempt(err);
                 }
             }
         }
@@ -114,15 +119,15 @@ async fn successful_query_history() {
 
     let history: StructuredHistory = history_collector.clone_structured_history();
 
-    let displayed = "Queries History:
-=== Query #0 ===
+    let displayed = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
     assert_eq!(
@@ -139,24 +144,24 @@ async fn successful_query_history() {
 
     let history2: StructuredHistory = history_collector.clone_structured_history();
 
-    let displayed2 = "Queries History:
-=== Query #0 ===
+    let displayed2 = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
-=== Query #1 ===
+=== Request #1 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
     assert_eq!(
@@ -182,8 +187,8 @@ async fn failed_query_history() {
     let history: StructuredHistory = history_collector.clone_structured_history();
 
     let displayed =
-"Queries History:
-=== Query #0 ===
+"Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
@@ -192,7 +197,7 @@ async fn failed_query_history() {
 |   Error: Database returned an error: The submitted query has a syntax error, Error message: Error message from database
 |   Retry decision: DontRetry
 |
-| Query failed at 2022-02-22 20:22:22 UTC
+| Request failed at 2022-02-22 20:22:22 UTC
 | Error: Database returned an error: The submitted query has a syntax error, Error message: Error message from database
 =================
 ";
@@ -244,44 +249,44 @@ async fn iterator_query_history() {
 
     let history = history_collector.clone_structured_history();
 
-    assert!(history.queries.len() >= 4);
+    assert!(history.requests.len() >= 4);
 
-    let displayed_prefix = "Queries History:
-=== Query #0 ===
+    let displayed_prefix = "Requests History:
+=== Request #0 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
-=== Query #1 ===
+=== Request #1 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
-=== Query #2 ===
+=== Request #2 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
-=== Query #3 ===
+=== Request #3 ===
 | start_time: 2022-02-22 20:22:22 UTC
 | Non-speculative attempts:
 | - Attempt #0 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Success at 2022-02-22 20:22:22 UTC
 |
-| Query successful at 2022-02-22 20:22:22 UTC
+| Request successful at 2022-02-22 20:22:22 UTC
 =================
 ";
     let displayed_str = format!(

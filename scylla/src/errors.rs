@@ -103,9 +103,16 @@ pub enum QueryError {
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
-    /// Client timeout occurred before any response arrived
-    #[error("Request timeout: {0}")]
-    RequestTimeout(String),
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+        "Request execution exceeded a client timeout {}ms",
+        std::time::Duration::as_millis(.0)
+    )]
+    RequestTimeout(std::time::Duration),
+
+    /// Schema agreement timed out.
+    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
+    SchemaAgreementTimeout(std::time::Duration),
 
     // TODO: This should not belong here, but it requires changes to error types
     // returned in async iterator API. This should be handled in separate PR.
@@ -139,12 +146,6 @@ impl From<SerializationError> for QueryError {
     }
 }
 
-impl From<tokio::time::error::Elapsed> for QueryError {
-    fn from(timer_error: tokio::time::error::Elapsed) -> QueryError {
-        QueryError::RequestTimeout(format!("{}", timer_error))
-    }
-}
-
 impl From<QueryError> for NewSessionError {
     fn from(query_error: QueryError) -> NewSessionError {
         match query_error {
@@ -161,7 +162,8 @@ impl From<QueryError> for NewSessionError {
             QueryError::TimeoutError => NewSessionError::TimeoutError,
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
-            QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
+            QueryError::RequestTimeout(dur) => NewSessionError::RequestTimeout(dur),
+            QueryError::SchemaAgreementTimeout(dur) => NewSessionError::SchemaAgreementTimeout(dur),
             #[allow(deprecated)]
             QueryError::IntoLegacyQueryResultError(e) => {
                 NewSessionError::IntoLegacyQueryResultError(e)
@@ -254,10 +256,16 @@ pub enum NewSessionError {
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
-    /// Client timeout occurred before a response arrived for some query
-    /// during `Session` creation.
-    #[error("Client timeout: {0}")]
-    RequestTimeout(String),
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+        "Request execution exceeded a client timeout {}ms",
+        std::time::Duration::as_millis(.0)
+    )]
+    RequestTimeout(std::time::Duration),
+
+    /// Schema agreement timed out.
+    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
+    SchemaAgreementTimeout(std::time::Duration),
 
     // TODO: This should not belong here, but it requires changes to error types
     // returned in async iterator API. This should be handled in separate PR.
@@ -321,14 +329,6 @@ pub enum ProtocolError {
     /// A result with nonfinished paging state received for unpaged query.
     #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
     NonfinishedPagingState,
-
-    /// Failed to parse CQL type.
-    #[error("Failed to parse a CQL type '{typ}', at position {position}: {reason}")]
-    InvalidCqlType {
-        typ: String,
-        position: usize,
-        reason: String,
-    },
 
     /// Unable extract a partition key based on prepared statement's metadata.
     #[error("Unable extract a partition key based on prepared statement's metadata")]
@@ -419,6 +419,10 @@ pub enum TracingProtocolError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum MetadataError {
+    /// Control connection pool error.
+    #[error("Control connection pool error: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
     /// Bad peers metadata.
     #[error("Bad peers metadata: {0}")]
     Peers(#[from] PeersMetadataError),
@@ -444,9 +448,17 @@ pub enum MetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum PeersMetadataError {
+    /// Failed to obtain next row from response to system.peers query.
+    #[error("Failed to obtain next row from response to system.peers query: {0}")]
+    SystemPeersNextRowError(NextRowError),
+
     /// system.peers has invalid column type.
     #[error("system.peers has invalid column type: {0}")]
     SystemPeersInvalidColumnType(TypeCheckError),
+
+    /// Failed to obtain next row from response to system.local query.
+    #[error("Failed to obtain next row from response to system.local query: {0}")]
+    SystemLocalNextRowError(NextRowError),
 
     /// system.local has invalid column type.
     #[error("system.local has invalid column type: {0}")]
@@ -465,6 +477,18 @@ pub enum PeersMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum KeyspacesMetadataError {
+    /// Failed to prepare system_schema.keyspaces statement.
+    #[error("Failed to prepare system_schema.keyspaces statement: {0}")]
+    SchemaKeyspacesPrepareError(RequestAttemptError),
+
+    /// Failed to serialize system_schema.keyspaces statement parameters.
+    #[error("Failed to serialize system_schema.keyspaces statement parameters: {0}")]
+    SchemaKeyspacesSerializationError(SerializationError),
+
+    /// Failed to obtain next row from response to system_schema.keyspaces query.
+    #[error("Failed to obtain next row from response to system_schema.keyspaces query: {0}")]
+    SchemaKeyspacesNextRowError(NextRowError),
+
     /// system_schema.keyspaces has invalid column type.
     #[error("system_schema.keyspaces has invalid column type: {0}")]
     SchemaKeyspacesInvalidColumnType(TypeCheckError),
@@ -503,9 +527,32 @@ pub enum KeyspaceStrategyError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum UdtMetadataError {
+    /// Failed to prepare system_schema.types statement.
+    #[error("Failed to prepare system_schema.types statement: {0}")]
+    SchemaTypesPrepareError(RequestAttemptError),
+
+    /// Failed to serialize system_schema.types statement parameters.
+    #[error("Failed to serialize system_schema.types statement parameters: {0}")]
+    SchemaTypesSerializationError(SerializationError),
+
+    /// Failed to obtain next row from response to system_schema.types query.
+    #[error("Failed to obtain next row from response to system_schema.types query: {0}")]
+    SchemaTypesNextRowError(NextRowError),
+
     /// system_schema.types has invalid column type.
     #[error("system_schema.types has invalid column type: {0}")]
     SchemaTypesInvalidColumnType(TypeCheckError),
+
+    /// Failed to parse CQL type returned from system_schema.types query.
+    #[error(
+        "Failed to parse a CQL type returned from system_schema.types query. \
+        Type '{typ}', at position {position}: {reason}"
+    )]
+    InvalidCqlType {
+        typ: String,
+        position: usize,
+        reason: String,
+    },
 
     /// Circular UDT dependency detected.
     #[error("Detected circular dependency between user defined types - toposort is impossible!")]
@@ -516,13 +563,48 @@ pub enum UdtMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum TablesMetadataError {
+    /// Failed to prepare system_schema.tables statement.
+    #[error("Failed to prepare system_schema.tables statement: {0}")]
+    SchemaTablesPrepareError(RequestAttemptError),
+
+    /// Failed to serialize system_schema.tables statement parameters.
+    #[error("Failed to serialize system_schema.tables statement parameters: {0}")]
+    SchemaTablesSerializationError(SerializationError),
+
+    /// Failed to obtain next row from response to system_schema.tables query.
+    #[error("Failed to obtain next row from response to system_schema.tables query: {0}")]
+    SchemaTablesNextRowError(NextRowError),
+
     /// system_schema.tables has invalid column type.
     #[error("system_schema.tables has invalid column type: {0}")]
     SchemaTablesInvalidColumnType(TypeCheckError),
 
+    /// Failed to prepare system_schema.columns statement.
+    #[error("Failed to prepare system_schema.columns statement: {0}")]
+    SchemaColumnsPrepareError(RequestAttemptError),
+
+    /// Failed to serialize system_schema.columns statement parameters.
+    #[error("Failed to serialize system_schema.columns statement parameters: {0}")]
+    SchemaColumnsSerializationError(SerializationError),
+
+    /// Failed to obtain next row from response to system_schema.columns query.
+    #[error("Failed to obtain next row from response to system_schema.columns query: {0}")]
+    SchemaColumnsNextRowError(NextRowError),
+
     /// system_schema.columns has invalid column type.
     #[error("system_schema.columns has invalid column type: {0}")]
     SchemaColumnsInvalidColumnType(TypeCheckError),
+
+    /// Failed to parse CQL type returned from system_schema.columns query.
+    #[error(
+        "Failed to parse a CQL type returned from system_schema.columns query. \
+        Type '{typ}', at position {position}: {reason}"
+    )]
+    InvalidCqlType {
+        typ: String,
+        position: usize,
+        reason: String,
+    },
 
     /// Unknown column kind.
     #[error("Unknown column kind '{column_kind}' for {keyspace_name}.{table_name}.{column_name}")]
@@ -538,6 +620,18 @@ pub enum TablesMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ViewsMetadataError {
+    /// Failed to prepare system_schema.views statement.
+    #[error("Failed to prepare system_schema.views statement: {0}")]
+    SchemaViewsPrepareError(RequestAttemptError),
+
+    /// Failed to serialize system_schema.views statement parameters.
+    #[error("Failed to serialize system_schema.views statement parameters: {0}")]
+    SchemaViewsSerializationError(SerializationError),
+
+    /// Failed to obtain next row from response to system_schema.views query.
+    #[error("Failed to obtain next row from response to system_schema.views query: {0}")]
+    SchemaViewsNextRowError(NextRowError),
+
     /// system_schema.views has invalid column type.
     #[error("system_schema.views has invalid column type: {0}")]
     SchemaViewsInvalidColumnType(TypeCheckError),
@@ -871,7 +965,55 @@ pub enum CqlEventHandlingError {
     SendError,
 }
 
-/// An error type that occurred during single attempt of:
+/// An error that occurred during execution of
+/// - `QUERY`
+/// - `PREPARE`
+/// - `EXECUTE`
+/// - `BATCH`
+///
+/// request. This error represents a definite request failure, unlike
+/// [`RequestAttemptError`] which represents a failure of a single
+/// attempt.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum RequestError {
+    /// Load balancing policy returned an empty plan.
+    #[error(
+            "Load balancing policy returned an empty plan.\
+            First thing to investigate should be the logic of custom LBP implementation.\
+            If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
+            then this is most probably a driver bug!"
+        )]
+    EmptyPlan,
+
+    /// Selected node's connection pool is in invalid state.
+    #[error("No connections in the pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+            "Request execution exceeded a client timeout {}ms",
+            std::time::Duration::as_millis(.0)
+        )]
+    RequestTimeout(std::time::Duration),
+
+    /// Failed to execute request.
+    #[error(transparent)]
+    LastAttemptError(#[from] RequestAttemptError),
+}
+
+impl RequestError {
+    pub fn into_query_error(self) -> QueryError {
+        match self {
+            RequestError::EmptyPlan => QueryError::EmptyPlan,
+            RequestError::ConnectionPoolError(e) => e.into(),
+            RequestError::RequestTimeout(dur) => QueryError::RequestTimeout(dur),
+            RequestError::LastAttemptError(e) => e.into_query_error(),
+        }
+    }
+}
+
+/// An error that occurred during a single attempt of:
 /// - `QUERY`
 /// - `PREPARE`
 /// - `EXECUTE`
