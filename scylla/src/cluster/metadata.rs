@@ -601,7 +601,8 @@ impl MetadataReader {
     async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, MetadataError> {
         // TODO: Timeouts?
         self.control_connection.wait_until_initialized().await;
-        let conn = ControlConnection::new(self.control_connection.random_connection()?);
+        let conn = ControlConnection::new(self.control_connection.random_connection()?)
+            .override_timeout(None);
 
         let res = conn
             .query_metadata(
@@ -764,6 +765,9 @@ impl NodeInfoSource {
 }
 
 mod control_connection {
+    use std::fmt::Write as _;
+    use std::time::Duration;
+
     use scylla_cql::serialize::row::SerializedValues;
 
     use crate::statement::prepared::PreparedStatement;
@@ -773,30 +777,62 @@ mod control_connection {
     #[derive(Clone)]
     pub(super) struct ControlConnection {
         conn: Arc<Connection>,
+        overriden_timeout: Option<Duration>,
     }
 
     impl ControlConnection {
         pub(super) fn new(conn: Arc<Connection>) -> Self {
-            Self { conn }
+            Self {
+                conn,
+                overriden_timeout: None,
+            }
+        }
+
+        pub(super) fn override_timeout(self, overriden_timeout: Option<Duration>) -> Self {
+            Self {
+                overriden_timeout,
+                ..self
+            }
         }
 
         pub(super) fn get_connect_address(&self) -> SocketAddr {
             self.conn.get_connect_address()
         }
 
+        /// Returns true iff the target node is a ScyllaDB node (and not a, e.g., Cassandra node).
+        pub(super) fn is_to_scylladb(&self) -> bool {
+            self.conn.get_shard_info().is_some()
+        }
+
+        fn maybe_append_timeout_override(&self, statement: &mut Statement) {
+            if let Some(timeout) = self.overriden_timeout {
+                if self.is_to_scylladb() {
+                    // SAFETY: io::fmt::Write impl for String is infallible.
+                    write!(
+                        statement.contents,
+                        " USING TIMEOUT {}ms",
+                        timeout.as_millis()
+                    )
+                    .unwrap()
+                }
+            }
+        }
+
         /// Executes a query and fetches its results over multiple pages, using
         /// the asynchronous iterator interface.
         pub(super) async fn query_iter(
             self,
-            statement: Statement,
+            mut statement: Statement,
         ) -> Result<QueryPager, NextRowError> {
+            self.maybe_append_timeout_override(&mut statement);
             self.conn.query_iter(statement).await
         }
 
         pub(crate) async fn prepare(
             &self,
-            statement: Statement,
+            mut statement: Statement,
         ) -> Result<PreparedStatement, RequestAttemptError> {
+            self.maybe_append_timeout_override(&mut statement);
             self.conn.prepare(&statement).await
         }
 
