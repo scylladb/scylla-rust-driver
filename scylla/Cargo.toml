@@ -16,7 +16,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
-openssl-010 = ["dep:tokio-openssl", "dep:openssl"]
+openssl-010 = ["dep:tokio-openssl", "dep:openssl", "__tls"]
 cloud = [
     "openssl-010",
     "scylla-cql/serde",
@@ -39,6 +39,7 @@ full-serialization = [
     "num-bigint-04",
     "bigdecimal-04",
 ]
+__tls = []
 
 [dependencies]
 scylla-macros = { version = "0.7.0", path = "../scylla-macros" }
