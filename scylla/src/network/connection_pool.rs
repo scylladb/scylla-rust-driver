@@ -1,5 +1,6 @@
 #[cfg(feature = "cloud")]
 use crate::cloud::set_ssl_config_for_scylla_cloud_host;
+use crate::utils::pretty::CommaSeparatedDisplayer;
 
 use super::connection::{
     open_connection, open_connection_to_shard_aware_port, Connection, ConnectionConfig,
@@ -358,12 +359,9 @@ impl NodeConnectionPool {
 
     fn choose_random_connection_from_slice(v: &[Arc<Connection>]) -> Option<Arc<Connection>> {
         trace!(
-            connections = v
-                .iter()
-                .map(|conn| conn.get_connect_address().to_string())
-                .collect::<Vec<String>>()
-                .join(",")
-                .as_str(),
+            connections = tracing::field::display(CommaSeparatedDisplayer(
+                v.iter().map(|conn| conn.get_connect_address())
+            )),
             "Available"
         );
         if v.is_empty() {
@@ -587,7 +585,7 @@ impl PoolRefiller {
                 }
             }
             trace!(
-                pool_state = format!("{:?}", ShardedConnectionVectorWrapper(&self.conns)).as_str()
+                pool_state = ?ShardedConnectionVectorWrapper(&self.conns)
             );
 
             // Schedule refilling here

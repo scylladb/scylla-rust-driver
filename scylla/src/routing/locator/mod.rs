@@ -472,6 +472,7 @@ impl<'a> IntoIterator for ReplicaSet<'a> {
     }
 }
 
+#[derive(Clone)]
 enum ReplicaSetIteratorInner<'a> {
     /// Token ring with SimpleStrategy, any datacenter
     Plain {
@@ -502,6 +503,7 @@ enum ReplicaSetIteratorInner<'a> {
 }
 
 /// Iterator that returns replicas from some replica set.
+#[derive(Clone)]
 pub struct ReplicaSetIterator<'a> {
     inner: ReplicaSetIteratorInner<'a>,
     token: Token,

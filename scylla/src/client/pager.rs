@@ -232,7 +232,7 @@ where
                 let retry_decision = self.retry_session.decide_should_retry(query_info);
                 trace!(
                     parent: &span,
-                    retry_decision = format!("{:?}", retry_decision).as_str()
+                    retry_decision = ?retry_decision
                 );
 
                 last_error = request_error.into_query_error();
@@ -856,7 +856,7 @@ impl QueryPager {
                     serialized_values_size,
                 );
                 if let Some(replicas) = replicas.as_ref() {
-                    span.record_replicas(replicas);
+                    span.record_replicas(replicas.iter().map(|(node, shard)| (node, *shard)));
                 }
                 span
             };

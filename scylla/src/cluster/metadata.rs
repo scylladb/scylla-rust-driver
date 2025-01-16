@@ -26,6 +26,7 @@ use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::query::Query;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
+use crate::utils::pretty::{CommaSeparatedDisplayer, DisplayUsingDebug};
 
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
@@ -37,8 +38,7 @@ use scylla_macros::DeserializeRow;
 use std::borrow::BorrowMut;
 use std::cell::Cell;
 use std::collections::HashMap;
-use std::fmt;
-use std::fmt::Formatter;
+use std::fmt::{self, Formatter};
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -562,11 +562,7 @@ impl MetadataReader {
         self.known_peers.shuffle(&mut thread_rng());
         debug!(
             "Known peers: {}",
-            self.known_peers
-                .iter()
-                .map(|endpoint| format!("{:?}", endpoint))
-                .collect::<Vec<String>>()
-                .join(", ")
+            CommaSeparatedDisplayer(self.known_peers.iter().map(DisplayUsingDebug))
         );
 
         let address_of_failed_control_connection = self.control_connection_endpoint.address();
@@ -633,11 +629,9 @@ impl MetadataReader {
             };
 
             warn!(
-                control_connection_address = self
+                control_connection_address = tracing::field::display(self
                     .control_connection_endpoint
-                    .address()
-                    .to_string()
-                    .as_str(),
+                    .address()),
                 error = %err,
                 "Failed to fetch metadata using current control connection"
             );
@@ -701,11 +695,9 @@ impl MetadataReader {
         // and print an error message about this fact
         if !metadata.peers.is_empty() && self.known_peers.is_empty() {
             error!(
-                node_ips = ?metadata
-                    .peers
-                    .iter()
-                    .map(|peer| peer.address)
-                    .collect::<Vec<_>>(),
+                node_ips = tracing::field::display(CommaSeparatedDisplayer(
+                    metadata.peers.iter().map(|peer| peer.address)
+                )),
                 "The host filter rejected all nodes in the cluster, \
                 no connections that can serve user queries have been \
                 established. The session cannot serve any queries!"
@@ -721,12 +713,12 @@ impl MetadataReader {
         if let Some(peer) = control_connection_peer {
             if !self.host_filter.as_ref().map_or(true, |f| f.accept(peer)) {
                 warn!(
-                    filtered_node_ips = ?metadata
+                    filtered_node_ips = tracing::field::display(CommaSeparatedDisplayer(metadata
                         .peers
                         .iter()
                         .filter(|peer| self.host_filter.as_ref().map_or(true, |p| p.accept(peer)))
                         .map(|peer| peer.address)
-                        .collect::<Vec<_>>(),
+                    )),
                     control_connection_address = ?self.control_connection_endpoint.address(),
                     "The node that the control connection is established to \
                     is not accepted by the host filter. Please verify that \
@@ -884,9 +876,10 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
 
     let peers = translated_peers_futures
         .buffer_unordered(256)
+        .try_filter_map(|x| std::future::ready(Ok(x)))
         .try_collect::<Vec<_>>()
         .await?;
-    Ok(peers.into_iter().flatten().collect())
+    Ok(peers)
 }
 
 async fn create_peer_from_row(

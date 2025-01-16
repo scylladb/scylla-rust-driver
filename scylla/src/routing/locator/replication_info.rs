@@ -64,8 +64,9 @@ impl ReplicationInfo {
 
         let unique_nodes_in_global_ring = global_ring
             .iter()
-            .map(|(_t, n)| n.clone())
+            .map(|(_t, n)| n)
             .unique()
+            .cloned()
             .collect();
 
         let mut datacenter_nodes: HashMap<&str, Vec<(Token, Arc<Node>)>> = HashMap::new();
@@ -82,7 +83,7 @@ impl ReplicationInfo {
         for (datacenter_name, this_datacenter_nodes) in datacenter_nodes {
             let dc_ring = TokenRing::new(this_datacenter_nodes.into_iter());
             let unique_nodes_in_dc_ring =
-                dc_ring.iter().map(|(_t, n)| n.clone()).unique().collect();
+                dc_ring.iter().map(|(_t, n)| n).unique().cloned().collect();
             // When counting racks consider None as a separate rack
             let rack_count: usize = dc_ring
                 .iter()

@@ -118,26 +118,26 @@ impl RequestSpan {
         }
     }
 
-    pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [(impl Borrow<Arc<Node>>, Shard)]) {
-        struct ReplicaIps<'a, N>(&'a [(N, Shard)]);
-        impl<N> Display for ReplicaIps<'_, N>
+    pub(crate) fn record_replicas<'a>(
+        &'a self,
+        replicas: impl Iterator<Item = (impl Borrow<Arc<Node>> + 'a, Shard)> + Clone,
+    ) {
+        struct Replica<N>(N, Shard);
+        impl<N> Display for Replica<N>
         where
             N: Borrow<Arc<Node>>,
         {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let mut nodes_with_shards = self.0.iter();
-                if let Some((node, shard)) = nodes_with_shards.next() {
-                    write!(f, "{}-shard{}", node.borrow().address.ip(), shard)?;
-
-                    for (node, shard) in nodes_with_shards {
-                        write!(f, ",{}-shard{}", node.borrow().address.ip(), shard)?;
-                    }
-                }
-                Ok(())
+                let Self(node, shard) = self;
+                write!(f, "{}-shard{}", node.borrow().address.ip(), shard)
             }
         }
-        self.span
-            .record("replicas", tracing::field::display(&ReplicaIps(replicas)));
+        self.span.record(
+            "replicas",
+            tracing::field::display(CommaSeparatedDisplayer(
+                replicas.map(|(node, shard)| Replica(node, shard)),
+            )),
+        );
     }
 
     pub(crate) fn record_request_size(&self, size: usize) {

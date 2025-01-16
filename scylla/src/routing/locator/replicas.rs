@@ -7,7 +7,7 @@ use std::{ops::Index, sync::Arc};
 ///
 /// This type is very similar to `Cow`, but unlike `Cow`,
 /// it holds references in an `Owned` variant `Vec`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum ReplicasArray<'a> {
     Borrowed(&'a [Arc<Node>]),
     Owned(Vec<NodeRef<'a>>),

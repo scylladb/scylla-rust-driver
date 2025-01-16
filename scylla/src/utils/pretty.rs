@@ -222,6 +222,13 @@ where
     }
 }
 
+pub(crate) struct DisplayUsingDebug<T>(pub(crate) T);
+impl<T: std::fmt::Debug> std::fmt::Display for DisplayUsingDebug<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <T as std::fmt::Debug>::fmt(&self.0, f)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};

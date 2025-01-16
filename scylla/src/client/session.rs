@@ -1426,10 +1426,8 @@ where
         if !span.span().is_disabled() {
             if let (Some(table_spec), Some(token)) = (statement_info.table, token) {
                 let cluster_data = self.get_cluster_data();
-                let replicas: smallvec::SmallVec<[_; 8]> = cluster_data
-                    .get_token_endpoints_iter(table_spec, token)
-                    .collect();
-                span.record_replicas(&replicas)
+                let replicas = cluster_data.get_token_endpoints_iter(table_spec, token);
+                span.record_replicas(replicas)
             }
         }
 
@@ -2096,7 +2094,7 @@ where
                 let retry_decision = context.retry_session.decide_should_retry(query_info);
                 trace!(
                     parent: &span,
-                    retry_decision = format!("{:?}", retry_decision).as_str()
+                    retry_decision = ?retry_decision
                 );
 
                 last_error = Some(request_error.into_query_error());
