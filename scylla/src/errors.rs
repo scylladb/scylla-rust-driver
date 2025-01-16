@@ -5,7 +5,6 @@ use std::io::ErrorKind;
 use std::net::{AddrParseError, IpAddr, SocketAddr};
 use std::num::ParseIntError;
 use std::sync::Arc;
-
 use thiserror::Error;
 
 use crate::frame::response;
@@ -21,6 +20,10 @@ pub use crate::response::query_result::{
 
 // Re-export error type from authentication module.
 pub use crate::authentication::AuthError;
+
+// Re-export error type from network module.
+#[cfg(feature = "__tls")]
+pub use crate::network::TlsError;
 
 // Re-export error types from scylla-cql.
 pub use scylla_cql::deserialize::{DeserializationError, TypeCheckError};

@@ -1,11 +1,9 @@
 use std::{collections::HashMap, io};
 
-use openssl::{
-    pkey::{PKey, Private},
-    x509::X509,
-};
 use scylla_cql::{frame::types::SerialConsistency, Consistency};
 use thiserror::Error;
+
+use crate::network::TlsError;
 
 #[non_exhaustive]
 #[derive(Debug, Error)]
@@ -23,7 +21,7 @@ pub enum CloudConfigError {
     Validation(String),
 
     #[error("Error during key/cert parsing: {0}")]
-    Ssl(#[from] openssl::error::ErrorStack),
+    Tls(#[from] TlsError),
 }
 
 /// Configuration for creating a session to a serverless cluster.
@@ -74,21 +72,36 @@ impl CloudConfig {
 /// to connect to cloud nodes.
 #[derive(Debug)]
 pub(crate) struct AuthInfo {
-    key: PKey<Private>,
-    cert: X509,
+    tls: TlsInfo,
     #[allow(unused)]
     username: Option<String>,
     #[allow(unused)]
     password: Option<String>,
 }
 
-impl AuthInfo {
-    pub(crate) fn get_key(&self) -> &PKey<Private> {
-        &self.key
-    }
+#[derive(Debug)]
+pub(crate) enum TlsInfo {
+    #[cfg(feature = "openssl-010")]
+    OpenSsl010 {
+        key: openssl::pkey::PKey<openssl::pkey::Private>,
+        cert: openssl::x509::X509,
+    },
+}
 
-    pub(crate) fn get_cert(&self) -> &X509 {
-        &self.cert
+impl TlsInfo {
+    fn from_pem(cert: &[u8], key: &[u8]) -> Result<Self, TlsError> {
+        #[cfg(feature = "openssl-010")]
+        {
+            let cert = openssl::x509::X509::from_pem(cert)?;
+            let key = openssl::pkey::PKey::private_key_from_pem(key)?;
+            Ok(TlsInfo::OpenSsl010 { key, cert })
+        }
+    }
+}
+
+impl AuthInfo {
+    pub(crate) fn get_tls(&self) -> &TlsInfo {
+        &self.tls
     }
 
     #[allow(unused)]
@@ -102,10 +115,11 @@ impl AuthInfo {
     }
 }
 
-/// Contains cloud datacenter configuration for creating TLS connections to its nodes.  
+/// Contains cloud datacenter configuration for creating TLS connections to its nodes.
 #[derive(Debug)]
 pub(crate) struct Datacenter {
-    certificate_authority: X509,
+    #[cfg(feature = "openssl-010")]
+    openssl_ca: openssl::x509::X509,
     server: String,
     #[allow(unused)]
     tls_server_name: Option<String>,
@@ -116,8 +130,9 @@ pub(crate) struct Datacenter {
 }
 
 impl Datacenter {
-    pub(crate) fn get_certificate_authority(&self) -> &X509 {
-        &self.certificate_authority
+    #[cfg(feature = "openssl-010")]
+    pub(crate) fn openssl_ca(&self) -> &openssl::x509::X509 {
+        &self.openssl_ca
     }
 
     pub(crate) fn get_server(&self) -> &str {
@@ -151,12 +166,10 @@ pub(crate) struct Context {
 }
 
 mod deserialize {
-    use super::CloudConfigError;
+    use super::{CloudConfigError, TlsError, TlsInfo};
     use base64::{engine::general_purpose, Engine as _};
     use scylla_cql::{frame::types::SerialConsistency, Consistency};
     use std::{collections::HashMap, fs::File, io::Read, path::Path};
-
-    use openssl::{pkey::PKey, x509::X509};
 
     use serde::Deserialize;
     use tracing::warn;
@@ -417,13 +430,10 @@ mod deserialize {
                 auth_info.clientKeyPath.as_deref(),
             )?;
 
-            let cert = X509::from_pem(&cert_pem[..]).map_err(CloudConfigError::Ssl)?;
-
-            let key = PKey::private_key_from_pem(&key_pem[..]).map_err(CloudConfigError::Ssl)?;
+            let tls = TlsInfo::from_pem(cert_pem.as_ref(), key_pem.as_ref())?;
 
             Ok(super::AuthInfo {
-                key,
-                cert,
+                tls,
                 username: auth_info.username,
                 password: auth_info.password,
             })
@@ -517,11 +527,13 @@ mod deserialize {
                 datacenter.certificateAuthorityPath.as_deref(),
             )?;
 
-            let certificate_authority =
-                X509::from_pem(&cert_pem[..]).map_err(CloudConfigError::Ssl)?;
+            #[cfg(feature = "openssl-010")]
+            let openssl_ca =
+                openssl::x509::X509::from_pem(&cert_pem[..]).map_err(TlsError::from)?;
 
             Ok(super::Datacenter {
-                certificate_authority,
+                #[cfg(feature = "openssl-010")]
+                openssl_ca,
                 server: datacenter.server,
                 node_domain,
                 insecure_skip_tls_verify: datacenter.insecureSkipTlsVerify.unwrap_or(false),
@@ -551,13 +563,13 @@ mod deserialize {
     #[cfg(test)]
     mod tests {
         use crate::cloud::config::deserialize::Parameters;
+        use crate::cloud::config::TlsInfo;
         use crate::test_utils::setup_tracing;
 
         use super::super::CloudConfig;
         use super::RawCloudConfig;
         use assert_matches::assert_matches;
         use base64::{engine::general_purpose, Engine as _};
-        use openssl::x509::X509;
         use scylla_cql::frame::types::SerialConsistency;
         use scylla_cql::Consistency;
 
@@ -835,9 +847,16 @@ mod deserialize {
 
                 let auth_info = validated_config.auth_infos.get("one").unwrap();
 
+                // In case multiple tls backends are enabled at the same time.
+                #[allow(irrefutable_let_patterns)]
+                let TlsInfo::OpenSsl010 { ref cert, .. } = auth_info.tls
+                else {
+                    panic!("openssl TLS info should have been configured")
+                };
+
                 assert_eq!(
-                    auth_info.cert,
-                    X509::from_pem(
+                    *cert,
+                    openssl::x509::X509::from_pem(
                         &general_purpose::STANDARD
                             .decode(TEST_CA.as_bytes())
                             .unwrap()
@@ -851,8 +870,8 @@ mod deserialize {
 
                 let datacenter = validated_config.datacenters.get("eu-west-1").unwrap();
                 assert_eq!(
-                    datacenter.certificate_authority,
-                    X509::from_pem(
+                    datacenter.openssl_ca,
+                    openssl::x509::X509::from_pem(
                         &general_purpose::STANDARD
                             .decode(TEST_CA.as_bytes())
                             .unwrap()

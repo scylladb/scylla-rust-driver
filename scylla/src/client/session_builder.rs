@@ -6,6 +6,8 @@ use super::execution_profile::ExecutionProfileHandle;
 use super::session::{Session, SessionConfig};
 use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
+#[cfg(feature = "__tls")]
+use crate::client::session::TlsContext;
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
 use crate::errors::NewSessionError;
@@ -13,8 +15,6 @@ use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::statement::Consistency;
-#[cfg(feature = "openssl-010")]
-use openssl::ssl::SslContext;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
@@ -323,10 +323,12 @@ impl GenericSessionBuilder<DefaultMode> {
         self
     }
 
-    /// ssl feature
-    /// Provide SessionBuilder with SslContext from openssl crate that will be
-    /// used to create an ssl connection to the database.
-    /// If set to None SSL connection won't be used.
+    /// TLS feature
+    ///
+    /// Provide SessionBuilder with TlsContext that will be
+    /// used to create a TLS connection to the database.
+    /// If set to None TLS connection won't be used.
+    ///
     /// Default is None.
     ///
     /// # Example
@@ -344,15 +346,15 @@ impl GenericSessionBuilder<DefaultMode> {
     ///
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .ssl_context(Some(context_builder.build()))
+    ///     .tls_context(Some(context_builder.build()))
     ///     .build()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "openssl-010")]
-    pub fn ssl_context(mut self, ssl_context: Option<SslContext>) -> Self {
-        self.config.ssl_context = ssl_context;
+    #[cfg(feature = "__tls")]
+    pub fn tls_context(mut self, tls_context: Option<impl Into<TlsContext>>) -> Self {
+        self.config.tls_context = tls_context.map(|t| t.into());
         self
     }
 }
