@@ -603,7 +603,8 @@ impl MetadataReader {
     async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, MetadataError> {
         // TODO: Timeouts?
         self.control_connection.wait_until_initialized().await;
-        let conn = ControlConnection::new(self.control_connection.random_connection()?);
+        let conn = ControlConnection::new(self.control_connection.random_connection()?)
+            .override_serverside_timeout(None);
 
         let res = conn
             .query_metadata(
