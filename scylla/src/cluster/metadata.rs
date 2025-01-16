@@ -761,6 +761,57 @@ impl NodeInfoSource {
     }
 }
 
+mod control_connection {
+    use scylla_cql::serialize::row::SerializedValues;
+
+    use crate::errors::RequestAttemptError;
+    use crate::statement::prepared::PreparedStatement;
+
+    use super::*;
+
+    #[derive(Clone)]
+    pub(super) struct ControlConnection {
+        conn: Arc<Connection>,
+    }
+
+    impl ControlConnection {
+        pub(super) fn new(conn: Arc<Connection>) -> Self {
+            Self { conn }
+        }
+
+        pub(super) fn get_connect_address(&self) -> SocketAddr {
+            self.conn.get_connect_address()
+        }
+
+        /// Executes a query and fetches its results over multiple pages, using
+        /// the asynchronous iterator interface.
+        pub(super) async fn query_iter(
+            self,
+            statement: Statement,
+        ) -> Result<QueryPager, NextRowError> {
+            self.conn.query_iter(statement).await
+        }
+
+        pub(crate) async fn prepare(
+            &self,
+            statement: Statement,
+        ) -> Result<PreparedStatement, RequestAttemptError> {
+            self.conn.prepare(&statement).await
+        }
+
+        /// Executes a prepared statements and fetches its results over multiple pages, using
+        /// the asynchronous iterator interface.
+        pub(crate) async fn execute_iter(
+            self,
+            prepared_statement: PreparedStatement,
+            values: SerializedValues,
+        ) -> Result<QueryPager, NextRowError> {
+            self.conn.execute_iter(prepared_statement, values).await
+        }
+    }
+}
+use control_connection::ControlConnection;
+
 const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
 async fn query_peers(
