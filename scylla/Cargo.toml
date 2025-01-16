@@ -15,7 +15,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = []
 openssl-010 = ["dep:tokio-openssl", "dep:openssl"]
 cloud = [
     "openssl-010",

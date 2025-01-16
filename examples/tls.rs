@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use openssl::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
 
 // How to run scylla instance with TLS:
+// FIXME(wprzytula): Adjust to rustls.
 //
 // Edit your scylla.yaml file and add paths to certificates
 // ex:
@@ -46,7 +47,7 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
-        .ssl_context(Some(context_builder.build()))
+        .tls_context(Some(context_builder.build()))
         .build()
         .await?;
 

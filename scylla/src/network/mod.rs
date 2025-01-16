@@ -5,8 +5,8 @@
 //! - NodeConnectionPool - a manager that keeps a desired number of connections opened to each shard.
 
 mod connection;
-#[cfg(feature = "openssl-010")]
-pub(crate) use connection::SslConfig;
+pub(crate) use connection::TlsConfig;
+pub use connection::TlsError;
 pub(crate) use connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 
 mod connection_pool;

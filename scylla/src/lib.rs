@@ -82,7 +82,7 @@
 //!     .query_unpaged("SELECT a, b FROM ks.tab", &[])
 //!     .await?
 //!     .into_rows_result()?;
-//!     
+//!
 //! for row in query_rows.rows()? {
 //!     // Parse row as int and text \
 //!     let (int_val, text_val): (i32, &str) = row?;
