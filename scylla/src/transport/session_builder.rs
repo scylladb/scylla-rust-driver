@@ -594,7 +594,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn connection_timeout(mut self, duration: std::time::Duration) -> Self {
+    pub fn connection_timeout(mut self, duration: Duration) -> Self {
         self.config.connect_timeout = duration;
         self
     }
@@ -703,6 +703,30 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn fetch_schema_metadata(mut self, fetch: bool) -> Self {
         self.config.fetch_schema_metadata = fetch;
+        self
+    }
+
+    /// Set the server-side timeout for metadata queries.
+    /// The default is `Some(Duration::from_secs(2))`. It means that
+    /// the all metadata queries will be set the 2 seconds timeout
+    /// no matter what timeout is set as a cluster default.
+    /// This prevents timeouts of schema queries when the schema is large
+    /// and the default timeout is configured as tight.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .metadata_request_serverside_timeout(std::time::Duration::from_secs(5))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn metadata_request_serverside_timeout(mut self, timeout: Duration) -> Self {
+        self.config.metadata_request_serverside_timeout = Some(timeout);
         self
     }
 
