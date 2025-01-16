@@ -20,3 +20,4 @@ pub mod host_filter;
 pub mod load_balancing;
 pub mod retry;
 pub mod speculative_execution;
+pub mod timestamp_generator;
