@@ -722,9 +722,12 @@ checksum = "443144c8cdadd93ebf52ddb4056d257f5b52c04d3c804e657d19eb73fc33668b"
 
 [[package]]
 name = "histogram"
-version = "0.6.9"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12cb882ccb290b8646e554b157ab0b71e64e8d5bef775cd66b6531e52d302669"
+checksum = "58cf6b99a250776d813cdf2f0b478a053a822d078e7a2baf5cb36afc88c41a7c"
+dependencies = [
+ "thiserror 1.0.48",
+]
 
 [[package]]
 name = "humantime"

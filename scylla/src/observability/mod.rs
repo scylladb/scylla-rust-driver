@@ -3,9 +3,13 @@
 //! - driver-side tracing,
 //! - cluster-side tracing,
 //! - request execution history,
+//! - lock-free histogram,
 //! - driver metrics.
 
 pub(crate) mod driver_tracing;
 pub mod history;
+#[cfg(feature = "metrics")]
+pub mod lock_free_histogram;
+#[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod tracing;
