@@ -150,11 +150,13 @@ struct UseKeyspaceRequest {
 }
 
 impl Cluster {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
         known_nodes: Vec<InternalKnownNode>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
+        metadata_request_serverside_timeout: Option<Duration>,
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
@@ -170,6 +172,7 @@ impl Cluster {
             control_connection_repair_sender,
             pool_config.connection_config.clone(),
             pool_config.keepalive_interval,
+            metadata_request_serverside_timeout,
             server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,
