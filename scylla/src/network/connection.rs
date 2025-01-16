@@ -46,14 +46,10 @@ use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
 use scylla_cql::serialize::raw_batch::RawBatchValuesAdapter;
 use scylla_cql::serialize::row::{RowSerializationContext, SerializedValues};
 use socket2::{SockRef, TcpKeepalive};
-#[cfg(feature = "openssl-010")]
-pub(crate) use ssl_config::SslConfig;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
 use std::net::{IpAddr, SocketAddr};
-#[cfg(feature = "openssl-010")]
-use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -62,12 +58,12 @@ use std::{
     cmp::Ordering,
     net::{Ipv4Addr, Ipv6Addr},
 };
+pub(crate) use tls_config::TlsConfig;
+pub use tls_config::TlsError;
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
-#[cfg(feature = "openssl-010")]
-use tokio_openssl::SslStream;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -212,35 +208,59 @@ struct TaskResponse {
     body: Bytes,
 }
 
-#[cfg(feature = "openssl-010")]
-mod ssl_config {
-    use openssl::{
-        error::ErrorStack,
-        ssl::{Ssl, SslContext},
-    };
+mod tls_config {
+    use std::io;
+
     #[cfg(feature = "cloud")]
     use uuid::Uuid;
 
-    /// This struct encapsulates all Ssl-regarding configuration and helps pass it tidily through the code.
+    use crate::client::session::TlsContext;
+
+    /// This struct encapsulates all TLS-regarding configuration and helps pass it tidily through the code.
     //
-    // There are 3 possible options for SslConfig, whose behaviour is somewhat subtle.
-    // Option 1: No ssl configuration. Then it is None every time.
-    // Option 2: User-provided global SslContext. Then, a SslConfig is created upon Session creation
+    // There are 3 possible options for TlsConfig, whose behaviour is somewhat subtle.
+    // Option 1: No TLS configuration. Then it is None every time.
+    // Option 2: User-provided global TlsContext. Then, a TlsConfig is created upon Session creation
     // and henceforth stored in the ConnectionConfig.
-    // Option 3: Serverless Cloud. The Option<SslConfig> remains None in ConnectionConfig until it reaches
-    // NodeConnectionPool::new(). Inside that function, the field is mutated to contain SslConfig specific
-    // for the particular node. (The SslConfig must be different, because SNIs differ for different nodes.)
-    // Thenceforth, all connections to that node share the same SslConfig.
+    // Option 3: Serverless Cloud. The Option<TlsConfig> remains None in ConnectionConfig until it reaches
+    // NodeConnectionPool::new(). Inside that function, the field is mutated to contain TlsConfig specific
+    // for the particular node. (The TlsConfig must be different, because SNIs differ for different nodes.)
+    // Thenceforth, all connections to that node share the same TlsConfig.
     #[derive(Clone)]
-    pub(crate) struct SslConfig {
-        context: SslContext,
+    pub(crate) struct TlsConfig {
+        context: TlsContext,
         #[cfg(feature = "cloud")]
         sni: Option<String>,
     }
 
-    impl SslConfig {
-        // Used in case when the user provided their own SslContext to be used in all connections.
-        pub(crate) fn new_with_global_context(context: SslContext) -> Self {
+    pub(crate) enum Tls {
+        #[cfg(feature = "openssl-010")]
+        OpenSsl010(openssl::ssl::Ssl),
+    }
+
+    /// A wrapper around a TLS error.
+    ///
+    /// The original error came from one of the supported TLS backends.
+    #[derive(Debug, thiserror::Error)]
+    #[error(transparent)]
+    #[non_exhaustive]
+    pub enum TlsError {
+        #[cfg(feature = "openssl-010")]
+        OpenSsl010(#[from] openssl::error::ErrorStack),
+    }
+
+    impl From<TlsError> for io::Error {
+        fn from(value: TlsError) -> Self {
+            match value {
+                #[cfg(feature = "openssl-010")]
+                TlsError::OpenSsl010(e) => e.into(),
+            }
+        }
+    }
+
+    impl TlsConfig {
+        // Used in case when the user provided their own TlsContext to be used in all connections.
+        pub(crate) fn new_with_global_context(context: TlsContext) -> Self {
             Self {
                 context,
                 #[cfg(feature = "cloud")]
@@ -251,7 +271,7 @@ mod ssl_config {
         // Used in case of Serverless Cloud connections.
         #[cfg(feature = "cloud")]
         pub(crate) fn new_for_sni(
-            context: SslContext,
+            context: TlsContext,
             domain_name: &str,
             host_id: Option<Uuid>,
         ) -> Self {
@@ -266,15 +286,22 @@ mod ssl_config {
             }
         }
 
-        // Produces a new Ssl object that is able to wrap a TCP stream.
-        pub(crate) fn new_ssl(&self) -> Result<Ssl, ErrorStack> {
-            #[allow(unused_mut)]
-            let mut ssl = Ssl::new(&self.context)?;
-            #[cfg(feature = "cloud")]
-            if let Some(sni) = self.sni.as_ref() {
-                ssl.set_hostname(sni)?;
+        // Produces a new Tls object that is able to wrap a TCP stream.
+        pub(crate) fn new_tls(&self) -> Result<Tls, TlsError> {
+            // To silence warnings when TlsContext is an empty enum (tls features are disabled).
+            #[allow(unreachable_code)]
+            match self.context {
+                #[cfg(feature = "openssl-010")]
+                TlsContext::OpenSsl010(ref context) => {
+                    #[allow(unused_mut)]
+                    let mut ssl = openssl::ssl::Ssl::new(context)?;
+                    #[cfg(feature = "cloud")]
+                    if let Some(sni) = self.sni.as_ref() {
+                        ssl.set_hostname(sni)?;
+                    }
+                    Ok(Tls::OpenSsl010(ssl))
+                }
             }
-            Ok(ssl)
         }
     }
 }
@@ -326,8 +353,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
     pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
-    #[cfg(feature = "openssl-010")]
-    pub(crate) ssl_config: Option<SslConfig>,
+    pub(crate) tls_config: Option<TlsConfig>,
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub(crate) event_sender: Option<mpsc::Sender<Event>>,
@@ -353,8 +379,7 @@ impl Default for ConnectionConfig {
             tcp_keepalive_interval: None,
             timestamp_generator: None,
             event_sender: None,
-            #[cfg(feature = "openssl-010")]
-            ssl_config: None,
+            tls_config: None,
             connect_timeout: std::time::Duration::from_secs(5),
             default_consistency: Default::default(),
             authenticator: None,
@@ -375,18 +400,12 @@ impl Default for ConnectionConfig {
 }
 
 impl ConnectionConfig {
-    #[cfg(feature = "openssl-010")]
-    fn is_ssl(&self) -> bool {
+    fn is_tls(&self) -> bool {
         #[cfg(feature = "cloud")]
         if self.cloud_config.is_some() {
             return true;
         }
-        self.ssl_config.is_some()
-    }
-
-    #[cfg(not(feature = "openssl-010"))]
-    fn is_ssl(&self) -> bool {
-        false
+        self.tls_config.is_some()
     }
 }
 
@@ -1367,22 +1386,27 @@ impl Connection {
             handle
         }
 
-        #[cfg(feature = "openssl-010")]
-        if let Some(ssl_config) = &config.ssl_config {
-            let ssl = ssl_config.new_ssl()?;
-            let mut stream = SslStream::new(ssl, stream)?;
-            let _pin = Pin::new(&mut stream).connect().await;
-
-            return Ok(spawn_router_and_get_handle(
-                config,
-                stream,
-                receiver,
-                error_sender,
-                orphan_notification_receiver,
-                router_handle,
-                node_address,
-            )
-            .await);
+        if let Some(tls_config) = &config.tls_config {
+            // To silence warnings when TlsContext is an empty enum (tls features are disabled).
+            #[allow(unreachable_code)]
+            match tls_config.new_tls()? {
+                #[cfg(feature = "openssl-010")]
+                tls_config::Tls::OpenSsl010(ssl) => {
+                    let mut stream =
+                        tokio_openssl::SslStream::new(ssl, stream).map_err(TlsError::OpenSsl010)?;
+                    let _ = std::pin::Pin::new(&mut stream).connect().await;
+                    return Ok(spawn_router_and_get_handle(
+                        config,
+                        stream,
+                        receiver,
+                        error_sender,
+                        orphan_notification_receiver,
+                        router_handle,
+                        node_address,
+                    )
+                    .await);
+                }
+            }
         }
 
         Ok(spawn_router_and_get_handle(
@@ -1847,7 +1871,7 @@ pub(super) async fn open_connection(
     // Get OPTIONS SUPPORTED by the cluster.
     let mut supported = connection.get_options().await?;
 
-    let shard_aware_port_key = match config.is_ssl() {
+    let shard_aware_port_key = match config.is_tls() {
         true => options::SCYLLA_SHARD_AWARE_PORT_SSL,
         false => options::SCYLLA_SHARD_AWARE_PORT,
     };
