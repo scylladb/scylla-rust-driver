@@ -384,7 +384,7 @@ where
     fn is_empty_next(&mut self) -> Option<bool> {
         self.0
             .next_serialized()
-            .map(|sv| sv.map_or(false, |sv| sv.len() == 0))
+            .map(|sv| sv.is_ok_and(|sv| sv.len() == 0))
     }
 
     #[inline]

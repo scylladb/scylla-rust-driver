@@ -2377,7 +2377,7 @@ impl VerifiedKeyspaceName {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use assert_matches::assert_matches;
     use scylla_cql::frame::protocol_features::{
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
@@ -2406,7 +2406,7 @@ mod tests {
     use std::time::Duration;
 
     // Just like resolve_hostname in session.rs
-    async fn resolve_hostname(hostname: &str) -> SocketAddr {
+    pub(crate) async fn resolve_hostname(hostname: &str) -> SocketAddr {
         match tokio::net::lookup_host(hostname).await {
             Ok(mut addrs) => addrs.next().unwrap(),
             Err(_) => {

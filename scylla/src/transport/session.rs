@@ -277,6 +277,9 @@ pub struct SessionConfig {
     /// If true, full schema is fetched with every metadata refresh.
     pub fetch_schema_metadata: bool,
 
+    /// Custom timeout for requests that query metadata.
+    pub metadata_request_serverside_timeout: Option<Duration>,
+
     /// Interval of sending keepalive requests.
     /// If `None`, keepalives are never sent, so `Self::keepalive_timeout` has no effect.
     pub keepalive_interval: Option<Duration>,
@@ -385,6 +388,7 @@ impl SessionConfig {
             disallow_shard_aware_port: false,
             keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
+            metadata_request_serverside_timeout: Some(Duration::from_secs(2)),
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_timeout: Some(Duration::from_secs(30)),
             schema_agreement_timeout: Duration::from_secs(60),
@@ -1103,6 +1107,7 @@ where
             pool_config,
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
+            config.metadata_request_serverside_timeout,
             config.host_filter,
             config.cluster_metadata_refresh_interval,
             tablet_receiver,
