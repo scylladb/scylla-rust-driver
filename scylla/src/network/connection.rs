@@ -325,6 +325,10 @@ mod tls_config {
     pub(crate) enum Tls {
         #[cfg(feature = "openssl-010")]
         OpenSsl010(openssl::ssl::Ssl),
+        #[cfg(feature = "rustls-023")]
+        Rustls023 {
+            connector: tokio_rustls::TlsConnector,
+        },
     }
 
     /// A wrapper around a TLS error.
@@ -389,6 +393,12 @@ mod tls_config {
                         ssl.set_hostname(sni)?;
                     }
                     Ok(Tls::OpenSsl010(ssl))
+                }
+                #[cfg(feature = "rustls-023")]
+                TlsContext::Rustls023(ref config) => {
+                    let connector = tokio_rustls::TlsConnector::from(config.clone());
+
+                    Ok(Tls::Rustls023 { connector })
                 }
             }
         }
@@ -1570,6 +1580,22 @@ impl Connection {
                         .connect()
                         .await
                         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                    return Ok(spawn_router_and_get_handle(
+                        config,
+                        stream,
+                        receiver,
+                        error_sender,
+                        orphan_notification_receiver,
+                        router_handle,
+                        node_address,
+                    )
+                    .await);
+                }
+                #[cfg(feature = "rustls-023")]
+                tls_config::Tls::Rustls023 { connector } => {
+                    use rustls::pki_types::ServerName;
+                    let server_name = ServerName::IpAddress(node_address.into());
+                    let stream = connector.connect(server_name, stream).await?;
                     return Ok(spawn_router_and_get_handle(
                         config,
                         stream,

@@ -100,12 +100,21 @@ impl std::fmt::Debug for Session {
 pub enum TlsContext {
     #[cfg(feature = "openssl-010")]
     OpenSsl010(openssl::ssl::SslContext),
+    #[cfg(feature = "rustls-023")]
+    Rustls023(Arc<rustls::ClientConfig>),
 }
 
 #[cfg(feature = "openssl-010")]
 impl From<openssl::ssl::SslContext> for TlsContext {
     fn from(value: openssl::ssl::SslContext) -> Self {
         TlsContext::OpenSsl010(value)
+    }
+}
+
+#[cfg(feature = "rustls-023")]
+impl From<Arc<rustls::ClientConfig>> for TlsContext {
+    fn from(value: Arc<rustls::ClientConfig>) -> Self {
+        TlsContext::Rustls023(value)
     }
 }
 
