@@ -1863,7 +1863,7 @@ async fn maybe_translated_addr(
 /// - registers for all event types using REGISTER request (if this is control connection).
 ///
 /// At the beginning, translates node's address, if it is subject to address translation.
-pub(super) async fn open_connection(
+pub(crate) async fn open_connection(
     endpoint: &UntranslatedEndpoint,
     source_port: Option<u16>,
     config: &HostConnectionConfig,
