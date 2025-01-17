@@ -230,9 +230,9 @@ mod tls_config {
     //!     │
     //!     ↳Tls (wrapper over TCP stream which adds encryption)
 
-    #[cfg(not(any(feature = "openssl-010")))]
+    #[cfg(not(any(feature = "openssl-010", feature = "rustls-023")))]
     compile_error!(
-        r#""__tls" feature requires a TLS backend: at least one of ["openssl-010"] is needed"#
+        r#""__tls" feature requires a TLS backend: at least one of ["openssl-010", "rustls-023"] is needed"#
     );
 
     use std::io;
@@ -333,6 +333,10 @@ mod tls_config {
     pub(crate) enum Tls {
         #[cfg(feature = "openssl-010")]
         OpenSsl010(openssl::ssl::Ssl),
+        #[cfg(feature = "rustls-023")]
+        Rustls023 {
+            connector: tokio_rustls::TlsConnector,
+        },
     }
 
     /// A wrapper around a TLS error.
@@ -395,6 +399,12 @@ mod tls_config {
                         ssl.set_hostname(sni)?;
                     }
                     Tls::OpenSsl010(ssl)
+                }
+                #[cfg(feature = "rustls-023")]
+                TlsContext::Rustls023(config) => {
+                    let connector = tokio_rustls::TlsConnector::from(config.clone());
+
+                    Tls::Rustls023 { connector }
                 }
             };
 
@@ -1564,6 +1574,26 @@ impl Connection {
                         .connect()
                         .await
                         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+                    let (task, handle) = Self::router(
+                        config,
+                        stream,
+                        receiver,
+                        error_sender,
+                        orphan_notification_receiver,
+                        router_handle,
+                        node_address,
+                    )
+                    .remote_handle();
+
+                    tokio::task::spawn(task);
+                    handle
+                }
+                #[cfg(feature = "rustls-023")]
+                Tls::Rustls023 { connector } => {
+                    use rustls::pki_types::ServerName;
+                    let server_name = ServerName::IpAddress(node_address.into());
+                    let stream = connector.connect(server_name, stream).await?;
                     let (task, handle) = Self::router(
                         config,
                         stream,

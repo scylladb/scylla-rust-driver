@@ -17,6 +17,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 openssl-010 = ["dep:tokio-openssl", "dep:openssl", "__tls"]
+rustls-023 = ["dep:tokio-rustls", "dep:rustls", "__tls"]
 cloud = [
     "openssl-010",
     "scylla-cql/serde",
@@ -66,6 +67,8 @@ tracing = "0.1.36"
 chrono = { version = "0.4.32", default-features = false, features = ["clock"] }
 openssl = { version = "0.10.70", optional = true }
 tokio-openssl = { version = "0.6.1", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+rustls = { version = "0.23", optional = true }
 arc-swap = "1.3.0"
 dashmap = "5.2"
 lz4_flex = { version = "0.11.1" }
