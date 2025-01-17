@@ -86,6 +86,32 @@ pub(crate) enum TlsInfo {
         key: openssl::pkey::PKey<openssl::pkey::Private>,
         cert: openssl::x509::X509,
     },
+    #[cfg(feature = "rustls")]
+    #[allow(dead_code)]
+    Rustls {
+        cert_chain: Vec<rustls::pki_types::CertificateDer<'static>>,
+        key: rustls::pki_types::PrivateKeyDer<'static>,
+    },
+}
+
+impl TlsInfo {
+    fn from_pem(cert: &[u8], key: &[u8]) -> Result<Self, TlsError> {
+        #[cfg(feature = "openssl")]
+        {
+            let cert = openssl::x509::X509::from_pem(cert)?;
+            let key = openssl::pkey::PKey::private_key_from_pem(key)?;
+            Ok(TlsInfo::OpenSsl { key, cert })
+        }
+
+        #[cfg(all(not(feature = "openssl"), feature = "rustls"))]
+        {
+            use rustls::pki_types::pem::PemObject;
+            let key = rustls::pki_types::PrivateKeyDer::from_pem_slice(key)?;
+            let cert_chain: Vec<_> = rustls::pki_types::CertificateDer::pem_slice_iter(cert)
+                .collect::<Result<_, _>>()?;
+            Ok(TlsInfo::Rustls { cert_chain, key })
+        }
+    }
 }
 
 impl AuthInfo {
@@ -109,6 +135,8 @@ impl AuthInfo {
 pub(crate) struct Datacenter {
     #[cfg(feature = "openssl")]
     openssl_ca: openssl::x509::X509,
+    #[cfg(feature = "rustls")]
+    rustls_ca: rustls::pki_types::CertificateDer<'static>,
     server: String,
     #[allow(unused)]
     tls_server_name: Option<String>,
@@ -122,6 +150,11 @@ impl Datacenter {
     #[cfg(feature = "openssl")]
     pub(crate) fn openssl_ca(&self) -> &openssl::x509::X509 {
         &self.openssl_ca
+    }
+
+    #[cfg(feature = "rustls")]
+    pub(crate) fn rustls_ca(&self) -> &rustls::pki_types::CertificateDer<'static> {
+        &self.rustls_ca
     }
 
     pub(crate) fn get_server(&self) -> &str {
@@ -419,17 +452,7 @@ mod deserialize {
                 auth_info.clientKeyPath.as_deref(),
             )?;
 
-            let tls = {
-                #[cfg(feature = "openssl")]
-                {
-                    let cert =
-                        openssl::x509::X509::from_pem(&cert_pem[..]).map_err(TlsError::from)?;
-
-                    let key = openssl::pkey::PKey::private_key_from_pem(&key_pem[..])
-                        .map_err(TlsError::from)?;
-                    TlsInfo::OpenSsl { key, cert }
-                }
-            };
+            let tls = TlsInfo::from_pem(cert_pem.as_ref(), key_pem.as_ref())?;
 
             Ok(super::AuthInfo {
                 tls,
@@ -530,9 +553,18 @@ mod deserialize {
             let openssl_ca =
                 openssl::x509::X509::from_pem(&cert_pem[..]).map_err(TlsError::from)?;
 
+            #[cfg(feature = "rustls")]
+            use rustls::pki_types::pem::PemObject;
+
+            #[cfg(feature = "rustls")]
+            let rustls_ca = rustls::pki_types::CertificateDer::from_pem_slice(cert_pem.as_ref())
+                .map_err(TlsError::from)?;
+
             Ok(super::Datacenter {
                 #[cfg(feature = "openssl")]
                 openssl_ca,
+                #[cfg(feature = "rustls")]
+                rustls_ca,
                 server: datacenter.server,
                 node_domain,
                 insecure_skip_tls_verify: datacenter.insecureSkipTlsVerify.unwrap_or(false),

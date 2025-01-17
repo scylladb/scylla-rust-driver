@@ -148,6 +148,9 @@ where
 pub enum TlsContext {
     #[cfg(feature = "openssl")]
     OpenSsl(openssl::ssl::SslContext),
+    #[cfg(feature = "rustls")]
+    Rustls(Arc<rustls::ClientConfig>),
+}
 
 #[cfg(feature = "openssl")]
 impl From<openssl::ssl::SslContext> for TlsContext {
@@ -155,6 +158,12 @@ impl From<openssl::ssl::SslContext> for TlsContext {
         TlsContext::OpenSsl(value)
     }
 }
+
+#[cfg(feature = "rustls")]
+impl From<Arc<rustls::ClientConfig>> for TlsContext {
+    fn from(value: Arc<rustls::ClientConfig>) -> Self {
+        TlsContext::Rustls(value)
+    }
 }
 
 /// Configuration options for [`Session`].

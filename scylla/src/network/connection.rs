@@ -50,8 +50,6 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
 use std::net::{IpAddr, SocketAddr};
-#[cfg(feature = "__tls")]
-use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -241,6 +239,12 @@ mod tls_config {
     pub(crate) enum Tls {
         #[cfg(feature = "openssl")]
         OpenSsl(openssl::ssl::Ssl),
+        #[cfg(feature = "rustls")]
+        Rustls {
+            connector: tokio_rustls::TlsConnector,
+            #[cfg(feature = "cloud")]
+            sni: Option<rustls::pki_types::ServerName<'static>>,
+        },
     }
 
     /// A wrapper around a TLS error
@@ -249,9 +253,16 @@ mod tls_config {
     /// transparent, meaning that error formatting and source is obtained directly from the source
     /// error
     #[derive(Debug)]
+    #[non_exhaustive]
     pub enum TlsError {
         #[cfg(feature = "openssl")]
         OpenSsl(openssl::error::ErrorStack),
+        #[cfg(feature = "rustls")]
+        InvalidName(rustls::pki_types::InvalidDnsNameError),
+        #[cfg(feature = "rustls")]
+        PemParse(rustls::pki_types::pem::Error),
+        #[cfg(feature = "rustls")]
+        Rustls(rustls::Error),
     }
 
     impl std::error::Error for TlsError {
@@ -259,6 +270,12 @@ mod tls_config {
             match self {
                 #[cfg(feature = "openssl")]
                 TlsError::OpenSsl(e) => e.source(),
+                #[cfg(feature = "rustls")]
+                TlsError::InvalidName(e) => e.source(),
+                #[cfg(feature = "rustls")]
+                TlsError::PemParse(e) => e.source(),
+                #[cfg(feature = "rustls")]
+                TlsError::Rustls(e) => e.source(),
             }
         }
     }
@@ -268,6 +285,12 @@ mod tls_config {
             match self {
                 #[cfg(feature = "openssl")]
                 TlsError::OpenSsl(e) => e.fmt(f),
+                #[cfg(feature = "rustls")]
+                TlsError::InvalidName(e) => e.fmt(f),
+                #[cfg(feature = "rustls")]
+                TlsError::PemParse(e) => e.fmt(f),
+                #[cfg(feature = "rustls")]
+                TlsError::Rustls(e) => e.fmt(f),
             }
         }
     }
@@ -277,6 +300,12 @@ mod tls_config {
             match value {
                 #[cfg(feature = "openssl")]
                 TlsError::OpenSsl(e) => e.into(),
+                #[cfg(feature = "rustls")]
+                TlsError::InvalidName(e) => io::Error::new(io::ErrorKind::Other, e),
+                #[cfg(feature = "rustls")]
+                TlsError::PemParse(e) => io::Error::new(io::ErrorKind::Other, e),
+                #[cfg(feature = "rustls")]
+                TlsError::Rustls(e) => io::Error::new(io::ErrorKind::Other, e),
             }
         }
     }
@@ -285,6 +314,27 @@ mod tls_config {
     impl From<openssl::error::ErrorStack> for TlsError {
         fn from(error: openssl::error::ErrorStack) -> Self {
             TlsError::OpenSsl(error)
+        }
+    }
+
+    #[cfg(feature = "rustls")]
+    impl From<rustls::pki_types::InvalidDnsNameError> for TlsError {
+        fn from(error: rustls::pki_types::InvalidDnsNameError) -> Self {
+            TlsError::InvalidName(error)
+        }
+    }
+
+    #[cfg(feature = "rustls")]
+    impl From<rustls::pki_types::pem::Error> for TlsError {
+        fn from(error: rustls::pki_types::pem::Error) -> Self {
+            TlsError::PemParse(error)
+        }
+    }
+
+    #[cfg(feature = "rustls")]
+    impl From<rustls::Error> for TlsError {
+        fn from(error: rustls::Error) -> Self {
+            TlsError::Rustls(error)
         }
     }
 
@@ -316,7 +366,7 @@ mod tls_config {
             }
         }
 
-        // Produces a new Ssl object that is able to wrap a TCP stream.
+        // Produces a new Tls object that is able to wrap a TCP stream.
         pub(crate) fn new_tls(&self) -> Result<Tls, TlsError> {
             let tls = match &self.context {
                 #[cfg(feature = "openssl")]
@@ -328,6 +378,23 @@ mod tls_config {
                         ssl.set_hostname(sni)?;
                     }
                     Tls::OpenSsl(ssl)
+                }
+                #[cfg(feature = "rustls")]
+                TlsContext::Rustls(config) => {
+                    let connector = tokio_rustls::TlsConnector::from(config.clone());
+                    #[cfg(feature = "cloud")]
+                    let sni = self
+                        .sni
+                        .as_deref()
+                        .map(|sni| rustls::pki_types::ServerName::try_from(sni))
+                        .transpose()?
+                        .map(|s| s.to_owned());
+
+                    Tls::Rustls {
+                        connector,
+                        #[cfg(feature = "cloud")]
+                        sni,
+                    }
                 }
             };
 
@@ -1417,24 +1484,54 @@ impl Connection {
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         #[cfg(feature = "__tls")]
         if let Some(tls_config) = &config.tls_config {
-            let mut stream = match tls_config.new_tls()? {
+            let handle = match tls_config.new_tls()? {
                 #[cfg(feature = "openssl")]
-                Tls::OpenSsl(ssl) => tokio_openssl::SslStream::new(ssl, stream)?,
+                Tls::OpenSsl(ssl) => {
+                    let mut stream = tokio_openssl::SslStream::new(ssl, stream)?;
+                    let _pin = std::pin::Pin::new(&mut stream).connect().await;
+                    let (task, handle) = Self::router(
+                        config,
+                        stream,
+                        receiver,
+                        error_sender,
+                        orphan_notification_receiver,
+                        router_handle,
+                        node_address,
+                    )
+                    .remote_handle();
+
+                    tokio::task::spawn(task);
+                    handle
+                }
+                #[cfg(feature = "rustls")]
+                Tls::Rustls {
+                    connector,
+                    #[cfg(feature = "cloud")]
+                    sni,
+                } => {
+                    use rustls::pki_types::ServerName;
+                    #[cfg(feature = "cloud")]
+                    let server_name =
+                        sni.unwrap_or_else(|| ServerName::IpAddress(node_address.into()));
+                    #[cfg(not(feature = "cloud"))]
+                    let server_name = ServerName::IpAddress(node_address.into());
+                    let stream = connector.connect(server_name, stream).await?;
+                    let (task, handle) = Self::router(
+                        config,
+                        stream,
+                        receiver,
+                        error_sender,
+                        orphan_notification_receiver,
+                        router_handle,
+                        node_address,
+                    )
+                    .remote_handle();
+
+                    tokio::task::spawn(task);
+                    handle
+                }
             };
 
-            let _pin = Pin::new(&mut stream).connect().await;
-
-            let (task, handle) = Self::router(
-                config,
-                stream,
-                receiver,
-                error_sender,
-                orphan_notification_receiver,
-                router_handle,
-                node_address,
-            )
-            .remote_handle();
-            tokio::task::spawn(task);
             return Ok(handle);
         }
 

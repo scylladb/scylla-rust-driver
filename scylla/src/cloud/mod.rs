@@ -51,6 +51,28 @@ pub(crate) fn set_ssl_config_for_scylla_cloud_host(
                 let context = builder.build();
                 TlsContext::OpenSsl(context)
             }
+            #[cfg(feature = "rustls")]
+            config::TlsInfo::Rustls { cert_chain, key } => {
+                use rustls::ClientConfig;
+                use std::sync::Arc;
+
+                let mut root_store = rustls::RootCertStore::empty();
+                root_store.add(datacenter.rustls_ca().clone())?;
+                let builder = ClientConfig::builder();
+                let builder = if datacenter.get_insecure_skip_tls_verify() {
+                    let supported = builder.crypto_provider().signature_verification_algorithms;
+                    builder
+                        .dangerous()
+                        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {
+                            supported,
+                        }))
+                } else {
+                    builder.with_root_certificates(root_store)
+                };
+
+                let config = builder.with_client_auth_cert(cert_chain.clone(), key.clone_key())?;
+                TlsContext::Rustls(Arc::new(config))
+            }
         };
 
         let tls_config = TlsConfig::new_for_sni(tls_context, domain_name, host_id);
@@ -60,4 +82,46 @@ pub(crate) fn set_ssl_config_for_scylla_cloud_host(
                dc, host_id, proxy_address);
     }
     Ok(())
+}
+
+#[cfg(feature = "rustls")]
+#[derive(Debug)]
+struct NoCertificateVerification {
+    supported: rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+#[cfg(feature = "rustls")]
+impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        return Ok(rustls::client::danger::ServerCertVerified::assertion());
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        return Ok(rustls::client::danger::HandshakeSignatureValid::assertion());
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        return Ok(rustls::client::danger::HandshakeSignatureValid::assertion());
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.supported.supported_schemes()
+    }
 }
