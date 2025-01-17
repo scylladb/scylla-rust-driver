@@ -92,3 +92,229 @@ impl ControlConnection {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use scylla_proxy::{
+        Condition, Node, Proxy, Reaction as _, RequestFrame, RequestOpcode, RequestReaction,
+        RequestRule, ResponseFrame,
+    };
+    use tokio::sync::mpsc;
+
+    use std::num::NonZeroU16;
+
+    use crate::cluster::metadata::UntranslatedEndpoint;
+    use crate::cluster::node::ResolvedContactPoint;
+    use crate::network::open_connection;
+    use crate::routing::ShardInfo;
+    use crate::test_utils::setup_tracing;
+
+    use super::ControlConnection;
+
+    /// Tests that ControlConnection enforces the provided custom timeout
+    /// iff ScyllaDB is the target node (else ignores the custom timeout).
+    #[tokio::test]
+    #[ntest::timeout(2000)]
+    async fn test_custom_timeouts() {
+        setup_tracing();
+
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+
+        let (feedback_tx, mut feedback_rx) = mpsc::unbounded_channel();
+
+        let make_rules = |shard_info: Option<ShardInfo>| {
+            vec![
+                // OPTIONS -> SUPPORTED rule
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Options),
+                    RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                        ResponseFrame::forged_supported(frame.params, &{
+                            let mut options = HashMap::new();
+                            if let Some(shard_info) = shard_info.as_ref() {
+                                shard_info.add_to_options(&mut options);
+                            }
+                            options
+                        })
+                        .unwrap()
+                    })),
+                ),
+                // STARTUP -> READY rule
+                // REGISTER -> READY rule
+                RequestRule(
+                    Condition::or(
+                        Condition::RequestOpcode(RequestOpcode::Startup),
+                        Condition::RequestOpcode(RequestOpcode::Register),
+                    ),
+                    RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                        ResponseFrame::forged_ready(frame.params)
+                    })),
+                ),
+                // Metadata query feedback rule
+                RequestRule(
+                    Condition::or(
+                        Condition::RequestOpcode(RequestOpcode::Query),
+                        Condition::RequestOpcode(RequestOpcode::Prepare),
+                    ),
+                    RequestReaction::forge()
+                        .server_error()
+                        .with_feedback_when_performed(feedback_tx),
+                ),
+            ]
+        };
+
+        let mut proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .request_rules(make_rules.clone()(None))
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        const QUERY_STR: &str = "SELECT host_id FROM system.local";
+
+        fn expected_query_body(dur: Duration) -> String {
+            format!("{} USING TIMEOUT {}ms", QUERY_STR, dur.as_millis())
+        }
+
+        fn contains_subslice(slice: &[u8], subslice: &[u8]) -> bool {
+            slice
+                .windows(subslice.len())
+                .any(|window| window == subslice)
+        }
+
+        async fn assert_no_custom_timeout(
+            feedback_rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
+        ) {
+            let (frame, _) = feedback_rx.recv().await.unwrap();
+            let clause = "USING TIMEOUT";
+            assert!(
+                !contains_subslice(&frame.body, clause.as_bytes()),
+                "slice {:?} does contain subslice {:?}",
+                &frame.body,
+                clause,
+            );
+        }
+
+        async fn assert_custom_timeout(
+            feedback_rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
+            dur: Duration,
+        ) {
+            let (frame, _) = feedback_rx.recv().await.unwrap();
+            let expected = expected_query_body(dur);
+            assert!(
+                contains_subslice(&frame.body, expected.as_bytes()),
+                "slice {:?} does not contain subslice {:?}",
+                &frame.body,
+                expected,
+            );
+        }
+
+        async fn assert_custom_timeout_iff_scylladb(
+            feedback_rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
+            dur: Duration,
+            connected_to_scylladb: bool,
+        ) {
+            if connected_to_scylladb {
+                assert_custom_timeout(feedback_rx, dur).await;
+            } else {
+                assert_no_custom_timeout(feedback_rx).await;
+            }
+        }
+
+        async fn test_metadata_timeouts(
+            proxy_addr: SocketAddr,
+            feedback_rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
+        ) {
+            let (conn, _error_receiver) = open_connection(
+                &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+                    address: proxy_addr,
+                    datacenter: None,
+                }),
+                None,
+                &Default::default(),
+            )
+            .await
+            .unwrap();
+
+            let connected_to_scylladb = conn.get_shard_info().is_some();
+            let conn_with_default_timeout = ControlConnection::new(Arc::new(conn));
+
+            // No custom timeout set.
+            {
+                conn_with_default_timeout
+                    .query_iter(QUERY_STR.into())
+                    .await
+                    .unwrap_err();
+
+                assert_no_custom_timeout(feedback_rx).await;
+
+                conn_with_default_timeout
+                    .prepare(QUERY_STR.into())
+                    .await
+                    .unwrap_err();
+
+                assert_no_custom_timeout(feedback_rx).await;
+            }
+
+            // Custom timeout set, so it should be set in query strings iff the target node is ScyllaDB.
+            {
+                let custom_timeout = Duration::from_millis(2137);
+                let conn_with_custom_timeout =
+                    conn_with_default_timeout.override_serverside_timeout(Some(custom_timeout));
+
+                conn_with_custom_timeout
+                    .query_iter(QUERY_STR.into())
+                    .await
+                    .unwrap_err();
+
+                assert_custom_timeout_iff_scylladb(
+                    feedback_rx,
+                    custom_timeout,
+                    connected_to_scylladb,
+                )
+                .await;
+
+                conn_with_custom_timeout
+                    .prepare(QUERY_STR.into())
+                    .await
+                    .unwrap_err();
+
+                assert_custom_timeout_iff_scylladb(
+                    feedback_rx,
+                    custom_timeout,
+                    connected_to_scylladb,
+                )
+                .await;
+            }
+        }
+
+        // Simulated non-ScyllaDB node (no sharding info in SUPPORTED)
+        {
+            // Proxy starts without shards. No additional config needed.
+
+            test_metadata_timeouts(proxy_addr, &mut feedback_rx).await;
+        }
+
+        // Simulated ScyllaDB node (sharding info present in SUPPORTED)
+        {
+            proxy.running_nodes[0].change_request_rules(Some(make_rules(Some(ShardInfo {
+                shard: 2,
+                nr_shards: NonZeroU16::new(4).unwrap(),
+                msb_ignore: 1,
+            }))));
+
+            test_metadata_timeouts(proxy_addr, &mut feedback_rx).await;
+        }
+
+        let _ = proxy.finish().await;
+    }
+}
