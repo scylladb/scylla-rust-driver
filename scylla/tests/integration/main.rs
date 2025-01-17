@@ -10,6 +10,7 @@ mod history;
 mod hygiene;
 mod large_batch_statements;
 mod lwt_optimisation;
+mod metadata_custom_timeouts;
 mod new_session;
 mod retries;
 mod self_identity;
