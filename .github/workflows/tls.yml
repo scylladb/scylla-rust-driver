@@ -20,7 +20,8 @@ jobs:
     timeout-minutes: 60
     services:
       scylladb:
-        image: scylladb/scylla
+        image: scylla-tls
+        build: ./test/tls
         ports:
           - 9042:9042
           - 9142:9142
@@ -28,8 +29,6 @@ jobs:
           --health-cmd "cqlsh --debug"
           --health-interval 5s
           --health-retries 10
-        volumes:
-          - ./scylla-etc:/etc/scylla
     env:
       working-directory: ./scylla
     steps:
