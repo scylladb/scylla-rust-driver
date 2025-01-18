@@ -20,7 +20,8 @@ jobs:
     timeout-minutes: 60
     services:
       scylladb:
-        image: scylladb/scylla-tls
+        image: scylla-tls
+        build: ./test/tls
         ports:
           - 9042:9042
           - 9142:9142
