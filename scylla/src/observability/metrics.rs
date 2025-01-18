@@ -217,7 +217,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             errors_num: AtomicU64::new(0),
             queries_num: AtomicU64::new(0),

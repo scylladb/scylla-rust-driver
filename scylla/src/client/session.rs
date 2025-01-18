@@ -818,9 +818,6 @@ impl Session {
             identity: config.identity,
         };
 
-        #[cfg(feature = "metrics")]
-        let metrics = Arc::new(Metrics::new());
-
         let pool_config = PoolConfig {
             connection_config,
             pool_size: config.connection_pool_size,
