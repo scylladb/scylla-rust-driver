@@ -21,7 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       scylladb:
-        image: scylladb/scylla-passauth
+        image: scylladb/scylla
+        command: --authenticator PasswordAuthenticator
         ports:
           - 9042:9042
         options: --health-cmd "cqlsh --username cassandra --password cassandra --debug" --health-interval 5s --health-retries 30
