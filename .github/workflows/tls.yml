@@ -26,14 +26,16 @@ jobs:
       run: rustup update
 
     - name: Check
-      run: cargo check --verbose --features "openssl-010"
+      run: cargo check --verbose --features "openssl-010" --features "rustls-023"
       working-directory: ${{env.working-directory}}
 
     - name: Start the cluster
       run: docker compose -f test/tls/docker-compose-tls.yml up -d
 
-    - name: Run tests
+    - name: Run openssl example
       run: SCYLLA_URI=172.44.0.2 RUST_LOG=trace cargo run --example tls-openssl
+    - name: Run rustls example
+      run: SCYLLA_URI=172.44.0.2 RUST_LOG=trace cargo run --example tls-rustls
 
     - name: Stop the cluster
       if: ${{ always() }}
