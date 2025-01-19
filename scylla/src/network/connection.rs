@@ -219,16 +219,16 @@ mod tls_config {
 
     use crate::client::session::TlsContext;
 
-    /// This struct encapsulates all Ssl-regarding configuration and helps pass it tidily through the code.
+    /// This struct encapsulates all TLS-regarding configuration and helps pass it tidily through the code.
     //
-    // There are 3 possible options for SslConfig, whose behaviour is somewhat subtle.
-    // Option 1: No ssl configuration. Then it is None every time.
-    // Option 2: User-provided global SslContext. Then, a SslConfig is created upon Session creation
+    // There are 3 possible options for TlsConfig, whose behaviour is somewhat subtle.
+    // Option 1: No TLS configuration. Then it is None every time.
+    // Option 2: User-provided global TlsContext. Then, a TlsConfig is created upon Session creation
     // and henceforth stored in the ConnectionConfig.
-    // Option 3: Serverless Cloud. The Option<SslConfig> remains None in ConnectionConfig until it reaches
-    // NodeConnectionPool::new(). Inside that function, the field is mutated to contain SslConfig specific
-    // for the particular node. (The SslConfig must be different, because SNIs differ for different nodes.)
-    // Thenceforth, all connections to that node share the same SslConfig.
+    // Option 3: Serverless Cloud. The Option<TlsConfig> remains None in ConnectionConfig until it reaches
+    // NodeConnectionPool::new(). Inside that function, the field is mutated to contain TlsConfig specific
+    // for the particular node. (The TlsConfig must be different, because SNIs differ for different nodes.)
+    // Thenceforth, all connections to that node share the same TlsConfig.
     #[derive(Clone)]
     pub(crate) struct TlsConfig {
         context: TlsContext,
@@ -339,7 +339,7 @@ mod tls_config {
     }
 
     impl TlsConfig {
-        // Used in case when the user provided their own SslContext to be used in all connections.
+        // Used in case when the user provided their own TlsContext to be used in all connections.
         pub(crate) fn new_with_global_context(context: TlsContext) -> Self {
             Self {
                 context,
@@ -386,7 +386,7 @@ mod tls_config {
                     let sni = self
                         .sni
                         .as_deref()
-                        .map(|sni| rustls::pki_types::ServerName::try_from(sni))
+                        .map(rustls::pki_types::ServerName::try_from)
                         .transpose()?
                         .map(|s| s.to_owned());
 
@@ -500,7 +500,7 @@ impl Default for ConnectionConfig {
 
 impl ConnectionConfig {
     #[cfg(feature = "__tls")]
-    fn is_ssl(&self) -> bool {
+    fn is_tls(&self) -> bool {
         #[cfg(feature = "cloud")]
         if self.cloud_config.is_some() {
             return true;
@@ -509,7 +509,7 @@ impl ConnectionConfig {
     }
 
     #[cfg(not(feature = "__tls"))]
-    fn is_ssl(&self) -> bool {
+    fn is_tls(&self) -> bool {
         false
     }
 }
@@ -1999,7 +1999,7 @@ pub(super) async fn open_connection(
     // Get OPTIONS SUPPORTED by the cluster.
     let mut supported = connection.get_options().await?;
 
-    let shard_aware_port_key = match config.is_ssl() {
+    let shard_aware_port_key = match config.is_tls() {
         true => options::SCYLLA_SHARD_AWARE_PORT_SSL,
         false => options::SCYLLA_SHARD_AWARE_PORT,
     };

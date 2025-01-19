@@ -21,7 +21,7 @@ pub enum CloudConfigError {
     Validation(String),
 
     #[error("Error during key/cert parsing: {0}")]
-    Ssl(#[from] TlsError),
+    Tls(#[from] TlsError),
 }
 
 /// Configuration for creating a session to a serverless cluster.

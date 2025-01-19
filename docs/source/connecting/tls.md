@@ -1,14 +1,15 @@
 # TLS
 
-Driver uses the [`openssl`](https://github.com/sfackler/rust-openssl) crate for TLS functionality.\
-It was chosen because [`rustls`](https://github.com/ctz/rustls) doesn't support certificates for ip addresses
-(see [issue](https://github.com/briansmith/webpki/issues/54)), which is a common use case for Scylla.
+Driver uses either the
+[`openssl`](https://github.com/sfackler/rust-openssl) crate or the
+[`rustls`](https://github.com/rustls/rustls) crate for TLS functionality.
+
+Both of this features are under a their respective feaure flag.
 
 
 ### Enabling feature
-`openssl` is not a pure Rust library so you need enable a feature and install the proper package.
+To enable use of TLS using `openssl`, add in `Cargo.toml`:
 
-To enable the `tls` feature add in `Cargo.toml`:
 ```toml
 scylla = { version = "0.4", features = ["openssl"] }
 openssl = "0.10.32"
@@ -38,9 +39,13 @@ Then install the package with `openssl`:
     ```
 
 ### Using TLS
-To use tls you will have to create an openssl
+To use TLS you will have to a `TlsContext`. For convenience, both an
+openssl
 [`SslContext`](https://docs.rs/openssl/0.10.33/openssl/ssl/struct.SslContext.html)
-and pass it to `SessionBuilder`
+and a rustls
+[`ClientConfig`](https://docs.rs/rustls/latest/rustls/client/struct.ClientConfig.html)
+can be automatically converted to a `TlsContext` when passing to
+`SessionBuilder`.
 
 For example, if database certificate is in the file `ca.crt`:
 ```rust

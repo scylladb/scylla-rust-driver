@@ -326,10 +326,10 @@ impl GenericSessionBuilder<DefaultMode> {
         self
     }
 
-    /// ssl feature
-    /// Provide SessionBuilder with SslContext from openssl crate that will be
-    /// used to create an ssl connection to the database.
-    /// If set to None SSL connection won't be used.
+    /// TLS feature
+    /// Provide SessionBuilder with TlsContext that will be
+    /// used to create a TLS connection to the database.
+    /// If set to None TLS connection won't be used.
     /// Default is None.
     ///
     /// # Example

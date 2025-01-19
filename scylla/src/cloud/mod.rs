@@ -10,18 +10,18 @@ use uuid::Uuid;
 use crate::client::session::TlsContext;
 use crate::network::{ConnectionConfig, TlsConfig};
 
-pub(crate) fn set_ssl_config_for_scylla_cloud_host(
+pub(crate) fn set_tls_config_for_scylla_cloud_host(
     host_id: Option<Uuid>,
     dc: Option<&str>,
     proxy_address: SocketAddr,
     connection_config: &mut ConnectionConfig,
 ) -> Result<(), crate::network::TlsError> {
     if connection_config.tls_config.is_some() {
-        // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom SslContext.
+        // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom TlsConfig.
         warn!(
-            "Overriding user-provided SslContext with Scylla Cloud SslContext due \
+            "Overriding user-provided TlsConfig with Scylla Cloud TlsConfig due \
                 to CloudConfig being provided. This is certainly an API misuse - Cloud \
-                may not be combined with user's own SSL config."
+                may not be combined with user's own TLS config."
         )
     }
 
@@ -100,7 +100,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
         _ocsp_response: &[u8],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        return Ok(rustls::client::danger::ServerCertVerified::assertion());
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
 
     fn verify_tls12_signature(
@@ -109,7 +109,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
         _cert: &rustls::pki_types::CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        return Ok(rustls::client::danger::HandshakeSignatureValid::assertion());
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
     }
 
     fn verify_tls13_signature(
@@ -118,7 +118,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
         _cert: &rustls::pki_types::CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        return Ok(rustls::client::danger::HandshakeSignatureValid::assertion());
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
     }
 
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {

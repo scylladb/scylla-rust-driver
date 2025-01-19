@@ -1,5 +1,5 @@
 #[cfg(feature = "cloud")]
-use crate::cloud::set_ssl_config_for_scylla_cloud_host;
+use crate::cloud::set_tls_config_for_scylla_cloud_host;
 use crate::utils::pretty::CommaSeparatedDisplayer;
 
 use super::connection::{
@@ -190,9 +190,9 @@ impl NodeConnectionPool {
                     ..
                 }) => (Some(host_id), address.into_inner(), datacenter.as_deref()),
             };
-            set_ssl_config_for_scylla_cloud_host(host_id, dc, address, &mut pool_config.connection_config)
+            set_tls_config_for_scylla_cloud_host(host_id, dc, address, &mut pool_config.connection_config)
                 .unwrap_or_else(|err| warn!(
-                    "SslContext for SNI connection to Scylla Cloud node {{ host_id={:?}, dc={:?} at {} }} could not be set up: {}\n Proceeding with attempting probably nonworking connection",
+                    "TlsContext for SNI connection to Scylla Cloud node {{ host_id={:?}, dc={:?} at {} }} could not be set up: {}\n Proceeding with attempting probably nonworking connection",
                     host_id,
                     dc,
                     address,
