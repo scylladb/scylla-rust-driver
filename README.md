@@ -51,7 +51,7 @@ The driver supports the following:
 * Batch statements
 * Configurable load balancing policies
 * Driver-side metrics
-* TLS support - install openssl if you want to use it https://docs.rs/openssl/0.10.70/openssl/#automatic
+* TLS support. Supports either [OpenSSL](https://docs.rs/openssl/0.10.70/openssl/#automatic) or [rustls](https://docs.rs/rustls/latest/rustls/)
 * Configurable retry policies
 * Authentication support
 * CQL tracing
