@@ -20,9 +20,6 @@
 # The more tokens, relative to other nodes, the larger the proportion of data
 # that this node will store. You probably want all nodes to have the same number
 # of tokens assuming they have equal hardware capability.
-#
-# If you already have a cluster with 1 token per node, and wish to migrate to
-# multiple tokens per node, see http://cassandra.apache.org/doc/latest/operating
 num_tokens: 256
 
 # Directory where Scylla should store all its files, which are commitlog,
@@ -38,6 +35,12 @@ num_tokens: 256
 # commit log.  when running on magnetic HDD, this should be a
 # separate spindle than the data directories.
 # commitlog_directory: /var/lib/scylla/commitlog
+
+# schema commit log. A special commitlog instance
+# used for schema and system tables.
+# When running on magnetic HDD, this should be a
+# separate spindle than the data directories.
+# schema_commitlog_directory: /var/lib/scylla/commitlog/schema
 
 # commitlog_sync may be either "periodic" or "batch."
 #
@@ -68,23 +71,35 @@ commitlog_sync_period_in_ms: 10000
 # is reasonable.
 commitlog_segment_size_in_mb: 32
 
+# The size of the individual schema commitlog file segments.
+#
+# The default size is 128, which is 4 times larger than the default
+# size of the data commitlog. It's because the segment size puts
+# a limit on the mutation size that can be written at once, and some
+# schema mutation writes are much larger than average.
+schema_commitlog_segment_size_in_mb: 128
+
 # seed_provider class_name is saved for future use.
-# seeds address(es) are mandatory!
+# A seed address is mandatory.
 seed_provider:
-    # Addresses of hosts that are deemed contact points.
-    # Scylla nodes use this list of hosts to find each other and learn
-    # the topology of the ring.  You must change this if you are running
-    # multiple nodes!
+    # The addresses of hosts that will serve as contact points for the joining node.
+    # It allows the node to discover the cluster ring topology on startup (when
+    # joining the cluster).
+    # Once the node has joined the cluster, the seed list has no function.
     - class_name: org.apache.cassandra.locator.SimpleSeedProvider
       parameters:
-          # seeds is actually a comma-delimited list of addresses.
-          # Ex: "<ip1>,<ip2>,<ip3>"
+          # In a new cluster, provide the address of the first node.
+          # In an existing cluster, specify the address of at least one existing node.
+          # If you specify addresses of more than one node, use a comma to separate them.
+          # For example: "<IP1>,<IP2>,<IP3>"
           - seeds: "127.0.0.1"
 
-# Address or interface to bind to and tell other Scylla nodes to connect to.
+# Address to bind to and tell other Scylla nodes to connect to.
 # You _must_ change this if you want multiple nodes to be able to communicate!
 #
-# Setting listen_address to 0.0.0.0 is always wrong.
+# If you leave broadcast_address (below) empty, then setting listen_address
+# to 0.0.0.0 is wrong as other nodes will not know how to reach this node.
+# If you set broadcast_address, then you can set listen_address to 0.0.0.0.
 listen_address: localhost
 
 # Address to broadcast to other Scylla nodes
@@ -99,8 +114,8 @@ listen_address: localhost
 # listen_on_broadcast_address: false
 
 # port for the CQL native transport to listen for clients on
-# For security reasons, you should not expose this port to the internet.  Firewall it if needed.
-# To disable the CQL native transport, set this option to 0.
+# For security reasons, you should not expose this port to the internet. Firewall it if needed.
+# To disable the CQL native transport, remove this option and configure native_transport_port_ssl.
 native_transport_port: 9042
 
 # Like native_transport_port, but clients are forwarded to specific shards, based on the
@@ -114,11 +129,11 @@ native_shard_aware_transport_port: 19042
 # for native_transport_port. Setting native_transport_port_ssl to a different value
 # from native_transport_port will use encryption for native_transport_port_ssl while
 # keeping native_transport_port unencrypted.
-native_transport_port_ssl: 9142
+#native_transport_port_ssl: 9142
 
 # Like native_transport_port_ssl, but clients are forwarded to specific shards, based on the
 # client-side port numbers.
-native_shard_aware_transport_port_ssl: 19142
+#native_shard_aware_transport_port_ssl: 19142
 
 # How long the coordinator should wait for read operations to complete
 read_request_timeout_in_ms: 5000
@@ -184,8 +199,7 @@ cas_contention_timeout_in_ms: 1000
 # of the snitch, which will be assumed to be on your classpath.
 endpoint_snitch: SimpleSnitch
 
-# The address or interface to bind the Thrift RPC service and native transport
-# server to.
+# The address or interface to bind the native transport server to.
 #
 # Set rpc_address OR rpc_interface, not both. Interfaces must correspond
 # to a single address, IP aliasing is not supported.
@@ -206,21 +220,18 @@ rpc_address: localhost
 # rpc_interface: eth1
 # rpc_interface_prefer_ipv6: false
 
-# port for Thrift to listen for clients on
-rpc_port: 9160
-
 # port for REST API server
 api_port: 10000
 
 # IP for the REST API server
 api_address: 127.0.0.1
 
-# Log WARN on any batch size exceeding this value. 5kb per batch by default.
+# Log WARN on any batch size exceeding this value. 128 kiB per batch by default.
 # Caution should be taken on increasing the size of this threshold as it can lead to node instability.
-batch_size_warn_threshold_in_kb: 5
+batch_size_warn_threshold_in_kb: 128
 
-# Fail any multiple-partition batch exceeding this value. 50kb (10x warn threshold) by default.
-batch_size_fail_threshold_in_kb: 50
+# Fail any multiple-partition batch exceeding this value. 1 MiB (8x warn threshold) by default.
+batch_size_fail_threshold_in_kb: 1024
 
 # Authentication backend, identifying users
 # Out of the box, Scylla provides org.apache.cassandra.auth.{AllowAllAuthenticator,
@@ -230,6 +241,9 @@ batch_size_fail_threshold_in_kb: 50
 # - PasswordAuthenticator relies on username/password pairs to authenticate
 #   users. It keeps usernames and hashed passwords in system_auth.credentials table.
 #   Please increase system_auth keyspace replication factor if you use this authenticator.
+# - com.scylladb.auth.TransitionalAuthenticator requires username/password pair
+#   to authenticate in the same manner as PasswordAuthenticator, but improper credentials
+#   result in being logged in as an anonymous user. Use for upgrading clusters' auth.
 # authenticator: AllowAllAuthenticator
 
 # Authorization backend, implementing IAuthorizer; used to limit access/provide permissions
@@ -239,11 +253,14 @@ batch_size_fail_threshold_in_kb: 50
 # - AllowAllAuthorizer allows any action to any user - set it to disable authorization.
 # - CassandraAuthorizer stores permissions in system_auth.permissions table. Please
 #   increase system_auth keyspace replication factor if you use this authorizer.
+# - com.scylladb.auth.TransitionalAuthorizer wraps around the CassandraAuthorizer, using it for
+#   authorizing permission management. Otherwise, it allows all. Use for upgrading
+#   clusters' auth.
 # authorizer: AllowAllAuthorizer
 
 # initial_token allows you to specify tokens manually.  While you can use # it with
-# vnodes (num_tokens > 1, above) -- in which case you should provide a
-# comma-separated list -- it's primarily used when adding nodes # to legacy clusters
+# vnodes (num_tokens > 1, above) -- in which case you should provide a 
+# comma-separated list -- it's primarily used when adding nodes # to legacy clusters 
 # that do not have vnodes enabled.
 # initial_token:
 
@@ -255,13 +272,14 @@ batch_size_fail_threshold_in_kb: 50
 
 # Uncomment to enable experimental features
 # experimental_features:
-#     - cdc
-#     - lwt
 #     - udf
+#     - alternator-streams
+#     - broadcast-tables
+#     - keyspace-storage-options
 
 # The directory where hints files are stored if hinted handoff is enabled.
 # hints_directory: /var/lib/scylla/hints
-
+ 
 # The directory where hints files are stored for materialized-view updates
 # view_hints_directory: /var/lib/scylla/view_hints
 
@@ -333,9 +351,6 @@ commitlog_total_space_in_mb: -1
 # be rejected as invalid. The default is 256MB.
 # native_transport_max_frame_size_in_mb: 256
 
-# Whether to start the thrift rpc server.
-# start_rpc: true
-
 # enable or disable keepalive on rpc/native connections
 # rpc_keepalive: true
 
@@ -352,7 +367,7 @@ commitlog_total_space_in_mb: -1
 # snapshot_before_compaction: false
 
 # Whether or not a snapshot is taken of the data before keyspace truncation
-# or dropping of column families. The STRONGLY advised default of true
+# or dropping of column families. The STRONGLY advised default of true 
 # should be used to provide data safety. If you set this flag to false, you will
 # lose data on truncation or drop.
 # auto_snapshot: true
@@ -380,6 +395,15 @@ commitlog_total_space_in_mb: -1
 #      you can cache more hot rows
 # column_index_size_in_kb: 64
 
+# Auto-scaling of the promoted index prevents running out of memory
+# when the promoted index grows too large (due to partitions with many rows
+# vs. too small column_index_size_in_kb).  When the serialized representation
+# of the promoted index grows by this threshold, the desired block size
+# for this partition (initialized to column_index_size_in_kb)
+# is doubled, to decrease the sampling resolution by half.
+#
+# To disable promoted index auto-scaling, set the threshold to 0.
+# column_index_auto_scale_threshold_in_kb: 10240
 
 # Log a warning when writing partitions larger than this value
 # compaction_large_partition_warning_threshold_mb: 1000
@@ -392,6 +416,9 @@ commitlog_total_space_in_mb: -1
 
 # Log a warning when row number is larger than this value
 # compaction_rows_count_warning_threshold: 100000
+
+# Log a warning when writing a collection containing more elements than this value
+# compaction_collection_elements_count_warning_threshold: 10000
 
 # How long the coordinator should wait for seq or index scans to complete
 # range_request_timeout_in_ms: 10000
@@ -407,39 +434,41 @@ commitlog_total_space_in_mb: -1
 # The default timeout for other, miscellaneous operations
 # request_timeout_in_ms: 10000
 
-# Enable or disable inter-node encryption.
-# You must also generate keys and provide the appropriate key and trust store locations and passwords.
+# Enable or disable inter-node encryption. 
+# You must also generate keys and provide the appropriate key and trust store locations and passwords. 
 #
 # The available internode options are : all, none, dc, rack
 # If set to dc scylla  will encrypt the traffic between the DCs
 # If set to rack scylla  will encrypt the traffic between the racks
 #
-# SSL/TLS algorithm and ciphers used can be controlled by
+# SSL/TLS algorithm and ciphers used can be controlled by 
 # the priority_string parameter. Info on priority string
 # syntax and values is available at:
 #   https://gnutls.org/manual/html_node/Priority-Strings.html
 #
-# The require_client_auth parameter allows you to
-# restrict access to service based on certificate
-# validation. Client must provide a certificate
+# The require_client_auth parameter allows you to 
+# restrict access to service based on certificate 
+# validation. Client must provide a certificate 
 # accepted by the used trust store to connect.
-#
+# 
 # server_encryption_options:
 #    internode_encryption: none
 #    certificate: conf/scylla.crt
 #    keyfile: conf/scylla.key
-#    truststore: <none, use system trust>
+#    truststore: <not set, use system trust>
+#    certficate_revocation_list: <not set>
 #    require_client_auth: False
-#    priority_string: <none, use default>
+#    priority_string: <not set, use default>
 
 # enable or disable client/server encryption.
-client_encryption_options:
-    enabled: true
-    certificate: /etc/scylla/db.crt
-    keyfile: /etc/scylla/db.key
-    # truststore: /etc/scylla/cadb.pem
+# client_encryption_options:
+#    enabled: false
+#    certificate: conf/scylla.crt
+#    keyfile: conf/scylla.key
+#    truststore: <not set, use system trust>
+#    certficate_revocation_list: <not set>
 #    require_client_auth: False
-#    priority_string: <none, use default>
+#    priority_string: <not set, use default>
 
 # internode_compression controls whether traffic between nodes is
 # compressed.
@@ -482,9 +511,13 @@ client_encryption_options:
 # prometheus_port: 9180
 #
 # prometheus address
-# By default, Scylla binds all interfaces to the prometheus API
-# It is possible to restrict the listening address to a specific one
-# prometheus_address: 0.0.0.0
+# Leaving this blank will set it to the same value as listen_address.
+# This means that by default, Scylla listens to the prometheus API on the same
+# listening address (and therefore network interface) used to listen for
+# internal communication. If the monitoring node is not in this internal
+# network, you can override prometheus_address explicitly - e.g., setting
+# it to 0.0.0.0 to listen on all interfaces.
+# prometheus_address: 1.2.3.4
 
 # Distribution of data among cores (shards) within a node
 #
@@ -505,5 +538,89 @@ client_encryption_options:
 #
 # Keep at 12 for new clusters.
 murmur3_partitioner_ignore_msb_bits: 12
+
+# Use on a new, parallel algorithm for performing aggregate queries.
+# Set to `false` to fall-back to the old algorithm.
+# enable_parallelized_aggregation: true
+
+# Time for which task manager task is kept in memory after it completes.
+# task_ttl_in_seconds: 0
+
+# In materialized views, restrictions are allowed only on the view's primary key columns.
+# In old versions Scylla mistakenly allowed IS NOT NULL restrictions on columns which were not part
+# of the view's primary key. These invalid restrictions were ignored.
+# This option controls the behavior when someone tries to create a view with such invalid IS NOT NULL restrictions.
+#
+# Can be true, false, or warn.
+# * `true`: IS NOT NULL is allowed only on the view's primary key columns,
+#           trying to use it on other columns will cause an error, as it should.
+# * `false`: Scylla accepts IS NOT NULL restrictions on regular columns, but they're silently ignored.
+#            It's useful for backwards compatibility.
+# * `warn`: The same as false, but there's a warning about invalid view restrictions.
+#
+# To preserve backwards compatibility on old clusters, Scylla's default setting is `warn`.
+# New clusters have this option set to `true` by scylla.yaml (which overrides the default `warn`)
+# to make sure that trying to create an invalid view causes an error.
+strict_is_not_null_in_views: true
+
+# The Unix Domain Socket the node uses for maintenance socket.
+# The possible options are:
+# * ignore: the node will not open the maintenance socket,
+# * workdir: the node will open the maintenance socket on the path <scylla's workdir>/cql.m,
+#            where <scylla's workdir> is a path defined by the workdir configuration option,
+# * <socket path>: the node will open the maintenance socket on the path <socket path>.
+maintenance_socket: ignore
+
+# If set to true, configuration parameters defined with LiveUpdate option can be updated in runtime with CQL
+# by updating system.config virtual table. If we don't want any configuration parameter to be changed in runtime
+# via CQL, this option should be set to false. This parameter doesn't impose any limits on other mechanisms updating
+# configuration parameters in runtime, e.g. sending SIGHUP or using API. This option should be set to false
+# e.g. for cloud users, for whom scylla's configuration should be changed only by support engineers.
+# live_updatable_config_params_changeable_via_cql: true
+
+# ****************
+# *  GUARDRAILS  *
+# ****************
+
+# Guardrails to warn or fail when Replication Factor is smaller/greater than the threshold.
+# Please note that the value of 0 is always allowed,
+# which means that having no replication at all, i.e. RF = 0, is always valid.
+# A guardrail value smaller than 0, e.g. -1, means that the guardrail is disabled.
+# Commenting out a guardrail also means it is disabled.
+# minimum_replication_factor_fail_threshold: -1
+# minimum_replication_factor_warn_threshold:  3
+# maximum_replication_factor_warn_threshold: -1
+# maximum_replication_factor_fail_threshold: -1
+
+# Guardrails to warn about or disallow creating a keyspace with specific replication strategy.
+# Each of these 2 settings is a list storing replication strategies considered harmful.
+# The replication strategies to choose from are:
+# 1) SimpleStrategy,
+# 2) NetworkTopologyStrategy,
+# 3) LocalStrategy,
+# 4) EverywhereStrategy
+#
+# replication_strategy_warn_list:
+#  - SimpleStrategy
+# replication_strategy_fail_list:
+
+# Enables the tablets feature.
+# When enabled, newly created keyspaces will have tablets enabled by default.
+# That can be explicitly disabled in the CREATE KEYSPACE query
+# by using the `tablets = {'enabled': false}` replication option.
+#
+# When the tablets feature is disabled, there is no way to enable tablets
+# per keyspace.
+#
+# Note that creating keyspaces with tablets enabled is irreversible.
+# Disabling the tablets feature may impact existing keyspaces that were created with tablets.
+# For example, the tablets map would remain "frozen" and will not respond to topology changes
+# like adding, removing, or replacing nodes, or to replication factor changes.
+enable_tablets: true
 api_ui_dir: /opt/scylladb/swagger-ui/dist/
 api_doc_dir: /opt/scylladb/api/api-doc/
+
+client_encryption_options:
+  enabled: true
+  certificate: /etc/scylla/db.crt
+  keyfile: /etc/scylla/db.key
