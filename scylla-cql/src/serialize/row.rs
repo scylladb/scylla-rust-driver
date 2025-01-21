@@ -37,6 +37,12 @@ impl<'a> RowSerializationContext<'a> {
         }
     }
 
+    /// Creates the serialization context directly from column specs.
+    #[inline]
+    pub fn from_specs(specs: &'a [ColumnSpec<'a>]) -> Self {
+        Self { columns: specs }
+    }
+
     /// Constructs an empty `RowSerializationContext`, as if for a statement
     /// with no bind markers.
     #[inline]
