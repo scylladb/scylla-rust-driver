@@ -281,7 +281,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
 
         let name_check: Option<syn::Stmt> = (!self.0.struct_attrs().skip_name_checks).then(|| parse_quote! {
             if col.spec.name() != #cql_name_literal {
-                panic!(
+                ::std::panic!(
                     "Typecheck should have prevented this scenario - field-column name mismatch! Rust field name {}, CQL column name {}",
                     #cql_name_literal,
                     col.spec.name()
@@ -500,7 +500,7 @@ impl DeserializeUnorderedGenerator<'_> {
         let deserialize_field = Self::deserialize_field_variable(field);
         let cql_name_literal = field.cql_name_literal();
         parse_quote! {
-            #deserialize_field.unwrap_or_else(|| panic!(
+            #deserialize_field.unwrap_or_else(|| ::std::panic!(
                 "column {} missing in DB row - type check should have prevented this!",
                 #cql_name_literal
             ))

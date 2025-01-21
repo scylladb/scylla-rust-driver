@@ -455,7 +455,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
         } else {
             parse_quote! {
                 {
-                    panic!(
+                    ::std::panic!(
                         "type check should have prevented this scenario - field name mismatch! Rust field name {}, CQL field name {}",
                         #cql_name_literal,
                         cql_field_name
@@ -485,7 +485,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
         } else {
             parse_quote! {
                 // Type check has ensured that there are enough CQL UDT fields.
-                panic!("Too few CQL UDT fields - type check should have prevented this scenario!")
+                ::std::panic!("Too few CQL UDT fields - type check should have prevented this scenario!")
             }
         };
 
@@ -754,7 +754,7 @@ impl DeserializeUnorderedGenerator<'_> {
         } else {
             let cql_name_literal = field.cql_name_literal();
             parse_quote! {
-                #deserialize_field.unwrap_or_else(|| panic!(
+                #deserialize_field.unwrap_or_else(|| ::std::panic!(
                     "field {} missing in UDT - type check should have prevented this!",
                     #cql_name_literal
                 ))
