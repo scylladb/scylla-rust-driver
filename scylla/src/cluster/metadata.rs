@@ -9,8 +9,8 @@
 //!   - [Column],
 //!   - [ColumnKind],
 //!   - [MaterializedView],
-//!   - CQL types:
-//!     - [CqlType],
+//!   - CQL types (re-exported from scylla-cql):
+//!     - [ColumnType],
 //!     - [NativeType],
 //!     - [UserDefinedType],
 //!     - [CollectionType],
@@ -53,6 +53,11 @@ use crate::cluster::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 use crate::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
     ProtocolError, RequestError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
+};
+
+// Re-export of CQL types.
+pub use scylla_cql::frame::response::result::{
+    CollectionType, ColumnType, NativeType, UserDefinedType,
 };
 
 type PerKeyspace<T> = HashMap<String, T>;
@@ -181,7 +186,7 @@ pub struct Keyspace {
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
     pub views: HashMap<String, MaterializedView>,
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
-    pub user_defined_types: HashMap<String, Arc<UserDefinedType>>,
+    pub user_defined_types: HashMap<String, Arc<UserDefinedType<'static>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -200,7 +205,7 @@ pub struct MaterializedView {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Column {
-    pub type_: CqlType,
+    pub type_: ColumnType<'static>,
     pub kind: ColumnKind,
 }
 
@@ -226,24 +231,24 @@ impl PreCqlType {
     pub(crate) fn into_cql_type(
         self,
         keyspace_name: &String,
-        keyspace_udts: &PerTable<Arc<UserDefinedType>>,
-    ) -> Result<CqlType, MissingUserDefinedType> {
+        keyspace_udts: &PerTable<Arc<UserDefinedType<'static>>>,
+    ) -> Result<ColumnType<'static>, MissingUserDefinedType> {
         match self {
-            PreCqlType::Native(n) => Ok(CqlType::Native(n)),
+            PreCqlType::Native(n) => Ok(ColumnType::Native(n)),
             PreCqlType::Collection { frozen, type_ } => type_
                 .into_collection_type(keyspace_name, keyspace_udts)
-                .map(|inner| CqlType::Collection {
+                .map(|inner| ColumnType::Collection {
                     frozen,
                     type_: inner,
                 }),
             PreCqlType::Tuple(t) => t
                 .into_iter()
                 .map(|t| t.into_cql_type(keyspace_name, keyspace_udts))
-                .collect::<Result<Vec<CqlType>, MissingUserDefinedType>>()
-                .map(CqlType::Tuple),
+                .collect::<Result<Vec<ColumnType>, MissingUserDefinedType>>()
+                .map(ColumnType::Tuple),
             PreCqlType::Vector { type_, dimensions } => type_
                 .into_cql_type(keyspace_name, keyspace_udts)
-                .map(|inner| CqlType::Vector {
+                .map(|inner| ColumnType::Vector {
                     type_: Box::new(inner),
                     dimensions,
                 }),
@@ -257,37 +262,10 @@ impl PreCqlType {
                         })
                     }
                 };
-                Ok(CqlType::UserDefinedType { frozen, definition })
+                Ok(ColumnType::UserDefinedType { frozen, definition })
             }
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CqlType {
-    Native(NativeType),
-    Collection {
-        frozen: bool,
-        type_: CollectionType,
-    },
-    Tuple(Vec<CqlType>),
-    Vector {
-        type_: Box<CqlType>,
-        dimensions: u16,
-    },
-    UserDefinedType {
-        frozen: bool,
-        // Using Arc here in order not to have many copies of the same definition
-        definition: Arc<UserDefinedType>,
-    },
-}
-
-/// Definition of a user-defined type
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UserDefinedType {
-    pub name: String,
-    pub keyspace: String,
-    pub field_types: Vec<(String, CqlType)>,
 }
 
 /// Represents a user defined type whose definition is missing from the metadata.
@@ -296,30 +274,6 @@ pub struct UserDefinedType {
 pub(crate) struct MissingUserDefinedType {
     name: String,
     keyspace: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum NativeType {
-    Ascii,
-    Boolean,
-    Blob,
-    Counter,
-    Date,
-    Decimal,
-    Double,
-    Duration,
-    Float,
-    Int,
-    BigInt,
-    Text,
-    Timestamp,
-    Inet,
-    SmallInt,
-    TinyInt,
-    Time,
-    Timeuuid,
-    Uuid,
-    Varint,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -333,8 +287,8 @@ impl PreCollectionType {
     pub(crate) fn into_collection_type(
         self,
         keyspace_name: &String,
-        keyspace_udts: &PerTable<Arc<UserDefinedType>>,
-    ) -> Result<CollectionType, MissingUserDefinedType> {
+        keyspace_udts: &PerTable<Arc<UserDefinedType<'static>>>,
+    ) -> Result<CollectionType<'static>, MissingUserDefinedType> {
         match self {
             PreCollectionType::List(t) => t
                 .into_cql_type(keyspace_name, keyspace_udts)
@@ -348,13 +302,6 @@ impl PreCollectionType {
                 .map(|inner| CollectionType::Set(Box::new(inner))),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CollectionType {
-    List(Box<CqlType>),
-    Map(Box<CqlType>, Box<CqlType>),
-    Set(Box<CqlType>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1098,7 +1045,10 @@ impl TryFrom<UdtRow> for UdtRowWithParsedFieldTypes {
 async fn query_user_defined_types(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-) -> Result<PerKeyspaceResult<PerTable<Arc<UserDefinedType>>, MissingUserDefinedType>, QueryError> {
+) -> Result<
+    PerKeyspaceResult<PerTable<Arc<UserDefinedType<'static>>>, MissingUserDefinedType>,
+    QueryError,
+> {
     let rows = query_filter_keyspace_name::<UdtRow>(
         conn,
         "select keyspace_name, type_name, field_names, field_types from system_schema.types",
@@ -1148,7 +1098,7 @@ async fn query_user_defined_types(
 
         for (field_name, field_type) in field_names.into_iter().zip(field_types.into_iter()) {
             match field_type.into_cql_type(&keyspace_name_clone, keyspace_udts) {
-                Ok(cql_type) => fields.push((field_name, cql_type)),
+                Ok(cql_type) => fields.push((field_name.into(), cql_type)),
                 Err(e) => {
                     *keyspace_udts_result = Err(e);
                     continue 'udts_loop;
@@ -1157,8 +1107,8 @@ async fn query_user_defined_types(
         }
 
         let udt = Arc::new(UserDefinedType {
-            name: type_name.clone(),
-            keyspace: keyspace_name_clone,
+            name: type_name.clone().into(),
+            keyspace: keyspace_name_clone.into(),
             field_types: fields,
         });
 
@@ -1525,7 +1475,7 @@ async fn query_views(
 async fn query_tables_schema(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    udts: &PerKeyspaceResult<PerTable<Arc<UserDefinedType>>, MissingUserDefinedType>,
+    udts: &PerKeyspaceResult<PerTable<Arc<UserDefinedType<'static>>>, MissingUserDefinedType>,
 ) -> Result<PerKsTableResult<Table, MissingUserDefinedType>, QueryError> {
     // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
     // type EmptyType for dense tables. This resolves into this CQL type name.
@@ -1551,7 +1501,7 @@ async fn query_tables_schema(
             return Ok::<_, QueryError>(());
         }
 
-        let keyspace_udts: &PerTable<Arc<UserDefinedType>> =
+        let keyspace_udts: &PerTable<Arc<UserDefinedType<'static>>> =
             match udts.get(&keyspace_name).unwrap_or(&empty_ok_map) {
                 Ok(udts) => udts,
                 Err(e) => {
