@@ -589,7 +589,7 @@ impl DeserializeUnorderedGenerator<'_> {
                     // Pattern match on the field name and deserialize.
                     match col.spec.name() {
                         #(#nonskipped_field_names => #deserialize_blocks,)*
-                        unknown => unreachable!("Typecheck should have prevented this scenario! Unknown column name: {}", unknown),
+                        unknown => ::std::unreachable!("Typecheck should have prevented this scenario! Unknown column name: {}", unknown),
                     }
                 }
 
