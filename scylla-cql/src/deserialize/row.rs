@@ -29,10 +29,7 @@ impl<'frame, 'metadata> ColumnIterator<'frame, 'metadata> {
     /// - `specs` - information about columns of the serialized response,
     /// - `slice` - a [FrameSlice] which points to the serialized row.
     #[inline]
-    pub(crate) fn new(
-        specs: &'metadata [ColumnSpec<'metadata>],
-        slice: FrameSlice<'frame>,
-    ) -> Self {
+    pub fn new(specs: &'metadata [ColumnSpec<'metadata>], slice: FrameSlice<'frame>) -> Self {
         Self {
             specs: specs.iter().enumerate(),
             slice,
