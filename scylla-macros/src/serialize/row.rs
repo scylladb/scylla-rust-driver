@@ -349,8 +349,8 @@ impl Generator for ColumnOrderedGenerator<'_> {
                         if #name_check_expression {
                             let cell_writer = #crate_path::RowWriter::make_cell_writer(writer);
                             match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, spec.typ(), cell_writer) {
-                                Ok(_proof) => {},
-                                Err(err) => {
+                                ::std::result::Result::Ok(_proof) => {},
+                                ::std::result::Result::Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(
                                         #crate_path::BuiltinRowSerializationErrorKind::ColumnSerializationFailed {
                                             name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),

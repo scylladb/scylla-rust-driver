@@ -282,7 +282,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
                         // In case the Rust field allows default-initialisation and there are no more CQL fields,
                         // simply assume it's going to be default-initialised.
                         ::std::option::Option::None if #default_when_missing => break 'field,
-                        ::std::option::Option::None => return Err(too_few_fields()),
+                        ::std::option::Option::None => return ::std::result::Result::Err(too_few_fields()),
                 };
                 let (cql_field_name, cql_field_typ) = next_cql_field;
 

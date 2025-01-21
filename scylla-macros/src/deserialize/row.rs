@@ -598,7 +598,7 @@ impl DeserializeUnorderedGenerator<'_> {
                 // For example, if a field is missing but marked as
                 // `default_when_null` it will create a default value, otherwise
                 // it will report an error.
-                Ok(Self {
+                ::std::result::Result::Ok(Self {
                     #(#field_idents: #field_finalizers,)*
                 })
             }

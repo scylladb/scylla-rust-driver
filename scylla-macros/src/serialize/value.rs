@@ -495,8 +495,8 @@ impl Generator for FieldOrderedGenerator<'_> {
 
                             let sub_builder = #crate_path::CellValueBuilder::make_sub_writer(&mut builder);
                             match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, typ, sub_builder) {
-                                Ok(_proof) => {},
-                                Err(err) => {
+                                ::std::result::Result::Ok(_proof) => {},
+                                ::std::result::Result::Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(
                                         #crate_path::UdtSerializationErrorKind::FieldSerializationFailed {
                                             field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),
