@@ -81,3 +81,6 @@ pub mod _macro_internal {
     pub use crate::serialize::writers::WrittenCellProof;
     pub use crate::serialize::{CellValueBuilder, CellWriter, RowWriter, SerializationError};
 }
+
+#[cfg(test)]
+mod types_tests;
