@@ -4,7 +4,7 @@ use crate::utils::{
 };
 use scylla::client::session::Session;
 use scylla::frame::response::result::CqlValue;
-use scylla_cql::types::serialize::value::SerializeValue;
+use scylla_cql::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 async fn connect() -> Session {

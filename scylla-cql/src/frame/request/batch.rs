@@ -2,17 +2,15 @@ use bytes::{Buf, BufMut};
 use std::{borrow::Cow, convert::TryInto, num::TryFromIntError};
 use thiserror::Error;
 
-use crate::{
-    frame::{
-        frame_errors::CqlRequestSerializationError,
-        request::{RequestOpcode, SerializableRequest},
-        types::{self, SerialConsistency},
-    },
-    types::serialize::{
-        raw_batch::{RawBatchValues, RawBatchValuesIterator},
-        row::SerializedValues,
-        RowWriter, SerializationError,
-    },
+use crate::frame::{
+    frame_errors::CqlRequestSerializationError,
+    request::{RequestOpcode, SerializableRequest},
+    types::{self, SerialConsistency},
+};
+use crate::serialize::{
+    raw_batch::{RawBatchValues, RawBatchValuesIterator},
+    row::SerializedValues,
+    RowWriter, SerializationError,
 };
 
 use super::{DeserializableRequest, RequestDeserializationError};

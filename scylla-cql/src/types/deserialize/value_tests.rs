@@ -8,15 +8,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use crate::deserialize::value::{TupleDeserializationErrorKind, TupleTypeCheckErrorKind};
+use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlVarint, CqlVarintBorrowed,
 };
-use crate::types::deserialize::value::{TupleDeserializationErrorKind, TupleTypeCheckErrorKind};
-use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-use crate::types::serialize::value::SerializeValue;
-use crate::types::serialize::CellWriter;
+use crate::serialize::value::SerializeValue;
+use crate::serialize::CellWriter;
 
 use super::{
     mk_deser_err, BuiltinDeserializationError, BuiltinDeserializationErrorKind,

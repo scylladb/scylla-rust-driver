@@ -3,13 +3,13 @@ use std::fmt::Debug;
 use thiserror::Error;
 use uuid::Uuid;
 
+use scylla_cql::deserialize::result::TypedRowIterator;
+use scylla_cql::deserialize::row::DeserializeRow;
+use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
 use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::response::result::{
     ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, RawMetadataAndRawRows, Row, TableSpec,
 };
-use scylla_cql::types::deserialize::result::TypedRowIterator;
-use scylla_cql::types::deserialize::row::DeserializeRow;
-use scylla_cql::types::deserialize::{DeserializationError, TypeCheckError};
 
 #[allow(deprecated)]
 use super::legacy_query_result::{IntoLegacyQueryResultError, LegacyQueryResult};

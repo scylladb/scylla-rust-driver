@@ -954,7 +954,7 @@ fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
 #[macro_export]
 macro_rules! impl_serialize_value_via_value {
     ($t:ident$(<$($targ:tt $(: $tbound:tt)?),*>)?) => {
-        impl $(<$($targ $(: $tbound)?),*>)? $crate::types::serialize::value::SerializeValue
+        impl $(<$($targ $(: $tbound)?),*>)? $crate::serialize::value::SerializeValue
         for $t$(<$($targ),*>)?
         where
             Self: $crate::frame::value::Value,
@@ -962,12 +962,12 @@ macro_rules! impl_serialize_value_via_value {
             fn serialize<'b>(
                 &self,
                 _typ: &$crate::frame::response::result::ColumnType,
-                writer: $crate::types::serialize::writers::CellWriter<'b>,
+                writer: $crate::serialize::writers::CellWriter<'b>,
             ) -> ::std::result::Result<
-                $crate::types::serialize::writers::WrittenCellProof<'b>,
-                $crate::types::serialize::SerializationError,
+                $crate::serialize::writers::WrittenCellProof<'b>,
+                $crate::serialize::SerializationError,
             > {
-                $crate::types::serialize::value::serialize_legacy_value(self, writer)
+                $crate::serialize::value::serialize_legacy_value(self, writer)
             }
         }
     };
@@ -1641,13 +1641,13 @@ pub(crate) mod tests {
     #[allow(deprecated)]
     use crate::frame::value::{Counter, MaybeUnset, Unset, Value, ValueTooBig};
     #[allow(deprecated)]
-    use crate::types::serialize::value::{
+    use crate::serialize::value::{
         BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
         BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind,
         SetOrListSerializationErrorKind, SetOrListTypeCheckErrorKind, TupleSerializationErrorKind,
         TupleTypeCheckErrorKind, ValueAdapter,
     };
-    use crate::types::serialize::{CellWriter, SerializationError};
+    use crate::serialize::{CellWriter, SerializationError};
 
     use assert_matches::assert_matches;
     use scylla_macros::SerializeValue;
