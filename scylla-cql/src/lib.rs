@@ -24,8 +24,8 @@ pub mod macros {
 
 mod types;
 
-pub use types::deserialize;
-pub use types::serialize;
+pub mod deserialize;
+pub mod serialize;
 
 pub use crate::frame::response::cql_to_rust;
 #[allow(deprecated)]
