@@ -22,8 +22,6 @@ pub mod macros {
     pub use crate::impl_serialize_value_via_value;
 }
 
-mod types;
-
 pub mod deserialize;
 pub mod serialize;
 
