@@ -36,7 +36,10 @@ fn test_cassandra_type_parser() {
         "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, 5)";
     assert_eq!(
         TypeParser::parse(test_vector).unwrap(),
-        ColumnType::Vector { typ: Box::new(ColumnType::Native(NativeType::Int)), dimensions: 5 }
+        ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
+            dimensions: 5
+        }
     );
     let test_list =
         "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)";
@@ -151,6 +154,48 @@ fn test_deserialize_bytes() {
     assert_ser_de_identity(
         &ColumnType::Native(NativeType::Blob),
         &(&[] as &[u8]),
+        &mut Bytes::new(),
+    );
+}
+
+#[test]
+fn test_deserialize_vector() {
+    // ser/de identity
+
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
+            dimensions: 2,
+        },
+        &vec![1, 2],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Ascii)),
+            dimensions: 3,
+        },
+        &vec!["ala", "ma", "kota"],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Vector {
+                typ: Box::new(ColumnType::Native(NativeType::Int)),
+                dimensions: 2,
+            }),
+            dimensions: 2,
+        },
+        &vec![vec![1, 2], vec![3, 4]],
+        &mut Bytes::new(),
+    );
+    let vec: Vec<bool> = vec![];
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Boolean)),
+            dimensions: 0,
+        },
+        &vec,
         &mut Bytes::new(),
     );
 }
