@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use crate::frame::response::new_type_parser::TypeParser;
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
@@ -25,6 +26,67 @@ use super::{
     SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind, UdtDeserializationErrorKind,
     UdtTypeCheckErrorKind,
 };
+
+#[test]
+fn test_cassandra_type_parser() {
+    let test_list =
+        "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)";
+    assert_eq!(
+        TypeParser::parse(test_list).unwrap(),
+        ColumnType::List(Box::new(ColumnType::Int))
+    );
+    let test_set =
+        "org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)";
+    assert_eq!(
+        TypeParser::parse(test_set).unwrap(),
+        ColumnType::Set(Box::new(ColumnType::Int))
+    );
+    let test_map =
+        "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)";
+    assert_eq!(
+        TypeParser::parse(test_map).unwrap(),
+        ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Int))
+    );
+    let test_duration = "org.apache.cassandra.db.marshal.DurationType";
+    assert_eq!(
+        TypeParser::parse(test_duration).unwrap(),
+        ColumnType::Duration
+    );
+    let test_tuple =
+        "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)";
+    assert_eq!(
+        TypeParser::parse(test_tuple).unwrap(),
+        ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Int])
+    );
+
+    let key = "org.apache.cassandra.db.marshal.Int32Type";
+    let value = "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)";
+    let test_recursive_map = format!(
+        "org.apache.cassandra.db.marshal.MapType({}, {})",
+        key, value
+    );
+    assert_eq!(
+        TypeParser::parse(&test_recursive_map).unwrap(),
+        ColumnType::Map(
+            Box::new(ColumnType::Int),
+            Box::new(ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Int]))
+        )
+    );
+
+    let test_udt = "org.apache.cassandra.db.marshal.UserType(keyspace1,61646472657373,737472656574:org.apache.cassandra.db.marshal.UTF8Type,63697479:org.apache.cassandra.db.marshal.UTF8Type,7a6970:org.apache.cassandra.db.marshal.Int32Type)";
+    assert_eq!(
+        TypeParser::parse(test_udt).unwrap(),
+        ColumnType::UserDefinedType {
+            type_name: "address".into(),
+            keyspace: "keyspace1".into(),
+            field_types: vec![
+                ("street".into(), ColumnType::Text),
+                ("city".into(), ColumnType::Text),
+                ("zip".into(), ColumnType::Int)
+            ]
+        }
+    );
+}
 
 #[test]
 fn test_deserialize_bytes() {
