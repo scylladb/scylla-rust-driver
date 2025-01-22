@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 use crate::deserialize::value::{TupleDeserializationErrorKind, TupleTypeCheckErrorKind};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+use crate::frame::frame_errors::CustomTypeParseError;
+use crate::frame::response::custom_type_parser::CustomTypeParser;
 use crate::frame::response::result::NativeType::*;
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
 use crate::serialize::value::SerializeValue;
@@ -28,6 +30,126 @@ use super::{
     SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind, UdtDeserializationErrorKind,
     UdtTypeCheckErrorKind,
 };
+
+#[test]
+fn test_custom_cassandra_type_parser() {
+    let tests = vec![
+    (  "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)", 
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+        }
+    ),
+    (
+        "org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)",
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+        },
+    ),
+    (
+        "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)",
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Native(NativeType::Int)),
+            ),
+        },
+    ),
+    (
+        "org.apache.cassandra.db.marshal.DurationType",
+        ColumnType::Native(NativeType::Duration)
+    ),
+    (
+        "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)",
+        ColumnType::Tuple(vec![
+            ColumnType::Native(NativeType::Int),
+            ColumnType::Native(NativeType::Int)
+        ]),
+    ),
+    (
+        "org.apache.cassandra.db.marshal.UserType(keyspace1,61646472657373,737472656574:org.apache.cassandra.db.marshal.UTF8Type,63697479:org.apache.cassandra.db.marshal.UTF8Type,7a6970:org.apache.cassandra.db.marshal.Int32Type)",
+        ColumnType::UserDefinedType {
+            frozen: false,
+            definition: Arc::new(UserDefinedType {
+                name: "address".into(),
+                keyspace: "keyspace1".into(),
+                field_types: vec![
+                    ("street".into(), ColumnType::Native(NativeType::Text)),
+                    ("city".into(), ColumnType::Native(NativeType::Text)),
+                    ("zip".into(), ColumnType::Native(NativeType::Int))
+                ]
+            }),
+        }
+    ),
+    ( "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type, org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type))",
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Tuple(vec![
+                    ColumnType::Native(NativeType::Int),
+                    ColumnType::Native(NativeType::Int)
+                ]))
+            )
+        }
+    )
+    ];
+
+    for (input, expected) in tests {
+        assert_eq!(CustomTypeParser::parse(input), Ok(expected));
+    }
+}
+
+#[test]
+fn test_custom_cassandra_type_parser_errors() {
+    assert_eq!(
+        CustomTypeParser::parse("org.apache.cassandra.db.marshal.RandomType"),
+        Err(CustomTypeParseError::UnknownSimpleCustomTypeName(
+            "RandomType".to_string()
+        ))
+    );
+
+    assert_eq!(
+        CustomTypeParser::parse("org.apache.cassandra.db.marshal.RandomType()"),
+        Err(CustomTypeParseError::UnknownComplexCustomTypeName(
+            "RandomType".to_string()
+        ))
+    );
+
+    assert_eq!(
+        CustomTypeParser::parse(
+            "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type)"
+        ),
+        Err(CustomTypeParseError::InvalidParameterCount {
+            actual: 1,
+            expected: 2
+        })
+    );
+
+    assert_eq!(
+        CustomTypeParser::parse("org.apache.cassandra.db.marshal.UserType(keyspace1,gg,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.Int32Type)"),
+        Err(CustomTypeParseError::BadHexString("gg".to_string()))
+    );
+
+    assert_eq!(
+        CustomTypeParser::parse("org.apache.cassandra.db.marshal.UserType(keyspace1,ff,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.Int32Type)"),
+        Err(CustomTypeParseError::InvalidUtf8(vec![0xff]))
+    );
+
+    assert_eq!(
+        CustomTypeParser::parse(
+            "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type"
+        ),
+        Err(CustomTypeParseError::UnexpectedEndOfInput)
+    );
+
+    assert_eq!(
+        CustomTypeParser::parse("org.apache.cassandra.db.marshal.UserType(keyspace1,61646472657373,737472656574#org.apache.cassandra.db.marshal.UTF8Type)"),
+        Err(CustomTypeParseError::UnexpectedCharacter('#', ':'))
+    );
+}
 
 #[test]
 fn test_deserialize_bytes() {
