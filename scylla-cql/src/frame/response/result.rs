@@ -108,6 +108,38 @@ pub enum NativeType {
     Varint,
 }
 
+impl NativeType {
+    /// This function returns the size of the type as it is used by Cassandra
+    /// for the purposes of serialization and deserialization of vectors,
+    /// it is needed as the variable size types (`None`) are de/serialized
+    /// differently than the fixed size types (`Some(size)`). Note that
+    /// many fixed size types are treated as variable size by Cassandra.
+    pub(crate) fn type_size(&self) -> Option<usize> {
+        match self {
+            NativeType::Ascii => None,
+            NativeType::Boolean => Some(1),
+            NativeType::Blob => None,
+            NativeType::Counter => None,
+            NativeType::Date => None,
+            NativeType::Decimal => None,
+            NativeType::Double => Some(8),
+            NativeType::Duration => None,
+            NativeType::Float => Some(4),
+            NativeType::Int => Some(4),
+            NativeType::BigInt => Some(8),
+            NativeType::Text => None,
+            NativeType::Timestamp => Some(8),
+            NativeType::Inet => None,
+            NativeType::SmallInt => None,
+            NativeType::TinyInt => None,
+            NativeType::Time => None,
+            NativeType::Timeuuid => Some(16),
+            NativeType::Uuid => Some(16),
+            NativeType::Varint => None,
+        }
+    }
+}
+
 /// Collection variants of [ColumnType]. A collection is a composite type that
 /// has dynamic size, so it is possible to add and remove values to/from it.
 ///
@@ -1143,6 +1175,19 @@ mod test_utils {
                 }
                 Self::UserDefinedType { .. } => 0x0030,
                 Self::Tuple(_) => 0x0031,
+            }
+        }
+
+        /// Returns the size of the type in bytes, as it is seen by the vector type if it is treated as fixed size.
+        pub(crate) fn type_size(&self) -> Option<usize> {
+            match self {
+                ColumnType::Native(n) => n.type_size(),
+                ColumnType::Tuple(_) => None,
+                ColumnType::Collection { .. } => None,
+                ColumnType::Vector { typ, dimensions } => {
+                    typ.type_size().map(|size| size * usize::from(*dimensions))
+                }
+                ColumnType::UserDefinedType { .. } => None,
             }
         }
 

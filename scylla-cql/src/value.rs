@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::deserialize::value::DeserializeValue;
 use crate::deserialize::value::{
-    mk_deser_err, BuiltinDeserializationErrorKind, MapIterator, UdtIterator,
+    mk_deser_err, BuiltinDeserializationErrorKind, MapIterator, UdtIterator, VectorIterator,
 };
 use crate::deserialize::DeserializationError;
 use crate::deserialize::FrameSlice;
@@ -1324,10 +1324,9 @@ pub fn deser_cql_value(
             CqlValue::Set(s)
         }
         Vector { .. } => {
-            return Err(mk_deser_err::<CqlValue>(
-                typ,
-                BuiltinDeserializationErrorKind::Unsupported,
-            ))
+            let iter = VectorIterator::deserialize(typ, v)?;
+            let v: Vec<CqlValue> = iter.collect::<StdResult<_, _>>()?;
+            CqlValue::Vector(v)
         }
         UserDefinedType {
             definition: udt, ..
