@@ -229,7 +229,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
             fn type_check(
                 specs: &[#macro_internal::ColumnSpec],
             ) -> ::std::result::Result<(), #macro_internal::TypeCheckError> {
-                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
+                let column_types_iter = || ::std::iter::Iterator::map(specs.iter(), |spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
 
                 match specs {
                     [#(#required_fields_idents),*] => {
@@ -291,7 +291,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
 
         parse_quote!(
             {
-                let col = row.next()
+                let col = ::std::iter::Iterator::next(&mut row)
                     .expect("Typecheck should have prevented this scenario! Too few columns in the serialized data.")
                     .map_err(#macro_internal::row_deser_error_replace_rust_name::<Self>)?;
 
@@ -437,9 +437,9 @@ impl TypeCheckUnorderedGenerator<'_> {
                 // For each required field, generate a "visited" boolean flag
                 #(#visited_field_declarations)*
 
-                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
+                let column_types_iter = || ::std::iter::Iterator::map(specs.iter(), |spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
 
-                for (column_index, spec) in specs.iter().enumerate() {
+                for (column_index, spec) in ::std::iter::Iterator::enumerate(specs.iter()) {
                     // Pattern match on the name and verify that the type is correct.
                     match spec.name() {
                         #(#nonskipped_field_names => #type_check_blocks,)*

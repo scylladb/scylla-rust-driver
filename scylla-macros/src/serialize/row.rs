@@ -344,7 +344,7 @@ impl Generator for ColumnOrderedGenerator<'_> {
                 parse_quote! { true }
             };
             statements.push(parse_quote! {
-                match column_iter.next() {
+                match ::std::iter::Iterator::next(&mut column_iter) {
                     Some(spec) => {
                         if #name_check_expression {
                             let cell_writer = #crate_path::RowWriter::make_cell_writer(writer);
@@ -381,7 +381,7 @@ impl Generator for ColumnOrderedGenerator<'_> {
 
         // Check whether there are some columns remaining
         statements.push(parse_quote! {
-            if let Some(spec) = column_iter.next() {
+            if let Some(spec) = ::std::iter::Iterator::next(&mut column_iter) {
                 return ::std::result::Result::Err(mk_typck_err(
                     #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
                         name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),

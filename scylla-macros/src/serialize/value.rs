@@ -472,7 +472,7 @@ impl Generator for FieldOrderedGenerator<'_> {
 
         // Create a peekable iterator over fields.
         statements.push(parse_quote! {
-            let mut field_iter = field_types.iter().peekable();
+            let mut field_iter = ::std::iter::Iterator::peekable(field_types.iter());
         });
 
         // Serialize each field
@@ -491,7 +491,7 @@ impl Generator for FieldOrderedGenerator<'_> {
                     Some((field_name, typ)) => {
                         if #name_check_expression {
                             // Advance the iterator.
-                            field_iter.next();
+                            ::std::iter::Iterator::next(&mut field_iter);
 
                             let sub_builder = #crate_path::CellValueBuilder::make_sub_writer(&mut builder);
                             match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, typ, sub_builder) {
@@ -532,7 +532,7 @@ impl Generator for FieldOrderedGenerator<'_> {
         if self.ctx.attributes.forbid_excess_udt_fields {
             // Check whether there are some fields remaining
             statements.push(parse_quote! {
-                if let Some((field_name, typ)) = field_iter.next() {
+                if let Some((field_name, typ)) = ::std::iter::Iterator::next(&mut field_iter) {
                     return ::std::result::Result::Err(mk_typck_err(
                         #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
                             field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),

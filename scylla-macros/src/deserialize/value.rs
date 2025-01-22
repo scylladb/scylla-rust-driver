@@ -277,7 +277,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
                     // We may have a stored CQL UDT field that did not match the previous Rust struct's field.
                     .take()
                     // If not, simply fetch another CQL UDT field from the iterator.
-                    .or_else(|| cql_field_iter.next()) {
+                    .or_else(|| ::std::iter::Iterator::next(&mut cql_field_iter)) {
                         ::std::option::Option::Some(cql_field) => cql_field,
                         // In case the Rust field allows default-initialisation and there are no more CQL fields,
                         // simply assume it's going to be default-initialised.
@@ -342,7 +342,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
                 parse_quote! {
                     if let ::std::option::Option::Some((cql_field_name, cql_field_typ)) = saved_cql_field
                         .take()
-                        .or_else(|| cql_field_iter.next()) {
+                        .or_else(|| ::std::iter::Iterator::next(&mut cql_field_iter)) {
                         return ::std::result::Result::Err(#macro_internal::mk_value_typck_err::<Self>(
                             typ,
                             #macro_internal::DeserUdtTypeCheckErrorKind::ExcessFieldInUdt {
@@ -367,7 +367,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
                         required_fields: vec![
                             #(stringify!(#required_fields_names),)*
                         ],
-                        present_fields: fields.iter().map(|(name, _typ)| name.clone().into_owned()).collect(),
+                        present_fields: ::std::iter::Iterator::collect(::std::iter::Iterator::map(fields.iter(), |(name, _typ)| name.clone().into_owned())),
                     }
                 );
 
@@ -494,10 +494,9 @@ impl DeserializeAssumeOrderGenerator<'_> {
                 let maybe_next_cql_field = saved_cql_field
                     .take()
                     .map(::std::result::Result::Ok)
-                    .or_else(|| {
-                        cql_field_iter.next()
-                            .map(|(specs, value_res)| value_res.map(|value| (specs, value)))
-                    })
+                    .or_else(|| ::std::iter::Iterator::next(&mut cql_field_iter)
+                        .map(|(specs, value_res)| value_res.map(|value| (specs, value)))
+                    )
                     .transpose()
                     // Propagate deserialization errors.
                     .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
