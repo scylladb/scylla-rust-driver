@@ -1497,7 +1497,7 @@ fn test_set_or_list_errors() {
             &Bytes::new(),
             Vec<i64>,
             ColumnType::Native(NativeType::Float),
-            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSetOrList)
+            BuiltinTypeCheckErrorKind::NotDeserializableToVector
         );
 
         // Type check of Rust set against CQL list must fail, because it would be lossy.

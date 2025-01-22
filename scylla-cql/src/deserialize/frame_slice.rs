@@ -155,6 +155,35 @@ impl<'frame> FrameSlice<'frame> {
             original_frame: self.original_frame,
         }))
     }
+
+    /// Reads and consumes a fixed number of bytes item from the beginning of the frame,
+    /// returning a subslice that encompasses that item.
+    ///
+    /// If this slice is empty, returns `Ok(None)`.
+    /// Otherwise, if the slice does not contain enough data, it returns `Err`.
+    /// If the operation fails then the slice remains unchanged.
+    #[inline]
+    pub fn read_n_bytes(
+        &mut self,
+        count: usize,
+    ) -> Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError> {
+        if self.is_empty() {
+            return Ok(None);
+        }
+
+        // We copy the slice reference, not to mutate the FrameSlice in case of an error.
+        let mut slice = self.frame_subslice;
+
+        let cql_bytes = types::read_raw_bytes(count, &mut slice)?;
+
+        // `read_raw_bytes` hasn't failed, so now we must update the FrameSlice.
+        self.frame_subslice = slice;
+
+        Ok(Some(Self {
+            frame_subslice: cql_bytes,
+            original_frame: self.original_frame,
+        }))
+    }
 }
 
 #[cfg(test)]
