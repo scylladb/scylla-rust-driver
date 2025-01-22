@@ -1,4 +1,5 @@
 pub mod authenticate;
+pub mod custom_type_parser;
 pub mod error;
 pub mod event;
 pub mod result;
