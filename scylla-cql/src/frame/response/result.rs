@@ -1,6 +1,7 @@
 use crate::deserialize::result::{RawRowIterator, TypedRowIterator};
 use crate::deserialize::row::DeserializeRow;
 use crate::deserialize::{FrameSlice, TypeCheckError};
+use crate::frame::frame_errors::CustomTypeParseError;
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
     LowLevelDeserializationError, PreparedMetadataParseError, PreparedParseError,
@@ -517,6 +518,8 @@ mod self_borrowed_metadata {
 }
 pub use self_borrowed_metadata::SelfBorrowedMetadataContainer;
 
+use super::custom_type_parser::CustomTypeParser;
+
 /// RESULT:Rows response, in partially serialized form.
 ///
 /// Paging state and metadata are deserialized, rows remain serialized.
@@ -604,6 +607,7 @@ pub enum Result {
 fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
     buf: &mut &'frame [u8],
     read_string: fn(&mut &'frame [u8]) -> StdResult<StrT, LowLevelDeserializationError>,
+    read_custom_type: fn(&'frame str) -> StdResult<ColumnType<'result>, CustomTypeParseError>,
 ) -> StdResult<ColumnType<'result>, CqlTypeParseError> {
     use ColumnType::*;
     use NativeType::*;
@@ -611,22 +615,9 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
         types::read_short(buf).map_err(|err| CqlTypeParseError::TypeIdParseError(err.into()))?;
     Ok(match id {
         0x0000 => {
-            // We use types::read_string instead of read_string argument here on purpose.
-            // Chances are the underlying string is `...DurationType`, in which case
-            // we don't need to allocate it at all. Only for Custom types
-            // (which we don't support anyway) do we need to allocate.
-            // OTOH, the provided `read_string` function deserializes borrowed OR owned string;
-            // here we want to always deserialize borrowed string.
-            let type_str =
+            let type_str: &'frame str =
                 types::read_string(buf).map_err(CqlTypeParseError::CustomTypeNameParseError)?;
-            match type_str {
-                "org.apache.cassandra.db.marshal.DurationType" => Native(Duration),
-                _ => {
-                    return Err(CqlTypeParseError::CustomTypeUnsupported(
-                        type_str.to_owned(),
-                    ))
-                }
-            }
+            read_custom_type(type_str).map_err(CqlTypeParseError::CustomTypeParseError)?
         }
         0x0001 => Native(Ascii),
         0x0002 => Native(BigInt),
@@ -650,18 +641,26 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
         0x0015 => Native(Duration),
         0x0020 => Collection {
             frozen: false,
-            typ: CollectionType::List(Box::new(deser_type_generic(buf, read_string)?)),
+            typ: CollectionType::List(Box::new(deser_type_generic(
+                buf,
+                read_string,
+                read_custom_type,
+            )?)),
         },
         0x0021 => Collection {
             frozen: false,
             typ: CollectionType::Map(
-                Box::new(deser_type_generic(buf, read_string)?),
-                Box::new(deser_type_generic(buf, read_string)?),
+                Box::new(deser_type_generic(buf, read_string, read_custom_type)?),
+                Box::new(deser_type_generic(buf, read_string, read_custom_type)?),
             ),
         },
         0x0022 => Collection {
             frozen: false,
-            typ: CollectionType::Set(Box::new(deser_type_generic(buf, read_string)?)),
+            typ: CollectionType::Set(Box::new(deser_type_generic(
+                buf,
+                read_string,
+                read_custom_type,
+            )?)),
         },
         0x0030 => {
             let keyspace_name =
@@ -677,7 +676,7 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
             for _ in 0..fields_size {
                 let field_name =
                     read_string(buf).map_err(CqlTypeParseError::UdtFieldNameParseError)?;
-                let field_type = deser_type_generic(buf, read_string)?;
+                let field_type = deser_type_generic(buf, read_string, read_custom_type)?;
 
                 field_types.push((field_name.into(), field_type));
             }
@@ -697,7 +696,7 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
                 .into();
             let mut types = Vec::with_capacity(len);
             for _ in 0..len {
-                types.push(deser_type_generic(buf, read_string)?);
+                types.push(deser_type_generic(buf, read_string, read_custom_type)?);
             }
             Tuple(types)
         }
@@ -710,11 +709,15 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
 fn deser_type_borrowed<'frame>(
     buf: &mut &'frame [u8],
 ) -> StdResult<ColumnType<'frame>, CqlTypeParseError> {
-    deser_type_generic(buf, |buf| types::read_string(buf))
+    deser_type_generic(buf, |buf| types::read_string(buf), CustomTypeParser::parse)
 }
 
 fn deser_type_owned(buf: &mut &[u8]) -> StdResult<ColumnType<'static>, CqlTypeParseError> {
-    deser_type_generic(buf, |buf| types::read_string(buf).map(ToOwned::to_owned))
+    deser_type_generic(
+        buf,
+        |buf| types::read_string(buf).map(ToOwned::to_owned),
+        |type_str| CustomTypeParser::parse(type_str).map(|t| t.into_owned()),
+    )
 }
 
 /// Deserializes a table spec, be it per-column one or a global one,

@@ -579,6 +579,7 @@ fn serialize_cql_value<'b>(
         }
         CqlValue::Uuid(u) => <_ as SerializeValue>::serialize(&u, typ, writer),
         CqlValue::Varint(v) => <_ as SerializeValue>::serialize(&v, typ, writer),
+        CqlValue::Vector(_) => unimplemented!("Vector serialization is not implemented yet"),
     }
 }
 

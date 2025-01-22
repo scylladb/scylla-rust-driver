@@ -13,6 +13,7 @@ pub use super::request::{
 
 use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
+use crate::utils::parse::ParseErrorCause;
 use thiserror::Error;
 
 /// An error returned by `parse_response_body_extensions`.
@@ -440,6 +441,8 @@ pub enum CustomTypeParseError {
     UnknownComplexCustomTypeName(String),
     #[error("Unexpected character encountered: {0}, expected: {1}")]
     UnexpectedCharacter(char, char),
+    #[error("Unable to parse an integer: {0}")]
+    IntegerParseError(ParseErrorCause),
     #[error("Unexpected end of input")]
     UnexpectedEndOfInput,
     #[error("Bad hex string: {0}")]

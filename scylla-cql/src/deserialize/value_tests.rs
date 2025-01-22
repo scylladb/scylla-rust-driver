@@ -18,6 +18,7 @@ use crate::frame::response::result::NativeType::*;
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
 use crate::serialize::value::SerializeValue;
 use crate::serialize::CellWriter;
+use crate::utils::parse::ParseErrorCause;
 use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed,
@@ -34,6 +35,13 @@ use super::{
 #[test]
 fn test_custom_cassandra_type_parser() {
     let tests = vec![
+    (
+        "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, 5)",
+        ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
+            dimensions: 5,
+        },
+    ),
     (  "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)", 
         ColumnType::Collection {
             frozen: false,
@@ -149,6 +157,11 @@ fn test_custom_cassandra_type_parser_errors() {
         CustomTypeParser::parse("org.apache.cassandra.db.marshal.UserType(keyspace1,61646472657373,737472656574#org.apache.cassandra.db.marshal.UTF8Type)"),
         Err(CustomTypeParseError::UnexpectedCharacter('#', ':'))
     );
+
+    assert_eq!(
+        CustomTypeParser::parse("org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, asdf)"),
+        Err(CustomTypeParseError::IntegerParseError(ParseErrorCause::Other("Expected 16-bit unsigned integer")))
+    )
 }
 
 #[test]

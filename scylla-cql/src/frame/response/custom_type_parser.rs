@@ -144,6 +144,34 @@ impl<'result> CustomTypeParser<'result> {
         })))
     }
 
+    fn get_vector_parameters(
+        &mut self,
+    ) -> Result<(ColumnType<'result>, u16), CustomTypeParseError> {
+        self.accept_in_place("(")
+            .map_err(|_| CustomTypeParseError::UnexpectedCharacter(self.get_first_char(), '('))?;
+
+        self.skip_blank_and_comma();
+        // This happens when no parameters are provided.
+        // See: https://github.com/scylladb/scylladb/blob/f5125ffa18871ae74c08a4337c599009d5dd48a9/db/marshal/type_parser.cc#L290
+        if self.parser.accept(")").is_ok() {
+            return Err(CustomTypeParseError::InvalidParameterCount {
+                actual: 0,
+                expected: 2,
+            });
+        }
+
+        let typ = self.do_parse()?;
+        self.skip_blank_and_comma();
+        let (len, parser) = self
+            .parser
+            .parse_u16()
+            .map_err(|err| CustomTypeParseError::IntegerParseError(err.get_cause()))?;
+        self.parser = parser;
+        self.accept_in_place(")")
+            .map_err(|_| CustomTypeParseError::UnexpectedCharacter(self.get_first_char(), ')'))?;
+        Ok((typ, len))
+    }
+
     /// Parse a string of hexadecimal representation of bytes into a byte vector.
     fn from_hex(s: &'result str) -> Result<Vec<u8>, CustomTypeParseError> {
         if s.len() % 2 != 0 {
@@ -273,6 +301,13 @@ impl<'result> CustomTypeParser<'result> {
                     });
                 }
                 Ok(ColumnType::Tuple(params))
+            }
+            "VectorType" => {
+                let (typ, len) = self.get_vector_parameters()?;
+                Ok(ColumnType::Vector {
+                    typ: Box::new(typ),
+                    dimensions: len,
+                })
             }
             "UserType" => {
                 let params = self.get_udt_parameters()?;
