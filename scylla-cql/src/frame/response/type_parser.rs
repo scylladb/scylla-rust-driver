@@ -179,6 +179,34 @@ impl<'result> TypeParser<'result> {
         }
     }
 
+    fn get_vector_parameters(
+        &mut self,
+    ) -> Result<(ColumnType<'result>, u16), CustomTypeParseError> {
+        if self.is_eos() || self.str.as_bytes()[self.pos] != b'(' {
+            return Err(CustomTypeParseError::BadCharacter);
+        }
+        self.pos += 1;
+        self.skip_blank_and_comma();
+        if self.str.as_bytes()[self.pos] == b')' {
+            return Err(CustomTypeParseError::BadCharacter);
+        }
+
+        let typ = self.do_parse()?;
+        self.skip_blank_and_comma();
+        let start = self.pos;
+        while !self.is_eos() && char::is_numeric(self.char_at_pos()) {
+            self.pos += 1;
+        }
+        let len = self.str[start..self.pos]
+            .parse::<u16>()
+            .map_err(|_| CustomTypeParseError::UnknownParserError)?;
+        if self.is_eos() || self.str.as_bytes()[self.pos] != b')' {
+            return Err(CustomTypeParseError::BadCharacter);
+        }
+        self.pos += 1;
+        Ok((typ, len))
+    }
+
     fn from_hex(s: Cow<'result, str>) -> Result<Vec<u8>, CustomTypeParseError> {
         if s.len() % 2 != 0 {
             return Err(CustomTypeParseError::BadHexString);
@@ -276,6 +304,13 @@ impl<'result> TypeParser<'result> {
                     return Err(CustomTypeParseError::InvalidParameterCount);
                 }
                 Ok(ColumnType::Tuple(params))
+            }
+            "org.apache.cassandra.db.marshal.VectorType" => {
+                let (typ, len) = self.get_vector_parameters()?;
+                Ok(ColumnType::Vector {
+                    typ: Box::new(typ),
+                    dimensions: len,
+                })
             }
             "org.apache.cassandra.db.marshal.UserType" => {
                 let (keyspace, name, fields) = self.get_udt_parameters()?;
