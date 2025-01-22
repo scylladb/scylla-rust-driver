@@ -143,6 +143,48 @@ fn test_deserialize_bytes() {
 }
 
 #[test]
+fn test_deserialize_vector() {
+    // ser/de identity
+
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
+            dimensions: 2,
+        },
+        &vec![1, 2],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Ascii)),
+            dimensions: 3,
+        },
+        &vec!["ala", "ma", "kota"],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Vector {
+                typ: Box::new(ColumnType::Native(NativeType::Int)),
+                dimensions: 2,
+            }),
+            dimensions: 2,
+        },
+        &vec![vec![1, 2], vec![3, 4]],
+        &mut Bytes::new(),
+    );
+    let vec: Vec<bool> = vec![];
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Boolean)),
+            dimensions: 0,
+        },
+        &vec,
+        &mut Bytes::new(),
+    );
+}
+
+#[test]
 fn test_deserialize_ascii() {
     const ASCII_TEXT: &str = "The quick brown fox jumps over the lazy dog";
 
