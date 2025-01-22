@@ -843,6 +843,7 @@ pub enum CqlValue {
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
     Varint(CqlVarint),
+    Vector(Vec<CqlValue>),
 }
 
 impl CqlValue {
@@ -1179,6 +1180,11 @@ impl std::fmt::Display for CqlValue {
                     .format(",")
                     .fmt(f)?;
                 f.write_str("}")?;
+            }
+            CqlValue::Vector(v) => {
+                f.write_str("[")?;
+                v.iter().format(",").fmt(f)?;
+                f.write_str("]")?;
             }
             CqlValue::UserDefinedType {
                 keyspace: _,

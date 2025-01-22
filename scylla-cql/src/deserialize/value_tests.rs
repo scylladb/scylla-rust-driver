@@ -32,6 +32,12 @@ use super::{
 
 #[test]
 fn test_cassandra_type_parser() {
+    let test_vector =
+        "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, 5)";
+    assert_eq!(
+        TypeParser::parse(test_vector).unwrap(),
+        ColumnType::Vector { typ: Box::new(ColumnType::Native(NativeType::Int)), dimensions: 5 }
+    );
     let test_list =
         "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)";
     assert_eq!(

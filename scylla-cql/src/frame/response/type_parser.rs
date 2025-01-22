@@ -18,7 +18,11 @@ pub(crate) struct TypeParser<'result> {
 }
 
 impl<'result> TypeParser<'result> {
+    fn new(parsed_string: Cow<'result, str>) -> TypeParser<'result> {
         TypeParser {
+            pos: 0,
+            parsed_string,
+        }
     }
 
     pub(crate) fn parse(
@@ -36,7 +40,11 @@ impl<'result> TypeParser<'result> {
         c.is_alphanumeric() || c == '+' || c == '-' || c == '_' || c == '.' || c == '&'
     }
 
+    fn char_at_pos(&self) -> Option<char> {
+        self.parsed_string
             .as_bytes()
+            .get(self.pos)
+            .map(|&b| b as char)
     }
 
     fn read_next_identifier(&mut self) -> Cow<'result, str> {
@@ -197,6 +205,48 @@ impl<'result> TypeParser<'result> {
         }
     }
 
+    fn get_vector_parameters(
+        &mut self,
+    ) -> Result<(ColumnType<'result>, u16), CustomTypeParseError> {
+        match self.char_at_pos() {
+            Some('(') => {}
+            _ => {
+                return Err(CustomTypeParseError::BadCharacter);
+            }
+        }
+        self.pos += 1;
+        self.skip_blank_and_comma();
+        if let Some(')') = self.char_at_pos() {
+            return Err(CustomTypeParseError::BadCharacter);
+        }
+
+        let typ = self.do_parse()?;
+        self.skip_blank_and_comma();
+        let start = self.pos;
+
+        loop {
+            match self.char_at_pos() {
+                Some(c) if char::is_numeric(c) => {
+                    self.pos += 1;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        let len = self.parsed_string[start..self.pos]
+            .parse::<u16>()
+            .map_err(|_| CustomTypeParseError::UnknownParserError)?;
+        match self.char_at_pos() {
+            Some(')') => {}
+            _ => {
+                return Err(CustomTypeParseError::BadCharacter);
+            }
+        }
+        self.pos += 1;
+        Ok((typ, len))
+    }
+
     fn from_hex(s: Cow<'result, str>) -> Result<Vec<u8>, CustomTypeParseError> {
         if s.len() % 2 != 0 {
             return Err(CustomTypeParseError::BadHexString);
@@ -298,6 +348,13 @@ impl<'result> TypeParser<'result> {
                     return Err(CustomTypeParseError::InvalidParameterCount);
                 }
                 Ok(ColumnType::Tuple(params))
+            }
+            "org.apache.cassandra.db.marshal.VectorType" => {
+                let (typ, len) = self.get_vector_parameters()?;
+                Ok(ColumnType::Vector {
+                    typ: Box::new(typ),
+                    dimensions: len,
+                })
             }
             "org.apache.cassandra.db.marshal.UserType" => {
                 let (keyspace, name, fields) = self.get_udt_parameters()?;
