@@ -12,7 +12,7 @@ use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::metadata::{Keyspace, Metadata, Strategy};
@@ -64,6 +64,7 @@ impl ClusterState {
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
         mut tablets: TabletsInfo,
+        old_keyspaces: &HashMap<String, Keyspace>,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
@@ -109,6 +110,26 @@ impl ClusterState {
             }
         }
 
+        let keyspaces: HashMap<String, Keyspace> = metadata
+        .keyspaces
+        .into_iter()
+        .filter_map(|(ks_name, ks)| match ks {
+            Ok(ks) => Some((ks_name, ks)),
+            Err(e) => {
+                if let Some(old_ks) = old_keyspaces.get(&ks_name) {
+                    warn!("Encountered an error while processing metadata of keyspace \"{ks_name}\": {e}.\
+                           Re-using older version of this keyspace metadata");
+                    Some((ks_name, old_ks.clone()))
+                } else {
+                    warn!("Encountered an error while processing metadata of keyspace \"{ks_name}\": {e}.\
+                           No previous version of this keyspace metadata found, so it will not be\
+                           present in ClusterData until next refresh.");
+                    None
+                }
+            }
+        })
+        .collect();
+
         {
             let removed_nodes = {
                 let mut removed_nodes = HashSet::new();
@@ -122,7 +143,7 @@ impl ClusterState {
             };
 
             let table_predicate = |spec: &TableSpec| {
-                if let Some(ks) = metadata.keyspaces.get(spec.ks_name()) {
+                if let Some(ks) = keyspaces.get(spec.ks_name()) {
                     ks.tables.contains_key(spec.table_name())
                 } else {
                     false
@@ -150,7 +171,6 @@ impl ClusterState {
             )
         }
 
-        let keyspaces = metadata.keyspaces;
         let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
             let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies, tablets);

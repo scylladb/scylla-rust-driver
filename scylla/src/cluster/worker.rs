@@ -140,6 +140,7 @@ impl Cluster {
             &None,
             host_filter.as_deref(),
             TabletsInfo::new(),
+            &HashMap::new(),
         )
         .await;
         cluster_data.wait_until_all_pools_are_initialized().await;
@@ -413,6 +414,7 @@ impl ClusterWorker {
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
                 cluster_data.locator.tablets.clone(),
+                &cluster_data.keyspaces,
             )
             .await,
         );
