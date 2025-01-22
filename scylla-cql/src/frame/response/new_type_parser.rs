@@ -130,6 +130,33 @@ impl<'result> TypeParser<'result> {
         })))
     }
 
+    fn get_vector_parameters(
+        &mut self,
+    ) -> Result<(ColumnType<'result>, u32), CustomTypeParseError> {
+        self.parser = self
+            .parser
+            .accept("(")
+            .map_err(|_| CustomTypeParseError::BadCharacter)?;
+
+        self.skip_blank_and_comma();
+        if self.parser.accept(")").is_ok() {
+            return Err(CustomTypeParseError::BadCharacter);
+        }
+
+        let typ = self.do_parse()?;
+        self.skip_blank_and_comma();
+        let (len, parser) = self
+            .parser
+            .parse_i32()
+            .map_err(|_| CustomTypeParseError::BadCharacter)?;
+        self.parser = parser;
+        self.parser = self
+            .parser
+            .accept(")")
+            .map_err(|_| CustomTypeParseError::BadCharacter)?;
+        Ok((typ, len.try_into().unwrap()))
+    }
+
     /// Parse a string of hexadecimal representation of bytes into a byte vector.
     fn from_hex(s: &'result str) -> Result<Vec<u8>, CustomTypeParseError> {
         if s.len() % 2 != 0 {
@@ -244,6 +271,10 @@ impl<'result> TypeParser<'result> {
                     return Err(CustomTypeParseError::InvalidParameterCount);
                 }
                 Ok(ColumnType::Tuple(params))
+            }
+            "VectorType" => {
+                let (typ, len) = self.get_vector_parameters()?;
+                Ok(ColumnType::Vector(Box::new(typ), len))
             }
             "UserType" => {
                 let params = self.get_udt_parameters()?;

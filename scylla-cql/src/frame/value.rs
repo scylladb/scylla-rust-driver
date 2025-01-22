@@ -1534,6 +1534,10 @@ mod legacy {
                 CqlValue::Map(m) => serialize_map(m.iter().map(|p| (&p.0, &p.1)), m.len(), buf),
                 CqlValue::Tuple(t) => serialize_tuple(t.iter(), buf),
 
+                CqlValue::Vector(_) => {
+                    unimplemented!("Vector serialization will not be implemented for legacy API");
+                }
+
                 // A UDT value is composed of successive [bytes] values, one for each field of the UDT
                 // value (in the order defined by the type), so they serialize in a same way tuples do.
                 CqlValue::UserDefinedType { fields, .. } => {
