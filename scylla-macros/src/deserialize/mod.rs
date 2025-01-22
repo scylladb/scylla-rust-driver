@@ -131,7 +131,7 @@ fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
 ) -> impl Iterator<Item = syn::WherePredicate> + '_ {
     fields.iter().filter(|f| f.needs_default()).map(|f| {
         let t = f.deserialize_target();
-        parse_quote!(#t: std::default::Default)
+        parse_quote!(#t: ::std::default::Default)
     })
 }
 

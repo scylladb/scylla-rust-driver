@@ -700,7 +700,7 @@ impl TypeCheckUnorderedGenerator<'_> {
 
                 for (cql_field_name, cql_field_typ) in cql_fields {
                     // Pattern match on the name and verify that the type is correct.
-                    match std::ops::Deref::deref(cql_field_name) {
+                    match ::std::ops::Deref::deref(cql_field_name) {
                         #(#rust_nonskipped_field_names => #type_check_blocks,)*
                         unknown => #excess_udt_field_action,
                     }
@@ -871,7 +871,7 @@ impl DeserializeUnorderedGenerator<'_> {
                         }
                     ))?;
                     // Pattern match on the field name and deserialize.
-                    match std::ops::Deref::deref(cql_field_name) {
+                    match ::std::ops::Deref::deref(cql_field_name) {
                         #(#rust_nonskipped_field_names => #deserialize_blocks,)*
                         unknown => {
                             // Assuming we type checked sucessfully, this must be an excess field.

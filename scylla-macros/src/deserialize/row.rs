@@ -301,7 +301,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
                     .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
                         #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
                             column_index: #field_index,
-                            column_name: <_ as std::borrow::ToOwned>::to_owned(col.spec.name()),
+                            column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
                             err,
                         }
                     ))?
@@ -530,7 +530,7 @@ impl DeserializeUnorderedGenerator<'_> {
                             #macro_internal::mk_row_deser_err::<Self>(
                                 #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
                                     column_index: #column_index,
-                                    column_name: <_ as std::borrow::ToOwned>::to_owned(col.spec.name()),
+                                    column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
                                     err,
                                 }
                             )
