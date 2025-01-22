@@ -25,8 +25,8 @@ use crate::network::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfi
 use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::query::Query;
-use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 use crate::utils::pretty::{CommaSeparatedDisplayer, DisplayUsingDebug};
+use scylla_cql::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};

@@ -24,6 +24,8 @@ pub mod macros {
 
 pub mod types;
 
+pub mod utils;
+
 pub use crate::frame::response::cql_to_rust;
 #[allow(deprecated)]
 pub use crate::frame::response::cql_to_rust::FromRow;
