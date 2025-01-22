@@ -494,9 +494,11 @@ impl DeserializeAssumeOrderGenerator<'_> {
                 let maybe_next_cql_field = saved_cql_field
                     .take()
                     .map(::std::result::Result::Ok)
-                    .or_else(|| ::std::iter::Iterator::next(&mut cql_field_iter)
-                        .map(|(specs, value_res)| value_res.map(|value| (specs, value)))
-                    )
+                    .or_else(|| {
+                        ::std::option::Option::map(
+                            ::std::iter::Iterator::next(&mut cql_field_iter),
+                            |(specs, value_res)| value_res.map(|value| (specs, value)))
+                    })
                     .transpose()
                     // Propagate deserialization errors.
                     .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
@@ -507,7 +509,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
                         }
                     ))?;
 
-                if let Some(next_cql_field) = maybe_next_cql_field {
+                if let ::std::option::Option::Some(next_cql_field) = maybe_next_cql_field {
                     let ((cql_field_name, cql_field_typ), value) = next_cql_field;
 
                     // The value can be either

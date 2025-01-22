@@ -345,7 +345,7 @@ impl Generator for ColumnOrderedGenerator<'_> {
             };
             statements.push(parse_quote! {
                 match ::std::iter::Iterator::next(&mut column_iter) {
-                    Some(spec) => {
+                    ::std::option::Option::Some(spec) => {
                         if #name_check_expression {
                             let cell_writer = #crate_path::RowWriter::make_cell_writer(writer);
                             match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, spec.typ(), cell_writer) {
@@ -368,7 +368,7 @@ impl Generator for ColumnOrderedGenerator<'_> {
                             ));
                         }
                     }
-                    None => {
+                    ::std::option::Option::None => {
                         return ::std::result::Result::Err(mk_typck_err(
                             #crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
                                 name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
@@ -381,7 +381,7 @@ impl Generator for ColumnOrderedGenerator<'_> {
 
         // Check whether there are some columns remaining
         statements.push(parse_quote! {
-            if let Some(spec) = ::std::iter::Iterator::next(&mut column_iter) {
+            if let ::std::option::Option::Some(spec) = ::std::iter::Iterator::next(&mut column_iter) {
                 return ::std::result::Result::Err(mk_typck_err(
                     #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
                         name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
