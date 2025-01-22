@@ -364,7 +364,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
                 let too_few_fields = || #macro_internal::mk_value_typck_err::<Self>(
                     typ,
                     #macro_internal::DeserUdtTypeCheckErrorKind::TooFewFields {
-                        required_fields: vec![
+                        required_fields: ::std::vec![
                             #(stringify!(#required_fields_names),)*
                         ],
                         present_fields: ::std::iter::Iterator::collect(::std::iter::Iterator::map(fields.iter(), |(name, _typ)| name.clone().into_owned())),
