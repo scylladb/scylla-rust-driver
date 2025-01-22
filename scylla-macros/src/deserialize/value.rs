@@ -420,7 +420,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
                 .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
                     typ,
                     #macro_internal::UdtDeserializationErrorKind::FieldDeserializationFailed {
-                        field_name: #cql_name_literal.to_owned(),
+                        field_name: <_ as ::std::borrow::ToOwned>::to_owned(#cql_name_literal),
                         err,
                     }
                 ))?
@@ -503,7 +503,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
                     .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
                         typ,
                         #macro_internal::UdtDeserializationErrorKind::FieldDeserializationFailed {
-                            field_name: #cql_name_literal.to_owned(),
+                            field_name: <_ as ::std::borrow::ToOwned>::to_owned(#cql_name_literal),
                             err,
                         }
                     ))?;
@@ -672,7 +672,7 @@ impl TypeCheckUnorderedGenerator<'_> {
                     #macro_internal::mk_value_typck_err::<Self>(
                         typ,
                         #macro_internal::DeserUdtTypeCheckErrorKind::ExcessFieldInUdt {
-                            db_field_name: unknown.to_owned(),
+                            db_field_name: <_ as ::std::borrow::ToOwned>::to_owned(unknown),
                         }
                     )
                 )
@@ -777,7 +777,7 @@ impl DeserializeUnorderedGenerator<'_> {
                 .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
                     typ,
                     #macro_internal::UdtDeserializationErrorKind::FieldDeserializationFailed {
-                        field_name: #cql_name_literal.to_owned(),
+                        field_name: <_ as ::std::borrow::ToOwned>::to_owned(#cql_name_literal),
                         err,
                     }
                 ))?
