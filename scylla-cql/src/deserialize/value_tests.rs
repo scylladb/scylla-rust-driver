@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::deserialize::value::{TupleDeserializationErrorKind, TupleTypeCheckErrorKind};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+use crate::frame::response::new_type_parser::TypeParser;
 use crate::frame::response::result::NativeType::*;
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
 use crate::serialize::value::SerializeValue;
@@ -28,6 +29,91 @@ use super::{
     SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind, UdtDeserializationErrorKind,
     UdtTypeCheckErrorKind,
 };
+
+#[test]
+fn test_cassandra_type_parser() {
+    let test_list =
+        "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)";
+    assert_eq!(
+        TypeParser::parse(test_list).unwrap(),
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+        }
+    );
+    let test_set =
+        "org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)";
+    assert_eq!(
+        TypeParser::parse(test_set).unwrap(),
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+        }
+    );
+    let test_map =
+        "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)";
+    assert_eq!(
+        TypeParser::parse(test_map).unwrap(),
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Native(NativeType::Int))
+            ),
+        }
+    );
+    let test_duration = "org.apache.cassandra.db.marshal.DurationType";
+    assert_eq!(
+        TypeParser::parse(test_duration).unwrap(),
+        ColumnType::Native(NativeType::Duration)
+    );
+    let test_tuple =
+        "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)";
+    assert_eq!(
+        TypeParser::parse(test_tuple).unwrap(),
+        ColumnType::Tuple(vec![
+            ColumnType::Native(NativeType::Int),
+            ColumnType::Native(NativeType::Int)
+        ])
+    );
+
+    let key = "org.apache.cassandra.db.marshal.Int32Type";
+    let value = "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)";
+    let test_recursive_map = format!(
+        "org.apache.cassandra.db.marshal.MapType({}, {})",
+        key, value
+    );
+    assert_eq!(
+        TypeParser::parse(&test_recursive_map).unwrap(),
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Tuple(vec![
+                    ColumnType::Native(NativeType::Int),
+                    ColumnType::Native(NativeType::Int)
+                ]))
+            )
+        }
+    );
+
+    let test_udt = "org.apache.cassandra.db.marshal.UserType(keyspace1,61646472657373,737472656574:org.apache.cassandra.db.marshal.UTF8Type,63697479:org.apache.cassandra.db.marshal.UTF8Type,7a6970:org.apache.cassandra.db.marshal.Int32Type)";
+    assert_eq!(
+        TypeParser::parse(test_udt).unwrap(),
+        ColumnType::UserDefinedType {
+            frozen: false,
+            definition: Arc::new(UserDefinedType {
+                name: "address".into(),
+                keyspace: "keyspace1".into(),
+                field_types: vec![
+                    ("street".into(), ColumnType::Native(NativeType::Text)),
+                    ("city".into(), ColumnType::Native(NativeType::Text)),
+                    ("zip".into(), ColumnType::Native(NativeType::Int))
+                ]
+            }),
+        }
+    );
+}
 
 #[test]
 fn test_deserialize_bytes() {
