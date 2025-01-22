@@ -18,7 +18,8 @@ use crate::frame::value::{
 use crate::types::deserialize::result::{RawRowIterator, TypedRowIterator};
 use crate::types::deserialize::row::DeserializeRow;
 use crate::types::deserialize::value::{
-    mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
+    mk_deser_err, BuiltinDeserializationErrorKind, ConstLengthVectorIterator, DeserializeValue,
+    MapIterator, UdtIterator, VariableLengthVectorIterator,
 };
 use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use bytes::{Buf, Bytes};
@@ -1454,7 +1455,16 @@ pub fn deser_cql_value(
                 .collect::<StdResult<_, _>>()?;
             CqlValue::Tuple(t)
         }
-        _ => unimplemented!(),
+        Vector(elem_type, _dimensions) if elem_type.type_size().is_some() => {
+            let v = ConstLengthVectorIterator::<'_, '_, CqlValue>::deserialize(typ, v)?;
+            let v: Vec<CqlValue> = v.collect::<StdResult<_, _>>()?;
+            CqlValue::Vector(v)
+        }
+        Vector(_, _) => {
+            let v = VariableLengthVectorIterator::<'_, '_, CqlValue>::deserialize(typ, v)?;
+            let v: Vec<CqlValue> = v.collect::<StdResult<_, _>>()?;
+            CqlValue::Vector(v)
+        }
     })
 }
 
