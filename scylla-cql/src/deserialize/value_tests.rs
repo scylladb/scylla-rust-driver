@@ -199,6 +199,308 @@ fn test_deserialize_bytes() {
 }
 
 #[test]
+fn test_deserialize_vector() {
+    // ser/de identity
+
+    // native types
+
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Ascii)),
+            dimensions: 3,
+        },
+        &vec!["ala", "ma", "kota"],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Boolean)),
+            dimensions: 2,
+        },
+        &vec![true, false],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Blob)),
+            dimensions: 2,
+        },
+        &vec![vec![1_u8, 2_u8], vec![3_u8, 4_u8]],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Counter)),
+            dimensions: 2,
+        },
+        &vec![Counter(1234), Counter(5678)],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Date)),
+            dimensions: 2,
+        },
+        &vec![CqlDate(1234), CqlDate(5678)],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Decimal)),
+            dimensions: 2,
+        },
+        &vec![
+            CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"123", 42),
+            CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"123", 42),
+        ],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Double)),
+            dimensions: 2,
+        },
+        &vec![0.1234, 0.5678],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Duration)),
+            dimensions: 2,
+        },
+        &vec![
+            CqlDuration {
+                months: 1,
+                days: 2,
+                nanoseconds: 3,
+            },
+            CqlDuration {
+                months: 1,
+                days: 2,
+                nanoseconds: 3,
+            },
+        ],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Float)),
+            dimensions: 2,
+        },
+        &vec![0.1234_f32, 0.5678_f32],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
+            dimensions: 2,
+        },
+        &vec![1, 2],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::BigInt)),
+            dimensions: 2,
+        },
+        &vec![1_i64, 2_i64],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Text)),
+            dimensions: 2,
+        },
+        &vec!["ala", "ma"],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Timestamp)),
+            dimensions: 2,
+        },
+        &vec![CqlTimestamp(1234), CqlTimestamp(5678)],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Inet)),
+            dimensions: 2,
+        },
+        &vec![
+            IpAddr::V4(Ipv4Addr::BROADCAST),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::SmallInt)),
+            dimensions: 2,
+        },
+        &vec![1_i16, 2_i16],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::TinyInt)),
+            dimensions: 2,
+        },
+        &vec![1_i8, 2_i8],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Time)),
+            dimensions: 2,
+        },
+        &vec![CqlTime(1234), CqlTime(5678)],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Timeuuid)),
+            dimensions: 2,
+        },
+        &vec![CqlTimeuuid::from_u128(123), CqlTimeuuid::from_u128(456)],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Uuid)),
+            dimensions: 2,
+        },
+        &vec![Uuid::from_u128(123), Uuid::from_u128(456)],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Varint)),
+            dimensions: 2,
+        },
+        &vec![
+            CqlVarint::from_signed_bytes_be(vec![1, 2]),
+            CqlVarint::from_signed_bytes_be(vec![3, 4]),
+        ],
+        &mut Bytes::new(),
+    );
+
+    // collection types
+
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+            }),
+            dimensions: 2,
+        },
+        &vec![vec![1, 2], vec![3, 4]],
+        &mut Bytes::new(),
+    );
+
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+            }),
+            dimensions: 2,
+        },
+        &vec![vec![1, 2], vec![3, 4]],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Int)),
+                    Box::new(ColumnType::Native(NativeType::Int)),
+                ),
+            }),
+            dimensions: 2,
+        },
+        &vec![
+            BTreeMap::from_iter(vec![(1, 2), (3, 4)]),
+            BTreeMap::from_iter(vec![(5, 6), (7, 8)]),
+        ],
+        &mut Bytes::new(),
+    );
+
+    // tuple types
+
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Tuple(vec![
+                ColumnType::Native(NativeType::Int),
+                ColumnType::Native(NativeType::Int),
+            ])),
+            dimensions: 2,
+        },
+        &vec![(1, 2), (3, 4)],
+        &mut Bytes::new(),
+    );
+
+    // nested vector
+
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Vector {
+                typ: Box::new(ColumnType::Native(NativeType::Int)),
+                dimensions: 2,
+            }),
+            dimensions: 2,
+        },
+        &vec![vec![1, 2], vec![3, 4]],
+        &mut Bytes::new(),
+    );
+
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(Box::new(ColumnType::Vector {
+                    typ: Box::new(ColumnType::Native(NativeType::Int)),
+                    dimensions: 2,
+                })),
+            }),
+            dimensions: 2,
+        },
+        &vec![vec![vec![1, 2], vec![3, 4]], vec![vec![5, 6], vec![7, 8]]],
+        &mut Bytes::new(),
+    );
+
+    //empty vector
+
+    let vec: Vec<bool> = vec![];
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Boolean)),
+            dimensions: 0,
+        },
+        &vec,
+        &mut Bytes::new(),
+    );
+
+    // deser_cql_value
+
+    let buf: Vec<u8> = vec![0, 0, 0, 1, 0, 0, 0, 2];
+    let decoded_vec = super::deser_cql_value(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(Int)),
+            dimensions: 2,
+        },
+        &mut buf.as_slice(),
+    )
+    .unwrap();
+    assert_eq!(
+        decoded_vec,
+        CqlValue::Vector(vec![CqlValue::Int(1), CqlValue::Int(2)])
+    );
+}
+
+#[test]
 fn test_deserialize_ascii() {
     const ASCII_TEXT: &str = "The quick brown fox jumps over the lazy dog";
 
