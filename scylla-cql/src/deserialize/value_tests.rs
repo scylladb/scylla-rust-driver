@@ -33,6 +33,13 @@ use super::{
 #[test]
 fn test_cassandra_type_parser() {
     let tests = vec![
+    (
+        "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, 5)",
+        ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
+            dimensions: 5,
+        },
+    ),
     (  "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)", 
         ColumnType::Collection {
             frozen: false,
