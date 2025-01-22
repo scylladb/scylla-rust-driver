@@ -1,7 +1,7 @@
+use super::type_parser;
 use crate::deserialize::result::{RawRowIterator, TypedRowIterator};
 use crate::deserialize::row::DeserializeRow;
 use crate::deserialize::{FrameSlice, TypeCheckError};
-use super::type_parser;
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
     LowLevelDeserializationError, PreparedMetadataParseError, PreparedParseError,
