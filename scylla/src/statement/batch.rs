@@ -217,6 +217,7 @@ pub(crate) mod batch_values {
     use scylla_cql::types::serialize::{RowWriter, SerializationError};
 
     use crate::errors::QueryError;
+    use crate::prepared_statement::PartitionKeyError;
     use crate::routing::Token;
 
     use super::BatchStatement;
@@ -247,7 +248,9 @@ pub(crate) mod batch_values {
                         .map(|o| o.is_some())
                 })?;
                 if did_write {
-                    let token = ps.calculate_token_untyped(&first_values)?;
+                    let token = ps
+                        .calculate_token_untyped(&first_values)
+                        .map_err(PartitionKeyError::into_query_error)?;
                     (token, Some(first_values))
                 } else {
                     (None, None)

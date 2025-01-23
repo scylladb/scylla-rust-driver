@@ -1,6 +1,6 @@
 use crate::authentication::AuthenticatorProvider;
 use crate::batch::{Batch, BatchStatement};
-use crate::client::pager::QueryPager;
+use crate::client::pager::{NextRowError, QueryPager};
 use crate::client::Compression;
 use crate::client::SelfIdentity;
 #[cfg(feature = "cloud")]
@@ -988,7 +988,7 @@ impl Connection {
     pub(crate) async fn query_iter(
         self: Arc<Self>,
         query: Query,
-    ) -> Result<QueryPager, QueryError> {
+    ) -> Result<QueryPager, NextRowError> {
         let consistency = query
             .config
             .determine_consistency(self.config.default_consistency);
@@ -1004,7 +1004,7 @@ impl Connection {
         self: Arc<Self>,
         prepared_statement: PreparedStatement,
         values: SerializedValues,
-    ) -> Result<QueryPager, QueryError> {
+    ) -> Result<QueryPager, NextRowError> {
         let consistency = prepared_statement
             .config
             .determine_consistency(self.config.default_consistency);

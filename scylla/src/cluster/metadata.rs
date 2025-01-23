@@ -16,7 +16,7 @@
 //!     - [CollectionType],
 //!
 
-use crate::client::pager::QueryPager;
+use crate::client::pager::{NextPageError, NextRowError, QueryPager};
 use crate::cluster::node::resolve_contact_points;
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{DbError, NewSessionError, QueryError, RequestAttemptError};
@@ -52,7 +52,7 @@ use uuid::Uuid;
 use crate::cluster::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 use crate::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
-    ProtocolError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
+    ProtocolError, RequestError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
 };
 
 type PerKeyspace<T> = HashMap<String, T>;
@@ -847,6 +847,7 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
             Ok::<_, QueryError>(rows_stream)
         })
         .into_stream()
+        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
@@ -864,6 +865,7 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
             Ok::<_, QueryError>(rows_stream)
         })
         .into_stream()
+        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Local, row_result)));
 
@@ -982,7 +984,7 @@ where
             let mut query = Query::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
-            conn.query_iter(query).await
+            conn.query_iter(query).await.map_err(QueryError::from)
         } else {
             let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
             let query_str = format!("{query_str} where keyspace_name in ?");
@@ -995,7 +997,9 @@ where
                 .await
                 .map_err(RequestAttemptError::into_query_error)?;
             let serialized_values = prepared.serialize_values(&keyspaces)?;
-            conn.execute_iter(prepared, serialized_values).await
+            conn.execute_iter(prepared, serialized_values)
+                .await
+                .map_err(QueryError::from)
         }
     }
 
@@ -1005,7 +1009,9 @@ where
             pager.rows_stream::<R>().map_err(convert_typecheck_error)?;
         Ok::<_, QueryError>(stream)
     };
-    fut.into_stream().try_flatten()
+    fut.into_stream()
+        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
+        .try_flatten()
 }
 
 async fn query_keyspaces(
@@ -1859,6 +1865,7 @@ async fn query_table_partitioners(
             Ok::<_, QueryError>(stream)
         })
         .into_stream()
+        .map(|result| result.map(|stream| stream.map_err(QueryError::from)))
         .try_flatten();
 
     let result = rows
@@ -1874,7 +1881,15 @@ async fn query_table_partitioners(
         // that we are only interested in the ones resulting from non-existent table
         // system_schema.scylla_tables.
         // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
-        Err(QueryError::DbError(DbError::Invalid, _)) => Ok(HashMap::new()),
+        // FIXME 2: The specific error we expect here should appear in QueryError::NextRowError. Currently
+        // leaving match against both variants. This will be fixed, once `MetadataError` is further adjusted
+        // in a follow-up PR. The goal is to return MetadataError from all functions related to metadata fetch.
+        Err(QueryError::DbError(DbError::Invalid, _))
+        | Err(QueryError::NextRowError(NextRowError::NextPageError(
+            NextPageError::RequestFailure(RequestError::LastAttemptError(
+                RequestAttemptError::DbError(DbError::Invalid, _),
+            )),
+        ))) => Ok(HashMap::new()),
         result => result,
     }
 }
