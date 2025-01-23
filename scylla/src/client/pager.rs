@@ -29,7 +29,7 @@ use crate::cluster::{ClusterState, NodeRef};
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
-use crate::errors::ProtocolError;
+use crate::errors::{ProtocolError, RequestError};
 use crate::errors::{QueryError, RequestAttemptError};
 use crate::frame::response::result;
 use crate::network::Connection;
@@ -148,7 +148,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     paging_state: PagingState,
 
     history_listener: Option<Arc<dyn HistoryListener>>,
-    current_query_id: Option<history::QueryId>,
+    current_request_id: Option<history::RequestId>,
     current_attempt_id: Option<history::AttemptId>,
 
     parent_span: tracing::Span,
@@ -168,10 +168,10 @@ where
         let query_plan =
             load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
-        let mut last_error: QueryError = QueryError::EmptyPlan;
+        let mut last_error: RequestError = RequestError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
 
-        self.log_query_start();
+        self.log_request_start();
 
         'nodes_in_plan: for (node, shard) in query_plan {
             let span =
@@ -235,8 +235,9 @@ where
                     retry_decision = ?retry_decision
                 );
 
-                last_error = request_error.into_query_error();
-                self.log_attempt_error(&last_error, &retry_decision);
+                self.log_attempt_error(&request_error, &retry_decision);
+
+                last_error = request_error.into();
 
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
@@ -265,9 +266,8 @@ where
             }
         }
 
-        // Send last_error to QueryPager - query failed fully
-        self.log_query_error(&last_error);
-        let (proof, _) = self.sender.send(Err(last_error)).await;
+        self.log_request_error(&last_error);
+        let (proof, _) = self.sender.send(Err(last_error.into_query_error())).await;
         proof
     }
 
@@ -329,7 +329,7 @@ where
             }) => {
                 let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                 self.log_attempt_success();
-                self.log_query_success();
+                self.log_request_success();
                 self.execution_profile
                     .load_balancing_policy
                     .on_request_success(&self.statement_info, elapsed, node);
@@ -357,7 +357,7 @@ where
 
                 // Query succeeded, reset retry policy for future retries
                 self.retry_session.reset();
-                self.log_query_start();
+                self.log_request_start();
 
                 Ok(ControlFlow::Continue(()))
             }
@@ -392,41 +392,41 @@ where
         }
     }
 
-    fn log_query_start(&mut self) {
+    fn log_request_start(&mut self) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
         };
 
-        self.current_query_id = Some(history_listener.log_query_start());
+        self.current_request_id = Some(history_listener.log_request_start());
     }
 
-    fn log_query_success(&mut self) {
+    fn log_request_success(&mut self) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
         };
 
-        let query_id: history::QueryId = match &self.current_query_id {
+        let request_id: history::RequestId = match &self.current_request_id {
             Some(id) => *id,
             None => return,
         };
 
-        history_listener.log_query_success(query_id);
+        history_listener.log_request_success(request_id);
     }
 
-    fn log_query_error(&mut self, error: &QueryError) {
+    fn log_request_error(&mut self, error: &RequestError) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
         };
 
-        let query_id: history::QueryId = match &self.current_query_id {
+        let request_id: history::RequestId = match &self.current_request_id {
             Some(id) => *id,
             None => return,
         };
 
-        history_listener.log_query_error(query_id, error);
+        history_listener.log_request_error(request_id, error);
     }
 
     fn log_attempt_start(&mut self, node_addr: SocketAddr) {
@@ -435,13 +435,13 @@ where
             None => return,
         };
 
-        let query_id: history::QueryId = match &self.current_query_id {
+        let request_id: history::RequestId = match &self.current_request_id {
             Some(id) => *id,
             None => return,
         };
 
         self.current_attempt_id =
-            Some(history_listener.log_attempt_start(query_id, None, node_addr));
+            Some(history_listener.log_attempt_start(request_id, None, node_addr));
     }
 
     fn log_attempt_success(&mut self) {
@@ -458,7 +458,7 @@ where
         history_listener.log_attempt_success(attempt_id);
     }
 
-    fn log_attempt_error(&mut self, error: &QueryError, retry_decision: &RetryDecision) {
+    fn log_attempt_error(&mut self, error: &RequestAttemptError, retry_decision: &RetryDecision) {
         let history_listener: &dyn HistoryListener = match &self.history_listener {
             Some(hl) => &**hl,
             None => return,
@@ -754,7 +754,7 @@ impl QueryPager {
                 metrics,
                 paging_state: PagingState::start(),
                 history_listener: query.config.history_listener.clone(),
-                current_query_id: None,
+                current_request_id: None,
                 current_attempt_id: None,
                 parent_span,
                 span_creator,
@@ -872,7 +872,7 @@ impl QueryPager {
                 metrics: config.metrics,
                 paging_state: PagingState::start(),
                 history_listener: config.prepared.config.history_listener.clone(),
-                current_query_id: None,
+                current_request_id: None,
                 current_attempt_id: None,
                 parent_span,
                 span_creator,
