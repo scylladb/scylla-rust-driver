@@ -572,7 +572,8 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-fn mk_typck_err<T>(kind: impl Into<BuiltinTypeCheckErrorKind>) -> SerializationError {
+#[doc(hidden)]
+pub fn mk_typck_err<T>(kind: impl Into<BuiltinTypeCheckErrorKind>) -> SerializationError {
     mk_typck_err_named(std::any::type_name::<T>(), kind)
 }
 
@@ -598,7 +599,8 @@ pub struct BuiltinSerializationError {
     pub kind: BuiltinSerializationErrorKind,
 }
 
-fn mk_ser_err<T>(kind: impl Into<BuiltinSerializationErrorKind>) -> SerializationError {
+#[doc(hidden)]
+pub fn mk_ser_err<T>(kind: impl Into<BuiltinSerializationErrorKind>) -> SerializationError {
     mk_ser_err_named(std::any::type_name::<T>(), kind)
 }
 
@@ -1674,6 +1676,171 @@ pub(crate) mod tests {
 
         let reference = do_serialize((42i32, 42i32), &spec);
         let row = do_serialize(Box::new((42i32, 42i32)), &spec);
+
+        assert_eq!(reference, row);
+    }
+
+    #[test]
+    fn test_row_serialization_nested_structs() {
+        #[derive(SerializeRow, Debug)]
+        #[scylla(crate = crate)]
+        struct InnerColumnsOne {
+            x: i32,
+            y: f64,
+        }
+
+        #[derive(SerializeRow, Debug)]
+        #[scylla(crate = crate)]
+        struct InnerColumnsTwo {
+            z: bool,
+        }
+
+        #[derive(SerializeRow, Debug)]
+        #[scylla(crate = crate)]
+        struct OuterColumns {
+            #[scylla(flatten)]
+            inner_one: InnerColumnsOne,
+            a: String,
+            #[scylla(flatten)]
+            inner_two: InnerColumnsTwo,
+        }
+
+        let spec = [
+            col("a", ColumnType::Text),
+            col("x", ColumnType::Int),
+            col("z", ColumnType::Boolean),
+            col("y", ColumnType::Double),
+        ];
+
+        let value = OuterColumns {
+            inner_one: InnerColumnsOne { x: 5, y: 1.0 },
+            a: "something".to_owned(),
+            inner_two: InnerColumnsTwo { z: true },
+        };
+
+        let reference = do_serialize(
+            (
+                &value.a,
+                &value.inner_one.x,
+                &value.inner_two.z,
+                &value.inner_one.y,
+            ),
+            &spec,
+        );
+        let row = do_serialize(value, &spec);
+
+        assert_eq!(reference, row);
+    }
+
+    #[test]
+    fn test_flatten_row_serialization_with_enforced_order_and_skip_namecheck() {
+        #[derive(SerializeRow, Debug)]
+        #[scylla(crate = crate, flavor = "enforce_order")]
+        struct OuterColumns {
+            a: String,
+            #[scylla(flatten)]
+            inner_one: InnerColumnsOne,
+            d: i32,
+            #[scylla(flatten)]
+            inner_two: InnerColumnsTwo,
+        }
+
+        #[derive(SerializeRow, Debug)]
+        #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
+        struct InnerColumnsOne {
+            potato: bool,
+            carrot: f32,
+        }
+
+        #[derive(SerializeRow, Debug)]
+        #[scylla(crate = crate, flavor = "enforce_order")]
+        struct InnerColumnsTwo {
+            e: String,
+        }
+
+        let value = OuterColumns {
+            a: "A".to_owned(),
+            inner_one: InnerColumnsOne {
+                potato: false,
+                carrot: 2.3,
+            },
+            d: 32,
+            inner_two: InnerColumnsTwo { e: "E".to_owned() },
+        };
+
+        let spec = [
+            col("a", ColumnType::Text),
+            col("b", ColumnType::Boolean),
+            col("c", ColumnType::Float),
+            col("d", ColumnType::Int),
+            col("e", ColumnType::Text),
+        ];
+
+        let reference = do_serialize(
+            (
+                &value.a,
+                &value.inner_one.potato,
+                &value.inner_one.carrot,
+                &value.d,
+                &value.inner_two.e,
+            ),
+            &spec,
+        );
+        let row = do_serialize(value, &spec);
+
+        assert_eq!(reference, row);
+    }
+
+    #[test]
+    fn test_name_flatten_with_lifetimes() {
+        #[derive(SerializeRow)]
+        #[scylla(crate = crate, flavor = "enforce_order")]
+        struct Inner<'b> {
+            b: &'b bool,
+        }
+
+        #[derive(SerializeRow)]
+        #[scylla(crate = crate, flavor = "enforce_order")]
+        struct Outer<'a, 'b> {
+            #[scylla(flatten)]
+            inner: &'a Inner<'b>,
+        }
+
+        let b = true;
+        let inner = Inner { b: &b };
+
+        let value = Outer { inner: &inner };
+        let spec = [col("b", ColumnType::Boolean)];
+
+        let reference = do_serialize((&value.inner.b,), &spec);
+        let row = do_serialize(value, &spec);
+
+        assert_eq!(reference, row);
+    }
+
+    #[test]
+    fn test_ordered_flatten_with_lifetimes() {
+        #[derive(SerializeRow)]
+        #[scylla(crate = crate, flavor = "enforce_order")]
+        struct Inner<'b> {
+            b: &'b bool,
+        }
+
+        #[derive(SerializeRow)]
+        #[scylla(crate = crate, flavor = "enforce_order")]
+        struct Outer<'a, 'b> {
+            #[scylla(flatten)]
+            inner: &'a Inner<'b>,
+        }
+
+        let b = true;
+        let inner = Inner { b: &b };
+
+        let value = Outer { inner: &inner };
+        let spec = [col("b", ColumnType::Boolean)];
+
+        let reference = do_serialize((&value.inner.b,), &spec);
+        let row = do_serialize(value, &spec);
 
         assert_eq!(reference, row);
     }
