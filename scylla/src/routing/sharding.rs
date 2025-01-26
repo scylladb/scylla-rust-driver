@@ -107,25 +107,37 @@ pub enum ShardingError {
     ParseIntError(#[from] std::num::ParseIntError),
 }
 
+const SHARD_ENTRY: &str = "SCYLLA_SHARD";
+const NR_SHARDS_ENTRY: &str = "SCYLLA_NR_SHARDS";
+const MSB_IGNORE_ENTRY: &str = "SCYLLA_SHARDING_IGNORE_MSB";
+
 impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
     type Error = ShardingError;
     fn try_from(options: &'a HashMap<String, Vec<String>>) -> Result<Self, Self::Error> {
-        let shard_entry = options.get("SCYLLA_SHARD");
-        let nr_shards_entry = options.get("SCYLLA_NR_SHARDS");
-        let msb_ignore_entry = options.get("SCYLLA_SHARDING_IGNORE_MSB");
-        if shard_entry.is_none() || nr_shards_entry.is_none() || msb_ignore_entry.is_none() {
+        let shard_entry = options.get(SHARD_ENTRY);
+        let nr_shards_entry = options.get(NR_SHARDS_ENTRY);
+        let msb_ignore_entry = options.get(MSB_IGNORE_ENTRY);
+
+        // Unwrap entries.
+        let (Some(shard_entry), Some(nr_shards_entry), Some(msb_ignore_entry)) =
+            (shard_entry, nr_shards_entry, msb_ignore_entry)
+        else {
             return Err(ShardingError::MissingShardInfoParameter);
-        }
-        if shard_entry.unwrap().is_empty()
-            || nr_shards_entry.unwrap().is_empty()
-            || msb_ignore_entry.unwrap().is_empty()
-        {
+        };
+
+        // Further unwrap entries (they should be the first entries of their corresponding Vecs).
+        let (Some(shard_entry), Some(nr_shards_entry), Some(msb_ignore_entry)) = (
+            shard_entry.first(),
+            nr_shards_entry.first(),
+            msb_ignore_entry.first(),
+        ) else {
             return Err(ShardingError::MissingUnwrapedShardInfoParameter);
-        }
-        let shard = shard_entry.unwrap().first().unwrap().parse::<u16>()?;
-        let nr_shards = nr_shards_entry.unwrap().first().unwrap().parse::<u16>()?;
+        };
+
+        let shard = shard_entry.parse::<u16>()?;
+        let nr_shards = nr_shards_entry.parse::<u16>()?;
         let nr_shards = ShardCount::new(nr_shards).ok_or(ShardingError::ZeroShards)?;
-        let msb_ignore = msb_ignore_entry.unwrap().first().unwrap().parse::<u8>()?;
+        let msb_ignore = msb_ignore_entry.parse::<u8>()?;
         Ok(ShardInfo::new(shard, nr_shards, msb_ignore))
     }
 }
