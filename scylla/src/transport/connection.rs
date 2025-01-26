@@ -2397,27 +2397,13 @@ mod tests {
     use crate::transport::connection::open_connection;
     use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
-    use crate::utils::test_utils::{unique_keyspace_name, PerformDDL};
+    use crate::utils::test_utils::{resolve_hostname, unique_keyspace_name, PerformDDL};
     use crate::SessionBuilder;
     use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::sync::Arc;
     use std::time::Duration;
-
-    // Just like resolve_hostname in session.rs
-    async fn resolve_hostname(hostname: &str) -> SocketAddr {
-        match tokio::net::lookup_host(hostname).await {
-            Ok(mut addrs) => addrs.next().unwrap(),
-            Err(_) => {
-                tokio::net::lookup_host((hostname, 9042)) // Port might not be specified, try default
-                    .await
-                    .unwrap()
-                    .next()
-                    .unwrap()
-            }
-        }
-    }
 
     /// Tests for Connection::query_iter
     /// 1. SELECT from an empty table.
@@ -2427,6 +2413,8 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_query_iter_test() {
+        use crate::test_utils::resolve_hostname;
+
         setup_tracing();
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;
@@ -2528,6 +2516,8 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn test_coalescing() {
+        use crate::test_utils::resolve_hostname;
+
         setup_tracing();
         // It's difficult to write a reliable test that checks whether coalescing
         // works like intended or not. Instead, this is a smoke test which is supposed

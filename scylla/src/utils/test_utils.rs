@@ -6,6 +6,7 @@ use crate::transport::errors::QueryError;
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::transport::{ClusterData, NodeRef};
 use crate::{CachingSession, ExecutionProfile, Session};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
 use std::{
@@ -27,6 +28,20 @@ pub(crate) fn unique_keyspace_name() -> String {
     );
     println!("Unique name: {}", name);
     name
+}
+
+// Just like resolve_hostname in session.rs
+pub(crate) async fn resolve_hostname(hostname: &str) -> SocketAddr {
+    match tokio::net::lookup_host(hostname).await {
+        Ok(mut addrs) => addrs.next().unwrap(),
+        Err(_) => {
+            tokio::net::lookup_host((hostname, 9042)) // Port might not be specified, try default
+                .await
+                .unwrap()
+                .next()
+                .unwrap()
+        }
+    }
 }
 
 pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
