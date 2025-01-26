@@ -555,6 +555,7 @@ where
 /// enabling Stream'ed operation on rows being eagerly deserialized
 /// to the middle-man [Row] type. This is inefficient, especially if
 /// [Row] is not the intended target type.
+#[derive(Debug)]
 pub struct QueryPager {
     current_page: RawRowLendingIterator,
     page_receiver: mpsc::Receiver<Result<ReceivedPage, QueryError>>,
