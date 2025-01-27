@@ -1623,16 +1623,16 @@ async fn query_tables_schema(
     Ok(result)
 }
 
-fn map_string_to_cql_type(type_: &str) -> Result<PreColumnType, InvalidCqlType> {
-    match parse_cql_type(ParserState::new(type_)) {
+fn map_string_to_cql_type(typ: &str) -> Result<PreColumnType, InvalidCqlType> {
+    match parse_cql_type(ParserState::new(typ)) {
         Err(err) => Err(InvalidCqlType {
-            typ: type_.to_string(),
-            position: err.calculate_position(type_).unwrap_or(0),
+            typ: typ.to_string(),
+            position: err.calculate_position(typ).unwrap_or(0),
             reason: err.get_cause().to_string(),
         }),
         Ok((_, p)) if !p.is_at_eof() => Err(InvalidCqlType {
-            typ: type_.to_string(),
-            position: p.calculate_position(type_).unwrap_or(0),
+            typ: typ.to_string(),
+            position: p.calculate_position(typ).unwrap_or(0),
             reason: "leftover characters".to_string(),
         }),
         Ok((typ, _)) => Ok(typ),
@@ -1764,8 +1764,8 @@ fn parse_user_defined_type(p: ParserState) -> ParseResult<(&str, ParserState)> {
     Ok((tok, p))
 }
 
-fn freeze_type(type_: PreColumnType) -> PreColumnType {
-    match type_ {
+fn freeze_type(typ: PreColumnType) -> PreColumnType {
+    match typ {
         PreColumnType::Collection { typ: type_, .. } => PreColumnType::Collection {
             frozen: true,
             typ: type_,
