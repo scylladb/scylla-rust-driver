@@ -1830,6 +1830,9 @@ pub enum BuiltinDeserializationErrorKind {
 
     /// A deserialization failure specific to a CQL UDT.
     UdtError(UdtDeserializationErrorKind),
+
+    /// Deserialization of this CQL type is not supported by the driver.
+    Unsupported,
 }
 
 impl Display for BuiltinDeserializationErrorKind {
@@ -1863,6 +1866,9 @@ impl Display for BuiltinDeserializationErrorKind {
             BuiltinDeserializationErrorKind::MapError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::TupleError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::UdtError(err) => err.fmt(f),
+            BuiltinDeserializationErrorKind::Unsupported => {
+                f.write_str("deserialization of this CQL type is not supported by the driver")
+            }
         }
     }
 }

@@ -55,6 +55,10 @@ pub enum ColumnType<'frame> {
     Collection {
         type_: CollectionType<'frame>,
     },
+    Vector {
+        type_: Box<ColumnType<'frame>>,
+        dimensions: u16,
+    },
     UserDefinedType {
         definition: Arc<UserDefinedType<'frame>>,
     },
@@ -106,6 +110,10 @@ impl ColumnType<'_> {
             ColumnType::Native(b) => ColumnType::Native(b),
             ColumnType::Collection { type_: t } => ColumnType::Collection {
                 type_: t.into_owned(),
+            },
+            ColumnType::Vector { type_, dimensions } => ColumnType::Vector {
+                type_: Box::new(type_.into_owned()),
+                dimensions,
             },
             ColumnType::UserDefinedType { definition: udt } => {
                 let udt = Arc::try_unwrap(udt).unwrap_or_else(|e| e.as_ref().clone());
@@ -1391,6 +1399,12 @@ pub fn deser_cql_value(
             let s = Vec::<CqlValue>::deserialize(typ, v)?;
             CqlValue::Set(s)
         }
+        Vector { .. } => {
+            return Err(mk_deser_err::<CqlValue>(
+                typ,
+                BuiltinDeserializationErrorKind::Unsupported,
+            ))
+        }
         UserDefinedType { definition: udt } => {
             let iter = UdtIterator::deserialize(typ, v)?;
             let fields: Vec<(String, Option<CqlValue>)> = iter
@@ -1548,6 +1562,9 @@ mod test_utils {
                 Self::Collection {
                     type_: CollectionType::Set(_),
                 } => 0x0022,
+                Self::Vector { .. } => {
+                    unimplemented!();
+                }
                 Self::UserDefinedType { .. } => 0x0030,
                 Self::Tuple(_) => 0x0031,
             }
@@ -1581,6 +1598,9 @@ mod test_utils {
                     for typ in types.iter() {
                         typ.serialize(buf)?;
                     }
+                }
+                ColumnType::Vector { .. } => {
+                    unimplemented!()
                 }
                 ColumnType::UserDefinedType { definition: udt } => {
                     types::write_string(&udt.keyspace, buf)?;
