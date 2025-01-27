@@ -1394,7 +1394,10 @@ impl Connection {
                 tls_config::Tls::OpenSsl010(ssl) => {
                     let mut stream =
                         tokio_openssl::SslStream::new(ssl, stream).map_err(TlsError::OpenSsl010)?;
-                    let _ = std::pin::Pin::new(&mut stream).connect().await;
+                    std::pin::Pin::new(&mut stream)
+                        .connect()
+                        .await
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                     return Ok(spawn_router_and_get_handle(
                         config,
                         stream,
