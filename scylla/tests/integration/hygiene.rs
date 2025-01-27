@@ -172,6 +172,14 @@ macro_rules! test_crate {
             }
         }
 
+        // The purpose of this test is to verify that the important types are
+        // correctly re-exported in `scylla` crate.
+        #[test]
+        fn test_types_imports() {
+            #[allow(unused_imports)]
+            use _scylla::frame::response::result::{CollectionType, ColumnType, NativeType, CqlValue, UserDefinedType};
+        }
+
         // Test attributes for value struct with name flavor
         #[derive(
             _scylla::macros::DeserializeValue, _scylla::macros::SerializeValue, PartialEq, Debug,
