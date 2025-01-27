@@ -101,13 +101,21 @@ pub enum ShardingError {
     /// Unless, there is some serious bug in Scylla.
     #[error("Server did not provide any sharding information")]
     NoShardInfo,
-    #[error("ShardInfo parameters missing")]
-    MissingShardInfoParameter,
-    #[error("ShardInfo parameters missing after unwrapping")]
-    MissingUnwrapedShardInfoParameter,
-    #[error("ShardInfo contains an invalid number of shards (0)")]
+
+    /// A bug in scylla. Some of the parameters are present, while others are missing.
+    #[error("Missing some sharding info parameters")]
+    MissingSomeShardInfoParameters,
+
+    /// A bug in Scylla. All parameters are present, but some do not contain any values.
+    #[error("Missing some sharding info parameter values")]
+    MissingShardInfoParameterValues,
+
+    /// A bug in Scylla. Number of shards is equal to zero.
+    #[error("Sharding info contains an invalid number of shards (0)")]
     ZeroShards,
-    #[error("ParseIntError encountered while getting ShardInfo")]
+
+    /// A bug in Scylla. Failed to parse string to number.
+    #[error("Failed to parse a sharding info parameter's value: {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
 }
 
@@ -131,7 +139,7 @@ impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
                 // All parameters are missing - most likely a Cassandra cluster.
                 (None, None, None) => return Err(ShardingError::NoShardInfo),
                 // At least one of the parameters is present, but some are missing. A bug in Scylla.
-                _ => return Err(ShardingError::MissingShardInfoParameter),
+                _ => return Err(ShardingError::MissingSomeShardInfoParameters),
             };
 
         // Further unwrap entries (they should be the first entries of their corresponding Vecs).
@@ -140,7 +148,7 @@ impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
             nr_shards_entry.first(),
             msb_ignore_entry.first(),
         ) else {
-            return Err(ShardingError::MissingUnwrapedShardInfoParameter);
+            return Err(ShardingError::MissingShardInfoParameterValues);
         };
 
         let shard = shard_entry.parse::<u16>()?;
