@@ -434,6 +434,28 @@ pub enum ColumnSpecParseErrorKind {
     ColumnTypeParseError(#[from] CqlTypeParseError),
 }
 
+/// An error type returned when deserialization of Custom CQL type name fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CustomTypeParseError {
+    #[error("Malformed simple custom type name: {0}")]
+    UnknownSimpleCustomTypeName(String),
+    #[error("Malformed complex custom type name: {0}")]
+    UnknownComplexCustomTypeName(String),
+    #[error("Bad character encountered")]
+    BadCharacter,
+    #[error("Unexpected end of input")]
+    UnexpectedEndOfInput,
+    #[error("Bad hex string")]
+    BadHexString,
+    #[error("Bytes do not represent a valid UTF-8 string")]
+    InvalidUtf8,
+    #[error("Wrong number of parameters")]
+    InvalidParameterCount,
+    #[error("Unknow parser error")]
+    UnknownParserError,
+}
+
 /// An error type returned when deserialization of CQL type name fails.
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
@@ -454,6 +476,8 @@ pub enum CqlTypeParseError {
     TupleLengthParseError(LowLevelDeserializationError),
     #[error("CQL Type not yet implemented, id: {0}")]
     TypeNotImplemented(u16),
+    #[error("Failed to parse custom CQL type: {0}")]
+    CustomTypeParseError(#[from] CustomTypeParseError),
 }
 
 /// A low level deserialization error.
