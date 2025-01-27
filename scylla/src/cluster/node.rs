@@ -89,13 +89,7 @@ pub struct Node {
 pub type NodeRef<'a> = &'a Arc<Node>;
 
 impl Node {
-    /// Creates new node which starts connecting in the background
-    /// # Arguments
-    ///
-    /// `address` - address to connect to
-    /// `compression` - preferred compression to use
-    /// `datacenter` - optional datacenter name
-    /// `rack` - optional rack name
+    /// Creates a new node which starts connecting in the background.
     pub(crate) fn new(
         peer: PeerEndpoint,
         pool_config: &PoolConfig,
