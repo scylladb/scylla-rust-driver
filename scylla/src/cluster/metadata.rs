@@ -349,7 +349,7 @@ pub enum Strategy {
 
 #[derive(Clone, Debug)]
 struct InvalidCqlType {
-    type_: String,
+    typ: String,
     position: usize,
     reason: String,
 }
@@ -363,7 +363,7 @@ impl fmt::Display for InvalidCqlType {
 impl From<InvalidCqlType> for QueryError {
     fn from(e: InvalidCqlType) -> Self {
         ProtocolError::InvalidCqlType {
-            typ: e.type_,
+            typ: e.typ,
             position: e.position,
             reason: e.reason,
         }
@@ -1626,12 +1626,12 @@ async fn query_tables_schema(
 fn map_string_to_cql_type(type_: &str) -> Result<PreColumnType, InvalidCqlType> {
     match parse_cql_type(ParserState::new(type_)) {
         Err(err) => Err(InvalidCqlType {
-            type_: type_.to_string(),
+            typ: type_.to_string(),
             position: err.calculate_position(type_).unwrap_or(0),
             reason: err.get_cause().to_string(),
         }),
         Ok((_, p)) if !p.is_at_eof() => Err(InvalidCqlType {
-            type_: type_.to_string(),
+            typ: type_.to_string(),
             position: p.calculate_position(type_).unwrap_or(0),
             reason: "leftover characters".to_string(),
         }),
