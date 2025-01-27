@@ -214,9 +214,7 @@ enum PreCqlType {
     Tuple(Vec<PreCqlType>),
     Vector {
         type_: Box<PreCqlType>,
-        /// matches the datatype used by the java driver:
-        /// <https://github.com/apache/cassandra-java-driver/blob/85bb4065098b887d2dda26eb14423ce4fc687045/core/src/main/java/com/datastax/oss/driver/api/core/type/DataTypes.java#L77>
-        dimensions: i32,
+        dimensions: u16,
     },
     UserDefinedType {
         frozen: bool,
@@ -275,9 +273,7 @@ pub enum CqlType {
     Tuple(Vec<CqlType>),
     Vector {
         type_: Box<CqlType>,
-        /// matches the datatype used by the java driver:
-        /// <https://github.com/apache/cassandra-java-driver/blob/85bb4065098b887d2dda26eb14423ce4fc687045/core/src/main/java/com/datastax/oss/driver/api/core/type/DataTypes.java#L77>
-        dimensions: i32,
+        dimensions: u16,
     },
     UserDefinedType {
         frozen: bool,
@@ -1790,7 +1786,7 @@ fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_
         let p = p.skip_white();
         let p = p.accept(",")?;
         let p = p.skip_white();
-        let (size, p) = p.parse_i32()?;
+        let (size, p) = p.parse_u16()?;
         let p = p.skip_white();
         let p = p.accept(">")?;
 

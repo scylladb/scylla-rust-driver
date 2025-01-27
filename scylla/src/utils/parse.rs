@@ -87,18 +87,18 @@ impl<'s> ParserState<'s> {
         me
     }
 
-    /// Parses a sequence of digits and '-' as an integer.
-    /// Consumes characters until it finds a character that is not a digit or '-'.
+    /// Parses a sequence of digits as an integer.
+    /// Consumes characters until it finds a character that is not a digit.
     ///
     /// An error is returned if:
-    /// * The first character is not a digit or '-'
-    /// * The integer is larger than i32
-    pub(crate) fn parse_i32(self) -> ParseResult<(i32, Self)> {
-        let (digits, p) = self.take_while(|c| c.is_ascii_digit() || c == '-');
+    /// * The first character is not a digit
+    /// * The integer is larger than u16
+    pub(crate) fn parse_u16(self) -> ParseResult<(u16, Self)> {
+        let (digits, p) = self.take_while(|c| c.is_ascii_digit());
         if let Ok(value) = digits.parse() {
             Ok((value, p))
         } else {
-            Err(p.error(ParseErrorCause::Other("Expected 32-bit signed integer")))
+            Err(p.error(ParseErrorCause::Other("Expected 16-bit unsigned integer")))
         }
     }
 
