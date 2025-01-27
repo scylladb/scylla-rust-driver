@@ -13,7 +13,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::frame::response::result::{ColumnType, CqlValue, NativeType};
+use crate::frame::response::result::{CollectionType, ColumnType, CqlValue, NativeType};
 use crate::frame::types::vint_encode;
 #[allow(deprecated)]
 use crate::frame::value::{
@@ -814,7 +814,12 @@ fn serialize_sequence<'t, 'b, T: SerializeValue + 't>(
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
     let elt = match typ {
-        ColumnType::List(elt) | ColumnType::Set(elt) => elt,
+        ColumnType::Collection {
+            type_: CollectionType::List(elt),
+        }
+        | ColumnType::Collection {
+            type_: CollectionType::Set(elt),
+        } => elt,
         _ => {
             return Err(mk_typck_err_named(
                 rust_name,
@@ -858,7 +863,9 @@ fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
     let (ktyp, vtyp) = match typ {
-        ColumnType::Map(k, v) => (k, v),
+        ColumnType::Collection {
+            type_: CollectionType::Map(k, v),
+        } => (k, v),
         _ => {
             return Err(mk_typck_err_named(
                 rust_name,
@@ -1624,7 +1631,7 @@ mod doctests {
 pub(crate) mod tests {
     use std::collections::BTreeMap;
 
-    use crate::frame::response::result::{ColumnType, CqlValue, NativeType};
+    use crate::frame::response::result::{CollectionType, ColumnType, CqlValue, NativeType};
     #[allow(deprecated)]
     use crate::frame::value::{Counter, MaybeUnset, Unset, Value, ValueTooBig};
     #[allow(deprecated)]
@@ -1807,7 +1814,9 @@ pub(crate) mod tests {
         // allows us to trigger the right error without going out of memory.
         // Such an array is also created instantaneously.
         let v = &[Unset; 1 << 33] as &[Unset];
-        let typ = ColumnType::List(Box::new(ColumnType::Native(NativeType::Int)));
+        let typ = ColumnType::Collection {
+            type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+        };
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<&[Unset]>());
@@ -1821,7 +1830,9 @@ pub(crate) mod tests {
 
         // Error during serialization of an element
         let v = vec![123_i32];
-        let typ = ColumnType::List(Box::new(ColumnType::Native(NativeType::Double)));
+        let typ = ColumnType::Collection {
+            type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Double))),
+        };
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<i32>>());
@@ -1859,10 +1870,12 @@ pub(crate) mod tests {
 
         // Error during serialization of a key
         let v = BTreeMap::from([(123_i32, 456_i32)]);
-        let typ = ColumnType::Map(
-            Box::new(ColumnType::Native(NativeType::Double)),
-            Box::new(ColumnType::Native(NativeType::Int)),
-        );
+        let typ = ColumnType::Collection {
+            type_: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Double)),
+                Box::new(ColumnType::Native(NativeType::Int)),
+            ),
+        };
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<i32, i32>>());
@@ -1883,10 +1896,12 @@ pub(crate) mod tests {
 
         // Error during serialization of a value
         let v = BTreeMap::from([(123_i32, 456_i32)]);
-        let typ = ColumnType::Map(
-            Box::new(ColumnType::Native(NativeType::Int)),
-            Box::new(ColumnType::Native(NativeType::Double)),
-        );
+        let typ = ColumnType::Collection {
+            type_: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Native(NativeType::Double)),
+            ),
+        };
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<i32, i32>>());
@@ -2193,7 +2208,11 @@ pub(crate) mod tests {
                 ("b".into(), ColumnType::Native(NativeType::Int)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
             ],
         };
@@ -2243,7 +2262,11 @@ pub(crate) mod tests {
                 ("a".into(), ColumnType::Native(NativeType::Text)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
             ],
         };
@@ -2296,7 +2319,11 @@ pub(crate) mod tests {
                 ("b".into(), ColumnType::Native(NativeType::Int)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
             ],
         };
@@ -2309,7 +2336,11 @@ pub(crate) mod tests {
                 ("b".into(), ColumnType::Native(NativeType::Int)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
                 // Unexpected fields
                 ("d".into(), ColumnType::Native(NativeType::Counter)),
@@ -2360,7 +2391,11 @@ pub(crate) mod tests {
                 // Remaining normal field
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
             ],
         };
@@ -2504,7 +2539,11 @@ pub(crate) mod tests {
                 ("b".into(), ColumnType::Native(NativeType::Int)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
             ],
         };
@@ -2555,7 +2594,11 @@ pub(crate) mod tests {
                 ("b".into(), ColumnType::Native(NativeType::Int)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
             ],
         };
@@ -2568,7 +2611,11 @@ pub(crate) mod tests {
                 ("b".into(), ColumnType::Native(NativeType::Int)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
                 // Unexpected field
                 ("d".into(), ColumnType::Native(NativeType::Counter)),
@@ -2605,7 +2652,11 @@ pub(crate) mod tests {
                 ("a".into(), ColumnType::Native(NativeType::Text)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
             ],
         };
@@ -2805,7 +2856,11 @@ pub(crate) mod tests {
                 ("b".into(), ColumnType::Native(NativeType::Int)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
                 // Unexpected field
                 ("d".into(), ColumnType::Native(NativeType::Counter)),
@@ -2831,7 +2886,11 @@ pub(crate) mod tests {
                 ("b_c".into(), ColumnType::Native(NativeType::Counter)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
             ],
         };
@@ -2867,7 +2926,11 @@ pub(crate) mod tests {
                 ("b".into(), ColumnType::Native(NativeType::Int)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
                 // Unexpected field
                 ("d".into(), ColumnType::Native(NativeType::Counter)),
@@ -2908,7 +2971,11 @@ pub(crate) mod tests {
                 ("b".into(), ColumnType::Native(NativeType::Int)),
                 (
                     "c".into(),
-                    ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    ColumnType::Collection {
+                        type_: CollectionType::List(Box::new(ColumnType::Native(
+                            NativeType::BigInt,
+                        ))),
+                    },
                 ),
             ],
         };

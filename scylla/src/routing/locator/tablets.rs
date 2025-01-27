@@ -3,7 +3,7 @@ use itertools::Itertools;
 use lazy_static::lazy_static;
 use scylla_cql::deserialize::value::ListlikeIterator;
 use scylla_cql::deserialize::{DeserializationError, DeserializeValue, FrameSlice, TypeCheckError};
-use scylla_cql::frame::response::result::{ColumnType, NativeType, TableSpec};
+use scylla_cql::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
 use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
@@ -46,10 +46,12 @@ lazy_static! {
     static ref RAW_TABLETS_CQL_TYPE: ColumnType<'static> = ColumnType::Tuple(vec![
         ColumnType::Native(NativeType::BigInt),
         ColumnType::Native(NativeType::BigInt),
-        ColumnType::List(Box::new(ColumnType::Tuple(vec![
-            ColumnType::Native(NativeType::Uuid),
-            ColumnType::Native(NativeType::Int),
-        ]))),
+        ColumnType::Collection {
+            type_: CollectionType::List(Box::new(ColumnType::Tuple(vec![
+                ColumnType::Native(NativeType::Uuid),
+                ColumnType::Native(NativeType::Int),
+            ])))
+        },
     ]);
 }
 
@@ -606,7 +608,9 @@ mod tests {
     use std::sync::Arc;
 
     use bytes::Bytes;
-    use scylla_cql::frame::response::result::{ColumnType, CqlValue, NativeType, TableSpec};
+    use scylla_cql::frame::response::result::{
+        CollectionType, ColumnType, CqlValue, NativeType, TableSpec,
+    };
     use scylla_cql::serialize::value::SerializeValue;
     use scylla_cql::serialize::CellWriter;
     use tracing::debug;
@@ -657,10 +661,12 @@ mod tests {
         let col_type = ColumnType::Tuple(vec![
             ColumnType::Native(NativeType::Ascii),
             ColumnType::Native(NativeType::BigInt),
-            ColumnType::List(Box::new(ColumnType::Tuple(vec![
-                ColumnType::Native(NativeType::Uuid),
-                ColumnType::Native(NativeType::Int),
-            ]))),
+            ColumnType::Collection {
+                type_: CollectionType::List(Box::new(ColumnType::Tuple(vec![
+                    ColumnType::Native(NativeType::Uuid),
+                    ColumnType::Native(NativeType::Int),
+                ]))),
+            },
         ]);
 
         SerializeValue::serialize(&value, &col_type, CellWriter::new(&mut data)).unwrap();

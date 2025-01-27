@@ -10,7 +10,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::deserialize::value::{TupleDeserializationErrorKind, TupleTypeCheckErrorKind};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::response::result::{ColumnType, CqlValue, NativeType};
+use crate::frame::response::result::{CollectionType, ColumnType, CqlValue, NativeType};
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlVarint, CqlVarintBorrowed,
@@ -410,7 +410,9 @@ fn test_null_and_empty() {
         &mut Bytes::new(),
     );
     assert_ser_de_identity(
-        &ColumnType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
+        &ColumnType::Collection {
+            type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
+        },
         &None::<Vec<&str>>,
         &mut Bytes::new(),
     );
@@ -462,7 +464,9 @@ fn test_cql_value() {
     );
 
     assert_ser_de_identity(
-        &ColumnType::Set(Box::new(ColumnType::Native(NativeType::Text))),
+        &ColumnType::Collection {
+            type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text))),
+        },
         &CqlValue::Set(vec![CqlValue::Text("Ala ma kota".to_owned())]),
         &mut Bytes::new(),
     );
@@ -478,8 +482,12 @@ fn test_list_and_set() {
 
     let collection = make_bytes(&collection_contents);
 
-    let list_typ = ColumnType::List(Box::new(ColumnType::Native(NativeType::Ascii)));
-    let set_typ = ColumnType::Set(Box::new(ColumnType::Native(NativeType::Ascii)));
+    let list_typ = ColumnType::Collection {
+        type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
+    };
+    let set_typ = ColumnType::Collection {
+        type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
+    };
 
     // iterator
     let mut iter = deserialize::<ListlikeIterator<&str>>(&list_typ, &collection).unwrap();
@@ -524,8 +532,12 @@ fn test_list_and_set() {
     // Null collections are interpreted as empty collections, to retain convenience:
     // when an empty collection is sent to the DB, the DB nullifies the column instead.
     {
-        let list_typ = ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt)));
-        let set_typ = ColumnType::Set(Box::new(ColumnType::Native(NativeType::BigInt)));
+        let list_typ = ColumnType::Collection {
+            type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+        };
+        let set_typ = ColumnType::Collection {
+            type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::BigInt))),
+        };
         type CollTyp = i64;
 
         fn check<'frame, 'metadata, Collection: DeserializeValue<'frame, 'metadata>>(
@@ -569,10 +581,12 @@ fn test_map() {
 
     let collection = make_bytes(&collection_contents);
 
-    let typ = ColumnType::Map(
-        Box::new(ColumnType::Native(NativeType::Int)),
-        Box::new(ColumnType::Native(NativeType::Ascii)),
-    );
+    let typ = ColumnType::Collection {
+        type_: CollectionType::Map(
+            Box::new(ColumnType::Native(NativeType::Int)),
+            Box::new(ColumnType::Native(NativeType::Ascii)),
+        ),
+    };
 
     // iterator
     let mut iter = deserialize::<MapIterator<i32, &str>>(&typ, &collection).unwrap();
@@ -609,10 +623,12 @@ fn test_map() {
     // Null collections are interpreted as empty collections, to retain convenience:
     // when an empty collection is sent to the DB, the DB nullifies the column instead.
     {
-        let map_typ = ColumnType::Map(
-            Box::new(ColumnType::Native(NativeType::BigInt)),
-            Box::new(ColumnType::Native(NativeType::Ascii)),
-        );
+        let map_typ = ColumnType::Collection {
+            type_: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::BigInt)),
+                Box::new(ColumnType::Native(NativeType::Ascii)),
+            ),
+        };
         type KeyTyp = i64;
         type ValueTyp<'s> = &'s str;
 
@@ -666,7 +682,9 @@ fn test_tuples() {
     // nonempty, varied tuple
     assert_ser_de_identity(
         &ColumnType::Tuple(vec![
-            ColumnType::List(Box::new(ColumnType::Native(NativeType::Boolean))),
+            ColumnType::Collection {
+                type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Boolean))),
+            },
             ColumnType::Native(NativeType::BigInt),
             ColumnType::Native(NativeType::Uuid),
             ColumnType::Native(NativeType::Inet),
@@ -1392,7 +1410,9 @@ fn test_set_or_list_errors() {
         assert_type_check_error!(
             &Bytes::new(),
             BTreeSet<i32>,
-            ColumnType::List(Box::new(ColumnType::Native(NativeType::Int))),
+            ColumnType::Collection {
+                type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+            },
             BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
         );
     }
@@ -1402,14 +1422,18 @@ fn test_set_or_list_errors() {
         assert_type_check_error!(
             &Bytes::new(),
             Vec<i64>,
-            ColumnType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
+            ColumnType::Collection {
+                type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
+            },
             BuiltinTypeCheckErrorKind::SetOrListError(
                 SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(_)
             )
         );
 
         let err = deserialize::<Vec<i64>>(
-            &ColumnType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+            &ColumnType::Collection {
+                type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+            },
             &Bytes::new(),
         )
         .unwrap_err();
@@ -1417,7 +1441,9 @@ fn test_set_or_list_errors() {
         assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
         assert_eq!(
             err.cql_type,
-            ColumnType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+            ColumnType::Collection {
+                type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+            },
         );
         let BuiltinTypeCheckErrorKind::SetOrListError(
             SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(ref err),
@@ -1437,13 +1463,17 @@ fn test_set_or_list_errors() {
     }
 
     {
-        let ser_typ = ColumnType::List(Box::new(ColumnType::Native(NativeType::Int)));
+        let ser_typ = ColumnType::Collection {
+            type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+        };
         let v = vec![123_i32];
         let bytes = serialize(&ser_typ, &v);
 
         {
             let err = deserialize::<Vec<i64>>(
-                &ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                &ColumnType::Collection {
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
                 &bytes,
             )
             .unwrap_err();
@@ -1451,7 +1481,9 @@ fn test_set_or_list_errors() {
             assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
             assert_eq!(
                 err.cql_type,
-                ColumnType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                ColumnType::Collection {
+                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
             );
             let BuiltinDeserializationErrorKind::SetOrListError(
                 SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
@@ -1494,10 +1526,12 @@ fn test_map_errors() {
     // Key type mismatch
     {
         let err = deserialize::<HashMap<i64, bool>>(
-            &ColumnType::Map(
-                Box::new(ColumnType::Native(NativeType::Varint)),
-                Box::new(ColumnType::Native(NativeType::Boolean)),
-            ),
+            &ColumnType::Collection {
+                type_: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Varint)),
+                    Box::new(ColumnType::Native(NativeType::Boolean)),
+                ),
+            },
             &Bytes::new(),
         )
         .unwrap_err();
@@ -1505,10 +1539,12 @@ fn test_map_errors() {
         assert_eq!(err.rust_name, std::any::type_name::<HashMap<i64, bool>>());
         assert_eq!(
             err.cql_type,
-            ColumnType::Map(
-                Box::new(ColumnType::Native(NativeType::Varint)),
-                Box::new(ColumnType::Native(NativeType::Boolean))
-            )
+            ColumnType::Collection {
+                type_: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Varint)),
+                    Box::new(ColumnType::Native(NativeType::Boolean))
+                ),
+            }
         );
         let BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::KeyTypeCheckFailed(ref err)) =
             err.kind
@@ -1529,10 +1565,12 @@ fn test_map_errors() {
     // Value type mismatch
     {
         let err = deserialize::<BTreeMap<i64, &str>>(
-            &ColumnType::Map(
-                Box::new(ColumnType::Native(NativeType::BigInt)),
-                Box::new(ColumnType::Native(NativeType::Boolean)),
-            ),
+            &ColumnType::Collection {
+                type_: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::BigInt)),
+                    Box::new(ColumnType::Native(NativeType::Boolean)),
+                ),
+            },
             &Bytes::new(),
         )
         .unwrap_err();
@@ -1540,10 +1578,12 @@ fn test_map_errors() {
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<i64, &str>>());
         assert_eq!(
             err.cql_type,
-            ColumnType::Map(
-                Box::new(ColumnType::Native(NativeType::BigInt)),
-                Box::new(ColumnType::Native(NativeType::Boolean))
-            )
+            ColumnType::Collection {
+                type_: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::BigInt)),
+                    Box::new(ColumnType::Native(NativeType::Boolean))
+                ),
+            }
         );
         let BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::ValueTypeCheckFailed(
             ref err,
@@ -1567,18 +1607,22 @@ fn test_map_errors() {
 
     // Key length mismatch
     {
-        let ser_typ = ColumnType::Map(
-            Box::new(ColumnType::Native(NativeType::Int)),
-            Box::new(ColumnType::Native(NativeType::Boolean)),
-        );
+        let ser_typ = ColumnType::Collection {
+            type_: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Native(NativeType::Boolean)),
+            ),
+        };
         let v = HashMap::from([(42, false), (2137, true)]);
         let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
 
         let err = deserialize::<HashMap<i64, bool>>(
-            &ColumnType::Map(
-                Box::new(ColumnType::Native(NativeType::BigInt)),
-                Box::new(ColumnType::Native(NativeType::Boolean)),
-            ),
+            &ColumnType::Collection {
+                type_: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::BigInt)),
+                    Box::new(ColumnType::Native(NativeType::Boolean)),
+                ),
+            },
             &bytes,
         )
         .unwrap_err();
@@ -1586,10 +1630,12 @@ fn test_map_errors() {
         assert_eq!(err.rust_name, std::any::type_name::<HashMap<i64, bool>>());
         assert_eq!(
             err.cql_type,
-            ColumnType::Map(
-                Box::new(ColumnType::Native(NativeType::BigInt)),
-                Box::new(ColumnType::Native(NativeType::Boolean))
-            )
+            ColumnType::Collection {
+                type_: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::BigInt)),
+                    Box::new(ColumnType::Native(NativeType::Boolean))
+                ),
+            }
         );
         let BuiltinDeserializationErrorKind::MapError(
             MapDeserializationErrorKind::KeyDeserializationFailed(err),
@@ -1611,18 +1657,22 @@ fn test_map_errors() {
 
     // Value length mismatch
     {
-        let ser_typ = ColumnType::Map(
-            Box::new(ColumnType::Native(NativeType::Int)),
-            Box::new(ColumnType::Native(NativeType::Boolean)),
-        );
+        let ser_typ = ColumnType::Collection {
+            type_: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Native(NativeType::Boolean)),
+            ),
+        };
         let v = HashMap::from([(42, false), (2137, true)]);
         let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
 
         let err = deserialize::<HashMap<i32, i16>>(
-            &ColumnType::Map(
-                Box::new(ColumnType::Native(NativeType::Int)),
-                Box::new(ColumnType::Native(NativeType::SmallInt)),
-            ),
+            &ColumnType::Collection {
+                type_: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Int)),
+                    Box::new(ColumnType::Native(NativeType::SmallInt)),
+                ),
+            },
             &bytes,
         )
         .unwrap_err();
@@ -1630,10 +1680,12 @@ fn test_map_errors() {
         assert_eq!(err.rust_name, std::any::type_name::<HashMap<i32, i16>>());
         assert_eq!(
             err.cql_type,
-            ColumnType::Map(
-                Box::new(ColumnType::Native(NativeType::Int)),
-                Box::new(ColumnType::Native(NativeType::SmallInt))
-            )
+            ColumnType::Collection {
+                type_: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Int)),
+                    Box::new(ColumnType::Native(NativeType::SmallInt))
+                ),
+            }
         );
         let BuiltinDeserializationErrorKind::MapError(
             MapDeserializationErrorKind::ValueDeserializationFailed(err),
@@ -1776,10 +1828,12 @@ fn test_tuple_errors() {
 
 #[test]
 fn test_null_errors() {
-    let ser_typ = ColumnType::Map(
-        Box::new(ColumnType::Native(NativeType::Int)),
-        Box::new(ColumnType::Native(NativeType::Boolean)),
-    );
+    let ser_typ = ColumnType::Collection {
+        type_: CollectionType::Map(
+            Box::new(ColumnType::Native(NativeType::Int)),
+            Box::new(ColumnType::Native(NativeType::Boolean)),
+        ),
+    };
     let v = HashMap::from([(42, false), (2137, true)]);
     let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
 
@@ -1806,10 +1860,12 @@ fn test_udt_errors() {
         {
             // Not UDT
             {
-                let typ = ColumnType::Map(
-                    Box::new(ColumnType::Native(NativeType::Ascii)),
-                    Box::new(ColumnType::Native(NativeType::Blob)),
-                );
+                let typ = ColumnType::Collection {
+                    type_: CollectionType::Map(
+                        Box::new(ColumnType::Native(NativeType::Ascii)),
+                        Box::new(ColumnType::Native(NativeType::Blob)),
+                    ),
+                };
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -1987,10 +2043,12 @@ fn test_udt_errors() {
         {
             // Not UDT
             {
-                let typ = ColumnType::Map(
-                    Box::new(ColumnType::Native(NativeType::Ascii)),
-                    Box::new(ColumnType::Native(NativeType::Blob)),
-                );
+                let typ = ColumnType::Collection {
+                    type_: CollectionType::Map(
+                        Box::new(ColumnType::Native(NativeType::Ascii)),
+                        Box::new(ColumnType::Native(NativeType::Blob)),
+                    ),
+                };
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -2213,20 +2271,26 @@ fn metadata_does_not_bound_deserialized_values() {
         let decoded_str_res = deserialize::<&str>(&str_typ, &bytes);
 
         // list
-        let list_typ = ColumnType::List(Box::new(ColumnType::Native(NativeType::Ascii)));
+        let list_typ = ColumnType::Collection {
+            type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
+        };
         let decoded_vec_str_res = deserialize::<Vec<&str>>(&list_typ, &bytes);
         let decoded_vec_string_res = deserialize::<Vec<String>>(&list_typ, &bytes);
 
         // set
-        let set_typ = ColumnType::Set(Box::new(ColumnType::Native(NativeType::Ascii)));
+        let set_typ = ColumnType::Collection {
+            type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
+        };
         let decoded_set_str_res = deserialize::<HashSet<&str>>(&set_typ, &bytes);
         let decoded_set_string_res = deserialize::<HashSet<String>>(&set_typ, &bytes);
 
         // map
-        let map_typ = ColumnType::Map(
-            Box::new(ColumnType::Native(NativeType::Ascii)),
-            Box::new(ColumnType::Native(NativeType::Int)),
-        );
+        let map_typ = ColumnType::Collection {
+            type_: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Ascii)),
+                Box::new(ColumnType::Native(NativeType::Int)),
+            ),
+        };
         let decoded_map_str_int_res = deserialize::<HashMap<&str, i32>>(&map_typ, &bytes);
 
         // UDT

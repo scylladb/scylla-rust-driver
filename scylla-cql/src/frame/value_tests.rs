@@ -1,7 +1,7 @@
 // TODO: remove this once deprecated items are deleted.
 #![allow(deprecated)]
 
-use crate::frame::response::result::NativeType;
+use crate::frame::response::result::{CollectionType, NativeType};
 use crate::frame::value::{CqlTimeuuid, CqlVarint};
 use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
 use crate::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};
@@ -694,7 +694,9 @@ fn vec_set_serialization() {
     assert_eq!(
         serialized(
             m,
-            ColumnType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+            ColumnType::Collection {
+                type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+            }
         ),
         vec![
             0, 0, 0, 25, // 25 bytes
@@ -712,7 +714,9 @@ fn slice_set_serialization() {
     assert_eq!(
         serialized(
             m.as_ref(),
-            ColumnType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+            ColumnType::Collection {
+                type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+            }
         ),
         vec![
             0, 0, 0, 25, // 25 bytes
@@ -750,7 +754,9 @@ fn hashset_serialization() {
     assert_eq!(
         serialized(
             m,
-            ColumnType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+            ColumnType::Collection {
+                type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+            }
         ),
         vec![
             0, 0, 0, 25, // 25 bytes
@@ -769,10 +775,12 @@ fn hashmap_serialization() {
     assert_eq!(
         serialized(
             m,
-            ColumnType::Map(
-                Box::new(ColumnType::Native(NativeType::Text)),
-                Box::new(ColumnType::Native(NativeType::Int))
-            )
+            ColumnType::Collection {
+                type_: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Text)),
+                    Box::new(ColumnType::Native(NativeType::Int))
+                )
+            }
         ),
         vec![
             0, 0, 0, 49, // 49 bytes
@@ -793,7 +801,9 @@ fn btreeset_serialization() {
     assert_eq!(
         serialized(
             m,
-            ColumnType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+            ColumnType::Collection {
+                type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+            }
         ),
         vec![
             0, 0, 0, 25, // 25 bytes
@@ -811,10 +821,12 @@ fn btreemap_serialization() {
     assert_eq!(
         serialized(
             m,
-            ColumnType::Map(
-                Box::new(ColumnType::Native(NativeType::Text)),
-                Box::new(ColumnType::Native(NativeType::Int))
-            )
+            ColumnType::Collection {
+                type_: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Text)),
+                    Box::new(ColumnType::Native(NativeType::Int))
+                )
+            }
         ),
         vec![
             0, 0, 0, 49, // 49 bytes
