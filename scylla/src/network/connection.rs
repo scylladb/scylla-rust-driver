@@ -29,7 +29,7 @@ use crate::response::{
     NonErrorAuthResponse, NonErrorStartupResponse, PagingState, PagingStateResponse, QueryResponse,
 };
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
-use crate::routing::{Shard, ShardInfo, Sharder};
+use crate::routing::{Shard, ShardInfo, Sharder, ShardingError};
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
@@ -1848,7 +1848,23 @@ pub(super) async fn open_connection(
     };
 
     // If this is ScyllaDB that we connected to, we received sharding information.
-    let shard_info = ShardInfo::try_from(&supported.options).ok();
+    let shard_info = match ShardInfo::try_from(&supported.options) {
+        Ok(info) => Some(info),
+        Err(ShardingError::NoShardInfo) => {
+            tracing::info!(
+                "[{}] No sharding information received. Proceeding with no sharding info.",
+                addr
+            );
+            None
+        }
+        Err(e) => {
+            tracing::error!(
+                "[{}] Error while parsing sharding information: {}. Proceeding with no sharding info.",
+                addr, e
+            );
+            None
+        }
+    };
     let supported_compression = supported
         .options
         .remove(options::COMPRESSION)
