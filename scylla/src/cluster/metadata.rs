@@ -205,7 +205,7 @@ pub struct MaterializedView {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Column {
-    pub type_: ColumnType<'static>,
+    pub typ: ColumnType<'static>,
     pub kind: ColumnKind,
 }
 
@@ -1569,7 +1569,7 @@ async fn query_tables_schema(
         entry.0.insert(
             column_name,
             Column {
-                type_: cql_type,
+                typ: cql_type,
                 kind,
             },
         );

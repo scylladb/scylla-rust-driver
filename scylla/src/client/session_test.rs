@@ -1653,7 +1653,7 @@ async fn test_schema_types_in_metadata() {
     let a = &table_a_columns["a"];
 
     assert_eq!(
-        a.type_,
+        a.typ,
         ColumnType::UserDefinedType {
             frozen: true,
             definition: udt_type_a_def(&ks),
@@ -1663,7 +1663,7 @@ async fn test_schema_types_in_metadata() {
     let b = &table_a_columns["b"];
 
     assert_eq!(
-        b.type_,
+        b.typ,
         ColumnType::UserDefinedType {
             frozen: false,
             definition: udt_type_b_def(&ks),
@@ -1673,7 +1673,7 @@ async fn test_schema_types_in_metadata() {
     let c = &table_a_columns["c"];
 
     assert_eq!(
-        c.type_,
+        c.typ,
         ColumnType::UserDefinedType {
             frozen: true,
             definition: udt_type_c_def(&ks)
@@ -1683,7 +1683,7 @@ async fn test_schema_types_in_metadata() {
     let d = &table_a_columns["d"];
 
     assert_eq!(
-        d.type_,
+        d.typ,
         ColumnType::Collection {
             typ: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Text)),
@@ -1699,7 +1699,7 @@ async fn test_schema_types_in_metadata() {
     let e = &table_a_columns["e"];
 
     assert_eq!(
-        e.type_,
+        e.typ,
         ColumnType::Tuple(vec![
             ColumnType::Native(NativeType::Int),
             ColumnType::Native(NativeType::Text)
@@ -1710,12 +1710,12 @@ async fn test_schema_types_in_metadata() {
 
     let a = &table_b_columns["a"];
 
-    assert_eq!(a.type_, ColumnType::Native(NativeType::Text));
+    assert_eq!(a.typ, ColumnType::Native(NativeType::Text));
 
     let b = &table_b_columns["b"];
 
     assert_eq!(
-        b.type_,
+        b.typ,
         ColumnType::Collection {
             typ: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Int),),
@@ -3242,14 +3242,14 @@ async fn test_vector_type_metadata() {
     let metadata = session.get_cluster_data();
     let columns = &metadata.keyspaces[&ks].tables["t"].columns;
     assert_eq!(
-        columns["b"].type_,
+        columns["b"].typ,
         ColumnType::Vector {
             typ: Box::new(ColumnType::Native(NativeType::Int)),
             dimensions: 4,
         },
     );
     assert_eq!(
-        columns["c"].type_,
+        columns["c"].typ,
         ColumnType::Vector {
             typ: Box::new(ColumnType::Native(NativeType::Text)),
             dimensions: 2,
