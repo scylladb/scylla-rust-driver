@@ -50,8 +50,6 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
 use std::net::{IpAddr, SocketAddr};
-#[cfg(feature = "__tls")]
-use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -1383,24 +1381,30 @@ impl Connection {
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         #[cfg(feature = "__tls")]
         if let Some(tls_config) = &config.tls_config {
-            let mut stream = match tls_config.new_tls()? {
+            let handle = match tls_config.new_tls()? {
                 #[cfg(feature = "openssl-010")]
-                Tls::OpenSsl010(ssl) => tokio_openssl::SslStream::new(ssl, stream)?,
+                Tls::OpenSsl010(ssl) => {
+                    let mut stream = tokio_openssl::SslStream::new(ssl, stream)?;
+                    std::pin::Pin::new(&mut stream)
+                        .connect()
+                        .await
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                    let (task, handle) = Self::router(
+                        config,
+                        stream,
+                        receiver,
+                        error_sender,
+                        orphan_notification_receiver,
+                        router_handle,
+                        node_address,
+                    )
+                    .remote_handle();
+
+                    tokio::task::spawn(task);
+                    handle
+                }
             };
 
-            let _pin = Pin::new(&mut stream).connect().await;
-
-            let (task, handle) = Self::router(
-                config,
-                stream,
-                receiver,
-                error_sender,
-                orphan_notification_receiver,
-                router_handle,
-                node_address,
-            )
-            .remote_handle();
-            tokio::task::spawn(task);
             return Ok(handle);
         }
 
