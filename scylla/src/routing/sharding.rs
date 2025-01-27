@@ -96,7 +96,7 @@ impl Sharder {
 }
 
 #[derive(Clone, Error, Debug)]
-pub enum ShardingError {
+pub(crate) enum ShardingError {
     /// This indicates that we are most likely connected to a Cassandra cluster.
     /// Unless, there is some serious bug in Scylla.
     #[error("Server did not provide any sharding information")]
