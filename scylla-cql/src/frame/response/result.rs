@@ -57,7 +57,7 @@ pub enum ColumnType<'frame> {
         typ: CollectionType<'frame>,
     },
     Vector {
-        type_: Box<ColumnType<'frame>>,
+        typ: Box<ColumnType<'frame>>,
         dimensions: u16,
     },
     UserDefinedType {
@@ -114,8 +114,11 @@ impl ColumnType<'_> {
                 frozen,
                 typ: t.into_owned(),
             },
-            ColumnType::Vector { type_, dimensions } => ColumnType::Vector {
-                type_: Box::new(type_.into_owned()),
+            ColumnType::Vector {
+                typ: type_,
+                dimensions,
+            } => ColumnType::Vector {
+                typ: Box::new(type_.into_owned()),
                 dimensions,
             },
             ColumnType::UserDefinedType {

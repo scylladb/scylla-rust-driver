@@ -246,7 +246,7 @@ impl PreColumnType {
             PreColumnType::Vector { type_, dimensions } => type_
                 .into_cql_type(keyspace_name, keyspace_udts)
                 .map(|inner| ColumnType::Vector {
-                    type_: Box::new(inner),
+                    typ: Box::new(inner),
                     dimensions,
                 }),
             PreColumnType::UserDefinedType { frozen, name } => {

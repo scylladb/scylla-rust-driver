@@ -3244,14 +3244,14 @@ async fn test_vector_type_metadata() {
     assert_eq!(
         columns["b"].type_,
         ColumnType::Vector {
-            type_: Box::new(ColumnType::Native(NativeType::Int)),
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
             dimensions: 4,
         },
     );
     assert_eq!(
         columns["c"].type_,
         ColumnType::Vector {
-            type_: Box::new(ColumnType::Native(NativeType::Text)),
+            typ: Box::new(ColumnType::Native(NativeType::Text)),
             dimensions: 2,
         },
     );
