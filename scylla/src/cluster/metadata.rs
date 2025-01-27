@@ -237,10 +237,7 @@ impl PreColumnType {
             PreColumnType::Native(n) => Ok(ColumnType::Native(n)),
             PreColumnType::Collection { frozen, type_ } => type_
                 .into_collection_type(keyspace_name, keyspace_udts)
-                .map(|inner| ColumnType::Collection {
-                    frozen,
-                    type_: inner,
-                }),
+                .map(|inner| ColumnType::Collection { frozen, typ: inner }),
             PreColumnType::Tuple(t) => t
                 .into_iter()
                 .map(|t| t.into_cql_type(keyspace_name, keyspace_udts))

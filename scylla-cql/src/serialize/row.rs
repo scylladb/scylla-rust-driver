@@ -1291,7 +1291,7 @@ pub(crate) mod tests {
                 "c",
                 ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
         ];
@@ -1318,7 +1318,7 @@ pub(crate) mod tests {
                 "c",
                 ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
             col("b", ColumnType::Native(NativeType::Int)),
@@ -1366,7 +1366,7 @@ pub(crate) mod tests {
                 "c",
                 ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
             // Unexpected last column
@@ -1444,7 +1444,7 @@ pub(crate) mod tests {
                 "c",
                 ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
         ];
@@ -1475,7 +1475,7 @@ pub(crate) mod tests {
                 "c",
                 ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
             col("b", ColumnType::Native(NativeType::Int)),
@@ -1511,7 +1511,7 @@ pub(crate) mod tests {
                 "c",
                 ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
             // Unexpected last column
@@ -1730,7 +1730,7 @@ pub(crate) mod tests {
                 "c",
                 ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             ),
         ];

@@ -814,11 +814,11 @@ fn serialize_sequence<'t, 'b, T: SerializeValue + 't>(
     let elt = match typ {
         ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::List(elt),
+            typ: CollectionType::List(elt),
         }
         | ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Set(elt),
+            typ: CollectionType::Set(elt),
         } => elt,
         _ => {
             return Err(mk_typck_err_named(
@@ -865,7 +865,7 @@ fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
     let (ktyp, vtyp) = match typ {
         ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Map(k, v),
+            typ: CollectionType::Map(k, v),
         } => (k, v),
         _ => {
             return Err(mk_typck_err_named(
@@ -1820,7 +1820,7 @@ pub(crate) mod tests {
         let v = &[Unset; 1 << 33] as &[Unset];
         let typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
         };
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
@@ -1837,7 +1837,7 @@ pub(crate) mod tests {
         let v = vec![123_i32];
         let typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Double))),
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Double))),
         };
         let err = do_serialize_err(v, &typ);
         let err = get_ser_err(&err);
@@ -1878,7 +1878,7 @@ pub(crate) mod tests {
         let v = BTreeMap::from([(123_i32, 456_i32)]);
         let typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Map(
+            typ: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Double)),
                 Box::new(ColumnType::Native(NativeType::Int)),
             ),
@@ -1905,7 +1905,7 @@ pub(crate) mod tests {
         let v = BTreeMap::from([(123_i32, 456_i32)]);
         let typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Map(
+            typ: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Int)),
                 Box::new(ColumnType::Native(NativeType::Double)),
             ),
@@ -2229,7 +2229,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -2287,7 +2287,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -2348,7 +2348,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -2369,7 +2369,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -2428,7 +2428,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -2589,7 +2589,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -2648,7 +2648,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -2669,7 +2669,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -2714,7 +2714,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -2937,7 +2937,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -2971,7 +2971,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -3015,7 +3015,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },
@@ -3064,7 +3064,7 @@ pub(crate) mod tests {
                         "c".into(),
                         ColumnType::Collection {
                             frozen: false,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::BigInt,
                             ))),
                         },

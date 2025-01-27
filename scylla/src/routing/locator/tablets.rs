@@ -48,7 +48,7 @@ lazy_static! {
         ColumnType::Native(NativeType::BigInt),
         ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::List(Box::new(ColumnType::Tuple(vec![
+            typ: CollectionType::List(Box::new(ColumnType::Tuple(vec![
                 ColumnType::Native(NativeType::Uuid),
                 ColumnType::Native(NativeType::Int),
             ])))
@@ -664,7 +664,7 @@ mod tests {
             ColumnType::Native(NativeType::BigInt),
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::List(Box::new(ColumnType::Tuple(vec![
+                typ: CollectionType::List(Box::new(ColumnType::Tuple(vec![
                     ColumnType::Native(NativeType::Uuid),
                     ColumnType::Native(NativeType::Int),
                 ]))),

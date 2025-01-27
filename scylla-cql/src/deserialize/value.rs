@@ -735,11 +735,11 @@ where
         match typ {
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::List(el_t),
+                typ: CollectionType::List(el_t),
             }
             | ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Set(el_t),
+                typ: CollectionType::Set(el_t),
             } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t).map_err(|err| {
                 mk_typck_err::<Self>(
                     typ,
@@ -762,11 +762,11 @@ where
         let elem_typ = match typ {
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::List(elem_typ),
+                typ: CollectionType::List(elem_typ),
             }
             | ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Set(elem_typ),
+                typ: CollectionType::Set(elem_typ),
             } => elem_typ,
             _ => {
                 unreachable!("Typecheck should have prevented this scenario!")
@@ -851,7 +851,7 @@ where
         match typ {
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Set(el_t),
+                typ: CollectionType::Set(el_t),
             } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
@@ -882,7 +882,7 @@ where
         match typ {
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Set(el_t),
+                typ: CollectionType::Set(el_t),
             } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
@@ -956,7 +956,7 @@ where
         match typ {
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(k_t, v_t),
+                typ: CollectionType::Map(k_t, v_t),
             } => {
                 <K as DeserializeValue<'frame, 'metadata>>::type_check(k_t).map_err(|err| {
                     mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::KeyTypeCheckFailed(err))
@@ -977,7 +977,7 @@ where
         let (k_typ, v_typ) = match typ {
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(k_t, v_t),
+                typ: CollectionType::Map(k_t, v_t),
             } => (k_t, v_t),
             _ => {
                 unreachable!("Typecheck should have prevented this scenario!")

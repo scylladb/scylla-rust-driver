@@ -1504,10 +1504,10 @@ fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType<'_>> {
                 "a".into(),
                 ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::Map(
+                    typ: CollectionType::Map(
                         Box::new(ColumnType::Collection {
                             frozen: true,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::Int,
                             ))),
                         }),
@@ -1519,16 +1519,16 @@ fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType<'_>> {
                 "b".into(),
                 ColumnType::Collection {
                     frozen: true,
-                    type_: CollectionType::Map(
+                    typ: CollectionType::Map(
                         Box::new(ColumnType::Collection {
                             frozen: true,
-                            type_: CollectionType::List(Box::new(ColumnType::Native(
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
                                 NativeType::Int,
                             ))),
                         }),
                         Box::new(ColumnType::Collection {
                             frozen: true,
-                            type_: CollectionType::Set(Box::new(ColumnType::Native(
+                            typ: CollectionType::Set(Box::new(ColumnType::Native(
                                 NativeType::Text,
                             ))),
                         }),
@@ -1558,10 +1558,10 @@ fn udt_type_c_def(ks: &str) -> Arc<UserDefinedType<'_>> {
             "a".into(),
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Collection {
                         frozen: true,
-                        type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text))),
+                        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text))),
                     }),
                     Box::new(ColumnType::UserDefinedType {
                         frozen: true,
@@ -1685,10 +1685,10 @@ async fn test_schema_types_in_metadata() {
     assert_eq!(
         d.type_,
         ColumnType::Collection {
-            type_: CollectionType::Map(
+            typ: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Text)),
                 Box::new(ColumnType::Collection {
-                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
                     frozen: true
                 })
             ),
@@ -1717,7 +1717,7 @@ async fn test_schema_types_in_metadata() {
     assert_eq!(
         b.type_,
         ColumnType::Collection {
-            type_: CollectionType::Map(
+            typ: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Int),),
                 Box::new(ColumnType::Native(NativeType::Int),)
             ),

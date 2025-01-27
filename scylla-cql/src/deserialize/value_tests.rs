@@ -415,7 +415,7 @@ fn test_null_and_empty() {
     assert_ser_de_identity(
         &ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
         },
         &None::<Vec<&str>>,
         &mut Bytes::new(),
@@ -470,7 +470,7 @@ fn test_cql_value() {
     assert_ser_de_identity(
         &ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text))),
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text))),
         },
         &CqlValue::Set(vec![CqlValue::Text("Ala ma kota".to_owned())]),
         &mut Bytes::new(),
@@ -489,11 +489,11 @@ fn test_list_and_set() {
 
     let list_typ = ColumnType::Collection {
         frozen: false,
-        type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
+        typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
     };
     let set_typ = ColumnType::Collection {
         frozen: false,
-        type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
+        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
     };
 
     // iterator
@@ -541,11 +541,11 @@ fn test_list_and_set() {
     {
         let list_typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
         };
         let set_typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::BigInt))),
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::BigInt))),
         };
         type CollTyp = i64;
 
@@ -592,7 +592,7 @@ fn test_map() {
 
     let typ = ColumnType::Collection {
         frozen: false,
-        type_: CollectionType::Map(
+        typ: CollectionType::Map(
             Box::new(ColumnType::Native(NativeType::Int)),
             Box::new(ColumnType::Native(NativeType::Ascii)),
         ),
@@ -635,7 +635,7 @@ fn test_map() {
     {
         let map_typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Map(
+            typ: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::BigInt)),
                 Box::new(ColumnType::Native(NativeType::Ascii)),
             ),
@@ -695,7 +695,7 @@ fn test_tuples() {
         &ColumnType::Tuple(vec![
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Boolean))),
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Boolean))),
             },
             ColumnType::Native(NativeType::BigInt),
             ColumnType::Native(NativeType::Uuid),
@@ -1427,7 +1427,7 @@ fn test_set_or_list_errors() {
             BTreeSet<i32>,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
             },
             BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
         );
@@ -1440,7 +1440,7 @@ fn test_set_or_list_errors() {
             Vec<i64>,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
             },
             BuiltinTypeCheckErrorKind::SetOrListError(
                 SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(_)
@@ -1450,7 +1450,7 @@ fn test_set_or_list_errors() {
         let err = deserialize::<Vec<i64>>(
             &ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
             },
             &Bytes::new(),
         )
@@ -1461,7 +1461,7 @@ fn test_set_or_list_errors() {
             err.cql_type,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
             },
         );
         let BuiltinTypeCheckErrorKind::SetOrListError(
@@ -1484,7 +1484,7 @@ fn test_set_or_list_errors() {
     {
         let ser_typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
         };
         let v = vec![123_i32];
         let bytes = serialize(&ser_typ, &v);
@@ -1493,7 +1493,7 @@ fn test_set_or_list_errors() {
             let err = deserialize::<Vec<i64>>(
                 &ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
                 &bytes,
             )
@@ -1504,7 +1504,7 @@ fn test_set_or_list_errors() {
                 err.cql_type,
                 ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
                 },
             );
             let BuiltinDeserializationErrorKind::SetOrListError(
@@ -1550,7 +1550,7 @@ fn test_map_errors() {
         let err = deserialize::<HashMap<i64, bool>>(
             &ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::Varint)),
                     Box::new(ColumnType::Native(NativeType::Boolean)),
                 ),
@@ -1564,7 +1564,7 @@ fn test_map_errors() {
             err.cql_type,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::Varint)),
                     Box::new(ColumnType::Native(NativeType::Boolean))
                 ),
@@ -1591,7 +1591,7 @@ fn test_map_errors() {
         let err = deserialize::<BTreeMap<i64, &str>>(
             &ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::BigInt)),
                     Box::new(ColumnType::Native(NativeType::Boolean)),
                 ),
@@ -1605,7 +1605,7 @@ fn test_map_errors() {
             err.cql_type,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::BigInt)),
                     Box::new(ColumnType::Native(NativeType::Boolean))
                 ),
@@ -1635,7 +1635,7 @@ fn test_map_errors() {
     {
         let ser_typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Map(
+            typ: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Int)),
                 Box::new(ColumnType::Native(NativeType::Boolean)),
             ),
@@ -1646,7 +1646,7 @@ fn test_map_errors() {
         let err = deserialize::<HashMap<i64, bool>>(
             &ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::BigInt)),
                     Box::new(ColumnType::Native(NativeType::Boolean)),
                 ),
@@ -1660,7 +1660,7 @@ fn test_map_errors() {
             err.cql_type,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::BigInt)),
                     Box::new(ColumnType::Native(NativeType::Boolean))
                 ),
@@ -1688,7 +1688,7 @@ fn test_map_errors() {
     {
         let ser_typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Map(
+            typ: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Int)),
                 Box::new(ColumnType::Native(NativeType::Boolean)),
             ),
@@ -1699,7 +1699,7 @@ fn test_map_errors() {
         let err = deserialize::<HashMap<i32, i16>>(
             &ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::Int)),
                     Box::new(ColumnType::Native(NativeType::SmallInt)),
                 ),
@@ -1713,7 +1713,7 @@ fn test_map_errors() {
             err.cql_type,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::Int)),
                     Box::new(ColumnType::Native(NativeType::SmallInt))
                 ),
@@ -1862,7 +1862,7 @@ fn test_tuple_errors() {
 fn test_null_errors() {
     let ser_typ = ColumnType::Collection {
         frozen: false,
-        type_: CollectionType::Map(
+        typ: CollectionType::Map(
             Box::new(ColumnType::Native(NativeType::Int)),
             Box::new(ColumnType::Native(NativeType::Boolean)),
         ),
@@ -1895,7 +1895,7 @@ fn test_udt_errors() {
             {
                 let typ = ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::Map(
+                    typ: CollectionType::Map(
                         Box::new(ColumnType::Native(NativeType::Ascii)),
                         Box::new(ColumnType::Native(NativeType::Blob)),
                     ),
@@ -2079,7 +2079,7 @@ fn test_udt_errors() {
             {
                 let typ = ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::Map(
+                    typ: CollectionType::Map(
                         Box::new(ColumnType::Native(NativeType::Ascii)),
                         Box::new(ColumnType::Native(NativeType::Blob)),
                     ),
@@ -2308,7 +2308,7 @@ fn metadata_does_not_bound_deserialized_values() {
         // list
         let list_typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
         };
         let decoded_vec_str_res = deserialize::<Vec<&str>>(&list_typ, &bytes);
         let decoded_vec_string_res = deserialize::<Vec<String>>(&list_typ, &bytes);
@@ -2316,7 +2316,7 @@ fn metadata_does_not_bound_deserialized_values() {
         // set
         let set_typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
         };
         let decoded_set_str_res = deserialize::<HashSet<&str>>(&set_typ, &bytes);
         let decoded_set_string_res = deserialize::<HashSet<String>>(&set_typ, &bytes);
@@ -2324,7 +2324,7 @@ fn metadata_does_not_bound_deserialized_values() {
         // map
         let map_typ = ColumnType::Collection {
             frozen: false,
-            type_: CollectionType::Map(
+            typ: CollectionType::Map(
                 Box::new(ColumnType::Native(NativeType::Ascii)),
                 Box::new(ColumnType::Native(NativeType::Int)),
             ),

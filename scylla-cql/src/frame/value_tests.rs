@@ -697,7 +697,7 @@ fn vec_set_serialization() {
             m,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+                typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
             }
         ),
         vec![
@@ -718,7 +718,7 @@ fn slice_set_serialization() {
             m.as_ref(),
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+                typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
             }
         ),
         vec![
@@ -759,7 +759,7 @@ fn hashset_serialization() {
             m,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+                typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
             }
         ),
         vec![
@@ -781,7 +781,7 @@ fn hashmap_serialization() {
             m,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::Text)),
                     Box::new(ColumnType::Native(NativeType::Int))
                 )
@@ -808,7 +808,7 @@ fn btreeset_serialization() {
             m,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
+                typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text)))
             }
         ),
         vec![
@@ -829,7 +829,7 @@ fn btreemap_serialization() {
             m,
             ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
+                typ: CollectionType::Map(
                     Box::new(ColumnType::Native(NativeType::Text)),
                     Box::new(ColumnType::Native(NativeType::Int))
                 )
