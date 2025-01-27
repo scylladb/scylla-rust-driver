@@ -1488,7 +1488,10 @@ impl Connection {
                 #[cfg(feature = "openssl")]
                 Tls::OpenSsl(ssl) => {
                     let mut stream = tokio_openssl::SslStream::new(ssl, stream)?;
-                    let _pin = std::pin::Pin::new(&mut stream).connect().await;
+                    std::pin::Pin::new(&mut stream)
+                        .connect()
+                        .await
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                     let (task, handle) = Self::router(
                         config,
                         stream,
