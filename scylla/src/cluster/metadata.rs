@@ -218,7 +218,7 @@ enum PreColumnType {
     },
     Tuple(Vec<PreColumnType>),
     Vector {
-        type_: Box<PreColumnType>,
+        typ: Box<PreColumnType>,
         dimensions: u16,
     },
     UserDefinedType {
@@ -243,7 +243,10 @@ impl PreColumnType {
                 .map(|t| t.into_cql_type(keyspace_name, keyspace_udts))
                 .collect::<Result<Vec<ColumnType>, MissingUserDefinedType>>()
                 .map(ColumnType::Tuple),
-            PreColumnType::Vector { type_, dimensions } => type_
+            PreColumnType::Vector {
+                typ: type_,
+                dimensions,
+            } => type_
                 .into_cql_type(keyspace_name, keyspace_udts)
                 .map(|inner| ColumnType::Vector {
                     typ: Box::new(inner),
@@ -1131,7 +1134,7 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), Quer
             PreColumnType::Tuple(types) => types
                 .iter()
                 .for_each(|type_| do_with_referenced_udts(what, type_)),
-            PreColumnType::Vector { type_, .. } => do_with_referenced_udts(what, type_),
+            PreColumnType::Vector { typ: type_, .. } => do_with_referenced_udts(what, type_),
             PreColumnType::UserDefinedType { name, .. } => what(name),
         }
     }
@@ -1704,7 +1707,7 @@ fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreColumnType, ParserState
         let p = p.accept(">")?;
 
         let typ = PreColumnType::Vector {
-            type_: Box::new(inner_type),
+            typ: Box::new(inner_type),
             dimensions: size,
         };
 
@@ -1932,14 +1935,14 @@ mod tests {
             (
                 "vector<int, 5>",
                 PreColumnType::Vector {
-                    type_: Box::new(PreColumnType::Native(NativeType::Int)),
+                    typ: Box::new(PreColumnType::Native(NativeType::Int)),
                     dimensions: 5,
                 },
             ),
             (
                 "vector<text, 1234>",
                 PreColumnType::Vector {
-                    type_: Box::new(PreColumnType::Native(NativeType::Text)),
+                    typ: Box::new(PreColumnType::Native(NativeType::Text)),
                     dimensions: 1234,
                 },
             ),
