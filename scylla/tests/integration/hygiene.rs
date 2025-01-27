@@ -7,69 +7,164 @@ macro_rules! test_crate {
         extern crate $name as _scylla;
 
         #[derive(
-            _scylla::macros::FromRow,
-            _scylla::macros::FromUserType,
-            _scylla::macros::IntoUserType,
-            _scylla::macros::ValueList,
+            _scylla::macros::DeserializeRow,
+            _scylla::macros::DeserializeValue,
+            _scylla::macros::SerializeValue,
+            _scylla::macros::SerializeRow,
             PartialEq,
             Debug,
         )]
-        #[scylla_crate = "_scylla"]
+        #[scylla(crate = _scylla)]
         struct TestStruct {
             a: ::core::primitive::i32,
         }
         #[test]
-        fn test_rename() {
-            use _scylla::cql_to_rust::{FromCqlVal, FromRow};
-            use _scylla::frame::response::result::CqlValue;
-            use _scylla::frame::value::{Value, ValueList};
+        fn test_impl_traits() {
+            use _scylla::deserialize::DeserializeRow;
+            use _scylla::deserialize::DeserializeValue;
+            use _scylla::serialize::row::SerializeRow;
+            use _scylla::serialize::value::SerializeValue;
 
             fn derived<T>()
             where
-                T: FromRow + FromCqlVal<CqlValue> + Value + ValueList,
+                T: for<'x> DeserializeRow<'x, 'x>
+                    + for<'x> DeserializeValue<'x, 'x>
+                    + SerializeValue
+                    + SerializeRow,
             {
             }
             derived::<TestStruct>();
         }
         #[test]
-        fn test_derives() {
+        fn test_row_ser_deser() {
+            use crate::utils::setup_tracing;
+            use ::bytes::Bytes;
             use ::core::primitive::u8;
             use ::std::assert_eq;
-            use ::std::option::Option::Some;
             use ::std::vec::Vec;
-            use _scylla::_macro_internal::{CqlValue, Row, Value, ValueList};
-            use _scylla::cql_to_rust::FromRow;
+            use _scylla::deserialize::row::ColumnIterator;
+            use _scylla::deserialize::DeserializeRow;
+            use _scylla::deserialize::FrameSlice;
+            use _scylla::frame::response::result::ColumnSpec;
+            use _scylla::frame::response::result::ColumnType;
+            use _scylla::frame::response::result::TableSpec;
+            use _scylla::serialize::row::RowSerializationContext;
+            use _scylla::serialize::row::SerializeRow;
+            use _scylla::serialize::writers::RowWriter;
+
+            setup_tracing();
 
             let test_struct = TestStruct { a: 16 };
-            fn get_row() -> Row {
-                Row {
-                    columns: ::std::vec![Some(CqlValue::Int(16))],
-                }
+            let tuple_with_same_layout: (i32,) = (16,);
+            let column_types = &[ColumnSpec::borrowed(
+                "a",
+                ColumnType::Int,
+                TableSpec::borrowed("ks", "table"),
+            )];
+            let ctx = RowSerializationContext::from_specs(column_types);
+
+            let mut buf_struct = Vec::<u8>::new();
+            {
+                let mut writer = RowWriter::new(&mut buf_struct);
+                SerializeRow::serialize(&test_struct, &ctx, &mut writer).unwrap();
             }
 
-            let st: TestStruct = FromRow::from_row(get_row()).unwrap();
-            assert_eq!(st, test_struct);
+            let mut buf_tuple = Vec::<u8>::new();
+            {
+                let mut writer = RowWriter::new(&mut buf_tuple);
+                SerializeRow::serialize(&tuple_with_same_layout, &ctx, &mut writer).unwrap();
+            }
 
-            let udt = get_row().into_typed::<TestStruct>().unwrap();
-            assert_eq!(udt, test_struct);
+            assert_eq!(buf_struct, buf_tuple);
 
-            let mut buf = Vec::<u8>::new();
-            test_struct.serialize(&mut buf).unwrap();
-            let mut buf_assert = Vec::<u8>::new();
-            let tuple_with_same_layout: (i32,) = (16,);
-            tuple_with_same_layout.serialize(&mut buf_assert).unwrap();
-            assert_eq!(buf, buf_assert);
+            {
+                assert!(<TestStruct as DeserializeRow>::type_check(column_types).is_ok());
+                let deserialized_struct: TestStruct =
+                    <TestStruct as DeserializeRow>::deserialize(ColumnIterator::new(
+                        column_types,
+                        FrameSlice::new(&Bytes::copy_from_slice(&buf_struct)),
+                    ))
+                    .unwrap();
+                assert_eq!(test_struct, deserialized_struct);
+            }
 
-            let sv = test_struct.serialized().unwrap().into_owned();
-            let sv2 = tuple_with_same_layout.serialized().unwrap().into_owned();
-            assert_eq!(sv, sv2);
+            {
+                assert!(<(i32,) as DeserializeRow>::type_check(column_types).is_ok());
+                let deserialized_tuple: (i32,) =
+                    <(i32,) as DeserializeRow>::deserialize(ColumnIterator::new(
+                        column_types,
+                        FrameSlice::new(&Bytes::copy_from_slice(&buf_tuple)),
+                    ))
+                    .unwrap();
+                assert_eq!(tuple_with_same_layout, deserialized_tuple);
+            }
         }
 
-        #[allow(unused)]
-        #[derive(_scylla::macros::SerializeValue, _scylla::macros::SerializeRow)]
-        #[scylla(crate = _scylla)]
-        struct TestStructNew {
-            x: ::core::primitive::i32,
+        #[test]
+        fn test_value_ser_deser() {
+            use crate::utils::setup_tracing;
+            use ::bytes::Bytes;
+            use ::core::primitive::u8;
+            use ::std::assert_eq;
+            use ::std::convert::Into;
+            use ::std::option::Option::Some;
+            use ::std::string::ToString;
+            use ::std::vec;
+            use ::std::vec::Vec;
+            use ::tracing::info;
+            use _scylla::deserialize::DeserializeValue;
+            use _scylla::deserialize::FrameSlice;
+            use _scylla::frame::response::result::{ColumnType, CqlValue};
+            use _scylla::serialize::value::SerializeValue;
+            use _scylla::serialize::writers::CellWriter;
+
+            setup_tracing();
+
+            let test_struct = TestStruct { a: 16 };
+            let value_with_same_layout: CqlValue = CqlValue::UserDefinedType {
+                keyspace: "some_ks".to_string(),
+                type_name: "some_type".to_string(),
+                fields: vec![("a".to_string(), Some(CqlValue::Int(16)))],
+            };
+            let udt_type = ColumnType::UserDefinedType {
+                type_name: "some_type".into(),
+                keyspace: "some_ks".into(),
+                field_types: vec![("a".into(), ColumnType::Int)],
+            };
+
+            let mut buf_struct = Vec::<u8>::new();
+            {
+                let writer = CellWriter::new(&mut buf_struct);
+                SerializeValue::serialize(&test_struct, &udt_type, writer).unwrap();
+                info!("struct buffer: {:?}", buf_struct);
+            }
+
+            let mut buf_value = Vec::<u8>::new();
+            {
+                let writer = CellWriter::new(&mut buf_value);
+                SerializeValue::serialize(&value_with_same_layout, &udt_type, writer).unwrap();
+                info!("value buffer: {:?}", buf_struct);
+            }
+
+            assert_eq!(buf_struct, buf_value);
+
+            {
+                assert!(<TestStruct as DeserializeValue>::type_check(&udt_type).is_ok());
+                let bytes_buf = Bytes::copy_from_slice(&buf_struct);
+                let slice = FrameSlice::new(&bytes_buf).read_cql_bytes().unwrap();
+                let deserialized_struct: TestStruct =
+                    <TestStruct as DeserializeValue>::deserialize(&udt_type, slice).unwrap();
+                assert_eq!(test_struct, deserialized_struct);
+            }
+
+            {
+                assert!(<CqlValue as DeserializeValue>::type_check(&udt_type).is_ok());
+                let bytes_buf = Bytes::copy_from_slice(&buf_value);
+                let slice = FrameSlice::new(&bytes_buf).read_cql_bytes().unwrap();
+                let deserialized_value: CqlValue =
+                    <CqlValue as DeserializeValue>::deserialize(&udt_type, slice).unwrap();
+                assert_eq!(value_with_same_layout, deserialized_value);
+            }
         }
     };
 }
