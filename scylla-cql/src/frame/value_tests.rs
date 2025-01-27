@@ -3,10 +3,10 @@
 
 use crate::frame::value::{CqlTimeuuid, CqlVarint};
 use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
-use crate::types::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};
-use crate::types::serialize::row::{RowSerializationContext, SerializeRow};
-use crate::types::serialize::value::SerializeValue;
-use crate::types::serialize::{CellWriter, RowWriter};
+use crate::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};
+use crate::serialize::row::{RowSerializationContext, SerializeRow};
+use crate::serialize::value::SerializeValue;
+use crate::serialize::{CellWriter, RowWriter};
 
 use super::response::result::{ColumnSpec, ColumnType, TableSpec};
 use super::value::{

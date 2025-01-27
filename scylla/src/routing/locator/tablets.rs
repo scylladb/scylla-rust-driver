@@ -1,11 +1,9 @@
 use bytes::Bytes;
 use itertools::Itertools;
 use lazy_static::lazy_static;
+use scylla_cql::deserialize::value::ListlikeIterator;
+use scylla_cql::deserialize::{DeserializationError, DeserializeValue, FrameSlice, TypeCheckError};
 use scylla_cql::frame::response::result::{ColumnType, TableSpec};
-use scylla_cql::types::deserialize::value::ListlikeIterator;
-use scylla_cql::types::deserialize::{
-    DeserializationError, DeserializeValue, FrameSlice, TypeCheckError,
-};
 use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
@@ -609,8 +607,8 @@ mod tests {
 
     use bytes::Bytes;
     use scylla_cql::frame::response::result::{ColumnType, CqlValue, TableSpec};
-    use scylla_cql::types::serialize::value::SerializeValue;
-    use scylla_cql::types::serialize::CellWriter;
+    use scylla_cql::serialize::value::SerializeValue;
+    use scylla_cql::serialize::CellWriter;
     use tracing::debug;
     use uuid::Uuid;
 

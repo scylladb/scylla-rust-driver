@@ -277,12 +277,12 @@ impl TypeCheckAssumeOrderGenerator<'_> {
                     // We may have a stored CQL UDT field that did not match the previous Rust struct's field.
                     .take()
                     // If not, simply fetch another CQL UDT field from the iterator.
-                    .or_else(|| cql_field_iter.next()) {
+                    .or_else(|| ::std::iter::Iterator::next(&mut cql_field_iter)) {
                         ::std::option::Option::Some(cql_field) => cql_field,
                         // In case the Rust field allows default-initialisation and there are no more CQL fields,
                         // simply assume it's going to be default-initialised.
                         ::std::option::Option::None if #default_when_missing => break 'field,
-                        ::std::option::Option::None => return Err(too_few_fields()),
+                        ::std::option::Option::None => return ::std::result::Result::Err(too_few_fields()),
                 };
                 let (cql_field_name, cql_field_typ) = next_cql_field;
 
@@ -342,7 +342,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
                 parse_quote! {
                     if let ::std::option::Option::Some((cql_field_name, cql_field_typ)) = saved_cql_field
                         .take()
-                        .or_else(|| cql_field_iter.next()) {
+                        .or_else(|| ::std::iter::Iterator::next(&mut cql_field_iter)) {
                         return ::std::result::Result::Err(#macro_internal::mk_value_typck_err::<Self>(
                             typ,
                             #macro_internal::DeserUdtTypeCheckErrorKind::ExcessFieldInUdt {
@@ -364,10 +364,10 @@ impl TypeCheckAssumeOrderGenerator<'_> {
                 let too_few_fields = || #macro_internal::mk_value_typck_err::<Self>(
                     typ,
                     #macro_internal::DeserUdtTypeCheckErrorKind::TooFewFields {
-                        required_fields: vec![
+                        required_fields: ::std::vec![
                             #(stringify!(#required_fields_names),)*
                         ],
-                        present_fields: fields.iter().map(|(name, _typ)| name.clone().into_owned()).collect(),
+                        present_fields: ::std::iter::Iterator::collect(::std::iter::Iterator::map(fields.iter(), |(name, _typ)| ::std::clone::Clone::clone(name).into_owned())),
                     }
                 );
 
@@ -420,7 +420,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
                 .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
                     typ,
                     #macro_internal::UdtDeserializationErrorKind::FieldDeserializationFailed {
-                        field_name: #cql_name_literal.to_owned(),
+                        field_name: <_ as ::std::borrow::ToOwned>::to_owned(#cql_name_literal),
                         err,
                     }
                 ))?
@@ -455,7 +455,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
         } else {
             parse_quote! {
                 {
-                    panic!(
+                    ::std::panic!(
                         "type check should have prevented this scenario - field name mismatch! Rust field name {}, CQL field name {}",
                         #cql_name_literal,
                         cql_field_name
@@ -485,7 +485,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
         } else {
             parse_quote! {
                 // Type check has ensured that there are enough CQL UDT fields.
-                panic!("Too few CQL UDT fields - type check should have prevented this scenario!")
+                ::std::panic!("Too few CQL UDT fields - type check should have prevented this scenario!")
             }
         };
 
@@ -495,20 +495,21 @@ impl DeserializeAssumeOrderGenerator<'_> {
                     .take()
                     .map(::std::result::Result::Ok)
                     .or_else(|| {
-                        cql_field_iter.next()
-                            .map(|(specs, value_res)| value_res.map(|value| (specs, value)))
+                        ::std::option::Option::map(
+                            ::std::iter::Iterator::next(&mut cql_field_iter),
+                            |(specs, value_res)| value_res.map(|value| (specs, value)))
                     })
                     .transpose()
                     // Propagate deserialization errors.
                     .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
                         typ,
                         #macro_internal::UdtDeserializationErrorKind::FieldDeserializationFailed {
-                            field_name: #cql_name_literal.to_owned(),
+                            field_name: <_ as ::std::borrow::ToOwned>::to_owned(#cql_name_literal),
                             err,
                         }
                     ))?;
 
-                if let Some(next_cql_field) = maybe_next_cql_field {
+                if let ::std::option::Option::Some(next_cql_field) = maybe_next_cql_field {
                     let ((cql_field_name, cql_field_typ), value) = next_cql_field;
 
                     // The value can be either
@@ -672,7 +673,7 @@ impl TypeCheckUnorderedGenerator<'_> {
                     #macro_internal::mk_value_typck_err::<Self>(
                         typ,
                         #macro_internal::DeserUdtTypeCheckErrorKind::ExcessFieldInUdt {
-                            db_field_name: unknown.to_owned(),
+                            db_field_name: <_ as ::std::borrow::ToOwned>::to_owned(unknown),
                         }
                     )
                 )
@@ -701,7 +702,7 @@ impl TypeCheckUnorderedGenerator<'_> {
 
                 for (cql_field_name, cql_field_typ) in cql_fields {
                     // Pattern match on the name and verify that the type is correct.
-                    match std::ops::Deref::deref(cql_field_name) {
+                    match ::std::ops::Deref::deref(cql_field_name) {
                         #(#rust_nonskipped_field_names => #type_check_blocks,)*
                         unknown => #excess_udt_field_action,
                     }
@@ -754,7 +755,7 @@ impl DeserializeUnorderedGenerator<'_> {
         } else {
             let cql_name_literal = field.cql_name_literal();
             parse_quote! {
-                #deserialize_field.unwrap_or_else(|| panic!(
+                #deserialize_field.unwrap_or_else(|| ::std::panic!(
                     "field {} missing in UDT - type check should have prevented this!",
                     #cql_name_literal
                 ))
@@ -777,7 +778,7 @@ impl DeserializeUnorderedGenerator<'_> {
                 .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
                     typ,
                     #macro_internal::UdtDeserializationErrorKind::FieldDeserializationFailed {
-                        field_name: #cql_name_literal.to_owned(),
+                        field_name: <_ as ::std::borrow::ToOwned>::to_owned(#cql_name_literal),
                         err,
                     }
                 ))?
@@ -872,7 +873,7 @@ impl DeserializeUnorderedGenerator<'_> {
                         }
                     ))?;
                     // Pattern match on the field name and deserialize.
-                    match std::ops::Deref::deref(cql_field_name) {
+                    match ::std::ops::Deref::deref(cql_field_name) {
                         #(#rust_nonskipped_field_names => #deserialize_blocks,)*
                         unknown => {
                             // Assuming we type checked sucessfully, this must be an excess field.

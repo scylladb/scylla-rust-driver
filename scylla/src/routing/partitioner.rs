@@ -9,7 +9,8 @@
 //!     - the partitioner employed when using CDC (_Change Data Capture_).
 
 use bytes::Buf;
-use scylla_cql::{frame::types::RawValue, types::serialize::row::SerializedValues};
+use scylla_cql::frame::types::RawValue;
+use scylla_cql::serialize::row::SerializedValues;
 use std::num::Wrapping;
 
 use crate::{prepared_statement::TokenCalculationError, routing::Token};

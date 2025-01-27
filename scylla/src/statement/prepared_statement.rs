@@ -3,8 +3,8 @@ use scylla_cql::frame::response::result::{
     ColumnSpec, PartitionKeyIndex, ResultMetadata, TableSpec,
 };
 use scylla_cql::frame::types::RawValue;
-use scylla_cql::types::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
-use scylla_cql::types::serialize::SerializationError;
+use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
+use scylla_cql::serialize::SerializationError;
 use smallvec::{smallvec, SmallVec};
 use std::convert::TryInto;
 use std::sync::Arc;
@@ -600,12 +600,10 @@ impl<'ps> PartitionKey<'ps> {
 
 #[cfg(test)]
 mod tests {
-    use scylla_cql::{
-        frame::response::result::{
-            ColumnSpec, ColumnType, PartitionKeyIndex, PreparedMetadata, TableSpec,
-        },
-        types::serialize::row::SerializedValues,
+    use scylla_cql::frame::response::result::{
+        ColumnSpec, ColumnType, PartitionKeyIndex, PreparedMetadata, TableSpec,
     };
+    use scylla_cql::serialize::row::SerializedValues;
 
     use crate::{prepared_statement::PartitionKey, test_utils::setup_tracing};
 

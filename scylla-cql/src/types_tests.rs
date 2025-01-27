@@ -2,9 +2,9 @@ mod derive_macros_integration {
     mod value {
         use bytes::Bytes;
 
+        use crate::deserialize::value::tests::{deserialize, udt_def_with_fields};
         use crate::frame::response::result::ColumnType;
-        use crate::types::deserialize::value::tests::{deserialize, udt_def_with_fields};
-        use crate::types::serialize::value::tests::do_serialize;
+        use crate::serialize::value::tests::do_serialize;
 
         #[test]
         fn derive_serialize_and_deserialize_value_loose_ordering() {
@@ -153,10 +153,10 @@ mod derive_macros_integration {
     mod row {
         use bytes::Bytes;
 
+        use crate::deserialize::row::tests::deserialize;
+        use crate::deserialize::tests::spec;
         use crate::frame::response::result::ColumnType;
-        use crate::types::deserialize::row::tests::deserialize;
-        use crate::types::deserialize::tests::spec;
-        use crate::types::serialize::row::tests::do_serialize;
+        use crate::serialize::row::tests::do_serialize;
 
         #[test]
         fn derive_serialize_and_deserialize_row_loose_ordering() {

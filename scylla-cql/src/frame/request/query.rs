@@ -1,9 +1,7 @@
 use std::{borrow::Cow, num::TryFromIntError, ops::ControlFlow, sync::Arc};
 
-use crate::{
-    frame::{frame_errors::CqlRequestSerializationError, types::SerialConsistency},
-    types::serialize::row::SerializedValues,
-};
+use crate::frame::{frame_errors::CqlRequestSerializationError, types::SerialConsistency};
+use crate::serialize::row::SerializedValues;
 use bytes::{Buf, BufMut};
 use thiserror::Error;
 

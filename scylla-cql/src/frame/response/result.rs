@@ -1,5 +1,11 @@
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::deserialize::result::{RawRowIterator, TypedRowIterator};
+use crate::deserialize::row::DeserializeRow;
+use crate::deserialize::value::{
+    mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
+};
+use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
     LowLevelDeserializationError, PreparedMetadataParseError, PreparedParseError,
@@ -13,12 +19,6 @@ use crate::frame::types;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
-use crate::types::deserialize::result::{RawRowIterator, TypedRowIterator};
-use crate::types::deserialize::row::DeserializeRow;
-use crate::types::deserialize::value::{
-    mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
-};
-use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
 use std::fmt::Debug;

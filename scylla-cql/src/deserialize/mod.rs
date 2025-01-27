@@ -88,8 +88,8 @@
 //!
 //! ```rust
 //! # use scylla_cql::frame::response::result::ColumnType;
-//! # use scylla_cql::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-//! # use scylla_cql::types::deserialize::value::DeserializeValue;
+//! # use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+//! # use scylla_cql::deserialize::value::DeserializeValue;
 //! use thiserror::Error;
 //! struct MyVec(Vec<u8>);
 //! #[derive(Debug, Error)]
@@ -129,8 +129,8 @@
 //!
 //! ```rust
 //! # use scylla_cql::frame::response::result::ColumnType;
-//! # use scylla_cql::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-//! # use scylla_cql::types::deserialize::value::DeserializeValue;
+//! # use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+//! # use scylla_cql::deserialize::value::DeserializeValue;
 //! use thiserror::Error;
 //! struct MySlice<'a>(&'a [u8]);
 //! #[derive(Debug, Error)]
@@ -180,8 +180,8 @@
 //!
 //! ```rust
 //! # use scylla_cql::frame::response::result::ColumnType;
-//! # use scylla_cql::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-//! # use scylla_cql::types::deserialize::value::DeserializeValue;
+//! # use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+//! # use scylla_cql::deserialize::value::DeserializeValue;
 //! # use bytes::Bytes;
 //! use thiserror::Error;
 //! struct MyBytes(Bytes);

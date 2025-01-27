@@ -472,7 +472,7 @@ impl Generator for FieldOrderedGenerator<'_> {
 
         // Create a peekable iterator over fields.
         statements.push(parse_quote! {
-            let mut field_iter = field_types.iter().peekable();
+            let mut field_iter = ::std::iter::Iterator::peekable(field_types.iter());
         });
 
         // Serialize each field
@@ -488,15 +488,15 @@ impl Generator for FieldOrderedGenerator<'_> {
             };
             statements.push(parse_quote! {
                 match field_iter.peek() {
-                    Some((field_name, typ)) => {
+                    ::std::option::Option::Some((field_name, typ)) => {
                         if #name_check_expression {
                             // Advance the iterator.
-                            field_iter.next();
+                            ::std::iter::Iterator::next(&mut field_iter);
 
                             let sub_builder = #crate_path::CellValueBuilder::make_sub_writer(&mut builder);
                             match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, typ, sub_builder) {
-                                Ok(_proof) => {},
-                                Err(err) => {
+                                ::std::result::Result::Ok(_proof) => {},
+                                ::std::result::Result::Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(
                                         #crate_path::UdtSerializationErrorKind::FieldSerializationFailed {
                                             field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),
@@ -515,7 +515,7 @@ impl Generator for FieldOrderedGenerator<'_> {
                         }
                         // Else simply ignore the field.
                     }
-                    None => {
+                    ::std::option::Option::None => {
                         if !#field_can_be_ignored {
                             return ::std::result::Result::Err(mk_typck_err(
                                 #crate_path::UdtTypeCheckErrorKind::ValueMissingForUdtField {
@@ -532,7 +532,7 @@ impl Generator for FieldOrderedGenerator<'_> {
         if self.ctx.attributes.forbid_excess_udt_fields {
             // Check whether there are some fields remaining
             statements.push(parse_quote! {
-                if let Some((field_name, typ)) = field_iter.next() {
+                if let ::std::option::Option::Some((field_name, typ)) = ::std::iter::Iterator::next(&mut field_iter) {
                     return ::std::result::Result::Err(mk_typck_err(
                         #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
                             field_name: <_ as ::std::clone::Clone>::clone(field_name).into_owned(),

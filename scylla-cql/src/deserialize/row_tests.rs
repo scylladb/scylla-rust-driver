@@ -2,9 +2,9 @@ use assert_matches::assert_matches;
 use bytes::Bytes;
 use scylla_macros::DeserializeRow;
 
+use crate::deserialize::row::BuiltinDeserializationErrorKind;
+use crate::deserialize::{value, DeserializationError, FrameSlice};
 use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
-use crate::types::deserialize::row::BuiltinDeserializationErrorKind;
-use crate::types::deserialize::{value, DeserializationError, FrameSlice};
 
 use super::super::tests::{serialize_cells, spec};
 use super::{BuiltinDeserializationError, ColumnIterator, CqlValue, DeserializeRow, Row};

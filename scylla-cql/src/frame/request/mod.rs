@@ -10,7 +10,7 @@ pub mod startup;
 use batch::BatchTypeParseError;
 use thiserror::Error;
 
-use crate::types::serialize::row::SerializedValues;
+use crate::serialize::row::SerializedValues;
 use crate::Consistency;
 use bytes::Bytes;
 
@@ -185,6 +185,7 @@ mod tests {
 
     use bytes::Bytes;
 
+    use crate::serialize::row::SerializedValues;
     use crate::{
         frame::{
             request::{
@@ -196,7 +197,6 @@ mod tests {
             response::result::ColumnType,
             types::{self, SerialConsistency},
         },
-        types::serialize::row::SerializedValues,
         Consistency,
     };
 

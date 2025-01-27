@@ -63,8 +63,7 @@ where
         // - either:
         //      - the inner code would have to represent unnamed fields differently and handle the errors differently,
         //      - or we could use `.0, .1` or `0`, `1` as names for consecutive fields, making representation and error handling uniform.
-        let fields = crate::parser::parse_named_fields(input, trait_name)
-            .unwrap_or_else(|err| panic!("{}", err))
+        let fields = crate::parser::parse_named_fields(input, trait_name)?
             .named
             .iter()
             .map(Field::from_field)
@@ -132,7 +131,7 @@ fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
 ) -> impl Iterator<Item = syn::WherePredicate> + '_ {
     fields.iter().filter(|f| f.needs_default()).map(|f| {
         let t = f.deserialize_target();
-        parse_quote!(#t: std::default::Default)
+        parse_quote!(#t: ::std::default::Default)
     })
 }
 

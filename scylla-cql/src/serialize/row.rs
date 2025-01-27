@@ -37,6 +37,12 @@ impl<'a> RowSerializationContext<'a> {
         }
     }
 
+    /// Creates the serialization context directly from column specs.
+    #[inline]
+    pub fn from_specs(specs: &'a [ColumnSpec<'a>]) -> Self {
+        Self { columns: specs }
+    }
+
     /// Constructs an empty `RowSerializationContext`, as if for a statement
     /// with no bind markers.
     #[inline]
@@ -418,17 +424,17 @@ impl_tuples!(
 #[macro_export]
 macro_rules! impl_serialize_row_via_value_list {
     ($t:ident$(<$($targ:tt $(: $tbound:tt)?),*>)?) => {
-        impl $(<$($targ $(: $tbound)?),*>)? $crate::types::serialize::row::SerializeRow
+        impl $(<$($targ $(: $tbound)?),*>)? $crate::serialize::row::SerializeRow
         for $t$(<$($targ),*>)?
         where
             Self: $crate::frame::value::ValueList,
         {
             fn serialize(
                 &self,
-                ctx: &$crate::types::serialize::row::RowSerializationContext<'_>,
-                writer: &mut $crate::types::serialize::writers::RowWriter,
-            ) -> ::std::result::Result<(), $crate::types::serialize::SerializationError> {
-                $crate::types::serialize::row::serialize_legacy_row(self, ctx, writer)
+                ctx: &$crate::serialize::row::RowSerializationContext<'_>,
+                writer: &mut $crate::serialize::writers::RowWriter,
+            ) -> ::std::result::Result<(), $crate::serialize::SerializationError> {
+                $crate::serialize::row::serialize_legacy_row(self, ctx, writer)
             }
 
             #[inline]
@@ -953,8 +959,8 @@ pub(crate) mod tests {
     #[allow(deprecated)]
     use crate::frame::value::{LegacySerializedValues, MaybeUnset, SerializedResult, ValueList};
     #[allow(deprecated)]
-    use crate::types::serialize::row::ValueListAdapter;
-    use crate::types::serialize::{RowWriter, SerializationError};
+    use crate::serialize::row::ValueListAdapter;
+    use crate::serialize::{RowWriter, SerializationError};
 
     use super::{
         BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,

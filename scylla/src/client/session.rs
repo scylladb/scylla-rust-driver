@@ -48,8 +48,8 @@ use itertools::Itertools;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 use scylla_cql::frame::response::NonErrorResponse;
-use scylla_cql::types::serialize::batch::BatchValues;
-use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
+use scylla_cql::serialize::batch::BatchValues;
+use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
 use std::borrow::Borrow;
 use std::future::Future;
 use std::marker::PhantomData;

@@ -6,7 +6,7 @@ use scylla_cql::frame::request::query::PagingState;
 use scylla_cql::frame::request::SerializableRequest;
 use scylla_cql::frame::response::result::ColumnType;
 use scylla_cql::frame::{request::query, Compression, SerializedRequest};
-use scylla_cql::types::serialize::row::SerializedValues;
+use scylla_cql::serialize::row::SerializedValues;
 
 fn make_query(contents: &str, values: SerializedValues) -> query::Query<'_> {
     query::Query {

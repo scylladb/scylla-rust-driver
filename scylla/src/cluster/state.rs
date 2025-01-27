@@ -9,7 +9,7 @@ use crate::routing::{Shard, Token};
 
 use itertools::Itertools;
 use scylla_cql::frame::response::result::TableSpec;
-use scylla_cql::types::serialize::row::SerializedValues;
+use scylla_cql::serialize::row::SerializedValues;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, warn};

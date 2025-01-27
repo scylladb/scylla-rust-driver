@@ -229,7 +229,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
             fn type_check(
                 specs: &[#macro_internal::ColumnSpec],
             ) -> ::std::result::Result<(), #macro_internal::TypeCheckError> {
-                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
+                let column_types_iter = || ::std::iter::Iterator::map(specs.iter(), |spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
 
                 match specs {
                     [#(#required_fields_idents),*] => {
@@ -281,7 +281,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
 
         let name_check: Option<syn::Stmt> = (!self.0.struct_attrs().skip_name_checks).then(|| parse_quote! {
             if col.spec.name() != #cql_name_literal {
-                panic!(
+                ::std::panic!(
                     "Typecheck should have prevented this scenario - field-column name mismatch! Rust field name {}, CQL column name {}",
                     #cql_name_literal,
                     col.spec.name()
@@ -291,7 +291,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
 
         parse_quote!(
             {
-                let col = row.next()
+                let col = ::std::iter::Iterator::next(&mut row)
                     .expect("Typecheck should have prevented this scenario! Too few columns in the serialized data.")
                     .map_err(#macro_internal::row_deser_error_replace_rust_name::<Self>)?;
 
@@ -301,7 +301,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
                     .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
                         #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
                             column_index: #field_index,
-                            column_name: <_ as std::borrow::ToOwned>::to_owned(col.spec.name()),
+                            column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
                             err,
                         }
                     ))?
@@ -437,9 +437,9 @@ impl TypeCheckUnorderedGenerator<'_> {
                 // For each required field, generate a "visited" boolean flag
                 #(#visited_field_declarations)*
 
-                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
+                let column_types_iter = || ::std::iter::Iterator::map(specs.iter(), |spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
 
-                for (column_index, spec) in specs.iter().enumerate() {
+                for (column_index, spec) in ::std::iter::Iterator::enumerate(specs.iter()) {
                     // Pattern match on the name and verify that the type is correct.
                     match spec.name() {
                         #(#nonskipped_field_names => #type_check_blocks,)*
@@ -500,7 +500,7 @@ impl DeserializeUnorderedGenerator<'_> {
         let deserialize_field = Self::deserialize_field_variable(field);
         let cql_name_literal = field.cql_name_literal();
         parse_quote! {
-            #deserialize_field.unwrap_or_else(|| panic!(
+            #deserialize_field.unwrap_or_else(|| ::std::panic!(
                 "column {} missing in DB row - type check should have prevented this!",
                 #cql_name_literal
             ))
@@ -530,7 +530,7 @@ impl DeserializeUnorderedGenerator<'_> {
                             #macro_internal::mk_row_deser_err::<Self>(
                                 #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
                                     column_index: #column_index,
-                                    column_name: <_ as std::borrow::ToOwned>::to_owned(col.spec.name()),
+                                    column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
                                     err,
                                 }
                             )
@@ -589,7 +589,7 @@ impl DeserializeUnorderedGenerator<'_> {
                     // Pattern match on the field name and deserialize.
                     match col.spec.name() {
                         #(#nonskipped_field_names => #deserialize_blocks,)*
-                        unknown => unreachable!("Typecheck should have prevented this scenario! Unknown column name: {}", unknown),
+                        unknown => ::std::unreachable!("Typecheck should have prevented this scenario! Unknown column name: {}", unknown),
                     }
                 }
 
@@ -598,7 +598,7 @@ impl DeserializeUnorderedGenerator<'_> {
                 // For example, if a field is missing but marked as
                 // `default_when_null` it will create a default value, otherwise
                 // it will report an error.
-                Ok(Self {
+                ::std::result::Result::Ok(Self {
                     #(#field_idents: #field_finalizers,)*
                 })
             }

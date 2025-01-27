@@ -3,9 +3,9 @@
 use crate::frame::response::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
+use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
 use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::response::result::{self, ResultMetadataHolder};
-use scylla_cql::types::deserialize::{DeserializationError, TypeCheckError};
 use thiserror::Error;
 use uuid::Uuid;
 

@@ -14,6 +14,7 @@ use std::{
 
 #[allow(deprecated)]
 use scylla_cql::{
+    deserialize::{DeserializationError, TypeCheckError},
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
@@ -25,10 +26,7 @@ use scylla_cql::{
         response::CqlResponseKind,
         value::SerializeValuesError,
     },
-    types::{
-        deserialize::{DeserializationError, TypeCheckError},
-        serialize::SerializationError,
-    },
+    serialize::SerializationError,
 };
 
 use thiserror::Error;

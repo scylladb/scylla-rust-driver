@@ -42,9 +42,9 @@ use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::response::{self, error};
 use scylla_cql::frame::types::SerialConsistency;
-use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
-use scylla_cql::types::serialize::raw_batch::RawBatchValuesAdapter;
-use scylla_cql::types::serialize::row::{RowSerializationContext, SerializedValues};
+use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
+use scylla_cql::serialize::raw_batch::RawBatchValuesAdapter;
+use scylla_cql::serialize::row::{RowSerializationContext, SerializedValues};
 use socket2::{SockRef, TcpKeepalive};
 #[cfg(feature = "ssl")]
 pub(crate) use ssl_config::SslConfig;

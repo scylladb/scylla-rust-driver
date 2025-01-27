@@ -139,7 +139,7 @@ impl<'frame> FrameSlice<'frame> {
     ///
     /// If the operation fails then the slice remains unchanged.
     #[inline]
-    pub(super) fn read_cql_bytes(
+    pub fn read_cql_bytes(
         &mut self,
     ) -> Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError> {
         // We copy the slice reference, not to mutate the FrameSlice in case of an error.
