@@ -97,6 +97,10 @@ impl Sharder {
 
 #[derive(Clone, Error, Debug)]
 pub enum ShardingError {
+    /// This indicates that we are most likely connected to a Cassandra cluster.
+    /// Unless, there is some serious bug in Scylla.
+    #[error("Server did not provide any sharding information")]
+    NoShardInfo,
     #[error("ShardInfo parameters missing")]
     MissingShardInfoParameter,
     #[error("ShardInfo parameters missing after unwrapping")]
@@ -119,11 +123,16 @@ impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
         let msb_ignore_entry = options.get(MSB_IGNORE_ENTRY);
 
         // Unwrap entries.
-        let (Some(shard_entry), Some(nr_shards_entry), Some(msb_ignore_entry)) =
-            (shard_entry, nr_shards_entry, msb_ignore_entry)
-        else {
-            return Err(ShardingError::MissingShardInfoParameter);
-        };
+        let (shard_entry, nr_shards_entry, msb_ignore_entry) =
+            match (shard_entry, nr_shards_entry, msb_ignore_entry) {
+                (Some(shard_entry), Some(nr_shards_entry), Some(msb_ignore_entry)) => {
+                    (shard_entry, nr_shards_entry, msb_ignore_entry)
+                }
+                // All parameters are missing - most likely a Cassandra cluster.
+                (None, None, None) => return Err(ShardingError::NoShardInfo),
+                // At least one of the parameters is present, but some are missing. A bug in Scylla.
+                _ => return Err(ShardingError::MissingShardInfoParameter),
+            };
 
         // Further unwrap entries (they should be the first entries of their corresponding Vecs).
         let (Some(shard_entry), Some(nr_shards_entry), Some(msb_ignore_entry)) = (
