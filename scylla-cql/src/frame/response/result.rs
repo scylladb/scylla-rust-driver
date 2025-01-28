@@ -1,5 +1,3 @@
-#[allow(deprecated)]
-use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::result::{RawRowIterator, TypedRowIterator};
 use crate::deserialize::row::DeserializeRow;
 use crate::deserialize::value::{
@@ -658,18 +656,6 @@ pub struct PreparedMetadata {
 #[derive(Debug, Default, PartialEq)]
 pub struct Row {
     pub columns: Vec<Option<CqlValue>>,
-}
-
-impl Row {
-    /// Allows converting Row into tuple of rust types or custom struct deriving FromRow
-    #[deprecated(
-        since = "0.15.0",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[allow(deprecated)]
-    pub fn into_typed<RowT: FromRow>(self) -> StdResult<RowT, FromRowError> {
-        RowT::from_row(self)
-    }
 }
 
 /// RESULT:Rows response, in partially serialized form.

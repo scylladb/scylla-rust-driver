@@ -12,9 +12,6 @@ pub mod macros {
     pub use bytes::{BufMut, Bytes, BytesMut};
 
     #[allow(deprecated)]
-    pub use crate::impl_from_cql_value_from_method;
-
-    #[allow(deprecated)]
     pub use crate::impl_serialize_row_via_value_list;
     #[allow(deprecated)]
     pub use crate::impl_serialize_value_via_value;
@@ -22,10 +19,6 @@ pub mod macros {
 
 pub mod deserialize;
 pub mod serialize;
-
-pub use crate::frame::response::cql_to_rust;
-#[allow(deprecated)]
-pub use crate::frame::response::cql_to_rust::FromRow;
 
 pub use crate::frame::types::Consistency;
 

@@ -115,7 +115,6 @@ pub mod frame {
     }
 
     pub mod response {
-        pub use scylla_cql::frame::response::cql_to_rust;
         pub(crate) use scylla_cql::frame::response::*;
 
         pub mod result {
@@ -275,6 +274,3 @@ pub(crate) use utils::test_utils;
 pub use statement::batch;
 pub use statement::prepared_statement;
 pub use statement::query;
-
-#[allow(deprecated)]
-pub use frame::response::cql_to_rust::{self, FromRow};

@@ -471,13 +471,6 @@ pub use scylla_macros::DeserializeRow;
 )]
 pub use scylla_cql::macros::ValueList;
 
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-#[allow(deprecated)]
-pub use scylla_cql::macros::impl_from_cql_value_from_method;
-
 #[allow(deprecated)]
 pub use scylla_cql::macros::impl_serialize_row_via_value_list;
 #[allow(deprecated)]
