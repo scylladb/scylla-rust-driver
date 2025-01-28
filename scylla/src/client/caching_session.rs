@@ -17,7 +17,7 @@ use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use crate::client::pager::QueryPager;
-use crate::client::session::{CurrentDeserializationApi, DeserializationApiKind, GenericSession};
+use crate::client::session::Session;
 
 /// Contains just the parts of a prepared statement that were returned
 /// from the database. All remaining parts (query string, page size,
@@ -33,12 +33,11 @@ struct RawPreparedStatementData {
 }
 
 /// Provides auto caching while executing queries
-pub struct GenericCachingSession<DeserializationApi, S = RandomState>
+pub struct CachingSession<S = RandomState>
 where
     S: Clone + BuildHasher,
-    DeserializationApi: DeserializationApiKind,
 {
-    session: GenericSession<DeserializationApi>,
+    session: Session,
     /// The prepared statement cache size
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
@@ -46,10 +45,9 @@ where
     cache: DashMap<String, RawPreparedStatementData, S>,
 }
 
-impl<DeserializationApi, S> fmt::Debug for GenericCachingSession<DeserializationApi, S>
+impl<S> fmt::Debug for CachingSession<S>
 where
     S: Clone + BuildHasher,
-    DeserializationApi: DeserializationApiKind,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GenericCachingSession")
@@ -60,14 +58,11 @@ where
     }
 }
 
-pub type CachingSession<S = RandomState> = GenericCachingSession<CurrentDeserializationApi, S>;
-
-impl<DeserApi, S> GenericCachingSession<DeserApi, S>
+impl<S> CachingSession<S>
 where
     S: Default + BuildHasher + Clone,
-    DeserApi: DeserializationApiKind,
 {
-    pub fn from(session: GenericSession<DeserApi>, cache_size: usize) -> Self {
+    pub fn from(session: Session, cache_size: usize) -> Self {
         Self {
             session,
             max_capacity: cache_size,
@@ -76,14 +71,13 @@ where
     }
 }
 
-impl<DeserApi, S> GenericCachingSession<DeserApi, S>
+impl<S> CachingSession<S>
 where
     S: BuildHasher + Clone,
-    DeserApi: DeserializationApiKind,
 {
     /// Builds a [`CachingSession`] from a [`Session`](GenericSession), a cache size,
     /// and a [`BuildHasher`], using a customer hasher.
-    pub fn with_hasher(session: GenericSession<DeserApi>, cache_size: usize, hasher: S) -> Self {
+    pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
         Self {
             session,
             max_capacity: cache_size,
@@ -92,7 +86,7 @@ where
     }
 }
 
-impl<S> GenericCachingSession<CurrentDeserializationApi, S>
+impl<S> CachingSession<S>
 where
     S: BuildHasher + Clone,
 {
@@ -137,7 +131,7 @@ where
 
     /// Does the same thing as [`Session::batch`](GenericSession::batch) but uses the
     /// prepared statement cache.\
-    /// Prepares batch using [`CachingSession::prepare_batch`](GenericCachingSession::prepare_batch)
+    /// Prepares batch using [`CachingSession::prepare_batch`]
     /// if needed and then executes it.
     pub async fn batch(
         &self,
@@ -159,10 +153,9 @@ where
     }
 }
 
-impl<DeserApi, S> GenericCachingSession<DeserApi, S>
+impl<S> CachingSession<S>
 where
     S: BuildHasher + Clone,
-    DeserApi: DeserializationApiKind,
 {
     /// Prepares all statements within the batch and returns a new batch where every
     /// statement is prepared.
@@ -249,7 +242,7 @@ where
         self.max_capacity
     }
 
-    pub fn get_session(&self) -> &GenericSession<DeserApi> {
+    pub fn get_session(&self) -> &Session {
         &self.session
     }
 }
