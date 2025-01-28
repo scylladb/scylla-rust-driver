@@ -75,7 +75,7 @@ impl<S> CachingSession<S>
 where
     S: BuildHasher + Clone,
 {
-    /// Builds a [`CachingSession`] from a [`Session`](GenericSession), a cache size,
+    /// Builds a [`CachingSession`] from a [`Session`], a cache size,
     /// and a [`BuildHasher`], using a customer hasher.
     pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
         Self {
@@ -90,7 +90,7 @@ impl<S> CachingSession<S>
 where
     S: BuildHasher + Clone,
 {
-    /// Does the same thing as [`Session::execute_unpaged`](GenericSession::execute_unpaged)
+    /// Does the same thing as [`Session::execute_unpaged`]
     /// but uses the prepared statement cache.
     pub async fn execute_unpaged(
         &self,
@@ -102,7 +102,7 @@ where
         self.session.execute_unpaged(&prepared, values).await
     }
 
-    /// Does the same thing as [`Session::execute_iter`](GenericSession::execute_iter)
+    /// Does the same thing as [`Session::execute_iter`]
     /// but uses the prepared statement cache.
     pub async fn execute_iter(
         &self,
@@ -114,7 +114,7 @@ where
         self.session.execute_iter(prepared, values).await
     }
 
-    /// Does the same thing as [`Session::execute_single_page`](GenericSession::execute_single_page)
+    /// Does the same thing as [`Session::execute_single_page`]
     /// but uses the prepared statement cache.
     pub async fn execute_single_page(
         &self,
@@ -129,7 +129,7 @@ where
             .await
     }
 
-    /// Does the same thing as [`Session::batch`](GenericSession::batch) but uses the
+    /// Does the same thing as [`Session::batch`] but uses the
     /// prepared statement cache.\
     /// Prepares batch using [`CachingSession::prepare_batch`]
     /// if needed and then executes it.

@@ -3,7 +3,7 @@
 #[cfg(feature = "cloud")]
 use super::execution_profile::ExecutionProfile;
 use super::execution_profile::ExecutionProfileHandle;
-use super::session::{CurrentDeserializationApi, GenericSession, SessionConfig};
+use super::session::{Session, SessionConfig};
 use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 #[cfg(feature = "cloud")]
@@ -557,10 +557,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn build(
-        &self,
-    ) -> Result<GenericSession<CurrentDeserializationApi>, NewSessionError> {
-        GenericSession::connect(self.config.clone()).await
+    pub async fn build(&self) -> Result<Session, NewSessionError> {
+        Session::connect(self.config.clone()).await
     }
 
     /// Changes connection timeout

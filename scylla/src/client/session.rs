@@ -49,7 +49,6 @@ use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
 use std::borrow::Borrow;
 use std::future::Future;
-use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -58,29 +57,12 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
-mod sealed {
-    // This is a sealed trait - its whole purpose is to be unnameable.
-    // This means we need to disable the check.
-    #[allow(unknown_lints)] // Rust 1.70 (our MSRV) doesn't know this lint
-    #[allow(unnameable_types)]
-    pub trait Sealed {}
-}
-
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
 const TRACING_QUERY_PAGE_SIZE: i32 = 1024;
 
-pub trait DeserializationApiKind: sealed::Sealed {}
-
-pub enum CurrentDeserializationApi {}
-impl sealed::Sealed for CurrentDeserializationApi {}
-impl DeserializationApiKind for CurrentDeserializationApi {}
-
 /// `Session` manages connections to the cluster and allows to perform queries
-pub struct GenericSession<DeserializationApi>
-where
-    DeserializationApi: DeserializationApiKind,
-{
+pub struct Session {
     cluster: Cluster,
     default_execution_profile_handle: ExecutionProfileHandle,
     schema_agreement_interval: Duration,
@@ -92,17 +74,11 @@ where
     tracing_info_fetch_attempts: NonZeroU32,
     tracing_info_fetch_interval: Duration,
     tracing_info_fetch_consistency: Consistency,
-    _phantom_deser_api: PhantomData<DeserializationApi>,
 }
-
-pub type Session = GenericSession<CurrentDeserializationApi>;
 
 /// This implementation deliberately omits some details from Cluster in order
 /// to avoid cluttering the print with much information of little usability.
-impl<DeserApi> std::fmt::Debug for GenericSession<DeserApi>
-where
-    DeserApi: DeserializationApiKind,
-{
+impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
             .field("cluster", &ClusterNeatDebug(&self.cluster))
@@ -369,7 +345,7 @@ pub(crate) enum RunRequestResult<ResT> {
     Completed(ResT),
 }
 
-impl GenericSession<CurrentDeserializationApi> {
+impl Session {
     /// Sends a request to the database and receives a response.\
     /// Performs an unpaged query, i.e. all results are received in a single response.
     ///
@@ -759,10 +735,7 @@ impl GenericSession<CurrentDeserializationApi> {
 
 /// Represents a CQL session, which can be used to communicate
 /// with the database
-impl<DeserApi> GenericSession<DeserApi>
-where
-    DeserApi: DeserializationApiKind,
-{
+impl Session {
     /// Estabilishes a CQL session with the database
     ///
     /// Usually it's easier to use [SessionBuilder](crate::client::session_builder::SessionBuilder)
@@ -873,7 +846,6 @@ where
             tracing_info_fetch_attempts: config.tracing_info_fetch_attempts,
             tracing_info_fetch_interval: config.tracing_info_fetch_interval,
             tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
-            _phantom_deser_api: PhantomData,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
