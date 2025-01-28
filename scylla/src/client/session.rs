@@ -2,8 +2,7 @@
 //! It manages all connections to the cluster and allows to perform queries.
 
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-#[allow(deprecated)]
-use super::pager::{LegacyRowIterator, PreparedIteratorConfig, QueryPager};
+use super::pager::{PreparedIteratorConfig, QueryPager};
 use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::AuthenticatorProvider;
 use crate::batch::batch_values;
@@ -34,8 +33,6 @@ use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
-#[allow(deprecated)]
-use crate::response::legacy_query_result::LegacyQueryResult;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse};
 use crate::routing::partitioner::PartitionerName;
@@ -61,11 +58,6 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
-// This re-export is to preserve backward compatibility.
-// Those items are no longer here not to clutter session.rs with legacy things.
-#[allow(deprecated)]
-pub use crate::response::legacy_query_result::{IntoTypedRows, TypedRowIter};
-
 mod sealed {
     // This is a sealed trait - its whole purpose is to be unnameable.
     // This means we need to disable the check.
@@ -83,16 +75,6 @@ pub trait DeserializationApiKind: sealed::Sealed {}
 pub enum CurrentDeserializationApi {}
 impl sealed::Sealed for CurrentDeserializationApi {}
 impl DeserializationApiKind for CurrentDeserializationApi {}
-
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-pub enum LegacyDeserializationApi {}
-#[allow(deprecated)]
-impl sealed::Sealed for LegacyDeserializationApi {}
-#[allow(deprecated)]
-impl DeserializationApiKind for LegacyDeserializationApi {}
 
 /// `Session` manages connections to the cluster and allows to perform queries
 pub struct GenericSession<DeserializationApi>
@@ -114,12 +96,6 @@ where
 }
 
 pub type Session = GenericSession<CurrentDeserializationApi>;
-#[allow(deprecated)]
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-pub type LegacySession = GenericSession<LegacyDeserializationApi>;
 
 /// This implementation deliberately omits some details from Cluster in order
 /// to avoid cluttering the print with much information of little usability.
@@ -778,147 +754,6 @@ impl GenericSession<CurrentDeserializationApi> {
         values: impl BatchValues,
     ) -> Result<QueryResult, ExecutionError> {
         self.do_batch(batch, values).await
-    }
-
-    /// Creates a new Session instance that shared resources with
-    /// the current Session but supports the legacy API.
-    ///
-    /// This method is provided in order to make migration to the new
-    /// deserialization API easier. For example, if your program in general uses
-    /// the new API but you still have some modules left that use the old one,
-    /// you can use this method to create an instance that supports the old API
-    /// and pass it to the module that you intend to migrate later.
-    #[deprecated(
-        since = "0.15.0",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[allow(deprecated)]
-    pub fn make_shared_session_with_legacy_api(&self) -> LegacySession {
-        LegacySession {
-            cluster: self.cluster.clone(),
-            default_execution_profile_handle: self.default_execution_profile_handle.clone(),
-            metrics: self.metrics.clone(),
-            refresh_metadata_on_auto_schema_agreement: self
-                .refresh_metadata_on_auto_schema_agreement,
-            schema_agreement_interval: self.schema_agreement_interval,
-            keyspace_name: self.keyspace_name.clone(),
-            schema_agreement_timeout: self.schema_agreement_timeout,
-            schema_agreement_automatic_waiting: self.schema_agreement_automatic_waiting,
-            tracing_info_fetch_attempts: self.tracing_info_fetch_attempts,
-            tracing_info_fetch_interval: self.tracing_info_fetch_interval,
-            tracing_info_fetch_consistency: self.tracing_info_fetch_consistency,
-            _phantom_deser_api: PhantomData,
-        }
-    }
-}
-
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-#[allow(deprecated)]
-impl GenericSession<LegacyDeserializationApi> {
-    pub async fn query_unpaged(
-        &self,
-        query: impl Into<Query>,
-        values: impl SerializeRow,
-    ) -> Result<LegacyQueryResult, ExecutionError> {
-        Ok(self
-            .do_query_unpaged(&query.into(), values)
-            .await?
-            .into_legacy_result()?)
-    }
-
-    pub async fn query_single_page(
-        &self,
-        query: impl Into<Query>,
-        values: impl SerializeRow,
-        paging_state: PagingState,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), ExecutionError> {
-        let (result, paging_state_response) = self
-            .do_query_single_page(&query.into(), values, paging_state)
-            .await?;
-        Ok((result.into_legacy_result()?, paging_state_response))
-    }
-
-    pub async fn query_iter(
-        &self,
-        query: impl Into<Query>,
-        values: impl SerializeRow,
-    ) -> Result<LegacyRowIterator, ExecutionError> {
-        self.do_query_iter(query.into(), values)
-            .await
-            .map(QueryPager::into_legacy)
-    }
-
-    pub async fn execute_unpaged(
-        &self,
-        prepared: &PreparedStatement,
-        values: impl SerializeRow,
-    ) -> Result<LegacyQueryResult, ExecutionError> {
-        Ok(self
-            .do_execute_unpaged(prepared, values)
-            .await?
-            .into_legacy_result()?)
-    }
-
-    pub async fn execute_single_page(
-        &self,
-        prepared: &PreparedStatement,
-        values: impl SerializeRow,
-        paging_state: PagingState,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), ExecutionError> {
-        let (result, paging_state_response) = self
-            .do_execute_single_page(prepared, values, paging_state)
-            .await?;
-        Ok((result.into_legacy_result()?, paging_state_response))
-    }
-
-    pub async fn execute_iter(
-        &self,
-        prepared: impl Into<PreparedStatement>,
-        values: impl SerializeRow,
-    ) -> Result<LegacyRowIterator, ExecutionError> {
-        self.do_execute_iter(prepared.into(), values)
-            .await
-            .map(QueryPager::into_legacy)
-    }
-
-    pub async fn batch(
-        &self,
-        batch: &Batch,
-        values: impl BatchValues,
-    ) -> Result<LegacyQueryResult, ExecutionError> {
-        Ok(self.do_batch(batch, values).await?.into_legacy_result()?)
-    }
-
-    /// Creates a new Session instance that shares resources with
-    /// the current Session but supports the new API.
-    ///
-    /// This method is provided in order to make migration to the new
-    /// deserialization API easier. For example, if your program in general uses
-    /// the old API but you want to migrate some modules to the new one, you
-    /// can use this method to create an instance that supports the new API
-    /// and pass it to the module that you intend to migrate.
-    ///
-    /// The new session object will use the same connections and cluster
-    /// metadata.
-    pub fn make_shared_session_with_new_api(&self) -> Session {
-        Session {
-            cluster: self.cluster.clone(),
-            default_execution_profile_handle: self.default_execution_profile_handle.clone(),
-            metrics: self.metrics.clone(),
-            refresh_metadata_on_auto_schema_agreement: self
-                .refresh_metadata_on_auto_schema_agreement,
-            schema_agreement_interval: self.schema_agreement_interval,
-            keyspace_name: self.keyspace_name.clone(),
-            schema_agreement_timeout: self.schema_agreement_timeout,
-            schema_agreement_automatic_waiting: self.schema_agreement_automatic_waiting,
-            tracing_info_fetch_attempts: self.tracing_info_fetch_attempts,
-            tracing_info_fetch_interval: self.tracing_info_fetch_interval,
-            tracing_info_fetch_consistency: self.tracing_info_fetch_consistency,
-            _phantom_deser_api: PhantomData,
-        }
     }
 }
 

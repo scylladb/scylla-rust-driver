@@ -3,10 +3,7 @@
 #[cfg(feature = "cloud")]
 use super::execution_profile::ExecutionProfile;
 use super::execution_profile::ExecutionProfileHandle;
-#[allow(deprecated)]
-use super::session::{
-    CurrentDeserializationApi, GenericSession, LegacyDeserializationApi, SessionConfig,
-};
+use super::session::{CurrentDeserializationApi, GenericSession, SessionConfig};
 use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 #[cfg(feature = "cloud")]
@@ -539,36 +536,6 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self.config.used_keyspace = Some(keyspace_name.into());
         self.config.keyspace_case_sensitive = case_sensitive;
         self
-    }
-
-    /// Builds the Session after setting all the options.
-    ///
-    /// The new session object uses the legacy deserialization API. If you wish
-    /// to use the new API, use [`SessionBuilder::build`].
-    ///
-    /// # Example
-    /// ```
-    /// # use scylla::client::session::LegacySession;
-    /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::client::Compression;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: LegacySession = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .compression(Some(Compression::Snappy))
-    ///     .build_legacy() // Turns SessionBuilder into LegacySession
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[deprecated(
-        since = "0.15.0",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[allow(deprecated)]
-    pub async fn build_legacy(
-        &self,
-    ) -> Result<GenericSession<LegacyDeserializationApi>, NewSessionError> {
-        GenericSession::connect(self.config.clone()).await
     }
 
     /// Builds the Session after setting all the options.
