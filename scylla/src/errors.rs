@@ -445,10 +445,6 @@ pub enum MetadataError {
     /// Bad tables metadata.
     #[error("Bad tables metadata: {0}")]
     Tables(#[from] TablesMetadataError),
-
-    /// Bad views metadata.
-    #[error("Bad views metadata: {0}")]
-    Views(#[from] ViewsMetadataError),
 }
 
 /// An error occurred during metadata fetch.
@@ -487,14 +483,6 @@ pub enum MetadataFetchErrorKind {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum PeersMetadataError {
-    /// system.peers has invalid column type.
-    #[error("system.peers has invalid column type: {0}")]
-    SystemPeersInvalidColumnType(TypeCheckError),
-
-    /// system.local has invalid column type.
-    #[error("system.local has invalid column type: {0}")]
-    SystemLocalInvalidColumnType(TypeCheckError),
-
     /// Empty peers list returned during peers metadata fetch.
     #[error("Peers list is empty")]
     EmptyPeers,
@@ -508,10 +496,6 @@ pub enum PeersMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum KeyspacesMetadataError {
-    /// system_schema.keyspaces has invalid column type.
-    #[error("system_schema.keyspaces has invalid column type: {0}")]
-    SchemaKeyspacesInvalidColumnType(TypeCheckError),
-
     /// Bad keyspace replication strategy.
     #[error("Bad keyspace <{keyspace}> replication strategy: {error}")]
     Strategy {
@@ -546,10 +530,6 @@ pub enum KeyspaceStrategyError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum UdtMetadataError {
-    /// system_schema.types has invalid column type.
-    #[error("system_schema.types has invalid column type: {0}")]
-    SchemaTypesInvalidColumnType(TypeCheckError),
-
     /// Failed to parse CQL type returned from system_schema.types query.
     #[error(
         "Failed to parse a CQL type returned from system_schema.types query. \
@@ -570,14 +550,6 @@ pub enum UdtMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum TablesMetadataError {
-    /// system_schema.tables has invalid column type.
-    #[error("system_schema.tables has invalid column type: {0}")]
-    SchemaTablesInvalidColumnType(TypeCheckError),
-
-    /// system_schema.columns has invalid column type.
-    #[error("system_schema.columns has invalid column type: {0}")]
-    SchemaColumnsInvalidColumnType(TypeCheckError),
-
     /// Failed to parse CQL type returned from system_schema.columns query.
     #[error(
         "Failed to parse a CQL type returned from system_schema.columns query. \
@@ -597,15 +569,6 @@ pub enum TablesMetadataError {
         column_name: String,
         column_kind: String,
     },
-}
-
-/// An error that occurred during views metadata fetch.
-#[derive(Error, Debug, Clone)]
-#[non_exhaustive]
-pub enum ViewsMetadataError {
-    /// system_schema.views has invalid column type.
-    #[error("system_schema.views has invalid column type: {0}")]
-    SchemaViewsInvalidColumnType(TypeCheckError),
 }
 
 /// Error caused by caller creating an invalid query
