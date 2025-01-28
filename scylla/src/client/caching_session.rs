@@ -1,11 +1,7 @@
 use crate::batch::{Batch, BatchStatement};
-#[allow(deprecated)]
-use crate::client::pager::LegacyRowIterator;
 use crate::errors::{ExecutionError, PrepareError};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-#[allow(deprecated)]
-use crate::response::legacy_query_result::LegacyQueryResult;
 use crate::response::query_result::QueryResult;
 use crate::response::{PagingState, PagingStateResponse};
 use crate::routing::partitioner::PartitionerName;
@@ -21,10 +17,7 @@ use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use crate::client::pager::QueryPager;
-#[allow(deprecated)]
-use crate::client::session::{
-    CurrentDeserializationApi, DeserializationApiKind, GenericSession, LegacyDeserializationApi,
-};
+use crate::client::session::{CurrentDeserializationApi, DeserializationApiKind, GenericSession};
 
 /// Contains just the parts of a prepared statement that were returned
 /// from the database. All remaining parts (query string, page size,
@@ -68,13 +61,6 @@ where
 }
 
 pub type CachingSession<S = RandomState> = GenericCachingSession<CurrentDeserializationApi, S>;
-
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-#[allow(deprecated)]
-pub type LegacyCachingSession<S = RandomState> = GenericCachingSession<LegacyDeserializationApi, S>;
 
 impl<DeserApi, S> GenericCachingSession<DeserApi, S>
 where
@@ -158,77 +144,6 @@ where
         batch: &Batch,
         values: impl BatchValues,
     ) -> Result<QueryResult, ExecutionError> {
-        let all_prepared: bool = batch
-            .statements
-            .iter()
-            .all(|stmt| matches!(stmt, BatchStatement::PreparedStatement(_)));
-
-        if all_prepared {
-            self.session.batch(batch, &values).await
-        } else {
-            let prepared_batch: Batch = self.prepare_batch(batch).await?;
-
-            self.session.batch(&prepared_batch, &values).await
-        }
-    }
-}
-
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-#[allow(deprecated)]
-impl<S> GenericCachingSession<LegacyDeserializationApi, S>
-where
-    S: BuildHasher + Clone,
-{
-    /// Does the same thing as [`Session::execute_unpaged`](GenericSession::execute_unpaged)
-    /// but uses the prepared statement cache.
-    pub async fn execute_unpaged(
-        &self,
-        query: impl Into<Query>,
-        values: impl SerializeRow,
-    ) -> Result<LegacyQueryResult, ExecutionError> {
-        let query = query.into();
-        let prepared = self.add_prepared_statement_owned(query).await?;
-        self.session.execute_unpaged(&prepared, values).await
-    }
-
-    /// Does the same thing as [`Session::execute_iter`](GenericSession::execute_iter)
-    /// but uses the prepared statement cache.
-    pub async fn execute_iter(
-        &self,
-        query: impl Into<Query>,
-        values: impl SerializeRow,
-    ) -> Result<LegacyRowIterator, ExecutionError> {
-        let query = query.into();
-        let prepared = self.add_prepared_statement_owned(query).await?;
-        self.session.execute_iter(prepared, values).await
-    }
-
-    /// Does the same thing as [`Session::execute_single_page`](GenericSession::execute_single_page)
-    /// but uses the prepared statement cache.
-    pub async fn execute_single_page(
-        &self,
-        query: impl Into<Query>,
-        values: impl SerializeRow,
-        paging_state: PagingState,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), ExecutionError> {
-        let query = query.into();
-        let prepared = self.add_prepared_statement_owned(query).await?;
-        self.session
-            .execute_single_page(&prepared, values, paging_state)
-            .await
-    }
-
-    /// Does the same thing as [`Session::batch`](GenericSession::batch) but uses
-    /// the prepared statement cache.\
-    /// Prepares batch using CachingSession::prepare_batch if needed and then executes it.
-    pub async fn batch(
-        &self,
-        batch: &Batch,
-        values: impl BatchValues,
-    ) -> Result<LegacyQueryResult, ExecutionError> {
         let all_prepared: bool = batch
             .statements
             .iter()
@@ -342,8 +257,6 @@ where
 #[cfg(test)]
 mod tests {
     use crate::batch::{Batch, BatchStatement};
-    #[allow(deprecated)]
-    use crate::client::caching_session::LegacyCachingSession;
     use crate::client::session::Session;
     use crate::prepared_statement::PreparedStatement;
     use crate::query::Query;
@@ -786,7 +699,5 @@ mod tests {
     fn _caching_session_impls_debug() {
         fn assert_debug<T: std::fmt::Debug>() {}
         assert_debug::<CachingSession>();
-        #[allow(deprecated)]
-        assert_debug::<LegacyCachingSession>();
     }
 }
