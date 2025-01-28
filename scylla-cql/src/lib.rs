@@ -3,8 +3,6 @@ pub mod frame;
 pub mod macros {
     pub use scylla_macros::DeserializeRow;
     pub use scylla_macros::DeserializeValue;
-    pub use scylla_macros::FromRow;
-    pub use scylla_macros::FromUserType;
     pub use scylla_macros::IntoUserType;
     pub use scylla_macros::SerializeRow;
     pub use scylla_macros::SerializeValue;
@@ -33,10 +31,6 @@ pub use crate::frame::types::Consistency;
 
 #[doc(hidden)]
 pub mod _macro_internal {
-    #[allow(deprecated)]
-    pub use crate::frame::response::cql_to_rust::{
-        FromCqlVal, FromCqlValError, FromRow, FromRowError,
-    };
     pub use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row};
     #[allow(deprecated)]
     pub use crate::frame::value::{

@@ -1,29 +1,3 @@
-/// Derive macro for the [`FromRow`](crate::frame::response::cql_to_rust::FromRow) trait
-/// which deserializes a row to given Rust structure.
-///
-/// It is supported for structs with either named or unnamed fields.
-/// It works only for simple structs without generics etc.
-///
-/// ---
-///
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-pub use scylla_cql::macros::FromRow;
-
-/// #[derive(FromUserType)] allows to parse struct as a User Defined Type
-///
-/// Works only on simple structs without generics etc
-///
-/// ---
-///
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-pub use scylla_cql::macros::FromUserType;
-
 /// #[derive(IntoUserType)] allows to pass struct a User Defined Type Value in queries
 ///
 /// Works only on simple structs without generics etc

@@ -431,9 +431,7 @@ impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14
 #[cfg(test)]
 mod tests {
     use super::{CqlValue, FromCqlVal, FromCqlValError, FromRow, FromRowError, Row};
-    use crate as scylla;
     use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
-    use crate::macros::FromRow;
     use std::collections::HashSet;
     use std::net::{IpAddr, Ipv4Addr};
     use std::str::FromStr;
@@ -956,103 +954,5 @@ mod tests {
                 actual: 2
             })
         );
-    }
-
-    // Enabling `expect_used` clippy lint,
-    // validates that `derive(FromRow)` macro definition does do not violates such rule under the hood.
-    // Could be removed after such rule will be applied for the whole crate.
-    // <https://rust-lang.github.io/rust-clippy/master/index.html#/expect_used>
-    #[deny(clippy::expect_used)]
-    #[test]
-    fn struct_from_row() {
-        #[derive(FromRow)]
-        struct MyRow {
-            a: i32,
-            b: Option<String>,
-            c: Option<Vec<i32>>,
-        }
-
-        let row = Row {
-            columns: vec![
-                Some(CqlValue::Int(16)),
-                None,
-                Some(CqlValue::Set(vec![CqlValue::Int(1), CqlValue::Int(2)])),
-            ],
-        };
-
-        let my_row: MyRow = MyRow::from_row(row).unwrap();
-
-        assert_eq!(my_row.a, 16);
-        assert_eq!(my_row.b, None);
-        assert_eq!(my_row.c, Some(vec![1, 2]));
-    }
-
-    // Enabling `expect_used` clippy lint,
-    // validates that `derive(FromRow)` macro definition does do not violates such rule under the hood.
-    // Could be removed after such rule will be applied for the whole crate.
-    // <https://rust-lang.github.io/rust-clippy/master/index.html#/expect_used>
-    #[deny(clippy::expect_used)]
-    #[test]
-    fn struct_from_row_wrong_size() {
-        #[derive(FromRow, PartialEq, Eq, Debug)]
-        struct MyRow {
-            a: i32,
-            b: Option<String>,
-            c: Option<Vec<i32>>,
-        }
-
-        let too_short_row = Row {
-            columns: vec![Some(CqlValue::Int(16)), None],
-        };
-
-        let too_large_row = Row {
-            columns: vec![
-                Some(CqlValue::Int(16)),
-                None,
-                Some(CqlValue::Set(vec![CqlValue::Int(1), CqlValue::Int(2)])),
-                Some(CqlValue::Set(vec![CqlValue::Int(1), CqlValue::Int(2)])),
-            ],
-        };
-
-        assert_eq!(
-            MyRow::from_row(too_short_row),
-            Err(FromRowError::WrongRowSize {
-                expected: 3,
-                actual: 2
-            })
-        );
-
-        assert_eq!(
-            MyRow::from_row(too_large_row),
-            Err(FromRowError::WrongRowSize {
-                expected: 3,
-                actual: 4
-            })
-        );
-    }
-
-    // Enabling `expect_used` clippy lint,
-    // validates that `derive(FromRow)` macro definition does do not violates such rule under the hood.
-    // Could be removed after such rule will be applied for the whole crate.
-    // <https://rust-lang.github.io/rust-clippy/master/index.html#/expect_used>
-    #[deny(clippy::expect_used)]
-    #[test]
-    fn unnamed_struct_from_row() {
-        #[derive(FromRow)]
-        struct MyRow(i32, Option<String>, Option<Vec<i32>>);
-
-        let row = Row {
-            columns: vec![
-                Some(CqlValue::Int(16)),
-                None,
-                Some(CqlValue::Set(vec![CqlValue::Int(1), CqlValue::Int(2)])),
-            ],
-        };
-
-        let my_row: MyRow = MyRow::from_row(row).unwrap();
-
-        assert_eq!(my_row.0, 16);
-        assert_eq!(my_row.1, None);
-        assert_eq!(my_row.2, Some(vec![1, 2]));
     }
 }
