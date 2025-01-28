@@ -414,17 +414,26 @@ pub enum TracingProtocolError {
     EmptyResults,
 }
 
-/// An error that occurred during cluster metadata fetch.
+/// An error that occurred during metadata fetch and verification.
 ///
-/// An error can occur during metadata fetch of:
-/// - peers
+/// The driver performs metadata fetch and verification of the cluster's schema
+/// and topology. This includes:
 /// - keyspaces
 /// - UDTs
 /// - tables
 /// - views
+/// - peers (topology)
+///
+/// The errors that occur during metadata fetch are contained in [`MetadataFetchError`].
+/// Remaining errors (logical errors) are contained in the variants corresponding to the
+/// specific part of the metadata.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum MetadataError {
+    /// Failed to fetch metadata.
+    #[error("transparent")]
+    FetchError(#[from] MetadataFetchError),
+
     /// Bad peers metadata.
     #[error("Bad peers metadata: {0}")]
     Peers(#[from] PeersMetadataError),
@@ -444,6 +453,38 @@ pub enum MetadataError {
     /// Bad views metadata.
     #[error("Bad views metadata: {0}")]
     Views(#[from] ViewsMetadataError),
+}
+
+/// An error occurred during metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[error("Metadata fetch failed for table \"{table}\": {error}")]
+#[non_exhaustive]
+pub struct MetadataFetchError {
+    /// Reason why metadata fetch failed.
+    pub error: MetadataFetchErrorKind,
+    /// Table name for which metadata fetch failed.
+    pub table: &'static str,
+}
+
+/// Specific reason why metadata fetch failed.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum MetadataFetchErrorKind {
+    /// Queried table has invalid column type.
+    #[error("The table has invalid column type: {0}")]
+    InvalidColumnType(#[from] TypeCheckError),
+
+    /// Failed to prepare the statement for metadata fetch.
+    #[error("Failed to prepare the statement: {0}")]
+    PrepareError(#[from] RequestAttemptError),
+
+    /// Failed to serialize statement parameters.
+    #[error("Failed to serialize statement parameters: {0}")]
+    SerializationError(#[from] SerializationError),
+
+    /// Failed to obtain next row from response to the metadata fetch query.
+    #[error("Failed to obtain next row from response to the query: {0}")]
+    NextRowError(#[from] NextRowError),
 }
 
 /// An error that occurred during peers metadata fetch.
