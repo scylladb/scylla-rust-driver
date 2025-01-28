@@ -96,36 +96,65 @@ impl Sharder {
 }
 
 #[derive(Clone, Error, Debug)]
-pub enum ShardingError {
-    #[error("ShardInfo parameters missing")]
-    MissingShardInfoParameter,
-    #[error("ShardInfo parameters missing after unwrapping")]
-    MissingUnwrapedShardInfoParameter,
-    #[error("ShardInfo contains an invalid number of shards (0)")]
+pub(crate) enum ShardingError {
+    /// This indicates that we are most likely connected to a Cassandra cluster.
+    /// Unless, there is some serious bug in Scylla.
+    #[error("Server did not provide any sharding information")]
+    NoShardInfo,
+
+    /// A bug in scylla. Some of the parameters are present, while others are missing.
+    #[error("Missing some sharding info parameters")]
+    MissingSomeShardInfoParameters,
+
+    /// A bug in Scylla. All parameters are present, but some do not contain any values.
+    #[error("Missing some sharding info parameter values")]
+    MissingShardInfoParameterValues,
+
+    /// A bug in Scylla. Number of shards is equal to zero.
+    #[error("Sharding info contains an invalid number of shards (0)")]
     ZeroShards,
-    #[error("ParseIntError encountered while getting ShardInfo")]
+
+    /// A bug in Scylla. Failed to parse string to number.
+    #[error("Failed to parse a sharding info parameter's value: {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
 }
+
+const SHARD_ENTRY: &str = "SCYLLA_SHARD";
+const NR_SHARDS_ENTRY: &str = "SCYLLA_NR_SHARDS";
+const MSB_IGNORE_ENTRY: &str = "SCYLLA_SHARDING_IGNORE_MSB";
 
 impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
     type Error = ShardingError;
     fn try_from(options: &'a HashMap<String, Vec<String>>) -> Result<Self, Self::Error> {
-        let shard_entry = options.get("SCYLLA_SHARD");
-        let nr_shards_entry = options.get("SCYLLA_NR_SHARDS");
-        let msb_ignore_entry = options.get("SCYLLA_SHARDING_IGNORE_MSB");
-        if shard_entry.is_none() || nr_shards_entry.is_none() || msb_ignore_entry.is_none() {
-            return Err(ShardingError::MissingShardInfoParameter);
-        }
-        if shard_entry.unwrap().is_empty()
-            || nr_shards_entry.unwrap().is_empty()
-            || msb_ignore_entry.unwrap().is_empty()
-        {
-            return Err(ShardingError::MissingUnwrapedShardInfoParameter);
-        }
-        let shard = shard_entry.unwrap().first().unwrap().parse::<u16>()?;
-        let nr_shards = nr_shards_entry.unwrap().first().unwrap().parse::<u16>()?;
+        let shard_entry = options.get(SHARD_ENTRY);
+        let nr_shards_entry = options.get(NR_SHARDS_ENTRY);
+        let msb_ignore_entry = options.get(MSB_IGNORE_ENTRY);
+
+        // Unwrap entries.
+        let (shard_entry, nr_shards_entry, msb_ignore_entry) =
+            match (shard_entry, nr_shards_entry, msb_ignore_entry) {
+                (Some(shard_entry), Some(nr_shards_entry), Some(msb_ignore_entry)) => {
+                    (shard_entry, nr_shards_entry, msb_ignore_entry)
+                }
+                // All parameters are missing - most likely a Cassandra cluster.
+                (None, None, None) => return Err(ShardingError::NoShardInfo),
+                // At least one of the parameters is present, but some are missing. A bug in Scylla.
+                _ => return Err(ShardingError::MissingSomeShardInfoParameters),
+            };
+
+        // Further unwrap entries (they should be the first entries of their corresponding Vecs).
+        let (Some(shard_entry), Some(nr_shards_entry), Some(msb_ignore_entry)) = (
+            shard_entry.first(),
+            nr_shards_entry.first(),
+            msb_ignore_entry.first(),
+        ) else {
+            return Err(ShardingError::MissingShardInfoParameterValues);
+        };
+
+        let shard = shard_entry.parse::<u16>()?;
+        let nr_shards = nr_shards_entry.parse::<u16>()?;
         let nr_shards = ShardCount::new(nr_shards).ok_or(ShardingError::ZeroShards)?;
-        let msb_ignore = msb_ignore_entry.unwrap().first().unwrap().parse::<u8>()?;
+        let msb_ignore = msb_ignore_entry.parse::<u8>()?;
         Ok(ShardInfo::new(shard, nr_shards, msb_ignore))
     }
 }

@@ -13,8 +13,8 @@ pub mod locator;
 pub mod partitioner;
 mod sharding;
 
-pub(crate) use sharding::ShardInfo;
-pub use sharding::{Shard, ShardCount, Sharder, ShardingError};
+pub use sharding::{Shard, ShardCount, Sharder};
+pub(crate) use sharding::{ShardInfo, ShardingError};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 
