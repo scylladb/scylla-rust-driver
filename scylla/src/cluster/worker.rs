@@ -1,5 +1,5 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
-use crate::errors::{NewSessionError, QueryError};
+use crate::errors::{MetadataError, NewSessionError, QueryError};
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::network::{PoolConfig, VerifiedKeyspaceName};
 use crate::policies::host_filter::HostFilter;
@@ -95,7 +95,7 @@ struct ClusterWorker {
 
 #[derive(Debug)]
 struct RefreshRequest {
-    response_chan: tokio::sync::oneshot::Sender<Result<(), QueryError>>,
+    response_chan: tokio::sync::oneshot::Sender<Result<(), MetadataError>>,
 }
 
 #[derive(Debug)]
@@ -182,7 +182,7 @@ impl Cluster {
         self.data.load_full()
     }
 
-    pub(crate) async fn refresh_metadata(&self) -> Result<(), QueryError> {
+    pub(crate) async fn refresh_metadata(&self) -> Result<(), MetadataError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
         self.refresh_channel
@@ -401,7 +401,7 @@ impl ClusterWorker {
         use_keyspace_result(use_keyspace_results.into_iter())
     }
 
-    async fn perform_refresh(&mut self) -> Result<(), QueryError> {
+    async fn perform_refresh(&mut self) -> Result<(), MetadataError> {
         // Read latest Metadata
         let metadata = self.metadata_reader.read_metadata(false).await?;
         let cluster_data: Arc<ClusterState> = self.cluster_data.load_full();

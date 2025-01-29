@@ -15,8 +15,8 @@ use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
-    BadQuery, NewSessionError, ProtocolError, QueryError, RequestAttemptError, RequestError,
-    TracingProtocolError,
+    BadQuery, MetadataError, NewSessionError, ProtocolError, QueryError, RequestAttemptError,
+    RequestError, TracingProtocolError,
 };
 use crate::frame::response::result;
 #[cfg(feature = "ssl")]
@@ -1717,7 +1717,7 @@ where
     ///
     /// Normally this is not needed,
     /// the driver should automatically detect all metadata changes in the cluster
-    pub async fn refresh_metadata(&self) -> Result<(), QueryError> {
+    pub async fn refresh_metadata(&self) -> Result<(), MetadataError> {
         self.cluster.refresh_metadata().await
     }
 

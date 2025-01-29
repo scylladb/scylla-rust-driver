@@ -328,14 +328,6 @@ pub enum ProtocolError {
     #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
     NonfinishedPagingState,
 
-    /// Failed to parse CQL type.
-    #[error("Failed to parse a CQL type '{typ}', at position {position}: {reason}")]
-    InvalidCqlType {
-        typ: String,
-        position: usize,
-        reason: String,
-    },
-
     /// Unable extract a partition key based on prepared statement's metadata.
     #[error("Unable extract a partition key based on prepared statement's metadata")]
     PartitionKeyExtraction,
@@ -414,17 +406,30 @@ pub enum TracingProtocolError {
     EmptyResults,
 }
 
-/// An error that occurred during cluster metadata fetch.
+/// An error that occurred during metadata fetch and verification.
 ///
-/// An error can occur during metadata fetch of:
-/// - peers
+/// The driver performs metadata fetch and verification of the cluster's schema
+/// and topology. This includes:
 /// - keyspaces
 /// - UDTs
 /// - tables
 /// - views
+/// - peers (topology)
+///
+/// The errors that occur during metadata fetch are contained in [`MetadataFetchError`].
+/// Remaining errors (logical errors) are contained in the variants corresponding to the
+/// specific part of the metadata.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum MetadataError {
+    /// Control connection pool error.
+    #[error("Control connection pool error: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
+    /// Failed to fetch metadata.
+    #[error("transparent")]
+    FetchError(#[from] MetadataFetchError),
+
     /// Bad peers metadata.
     #[error("Bad peers metadata: {0}")]
     Peers(#[from] PeersMetadataError),
@@ -440,24 +445,44 @@ pub enum MetadataError {
     /// Bad tables metadata.
     #[error("Bad tables metadata: {0}")]
     Tables(#[from] TablesMetadataError),
+}
 
-    /// Bad views metadata.
-    #[error("Bad views metadata: {0}")]
-    Views(#[from] ViewsMetadataError),
+/// An error occurred during metadata fetch.
+#[derive(Error, Debug, Clone)]
+#[error("Metadata fetch failed for table \"{table}\": {error}")]
+#[non_exhaustive]
+pub struct MetadataFetchError {
+    /// Reason why metadata fetch failed.
+    pub error: MetadataFetchErrorKind,
+    /// Table name for which metadata fetch failed.
+    pub table: &'static str,
+}
+
+/// Specific reason why metadata fetch failed.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum MetadataFetchErrorKind {
+    /// Queried table has invalid column type.
+    #[error("The table has invalid column type: {0}")]
+    InvalidColumnType(#[from] TypeCheckError),
+
+    /// Failed to prepare the statement for metadata fetch.
+    #[error("Failed to prepare the statement: {0}")]
+    PrepareError(#[from] RequestAttemptError),
+
+    /// Failed to serialize statement parameters.
+    #[error("Failed to serialize statement parameters: {0}")]
+    SerializationError(#[from] SerializationError),
+
+    /// Failed to obtain next row from response to the metadata fetch query.
+    #[error("Failed to obtain next row from response to the query: {0}")]
+    NextRowError(#[from] NextRowError),
 }
 
 /// An error that occurred during peers metadata fetch.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum PeersMetadataError {
-    /// system.peers has invalid column type.
-    #[error("system.peers has invalid column type: {0}")]
-    SystemPeersInvalidColumnType(TypeCheckError),
-
-    /// system.local has invalid column type.
-    #[error("system.local has invalid column type: {0}")]
-    SystemLocalInvalidColumnType(TypeCheckError),
-
     /// Empty peers list returned during peers metadata fetch.
     #[error("Peers list is empty")]
     EmptyPeers,
@@ -471,10 +496,6 @@ pub enum PeersMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum KeyspacesMetadataError {
-    /// system_schema.keyspaces has invalid column type.
-    #[error("system_schema.keyspaces has invalid column type: {0}")]
-    SchemaKeyspacesInvalidColumnType(TypeCheckError),
-
     /// Bad keyspace replication strategy.
     #[error("Bad keyspace <{keyspace}> replication strategy: {error}")]
     Strategy {
@@ -509,9 +530,16 @@ pub enum KeyspaceStrategyError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum UdtMetadataError {
-    /// system_schema.types has invalid column type.
-    #[error("system_schema.types has invalid column type: {0}")]
-    SchemaTypesInvalidColumnType(TypeCheckError),
+    /// Failed to parse CQL type returned from system_schema.types query.
+    #[error(
+        "Failed to parse a CQL type returned from system_schema.types query. \
+        Type '{typ}', at position {position}: {reason}"
+    )]
+    InvalidCqlType {
+        typ: String,
+        position: usize,
+        reason: String,
+    },
 
     /// Circular UDT dependency detected.
     #[error("Detected circular dependency between user defined types - toposort is impossible!")]
@@ -522,13 +550,16 @@ pub enum UdtMetadataError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum TablesMetadataError {
-    /// system_schema.tables has invalid column type.
-    #[error("system_schema.tables has invalid column type: {0}")]
-    SchemaTablesInvalidColumnType(TypeCheckError),
-
-    /// system_schema.columns has invalid column type.
-    #[error("system_schema.columns has invalid column type: {0}")]
-    SchemaColumnsInvalidColumnType(TypeCheckError),
+    /// Failed to parse CQL type returned from system_schema.columns query.
+    #[error(
+        "Failed to parse a CQL type returned from system_schema.columns query. \
+        Type '{typ}', at position {position}: {reason}"
+    )]
+    InvalidCqlType {
+        typ: String,
+        position: usize,
+        reason: String,
+    },
 
     /// Unknown column kind.
     #[error("Unknown column kind '{column_kind}' for {keyspace_name}.{table_name}.{column_name}")]
@@ -538,15 +569,6 @@ pub enum TablesMetadataError {
         column_name: String,
         column_kind: String,
     },
-}
-
-/// An error that occurred during views metadata fetch.
-#[derive(Error, Debug, Clone)]
-#[non_exhaustive]
-pub enum ViewsMetadataError {
-    /// system_schema.views has invalid column type.
-    #[error("system_schema.views has invalid column type: {0}")]
-    SchemaViewsInvalidColumnType(TypeCheckError),
 }
 
 /// Error caused by caller creating an invalid query
