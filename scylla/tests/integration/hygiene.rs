@@ -47,6 +47,7 @@ macro_rules! test_crate {
             use _scylla::deserialize::FrameSlice;
             use _scylla::frame::response::result::ColumnSpec;
             use _scylla::frame::response::result::ColumnType;
+            use _scylla::frame::response::result::NativeType;
             use _scylla::frame::response::result::TableSpec;
             use _scylla::serialize::row::RowSerializationContext;
             use _scylla::serialize::row::SerializeRow;
@@ -58,7 +59,7 @@ macro_rules! test_crate {
             let tuple_with_same_layout: (i32,) = (16,);
             let column_types = &[ColumnSpec::borrowed(
                 "a",
-                ColumnType::Int,
+                ColumnType::Native(NativeType::Int),
                 TableSpec::borrowed("ks", "table"),
             )];
             let ctx = RowSerializationContext::from_specs(column_types);
@@ -109,12 +110,13 @@ macro_rules! test_crate {
             use ::std::convert::Into;
             use ::std::option::Option::Some;
             use ::std::string::ToString;
+            use ::std::sync::Arc;
             use ::std::vec;
             use ::std::vec::Vec;
             use ::tracing::info;
             use _scylla::deserialize::DeserializeValue;
             use _scylla::deserialize::FrameSlice;
-            use _scylla::frame::response::result::{ColumnType, CqlValue};
+            use _scylla::frame::response::result::{ColumnType, NativeType, CqlValue, UserDefinedType};
             use _scylla::serialize::value::SerializeValue;
             use _scylla::serialize::writers::CellWriter;
 
@@ -123,13 +125,16 @@ macro_rules! test_crate {
             let test_struct = TestStruct { a: 16 };
             let value_with_same_layout: CqlValue = CqlValue::UserDefinedType {
                 keyspace: "some_ks".to_string(),
-                type_name: "some_type".to_string(),
+                name: "some_type".to_string(),
                 fields: vec![("a".to_string(), Some(CqlValue::Int(16)))],
             };
             let udt_type = ColumnType::UserDefinedType {
-                type_name: "some_type".into(),
-                keyspace: "some_ks".into(),
-                field_types: vec![("a".into(), ColumnType::Int)],
+                frozen: false,
+                definition: Arc::new(UserDefinedType {
+                    name: "some_type".into(),
+                    keyspace: "some_ks".into(),
+                    field_types: vec![("a".into(), ColumnType::Native(NativeType::Int))],
+                })
             };
 
             let mut buf_struct = Vec::<u8>::new();
@@ -165,6 +170,14 @@ macro_rules! test_crate {
                     <CqlValue as DeserializeValue>::deserialize(&udt_type, slice).unwrap();
                 assert_eq!(value_with_same_layout, deserialized_value);
             }
+        }
+
+        // The purpose of this test is to verify that the important types are
+        // correctly re-exported in `scylla` crate.
+        #[test]
+        fn test_types_imports() {
+            #[allow(unused_imports)]
+            use _scylla::frame::response::result::{CollectionType, ColumnType, NativeType, CqlValue, UserDefinedType};
         }
 
         // Test attributes for value struct with name flavor

@@ -5,7 +5,9 @@ use super::session_builder::SessionBuilder;
 use crate as scylla;
 use crate::batch::{Batch, BatchStatement, BatchType};
 use crate::cluster::metadata::Strategy::NetworkTopologyStrategy;
-use crate::cluster::metadata::{CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType};
+use crate::cluster::metadata::{
+    CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType,
+};
 use crate::deserialize::DeserializeOwnedValue;
 use crate::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::observability::tracing::TracingInfo;
@@ -25,7 +27,7 @@ use assert_matches::assert_matches;
 use futures::{FutureExt, StreamExt as _, TryStreamExt};
 use itertools::Itertools;
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
-use scylla_cql::frame::response::result::{ColumnType, Row};
+use scylla_cql::frame::response::result::Row;
 use scylla_cql::frame::value::CqlVarint;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
 use scylla_cql::serialize::value::SerializeValue;
@@ -243,7 +245,8 @@ async fn test_prepared_statement() {
             .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
         let mut pk = SerializedValues::new();
-        pk.add_value(&17_i32, &ColumnType::Int).unwrap();
+        pk.add_value(&17_i32, &ColumnType::Native(NativeType::Int))
+            .unwrap();
         let cluster_data_token = session
             .get_cluster_data()
             .compute_token(&ks, "t2", &pk)
@@ -1492,36 +1495,42 @@ async fn test_prepared_config() {
     assert_eq!(prepared_statement.get_page_size(), 42);
 }
 
-fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType> {
+fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType<'_>> {
     Arc::new(UserDefinedType {
-        name: "type_a".to_string(),
-        keyspace: ks.to_owned(),
+        name: "type_a".into(),
+        keyspace: ks.into(),
         field_types: vec![
             (
                 "a".into(),
-                CqlType::Collection {
+                ColumnType::Collection {
                     frozen: false,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Collection {
+                    typ: CollectionType::Map(
+                        Box::new(ColumnType::Collection {
                             frozen: true,
-                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::Int,
+                            ))),
                         }),
-                        Box::new(CqlType::Native(NativeType::Text)),
+                        Box::new(ColumnType::Native(NativeType::Text)),
                     ),
                 },
             ),
             (
                 "b".into(),
-                CqlType::Collection {
+                ColumnType::Collection {
                     frozen: true,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Collection {
+                    typ: CollectionType::Map(
+                        Box::new(ColumnType::Collection {
                             frozen: true,
-                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                            typ: CollectionType::List(Box::new(ColumnType::Native(
+                                NativeType::Int,
+                            ))),
                         }),
-                        Box::new(CqlType::Collection {
+                        Box::new(ColumnType::Collection {
                             frozen: true,
-                            type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text))),
+                            typ: CollectionType::Set(Box::new(ColumnType::Native(
+                                NativeType::Text,
+                            ))),
                         }),
                     ),
                 },
@@ -1530,31 +1539,31 @@ fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType> {
     })
 }
 
-fn udt_type_b_def(ks: &str) -> Arc<UserDefinedType> {
+fn udt_type_b_def(ks: &str) -> Arc<UserDefinedType<'_>> {
     Arc::new(UserDefinedType {
-        name: "type_b".to_string(),
-        keyspace: ks.to_owned(),
+        name: "type_b".into(),
+        keyspace: ks.into(),
         field_types: vec![
-            ("a".to_string(), CqlType::Native(NativeType::Int)),
-            ("b".to_string(), CqlType::Native(NativeType::Text)),
+            ("a".into(), ColumnType::Native(NativeType::Int)),
+            ("b".into(), ColumnType::Native(NativeType::Text)),
         ],
     })
 }
 
-fn udt_type_c_def(ks: &str) -> Arc<UserDefinedType> {
+fn udt_type_c_def(ks: &str) -> Arc<UserDefinedType<'_>> {
     Arc::new(UserDefinedType {
-        name: "type_c".to_string(),
-        keyspace: ks.to_owned(),
+        name: "type_c".into(),
+        keyspace: ks.into(),
         field_types: vec![(
-            "a".to_string(),
-            CqlType::Collection {
+            "a".into(),
+            ColumnType::Collection {
                 frozen: false,
-                type_: CollectionType::Map(
-                    Box::new(CqlType::Collection {
+                typ: CollectionType::Map(
+                    Box::new(ColumnType::Collection {
                         frozen: true,
-                        type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text))),
+                        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text))),
                     }),
-                    Box::new(CqlType::UserDefinedType {
+                    Box::new(ColumnType::UserDefinedType {
                         frozen: true,
                         definition: udt_type_b_def(ks),
                     }),
@@ -1644,8 +1653,8 @@ async fn test_schema_types_in_metadata() {
     let a = &table_a_columns["a"];
 
     assert_eq!(
-        a.type_,
-        CqlType::UserDefinedType {
+        a.typ,
+        ColumnType::UserDefinedType {
             frozen: true,
             definition: udt_type_a_def(&ks),
         }
@@ -1654,8 +1663,8 @@ async fn test_schema_types_in_metadata() {
     let b = &table_a_columns["b"];
 
     assert_eq!(
-        b.type_,
-        CqlType::UserDefinedType {
+        b.typ,
+        ColumnType::UserDefinedType {
             frozen: false,
             definition: udt_type_b_def(&ks),
         }
@@ -1664,8 +1673,8 @@ async fn test_schema_types_in_metadata() {
     let c = &table_a_columns["c"];
 
     assert_eq!(
-        c.type_,
-        CqlType::UserDefinedType {
+        c.typ,
+        ColumnType::UserDefinedType {
             frozen: true,
             definition: udt_type_c_def(&ks)
         }
@@ -1674,12 +1683,12 @@ async fn test_schema_types_in_metadata() {
     let d = &table_a_columns["d"];
 
     assert_eq!(
-        d.type_,
-        CqlType::Collection {
-            type_: CollectionType::Map(
-                Box::new(CqlType::Native(NativeType::Text)),
-                Box::new(CqlType::Collection {
-                    type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+        d.typ,
+        ColumnType::Collection {
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Text)),
+                Box::new(ColumnType::Collection {
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
                     frozen: true
                 })
             ),
@@ -1690,27 +1699,27 @@ async fn test_schema_types_in_metadata() {
     let e = &table_a_columns["e"];
 
     assert_eq!(
-        e.type_,
-        CqlType::Tuple(vec![
-            CqlType::Native(NativeType::Int),
-            CqlType::Native(NativeType::Text)
-        ])
+        e.typ,
+        ColumnType::Tuple(vec![
+            ColumnType::Native(NativeType::Int),
+            ColumnType::Native(NativeType::Text)
+        ],)
     );
 
     let table_b_columns = &tables["table_b"].columns;
 
     let a = &table_b_columns["a"];
 
-    assert_eq!(a.type_, CqlType::Native(NativeType::Text));
+    assert_eq!(a.typ, ColumnType::Native(NativeType::Text));
 
     let b = &table_b_columns["b"];
 
     assert_eq!(
-        b.type_,
-        CqlType::Collection {
-            type_: CollectionType::Map(
-                Box::new(CqlType::Native(NativeType::Int),),
-                Box::new(CqlType::Native(NativeType::Int),)
+        b.typ,
+        ColumnType::Collection {
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int),),
+                Box::new(ColumnType::Native(NativeType::Int),)
             ),
             frozen: true
         }
@@ -2563,12 +2572,12 @@ async fn test_refresh_metadata_after_schema_agreement() {
     assert_eq!(
         udt.unwrap(),
         &Arc::new(UserDefinedType {
-            keyspace: ks,
-            name: "udt".to_string(),
+            keyspace: ks.into(),
+            name: "udt".into(),
             field_types: Vec::from([
-                ("field1".to_string(), CqlType::Native(NativeType::Int)),
-                ("field2".to_string(), CqlType::Native(NativeType::Uuid)),
-                ("field3".to_string(), CqlType::Native(NativeType::Text))
+                ("field1".into(), ColumnType::Native(NativeType::Int)),
+                ("field2".into(), ColumnType::Native(NativeType::Uuid)),
+                ("field3".into(), ColumnType::Native(NativeType::Text))
             ])
         })
     );
@@ -3056,7 +3065,7 @@ async fn test_manual_primary_key_computation() {
 
         let mut pk_values_in_pk_order = SerializedValues::new();
         pk_values_in_pk_order
-            .add_value(&17_i32, &ColumnType::Int)
+            .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
             .unwrap();
         let all_values_in_query_order = (17_i32, 16_i32, "I'm prepared!!!");
 
@@ -3085,13 +3094,13 @@ async fn test_manual_primary_key_computation() {
 
         let mut pk_values_in_pk_order = SerializedValues::new();
         pk_values_in_pk_order
-            .add_value(&17_i32, &ColumnType::Int)
+            .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
             .unwrap();
         pk_values_in_pk_order
-            .add_value(&16_i32, &ColumnType::Int)
+            .add_value(&16_i32, &ColumnType::Native(NativeType::Int))
             .unwrap();
         pk_values_in_pk_order
-            .add_value(&"I'm prepared!!!", &ColumnType::Ascii)
+            .add_value(&"I'm prepared!!!", &ColumnType::Native(NativeType::Ascii))
             .unwrap();
         let all_values_in_query_order = (17_i32, "I'm prepared!!!", 16_i32);
 
@@ -3233,16 +3242,16 @@ async fn test_vector_type_metadata() {
     let metadata = session.get_cluster_data();
     let columns = &metadata.keyspaces[&ks].tables["t"].columns;
     assert_eq!(
-        columns["b"].type_,
-        CqlType::Vector {
-            type_: Box::new(CqlType::Native(NativeType::Int)),
+        columns["b"].typ,
+        ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
             dimensions: 4,
         },
     );
     assert_eq!(
-        columns["c"].type_,
-        CqlType::Vector {
-            type_: Box::new(CqlType::Native(NativeType::Text)),
+        columns["c"].typ,
+        ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Text)),
             dimensions: 2,
         },
     );

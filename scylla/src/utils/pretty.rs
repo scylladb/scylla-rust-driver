@@ -137,7 +137,7 @@ where
             }
             CqlValue::UserDefinedType {
                 keyspace: _,
-                type_name: _,
+                name: _,
                 fields,
             } => {
                 f.write_str("{")?;
@@ -354,7 +354,7 @@ mod tests {
                 "{}",
                 CqlValueDisplayer(CqlValue::UserDefinedType {
                     keyspace: "ks".to_owned(),
-                    type_name: "typ".to_owned(),
+                    name: "typ".to_owned(),
                     fields,
                 })
             ),

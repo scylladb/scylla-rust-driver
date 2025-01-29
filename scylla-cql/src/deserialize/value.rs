@@ -5,6 +5,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     hash::{BuildHasher, Hash},
     net::IpAddr,
+    sync::Arc,
 };
 
 use bytes::Bytes;
@@ -15,13 +16,16 @@ use std::fmt::Display;
 use thiserror::Error;
 
 use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::types;
-use crate::frame::value::{
-    Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
-};
 use crate::frame::{frame_errors::LowLevelDeserializationError, value::CqlVarintBorrowed};
+use crate::frame::{response::result::CollectionType, types};
 use crate::frame::{
-    response::result::{deser_cql_value, ColumnType, CqlValue},
+    response::result::UserDefinedType,
+    value::{
+        Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+    },
+};
+use crate::frame::{
+    response::result::{deser_cql_value, ColumnType, CqlValue, NativeType},
     value::CqlDecimalBorrowed,
 };
 
@@ -349,7 +353,7 @@ macro_rules! impl_string_type {
 }
 
 fn check_ascii<T>(typ: &ColumnType, s: &[u8]) -> Result<(), DeserializationError> {
-    if matches!(typ, ColumnType::Ascii) && !s.is_ascii() {
+    if matches!(typ, ColumnType::Native(NativeType::Ascii)) && !s.is_ascii() {
         return Err(mk_deser_err::<T>(
             typ,
             BuiltinDeserializationErrorKind::ExpectedAscii,
@@ -729,14 +733,19 @@ where
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
-            ColumnType::List(el_t) | ColumnType::Set(el_t) => {
-                <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t).map_err(|err| {
-                    mk_typck_err::<Self>(
-                        typ,
-                        SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
-                    )
-                })
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(el_t),
             }
+            | ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Set(el_t),
+            } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t).map_err(|err| {
+                mk_typck_err::<Self>(
+                    typ,
+                    SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
+                )
+            }),
             _ => Err(mk_typck_err::<Self>(
                 typ,
                 BuiltinTypeCheckErrorKind::SetOrListError(
@@ -751,7 +760,14 @@ where
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         let elem_typ = match typ {
-            ColumnType::List(elem_typ) | ColumnType::Set(elem_typ) => elem_typ,
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(elem_typ),
+            }
+            | ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Set(elem_typ),
+            } => elem_typ,
             _ => {
                 unreachable!("Typecheck should have prevented this scenario!")
             }
@@ -833,7 +849,10 @@ where
         // It only makes sense for Set to deserialize to BTreeSet.
         // Deserializing List straight to BTreeSet would be lossy.
         match typ {
-            ColumnType::Set(el_t) => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Set(el_t),
+            } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
                 typ,
@@ -861,7 +880,10 @@ where
         // It only makes sense for Set to deserialize to HashSet.
         // Deserializing List straight to HashSet would be lossy.
         match typ {
-            ColumnType::Set(el_t) => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Set(el_t),
+            } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
                 typ,
@@ -932,7 +954,10 @@ where
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
-            ColumnType::Map(k_t, v_t) => {
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(k_t, v_t),
+            } => {
                 <K as DeserializeValue<'frame, 'metadata>>::type_check(k_t).map_err(|err| {
                     mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::KeyTypeCheckFailed(err))
                 })?;
@@ -950,7 +975,10 @@ where
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         let (k_typ, v_typ) = match typ {
-            ColumnType::Map(k_t, v_t) => (k_t, v_t),
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(k_t, v_t),
+            } => (k_t, v_t),
             _ => {
                 unreachable!("Typecheck should have prevented this scenario!")
             }
@@ -1235,10 +1263,12 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for UdtIterator<'fra
         let v = ensure_not_null_frame_slice::<Self>(typ, v)?;
         let (fields, type_name, keyspace) = match typ {
             ColumnType::UserDefinedType {
-                field_types,
-                type_name,
-                keyspace,
-            } => (field_types.as_ref(), type_name.as_ref(), keyspace.as_ref()),
+                definition: udt, ..
+            } => (
+                udt.field_types.as_ref(),
+                udt.name.as_ref(),
+                udt.keyspace.as_ref(),
+            ),
             _ => {
                 unreachable!("Typecheck should have prevented this scenario!")
             }
@@ -1264,9 +1294,12 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
             // There were some bytes but they didn't parse as correct field value
             Some(Err(err)) => Err(mk_deser_err::<Self>(
                 &ColumnType::UserDefinedType {
-                    type_name: self.type_name.into(),
-                    keyspace: self.keyspace.into(),
-                    field_types: self.all_fields.to_owned(),
+                    frozen: false,
+                    definition: Arc::new(UserDefinedType {
+                        name: self.type_name.into(),
+                        keyspace: self.keyspace.into(),
+                        field_types: self.all_fields.to_owned(),
+                    }),
                 },
                 BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
             )),
@@ -1449,11 +1482,11 @@ fn mk_typck_err_named(
 macro_rules! exact_type_check {
     ($typ:ident, $($cql:tt),*) => {
         match $typ {
-            $(ColumnType::$cql)|* => {},
+            $(ColumnType::Native(NativeType::$cql))|* => {},
             _ => return Err(mk_typck_err::<Self>(
                 $typ,
                 BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[$(ColumnType::$cql),*],
+                    expected: &[$(ColumnType::Native(NativeType::$cql)),*],
                 }
             ))
         }
@@ -1778,9 +1811,6 @@ pub enum BuiltinDeserializationErrorKind {
     /// Failed to deserialize raw bytes of cql value.
     RawCqlBytesReadError(LowLevelDeserializationError),
 
-    /// Returned on attempt to deserialize a value of custom type.
-    CustomTypeNotSupported(String),
-
     /// Expected non-null value, got null.
     ExpectedNonNull,
 
@@ -1811,6 +1841,9 @@ pub enum BuiltinDeserializationErrorKind {
 
     /// A deserialization failure specific to a CQL UDT.
     UdtError(UdtDeserializationErrorKind),
+
+    /// Deserialization of this CQL type is not supported by the driver.
+    Unsupported,
 }
 
 impl Display for BuiltinDeserializationErrorKind {
@@ -1844,7 +1877,9 @@ impl Display for BuiltinDeserializationErrorKind {
             BuiltinDeserializationErrorKind::MapError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::TupleError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::UdtError(err) => err.fmt(f),
-            BuiltinDeserializationErrorKind::CustomTypeNotSupported(typ) => write!(f, "Support for custom types is not yet implemented: {}", typ),
+            BuiltinDeserializationErrorKind::Unsupported => {
+                f.write_str("deserialization of this CQL type is not supported by the driver")
+            }
         }
     }
 }

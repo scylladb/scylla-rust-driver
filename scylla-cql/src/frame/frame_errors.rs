@@ -442,6 +442,8 @@ pub enum CqlTypeParseError {
     TypeIdParseError(LowLevelDeserializationError),
     #[error("Malformed custom type name: {0}")]
     CustomTypeNameParseError(LowLevelDeserializationError),
+    #[error("Unsupported custom type: {0}")]
+    CustomTypeUnsupported(String),
     #[error("Malformed name of UDT keyspace: {0}")]
     UdtKeyspaceNameParseError(LowLevelDeserializationError),
     #[error("Malformed UDT name: {0}")]

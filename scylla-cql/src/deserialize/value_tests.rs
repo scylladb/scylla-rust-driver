@@ -7,10 +7,13 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 
 use crate::deserialize::value::{TupleDeserializationErrorKind, TupleTypeCheckErrorKind};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::response::result::{ColumnType, CqlValue};
+use crate::frame::response::result::{
+    CollectionType, ColumnType, CqlValue, NativeType, UserDefinedType,
+};
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlVarint, CqlVarintBorrowed,
@@ -32,9 +35,12 @@ fn test_deserialize_bytes() {
 
     let bytes = make_bytes(ORIGINAL_BYTES);
 
-    let decoded_slice = deserialize::<&[u8]>(&ColumnType::Blob, &bytes).unwrap();
-    let decoded_vec = deserialize::<Vec<u8>>(&ColumnType::Blob, &bytes).unwrap();
-    let decoded_bytes = deserialize::<Bytes>(&ColumnType::Blob, &bytes).unwrap();
+    let decoded_slice =
+        deserialize::<&[u8]>(&ColumnType::Native(NativeType::Blob), &bytes).unwrap();
+    let decoded_vec =
+        deserialize::<Vec<u8>>(&ColumnType::Native(NativeType::Blob), &bytes).unwrap();
+    let decoded_bytes =
+        deserialize::<Bytes>(&ColumnType::Native(NativeType::Blob), &bytes).unwrap();
 
     assert_eq!(decoded_slice, ORIGINAL_BYTES);
     assert_eq!(decoded_vec, ORIGINAL_BYTES);
@@ -43,10 +49,18 @@ fn test_deserialize_bytes() {
     // ser/de identity
 
     // Nonempty blob
-    assert_ser_de_identity(&ColumnType::Blob, &ORIGINAL_BYTES, &mut Bytes::new());
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Blob),
+        &ORIGINAL_BYTES,
+        &mut Bytes::new(),
+    );
 
     // Empty blob
-    assert_ser_de_identity(&ColumnType::Blob, &(&[] as &[u8]), &mut Bytes::new());
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Blob),
+        &(&[] as &[u8]),
+        &mut Bytes::new(),
+    );
 }
 
 #[test]
@@ -55,7 +69,12 @@ fn test_deserialize_ascii() {
 
     let ascii = make_bytes(ASCII_TEXT.as_bytes());
 
-    for typ in [ColumnType::Ascii, ColumnType::Text].iter() {
+    for typ in [
+        ColumnType::Native(NativeType::Ascii),
+        ColumnType::Native(NativeType::Text),
+    ]
+    .iter()
+    {
         let decoded_str = deserialize::<&str>(typ, &ascii).unwrap();
         let decoded_string = deserialize::<String>(typ, &ascii).unwrap();
 
@@ -81,19 +100,25 @@ fn test_deserialize_text() {
     let unicode = make_bytes(UNICODE_TEXT.as_bytes());
 
     // Should fail because it's not an ASCII string
-    deserialize::<&str>(&ColumnType::Ascii, &unicode).unwrap_err();
-    deserialize::<String>(&ColumnType::Ascii, &unicode).unwrap_err();
+    deserialize::<&str>(&ColumnType::Native(NativeType::Ascii), &unicode).unwrap_err();
+    deserialize::<String>(&ColumnType::Native(NativeType::Ascii), &unicode).unwrap_err();
 
-    let decoded_text_str = deserialize::<&str>(&ColumnType::Text, &unicode).unwrap();
-    let decoded_text_string = deserialize::<String>(&ColumnType::Text, &unicode).unwrap();
+    let decoded_text_str =
+        deserialize::<&str>(&ColumnType::Native(NativeType::Text), &unicode).unwrap();
+    let decoded_text_string =
+        deserialize::<String>(&ColumnType::Native(NativeType::Text), &unicode).unwrap();
     assert_eq!(decoded_text_str, UNICODE_TEXT);
     assert_eq!(decoded_text_string, UNICODE_TEXT);
 
     // ser/de identity
 
-    assert_ser_de_identity(&ColumnType::Text, &UNICODE_TEXT, &mut Bytes::new());
     assert_ser_de_identity(
-        &ColumnType::Text,
+        &ColumnType::Native(NativeType::Text),
+        &UNICODE_TEXT,
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Text),
         &UNICODE_TEXT.to_owned(),
         &mut Bytes::new(),
     );
@@ -102,100 +127,133 @@ fn test_deserialize_text() {
 #[test]
 fn test_integral() {
     let tinyint = make_bytes(&[0x01]);
-    let decoded_tinyint = deserialize::<i8>(&ColumnType::TinyInt, &tinyint).unwrap();
+    let decoded_tinyint =
+        deserialize::<i8>(&ColumnType::Native(NativeType::TinyInt), &tinyint).unwrap();
     assert_eq!(decoded_tinyint, 0x01);
 
     let smallint = make_bytes(&[0x01, 0x02]);
-    let decoded_smallint = deserialize::<i16>(&ColumnType::SmallInt, &smallint).unwrap();
+    let decoded_smallint =
+        deserialize::<i16>(&ColumnType::Native(NativeType::SmallInt), &smallint).unwrap();
     assert_eq!(decoded_smallint, 0x0102);
 
     let int = make_bytes(&[0x01, 0x02, 0x03, 0x04]);
-    let decoded_int = deserialize::<i32>(&ColumnType::Int, &int).unwrap();
+    let decoded_int = deserialize::<i32>(&ColumnType::Native(NativeType::Int), &int).unwrap();
     assert_eq!(decoded_int, 0x01020304);
 
     let bigint = make_bytes(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
-    let decoded_bigint = deserialize::<i64>(&ColumnType::BigInt, &bigint).unwrap();
+    let decoded_bigint =
+        deserialize::<i64>(&ColumnType::Native(NativeType::BigInt), &bigint).unwrap();
     assert_eq!(decoded_bigint, 0x0102030405060708);
 
     // ser/de identity
-    assert_ser_de_identity(&ColumnType::TinyInt, &42_i8, &mut Bytes::new());
-    assert_ser_de_identity(&ColumnType::SmallInt, &2137_i16, &mut Bytes::new());
-    assert_ser_de_identity(&ColumnType::Int, &21372137_i32, &mut Bytes::new());
-    assert_ser_de_identity(&ColumnType::BigInt, &0_i64, &mut Bytes::new());
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::TinyInt),
+        &42_i8,
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::SmallInt),
+        &2137_i16,
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Int),
+        &21372137_i32,
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::BigInt),
+        &0_i64,
+        &mut Bytes::new(),
+    );
 }
 
 #[test]
 fn test_bool() {
     for boolean in [true, false] {
         let boolean_bytes = make_bytes(&[boolean as u8]);
-        let decoded_bool = deserialize::<bool>(&ColumnType::Boolean, &boolean_bytes).unwrap();
+        let decoded_bool =
+            deserialize::<bool>(&ColumnType::Native(NativeType::Boolean), &boolean_bytes).unwrap();
         assert_eq!(decoded_bool, boolean);
 
         // ser/de identity
-        assert_ser_de_identity(&ColumnType::Boolean, &boolean, &mut Bytes::new());
+        assert_ser_de_identity(
+            &ColumnType::Native(NativeType::Boolean),
+            &boolean,
+            &mut Bytes::new(),
+        );
     }
 }
 
 #[test]
 fn test_floating_point() {
     let float = make_bytes(&[63, 0, 0, 0]);
-    let decoded_float = deserialize::<f32>(&ColumnType::Float, &float).unwrap();
+    let decoded_float = deserialize::<f32>(&ColumnType::Native(NativeType::Float), &float).unwrap();
     assert_eq!(decoded_float, 0.5);
 
     let double = make_bytes(&[64, 0, 0, 0, 0, 0, 0, 0]);
-    let decoded_double = deserialize::<f64>(&ColumnType::Double, &double).unwrap();
+    let decoded_double =
+        deserialize::<f64>(&ColumnType::Native(NativeType::Double), &double).unwrap();
     assert_eq!(decoded_double, 2.0);
 
     // ser/de identity
-    assert_ser_de_identity(&ColumnType::Float, &21.37_f32, &mut Bytes::new());
-    assert_ser_de_identity(&ColumnType::Double, &2137.2137_f64, &mut Bytes::new());
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Float),
+        &21.37_f32,
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Double),
+        &2137.2137_f64,
+        &mut Bytes::new(),
+    );
 }
 
 #[test]
 fn test_varlen_numbers() {
     // varint
     assert_ser_de_identity(
-        &ColumnType::Varint,
+        &ColumnType::Native(NativeType::Varint),
         &CqlVarint::from_signed_bytes_be_slice(b"Ala ma kota"),
         &mut Bytes::new(),
     );
 
     assert_ser_de_identity(
-        &ColumnType::Varint,
+        &ColumnType::Native(NativeType::Varint),
         &CqlVarintBorrowed::from_signed_bytes_be_slice(b"Ala ma kota"),
         &mut Bytes::new(),
     );
 
     #[cfg(feature = "num-bigint-03")]
     assert_ser_de_identity(
-        &ColumnType::Varint,
+        &ColumnType::Native(NativeType::Varint),
         &num_bigint_03::BigInt::from_signed_bytes_be(b"Kot ma Ale"),
         &mut Bytes::new(),
     );
 
     #[cfg(feature = "num-bigint-04")]
     assert_ser_de_identity(
-        &ColumnType::Varint,
+        &ColumnType::Native(NativeType::Varint),
         &num_bigint_04::BigInt::from_signed_bytes_be(b"Kot ma Ale"),
         &mut Bytes::new(),
     );
 
     // decimal
     assert_ser_de_identity(
-        &ColumnType::Decimal,
+        &ColumnType::Native(NativeType::Decimal),
         &CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"Ala ma kota", 42),
         &mut Bytes::new(),
     );
 
     assert_ser_de_identity(
-        &ColumnType::Decimal,
+        &ColumnType::Native(NativeType::Decimal),
         &CqlDecimalBorrowed::from_signed_be_bytes_slice_and_exponent(b"Ala ma kota", 42),
         &mut Bytes::new(),
     );
 
     #[cfg(feature = "bigdecimal-04")]
     assert_ser_de_identity(
-        &ColumnType::Decimal,
+        &ColumnType::Native(NativeType::Decimal),
         &bigdecimal_04::BigDecimal::new(
             bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(b"Ala ma kota"),
             42,
@@ -208,7 +266,7 @@ fn test_varlen_numbers() {
 fn test_date_time_types() {
     // duration
     assert_ser_de_identity(
-        &ColumnType::Duration,
+        &ColumnType::Native(NativeType::Duration),
         &CqlDuration {
             months: 21,
             days: 37,
@@ -218,56 +276,64 @@ fn test_date_time_types() {
     );
 
     // date
-    assert_ser_de_identity(&ColumnType::Date, &CqlDate(0xbeaf), &mut Bytes::new());
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Date),
+        &CqlDate(0xbeaf),
+        &mut Bytes::new(),
+    );
 
     #[cfg(feature = "chrono-04")]
     assert_ser_de_identity(
-        &ColumnType::Date,
+        &ColumnType::Native(NativeType::Date),
         &chrono_04::NaiveDate::from_yo_opt(1999, 99).unwrap(),
         &mut Bytes::new(),
     );
 
     #[cfg(feature = "time-03")]
     assert_ser_de_identity(
-        &ColumnType::Date,
+        &ColumnType::Native(NativeType::Date),
         &time_03::Date::from_ordinal_date(1999, 99).unwrap(),
         &mut Bytes::new(),
     );
 
     // time
-    assert_ser_de_identity(&ColumnType::Time, &CqlTime(0xdeed), &mut Bytes::new());
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Time),
+        &CqlTime(0xdeed),
+        &mut Bytes::new(),
+    );
 
     #[cfg(feature = "chrono-04")]
     assert_ser_de_identity(
-        &ColumnType::Time,
+        &ColumnType::Native(NativeType::Time),
         &chrono_04::NaiveTime::from_hms_micro_opt(21, 37, 21, 37).unwrap(),
         &mut Bytes::new(),
     );
 
     #[cfg(feature = "time-03")]
     assert_ser_de_identity(
-        &ColumnType::Time,
+        &ColumnType::Native(NativeType::Time),
         &time_03::Time::from_hms_micro(21, 37, 21, 37).unwrap(),
         &mut Bytes::new(),
     );
 
     // timestamp
     assert_ser_de_identity(
-        &ColumnType::Timestamp,
+        &ColumnType::Native(NativeType::Timestamp),
         &CqlTimestamp(0xceed),
         &mut Bytes::new(),
     );
 
     #[cfg(feature = "chrono-04")]
     assert_ser_de_identity(
-        &ColumnType::Timestamp,
+        &ColumnType::Native(NativeType::Timestamp),
         &chrono_04::DateTime::<chrono_04::Utc>::from_timestamp_millis(0xdead_cafe_deaf).unwrap(),
         &mut Bytes::new(),
     );
 
     #[cfg(feature = "time-03")]
     assert_ser_de_identity(
-        &ColumnType::Timestamp,
+        &ColumnType::Native(NativeType::Timestamp),
         &time_03::OffsetDateTime::from_unix_timestamp(0xdead_cafe).unwrap(),
         &mut Bytes::new(),
     );
@@ -276,13 +342,13 @@ fn test_date_time_types() {
 #[test]
 fn test_inet() {
     assert_ser_de_identity(
-        &ColumnType::Inet,
+        &ColumnType::Native(NativeType::Inet),
         &IpAddr::V4(Ipv4Addr::BROADCAST),
         &mut Bytes::new(),
     );
 
     assert_ser_de_identity(
-        &ColumnType::Inet,
+        &ColumnType::Native(NativeType::Inet),
         &IpAddr::V6(Ipv6Addr::LOCALHOST),
         &mut Bytes::new(),
     );
@@ -291,13 +357,13 @@ fn test_inet() {
 #[test]
 fn test_uuid() {
     assert_ser_de_identity(
-        &ColumnType::Uuid,
+        &ColumnType::Native(NativeType::Uuid),
         &Uuid::from_u128(0xdead_cafe_deaf_feed_beaf_bead),
         &mut Bytes::new(),
     );
 
     assert_ser_de_identity(
-        &ColumnType::Timeuuid,
+        &ColumnType::Native(NativeType::Timeuuid),
         &CqlTimeuuid::from_u128(0xdead_cafe_deaf_feed_beaf_bead),
         &mut Bytes::new(),
     );
@@ -307,34 +373,50 @@ fn test_uuid() {
 fn test_null_and_empty() {
     // non-nullable emptiable deserialization, non-empty value
     let int = make_bytes(&[21, 37, 0, 0]);
-    let decoded_int = deserialize::<MaybeEmpty<i32>>(&ColumnType::Int, &int).unwrap();
+    let decoded_int =
+        deserialize::<MaybeEmpty<i32>>(&ColumnType::Native(NativeType::Int), &int).unwrap();
     assert_eq!(decoded_int, MaybeEmpty::Value((21 << 24) + (37 << 16)));
 
     // non-nullable emptiable deserialization, empty value
     let int = make_bytes(&[]);
-    let decoded_int = deserialize::<MaybeEmpty<i32>>(&ColumnType::Int, &int).unwrap();
+    let decoded_int =
+        deserialize::<MaybeEmpty<i32>>(&ColumnType::Native(NativeType::Int), &int).unwrap();
     assert_eq!(decoded_int, MaybeEmpty::Empty);
 
     // nullable non-emptiable deserialization, non-null value
     let int = make_bytes(&[21, 37, 0, 0]);
-    let decoded_int = deserialize::<Option<i32>>(&ColumnType::Int, &int).unwrap();
+    let decoded_int =
+        deserialize::<Option<i32>>(&ColumnType::Native(NativeType::Int), &int).unwrap();
     assert_eq!(decoded_int, Some((21 << 24) + (37 << 16)));
 
     // nullable non-emptiable deserialization, null value
     let int = make_null();
-    let decoded_int = deserialize::<Option<i32>>(&ColumnType::Int, &int).unwrap();
+    let decoded_int =
+        deserialize::<Option<i32>>(&ColumnType::Native(NativeType::Int), &int).unwrap();
     assert_eq!(decoded_int, None);
 
     // nullable emptiable deserialization, non-null non-empty value
     let int = make_bytes(&[]);
-    let decoded_int = deserialize::<Option<MaybeEmpty<i32>>>(&ColumnType::Int, &int).unwrap();
+    let decoded_int =
+        deserialize::<Option<MaybeEmpty<i32>>>(&ColumnType::Native(NativeType::Int), &int).unwrap();
     assert_eq!(decoded_int, Some(MaybeEmpty::Empty));
 
     // ser/de identity
-    assert_ser_de_identity(&ColumnType::Int, &Some(12321_i32), &mut Bytes::new());
-    assert_ser_de_identity(&ColumnType::Double, &None::<f64>, &mut Bytes::new());
     assert_ser_de_identity(
-        &ColumnType::Set(Box::new(ColumnType::Ascii)),
+        &ColumnType::Native(NativeType::Int),
+        &Some(12321_i32),
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Double),
+        &None::<f64>,
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
+        },
         &None::<Vec<&str>>,
         &mut Bytes::new(),
     );
@@ -343,44 +425,53 @@ fn test_null_and_empty() {
 #[test]
 fn test_maybe_empty() {
     let empty = make_bytes(&[]);
-    let decoded_empty = deserialize::<MaybeEmpty<i8>>(&ColumnType::TinyInt, &empty).unwrap();
+    let decoded_empty =
+        deserialize::<MaybeEmpty<i8>>(&ColumnType::Native(NativeType::TinyInt), &empty).unwrap();
     assert_eq!(decoded_empty, MaybeEmpty::Empty);
 
     let non_empty = make_bytes(&[0x01]);
     let decoded_non_empty =
-        deserialize::<MaybeEmpty<i8>>(&ColumnType::TinyInt, &non_empty).unwrap();
+        deserialize::<MaybeEmpty<i8>>(&ColumnType::Native(NativeType::TinyInt), &non_empty)
+            .unwrap();
     assert_eq!(decoded_non_empty, MaybeEmpty::Value(0x01));
 }
 
 #[test]
 fn test_cql_value() {
     assert_ser_de_identity(
-        &ColumnType::Counter,
+        &ColumnType::Native(NativeType::Counter),
         &CqlValue::Counter(Counter(765)),
         &mut Bytes::new(),
     );
 
     assert_ser_de_identity(
-        &ColumnType::Timestamp,
+        &ColumnType::Native(NativeType::Timestamp),
         &CqlValue::Timestamp(CqlTimestamp(2136)),
         &mut Bytes::new(),
     );
 
-    assert_ser_de_identity(&ColumnType::Boolean, &CqlValue::Empty, &mut Bytes::new());
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Boolean),
+        &CqlValue::Empty,
+        &mut Bytes::new(),
+    );
 
     assert_ser_de_identity(
-        &ColumnType::Text,
+        &ColumnType::Native(NativeType::Text),
         &CqlValue::Text("kremówki".to_owned()),
         &mut Bytes::new(),
     );
     assert_ser_de_identity(
-        &ColumnType::Ascii,
+        &ColumnType::Native(NativeType::Ascii),
         &CqlValue::Ascii("kremowy".to_owned()),
         &mut Bytes::new(),
     );
 
     assert_ser_de_identity(
-        &ColumnType::Set(Box::new(ColumnType::Text)),
+        &ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Text))),
+        },
         &CqlValue::Set(vec![CqlValue::Text("Ala ma kota".to_owned())]),
         &mut Bytes::new(),
     );
@@ -396,8 +487,14 @@ fn test_list_and_set() {
 
     let collection = make_bytes(&collection_contents);
 
-    let list_typ = ColumnType::List(Box::new(ColumnType::Ascii));
-    let set_typ = ColumnType::Set(Box::new(ColumnType::Ascii));
+    let list_typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
+    };
+    let set_typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
+    };
 
     // iterator
     let mut iter = deserialize::<ListlikeIterator<&str>>(&list_typ, &collection).unwrap();
@@ -442,8 +539,14 @@ fn test_list_and_set() {
     // Null collections are interpreted as empty collections, to retain convenience:
     // when an empty collection is sent to the DB, the DB nullifies the column instead.
     {
-        let list_typ = ColumnType::List(Box::new(ColumnType::BigInt));
-        let set_typ = ColumnType::Set(Box::new(ColumnType::BigInt));
+        let list_typ = ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+        };
+        let set_typ = ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::BigInt))),
+        };
         type CollTyp = i64;
 
         fn check<'frame, 'metadata, Collection: DeserializeValue<'frame, 'metadata>>(
@@ -487,7 +590,13 @@ fn test_map() {
 
     let collection = make_bytes(&collection_contents);
 
-    let typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Ascii));
+    let typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::Map(
+            Box::new(ColumnType::Native(NativeType::Int)),
+            Box::new(ColumnType::Native(NativeType::Ascii)),
+        ),
+    };
 
     // iterator
     let mut iter = deserialize::<MapIterator<i32, &str>>(&typ, &collection).unwrap();
@@ -524,7 +633,13 @@ fn test_map() {
     // Null collections are interpreted as empty collections, to retain convenience:
     // when an empty collection is sent to the DB, the DB nullifies the column instead.
     {
-        let map_typ = ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Ascii));
+        let map_typ = ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::BigInt)),
+                Box::new(ColumnType::Native(NativeType::Ascii)),
+            ),
+        };
         type KeyTyp = i64;
         type ValueTyp<'s> = &'s str;
 
@@ -561,7 +676,11 @@ fn test_tuples() {
 
     let tuple = make_bytes(&tuple_contents);
 
-    let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Ascii, ColumnType::Uuid]);
+    let typ = ColumnType::Tuple(vec![
+        ColumnType::Native(NativeType::Int),
+        ColumnType::Native(NativeType::Ascii),
+        ColumnType::Native(NativeType::Uuid),
+    ]);
 
     let tup = deserialize::<(i32, &str, Option<Uuid>)>(&typ, &tuple).unwrap();
     assert_eq!(tup, (42, "foo", None));
@@ -574,10 +693,13 @@ fn test_tuples() {
     // nonempty, varied tuple
     assert_ser_de_identity(
         &ColumnType::Tuple(vec![
-            ColumnType::List(Box::new(ColumnType::Boolean)),
-            ColumnType::BigInt,
-            ColumnType::Uuid,
-            ColumnType::Inet,
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Boolean))),
+            },
+            ColumnType::Native(NativeType::BigInt),
+            ColumnType::Native(NativeType::Uuid),
+            ColumnType::Native(NativeType::Inet),
         ]),
         &(
             vec![true, false, true],
@@ -591,7 +713,7 @@ fn test_tuples() {
     // nested tuples
     assert_ser_de_identity(
         &ColumnType::Tuple(vec![ColumnType::Tuple(vec![ColumnType::Tuple(vec![
-            ColumnType::Text,
+            ColumnType::Native(NativeType::Text),
         ])])]),
         &((("",),),),
         &mut Bytes::new(),
@@ -602,9 +724,12 @@ pub(crate) fn udt_def_with_fields(
     fields: impl IntoIterator<Item = (impl Into<Cow<'static, str>>, ColumnType<'static>)>,
 ) -> ColumnType<'static> {
     ColumnType::UserDefinedType {
-        type_name: "udt".into(),
-        keyspace: "ks".into(),
-        field_types: fields.into_iter().map(|(s, t)| (s.into(), t)).collect(),
+        frozen: false,
+        definition: Arc::new(UserDefinedType {
+            name: "udt".into(),
+            keyspace: "ks".into(),
+            field_types: fields.into_iter().map(|(s, t)| (s.into(), t)).collect(),
+        }),
     }
 }
 
@@ -670,9 +795,9 @@ fn test_udt_loose_ordering() {
             .field(&2137_i64.to_be_bytes())
             .finalize();
         let typ = udt_def_with_fields([
-            ("a", ColumnType::Text),
-            ("b", ColumnType::Int),
-            ("c", ColumnType::BigInt),
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("b", ColumnType::Native(NativeType::Int)),
+            ("c", ColumnType::Native(NativeType::BigInt)),
         ]);
 
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
@@ -694,9 +819,9 @@ fn test_udt_loose_ordering() {
             .field("The quick brown fox".as_bytes())
             .finalize();
         let typ = udt_def_with_fields([
-            ("a", ColumnType::Text),
-            ("b", ColumnType::Int),
-            ("c", ColumnType::BigInt),
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("b", ColumnType::Native(NativeType::Int)),
+            ("c", ColumnType::Native(NativeType::BigInt)),
         ]);
 
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
@@ -719,9 +844,9 @@ fn test_udt_loose_ordering() {
             .field(&2137_i64.to_be_bytes())
             .finalize();
         let typ = udt_def_with_fields([
-            ("b", ColumnType::Int),
-            ("a", ColumnType::Text),
-            ("c", ColumnType::BigInt),
+            ("b", ColumnType::Native(NativeType::Int)),
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("c", ColumnType::Native(NativeType::BigInt)),
         ]);
 
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
@@ -745,10 +870,10 @@ fn test_udt_loose_ordering() {
             .field(&2137_i64.to_be_bytes())
             .finalize();
         let typ = udt_def_with_fields([
-            ("d", ColumnType::TinyInt),
-            ("b", ColumnType::Int),
-            ("a", ColumnType::Text),
-            ("c", ColumnType::BigInt),
+            ("d", ColumnType::Native(NativeType::TinyInt)),
+            ("b", ColumnType::Native(NativeType::Int)),
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("c", ColumnType::Native(NativeType::BigInt)),
         ]);
 
         Udt::type_check(&typ).unwrap();
@@ -769,7 +894,10 @@ fn test_udt_loose_ordering() {
         let udt_bytes = UdtSerializer::new()
             .field("The quick brown fox".as_bytes())
             .finalize();
-        let typ = udt_def_with_fields([("a", ColumnType::Text), ("c", ColumnType::BigInt)]);
+        let typ = udt_def_with_fields([
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("c", ColumnType::Native(NativeType::BigInt)),
+        ]);
 
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
         assert_eq!(
@@ -785,13 +913,13 @@ fn test_udt_loose_ordering() {
 
     // Wrong column type
     {
-        let typ = udt_def_with_fields([("a", ColumnType::Text)]);
+        let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
         Udt::type_check(&typ).unwrap_err();
     }
 
     // Missing required column
     {
-        let typ = udt_def_with_fields([("b", ColumnType::Int)]);
+        let typ = udt_def_with_fields([("b", ColumnType::Native(NativeType::Int))]);
         Udt::type_check(&typ).unwrap_err();
     }
 }
@@ -815,7 +943,10 @@ fn test_udt_strict_ordering() {
             .field("The quick brown fox".as_bytes())
             .field(&42i32.to_be_bytes())
             .finalize();
-        let typ = udt_def_with_fields([("a", ColumnType::Text), ("b", ColumnType::Int)]);
+        let typ = udt_def_with_fields([
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("b", ColumnType::Native(NativeType::Int)),
+        ]);
 
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
         assert_eq!(
@@ -834,7 +965,10 @@ fn test_udt_strict_ordering() {
         let udt_bytes = UdtSerializer::new()
             .field("The quick brown fox".as_bytes())
             .finalize();
-        let typ = udt_def_with_fields([("a", ColumnType::Text), ("b", ColumnType::Int)]);
+        let typ = udt_def_with_fields([
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("b", ColumnType::Native(NativeType::Int)),
+        ]);
 
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
         assert_eq!(
@@ -855,9 +989,9 @@ fn test_udt_strict_ordering() {
             .field(&(true as i8).to_be_bytes())
             .finalize();
         let typ = udt_def_with_fields([
-            ("a", ColumnType::Text),
-            ("b", ColumnType::Int),
-            ("d", ColumnType::Boolean),
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("b", ColumnType::Native(NativeType::Int)),
+            ("d", ColumnType::Native(NativeType::Boolean)),
         ]);
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
         assert_eq!(
@@ -882,9 +1016,9 @@ fn test_udt_strict_ordering() {
         }
 
         let typ = udt_def_with_fields([
-            ("a", ColumnType::Text),
-            ("b", ColumnType::Int),
-            ("d", ColumnType::Boolean),
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("b", ColumnType::Native(NativeType::Int)),
+            ("d", ColumnType::Native(NativeType::Boolean)),
         ]);
 
         Udt::type_check(&typ).unwrap_err();
@@ -892,26 +1026,32 @@ fn test_udt_strict_ordering() {
 
     // UDT fields switched - will not work
     {
-        let typ = udt_def_with_fields([("b", ColumnType::Int), ("a", ColumnType::Text)]);
+        let typ = udt_def_with_fields([
+            ("b", ColumnType::Native(NativeType::Int)),
+            ("a", ColumnType::Native(NativeType::Text)),
+        ]);
         Udt::type_check(&typ).unwrap_err();
     }
 
     // Wrong column type
     {
-        let typ = udt_def_with_fields([("a", ColumnType::Int), ("b", ColumnType::Int)]);
+        let typ = udt_def_with_fields([
+            ("a", ColumnType::Native(NativeType::Int)),
+            ("b", ColumnType::Native(NativeType::Int)),
+        ]);
         Udt::type_check(&typ).unwrap_err();
     }
 
     // Missing required column
     {
-        let typ = udt_def_with_fields([("b", ColumnType::Int)]);
+        let typ = udt_def_with_fields([("b", ColumnType::Native(NativeType::Int))]);
         Udt::type_check(&typ).unwrap_err();
     }
 
     // Missing non-required column
     {
         let udt_bytes = UdtSerializer::new().field(b"kotmaale").finalize();
-        let typ = udt_def_with_fields([("a", ColumnType::Text)]);
+        let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
 
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
         assert_eq!(
@@ -930,7 +1070,10 @@ fn test_udt_strict_ordering() {
             .null_field()
             .field(&42i32.to_be_bytes())
             .finalize();
-        let typ = udt_def_with_fields([("a", ColumnType::Text), ("b", ColumnType::Int)]);
+        let typ = udt_def_with_fields([
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("b", ColumnType::Native(NativeType::Int)),
+        ]);
 
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
         assert_eq!(
@@ -961,7 +1104,10 @@ fn test_udt_no_name_check() {
             .field("The quick brown fox".as_bytes())
             .field(&42i32.to_be_bytes())
             .finalize();
-        let typ = udt_def_with_fields([("a", ColumnType::Text), ("b", ColumnType::Int)]);
+        let typ = udt_def_with_fields([
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("b", ColumnType::Native(NativeType::Int)),
+        ]);
 
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
         assert_eq!(
@@ -980,7 +1126,10 @@ fn test_udt_no_name_check() {
             .field("The quick brown fox".as_bytes())
             .field(&42i32.to_be_bytes())
             .finalize();
-        let typ = udt_def_with_fields([("k", ColumnType::Text), ("l", ColumnType::Int)]);
+        let typ = udt_def_with_fields([
+            ("k", ColumnType::Native(NativeType::Text)),
+            ("l", ColumnType::Native(NativeType::Int)),
+        ]);
 
         let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
         assert_eq!(
@@ -1011,7 +1160,10 @@ fn test_udt_cross_rename_fields() {
             .field("The quick brown fox".as_bytes())
             .field(&42_i32.to_be_bytes())
             .finalize();
-        let typ = udt_def_with_fields([("a", ColumnType::Text), ("b", ColumnType::Int)]);
+        let typ = udt_def_with_fields([
+            ("a", ColumnType::Native(NativeType::Text)),
+            ("b", ColumnType::Native(NativeType::Int)),
+        ]);
 
         let udt = deserialize::<TestUdt>(&typ, &udt_bytes).unwrap();
         assert_eq!(
@@ -1051,7 +1203,10 @@ fn test_custom_type_parser() {
     append_bytes(&mut tuple_contents, &42i32.to_be_bytes());
     let tuple = make_bytes(&tuple_contents);
 
-    let typ = ColumnType::Tuple(vec![ColumnType::Ascii, ColumnType::Int]);
+    let typ = ColumnType::Tuple(vec![
+        ColumnType::Native(NativeType::Ascii),
+        ColumnType::Native(NativeType::Int),
+    ]);
 
     let tup = deserialize::<SwappedPair<i32, &str>>(&typ, &tuple).unwrap();
     assert_eq!(tup, SwappedPair("foo", 42));
@@ -1174,15 +1329,15 @@ fn test_native_errors() {
     // Simple type mismatch
     {
         let v = 123_i32;
-        let bytes = serialize(&ColumnType::Int, &v);
+        let bytes = serialize(&ColumnType::Native(NativeType::Int), &v);
 
         // Incompatible types render type check error.
         assert_type_check_error!(
             &bytes,
             f64,
-            ColumnType::Int,
+            ColumnType::Native(NativeType::Int),
             super::BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Double],
+                expected: &[ColumnType::Native(NativeType::Double)],
             }
         );
 
@@ -1190,7 +1345,7 @@ fn test_native_errors() {
         assert_deser_error!(
             &bytes,
             f64,
-            ColumnType::Double,
+            ColumnType::Native(NativeType::Double),
             BuiltinDeserializationErrorKind::ByteLengthMismatch {
                 expected: 8,
                 got: 4,
@@ -1201,21 +1356,24 @@ fn test_native_errors() {
         // As these types have the same size, though, and every binary number in [0, 2^32] is a valid
         // value for both of them, this always succeeds.
         {
-            deserialize::<f32>(&ColumnType::Float, &bytes).unwrap();
+            deserialize::<f32>(&ColumnType::Native(NativeType::Float), &bytes).unwrap();
         }
     }
 
     // str (and also Uuid) are interesting because they accept two types.
     {
         let v = "Ala ma kota";
-        let bytes = serialize(&ColumnType::Ascii, &v);
+        let bytes = serialize(&ColumnType::Native(NativeType::Ascii), &v);
 
         assert_type_check_error!(
             &bytes,
             &str,
-            ColumnType::Double,
+            ColumnType::Native(NativeType::Double),
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Ascii, ColumnType::Text],
+                expected: &[
+                    ColumnType::Native(NativeType::Ascii),
+                    ColumnType::Native(NativeType::Text)
+                ],
             }
         );
 
@@ -1224,7 +1382,7 @@ fn test_native_errors() {
         assert_deser_error!(
             &bytes,
             i64,
-            ColumnType::BigInt,
+            ColumnType::Native(NativeType::BigInt),
             BuiltinDeserializationErrorKind::ByteLengthMismatch {
                 expected: 8,
                 got: 11, // str len
@@ -1234,19 +1392,19 @@ fn test_native_errors() {
     {
         // -126 is not a valid ASCII nor UTF-8 byte.
         let v = -126_i8;
-        let bytes = serialize(&ColumnType::TinyInt, &v);
+        let bytes = serialize(&ColumnType::Native(NativeType::TinyInt), &v);
 
         assert_deser_error!(
             &bytes,
             &str,
-            ColumnType::Ascii,
+            ColumnType::Native(NativeType::Ascii),
             BuiltinDeserializationErrorKind::ExpectedAscii
         );
 
         assert_deser_error!(
             &bytes,
             &str,
-            ColumnType::Text,
+            ColumnType::Native(NativeType::Text),
             BuiltinDeserializationErrorKind::InvalidUtf8(_)
         );
     }
@@ -1259,7 +1417,7 @@ fn test_set_or_list_errors() {
         assert_type_check_error!(
             &Bytes::new(),
             Vec<i64>,
-            ColumnType::Float,
+            ColumnType::Native(NativeType::Float),
             BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSetOrList)
         );
 
@@ -1267,7 +1425,10 @@ fn test_set_or_list_errors() {
         assert_type_check_error!(
             &Bytes::new(),
             BTreeSet<i32>,
-            ColumnType::List(Box::new(ColumnType::Int)),
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+            },
             BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
         );
     }
@@ -1277,20 +1438,32 @@ fn test_set_or_list_errors() {
         assert_type_check_error!(
             &Bytes::new(),
             Vec<i64>,
-            ColumnType::List(Box::new(ColumnType::Ascii)),
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
+            },
             BuiltinTypeCheckErrorKind::SetOrListError(
                 SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(_)
             )
         );
 
         let err = deserialize::<Vec<i64>>(
-            &ColumnType::List(Box::new(ColumnType::Varint)),
+            &ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+            },
             &Bytes::new(),
         )
         .unwrap_err();
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
-        assert_eq!(err.cql_type, ColumnType::List(Box::new(ColumnType::Varint)),);
+        assert_eq!(
+            err.cql_type,
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+            },
+        );
         let BuiltinTypeCheckErrorKind::SetOrListError(
             SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(ref err),
         ) = err.kind
@@ -1299,27 +1472,41 @@ fn test_set_or_list_errors() {
         };
         let err = get_typeck_err_inner(err.0.as_ref());
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
-        assert_eq!(err.cql_type, ColumnType::Varint);
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::Varint));
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::BigInt]
+                expected: &[ColumnType::Native(NativeType::BigInt)]
             }
         );
     }
 
     {
-        let ser_typ = ColumnType::List(Box::new(ColumnType::Int));
+        let ser_typ = ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+        };
         let v = vec![123_i32];
         let bytes = serialize(&ser_typ, &v);
 
         {
-            let err =
-                deserialize::<Vec<i64>>(&ColumnType::List(Box::new(ColumnType::BigInt)), &bytes)
-                    .unwrap_err();
+            let err = deserialize::<Vec<i64>>(
+                &ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
+                &bytes,
+            )
+            .unwrap_err();
             let err = get_deser_err(&err);
             assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
-            assert_eq!(err.cql_type, ColumnType::List(Box::new(ColumnType::BigInt)),);
+            assert_eq!(
+                err.cql_type,
+                ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
+                },
+            );
             let BuiltinDeserializationErrorKind::SetOrListError(
                 SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
             ) = &err.kind
@@ -1328,7 +1515,7 @@ fn test_set_or_list_errors() {
             };
             let err = get_deser_err(err);
             assert_eq!(err.rust_name, std::any::type_name::<i64>());
-            assert_eq!(err.cql_type, ColumnType::BigInt);
+            assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
             assert_matches!(
                 err.kind,
                 BuiltinDeserializationErrorKind::ByteLengthMismatch {
@@ -1344,7 +1531,7 @@ fn test_set_or_list_errors() {
 fn test_map_errors() {
     // Not a map
     {
-        let ser_typ = ColumnType::Float;
+        let ser_typ = ColumnType::Native(NativeType::Float);
         let v = 2.12_f32;
         let bytes = serialize(&ser_typ, &v);
 
@@ -1361,7 +1548,13 @@ fn test_map_errors() {
     // Key type mismatch
     {
         let err = deserialize::<HashMap<i64, bool>>(
-            &ColumnType::Map(Box::new(ColumnType::Varint), Box::new(ColumnType::Boolean)),
+            &ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Varint)),
+                    Box::new(ColumnType::Native(NativeType::Boolean)),
+                ),
+            },
             &Bytes::new(),
         )
         .unwrap_err();
@@ -1369,7 +1562,13 @@ fn test_map_errors() {
         assert_eq!(err.rust_name, std::any::type_name::<HashMap<i64, bool>>());
         assert_eq!(
             err.cql_type,
-            ColumnType::Map(Box::new(ColumnType::Varint), Box::new(ColumnType::Boolean))
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Varint)),
+                    Box::new(ColumnType::Native(NativeType::Boolean))
+                ),
+            }
         );
         let BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::KeyTypeCheckFailed(ref err)) =
             err.kind
@@ -1378,11 +1577,11 @@ fn test_map_errors() {
         };
         let err = get_typeck_err_inner(err.0.as_ref());
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
-        assert_eq!(err.cql_type, ColumnType::Varint);
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::Varint));
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::BigInt]
+                expected: &[ColumnType::Native(NativeType::BigInt)]
             }
         );
     }
@@ -1390,7 +1589,13 @@ fn test_map_errors() {
     // Value type mismatch
     {
         let err = deserialize::<BTreeMap<i64, &str>>(
-            &ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean)),
+            &ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::BigInt)),
+                    Box::new(ColumnType::Native(NativeType::Boolean)),
+                ),
+            },
             &Bytes::new(),
         )
         .unwrap_err();
@@ -1398,7 +1603,13 @@ fn test_map_errors() {
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<i64, &str>>());
         assert_eq!(
             err.cql_type,
-            ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean))
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::BigInt)),
+                    Box::new(ColumnType::Native(NativeType::Boolean))
+                ),
+            }
         );
         let BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::ValueTypeCheckFailed(
             ref err,
@@ -1408,23 +1619,38 @@ fn test_map_errors() {
         };
         let err = get_typeck_err_inner(err.0.as_ref());
         assert_eq!(err.rust_name, std::any::type_name::<&str>());
-        assert_eq!(err.cql_type, ColumnType::Boolean);
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::Boolean));
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Ascii, ColumnType::Text]
+                expected: &[
+                    ColumnType::Native(NativeType::Ascii),
+                    ColumnType::Native(NativeType::Text)
+                ]
             }
         );
     }
 
     // Key length mismatch
     {
-        let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
+        let ser_typ = ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Native(NativeType::Boolean)),
+            ),
+        };
         let v = HashMap::from([(42, false), (2137, true)]);
         let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
 
         let err = deserialize::<HashMap<i64, bool>>(
-            &ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean)),
+            &ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::BigInt)),
+                    Box::new(ColumnType::Native(NativeType::Boolean)),
+                ),
+            },
             &bytes,
         )
         .unwrap_err();
@@ -1432,7 +1658,13 @@ fn test_map_errors() {
         assert_eq!(err.rust_name, std::any::type_name::<HashMap<i64, bool>>());
         assert_eq!(
             err.cql_type,
-            ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean))
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::BigInt)),
+                    Box::new(ColumnType::Native(NativeType::Boolean))
+                ),
+            }
         );
         let BuiltinDeserializationErrorKind::MapError(
             MapDeserializationErrorKind::KeyDeserializationFailed(err),
@@ -1442,7 +1674,7 @@ fn test_map_errors() {
         };
         let err = get_deser_err(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
-        assert_eq!(err.cql_type, ColumnType::BigInt);
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         assert_matches!(
             err.kind,
             BuiltinDeserializationErrorKind::ByteLengthMismatch {
@@ -1454,12 +1686,24 @@ fn test_map_errors() {
 
     // Value length mismatch
     {
-        let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
+        let ser_typ = ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Native(NativeType::Boolean)),
+            ),
+        };
         let v = HashMap::from([(42, false), (2137, true)]);
         let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
 
         let err = deserialize::<HashMap<i32, i16>>(
-            &ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::SmallInt)),
+            &ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Int)),
+                    Box::new(ColumnType::Native(NativeType::SmallInt)),
+                ),
+            },
             &bytes,
         )
         .unwrap_err();
@@ -1467,7 +1711,13 @@ fn test_map_errors() {
         assert_eq!(err.rust_name, std::any::type_name::<HashMap<i32, i16>>());
         assert_eq!(
             err.cql_type,
-            ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::SmallInt))
+            ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::Map(
+                    Box::new(ColumnType::Native(NativeType::Int)),
+                    Box::new(ColumnType::Native(NativeType::SmallInt))
+                ),
+            }
         );
         let BuiltinDeserializationErrorKind::MapError(
             MapDeserializationErrorKind::ValueDeserializationFailed(err),
@@ -1477,7 +1727,7 @@ fn test_map_errors() {
         };
         let err = get_deser_err(err);
         assert_eq!(err.rust_name, std::any::type_name::<i16>());
-        assert_eq!(err.cql_type, ColumnType::SmallInt);
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::SmallInt));
         assert_matches!(
             err.kind,
             BuiltinDeserializationErrorKind::ByteLengthMismatch {
@@ -1495,7 +1745,7 @@ fn test_tuple_errors() {
         assert_type_check_error!(
             &Bytes::new(),
             (i64,),
-            ColumnType::BigInt,
+            ColumnType::Native(NativeType::BigInt),
             BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple)
         );
     }
@@ -1514,7 +1764,10 @@ fn test_tuple_errors() {
         assert_type_check_error!(
             &Bytes::new(),
             (f32,),
-            ColumnType::Tuple(vec![ColumnType::Float, ColumnType::Float]),
+            ColumnType::Tuple(vec![
+                ColumnType::Native(NativeType::Float),
+                ColumnType::Native(NativeType::Float)
+            ]),
             BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
                 rust_type_el_count: 1,
                 cql_type_el_count: 2,
@@ -1526,13 +1779,16 @@ fn test_tuple_errors() {
     {
         {
             let err = deserialize::<(i64,)>(
-                &ColumnType::Tuple(vec![ColumnType::SmallInt]),
+                &ColumnType::Tuple(vec![ColumnType::Native(NativeType::SmallInt)]),
                 &Bytes::new(),
             )
             .unwrap_err();
             let err = get_typeck_err(&err);
             assert_eq!(err.rust_name, std::any::type_name::<(i64,)>());
-            assert_eq!(err.cql_type, ColumnType::Tuple(vec![ColumnType::SmallInt]));
+            assert_eq!(
+                err.cql_type,
+                ColumnType::Tuple(vec![ColumnType::Native(NativeType::SmallInt)])
+            );
             let BuiltinTypeCheckErrorKind::TupleError(
                 TupleTypeCheckErrorKind::FieldTypeCheckFailed { ref err, position },
             ) = err.kind
@@ -1542,24 +1798,30 @@ fn test_tuple_errors() {
             assert_eq!(position, 0);
             let err = get_typeck_err_inner(err.0.as_ref());
             assert_eq!(err.rust_name, std::any::type_name::<i64>());
-            assert_eq!(err.cql_type, ColumnType::SmallInt);
+            assert_eq!(err.cql_type, ColumnType::Native(NativeType::SmallInt));
             assert_matches!(
                 err.kind,
                 BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[ColumnType::BigInt]
+                    expected: &[ColumnType::Native(NativeType::BigInt)]
                 }
             );
         }
     }
 
     {
-        let ser_typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Float]);
+        let ser_typ = ColumnType::Tuple(vec![
+            ColumnType::Native(NativeType::Int),
+            ColumnType::Native(NativeType::Float),
+        ]);
         let v = (123_i32, 123.123_f32);
         let bytes = serialize(&ser_typ, &v);
 
         {
             let err = deserialize::<(i32, f64)>(
-                &ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Double]),
+                &ColumnType::Tuple(vec![
+                    ColumnType::Native(NativeType::Int),
+                    ColumnType::Native(NativeType::Double),
+                ]),
                 &bytes,
             )
             .unwrap_err();
@@ -1567,7 +1829,10 @@ fn test_tuple_errors() {
             assert_eq!(err.rust_name, std::any::type_name::<(i32, f64)>());
             assert_eq!(
                 err.cql_type,
-                ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Double])
+                ColumnType::Tuple(vec![
+                    ColumnType::Native(NativeType::Int),
+                    ColumnType::Native(NativeType::Double)
+                ])
             );
             let BuiltinDeserializationErrorKind::TupleError(
                 TupleDeserializationErrorKind::FieldDeserializationFailed {
@@ -1581,7 +1846,7 @@ fn test_tuple_errors() {
             assert_eq!(index, 1);
             let err = get_deser_err(err);
             assert_eq!(err.rust_name, std::any::type_name::<f64>());
-            assert_eq!(err.cql_type, ColumnType::Double);
+            assert_eq!(err.cql_type, ColumnType::Native(NativeType::Double));
             assert_matches!(
                 err.kind,
                 BuiltinDeserializationErrorKind::ByteLengthMismatch {
@@ -1595,7 +1860,13 @@ fn test_tuple_errors() {
 
 #[test]
 fn test_null_errors() {
-    let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
+    let ser_typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::Map(
+            Box::new(ColumnType::Native(NativeType::Int)),
+            Box::new(ColumnType::Native(NativeType::Boolean)),
+        ),
+    };
     let v = HashMap::from([(42, false), (2137, true)]);
     let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
 
@@ -1622,7 +1893,13 @@ fn test_udt_errors() {
         {
             // Not UDT
             {
-                let typ = ColumnType::Map(Box::new(ColumnType::Ascii), Box::new(ColumnType::Blob));
+                let typ = ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::Map(
+                        Box::new(ColumnType::Native(NativeType::Ascii)),
+                        Box::new(ColumnType::Native(NativeType::Blob)),
+                    ),
+                };
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -1635,7 +1912,7 @@ fn test_udt_errors() {
 
             // UDT missing fields
             {
-                let typ = udt_def_with_fields([("c", ColumnType::Boolean)]);
+                let typ = udt_def_with_fields([("c", ColumnType::Native(NativeType::Boolean))]);
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -1654,9 +1931,9 @@ fn test_udt_errors() {
             // excess fields in UDT
             {
                 let typ = udt_def_with_fields([
-                    ("d", ColumnType::Boolean),
-                    ("a", ColumnType::Text),
-                    ("b", ColumnType::Int),
+                    ("d", ColumnType::Native(NativeType::Boolean)),
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Int)),
                 ]);
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
@@ -1673,7 +1950,10 @@ fn test_udt_errors() {
 
             // missing UDT field
             {
-                let typ = udt_def_with_fields([("b", ColumnType::Int), ("a", ColumnType::Text)]);
+                let typ = udt_def_with_fields([
+                    ("b", ColumnType::Native(NativeType::Int)),
+                    ("a", ColumnType::Native(NativeType::Text)),
+                ]);
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -1689,7 +1969,10 @@ fn test_udt_errors() {
 
             // UDT fields incompatible types - field type check failed
             {
-                let typ = udt_def_with_fields([("a", ColumnType::Blob), ("b", ColumnType::Int)]);
+                let typ = udt_def_with_fields([
+                    ("a", ColumnType::Native(NativeType::Blob)),
+                    ("b", ColumnType::Native(NativeType::Int)),
+                ]);
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -1706,11 +1989,14 @@ fn test_udt_errors() {
                 assert_eq!(field_name.as_str(), "a");
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<&str>());
-                assert_eq!(err.cql_type, ColumnType::Blob);
+                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
                 assert_matches!(
                     err.kind,
                     BuiltinTypeCheckErrorKind::MismatchedType {
-                        expected: &[ColumnType::Ascii, ColumnType::Text]
+                        expected: &[
+                            ColumnType::Native(NativeType::Ascii),
+                            ColumnType::Native(NativeType::Text)
+                        ]
                     }
                 );
             }
@@ -1721,9 +2007,9 @@ fn test_udt_errors() {
             // Got null
             {
                 let typ = udt_def_with_fields([
-                    ("c", ColumnType::Boolean),
-                    ("a", ColumnType::Blob),
-                    ("b", ColumnType::Int),
+                    ("c", ColumnType::Native(NativeType::Boolean)),
+                    ("a", ColumnType::Native(NativeType::Blob)),
+                    ("b", ColumnType::Native(NativeType::Int)),
                 ]);
 
                 let err = Udt::deserialize(&typ, None).unwrap_err();
@@ -1735,8 +2021,10 @@ fn test_udt_errors() {
 
             // UDT field deserialization failed
             {
-                let typ =
-                    udt_def_with_fields([("a", ColumnType::Ascii), ("c", ColumnType::Boolean)]);
+                let typ = udt_def_with_fields([
+                    ("a", ColumnType::Native(NativeType::Ascii)),
+                    ("c", ColumnType::Native(NativeType::Boolean)),
+                ]);
 
                 let udt_bytes = UdtSerializer::new()
                     .field("alamakota".as_bytes())
@@ -1760,7 +2048,7 @@ fn test_udt_errors() {
                 assert_eq!(field_name.as_str(), "c");
                 let err = get_deser_err(err);
                 assert_eq!(err.rust_name, std::any::type_name::<bool>());
-                assert_eq!(err.cql_type, ColumnType::Boolean);
+                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Boolean));
                 assert_matches!(
                     err.kind,
                     BuiltinDeserializationErrorKind::ByteLengthMismatch {
@@ -1789,7 +2077,13 @@ fn test_udt_errors() {
         {
             // Not UDT
             {
-                let typ = ColumnType::Map(Box::new(ColumnType::Ascii), Box::new(ColumnType::Blob));
+                let typ = ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::Map(
+                        Box::new(ColumnType::Native(NativeType::Ascii)),
+                        Box::new(ColumnType::Native(NativeType::Blob)),
+                    ),
+                };
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -1802,7 +2096,7 @@ fn test_udt_errors() {
 
             // UDT too few fields
             {
-                let typ = udt_def_with_fields([("a", ColumnType::Text)]);
+                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -1821,9 +2115,9 @@ fn test_udt_errors() {
             // excess fields in UDT
             {
                 let typ = udt_def_with_fields([
-                    ("a", ColumnType::Text),
-                    ("b", ColumnType::Int),
-                    ("d", ColumnType::Boolean),
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Int)),
+                    ("d", ColumnType::Native(NativeType::Boolean)),
                 ]);
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
@@ -1840,7 +2134,10 @@ fn test_udt_errors() {
 
             // UDT fields switched - field name mismatch
             {
-                let typ = udt_def_with_fields([("b", ColumnType::Int), ("a", ColumnType::Text)]);
+                let typ = udt_def_with_fields([
+                    ("b", ColumnType::Native(NativeType::Int)),
+                    ("a", ColumnType::Native(NativeType::Text)),
+                ]);
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -1860,7 +2157,10 @@ fn test_udt_errors() {
 
             // UDT fields incompatible types - field type check failed
             {
-                let typ = udt_def_with_fields([("a", ColumnType::Blob), ("b", ColumnType::Int)]);
+                let typ = udt_def_with_fields([
+                    ("a", ColumnType::Native(NativeType::Blob)),
+                    ("b", ColumnType::Native(NativeType::Int)),
+                ]);
                 let err = Udt::type_check(&typ).unwrap_err();
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -1877,11 +2177,14 @@ fn test_udt_errors() {
                 assert_eq!(field_name.as_str(), "a");
                 let err = get_typeck_err_inner(err.0.as_ref());
                 assert_eq!(err.rust_name, std::any::type_name::<&str>());
-                assert_eq!(err.cql_type, ColumnType::Blob);
+                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
                 assert_matches!(
                     err.kind,
                     BuiltinTypeCheckErrorKind::MismatchedType {
-                        expected: &[ColumnType::Ascii, ColumnType::Text]
+                        expected: &[
+                            ColumnType::Native(NativeType::Ascii),
+                            ColumnType::Native(NativeType::Text)
+                        ]
                     }
                 );
             }
@@ -1892,9 +2195,9 @@ fn test_udt_errors() {
             // Got null
             {
                 let typ = udt_def_with_fields([
-                    ("a", ColumnType::Text),
-                    ("b", ColumnType::Int),
-                    ("c", ColumnType::Boolean),
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Int)),
+                    ("c", ColumnType::Native(NativeType::Boolean)),
                 ]);
 
                 let err = Udt::deserialize(&typ, None).unwrap_err();
@@ -1907,9 +2210,9 @@ fn test_udt_errors() {
             // Bad field format
             {
                 let typ = udt_def_with_fields([
-                    ("a", ColumnType::Text),
-                    ("b", ColumnType::Int),
-                    ("c", ColumnType::Boolean),
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Int)),
+                    ("c", ColumnType::Native(NativeType::Boolean)),
                 ]);
 
                 let udt_bytes = UdtSerializer::new()
@@ -1934,9 +2237,9 @@ fn test_udt_errors() {
             // UDT field deserialization failed
             {
                 let typ = udt_def_with_fields([
-                    ("a", ColumnType::Text),
-                    ("b", ColumnType::Int),
-                    ("c", ColumnType::Boolean),
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Int)),
+                    ("c", ColumnType::Native(NativeType::Boolean)),
                 ]);
 
                 let udt_bytes = UdtSerializer::new()
@@ -1962,7 +2265,7 @@ fn test_udt_errors() {
                 assert_eq!(field_name.as_str(), "b");
                 let err = get_deser_err(err);
                 assert_eq!(err.rust_name, std::any::type_name::<i32>());
-                assert_eq!(err.cql_type, ColumnType::Int);
+                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
                 assert_matches!(
                     err.kind,
                     BuiltinDeserializationErrorKind::ByteLengthMismatch {
@@ -1995,35 +2298,50 @@ fn metadata_does_not_bound_deserialized_values() {
         // Metadata's lifetime is limited to this scope.
 
         // blob
-        let blob_typ = ColumnType::Blob;
+        let blob_typ = ColumnType::Native(NativeType::Blob);
         let decoded_blob_res = deserialize::<&[u8]>(&blob_typ, &bytes);
 
         // str
-        let str_typ = ColumnType::Ascii;
+        let str_typ = ColumnType::Native(NativeType::Ascii);
         let decoded_str_res = deserialize::<&str>(&str_typ, &bytes);
 
         // list
-        let list_typ = ColumnType::List(Box::new(ColumnType::Ascii));
+        let list_typ = ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
+        };
         let decoded_vec_str_res = deserialize::<Vec<&str>>(&list_typ, &bytes);
         let decoded_vec_string_res = deserialize::<Vec<String>>(&list_typ, &bytes);
 
         // set
-        let set_typ = ColumnType::Set(Box::new(ColumnType::Ascii));
+        let set_typ = ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
+        };
         let decoded_set_str_res = deserialize::<HashSet<&str>>(&set_typ, &bytes);
         let decoded_set_string_res = deserialize::<HashSet<String>>(&set_typ, &bytes);
 
         // map
-        let map_typ = ColumnType::Map(Box::new(ColumnType::Ascii), Box::new(ColumnType::Int));
+        let map_typ = ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Ascii)),
+                Box::new(ColumnType::Native(NativeType::Int)),
+            ),
+        };
         let decoded_map_str_int_res = deserialize::<HashMap<&str, i32>>(&map_typ, &bytes);
 
         // UDT
         let udt_typ = ColumnType::UserDefinedType {
-            type_name: "udt".into(),
-            keyspace: "ks".into(),
-            field_types: vec![
-                ("bytes".into(), ColumnType::Blob),
-                ("text".into(), ColumnType::Text),
-            ],
+            frozen: false,
+            definition: Arc::new(UserDefinedType {
+                name: "udt".into(),
+                keyspace: "ks".into(),
+                field_types: vec![
+                    ("bytes".into(), ColumnType::Native(NativeType::Blob)),
+                    ("text".into(), ColumnType::Native(NativeType::Text)),
+                ],
+            }),
         };
         #[derive(DeserializeValue)]
         #[scylla(crate=crate)]

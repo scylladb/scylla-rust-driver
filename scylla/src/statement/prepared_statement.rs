@@ -601,7 +601,7 @@ impl<'ps> PartitionKey<'ps> {
 #[cfg(test)]
 mod tests {
     use scylla_cql::frame::response::result::{
-        ColumnSpec, ColumnType, PartitionKeyIndex, PreparedMetadata, TableSpec,
+        ColumnSpec, ColumnType, NativeType, PartitionKeyIndex, PreparedMetadata, TableSpec,
     };
     use scylla_cql::serialize::row::SerializedValues;
 
@@ -639,21 +639,29 @@ mod tests {
         setup_tracing();
         let meta = make_meta(
             [
-                ColumnType::TinyInt,
-                ColumnType::SmallInt,
-                ColumnType::Int,
-                ColumnType::BigInt,
-                ColumnType::Blob,
+                ColumnType::Native(NativeType::TinyInt),
+                ColumnType::Native(NativeType::SmallInt),
+                ColumnType::Native(NativeType::Int),
+                ColumnType::Native(NativeType::BigInt),
+                ColumnType::Native(NativeType::Blob),
             ],
             [4, 0, 3],
         );
         let mut values = SerializedValues::new();
-        values.add_value(&67i8, &ColumnType::TinyInt).unwrap();
-        values.add_value(&42i16, &ColumnType::SmallInt).unwrap();
-        values.add_value(&23i32, &ColumnType::Int).unwrap();
-        values.add_value(&89i64, &ColumnType::BigInt).unwrap();
         values
-            .add_value(&[1u8, 2, 3, 4, 5], &ColumnType::Blob)
+            .add_value(&67i8, &ColumnType::Native(NativeType::TinyInt))
+            .unwrap();
+        values
+            .add_value(&42i16, &ColumnType::Native(NativeType::SmallInt))
+            .unwrap();
+        values
+            .add_value(&23i32, &ColumnType::Native(NativeType::Int))
+            .unwrap();
+        values
+            .add_value(&89i64, &ColumnType::Native(NativeType::BigInt))
+            .unwrap();
+        values
+            .add_value(&[1u8, 2, 3, 4, 5], &ColumnType::Native(NativeType::Blob))
             .unwrap();
 
         let pk = PartitionKey::new(&meta, &values).unwrap();
