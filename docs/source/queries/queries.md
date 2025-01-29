@@ -107,5 +107,6 @@ There is a special functionality to enable [USE keyspace](usekeyspace.md).
    schema-agreement
    lwt
    timeouts
+   displaying-results
    timestamp-generators
 ```
