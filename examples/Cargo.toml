@@ -7,7 +7,7 @@ version = "0.0.0"
 [dev-dependencies]
 anyhow = "1.0.33"
 futures = "0.3.6"
-openssl = "0.10.32"
+openssl = "0.10.70"
 rustyline = "9"
 rustyline-derive = "0.6"
 scylla = { path = "../scylla", features = [
