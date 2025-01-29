@@ -1,5 +1,5 @@
 use crate::batch::{Batch, BatchStatement};
-use crate::errors::{ExecutionError, PrepareError};
+use crate::errors::{ExecutionError, PagerExecutionError, PrepareError};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::response::query_result::QueryResult;
@@ -108,7 +108,7 @@ where
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<QueryPager, ExecutionError> {
+    ) -> Result<QueryPager, PagerExecutionError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session.execute_iter(prepared, values).await

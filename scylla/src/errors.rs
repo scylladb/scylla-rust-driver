@@ -152,6 +152,23 @@ pub enum PrepareError {
     PreparedStatementIdsMismatch,
 }
 
+/// An error that occurred during construction of [`QueryPager`][crate::client::pager::QueryPager].
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum PagerExecutionError {
+    /// Failed to prepare the statement.
+    #[error("Failed to prepare the statement to be used by the pager: {0}")]
+    PrepareError(#[from] PrepareError),
+
+    /// Failed to serialize statement parameters.
+    #[error("Failed to serialize statement parameters: {0}")]
+    SerializationError(#[from] SerializationError),
+
+    /// Failed to fetch the first page of the result.
+    #[error("Failed to fetch the first page of the result: {0}")]
+    NextPageError(#[from] NextPageError),
+}
+
 /// Error that occurred during session creation
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]

@@ -14,8 +14,8 @@ use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
-    BadQuery, ExecutionError, MetadataError, NewSessionError, PrepareError, ProtocolError,
-    RequestAttemptError, RequestError, TracingError, UseKeyspaceError,
+    BadQuery, ExecutionError, MetadataError, NewSessionError, PagerExecutionError, PrepareError,
+    ProtocolError, RequestAttemptError, RequestError, TracingError, UseKeyspaceError,
 };
 use crate::frame::response::result;
 #[cfg(feature = "ssl")]
@@ -511,7 +511,7 @@ impl Session {
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<QueryPager, ExecutionError> {
+    ) -> Result<QueryPager, PagerExecutionError> {
         self.do_query_iter(query.into(), values).await
     }
 
@@ -675,7 +675,7 @@ impl Session {
         &self,
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
-    ) -> Result<QueryPager, ExecutionError> {
+    ) -> Result<QueryPager, PagerExecutionError> {
         self.do_execute_iter(prepared.into(), values).await
     }
 
@@ -1035,7 +1035,7 @@ impl Session {
         &self,
         query: Query,
         values: impl SerializeRow,
-    ) -> Result<QueryPager, ExecutionError> {
+    ) -> Result<QueryPager, PagerExecutionError> {
         let execution_profile = query
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -1049,7 +1049,7 @@ impl Session {
                 self.metrics.clone(),
             )
             .await
-            .map_err(ExecutionError::from)
+            .map_err(PagerExecutionError::NextPageError)
         } else {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
@@ -1064,7 +1064,7 @@ impl Session {
                 metrics: self.metrics.clone(),
             })
             .await
-            .map_err(ExecutionError::from)
+            .map_err(PagerExecutionError::NextPageError)
         }
     }
 
@@ -1307,7 +1307,7 @@ impl Session {
         &self,
         prepared: PreparedStatement,
         values: impl SerializeRow,
-    ) -> Result<QueryPager, ExecutionError> {
+    ) -> Result<QueryPager, PagerExecutionError> {
         let serialized_values = prepared.serialize_values(&values)?;
 
         let execution_profile = prepared
@@ -1323,7 +1323,7 @@ impl Session {
             metrics: self.metrics.clone(),
         })
         .await
-        .map_err(ExecutionError::from)
+        .map_err(PagerExecutionError::NextPageError)
     }
 
     async fn do_batch(
