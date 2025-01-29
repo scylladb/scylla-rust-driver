@@ -65,6 +65,7 @@ pub(crate) struct PoolConfig {
     pub(crate) keepalive_interval: Option<Duration>,
 }
 
+#[cfg(test)]
 impl Default for PoolConfig {
     fn default() -> Self {
         Self {
