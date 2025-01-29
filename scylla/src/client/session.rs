@@ -15,8 +15,8 @@ use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
-    BadQuery, ExecutionError, MetadataError, NewSessionError, ProtocolError, RequestAttemptError,
-    RequestError, TracingProtocolError, UseKeyspaceError,
+    BadQuery, ExecutionError, MetadataError, NewSessionError, PrepareError, ProtocolError,
+    RequestAttemptError, RequestError, TracingProtocolError, UseKeyspaceError,
 };
 use crate::frame::response::result;
 #[cfg(feature = "ssl")]
@@ -1300,7 +1300,7 @@ where
     pub async fn prepare(
         &self,
         query: impl Into<Query>,
-    ) -> Result<PreparedStatement, ExecutionError> {
+    ) -> Result<PreparedStatement, PrepareError> {
         let query = query.into();
         let query_ref = &query;
 
@@ -1319,12 +1319,12 @@ where
         let first_ok: Result<PreparedStatement, RequestAttemptError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
         let mut prepared: PreparedStatement =
-            first_ok.map_err(RequestAttemptError::into_execution_error)?;
+            first_ok.map_err(|first_attempt| PrepareError::AllAttemptsFailed { first_attempt })?;
 
         // Validate prepared ids equality
         for statement in results.flatten() {
             if prepared.get_id() != statement.get_id() {
-                return Err(ProtocolError::PreparedStatementIdsMismatch.into());
+                return Err(PrepareError::PreparedStatementIdsMismatch);
             }
 
             // Collect all tracing ids from prepare() queries in the final result

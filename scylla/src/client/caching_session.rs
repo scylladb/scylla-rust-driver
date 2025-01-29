@@ -1,7 +1,7 @@
 use crate::batch::{Batch, BatchStatement};
 #[allow(deprecated)]
 use crate::client::pager::LegacyRowIterator;
-use crate::errors::ExecutionError;
+use crate::errors::{ExecutionError, PrepareError};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 #[allow(deprecated)]
@@ -276,7 +276,7 @@ where
     pub async fn add_prepared_statement(
         &self,
         query: impl Into<&Query>,
-    ) -> Result<PreparedStatement, ExecutionError> {
+    ) -> Result<PreparedStatement, PrepareError> {
         self.add_prepared_statement_owned(query.into().clone())
             .await
     }
@@ -284,7 +284,7 @@ where
     async fn add_prepared_statement_owned(
         &self,
         query: impl Into<Query>,
-    ) -> Result<PreparedStatement, ExecutionError> {
+    ) -> Result<PreparedStatement, PrepareError> {
         let query = query.into();
 
         if let Some(raw) = self.cache.get(&query.contents) {
