@@ -29,6 +29,7 @@ use scylla_cql::{
 
 use thiserror::Error;
 
+use crate::client::pager::NextPageError;
 use crate::{authentication::AuthError, frame::response};
 
 use crate::client::pager::NextRowError;
@@ -116,8 +117,8 @@ pub enum ExecutionError {
     // The reason this needs to be included is that topology.rs makes use of iter API and returns ExecutionError.
     // Once iter API is adjusted, we can then adjust errors returned by topology module (e.g. refactor MetadataError and not include it in ExecutionError).
     /// An error occurred during async iteration over rows of result.
-    #[error("An error occurred during async iteration over rows of result: {0}")]
-    NextRowError(#[from] NextRowError),
+    #[error("Failed to fetch next page of the result: {0}")]
+    NextPageError(#[from] NextPageError),
 }
 
 impl From<SerializationError> for ExecutionError {
