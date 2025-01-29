@@ -338,10 +338,10 @@ impl NodeConnectionPool {
                 response_sender,
             })
             .await
-            .expect("Bug in ConnectionKeeper::use_keyspace sending");
-        // Other end of this channel is in the Refiller, can't be dropped while we have &self to _refiller_handle
+            .expect("Bug in NodeConnectionPool::use_keyspace sending");
+        // Other end of this channel is in the PoolRefiller, can't be dropped while we have &self to _refiller_handle
 
-        response_receiver.await.unwrap() // NodePoolRefiller always responds
+        response_receiver.await.unwrap() // PoolRefiller always responds
     }
 
     // Waits until the pool becomes initialized.
