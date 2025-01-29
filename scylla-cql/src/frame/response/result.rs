@@ -49,24 +49,47 @@ pub struct TableSpec<'a> {
     table_name: Cow<'a, str>,
 }
 
+/// A type of:
+/// - a column in schema metadata
+/// - a bind marker in a prepared statement
+/// - a column a in query result set
+///
+/// Some of the variants contain a `frozen` flag. This flag is only used
+/// in schema metadata. For prepared statement bind markers and query result
+/// types those fields will always be set to `false` (even if the DB column
+/// corresponding to given marker / result type is frozen).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColumnType<'frame> {
+    /// Types that are "simple" (non-recursive).
     Native(NativeType),
+
+    /// Collection types: Map, Set, and List. Those are composite types with
+    /// dynamic size but constant predefined element types.
     Collection {
         frozen: bool,
         typ: CollectionType<'frame>,
     },
+
+    /// A composite list-like type that has a defined size and all its elements
+    /// are of the same type. Intuitively, it can be viewed as a list with constant
+    /// predefined size, or as a tuple which has all elements of the same type.
     Vector {
         typ: Box<ColumnType<'frame>>,
         dimensions: u16,
     },
+
+    /// A C-struct-like type defined by the user.
     UserDefinedType {
         frozen: bool,
         definition: Arc<UserDefinedType<'frame>>,
     },
+
+    /// A composite type with a defined size and elements of possibly different,
+    /// but predefined, types.
     Tuple(Vec<ColumnType<'frame>>),
 }
 
+/// A [ColumnType] variants that are "simple" (non-recursive).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeType {
     Ascii,
@@ -91,6 +114,10 @@ pub enum NativeType {
     Varint,
 }
 
+/// Collection variants of [ColumnType]. A collection is a composite type that
+/// has dynamic size, so it is possible to add and remove values to/from it.
+///
+/// Tuple and vector are not collections because they have predefined size.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CollectionType<'frame> {
     List(Box<ColumnType<'frame>>),
