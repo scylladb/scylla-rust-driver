@@ -12,7 +12,6 @@ use std::{
     sync::Arc,
 };
 
-#[allow(deprecated)]
 use scylla_cql::{
     deserialize::{DeserializationError, TypeCheckError},
     frame::{
@@ -24,7 +23,6 @@ use scylla_cql::{
         },
         request::CqlRequestKind,
         response::CqlResponseKind,
-        value::SerializeValuesError,
     },
     serialize::SerializationError,
 };
@@ -120,13 +118,6 @@ pub enum ExecutionError {
     /// An error occurred during async iteration over rows of result.
     #[error("An error occurred during async iteration over rows of result: {0}")]
     NextRowError(#[from] NextRowError),
-}
-
-#[allow(deprecated)]
-impl From<SerializeValuesError> for ExecutionError {
-    fn from(serialized_err: SerializeValuesError) -> ExecutionError {
-        ExecutionError::BadQuery(BadQuery::SerializeValuesError(serialized_err))
-    }
 }
 
 impl From<SerializationError> for ExecutionError {
@@ -478,15 +469,6 @@ pub enum TablesMetadataError {
 #[error("Invalid query passed to Session")]
 #[non_exhaustive]
 pub enum BadQuery {
-    /// Failed to serialize values passed to a query - values too big
-    #[deprecated(
-        since = "0.15.1",
-        note = "Legacy serialization API is not type-safe and is going to be removed soon"
-    )]
-    #[error("Serializing values failed: {0} ")]
-    #[allow(deprecated)]
-    SerializeValuesError(#[from] SerializeValuesError),
-
     #[error("Serializing values failed: {0} ")]
     SerializationError(#[from] SerializationError),
 
