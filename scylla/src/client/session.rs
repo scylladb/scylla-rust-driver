@@ -16,7 +16,7 @@ use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
     BadQuery, MetadataError, NewSessionError, ProtocolError, QueryError, RequestAttemptError,
-    RequestError, TracingProtocolError,
+    RequestError, TracingProtocolError, UseKeyspaceError,
 };
 use crate::frame::response::result;
 #[cfg(feature = "ssl")]
@@ -1697,7 +1697,7 @@ where
         &self,
         keyspace_name: impl Into<String>,
         case_sensitive: bool,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), UseKeyspaceError> {
         let keyspace_name = keyspace_name.into();
         self.keyspace_name
             .store(Some(Arc::new(keyspace_name.clone())));

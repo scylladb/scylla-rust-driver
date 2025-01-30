@@ -89,10 +89,6 @@ pub enum QueryError {
     #[error("Protocol error: {0}")]
     ProtocolError(#[from] ProtocolError),
 
-    /// Timeout error has occurred, function didn't complete in time.
-    #[error("Timeout Error")]
-    TimeoutError,
-
     /// A connection has been broken during query execution.
     #[error(transparent)]
     BrokenConnection(#[from] BrokenConnectionError),
@@ -111,6 +107,10 @@ pub enum QueryError {
     /// Schema agreement timed out.
     #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
     SchemaAgreementTimeout(std::time::Duration),
+
+    /// 'USE KEYSPACE <>' request failed.
+    #[error("'USE KEYSPACE <>' request failed: {0}")]
+    UseKeyspaceError(#[from] UseKeyspaceError),
 
     // TODO: This should not belong here, but it requires changes to error types
     // returned in async iterator API. This should be handled in separate PR.
@@ -144,39 +144,6 @@ impl From<SerializationError> for QueryError {
     }
 }
 
-impl From<QueryError> for NewSessionError {
-    fn from(query_error: QueryError) -> NewSessionError {
-        match query_error {
-            QueryError::DbError(e, msg) => NewSessionError::DbError(e, msg),
-            QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
-            QueryError::CqlRequestSerialization(e) => NewSessionError::CqlRequestSerialization(e),
-            QueryError::CqlResultParseError(e) => NewSessionError::CqlResultParseError(e),
-            QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
-            QueryError::BodyExtensionsParseError(e) => NewSessionError::BodyExtensionsParseError(e),
-            QueryError::EmptyPlan => NewSessionError::EmptyPlan,
-            QueryError::MetadataError(e) => NewSessionError::MetadataError(e),
-            QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
-            QueryError::ProtocolError(e) => NewSessionError::ProtocolError(e),
-            QueryError::TimeoutError => NewSessionError::TimeoutError,
-            QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
-            QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
-            QueryError::RequestTimeout(dur) => NewSessionError::RequestTimeout(dur),
-            QueryError::SchemaAgreementTimeout(dur) => NewSessionError::SchemaAgreementTimeout(dur),
-            #[allow(deprecated)]
-            QueryError::IntoLegacyQueryResultError(e) => {
-                NewSessionError::IntoLegacyQueryResultError(e)
-            }
-            QueryError::NextRowError(e) => NewSessionError::NextRowError(e),
-        }
-    }
-}
-
-impl From<BadKeyspaceName> for QueryError {
-    fn from(keyspace_err: BadKeyspaceName) -> QueryError {
-        QueryError::BadQuery(BadQuery::BadKeyspaceName(keyspace_err))
-    }
-}
-
 impl From<response::Error> for QueryError {
     fn from(error: response::Error) -> QueryError {
         QueryError::DbError(error.error, error.reason)
@@ -197,91 +164,13 @@ pub enum NewSessionError {
     #[error("Empty known nodes list")]
     EmptyKnownNodesList,
 
-    /// Database sent a response containing some error with a message
-    #[error("Database returned an error: {0}, Error message: {1}")]
-    DbError(DbError, String),
-
-    /// Caller passed an invalid query
-    #[error(transparent)]
-    BadQuery(#[from] BadQuery),
-
-    /// Failed to serialize CQL request.
-    #[error("Failed to serialize CQL request: {0}")]
-    CqlRequestSerialization(#[from] CqlRequestSerializationError),
-
-    /// Load balancing policy returned an empty plan.
-    #[error(
-        "Load balancing policy returned an empty plan.\
-        First thing to investigate should be the logic of custom LBP implementation.\
-        If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
-        then this is most probably a driver bug!"
-    )]
-    EmptyPlan,
-
-    /// Failed to deserialize frame body extensions.
-    #[error(transparent)]
-    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
-
     /// Failed to perform initial cluster metadata fetch.
     #[error("Failed to perform initial cluster metadata fetch: {0}")]
     MetadataError(#[from] MetadataError),
 
-    /// Received a RESULT server response, but failed to deserialize it.
-    #[error(transparent)]
-    CqlResultParseError(#[from] CqlResultParseError),
-
-    /// Received an ERROR server response, but failed to deserialize it.
-    #[error("Failed to deserialize ERROR response: {0}")]
-    CqlErrorParseError(#[from] CqlErrorParseError),
-
-    /// Selected node's connection pool is in invalid state.
-    #[error("No connections in the pool: {0}")]
-    ConnectionPoolError(#[from] ConnectionPoolError),
-
-    /// Protocol error.
-    #[error("Protocol error: {0}")]
-    ProtocolError(#[from] ProtocolError),
-
-    /// Timeout error has occurred, couldn't connect to node in time.
-    #[error("Timeout Error")]
-    TimeoutError,
-
-    /// A connection has been broken during query execution.
-    #[error(transparent)]
-    BrokenConnection(#[from] BrokenConnectionError),
-
-    /// Driver was unable to allocate a stream id to execute a query on.
-    #[error("Unable to allocate stream id")]
-    UnableToAllocStreamId,
-
-    /// Failed to run a request within a provided client timeout.
-    #[error(
-        "Request execution exceeded a client timeout of {}ms",
-        std::time::Duration::as_millis(.0)
-    )]
-    RequestTimeout(std::time::Duration),
-
-    /// Schema agreement timed out.
-    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
-    SchemaAgreementTimeout(std::time::Duration),
-
-    // TODO: This should not belong here, but it requires changes to error types
-    // returned in async iterator API. This should be handled in separate PR.
-    // The reason this needs to be included is that topology.rs makes use of iter API and returns QueryError.
-    // Once iter API is adjusted, we can then adjust errors returned by topology module (e.g. refactor MetadataError and not include it in QueryError).
-    /// An error occurred during async iteration over rows of result.
-    #[error("An error occurred during async iteration over rows of result: {0}")]
-    NextRowError(#[from] NextRowError),
-
-    /// Failed to convert [`QueryResult`][crate::response::query_result::QueryResult]
-    /// into [`LegacyQueryResult`][crate::response::legacy_query_result::LegacyQueryResult].
-    #[deprecated(
-        since = "0.15.1",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[allow(deprecated)]
-    #[error("Failed to convert `QueryResult` into `LegacyQueryResult`: {0}")]
-    IntoLegacyQueryResultError(#[from] IntoLegacyQueryResultError),
+    /// 'USE KEYSPACE <>' request failed.
+    #[error("'USE KEYSPACE <>' request failed: {0}")]
+    UseKeyspaceError(#[from] UseKeyspaceError),
 }
 
 /// A protocol error.
@@ -316,10 +205,6 @@ pub enum ProtocolError {
         reprepared_id: Vec<u8>,
     },
 
-    /// USE KEYSPACE protocol error.
-    #[error("USE KEYSPACE protocol error: {0}")]
-    UseKeyspace(#[from] UseKeyspaceProtocolError),
-
     /// A protocol error appeared during schema version fetch.
     #[error("Schema version fetch protocol error: {0}")]
     SchemaVersionFetch(#[from] SchemaVersionFetchError),
@@ -342,17 +227,31 @@ pub enum ProtocolError {
     RepreparedIdMissingInBatch,
 }
 
-/// A protocol error that occurred during `USE KEYSPACE <>` request.
+/// An error that occurred during `USE KEYSPACE <>` request.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-pub enum UseKeyspaceProtocolError {
+pub enum UseKeyspaceError {
+    /// Passed invalid keyspace name to use.
+    #[error("Passed invalid keyspace name to use: {0}")]
+    BadKeyspaceName(#[from] BadKeyspaceName),
+
+    /// An error during request execution.
+    #[error(transparent)]
+    RequestError(#[from] RequestAttemptError),
+
+    /// Keyspace name mismatch.
     #[error("Keyspace name mismtach; expected: {expected_keyspace_name_lowercase}, received: {result_keyspace_name_lowercase}")]
     KeyspaceNameMismatch {
         expected_keyspace_name_lowercase: String,
         result_keyspace_name_lowercase: String,
     },
-    #[error("Received unexpected response: {0}. Expected RESULT:Set_keyspace")]
-    UnexpectedResponse(CqlResponseKind),
+
+    /// Failed to run a request within a provided client timeout.
+    #[error(
+        "Request execution exceeded a client timeout of {}ms",
+        std::time::Duration::as_millis(.0)
+    )]
+    RequestTimeout(std::time::Duration),
 }
 
 /// A protocol error that occurred during schema version fetch.
@@ -591,10 +490,6 @@ pub enum BadQuery {
     /// Serialized values are too long to compute partition key
     #[error("Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}")]
     ValuesTooLongForKey(usize, usize),
-
-    /// Passed invalid keyspace name to use
-    #[error("Passed invalid keyspace name to use: {0}")]
-    BadKeyspaceName(#[from] BadKeyspaceName),
 
     /// Too many queries in the batch statement
     #[error("Number of Queries in Batch Statement supplied is {0} which has exceeded the max value of 65,535")]
