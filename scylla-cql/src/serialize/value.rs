@@ -1105,7 +1105,7 @@ pub struct BuiltinSerializationError {
     pub kind: BuiltinSerializationErrorKind,
 }
 
-fn mk_ser_err<T>(
+pub(crate) fn mk_ser_err<T>(
     got: &ColumnType,
     kind: impl Into<BuiltinSerializationErrorKind>,
 ) -> SerializationError {
