@@ -111,14 +111,6 @@ pub enum ExecutionError {
     /// 'USE KEYSPACE <>' request failed.
     #[error("'USE KEYSPACE <>' request failed: {0}")]
     UseKeyspaceError(#[from] UseKeyspaceError),
-
-    // TODO: This should not belong here, but it requires changes to error types
-    // returned in async iterator API. This should be handled in separate PR.
-    // The reason this needs to be included is that topology.rs makes use of iter API and returns ExecutionError.
-    // Once iter API is adjusted, we can then adjust errors returned by topology module (e.g. refactor MetadataError and not include it in ExecutionError).
-    /// An error occurred during async iteration over rows of result.
-    #[error("Failed to fetch next page of the result: {0}")]
-    NextPageError(#[from] NextPageError),
 }
 
 impl From<SerializationError> for ExecutionError {
