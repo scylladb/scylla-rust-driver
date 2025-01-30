@@ -64,6 +64,7 @@ pygments_style = 'sphinx'
 # Setup Sphinx
 def setup(sphinx):
     lexers['rust'] = RustLexer()
+    lexers['rust,ignore'] = RustLexer()
     lexers['toml'] = TOMLLexer()
 
 # -- Options for not found extension
