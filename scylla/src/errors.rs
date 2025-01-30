@@ -176,7 +176,6 @@ pub enum PrepareError {
 /// Error that occurred during session creation
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-#[allow(deprecated)]
 pub enum NewSessionError {
     /// Failed to resolve hostname passed in Session creation
     #[error("Couldn't resolve any hostname: {0:?}")]
