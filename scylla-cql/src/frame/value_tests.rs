@@ -887,8 +887,7 @@ fn cqlvalue_serialization() {
         ]
     );
 
-    // Unlike the legacy Value trait, SerializeValue takes case of reordering
-    // the fields
+    // SerializeValue takes case of reordering the fields
     let udt = CqlValue::UserDefinedType {
         keyspace: "ks".to_string(),
         name: "t".to_string(),
@@ -1259,9 +1258,7 @@ fn tuple_value_list() {
 
 #[test]
 fn map_value_list() {
-    // The legacy ValueList would serialize this as a list of named values,
-    // whereas the new SerializeRow will order the values by their names.
-
+    // SerializeRow will order the values by their names.
     // Note that the alphabetical order of the keys is "ala", "kota", "ma",
     // but the impl sorts properly.
     let row = BTreeMap::from_iter([("ala", 1), ("ma", 2), ("kota", 3)]);
