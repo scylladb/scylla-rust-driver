@@ -827,7 +827,7 @@ impl Connection {
 
         self.query_raw_unpaged(&query)
             .await
-            .map_err(RequestAttemptError::into_query_error)
+            .map_err(RequestAttemptError::into_execution_error)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -893,7 +893,7 @@ impl Connection {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values)
             .await
-            .map_err(RequestAttemptError::into_query_error)
+            .map_err(RequestAttemptError::into_execution_error)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -1056,7 +1056,7 @@ impl Connection {
             batch.config.serial_consistency.flatten(),
         )
         .await
-        .map_err(RequestAttemptError::into_query_error)
+        .map_err(RequestAttemptError::into_execution_error)
         .and_then(QueryResponse::into_query_result)
     }
 

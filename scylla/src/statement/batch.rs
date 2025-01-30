@@ -250,7 +250,7 @@ pub(crate) mod batch_values {
                 if did_write {
                     let token = ps
                         .calculate_token_untyped(&first_values)
-                        .map_err(PartitionKeyError::into_query_error)?;
+                        .map_err(PartitionKeyError::into_execution_error)?;
                     (token, Some(first_values))
                 } else {
                     (None, None)

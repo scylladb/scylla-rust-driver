@@ -495,7 +495,7 @@ pub enum PartitionKeyError {
 
 impl PartitionKeyError {
     /// Converts the error to [`ExecutionError`].
-    pub fn into_query_error(self) -> ExecutionError {
+    pub fn into_execution_error(self) -> ExecutionError {
         match self {
             PartitionKeyError::PartitionKeyExtraction(_) => {
                 ExecutionError::ProtocolError(ProtocolError::PartitionKeyExtraction)

@@ -1183,7 +1183,7 @@ where
 
         let (result, paging_state_response) = response
             .into_query_result_and_paging_state()
-            .map_err(RequestAttemptError::into_query_error)?;
+            .map_err(RequestAttemptError::into_execution_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1319,7 +1319,7 @@ where
         let first_ok: Result<PreparedStatement, RequestAttemptError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
         let mut prepared: PreparedStatement =
-            first_ok.map_err(RequestAttemptError::into_query_error)?;
+            first_ok.map_err(RequestAttemptError::into_execution_error)?;
 
         // Validate prepared ids equality
         for statement in results.flatten() {
@@ -1407,7 +1407,7 @@ where
 
         let (partition_key, token) = prepared
             .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)
-            .map_err(PartitionKeyError::into_query_error)?
+            .map_err(PartitionKeyError::into_execution_error)?
             .unzip();
 
         let execution_profile = prepared
@@ -1490,7 +1490,7 @@ where
 
         let (result, paging_state_response) = response
             .into_query_result_and_paging_state()
-            .map_err(RequestAttemptError::into_query_error)?;
+            .map_err(RequestAttemptError::into_execution_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -2006,7 +2006,7 @@ where
             }
         }
 
-        result.map_err(RequestError::into_query_error)
+        result.map_err(RequestError::into_execution_error)
     }
 
     /// Executes the closure `run_request_once`, provided the load balancing plan and some information

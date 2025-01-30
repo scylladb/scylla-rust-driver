@@ -832,12 +832,12 @@ pub enum RequestError {
 }
 
 impl RequestError {
-    pub fn into_query_error(self) -> ExecutionError {
+    pub fn into_execution_error(self) -> ExecutionError {
         match self {
             RequestError::EmptyPlan => ExecutionError::EmptyPlan,
             RequestError::ConnectionPoolError(e) => e.into(),
             RequestError::RequestTimeout(dur) => ExecutionError::RequestTimeout(dur),
-            RequestError::LastAttemptError(e) => e.into_query_error(),
+            RequestError::LastAttemptError(e) => e.into_execution_error(),
         }
     }
 }
@@ -912,7 +912,7 @@ pub enum RequestAttemptError {
 
 impl RequestAttemptError {
     /// Converts the error to [`ExecutionError`].
-    pub fn into_query_error(self) -> ExecutionError {
+    pub fn into_execution_error(self) -> ExecutionError {
         match self {
             RequestAttemptError::CqlRequestSerialization(e) => e.into(),
             RequestAttemptError::DbError(err, msg) => ExecutionError::DbError(err, msg),
@@ -1070,14 +1070,14 @@ mod tests {
         assert_eq!(db_error_displayed, expected_dberr_msg);
 
         // Test that ExecutionError::DbError::(DbError::Unavailable) is displayed correctly
-        let query_error =
+        let execution_error =
             ExecutionError::DbError(db_error, "a message about unavailable error".to_string());
-        let query_error_displayed: String = format!("{}", query_error);
+        let execution_error_displayed: String = format!("{}", execution_error);
 
         let mut expected_querr_msg = "Database returned an error: ".to_string();
         expected_querr_msg += &expected_dberr_msg;
         expected_querr_msg += ", Error message: a message about unavailable error";
 
-        assert_eq!(query_error_displayed, expected_querr_msg);
+        assert_eq!(execution_error_displayed, expected_querr_msg);
     }
 }
