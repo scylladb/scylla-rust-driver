@@ -109,7 +109,7 @@ Length of batch values must be equal to the number of statements in a batch.\
 Each statement must have its values specified, even if they are empty.
 
 Values passed to `Session::batch` must implement the trait `BatchValues`.\
-By default this includes tuples `()` and slices `&[]` of tuples and slices which implement `ValueList`.
+By default this includes tuples `()` and slices `&[]` of tuples and slices which implement `SerializeRow`.
 
 Example:
 ```rust
