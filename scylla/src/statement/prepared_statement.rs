@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use super::{PageSize, StatementConfig};
 use crate::client::execution_profile::ExecutionProfileHandle;
-use crate::errors::{BadQuery, ProtocolError, QueryError};
+use crate::errors::{BadQuery, ExecutionError, ProtocolError};
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::observability::history::HistoryListener;
@@ -494,17 +494,19 @@ pub enum PartitionKeyError {
 }
 
 impl PartitionKeyError {
-    /// Converts the error to [`QueryError`].
-    pub fn into_query_error(self) -> QueryError {
+    /// Converts the error to [`ExecutionError`].
+    pub fn into_execution_error(self) -> ExecutionError {
         match self {
             PartitionKeyError::PartitionKeyExtraction(_) => {
-                QueryError::ProtocolError(ProtocolError::PartitionKeyExtraction)
+                ExecutionError::ProtocolError(ProtocolError::PartitionKeyExtraction)
             }
             PartitionKeyError::TokenCalculation(TokenCalculationError::ValueTooLong(
                 values_len,
-            )) => QueryError::BadQuery(BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())),
+            )) => {
+                ExecutionError::BadQuery(BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into()))
+            }
             PartitionKeyError::Serialization(err) => {
-                QueryError::BadQuery(BadQuery::SerializationError(err))
+                ExecutionError::BadQuery(BadQuery::SerializationError(err))
             }
         }
     }

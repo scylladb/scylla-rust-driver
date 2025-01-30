@@ -1,7 +1,7 @@
 use crate::batch::{Batch, BatchStatement};
 #[allow(deprecated)]
 use crate::client::pager::LegacyRowIterator;
-use crate::errors::QueryError;
+use crate::errors::ExecutionError;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 #[allow(deprecated)]
@@ -116,7 +116,7 @@ where
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session.execute_unpaged(&prepared, values).await
@@ -128,7 +128,7 @@ where
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<QueryPager, QueryError> {
+    ) -> Result<QueryPager, ExecutionError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session.execute_iter(prepared, values).await
@@ -141,7 +141,7 @@ where
         query: impl Into<Query>,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session
@@ -157,7 +157,7 @@ where
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         let all_prepared: bool = batch
             .statements
             .iter()
@@ -188,7 +188,7 @@ where
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<LegacyQueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, ExecutionError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session.execute_unpaged(&prepared, values).await
@@ -200,7 +200,7 @@ where
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<LegacyRowIterator, QueryError> {
+    ) -> Result<LegacyRowIterator, ExecutionError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session.execute_iter(prepared, values).await
@@ -213,7 +213,7 @@ where
         query: impl Into<Query>,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), ExecutionError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session
@@ -228,7 +228,7 @@ where
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<LegacyQueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, ExecutionError> {
         let all_prepared: bool = batch
             .statements
             .iter()
@@ -252,7 +252,7 @@ where
     /// Prepares all statements within the batch and returns a new batch where every
     /// statement is prepared.
     /// Uses the prepared statements cache.
-    pub async fn prepare_batch(&self, batch: &Batch) -> Result<Batch, QueryError> {
+    pub async fn prepare_batch(&self, batch: &Batch) -> Result<Batch, ExecutionError> {
         let mut prepared_batch = batch.clone();
 
         try_join_all(
@@ -264,7 +264,7 @@ where
                         let prepared = self.add_prepared_statement(&*query).await?;
                         *statement = BatchStatement::PreparedStatement(prepared);
                     }
-                    Ok::<(), QueryError>(())
+                    Ok::<(), ExecutionError>(())
                 }),
         )
         .await?;
@@ -276,7 +276,7 @@ where
     pub async fn add_prepared_statement(
         &self,
         query: impl Into<&Query>,
-    ) -> Result<PreparedStatement, QueryError> {
+    ) -> Result<PreparedStatement, ExecutionError> {
         self.add_prepared_statement_owned(query.into().clone())
             .await
     }
@@ -284,7 +284,7 @@ where
     async fn add_prepared_statement_owned(
         &self,
         query: impl Into<Query>,
-    ) -> Result<PreparedStatement, QueryError> {
+    ) -> Result<PreparedStatement, ExecutionError> {
         let query = query.into();
 
         if let Some(raw) = self.cache.get(&query.contents) {

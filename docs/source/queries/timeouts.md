@@ -1,7 +1,7 @@
 # Query timeouts
 
 Query execution time can be limited by setting a request timeout. If a query does not complete
-in the given time, then `QueryError::RequestTimeout` is returned by the driver immediately,
+in the given time, then `ExecutionError::RequestTimeout` is returned by the driver immediately,
 so that application logic can continue operating, but the query may still be in progress on the server.
 
 As a side note, if one wishes custom server-side timeouts (i.e. actual interruption of query processing),

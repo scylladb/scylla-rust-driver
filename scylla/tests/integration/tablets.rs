@@ -21,7 +21,7 @@ use scylla::query::Query;
 use scylla::response::query_result::QueryResult;
 use scylla::serialize::row::SerializeRow;
 
-use scylla::errors::QueryError;
+use scylla::errors::ExecutionError;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule,
     ShardAwareness, TargetShard, WorkerError,
@@ -188,7 +188,7 @@ async fn send_statement_everywhere(
     cluster: &ClusterState,
     statement: &PreparedStatement,
     values: &dyn SerializeRow,
-) -> Result<Vec<QueryResult>, QueryError> {
+) -> Result<Vec<QueryResult>, ExecutionError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
         (0..shard_count).map(|shard| {
@@ -213,7 +213,7 @@ async fn send_unprepared_query_everywhere(
     session: &Session,
     cluster: &ClusterState,
     query: &Query,
-) -> Result<Vec<QueryResult>, QueryError> {
+) -> Result<Vec<QueryResult>, ExecutionError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
         (0..shard_count).map(|shard| {

@@ -43,7 +43,7 @@ use crate::response::query_result::{IntoRowsResultError, SingleRowError};
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 #[allow(deprecated)]
-pub enum QueryError {
+pub enum ExecutionError {
     /// Database sent a response containing some error with a message
     #[error("Database returned an error: {0}, Error message: {1}")]
     DbError(DbError, String),
@@ -114,8 +114,8 @@ pub enum QueryError {
 
     // TODO: This should not belong here, but it requires changes to error types
     // returned in async iterator API. This should be handled in separate PR.
-    // The reason this needs to be included is that topology.rs makes use of iter API and returns QueryError.
-    // Once iter API is adjusted, we can then adjust errors returned by topology module (e.g. refactor MetadataError and not include it in QueryError).
+    // The reason this needs to be included is that topology.rs makes use of iter API and returns ExecutionError.
+    // Once iter API is adjusted, we can then adjust errors returned by topology module (e.g. refactor MetadataError and not include it in ExecutionError).
     /// An error occurred during async iteration over rows of result.
     #[error("An error occurred during async iteration over rows of result: {0}")]
     NextRowError(#[from] NextRowError),
@@ -132,21 +132,21 @@ pub enum QueryError {
 }
 
 #[allow(deprecated)]
-impl From<SerializeValuesError> for QueryError {
-    fn from(serialized_err: SerializeValuesError) -> QueryError {
-        QueryError::BadQuery(BadQuery::SerializeValuesError(serialized_err))
+impl From<SerializeValuesError> for ExecutionError {
+    fn from(serialized_err: SerializeValuesError) -> ExecutionError {
+        ExecutionError::BadQuery(BadQuery::SerializeValuesError(serialized_err))
     }
 }
 
-impl From<SerializationError> for QueryError {
-    fn from(serialized_err: SerializationError) -> QueryError {
-        QueryError::BadQuery(BadQuery::SerializationError(serialized_err))
+impl From<SerializationError> for ExecutionError {
+    fn from(serialized_err: SerializationError) -> ExecutionError {
+        ExecutionError::BadQuery(BadQuery::SerializationError(serialized_err))
     }
 }
 
-impl From<response::Error> for QueryError {
-    fn from(error: response::Error) -> QueryError {
-        QueryError::DbError(error.error, error.reason)
+impl From<response::Error> for ExecutionError {
+    fn from(error: response::Error) -> ExecutionError {
+        ExecutionError::DbError(error.error, error.reason)
     }
 }
 
@@ -832,12 +832,12 @@ pub enum RequestError {
 }
 
 impl RequestError {
-    pub fn into_query_error(self) -> QueryError {
+    pub fn into_execution_error(self) -> ExecutionError {
         match self {
-            RequestError::EmptyPlan => QueryError::EmptyPlan,
+            RequestError::EmptyPlan => ExecutionError::EmptyPlan,
             RequestError::ConnectionPoolError(e) => e.into(),
-            RequestError::RequestTimeout(dur) => QueryError::RequestTimeout(dur),
-            RequestError::LastAttemptError(e) => e.into_query_error(),
+            RequestError::RequestTimeout(dur) => ExecutionError::RequestTimeout(dur),
+            RequestError::LastAttemptError(e) => e.into_execution_error(),
         }
     }
 }
@@ -911,11 +911,11 @@ pub enum RequestAttemptError {
 }
 
 impl RequestAttemptError {
-    /// Converts the error to [`QueryError`].
-    pub fn into_query_error(self) -> QueryError {
+    /// Converts the error to [`ExecutionError`].
+    pub fn into_execution_error(self) -> ExecutionError {
         match self {
             RequestAttemptError::CqlRequestSerialization(e) => e.into(),
-            RequestAttemptError::DbError(err, msg) => QueryError::DbError(err, msg),
+            RequestAttemptError::DbError(err, msg) => ExecutionError::DbError(err, msg),
             RequestAttemptError::CqlResultParseError(e) => e.into(),
             RequestAttemptError::CqlErrorParseError(e) => e.into(),
             RequestAttemptError::BrokenConnectionError(e) => e.into(),
@@ -923,7 +923,7 @@ impl RequestAttemptError {
                 ProtocolError::UnexpectedResponse(response).into()
             }
             RequestAttemptError::BodyExtensionsParseError(e) => e.into(),
-            RequestAttemptError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
+            RequestAttemptError::UnableToAllocStreamId => ExecutionError::UnableToAllocStreamId,
             RequestAttemptError::RepreparedIdChanged {
                 statement,
                 expected_id,
@@ -1025,7 +1025,7 @@ pub(crate) enum ResponseParseError {
 mod tests {
     use scylla_cql::Consistency;
 
-    use super::{DbError, QueryError, WriteType};
+    use super::{DbError, ExecutionError, WriteType};
 
     #[test]
     fn write_type_from_str() {
@@ -1047,7 +1047,7 @@ mod tests {
         }
     }
 
-    // A test to check that displaying DbError and QueryError::DbError works as expected
+    // A test to check that displaying DbError and ExecutionError::DbError works as expected
     // - displays error description
     // - displays error parameters
     // - displays error message
@@ -1069,15 +1069,15 @@ mod tests {
 
         assert_eq!(db_error_displayed, expected_dberr_msg);
 
-        // Test that QueryError::DbError::(DbError::Unavailable) is displayed correctly
-        let query_error =
-            QueryError::DbError(db_error, "a message about unavailable error".to_string());
-        let query_error_displayed: String = format!("{}", query_error);
+        // Test that ExecutionError::DbError::(DbError::Unavailable) is displayed correctly
+        let execution_error =
+            ExecutionError::DbError(db_error, "a message about unavailable error".to_string());
+        let execution_error_displayed: String = format!("{}", execution_error);
 
-        let mut expected_querr_msg = "Database returned an error: ".to_string();
-        expected_querr_msg += &expected_dberr_msg;
-        expected_querr_msg += ", Error message: a message about unavailable error";
+        let mut expected_execution_err_msg = "Database returned an error: ".to_string();
+        expected_execution_err_msg += &expected_dberr_msg;
+        expected_execution_err_msg += ", Error message: a message about unavailable error";
 
-        assert_eq!(query_error_displayed, expected_querr_msg);
+        assert_eq!(execution_error_displayed, expected_execution_err_msg);
     }
 }

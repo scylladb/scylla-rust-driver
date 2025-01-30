@@ -15,7 +15,7 @@ use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
-    BadQuery, MetadataError, NewSessionError, ProtocolError, QueryError, RequestAttemptError,
+    BadQuery, ExecutionError, MetadataError, NewSessionError, ProtocolError, RequestAttemptError,
     RequestError, TracingProtocolError, UseKeyspaceError,
 };
 use crate::frame::response::result;
@@ -454,7 +454,7 @@ impl GenericSession<CurrentDeserializationApi> {
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         self.do_query_unpaged(&query.into(), values).await
     }
 
@@ -514,7 +514,7 @@ impl GenericSession<CurrentDeserializationApi> {
         query: impl Into<Query>,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         self.do_query_single_page(&query.into(), values, paging_state)
             .await
     }
@@ -559,7 +559,7 @@ impl GenericSession<CurrentDeserializationApi> {
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<QueryPager, QueryError> {
+    ) -> Result<QueryPager, ExecutionError> {
         self.do_query_iter(query.into(), values).await
     }
 
@@ -610,7 +610,7 @@ impl GenericSession<CurrentDeserializationApi> {
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         self.do_execute_unpaged(prepared, values).await
     }
 
@@ -675,7 +675,7 @@ impl GenericSession<CurrentDeserializationApi> {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         self.do_execute_single_page(prepared, values, paging_state)
             .await
     }
@@ -723,7 +723,7 @@ impl GenericSession<CurrentDeserializationApi> {
         &self,
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
-    ) -> Result<QueryPager, QueryError> {
+    ) -> Result<QueryPager, ExecutionError> {
         self.do_execute_iter(prepared.into(), values).await
     }
 
@@ -776,7 +776,7 @@ impl GenericSession<CurrentDeserializationApi> {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         self.do_batch(batch, values).await
     }
 
@@ -822,7 +822,7 @@ impl GenericSession<LegacyDeserializationApi> {
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<LegacyQueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, ExecutionError> {
         Ok(self
             .do_query_unpaged(&query.into(), values)
             .await?
@@ -834,7 +834,7 @@ impl GenericSession<LegacyDeserializationApi> {
         query: impl Into<Query>,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), ExecutionError> {
         let (result, paging_state_response) = self
             .do_query_single_page(&query.into(), values, paging_state)
             .await?;
@@ -845,7 +845,7 @@ impl GenericSession<LegacyDeserializationApi> {
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<LegacyRowIterator, QueryError> {
+    ) -> Result<LegacyRowIterator, ExecutionError> {
         self.do_query_iter(query.into(), values)
             .await
             .map(QueryPager::into_legacy)
@@ -855,7 +855,7 @@ impl GenericSession<LegacyDeserializationApi> {
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
-    ) -> Result<LegacyQueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, ExecutionError> {
         Ok(self
             .do_execute_unpaged(prepared, values)
             .await?
@@ -867,7 +867,7 @@ impl GenericSession<LegacyDeserializationApi> {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), ExecutionError> {
         let (result, paging_state_response) = self
             .do_execute_single_page(prepared, values, paging_state)
             .await?;
@@ -878,7 +878,7 @@ impl GenericSession<LegacyDeserializationApi> {
         &self,
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
-    ) -> Result<LegacyRowIterator, QueryError> {
+    ) -> Result<LegacyRowIterator, ExecutionError> {
         self.do_execute_iter(prepared.into(), values)
             .await
             .map(QueryPager::into_legacy)
@@ -888,7 +888,7 @@ impl GenericSession<LegacyDeserializationApi> {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<LegacyQueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, ExecutionError> {
         Ok(self.do_batch(batch, values).await?.into_legacy_result()?)
     }
 
@@ -1054,7 +1054,7 @@ where
         &self,
         query: &Query,
         values: impl SerializeRow,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         let (result, paging_state_response) = self
             .query(query, values, None, PagingState::start())
             .await?;
@@ -1070,7 +1070,7 @@ where
         query: &Query,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         self.query(
             query,
             values,
@@ -1097,7 +1097,7 @@ where
         values: impl SerializeRow,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         let execution_profile = query
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -1183,7 +1183,7 @@ where
 
         let (result, paging_state_response) = response
             .into_query_result_and_paging_state()
-            .map_err(RequestAttemptError::into_query_error)?;
+            .map_err(RequestAttemptError::into_execution_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1192,7 +1192,7 @@ where
     async fn handle_set_keyspace_response(
         &self,
         response: &NonErrorQueryResponse,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), ExecutionError> {
         if let Some(set_keyspace) = response.as_set_keyspace() {
             debug!(
                 "Detected USE KEYSPACE query, setting session's keyspace to {}",
@@ -1208,7 +1208,7 @@ where
     async fn handle_auto_await_schema_agreement(
         &self,
         response: &NonErrorQueryResponse,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), ExecutionError> {
         if self.schema_agreement_automatic_waiting {
             if response.as_schema_change().is_some() {
                 self.await_schema_agreement().await?;
@@ -1228,7 +1228,7 @@ where
         &self,
         query: Query,
         values: impl SerializeRow,
-    ) -> Result<QueryPager, QueryError> {
+    ) -> Result<QueryPager, ExecutionError> {
         let execution_profile = query
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -1242,7 +1242,7 @@ where
                 self.metrics.clone(),
             )
             .await
-            .map_err(QueryError::from)
+            .map_err(ExecutionError::from)
         } else {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
@@ -1257,7 +1257,7 @@ where
                 metrics: self.metrics.clone(),
             })
             .await
-            .map_err(QueryError::from)
+            .map_err(ExecutionError::from)
         }
     }
 
@@ -1297,7 +1297,10 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
+    pub async fn prepare(
+        &self,
+        query: impl Into<Query>,
+    ) -> Result<PreparedStatement, ExecutionError> {
         let query = query.into();
         let query_ref = &query;
 
@@ -1316,7 +1319,7 @@ where
         let first_ok: Result<PreparedStatement, RequestAttemptError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
         let mut prepared: PreparedStatement =
-            first_ok.map_err(RequestAttemptError::into_query_error)?;
+            first_ok.map_err(RequestAttemptError::into_execution_error)?;
 
         // Validate prepared ids equality
         for statement in results.flatten() {
@@ -1358,7 +1361,7 @@ where
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let (result, paging_state) = self
             .execute(prepared, &serialized_values, None, PagingState::start())
@@ -1375,7 +1378,7 @@ where
         prepared: &PreparedStatement,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let page_size = prepared.get_validated_page_size();
         self.execute(prepared, &serialized_values, Some(page_size), paging_state)
@@ -1398,13 +1401,13 @@ where
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
         let (partition_key, token) = prepared
             .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)
-            .map_err(PartitionKeyError::into_query_error)?
+            .map_err(PartitionKeyError::into_execution_error)?
             .unzip();
 
         let execution_profile = prepared
@@ -1487,7 +1490,7 @@ where
 
         let (result, paging_state_response) = response
             .into_query_result_and_paging_state()
-            .map_err(RequestAttemptError::into_query_error)?;
+            .map_err(RequestAttemptError::into_execution_error)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1497,7 +1500,7 @@ where
         &self,
         prepared: PreparedStatement,
         values: impl SerializeRow,
-    ) -> Result<QueryPager, QueryError> {
+    ) -> Result<QueryPager, ExecutionError> {
         let serialized_values = prepared.serialize_values(&values)?;
 
         let execution_profile = prepared
@@ -1513,21 +1516,21 @@ where
             metrics: self.metrics.clone(),
         })
         .await
-        .map_err(QueryError::from)
+        .map_err(ExecutionError::from)
     }
 
     async fn do_batch(
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
 
         // check to ensure that we don't send a batch statement with more than u16::MAX queries
         let batch_statements_length = batch.statements.len();
         if batch_statements_length > u16::MAX as usize {
-            return Err(QueryError::BadQuery(
+            return Err(ExecutionError::BadQuery(
                 BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
             ));
         }
@@ -1636,7 +1639,7 @@ where
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn prepare_batch(&self, batch: &Batch) -> Result<Batch, QueryError> {
+    pub async fn prepare_batch(&self, batch: &Batch) -> Result<Batch, ExecutionError> {
         let mut prepared_batch = batch.clone();
 
         try_join_all(
@@ -1648,7 +1651,7 @@ where
                         let prepared = self.prepare(query.clone()).await?;
                         *statement = BatchStatement::PreparedStatement(prepared);
                     }
-                    Ok::<(), QueryError>(())
+                    Ok::<(), ExecutionError>(())
                 }),
         )
         .await?;
@@ -1739,7 +1742,7 @@ where
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/tracing/tracing.html)
     /// for more information about query tracing
-    pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, QueryError> {
+    pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, ExecutionError> {
         // tracing_info_fetch_attempts is NonZeroU32 so at least one attempt will be made
         for _ in 0..self.tracing_info_fetch_attempts.get() {
             let current_try: Option<TracingInfo> = self
@@ -1777,7 +1780,7 @@ where
         &self,
         tracing_id: &Uuid,
         consistency: Option<Consistency>,
-    ) -> Result<Option<TracingInfo>, QueryError> {
+    ) -> Result<Option<TracingInfo>, ExecutionError> {
         // Query system_traces.sessions for TracingInfo
         let mut traces_session_query =
             Query::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
@@ -1856,7 +1859,7 @@ where
         execution_profile: Arc<ExecutionProfileInner>,
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
-    ) -> Result<RunRequestResult<ResT>, QueryError>
+    ) -> Result<RunRequestResult<ResT>, ExecutionError>
     where
         QueryFut: Future<Output = Result<ResT, RequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
@@ -2003,7 +2006,7 @@ where
             }
         }
 
-        result.map_err(RequestError::into_query_error)
+        result.map_err(RequestError::into_execution_error)
     }
 
     /// Executes the closure `run_request_once`, provided the load balancing plan and some information
@@ -2133,7 +2136,7 @@ where
         last_error.map(Result::Err)
     }
 
-    async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, QueryError> {
+    async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, ExecutionError> {
         loop {
             tokio::time::sleep(self.schema_agreement_interval).await;
             if let Some(agreed_version) = self.check_schema_agreement().await? {
@@ -2142,18 +2145,18 @@ where
         }
     }
 
-    pub async fn await_schema_agreement(&self) -> Result<Uuid, QueryError> {
+    pub async fn await_schema_agreement(&self) -> Result<Uuid, ExecutionError> {
         timeout(
             self.schema_agreement_timeout,
             self.await_schema_agreement_indefinitely(),
         )
         .await
-        .unwrap_or(Err(QueryError::SchemaAgreementTimeout(
+        .unwrap_or(Err(ExecutionError::SchemaAgreementTimeout(
             self.schema_agreement_timeout,
         )))
     }
 
-    pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, QueryError> {
+    pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, ExecutionError> {
         let cluster_data = self.get_cluster_data();
         let connections_iter = cluster_data.iter_working_connections()?;
 
@@ -2175,7 +2178,7 @@ where
 // run_request, run_request_speculative_fiber, etc have a template type called ResT.
 // There was a bug where ResT was set to QueryResponse, which could
 // be an error response. This was not caught by retry policy which
-// assumed all errors would come from analyzing Result<ResT, QueryError>.
+// assumed all errors would come from analyzing Result<ResT, ExecutionError>.
 // This trait is a guard to make sure that this mistake doesn't
 // happen again.
 // When using run_request make sure that the ResT type is NOT able

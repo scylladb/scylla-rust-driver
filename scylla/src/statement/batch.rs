@@ -216,7 +216,7 @@ pub(crate) mod batch_values {
     use scylla_cql::serialize::row::SerializedValues;
     use scylla_cql::serialize::{RowWriter, SerializationError};
 
-    use crate::errors::QueryError;
+    use crate::errors::ExecutionError;
     use crate::prepared_statement::PartitionKeyError;
     use crate::routing::Token;
 
@@ -236,7 +236,7 @@ pub(crate) mod batch_values {
     pub(crate) fn peek_first_token<'bv>(
         values: impl BatchValues + 'bv,
         statement: Option<&BatchStatement>,
-    ) -> Result<(Option<Token>, impl BatchValues + 'bv), QueryError> {
+    ) -> Result<(Option<Token>, impl BatchValues + 'bv), ExecutionError> {
         let mut values_iter = values.batch_values_iter();
         let (token, first_values) = match statement {
             Some(BatchStatement::PreparedStatement(ps)) => {
@@ -250,7 +250,7 @@ pub(crate) mod batch_values {
                 if did_write {
                     let token = ps
                         .calculate_token_untyped(&first_values)
-                        .map_err(PartitionKeyError::into_query_error)?;
+                        .map_err(PartitionKeyError::into_execution_error)?;
                     (token, Some(first_values))
                 } else {
                     (None, None)

@@ -1,6 +1,6 @@
 use scylla::batch::Batch;
 use scylla::batch::BatchType;
-use scylla::errors::QueryError;
+use scylla::errors::ExecutionError;
 use scylla::frame::frame_errors::BatchSerializationError;
 use scylla::frame::frame_errors::CqlRequestSerializationError;
 use scylla::query::Query;
@@ -46,12 +46,14 @@ async fn batch_statements_and_values_mismatch_detected() {
         let err = session.batch(&batch, &((1, 2), ())).await.unwrap_err();
         assert_matches!(
             err,
-            QueryError::CqlRequestSerialization(CqlRequestSerializationError::BatchSerialization(
-                BatchSerializationError::ValuesAndStatementsLengthMismatch {
-                    n_value_lists: 2,
-                    n_statements: 3
-                }
-            ))
+            ExecutionError::CqlRequestSerialization(
+                CqlRequestSerializationError::BatchSerialization(
+                    BatchSerializationError::ValuesAndStatementsLengthMismatch {
+                        n_value_lists: 2,
+                        n_statements: 3
+                    }
+                )
+            )
         )
     }
 
@@ -63,12 +65,14 @@ async fn batch_statements_and_values_mismatch_detected() {
             .unwrap_err();
         assert_matches!(
             err,
-            QueryError::CqlRequestSerialization(CqlRequestSerializationError::BatchSerialization(
-                BatchSerializationError::ValuesAndStatementsLengthMismatch {
-                    n_value_lists: 4,
-                    n_statements: 3
-                }
-            ))
+            ExecutionError::CqlRequestSerialization(
+                CqlRequestSerializationError::BatchSerialization(
+                    BatchSerializationError::ValuesAndStatementsLengthMismatch {
+                        n_value_lists: 4,
+                        n_statements: 3
+                    }
+                )
+            )
         )
     }
 }
