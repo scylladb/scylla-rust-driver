@@ -27,7 +27,7 @@ let session = SessionBuilder::new()
 
 `Session::await_schema_agreement` returns a `Future` that can be `await`ed as long as schema is not in an agreement.
 However, it won't wait forever; `SessionConfig` defines a timeout that limits the time of waiting. If the timeout elapses,
-the return value is `Err(ExecutionError::RequestTimeout)`, otherwise it is `Ok(schema_version)`.
+the return value is `Err(ExecutionError::SchemaAgreementTimeout)`, otherwise it is `Ok(schema_version)`.
 
 ```rust
 # extern crate scylla;
