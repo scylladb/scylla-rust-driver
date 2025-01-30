@@ -540,9 +540,6 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
 
     /// Builds the Session after setting all the options.
     ///
-    /// The new session object uses the new deserialization API. If you wish
-    /// to use the old API, use [`SessionBuilder::build`].
-    ///
     /// # Example
     /// ```
     /// # use scylla::client::session::Session;
