@@ -1074,10 +1074,10 @@ mod tests {
             ExecutionError::DbError(db_error, "a message about unavailable error".to_string());
         let execution_error_displayed: String = format!("{}", execution_error);
 
-        let mut expected_querr_msg = "Database returned an error: ".to_string();
-        expected_querr_msg += &expected_dberr_msg;
-        expected_querr_msg += ", Error message: a message about unavailable error";
+        let mut expected_execution_err_msg = "Database returned an error: ".to_string();
+        expected_execution_err_msg += &expected_dberr_msg;
+        expected_execution_err_msg += ", Error message: a message about unavailable error";
 
-        assert_eq!(execution_error_displayed, expected_querr_msg);
+        assert_eq!(execution_error_displayed, expected_execution_err_msg);
     }
 }
