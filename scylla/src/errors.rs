@@ -33,7 +33,6 @@ use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-#[allow(deprecated)]
 use crate::client::pager::NextRowError;
 #[allow(deprecated)]
 use crate::response::legacy_query_result::IntoLegacyQueryResultError;
