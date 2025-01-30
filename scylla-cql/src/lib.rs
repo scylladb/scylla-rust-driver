@@ -5,11 +5,6 @@ pub mod macros {
     pub use scylla_macros::DeserializeValue;
     pub use scylla_macros::SerializeRow;
     pub use scylla_macros::SerializeValue;
-
-    #[allow(deprecated)]
-    pub use crate::impl_serialize_row_via_value_list;
-    #[allow(deprecated)]
-    pub use crate::impl_serialize_value_via_value;
 }
 
 pub mod deserialize;

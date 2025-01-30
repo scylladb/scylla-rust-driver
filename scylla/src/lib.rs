@@ -143,12 +143,6 @@ pub mod serialize {
             BatchValues, BatchValuesFromIterator, BatchValuesIterator,
             BatchValuesIteratorFromIterator, TupleValuesIter,
         };
-
-        // Legacy migration types - to be removed when removing legacy framework
-        #[allow(deprecated)]
-        pub use scylla_cql::serialize::batch::{
-            LegacyBatchValuesAdapter, LegacyBatchValuesIteratorAdapter,
-        };
     }
 
     /// Contains the [SerializeRow][row::SerializeRow] trait and its implementations.
@@ -160,15 +154,6 @@ pub mod serialize {
         pub use scylla_cql::serialize::row::{
             BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
             BuiltinTypeCheckErrorKind,
-        };
-
-        // Legacy migration types - to be removed when removing legacy framework
-        #[allow(deprecated)]
-        pub use scylla_cql::serialize::row::{
-            // Legacy migration types - to be removed when removing legacy framework
-            serialize_legacy_row,
-            ValueListAdapter,
-            ValueListToSerializeRowAdapterError,
         };
 
         // Not part of the old framework, but something that we should
@@ -188,12 +173,6 @@ pub mod serialize {
             SetOrListSerializationErrorKind, SetOrListTypeCheckErrorKind,
             TupleSerializationErrorKind, TupleTypeCheckErrorKind, UdtSerializationErrorKind,
             UdtTypeCheckErrorKind,
-        };
-
-        // Legacy migration types - to be removed when removing legacy framework
-        #[allow(deprecated)]
-        pub use scylla_cql::serialize::value::{
-            serialize_legacy_value, ValueAdapter, ValueToSerializeValueAdapterError,
         };
     }
 

@@ -447,8 +447,3 @@ pub use scylla_macros::DeserializeValue;
 /// to a column with the same name. This attribute allows to match to a column
 /// with provided name.
 pub use scylla_macros::DeserializeRow;
-
-#[allow(deprecated)]
-pub use scylla_cql::macros::impl_serialize_row_via_value_list;
-#[allow(deprecated)]
-pub use scylla_cql::macros::impl_serialize_value_via_value;
