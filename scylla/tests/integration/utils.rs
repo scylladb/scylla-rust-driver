@@ -5,7 +5,7 @@ use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilderKind}
 use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
 use scylla::deserialize::DeserializeValue;
-use scylla::errors::QueryError;
+use scylla::errors::ExecutionError;
 use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use scylla::query::Query;
 use scylla::routing::Shard;
@@ -222,12 +222,12 @@ fn apply_ddl_lbp(query: &mut Query) {
 // or something like that.
 #[async_trait::async_trait]
 pub(crate) trait PerformDDL {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError>;
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError>;
 }
 
 #[async_trait::async_trait]
 impl PerformDDL for Session {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError> {
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
         self.query_unpaged(query, &[]).await.map(|_| ())

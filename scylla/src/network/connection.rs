@@ -10,7 +10,7 @@ use crate::cluster::NodeAddr;
 use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
-    InternalRequestError, ProtocolError, QueryError, RequestAttemptError, ResponseParseError,
+    ExecutionError, InternalRequestError, ProtocolError, RequestAttemptError, ResponseParseError,
     SchemaVersionFetchError, TranslationError, UseKeyspaceError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -821,7 +821,7 @@ impl Connection {
     pub(crate) async fn query_unpaged(
         &self,
         query: impl Into<Query>,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         let query: Query = query.into();
 
@@ -889,7 +889,7 @@ impl Connection {
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values)
             .await
@@ -1046,7 +1046,7 @@ impl Connection {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<QueryResult, ExecutionError> {
         self.batch_with_consistency(
             batch,
             values,
@@ -1262,13 +1262,13 @@ impl Connection {
         }
     }
 
-    pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
+    pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, ExecutionError> {
         let (version_id,) = self
             .query_unpaged(LOCAL_VERSION)
             .await?
             .into_rows_result()
             .map_err(|err| {
-                QueryError::ProtocolError(ProtocolError::SchemaVersionFetch(
+                ExecutionError::ProtocolError(ProtocolError::SchemaVersionFetch(
                     SchemaVersionFetchError::TracesEventsIntoRowsResultError(err),
                 ))
             })?

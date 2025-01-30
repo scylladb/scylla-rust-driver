@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use futures::TryStreamExt as _;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::errors::QueryError;
+use scylla::errors::ExecutionError;
 use std::env;
 use std::time::Duration;
 
@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
 
     match session.await_schema_agreement().await {
         Ok(_schema_version) => println!("Schema is in agreement in time"),
-        Err(QueryError::RequestTimeout(_)) => println!("Schema is NOT in agreement in time"),
+        Err(ExecutionError::RequestTimeout(_)) => println!("Schema is NOT in agreement in time"),
         Err(err) => bail!(err),
     };
     session

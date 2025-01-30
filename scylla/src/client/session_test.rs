@@ -9,7 +9,7 @@ use crate::cluster::metadata::{
     CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType,
 };
 use crate::deserialize::DeserializeOwnedValue;
-use crate::errors::{BadKeyspaceName, DbError, QueryError, UseKeyspaceError};
+use crate::errors::{BadKeyspaceName, DbError, ExecutionError, UseKeyspaceError};
 use crate::observability::tracing::TracingInfo;
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::prepared_statement::PreparedStatement;
@@ -949,7 +949,7 @@ async fn test_db_errors() {
     // SyntaxError on bad query
     assert!(matches!(
         session.query_unpaged("gibberish", &[]).await,
-        Err(QueryError::DbError(DbError::SyntaxError, _))
+        Err(ExecutionError::DbError(DbError::SyntaxError, _))
     ));
 
     // AlreadyExists when creating a keyspace for the second time
@@ -957,7 +957,7 @@ async fn test_db_errors() {
 
     let create_keyspace_res = session.ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await;
     let keyspace_exists_error: DbError = match create_keyspace_res {
-        Err(QueryError::DbError(e, _)) => e,
+        Err(ExecutionError::DbError(e, _)) => e,
         _ => panic!("Second CREATE KEYSPACE didn't return an error!"),
     };
 
@@ -982,7 +982,7 @@ async fn test_db_errors() {
         .ddl(format!("CREATE TABLE {}.tab (a text primary key)", ks))
         .await;
     let create_tab_error: DbError = match create_table_res {
-        Err(QueryError::DbError(e, _)) => e,
+        Err(ExecutionError::DbError(e, _)) => e,
         _ => panic!("Second CREATE TABLE didn't return an error!"),
     };
 
@@ -1429,7 +1429,7 @@ async fn test_request_timeout() {
         query.set_request_timeout(Some(Duration::from_millis(1)));
         match session.query_unpaged(query, &[]).await {
             Ok(_) => panic!("the query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, QueryError::RequestTimeout(_)),
+            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
         }
 
         let mut prepared = session
@@ -1440,7 +1440,7 @@ async fn test_request_timeout() {
         prepared.set_request_timeout(Some(Duration::from_millis(1)));
         match session.execute_unpaged(&prepared, &[]).await {
             Ok(_) => panic!("the prepared query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, QueryError::RequestTimeout(_)),
+            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
         };
     }
     {
@@ -1454,7 +1454,7 @@ async fn test_request_timeout() {
 
         match timeouting_session.query_unpaged(query.clone(), &[]).await {
             Ok(_) => panic!("the query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, QueryError::RequestTimeout(_)),
+            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
         };
 
         query.set_request_timeout(Some(Duration::from_secs(10000)));
@@ -1470,7 +1470,7 @@ async fn test_request_timeout() {
 
         match timeouting_session.execute_unpaged(&prepared, &[]).await {
             Ok(_) => panic!("the prepared query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, QueryError::RequestTimeout(_)),
+            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
         };
 
         prepared.set_request_timeout(Some(Duration::from_secs(10000)));
@@ -2622,7 +2622,7 @@ async fn test_rate_limit_exceeded_exception() {
     use crate::errors::OperationType;
 
     match maybe_err.expect("Rate limit error didn't occur") {
-        QueryError::DbError(DbError::RateLimitReached { op_type, .. }, _) => {
+        ExecutionError::DbError(DbError::RateLimitReached { op_type, .. }, _) => {
             assert_eq!(op_type, OperationType::Write);
         }
         err => panic!("Unexpected error type received: {:?}", err),

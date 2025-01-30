@@ -4,7 +4,7 @@ use scylla::client::session::Session;
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 use scylla::batch::Batch;
 use scylla::batch::BatchType;
-use scylla::errors::{BadQuery, QueryError};
+use scylla::errors::{BadQuery, ExecutionError};
 use scylla::query::Query;
 use scylla::response::query_result::QueryResult;
 
@@ -25,7 +25,7 @@ async fn test_large_batch_statements() {
     let batch_insert_result = write_batch(&session, too_many_queries, &ks).await;
     assert_matches!(
         batch_insert_result.unwrap_err(),
-        QueryError::BadQuery(BadQuery::TooManyQueriesInBatchStatement(_too_many_queries)) if _too_many_queries == too_many_queries
+        ExecutionError::BadQuery(BadQuery::TooManyQueriesInBatchStatement(_too_many_queries)) if _too_many_queries == too_many_queries
     )
 }
 
@@ -45,7 +45,11 @@ async fn create_test_session(session: Session, ks: &String) -> Session {
     session
 }
 
-async fn write_batch(session: &Session, n: usize, ks: &String) -> Result<QueryResult, QueryError> {
+async fn write_batch(
+    session: &Session,
+    n: usize,
+    ks: &String,
+) -> Result<QueryResult, ExecutionError> {
     let mut batch_query = Batch::new(BatchType::Unlogged);
     let mut batch_values = Vec::new();
     let query = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);

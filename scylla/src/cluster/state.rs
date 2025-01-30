@@ -1,4 +1,4 @@
-use crate::errors::{BadQuery, QueryError};
+use crate::errors::{BadQuery, ExecutionError};
 use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
 use crate::policies::host_filter::HostFilter;
 use crate::prepared_statement::TokenCalculationError;
@@ -268,7 +268,7 @@ impl ClusterState {
     /// Returns nonempty iterator of working connections to all shards.
     pub(crate) fn iter_working_connections(
         &self,
-    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, QueryError> {
+    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, ExecutionError> {
         // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
         assert!(!self.known_peers.is_empty());
         let mut peers_iter = self.known_peers.values();

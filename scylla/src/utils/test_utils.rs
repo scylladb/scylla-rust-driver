@@ -4,7 +4,7 @@ use crate::client::session::Session;
 use crate::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::cluster::ClusterState;
 use crate::cluster::NodeRef;
-use crate::errors::QueryError;
+use crate::errors::ExecutionError;
 use crate::network::Connection;
 use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::query::Query;
@@ -157,12 +157,12 @@ fn apply_ddl_lbp(query: &mut Query) {
 // or something like that.
 #[async_trait::async_trait]
 pub(crate) trait PerformDDL {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError>;
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError>;
 }
 
 #[async_trait::async_trait]
 impl PerformDDL for Session {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError> {
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
         self.query_unpaged(query, &[]).await.map(|_| ())
@@ -171,7 +171,7 @@ impl PerformDDL for Session {
 
 #[async_trait::async_trait]
 impl PerformDDL for CachingSession {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError> {
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
         self.execute_unpaged(query, &[]).await.map(|_| ())
@@ -180,7 +180,7 @@ impl PerformDDL for CachingSession {
 
 #[async_trait::async_trait]
 impl PerformDDL for Connection {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), QueryError> {
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
         self.query_unpaged(query).await.map(|_| ())
