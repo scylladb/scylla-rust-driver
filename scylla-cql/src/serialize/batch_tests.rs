@@ -1,10 +1,9 @@
 use crate::frame::response::result::NativeType;
+use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
 use crate::serialize::batch::{BatchValues, BatchValuesIterator};
 use crate::serialize::row::RowSerializationContext;
 use crate::serialize::RowWriter;
 
-use super::response::result::{ColumnSpec, ColumnType, TableSpec};
-#[cfg(test)]
 use assert_matches::assert_matches;
 use bytes::BufMut;
 
