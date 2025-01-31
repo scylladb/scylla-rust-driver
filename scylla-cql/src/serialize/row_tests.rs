@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::frame::response::result::{
@@ -5,16 +6,20 @@ use crate::frame::response::result::{
 };
 use crate::frame::types::RawValue;
 use crate::frame::value::MaybeUnset;
-use crate::serialize::{RowWriter, SerializationError};
-
-use super::{
+use crate::macros::SerializeRow;
+use crate::serialize::row::{
     BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
     BuiltinTypeCheckErrorKind, RowSerializationContext, SerializeRow, SerializeValue,
+    SerializedValues,
 };
+use crate::serialize::value::tests::get_ser_err as get_value_ser_err;
+use crate::serialize::value::{
+    mk_ser_err, BuiltinSerializationErrorKind as BuiltinValueSerializationErrorKind,
+};
+use crate::serialize::writers::WrittenCellProof;
+use crate::serialize::{CellWriter, RowWriter, SerializationError};
 
-use super::SerializedValues;
 use assert_matches::assert_matches;
-use scylla_macros::SerializeRow;
 
 pub(crate) fn do_serialize<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> Vec<u8> {
     let ctx = RowSerializationContext { columns };
@@ -31,8 +36,12 @@ fn do_serialize_err<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> Serializat
     t.serialize(&ctx, &mut builder).unwrap_err()
 }
 
-fn col<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
-    ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
+fn col<'a>(name: impl Into<Cow<'a, str>>, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+    ColumnSpec {
+        name: name.into(),
+        typ,
+        table_spec: TableSpec::borrowed("ks", "tbl"),
+    }
 }
 
 fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {
@@ -713,4 +722,296 @@ fn test_row_serialization_with_boxed_tuple() {
     let row = do_serialize(Box::new((42i32, 42i32)), &spec);
 
     assert_eq!(reference, row);
+}
+
+// Tests migrated from old frame/value_tests.rs file
+
+#[test]
+fn empty_serialized_values() {
+    const EMPTY: SerializedValues = SerializedValues::new();
+    assert_eq!(EMPTY.element_count(), 0);
+    assert!(EMPTY.is_empty());
+    assert_eq!(EMPTY.iter().next(), None);
+
+    let mut empty_request = Vec::<u8>::new();
+    EMPTY.write_to_request(&mut empty_request);
+    assert_eq!(empty_request, vec![0, 0]);
+}
+
+#[test]
+fn serialized_values() {
+    let mut values = SerializedValues::new();
+    assert!(values.is_empty());
+
+    // Add first value
+    values
+        .add_value(&8_i8, &ColumnType::Native(NativeType::TinyInt))
+        .unwrap();
+    {
+        assert_eq!(values.element_count(), 1);
+        assert!(!values.is_empty());
+
+        let mut request = Vec::<u8>::new();
+        values.write_to_request(&mut request);
+        assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 8]);
+
+        assert_eq!(
+            values.iter().collect::<Vec<_>>(),
+            vec![RawValue::Value([8].as_ref())]
+        );
+    }
+
+    // Add second value
+    values
+        .add_value(&16_i16, &ColumnType::Native(NativeType::SmallInt))
+        .unwrap();
+    {
+        assert_eq!(values.element_count(), 2);
+        assert!(!values.is_empty());
+
+        let mut request = Vec::<u8>::new();
+        values.write_to_request(&mut request);
+        assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 8, 0, 0, 0, 2, 0, 16]);
+
+        assert_eq!(
+            values.iter().collect::<Vec<_>>(),
+            vec![
+                RawValue::Value([8].as_ref()),
+                RawValue::Value([0, 16].as_ref())
+            ]
+        );
+    }
+
+    // Add a value that's too big, recover gracefully
+    struct TooBigValue;
+    impl SerializeValue for TooBigValue {
+        fn serialize<'b>(
+            &self,
+            typ: &ColumnType,
+            writer: CellWriter<'b>,
+        ) -> Result<WrittenCellProof<'b>, SerializationError> {
+            // serialize some
+            writer.into_value_builder().append_bytes(&[1u8]);
+
+            // then throw an error
+            Err(mk_ser_err::<Self>(
+                typ,
+                BuiltinValueSerializationErrorKind::SizeOverflow,
+            ))
+        }
+    }
+
+    let err = values
+        .add_value(&TooBigValue, &ColumnType::Native(NativeType::Ascii))
+        .unwrap_err();
+
+    assert_matches!(
+        get_value_ser_err(&err).kind,
+        BuiltinValueSerializationErrorKind::SizeOverflow
+    );
+
+    // All checks for two values should still pass
+    {
+        assert_eq!(values.element_count(), 2);
+        assert!(!values.is_empty());
+
+        let mut request = Vec::<u8>::new();
+        values.write_to_request(&mut request);
+        assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 8, 0, 0, 0, 2, 0, 16]);
+
+        assert_eq!(
+            values.iter().collect::<Vec<_>>(),
+            vec![
+                RawValue::Value([8].as_ref()),
+                RawValue::Value([0, 16].as_ref())
+            ]
+        );
+    }
+}
+
+#[test]
+fn unit_value_list() {
+    let serialized_unit: SerializedValues =
+        SerializedValues::from_serializable(&RowSerializationContext::empty(), &()).unwrap();
+    assert!(serialized_unit.is_empty());
+}
+
+#[test]
+fn empty_array_value_list() {
+    let serialized_arr: SerializedValues =
+        SerializedValues::from_serializable(&RowSerializationContext::empty(), &[] as &[u8; 0])
+            .unwrap();
+    assert!(serialized_arr.is_empty());
+}
+
+#[test]
+fn slice_value_list() {
+    let values: &[i32] = &[1, 2, 3];
+    let cols = &[
+        col("ala", ColumnType::Native(NativeType::Int)),
+        col("ma", ColumnType::Native(NativeType::Int)),
+        col("kota", ColumnType::Native(NativeType::Int)),
+    ];
+    let serialized = serialize_values(values, cols);
+
+    assert_eq!(
+        serialized.iter().collect::<Vec<_>>(),
+        vec![
+            RawValue::Value([0, 0, 0, 1].as_ref()),
+            RawValue::Value([0, 0, 0, 2].as_ref()),
+            RawValue::Value([0, 0, 0, 3].as_ref())
+        ]
+    );
+}
+
+#[test]
+fn vec_value_list() {
+    let values: Vec<i32> = vec![1, 2, 3];
+    let cols = &[
+        col("ala", ColumnType::Native(NativeType::Int)),
+        col("ma", ColumnType::Native(NativeType::Int)),
+        col("kota", ColumnType::Native(NativeType::Int)),
+    ];
+    let serialized = serialize_values(values, cols);
+
+    assert_eq!(
+        serialized.iter().collect::<Vec<_>>(),
+        vec![
+            RawValue::Value([0, 0, 0, 1].as_ref()),
+            RawValue::Value([0, 0, 0, 2].as_ref()),
+            RawValue::Value([0, 0, 0, 3].as_ref())
+        ]
+    );
+}
+
+fn serialize_values<T: SerializeRow>(vl: T, columns: &[ColumnSpec]) -> SerializedValues {
+    let ctx = RowSerializationContext { columns };
+    let serialized: SerializedValues = SerializedValues::from_serializable(&ctx, &vl).unwrap();
+
+    assert_eq!(<T as SerializeRow>::is_empty(&vl), serialized.is_empty());
+
+    serialized
+}
+
+#[test]
+fn tuple_value_list() {
+    fn check_i8_tuple(tuple: impl SerializeRow, expected: core::ops::Range<u8>) {
+        let typs = expected
+            .clone()
+            .enumerate()
+            .map(|(i, _)| col(format!("col_{i}"), ColumnType::Native(NativeType::TinyInt)))
+            .collect::<Vec<_>>();
+        let serialized = serialize_values(tuple, &typs);
+        assert_eq!(serialized.element_count() as usize, expected.len());
+
+        let serialized_vals: Vec<u8> = serialized
+            .iter()
+            .map(|o: RawValue| o.as_value().unwrap()[0])
+            .collect();
+
+        let expected: Vec<u8> = expected.collect();
+
+        assert_eq!(serialized_vals, expected);
+    }
+
+    check_i8_tuple((), 1..1);
+    check_i8_tuple((1_i8,), 1..2);
+    check_i8_tuple((1_i8, 2_i8), 1..3);
+    check_i8_tuple((1_i8, 2_i8, 3_i8), 1..4);
+    check_i8_tuple((1_i8, 2_i8, 3_i8, 4_i8), 1..5);
+    check_i8_tuple((1_i8, 2_i8, 3_i8, 4_i8, 5_i8), 1..6);
+    check_i8_tuple((1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8), 1..7);
+    check_i8_tuple((1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8, 7_i8), 1..8);
+    check_i8_tuple((1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8, 7_i8, 8_i8), 1..9);
+    check_i8_tuple(
+        (1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8, 7_i8, 8_i8, 9_i8),
+        1..10,
+    );
+    check_i8_tuple(
+        (1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8, 7_i8, 8_i8, 9_i8, 10_i8),
+        1..11,
+    );
+    check_i8_tuple(
+        (
+            1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8, 7_i8, 8_i8, 9_i8, 10_i8, 11_i8,
+        ),
+        1..12,
+    );
+    check_i8_tuple(
+        (
+            1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8, 7_i8, 8_i8, 9_i8, 10_i8, 11_i8, 12_i8,
+        ),
+        1..13,
+    );
+    check_i8_tuple(
+        (
+            1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8, 7_i8, 8_i8, 9_i8, 10_i8, 11_i8, 12_i8, 13_i8,
+        ),
+        1..14,
+    );
+    check_i8_tuple(
+        (
+            1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8, 7_i8, 8_i8, 9_i8, 10_i8, 11_i8, 12_i8, 13_i8, 14_i8,
+        ),
+        1..15,
+    );
+    check_i8_tuple(
+        (
+            1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8, 7_i8, 8_i8, 9_i8, 10_i8, 11_i8, 12_i8, 13_i8,
+            14_i8, 15_i8,
+        ),
+        1..16,
+    );
+    check_i8_tuple(
+        (
+            1_i8, 2_i8, 3_i8, 4_i8, 5_i8, 6_i8, 7_i8, 8_i8, 9_i8, 10_i8, 11_i8, 12_i8, 13_i8,
+            14_i8, 15_i8, 16_i8,
+        ),
+        1..17,
+    );
+}
+
+#[test]
+fn map_value_list() {
+    // SerializeRow will order the values by their names.
+    // Note that the alphabetical order of the keys is "ala", "kota", "ma",
+    // but the impl sorts properly.
+    let row = BTreeMap::from_iter([("ala", 1), ("ma", 2), ("kota", 3)]);
+    let cols = &[
+        col("ala", ColumnType::Native(NativeType::Int)),
+        col("ma", ColumnType::Native(NativeType::Int)),
+        col("kota", ColumnType::Native(NativeType::Int)),
+    ];
+    let values = serialize_values(row.clone(), cols);
+    let mut values_bytes = Vec::new();
+    values.write_to_request(&mut values_bytes);
+    assert_eq!(
+        values_bytes,
+        vec![
+            0, 3, // value count: 3
+            0, 0, 0, 4, 0, 0, 0, 1, // ala: 1
+            0, 0, 0, 4, 0, 0, 0, 2, // ma: 2
+            0, 0, 0, 4, 0, 0, 0, 3, // kota: 3
+        ]
+    );
+}
+
+#[test]
+fn ref_value_list() {
+    let values: &[i32] = &[1, 2, 3];
+    let typs = &[
+        col("col_1", ColumnType::Native(NativeType::Int)),
+        col("col_2", ColumnType::Native(NativeType::Int)),
+        col("col_3", ColumnType::Native(NativeType::Int)),
+    ];
+    let serialized = serialize_values::<&&[i32]>(&values, typs);
+
+    assert_eq!(
+        serialized.iter().collect::<Vec<_>>(),
+        vec![
+            RawValue::Value([0, 0, 0, 1].as_ref()),
+            RawValue::Value([0, 0, 0, 2].as_ref()),
+            RawValue::Value([0, 0, 0, 3].as_ref())
+        ]
+    );
 }
