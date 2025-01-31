@@ -3,17 +3,14 @@ use crate::frame::value::{CqlTimeuuid, CqlVarint};
 use crate::frame::{response::result::CqlValue, types::RawValue};
 use crate::serialize::batch::{BatchValues, BatchValuesIterator};
 use crate::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
+use crate::serialize::value::BuiltinSerializationErrorKind;
 use crate::serialize::value::{mk_ser_err, SerializeValue};
-use crate::serialize::value::{
-    BuiltinSerializationError as BuiltinTypeSerializationError,
-    BuiltinSerializationErrorKind as BuiltinTypeSerializationErrorKind,
-};
 use crate::serialize::writers::WrittenCellProof;
 use crate::serialize::{CellWriter, RowWriter, SerializationError};
 
 use super::response::result::{ColumnSpec, ColumnType, TableSpec};
 use super::value::{CqlDate, CqlDuration, CqlTime, CqlTimestamp, MaybeUnset, Unset};
-use crate::serialize::value::tests::do_serialize;
+use crate::serialize::value::tests::{do_serialize, do_serialize_err, get_ser_err};
 #[cfg(test)]
 use assert_matches::assert_matches;
 use bytes::BufMut;
@@ -25,19 +22,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::{borrow::Cow, convert::TryInto};
 use uuid::Uuid;
-
-// For now it is only used in a test that is also behind this feature flag,
-// so without it it throws a warning about being unused.
-#[cfg(feature = "chrono-04")]
-fn try_serialized<T: SerializeValue>(
-    val: T,
-    typ: ColumnType,
-) -> Result<Vec<u8>, SerializationError> {
-    let mut result: Vec<u8> = Vec::new();
-    let writer = CellWriter::new(&mut result);
-    SerializeValue::serialize(&val, &typ, writer)?;
-    Ok(result)
-}
 
 fn compute_hash<T: Hash>(x: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -227,7 +211,10 @@ fn bigdecimal04_serialization() {
                 .collect::<Vec<_>>();
             let digits = bigdecimal_04::num_bigint::BigInt::from(*digits);
             let x = bigdecimal_04::BigDecimal::new(digits, exponent as i64);
-            assert_eq!(do_serialize(x, &ColumnType::Native(NativeType::Decimal)), repr);
+            assert_eq!(
+                do_serialize(x, &ColumnType::Native(NativeType::Decimal)),
+                repr
+            );
         }
     }
 }
@@ -455,12 +442,10 @@ fn naive_time_04_serialization() {
 
     // Leap second must return error on serialize
     let leap_second = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_500_000_000).unwrap();
-    let err = try_serialized(leap_second, ColumnType::Native(NativeType::Time)).unwrap_err();
+    let err = do_serialize_err(leap_second, &ColumnType::Native(NativeType::Time));
     assert_matches!(
-        err.downcast_ref::<BuiltinTypeSerializationError>()
-            .unwrap()
-            .kind,
-        BuiltinTypeSerializationErrorKind::ValueOverflow
+        get_ser_err(&err).kind,
+        BuiltinSerializationErrorKind::ValueOverflow
     )
 }
 
@@ -497,7 +482,8 @@ fn cql_timestamp_serialization() {
 
     for test_val in &[0, -1, 1, -45345346, 453451, i64::MIN, i64::MAX] {
         let test_timestamp: CqlTimestamp = CqlTimestamp(*test_val);
-        let bytes: Vec<u8> = do_serialize(test_timestamp, &ColumnType::Native(NativeType::Timestamp));
+        let bytes: Vec<u8> =
+            do_serialize(test_timestamp, &ColumnType::Native(NativeType::Timestamp));
 
         let mut expected_bytes: Vec<u8> = vec![0, 0, 0, 8];
         expected_bytes.extend_from_slice(&test_val.to_be_bytes());
@@ -549,7 +535,8 @@ fn date_time_04_serialization() {
         ),
     ];
     for (test_datetime, expected) in test_cases {
-        let bytes: Vec<u8> = do_serialize(test_datetime, &ColumnType::Native(NativeType::Timestamp));
+        let bytes: Vec<u8> =
+            do_serialize(test_datetime, &ColumnType::Native(NativeType::Timestamp));
 
         let mut expected_bytes: Vec<u8> = vec![0, 0, 0, 8];
         expected_bytes.extend_from_slice(&expected);
@@ -1060,7 +1047,7 @@ fn serialized_values() {
             // then throw an error
             Err(mk_ser_err::<Self>(
                 typ,
-                BuiltinTypeSerializationErrorKind::SizeOverflow,
+                BuiltinSerializationErrorKind::SizeOverflow,
             ))
         }
     }
@@ -1068,11 +1055,10 @@ fn serialized_values() {
     let err = values
         .add_value(&TooBigValue, &ColumnType::Native(NativeType::Ascii))
         .unwrap_err();
-    let err_inner = err.downcast_ref::<BuiltinTypeSerializationError>().unwrap();
 
     assert_matches!(
-        err_inner.kind,
-        BuiltinTypeSerializationErrorKind::SizeOverflow
+        get_ser_err(&err).kind,
+        BuiltinSerializationErrorKind::SizeOverflow
     );
 
     // All checks for two values should still pass

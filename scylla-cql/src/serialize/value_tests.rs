@@ -47,7 +47,7 @@ pub(crate) fn do_serialize<T: SerializeValue>(t: T, typ: &ColumnType) -> Vec<u8>
     do_serialize_result(t, typ).unwrap()
 }
 
-fn do_serialize_err<T: SerializeValue>(t: T, typ: &ColumnType) -> SerializationError {
+pub(crate) fn do_serialize_err<T: SerializeValue>(t: T, typ: &ColumnType) -> SerializationError {
     do_serialize_result(t, typ).unwrap_err()
 }
 
@@ -58,7 +58,7 @@ fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {
     }
 }
 
-fn get_ser_err(err: &SerializationError) -> &BuiltinSerializationError {
+pub(crate) fn get_ser_err(err: &SerializationError) -> &BuiltinSerializationError {
     match err.0.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinSerializationError: {}", err),
