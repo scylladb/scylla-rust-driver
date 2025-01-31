@@ -137,9 +137,9 @@ fn empty_array_value_list() {
 fn slice_value_list() {
     let values: &[i32] = &[1, 2, 3];
     let cols = &[
-        col_spec("ala", ColumnType::Native(NativeType::Int)),
-        col_spec("ma", ColumnType::Native(NativeType::Int)),
-        col_spec("kota", ColumnType::Native(NativeType::Int)),
+        col("ala", ColumnType::Native(NativeType::Int)),
+        col("ma", ColumnType::Native(NativeType::Int)),
+        col("kota", ColumnType::Native(NativeType::Int)),
     ];
     let serialized = serialize_values(values, cols);
 
@@ -157,9 +157,9 @@ fn slice_value_list() {
 fn vec_value_list() {
     let values: Vec<i32> = vec![1, 2, 3];
     let cols = &[
-        col_spec("ala", ColumnType::Native(NativeType::Int)),
-        col_spec("ma", ColumnType::Native(NativeType::Int)),
-        col_spec("kota", ColumnType::Native(NativeType::Int)),
+        col("ala", ColumnType::Native(NativeType::Int)),
+        col("ma", ColumnType::Native(NativeType::Int)),
+        col("kota", ColumnType::Native(NativeType::Int)),
     ];
     let serialized = serialize_values(values, cols);
 
@@ -173,7 +173,7 @@ fn vec_value_list() {
     );
 }
 
-fn col_spec<'a>(name: impl Into<Cow<'a, str>>, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+fn col<'a>(name: impl Into<Cow<'a, str>>, typ: ColumnType<'a>) -> ColumnSpec<'a> {
     ColumnSpec {
         name: name.into(),
         typ,
@@ -196,7 +196,7 @@ fn tuple_value_list() {
         let typs = expected
             .clone()
             .enumerate()
-            .map(|(i, _)| col_spec(format!("col_{i}"), ColumnType::Native(NativeType::TinyInt)))
+            .map(|(i, _)| col(format!("col_{i}"), ColumnType::Native(NativeType::TinyInt)))
             .collect::<Vec<_>>();
         let serialized = serialize_values(tuple, &typs);
         assert_eq!(serialized.element_count() as usize, expected.len());
@@ -275,9 +275,9 @@ fn map_value_list() {
     // but the impl sorts properly.
     let row = BTreeMap::from_iter([("ala", 1), ("ma", 2), ("kota", 3)]);
     let cols = &[
-        col_spec("ala", ColumnType::Native(NativeType::Int)),
-        col_spec("ma", ColumnType::Native(NativeType::Int)),
-        col_spec("kota", ColumnType::Native(NativeType::Int)),
+        col("ala", ColumnType::Native(NativeType::Int)),
+        col("ma", ColumnType::Native(NativeType::Int)),
+        col("kota", ColumnType::Native(NativeType::Int)),
     ];
     let values = serialize_values(row.clone(), cols);
     let mut values_bytes = Vec::new();
@@ -297,9 +297,9 @@ fn map_value_list() {
 fn ref_value_list() {
     let values: &[i32] = &[1, 2, 3];
     let typs = &[
-        col_spec("col_1", ColumnType::Native(NativeType::Int)),
-        col_spec("col_2", ColumnType::Native(NativeType::Int)),
-        col_spec("col_3", ColumnType::Native(NativeType::Int)),
+        col("col_1", ColumnType::Native(NativeType::Int)),
+        col("col_2", ColumnType::Native(NativeType::Int)),
+        col("col_3", ColumnType::Native(NativeType::Int)),
     ];
     let serialized = serialize_values::<&&[i32]>(&values, typs);
 
@@ -345,8 +345,8 @@ fn slice_batch_values() {
     let mut iter = make_batch_value_iter(&batch_values);
     {
         let cols = &[
-            col_spec("a", ColumnType::Native(NativeType::TinyInt)),
-            col_spec("b", ColumnType::Native(NativeType::TinyInt)),
+            col("a", ColumnType::Native(NativeType::TinyInt)),
+            col("b", ColumnType::Native(NativeType::TinyInt)),
         ];
         let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
@@ -354,10 +354,10 @@ fn slice_batch_values() {
 
     {
         let cols = &[
-            col_spec("a", ColumnType::Native(NativeType::TinyInt)),
-            col_spec("b", ColumnType::Native(NativeType::TinyInt)),
-            col_spec("c", ColumnType::Native(NativeType::TinyInt)),
-            col_spec("d", ColumnType::Native(NativeType::TinyInt)),
+            col("a", ColumnType::Native(NativeType::TinyInt)),
+            col("b", ColumnType::Native(NativeType::TinyInt)),
+            col("c", ColumnType::Native(NativeType::TinyInt)),
+            col("d", ColumnType::Native(NativeType::TinyInt)),
         ];
         let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(
@@ -367,7 +367,7 @@ fn slice_batch_values() {
     }
 
     {
-        let cols = &[col_spec("a", ColumnType::Native(NativeType::TinyInt))];
+        let cols = &[col("a", ColumnType::Native(NativeType::TinyInt))];
         let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
     }
@@ -393,8 +393,8 @@ fn vec_batch_values() {
     let mut iter = make_batch_value_iter(&batch_values);
     {
         let cols = &[
-            col_spec("a", ColumnType::Native(NativeType::TinyInt)),
-            col_spec("b", ColumnType::Native(NativeType::TinyInt)),
+            col("a", ColumnType::Native(NativeType::TinyInt)),
+            col("b", ColumnType::Native(NativeType::TinyInt)),
         ];
         let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
@@ -402,10 +402,10 @@ fn vec_batch_values() {
 
     {
         let cols = &[
-            col_spec("a", ColumnType::Native(NativeType::TinyInt)),
-            col_spec("b", ColumnType::Native(NativeType::TinyInt)),
-            col_spec("c", ColumnType::Native(NativeType::TinyInt)),
-            col_spec("d", ColumnType::Native(NativeType::TinyInt)),
+            col("a", ColumnType::Native(NativeType::TinyInt)),
+            col("b", ColumnType::Native(NativeType::TinyInt)),
+            col("c", ColumnType::Native(NativeType::TinyInt)),
+            col("d", ColumnType::Native(NativeType::TinyInt)),
         ];
         let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(
@@ -415,7 +415,7 @@ fn vec_batch_values() {
     }
 
     {
-        let cols = &[col_spec("a", ColumnType::Native(NativeType::TinyInt))];
+        let cols = &[col("a", ColumnType::Native(NativeType::TinyInt))];
         let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
     }
@@ -428,8 +428,8 @@ fn tuple_batch_values() {
 
         for i in 0..size {
             let cols = &[
-                col_spec("a", ColumnType::Native(NativeType::Int)),
-                col_spec("b", ColumnType::Native(NativeType::Int)),
+                col("a", ColumnType::Native(NativeType::Int)),
+                col("b", ColumnType::Native(NativeType::Int)),
             ];
 
             let request = serialize_batch_value_iterator(&mut iter, cols);
@@ -620,8 +620,8 @@ fn tuple_batch_values() {
 fn ref_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
     let cols = &[
-        col_spec("a", ColumnType::Native(NativeType::TinyInt)),
-        col_spec("b", ColumnType::Native(NativeType::TinyInt)),
+        col("a", ColumnType::Native(NativeType::TinyInt)),
+        col("b", ColumnType::Native(NativeType::TinyInt)),
     ];
 
     return check_ref_bv::<&&&&&[&[i8]]>(&&&&batch_values, cols);
@@ -645,17 +645,17 @@ fn check_ref_tuple() {
     }
     let s = String::from("hello");
     let tuple: ((&str,),) = ((&s,),);
-    let cols: &[&[ColumnSpec]] = &[&[col_spec("a", ColumnType::Native(NativeType::Text))]];
+    let cols: &[&[ColumnSpec]] = &[&[col("a", ColumnType::Native(NativeType::Text))]];
     assert_has_batch_values::<&_>(&tuple, cols);
     let tuple2: ((&str, &str), (&str, &str)) = ((&s, &s), (&s, &s));
     let cols: &[&[ColumnSpec]] = &[
         &[
-            col_spec("a", ColumnType::Native(NativeType::Text)),
-            col_spec("b", ColumnType::Native(NativeType::Text)),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Text)),
         ],
         &[
-            col_spec("a", ColumnType::Native(NativeType::Text)),
-            col_spec("b", ColumnType::Native(NativeType::Text)),
+            col("a", ColumnType::Native(NativeType::Text)),
+            col("b", ColumnType::Native(NativeType::Text)),
         ],
     ];
     assert_has_batch_values::<&_>(&tuple2, cols);
@@ -668,7 +668,7 @@ fn check_batch_values_iterator_is_not_lending() {
         let mut it = bv.batch_values_iter();
         let mut it2 = bv.batch_values_iter();
 
-        let columns = &[col_spec("a", ColumnType::Native(NativeType::Int))];
+        let columns = &[col("a", ColumnType::Native(NativeType::Int))];
         let ctx = RowSerializationContext { columns };
         let mut data = Vec::new();
         let mut writer = RowWriter::new(&mut data);
