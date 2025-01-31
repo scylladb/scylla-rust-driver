@@ -16,10 +16,6 @@ use super::SerializedValues;
 use assert_matches::assert_matches;
 use scylla_macros::SerializeRow;
 
-fn col_spec<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
-    ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
-}
-
 #[test]
 fn test_dyn_serialize_row() {
     let row = (
@@ -30,10 +26,10 @@ fn test_dyn_serialize_row() {
     );
     let ctx = RowSerializationContext {
         columns: &[
-            col_spec("a", ColumnType::Native(NativeType::Int)),
-            col_spec("b", ColumnType::Native(NativeType::Text)),
-            col_spec("c", ColumnType::Native(NativeType::BigInt)),
-            col_spec("d", ColumnType::Native(NativeType::Ascii)),
+            col("a", ColumnType::Native(NativeType::Int)),
+            col("b", ColumnType::Native(NativeType::Text)),
+            col("c", ColumnType::Native(NativeType::BigInt)),
+            col("d", ColumnType::Native(NativeType::Ascii)),
         ],
     };
 
