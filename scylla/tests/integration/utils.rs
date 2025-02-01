@@ -1,5 +1,6 @@
 use futures::future::try_join_all;
 use futures::Future;
+use itertools::Either;
 use scylla::client::caching_session::CachingSession;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
@@ -388,12 +389,17 @@ async fn for_each_target_execute<ExecuteFn, ExecuteFut>(
     execute: ExecuteFn,
 ) -> Result<Vec<QueryResult>, ExecutionError>
 where
-    ExecuteFn: Fn(Arc<scylla::cluster::Node>, Shard) -> ExecuteFut,
+    ExecuteFn: Fn(Arc<scylla::cluster::Node>, Option<Shard>) -> ExecuteFut,
     ExecuteFut: Future<Output = Result<QueryResult, ExecutionError>>,
 {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
-        let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
-        (0..shard_count).map(|shard| execute(node.clone(), shard as u32))
+        let maybe_shard_count: Option<u16> = node.sharder().map(|sharder| sharder.nr_shards.into());
+        match maybe_shard_count {
+            Some(shard_count) => Either::Left(
+                (0..shard_count).map(|shard| execute(node.clone(), Some(shard as u32))),
+            ),
+            None => Either::Right(std::iter::once(execute(node.clone(), None))),
+        }
     });
 
     try_join_all(tasks).await
@@ -408,7 +414,7 @@ pub(crate) async fn execute_prepared_statement_everywhere(
     for_each_target_execute(cluster, |node, shard| async move {
         let mut stmt = statement.clone();
         let values_ref = &values;
-        let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), Some(shard));
+        let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
         let execution_profile = ExecutionProfile::builder()
             .load_balancing_policy(policy)
             .build();
@@ -426,7 +432,7 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
     values: &dyn SerializeRow,
 ) -> Result<Vec<QueryResult>, ExecutionError> {
     for_each_target_execute(cluster, |node, shard| async move {
-        let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), Some(shard));
+        let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
         let execution_profile = ExecutionProfile::builder()
             .load_balancing_policy(policy)
             .build();
