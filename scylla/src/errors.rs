@@ -543,6 +543,10 @@ pub enum TranslationError {
         translated_addr_str: &'static str,
         reason: AddrParseError,
     },
+
+    /// An I/O error occurred during address translation.
+    #[error("An I/O error occurred during address translation: {0}")]
+    IoError(Arc<std::io::Error>),
 }
 
 /// An error that occurred during connection setup request execution.
