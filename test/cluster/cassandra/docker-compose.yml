@@ -23,6 +23,11 @@ services:
       - CASSANDRA_BROADCAST_ADDRESS=172.42.0.2
       - HEAP_NEWSIZE=512M
       - MAX_HEAP_SIZE=2048M
+    # Only needed to set the custom prepared cache size in /etc/cassandra/cassandra.yaml.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - "sed -i 's/^prepared_statements_cache_size:.*/prepared_statements_cache_size: 100MiB/' /etc/cassandra/cassandra.yaml && docker-entrypoint.sh"
   cassandra2:
     image: cassandra
     healthcheck:
@@ -38,6 +43,11 @@ services:
       - CASSANDRA_SEEDS=172.42.0.2
       - HEAP_NEWSIZE=512M
       - MAX_HEAP_SIZE=2048M
+    # Only needed to set the custom prepared cache size in /etc/cassandra/cassandra.yaml.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - "sed -i 's/^prepared_statements_cache_size:.*/prepared_statements_cache_size: 100MiB/' /etc/cassandra/cassandra.yaml && docker-entrypoint.sh"
     depends_on:
       cassandra1:
         condition: service_healthy
@@ -56,6 +66,11 @@ services:
       - CASSANDRA_SEEDS=172.42.0.2,172.42.0.3
       - HEAP_NEWSIZE=512M
       - MAX_HEAP_SIZE=2048M
+    # Only needed to set the custom prepared cache size in /etc/cassandra/cassandra.yaml.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - "sed -i 's/^prepared_statements_cache_size:.*/prepared_statements_cache_size: 100MiB/' /etc/cassandra/cassandra.yaml && docker-entrypoint.sh"
     depends_on:
       cassandra2:
         condition: service_healthy
