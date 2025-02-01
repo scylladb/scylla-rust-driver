@@ -1,3 +1,4 @@
+use futures::future::try_join_all;
 use futures::Future;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
@@ -7,8 +8,11 @@ use scylla::cluster::NodeRef;
 use scylla::deserialize::DeserializeValue;
 use scylla::errors::ExecutionError;
 use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
+use scylla::prepared_statement::PreparedStatement;
 use scylla::query::Query;
+use scylla::response::query_result::QueryResult;
 use scylla::routing::Shard;
+use scylla::serialize::row::SerializeRow;
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
@@ -232,4 +236,81 @@ impl PerformDDL for Session {
         apply_ddl_lbp(&mut query);
         self.query_unpaged(query, &[]).await.map(|_| ())
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct SingleTargetLBP {
+    target: (Arc<scylla::cluster::Node>, Option<u32>),
+}
+
+impl LoadBalancingPolicy for SingleTargetLBP {
+    fn pick<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        _cluster: &'a ClusterState,
+    ) -> Option<(NodeRef<'a>, Option<u32>)> {
+        Some((&self.target.0, self.target.1))
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        _cluster: &'a ClusterState,
+    ) -> FallbackPlan<'a> {
+        Box::new(std::iter::empty())
+    }
+
+    fn name(&self) -> String {
+        "SingleTargetLBP".to_owned()
+    }
+}
+
+pub(crate) async fn send_statement_everywhere(
+    session: &Session,
+    cluster: &ClusterState,
+    statement: &PreparedStatement,
+    values: &dyn SerializeRow,
+) -> Result<Vec<QueryResult>, ExecutionError> {
+    let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
+        let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
+        (0..shard_count).map(|shard| {
+            let mut stmt = statement.clone();
+            let values_ref = &values;
+            let policy = SingleTargetLBP {
+                target: (node.clone(), Some(shard as u32)),
+            };
+            let execution_profile = ExecutionProfile::builder()
+                .load_balancing_policy(Arc::new(policy))
+                .build();
+            stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
+
+            async move { session.execute_unpaged(&stmt, values_ref).await }
+        })
+    });
+
+    try_join_all(tasks).await
+}
+
+pub(crate) async fn send_unprepared_query_everywhere(
+    session: &Session,
+    cluster: &ClusterState,
+    query: &Query,
+) -> Result<Vec<QueryResult>, ExecutionError> {
+    let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
+        let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
+        (0..shard_count).map(|shard| {
+            let mut stmt = query.clone();
+            let policy = SingleTargetLBP {
+                target: (node.clone(), Some(shard as u32)),
+            };
+            let execution_profile = ExecutionProfile::builder()
+                .load_balancing_policy(Arc::new(policy))
+                .build();
+            stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
+
+            async move { session.query_unpaged(stmt, &()).await }
+        })
+    });
+
+    try_join_all(tasks).await
 }

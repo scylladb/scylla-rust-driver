@@ -1,27 +1,18 @@
 use std::sync::Arc;
 
 use crate::utils::{
-    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
-    PerformDDL,
+    scylla_supports_tablets, send_statement_everywhere, send_unprepared_query_everywhere,
+    setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL,
 };
 
 use futures::future::try_join_all;
 use futures::TryStreamExt;
 use itertools::Itertools;
-use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
-use scylla::cluster::ClusterState;
 use scylla::cluster::Node;
-use scylla::cluster::NodeRef;
-use scylla::policies::load_balancing::FallbackPlan;
-use scylla::policies::load_balancing::LoadBalancingPolicy;
-use scylla::policies::load_balancing::RoutingInfo;
 use scylla::prepared_statement::PreparedStatement;
 use scylla::query::Query;
-use scylla::response::query_result::QueryResult;
-use scylla::serialize::row::SerializeRow;
 
-use scylla::errors::ExecutionError;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule,
     ShardAwareness, TargetShard, WorkerError,
@@ -154,83 +145,6 @@ fn calculate_key_per_tablet(tablets: &[Tablet], prepared: &PreparedStatement) ->
     assert!(present_tablets.iter().all(|x| *x));
 
     value_lists
-}
-
-#[derive(Debug)]
-struct SingleTargetLBP {
-    target: (Arc<Node>, Option<u32>),
-}
-
-impl LoadBalancingPolicy for SingleTargetLBP {
-    fn pick<'a>(
-        &'a self,
-        _query: &'a RoutingInfo,
-        _cluster: &'a ClusterState,
-    ) -> Option<(NodeRef<'a>, Option<u32>)> {
-        Some((&self.target.0, self.target.1))
-    }
-
-    fn fallback<'a>(
-        &'a self,
-        _query: &'a RoutingInfo,
-        _cluster: &'a ClusterState,
-    ) -> FallbackPlan<'a> {
-        Box::new(std::iter::empty())
-    }
-
-    fn name(&self) -> String {
-        "SingleTargetLBP".to_owned()
-    }
-}
-
-async fn send_statement_everywhere(
-    session: &Session,
-    cluster: &ClusterState,
-    statement: &PreparedStatement,
-    values: &dyn SerializeRow,
-) -> Result<Vec<QueryResult>, ExecutionError> {
-    let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
-        let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
-        (0..shard_count).map(|shard| {
-            let mut stmt = statement.clone();
-            let values_ref = &values;
-            let policy = SingleTargetLBP {
-                target: (node.clone(), Some(shard as u32)),
-            };
-            let execution_profile = ExecutionProfile::builder()
-                .load_balancing_policy(Arc::new(policy))
-                .build();
-            stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
-
-            async move { session.execute_unpaged(&stmt, values_ref).await }
-        })
-    });
-
-    try_join_all(tasks).await
-}
-
-async fn send_unprepared_query_everywhere(
-    session: &Session,
-    cluster: &ClusterState,
-    query: &Query,
-) -> Result<Vec<QueryResult>, ExecutionError> {
-    let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
-        let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
-        (0..shard_count).map(|shard| {
-            let mut stmt = query.clone();
-            let policy = SingleTargetLBP {
-                target: (node.clone(), Some(shard as u32)),
-            };
-            let execution_profile = ExecutionProfile::builder()
-                .load_balancing_policy(Arc::new(policy))
-                .build();
-            stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
-
-            async move { session.query_unpaged(stmt, &()).await }
-        })
-    });
-
-    try_join_all(tasks).await
 }
 
 fn frame_has_tablet_feedback(frame: ResponseFrame) -> bool {
@@ -460,7 +374,7 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
             .unwrap();
 
             let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-            assert!(feedbacks == 0);
+            assert_eq!(feedbacks, 0);
 
             running_proxy
         },
