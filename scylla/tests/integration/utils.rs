@@ -383,7 +383,7 @@ pub(crate) fn calculate_proxy_host_ids(
     host_ids
 }
 
-pub(crate) async fn send_statement_everywhere(
+pub(crate) async fn execute_prepared_statement_everywhere(
     session: &Session,
     cluster: &ClusterState,
     statement: &PreparedStatement,
@@ -406,7 +406,7 @@ pub(crate) async fn send_statement_everywhere(
     try_join_all(tasks).await
 }
 
-pub(crate) async fn send_unprepared_query_everywhere(
+pub(crate) async fn execute_unprepared_statement_everywhere(
     session: &Session,
     cluster: &ClusterState,
     query: &Statement,

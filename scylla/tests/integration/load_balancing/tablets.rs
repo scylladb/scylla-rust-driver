@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use crate::utils::{
-    scylla_supports_tablets, send_statement_everywhere, send_unprepared_query_everywhere,
-    setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL,
+    execute_prepared_statement_everywhere, execute_unprepared_statement_everywhere,
+    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL,
 };
 
 use futures::future::try_join_all;
@@ -365,7 +366,7 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
 
             // I expect Scylla to not send feedback for unprepared queries,
             // as such queries cannot be token-aware anyway
-            send_unprepared_query_everywhere(
+            execute_unprepared_statement_everywhere(
                 &session,
                 session.get_cluster_state().as_ref(),
                 &Statement::new(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')")),
@@ -471,7 +472,7 @@ async fn test_lwt_optimization_works_with_tablets() {
                         .unwrap()
                         .value()
                 );
-                send_statement_everywhere(
+                execute_prepared_statement_everywhere(
                     &session,
                     session.get_cluster_state().as_ref(),
                     &prepared_insert,
