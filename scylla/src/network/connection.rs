@@ -504,17 +504,12 @@ impl Default for ConnectionConfig {
 }
 
 impl HostConnectionConfig {
-    #[cfg(feature = "__tls")]
     fn is_tls(&self) -> bool {
-        #[cfg(feature = "cloud")]
-        if self.cloud_config.is_some() {
-            return true;
+        #[cfg(feature = "__tls")]
+        {
+            self.tls_config.is_some()
         }
-        self.tls_config.is_some()
-    }
-
-    #[cfg(not(feature = "__tls"))]
-    fn is_tls(&self) -> bool {
+        #[cfg(not(feature = "__tls"))]
         false
     }
 }
