@@ -591,7 +591,7 @@ impl DefaultPolicy {
         DefaultPolicyBuilder::new()
     }
 
-    /// Returns the given routing info processed based on given cluster data.
+    /// Returns the given routing info processed based on given cluster state.
     fn routing_info<'a>(
         &'a self,
         query: &'a RoutingInfo,
@@ -629,7 +629,7 @@ impl DefaultPolicy {
     }
 
     /// Returns a full replica set for given datacenter (if given, else for all DCs),
-    /// cluster data and table spec.
+    /// cluster state and table spec.
     fn nonfiltered_replica_set<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
@@ -1166,7 +1166,7 @@ mod tests {
     use tracing::info;
 
     use self::framework::{
-        get_plan_and_collect_node_identifiers, mock_cluster_data_for_token_unaware_tests,
+        get_plan_and_collect_node_identifiers, mock_cluster_state_for_token_unaware_tests,
         ExpectedGroups, ExpectedGroupsBuilder,
     };
     use crate::policies::host_filter::HostFilter;
@@ -1178,7 +1178,7 @@ mod tests {
     use crate::{
         cluster::ClusterState,
         policies::load_balancing::{
-            default::tests::framework::mock_cluster_data_for_token_aware_tests, Plan, RoutingInfo,
+            default::tests::framework::mock_cluster_state_for_token_aware_tests, Plan, RoutingInfo,
         },
         routing::Token,
         test_utils::setup_tracing,
@@ -1410,7 +1410,7 @@ mod tests {
         }
 
         // based on locator mock cluster
-        pub(crate) async fn mock_cluster_data_for_token_aware_tests() -> ClusterState {
+        pub(crate) async fn mock_cluster_state_for_token_aware_tests() -> ClusterState {
             let metadata = mock_metadata_for_token_aware_tests();
             ClusterState::new(
                 metadata,
@@ -1426,7 +1426,7 @@ mod tests {
 
         // creates ClusterState with info about 5 nodes living in 2 different datacenters
         // ring field is minimal, not intended to influence the tests
-        pub(crate) async fn mock_cluster_data_for_token_unaware_tests() -> ClusterState {
+        pub(crate) async fn mock_cluster_state_for_token_unaware_tests() -> ClusterState {
             let peers = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)]
                 .iter()
                 .map(|(dc, id)| Peer {
@@ -1505,7 +1505,7 @@ mod tests {
         policy: DefaultPolicy,
         expected_groups: &ExpectedGroups,
     ) {
-        let cluster = mock_cluster_data_for_token_unaware_tests().await;
+        let cluster = mock_cluster_state_for_token_unaware_tests().await;
 
         test_default_policy_with_given_cluster_and_routing_info(
             &policy,
@@ -1555,7 +1555,7 @@ mod tests {
         setup_tracing();
 
         use crate::routing::locator::test::{A, B, C, D, E, F, G};
-        let cluster = mock_cluster_data_for_token_aware_tests().await;
+        let cluster = mock_cluster_state_for_token_aware_tests().await;
 
         #[derive(Debug)]
         struct Test<'a> {
@@ -2029,7 +2029,7 @@ mod tests {
         setup_tracing();
         use crate::routing::locator::test::{A, B, C, D, E, F, G};
 
-        let cluster = mock_cluster_data_for_token_aware_tests().await;
+        let cluster = mock_cluster_state_for_token_aware_tests().await;
         struct Test<'a> {
             policy: DefaultPolicy,
             routing_info: RoutingInfo<'a>,
@@ -3235,7 +3235,7 @@ mod latency_awareness {
         async fn latency_aware_default_policy_does_not_penalise_if_no_latency_info_available_yet() {
             setup_tracing();
             let policy = latency_aware_default_policy();
-            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+            let cluster = tests::mock_cluster_state_for_token_unaware_tests().await;
 
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([1, 2, 3]) // pick + fallback local nodes
@@ -3255,7 +3255,7 @@ mod latency_awareness {
         async fn latency_aware_default_policy_does_not_penalise_if_not_enough_measurements() {
             setup_tracing();
             let policy = latency_aware_default_policy();
-            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+            let cluster = tests::mock_cluster_state_for_token_unaware_tests().await;
 
             let min_avg = Duration::from_millis(10);
 
@@ -3317,7 +3317,7 @@ mod latency_awareness {
         {
             setup_tracing();
             let policy = latency_aware_default_policy();
-            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+            let cluster = tests::mock_cluster_state_for_token_unaware_tests().await;
 
             let min_avg = Duration::from_millis(10);
 
@@ -3380,7 +3380,7 @@ mod latency_awareness {
                 b.retry_period(Duration::from_millis(10))
             });
 
-            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+            let cluster = tests::mock_cluster_state_for_token_unaware_tests().await;
 
             let min_avg = Duration::from_millis(10);
 
@@ -3442,7 +3442,7 @@ mod latency_awareness {
         async fn latency_aware_default_policy_penalises_if_conditions_met() {
             setup_tracing();
             let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
-            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+            let cluster = tests::mock_cluster_state_for_token_unaware_tests().await;
 
             let min_avg = Duration::from_millis(10);
 
@@ -3531,7 +3531,7 @@ mod latency_awareness {
 
             let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
 
-            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+            let cluster = tests::mock_cluster_state_for_token_unaware_tests().await;
 
             let min_avg = Duration::from_millis(10);
 
@@ -3663,7 +3663,7 @@ mod latency_awareness {
                 expected_groups: ExpectedGroups,
             }
 
-            let cluster = tests::mock_cluster_data_for_token_aware_tests().await;
+            let cluster = tests::mock_cluster_state_for_token_aware_tests().await;
             let latency_awareness_defaults =
                 latency_aware_default_policy().latency_awareness.unwrap();
             let min_avg = Duration::from_millis(10);

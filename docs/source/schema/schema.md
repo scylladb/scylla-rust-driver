@@ -55,8 +55,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Schema metadata will be fetched below
     session.refresh_metadata().await?;
 
-    let cluster_data = &session.get_cluster_data();
-    let keyspaces = &cluster_data.get_keyspace_info();
+    let cluster_state = &session.get_cluster_state();
+    let keyspaces = &cluster_state.get_keyspace_info();
 
     for (keyspace_name, keyspace_info) in keyspaces.iter() {
         println!("Keyspace {}:", keyspace_name);

@@ -20,7 +20,7 @@ use super::node::{InternalKnownNode, NodeAddr};
 use super::state::{ClusterState, ClusterStateNeatDebug};
 
 /// Cluster manages up to date information and connections to database nodes.
-/// All data can be accessed by cloning Arc<ClusterState> in the `data` field
+/// All state can be accessed by cloning Arc<ClusterState> in the `state` field
 //
 // NOTE: This structure was intentionally made cloneable. The reason for this
 // is to make it possible to use two different Session APIs in the same program
@@ -34,9 +34,9 @@ use super::state::{ClusterState, ClusterStateNeatDebug};
 // deserialization API is removed.
 #[derive(Clone)]
 pub(crate) struct Cluster {
-    // `ArcSwap<ClusterState>` is wrapped in `Arc` to support sharing cluster data
+    // `ArcSwap<ClusterState>` is wrapped in `Arc` to support sharing cluster state
     // between `Cluster` and `ClusterWorker`
-    data: Arc<ArcSwap<ClusterState>>,
+    state: Arc<ArcSwap<ClusterState>>,
 
     refresh_channel: tokio::sync::mpsc::Sender<RefreshRequest>,
     use_keyspace_channel: tokio::sync::mpsc::Sender<UseKeyspaceRequest>,
@@ -51,15 +51,15 @@ impl std::fmt::Debug for ClusterNeatDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cluster = self.0;
         f.debug_struct("Cluster")
-            .field("data", &ClusterStateNeatDebug(&cluster.data.load()))
+            .field("data", &ClusterStateNeatDebug(&cluster.state.load()))
             .finish_non_exhaustive()
     }
 }
 
 // Works in the background to keep the cluster updated
 struct ClusterWorker {
-    // Cluster data to keep updated:
-    cluster_data: Arc<ArcSwap<ClusterState>>,
+    // Cluster state to keep updated:
+    cluster_state: Arc<ArcSwap<ClusterState>>,
 
     // Cluster connections
     metadata_reader: MetadataReader,
@@ -133,7 +133,7 @@ impl Cluster {
         .await?;
 
         let metadata = metadata_reader.read_metadata(true).await?;
-        let cluster_data = ClusterState::new(
+        let cluster_state = ClusterState::new(
             metadata,
             &pool_config,
             &HashMap::new(),
@@ -143,12 +143,12 @@ impl Cluster {
             &HashMap::new(),
         )
         .await;
-        cluster_data.wait_until_all_pools_are_initialized().await;
-        let cluster_data: Arc<ArcSwap<ClusterState>> =
-            Arc::new(ArcSwap::from(Arc::new(cluster_data)));
+        cluster_state.wait_until_all_pools_are_initialized().await;
+        let cluster_state: Arc<ArcSwap<ClusterState>> =
+            Arc::new(ArcSwap::from(Arc::new(cluster_state)));
 
         let worker = ClusterWorker {
-            cluster_data: cluster_data.clone(),
+            cluster_state: cluster_state.clone(),
 
             metadata_reader,
             pool_config,
@@ -169,7 +169,7 @@ impl Cluster {
         tokio::spawn(fut);
 
         let result = Cluster {
-            data: cluster_data,
+            state: cluster_state,
             refresh_channel: refresh_sender,
             use_keyspace_channel: use_keyspace_sender,
             _worker_handle: Arc::new(worker_handle),
@@ -178,8 +178,8 @@ impl Cluster {
         Ok(result)
     }
 
-    pub(crate) fn get_data(&self) -> Arc<ClusterState> {
-        self.data.load_full()
+    pub(crate) fn get_state(&self) -> Arc<ClusterState> {
+        self.state.load_full()
     }
 
     pub(crate) async fn refresh_metadata(&self) -> Result<(), MetadataError> {
@@ -276,9 +276,9 @@ impl ClusterWorker {
                     // I decided to stick with the approach that fits with the driver.
                     // Apart from the reasons above, it is much easier to reason about concurrency etc
                     // when reading the code in other parts of the driver.
-                    let mut new_cluster_data: ClusterState = self.cluster_data.load().as_ref().clone();
-                    new_cluster_data.update_tablets(tablets);
-                    self.update_cluster_data(Arc::new(new_cluster_data));
+                    let mut new_cluster_state: ClusterState = self.cluster_state.load().as_ref().clone();
+                    new_cluster_state.update_tablets(tablets);
+                    self.update_cluster_state(Arc::new(new_cluster_state));
 
                     continue;
                 }
@@ -310,8 +310,8 @@ impl ClusterWorker {
                         Some(request) => {
                             self.used_keyspace = Some(request.keyspace_name.clone());
 
-                            let cluster_data = self.cluster_data.load_full();
-                            let use_keyspace_future = Self::handle_use_keyspace_request(cluster_data, request);
+                            let cluster_state = self.cluster_state.load_full();
+                            let use_keyspace_future = Self::handle_use_keyspace_request(cluster_state, request);
                             tokio::spawn(use_keyspace_future);
                         },
                         None => return, // If use_keyspace_channel was closed then cluster was dropped, we can stop working
@@ -357,12 +357,12 @@ impl ClusterWorker {
     }
 
     fn change_node_down_marker(&mut self, addr: SocketAddr, is_down: bool) {
-        let cluster_data = self.cluster_data.load_full();
+        let cluster_state = self.cluster_state.load_full();
 
         // We need to iterate through the whole map here, but there will rarely more than ~100 nodes,
         // and changes of down marker are infrequent enough to afford this. As an important tradeoff,
         // we only keep one hashmap of known_peers, which is indexed by host IDs for node identification.
-        let node = match cluster_data
+        let node = match cluster_state
             .known_peers
             .values()
             .find(|&peer| peer.address == NodeAddr::Translatable(addr))
@@ -378,20 +378,20 @@ impl ClusterWorker {
     }
 
     async fn handle_use_keyspace_request(
-        cluster_data: Arc<ClusterState>,
+        cluster_state: Arc<ClusterState>,
         request: UseKeyspaceRequest,
     ) {
-        let result = Self::send_use_keyspace(cluster_data, &request.keyspace_name).await;
+        let result = Self::send_use_keyspace(cluster_state, &request.keyspace_name).await;
 
         // Don't care if nobody wants request result
         let _ = request.response_chan.send(result);
     }
 
     async fn send_use_keyspace(
-        cluster_data: Arc<ClusterState>,
+        cluster_state: Arc<ClusterState>,
         keyspace_name: &VerifiedKeyspaceName,
     ) -> Result<(), UseKeyspaceError> {
-        let use_keyspace_futures = cluster_data
+        let use_keyspace_futures = cluster_state
             .known_peers
             .values()
             .map(|node| node.use_keyspace(keyspace_name.clone()));
@@ -404,32 +404,32 @@ impl ClusterWorker {
     async fn perform_refresh(&mut self) -> Result<(), MetadataError> {
         // Read latest Metadata
         let metadata = self.metadata_reader.read_metadata(false).await?;
-        let cluster_data: Arc<ClusterState> = self.cluster_data.load_full();
+        let cluster_state: Arc<ClusterState> = self.cluster_state.load_full();
 
-        let new_cluster_data = Arc::new(
+        let new_cluster_state = Arc::new(
             ClusterState::new(
                 metadata,
                 &self.pool_config,
-                &cluster_data.known_peers,
+                &cluster_state.known_peers,
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
-                cluster_data.locator.tablets.clone(),
-                &cluster_data.keyspaces,
+                cluster_state.locator.tablets.clone(),
+                &cluster_state.keyspaces,
             )
             .await,
         );
 
-        new_cluster_data
+        new_cluster_state
             .wait_until_all_pools_are_initialized()
             .await;
 
-        self.update_cluster_data(new_cluster_data);
+        self.update_cluster_state(new_cluster_state);
 
         Ok(())
     }
 
-    fn update_cluster_data(&mut self, new_cluster_data: Arc<ClusterState>) {
-        self.cluster_data.store(new_cluster_data);
+    fn update_cluster_state(&mut self, new_cluster_state: Arc<ClusterState>) {
+        self.cluster_state.store(new_cluster_state);
     }
 }
 

@@ -1238,7 +1238,7 @@ where
             QueryPager::new_for_query(
                 query,
                 execution_profile,
-                self.cluster.get_data(),
+                self.cluster.get_state(),
                 self.metrics.clone(),
             )
             .await
@@ -1253,7 +1253,7 @@ where
                 prepared,
                 values,
                 execution_profile,
-                cluster_data: self.cluster.get_data(),
+                cluster_state: self.cluster.get_state(),
                 metrics: self.metrics.clone(),
             })
             .await
@@ -1304,8 +1304,8 @@ where
         let query = query.into();
         let query_ref = &query;
 
-        let cluster_data = self.get_cluster_data();
-        let connections_iter = cluster_data.iter_working_connections()?;
+        let cluster_state = self.get_cluster_state();
+        let connections_iter = cluster_state.iter_working_connections()?;
 
         // Prepare statements on all connections concurrently
         let handles = connections_iter.map(|c| async move { c.prepare(query_ref).await });
@@ -1334,7 +1334,7 @@ where
         }
 
         prepared.set_partitioner_name(
-            self.extract_partitioner_name(&prepared, &self.cluster.get_data())
+            self.extract_partitioner_name(&prepared, &self.cluster.get_state())
                 .and_then(PartitionerName::from_str)
                 .unwrap_or_default(),
         );
@@ -1345,10 +1345,10 @@ where
     fn extract_partitioner_name<'a>(
         &self,
         prepared: &PreparedStatement,
-        cluster_data: &'a ClusterState,
+        cluster_state: &'a ClusterState,
     ) -> Option<&'a str> {
         let table_spec = prepared.get_table_spec()?;
-        cluster_data
+        cluster_state
             .keyspaces
             .get(table_spec.ks_name())?
             .tables
@@ -1439,8 +1439,8 @@ where
 
         if !span.span().is_disabled() {
             if let (Some(table_spec), Some(token)) = (statement_info.table, token) {
-                let cluster_data = self.get_cluster_data();
-                let replicas = cluster_data.get_token_endpoints_iter(table_spec, token);
+                let cluster_state = self.get_cluster_state();
+                let replicas = cluster_state.get_token_endpoints_iter(table_spec, token);
                 span.record_replicas(replicas)
             }
         }
@@ -1512,7 +1512,7 @@ where
             prepared,
             values: serialized_values,
             execution_profile,
-            cluster_data: self.cluster.get_data(),
+            cluster_state: self.cluster.get_state(),
             metrics: self.metrics.clone(),
         })
         .await
@@ -1731,11 +1731,12 @@ where
         self.metrics.clone()
     }
 
-    /// Access cluster data collected by the driver\
+    /// Access cluster state visible by the driver.
+    ///
     /// Driver collects various information about network topology or schema.
-    /// They can be read using this method
-    pub fn get_cluster_data(&self) -> Arc<ClusterState> {
-        self.cluster.get_data()
+    /// It can be read using this method.
+    pub fn get_cluster_state(&self) -> Arc<ClusterState> {
+        self.cluster.get_state()
     }
 
     /// Get [`TracingInfo`] of a traced query performed earlier
@@ -1873,9 +1874,9 @@ where
         let load_balancer = &execution_profile.load_balancing_policy;
 
         let runner = async {
-            let cluster_data = self.cluster.get_data();
+            let cluster_state = self.cluster.get_state();
             let request_plan =
-                load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
+                load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_state);
 
             // If a speculative execution policy is used to run request, request_plan has to be shared
             // between different async functions. This struct helps to wrap request_plan in mutex so it
@@ -2157,8 +2158,8 @@ where
     }
 
     pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, ExecutionError> {
-        let cluster_data = self.get_cluster_data();
-        let connections_iter = cluster_data.iter_working_connections()?;
+        let cluster_state = self.get_cluster_state();
+        let connections_iter = cluster_state.iter_working_connections()?;
 
         let handles = connections_iter.map(|c| async move { c.fetch_schema_version().await });
         let versions = try_join_all(handles).await?;

@@ -225,13 +225,13 @@ mod tests {
             expected_nodes: expected_nodes(),
         };
         let locator = create_locator(&mock_metadata_for_token_aware_tests());
-        let cluster_data = ClusterState {
+        let cluster_state = ClusterState {
             known_peers: Default::default(),
             keyspaces: Default::default(),
             locator,
         };
         let routing_info = RoutingInfo::default();
-        let plan = Plan::new(&policy, &routing_info, &cluster_data);
+        let plan = Plan::new(&policy, &routing_info, &cluster_state);
         assert_eq!(
             Vec::from_iter(plan.map(|(node, shard)| (node.clone(), shard))),
             policy.expected_nodes
