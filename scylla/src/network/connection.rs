@@ -3,8 +3,6 @@ use crate::batch::{Batch, BatchStatement};
 use crate::client::pager::{NextRowError, QueryPager};
 use crate::client::Compression;
 use crate::client::SelfIdentity;
-#[cfg(feature = "cloud")]
-use crate::cloud::CloudConfig;
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use crate::cluster::NodeAddr;
 use crate::errors::{
@@ -465,8 +463,6 @@ pub(crate) struct ConnectionConfig {
     // should be Some only in control connections,
     pub(crate) event_sender: Option<mpsc::Sender<Event>>,
     pub(crate) default_consistency: Consistency,
-    #[cfg(feature = "cloud")]
-    pub(crate) cloud_config: Option<Arc<CloudConfig>>,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
     pub(crate) enable_write_coalescing: bool,
@@ -499,8 +495,6 @@ impl ConnectionConfig {
             connect_timeout: self.connect_timeout,
             event_sender: self.event_sender.clone(),
             default_consistency: self.default_consistency,
-            #[cfg(feature = "cloud")]
-            cloud_config: self.cloud_config.clone(),
             authenticator: self.authenticator.clone(),
             address_translator: self.address_translator.clone(),
             enable_write_coalescing: self.enable_write_coalescing,
@@ -524,8 +518,6 @@ pub(crate) struct HostConnectionConfig {
     // should be Some only in control connections,
     pub(crate) event_sender: Option<mpsc::Sender<Event>>,
     pub(crate) default_consistency: Consistency,
-    #[cfg(feature = "cloud")]
-    pub(crate) cloud_config: Option<Arc<CloudConfig>>,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
     pub(crate) enable_write_coalescing: bool,
@@ -552,8 +544,6 @@ impl Default for HostConnectionConfig {
             default_consistency: Default::default(),
             authenticator: None,
             address_translator: None,
-            #[cfg(feature = "cloud")]
-            cloud_config: None,
             enable_write_coalescing: true,
 
             // Note: this is different than SessionConfig default values.
@@ -582,8 +572,6 @@ impl Default for ConnectionConfig {
             default_consistency: Default::default(),
             authenticator: None,
             address_translator: None,
-            #[cfg(feature = "cloud")]
-            cloud_config: None,
             enable_write_coalescing: true,
 
             // Note: this is different than SessionConfig default values.
