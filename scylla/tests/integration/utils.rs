@@ -1,3 +1,4 @@
+use futures::future::try_join_all;
 use futures::Future;
 use scylla::client::caching_session::CachingSession;
 use scylla::client::execution_profile::ExecutionProfile;
@@ -7,9 +8,14 @@ use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
 use scylla::deserialize::value::DeserializeValue;
 use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
-use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
+use scylla::policies::load_balancing::{
+    FallbackPlan, LoadBalancingPolicy, NodeIdentifier, RoutingInfo, SingleTargetLoadBalancingPolicy,
+};
 use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
+use scylla::response::query_result::QueryResult;
 use scylla::routing::Shard;
+use scylla::serialize::row::SerializeRow;
+use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 use std::collections::HashMap;
 use std::env;
@@ -375,4 +381,48 @@ pub(crate) fn calculate_proxy_host_ids(
 
     assert_eq!(host_ids.len(), proxy_uris.len());
     host_ids
+}
+
+pub(crate) async fn send_statement_everywhere(
+    session: &Session,
+    cluster: &ClusterState,
+    statement: &PreparedStatement,
+    values: &dyn SerializeRow,
+) -> Result<Vec<QueryResult>, ExecutionError> {
+    let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
+        let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
+        (0..shard_count).map(|shard| {
+            let mut stmt = statement.clone();
+            let values_ref = &values;
+            stmt.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
+                NodeIdentifier::Node(Arc::clone(node)),
+                Some(shard as u32),
+            )));
+
+            async move { session.execute_unpaged(&stmt, values_ref).await }
+        })
+    });
+
+    try_join_all(tasks).await
+}
+
+pub(crate) async fn send_unprepared_query_everywhere(
+    session: &Session,
+    cluster: &ClusterState,
+    query: &Statement,
+) -> Result<Vec<QueryResult>, ExecutionError> {
+    let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
+        let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
+        (0..shard_count).map(|shard| {
+            let mut stmt = query.clone();
+            stmt.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
+                NodeIdentifier::Node(Arc::clone(node)),
+                Some(shard as u32),
+            )));
+
+            async move { session.query_unpaged(stmt, &()).await }
+        })
+    });
+
+    try_join_all(tasks).await
 }
