@@ -11,6 +11,7 @@ mod hygiene;
 mod large_batch_statements;
 mod lwt_optimisation;
 mod new_session;
+mod reachability;
 mod retries;
 mod self_identity;
 mod shards;
