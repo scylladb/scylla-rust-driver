@@ -12,10 +12,10 @@ services:
   cassandra1:
     image: cassandra
     healthcheck:
-        test: ["CMD", "cqlsh", "-e", "describe keyspaces" ]
-        interval: 5s
-        timeout: 5s
-        retries: 60
+      test: [ "CMD", "cqlsh", "-e", "describe keyspaces" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
     networks:
       public:
         ipv4_address: 172.42.0.2
@@ -26,10 +26,10 @@ services:
   cassandra2:
     image: cassandra
     healthcheck:
-        test: ["CMD", "cqlsh", "-e", "describe keyspaces" ]
-        interval: 5s
-        timeout: 5s
-        retries: 60
+      test: [ "CMD", "cqlsh", "-e", "describe keyspaces" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
     networks:
       public:
         ipv4_address: 172.42.0.3
@@ -44,10 +44,10 @@ services:
   cassandra3:
     image: cassandra
     healthcheck:
-        test: ["CMD", "cqlsh", "-e", "describe keyspaces" ]
-        interval: 5s
-        timeout: 5s
-        retries: 60
+      test: [ "CMD", "cqlsh", "-e", "describe keyspaces" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
     networks:
       public:
         ipv4_address: 172.42.0.4
