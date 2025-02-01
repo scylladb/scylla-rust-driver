@@ -15,8 +15,6 @@ use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 #[cfg(feature = "cloud")]
 use crate::cluster::node::resolve_hostname;
 
-#[cfg(feature = "cloud")]
-use crate::cluster::node::ResolvedContactPoint;
 use crate::cluster::NodeAddr;
 
 use arc_swap::ArcSwap;
@@ -197,51 +195,12 @@ impl NodeConnectionPool {
     pub(crate) fn new(
         endpoint: UntranslatedEndpoint,
         // TODO: pass &PoolConfig (by shared reference)
-        #[allow(unused_mut)] mut pool_config: PoolConfig, // `mut` needed only with "cloud" feature
+        pool_config: PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_empty_notifier: broadcast::Sender<()>,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
-
-        #[cfg(feature = "cloud")]
-        if let Some(ref cloud_config) = pool_config.connection_config.cloud_config {
-            if pool_config.connection_config.tls_config.is_some() {
-                // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom TlsContext.
-                warn!(
-                    "Overriding user-provided TlsContext with Scylla Cloud TlsContext due \
-                        to CloudConfig being provided. This is certainly an API misuse - Cloud \
-                        may not be combined with user's own TLS config."
-                )
-            }
-
-            let (host_id, address, dc) = match endpoint {
-                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
-                    address,
-                    ref datacenter,
-                }) => (None, address, datacenter.as_deref()), // FIXME: Pass DC in ContactPoint
-                UntranslatedEndpoint::Peer(PeerEndpoint {
-                    host_id,
-                    address,
-                    ref datacenter,
-                    ..
-                }) => (Some(host_id), address.into_inner(), datacenter.as_deref()),
-            };
-
-            pool_config.connection_config.tls_config = cloud_config.make_tls_config_for_scylla_cloud_host(host_id, dc, address)
-                // inspect_err() is stable since 1.76.
-                // TODO: use inspect_err once we bump MSRV to at least 1.76.
-                .map_err(|err| {
-                    warn!(
-                        "TlsContext for SNI connection to Scylla Cloud node {{ host_id={:?}, dc={:?} at {} }} could not be set up: {}\n Proceeding with attempting probably nonworking connection",
-                        host_id,
-                        dc,
-                        address,
-                        err
-                    );
-                    err
-                }).ok().flatten();
-        }
 
         let host_pool_config = pool_config.to_host_pool_config(&endpoint);
 

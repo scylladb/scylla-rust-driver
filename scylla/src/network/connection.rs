@@ -61,7 +61,7 @@ use std::{
 #[cfg(feature = "__tls")]
 pub use tls_config::TlsError;
 #[cfg(feature = "__tls")]
-pub(crate) use tls_config::{Tls, TlsConfig};
+pub(crate) use tls_config::{Tls, TlsConfig, TlsProvider};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -212,28 +212,118 @@ struct TaskResponse {
 
 #[cfg(feature = "__tls")]
 mod tls_config {
+    //! This module contains abstractions related to the TLS layer of driver connections.
+    //!
+    //! The full picture looks like this:
+    //!
+    //! ┌─←─ TlsContext (openssl::SslContext / rustls::ClientConfig)
+    //! │
+    //! ├─←─ CloudConfig (powered by either TLS backend)
+    //! │
+    //! │ gets wrapped in
+    //! │
+    //! ↳TlsProvider (same for all connections)
+    //!   │
+    //!   │ produces
+    //!   │
+    //!   ↳TlsConfig (specific for the particular connection)
+    //!     │
+    //!     │ produces
+    //!     │
+    //!     ↳Tls (wrapper over TCP stream which adds encryption)
+
     #[cfg(not(any(feature = "openssl-010")))]
     compile_error!(
         r#""__tls" feature requires a TLS backend: at least one of ["openssl-010"] is needed"#
     );
 
     use std::io;
+    #[cfg(feature = "cloud")]
+    use std::sync::Arc;
 
+    #[cfg(feature = "cloud")]
+    use tracing::warn;
     #[cfg(feature = "cloud")]
     use uuid::Uuid;
 
     use crate::client::session::TlsContext;
+    #[cfg(feature = "cloud")]
+    use crate::cloud::CloudConfig;
+    #[cfg(feature = "cloud")]
+    use crate::cluster::metadata::PeerEndpoint;
+    use crate::cluster::metadata::UntranslatedEndpoint;
+    #[cfg(feature = "cloud")]
+    use crate::cluster::node::ResolvedContactPoint;
 
-    /// This struct encapsulates all TLS-regarding configuration and helps pass it tidily through the code.
-    //
-    // There are 3 possible options for TlsConfig, whose behaviour is somewhat subtle.
-    // Option 1: No TLS configuration. Then it is None every time.
-    // Option 2: User-provided global TlsContext. Then, a TlsConfig is created upon Session creation
-    // and henceforth stored in the ConnectionConfig.
-    // Option 3: Serverless Cloud. The Option<TlsConfig> remains None in ConnectionConfig until it reaches
-    // NodeConnectionPool::new(). Inside that function, the field is mutated to contain TlsConfig specific
-    // for the particular node. (The TlsConfig must be different, because SNIs differ for different nodes.)
-    // Thenceforth, all connections to that node share the same TlsConfig.
+    /// Abstraction capable of producing [TlsConfig] for connections on-demand.
+    #[derive(Clone)] // Cheaply clonable (reference-counted)
+    pub(crate) enum TlsProvider {
+        GlobalContext(TlsContext),
+        #[cfg(feature = "cloud")]
+        ScyllaCloud(Arc<CloudConfig>),
+    }
+
+    impl TlsProvider {
+        /// Used in case when the user provided their own [TlsContext] to be used in all connections.
+        pub(crate) fn new_with_global_context(context: TlsContext) -> Self {
+            Self::GlobalContext(context)
+        }
+
+        /// Used in the cloud case.
+        #[cfg(feature = "cloud")]
+        pub(crate) fn new_cloud(cloud_config: Arc<CloudConfig>) -> Self {
+            Self::ScyllaCloud(cloud_config)
+        }
+
+        /// Produces a [TlsConfig] that is specific for the given endpoint.
+        pub(crate) fn make_tls_config(
+            &self,
+            // Currently, this is only used for cloud; but it makes abstract sense to pass endpoint here
+            // also for non-cloud cases, so let's just allow(unused).
+            #[allow(unused)] endpoint: &UntranslatedEndpoint,
+        ) -> Option<TlsConfig> {
+            match self {
+                TlsProvider::GlobalContext(context) => {
+                    Some(TlsConfig::new_with_global_context(context.clone()))
+                }
+                #[cfg(feature = "cloud")]
+                TlsProvider::ScyllaCloud(cloud_config) => {
+                    let (host_id, address, dc) = match *endpoint {
+                        UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+                            address,
+                            ref datacenter,
+                        }) => (None, address, datacenter.as_deref()), // FIXME: Pass DC in ContactPoint
+                        UntranslatedEndpoint::Peer(PeerEndpoint {
+                            host_id,
+                            address,
+                            ref datacenter,
+                            ..
+                        }) => (Some(host_id), address.into_inner(), datacenter.as_deref()),
+                    };
+
+                    cloud_config.make_tls_config_for_scylla_cloud_host(host_id, dc, address)
+                        // inspect_err() is stable since 1.76.
+                        // TODO: use inspect_err once we bump MSRV to at least 1.76.
+                        .map_err(|err| {
+                            warn!(
+                                "TlsProvider for SNI connection to Scylla Cloud node {{ host_id={:?}, dc={:?} at {} }} could not be set up: {}\n Proceeding with attempting probably nonworking connection",
+                                host_id,
+                                dc,
+                                address,
+                                err
+                            );
+                        }).ok().flatten()
+                }
+            }
+        }
+    }
+
+    /// Encapsulates TLS-regarding configuration that is specific for a particular endpoint.
+    ///
+    /// Both use cases are supported:
+    /// 1. User-provided global TlsContext. Then, the global TlsContext is simply cloned here.
+    /// 2. Serverless Cloud. Then the TlsContext is customized for the given endpoint,
+    ///    and its SNI information is stored alongside.
     #[derive(Clone)]
     pub(crate) struct TlsConfig {
         context: TlsContext,
@@ -241,6 +331,7 @@ mod tls_config {
         sni: Option<String>,
     }
 
+    /// An abstraction over connection's TLS layer which holds its state and configuration.
     pub(crate) enum Tls {
         #[cfg(feature = "openssl-010")]
         OpenSsl010(openssl::ssl::Ssl),
@@ -267,7 +358,7 @@ mod tls_config {
     }
 
     impl TlsConfig {
-        // Used in case when the user provided their own TlsContext to be used in all connections.
+        /// Used in case when the user provided their own TlsContext to be used in all connections.
         pub(crate) fn new_with_global_context(context: TlsContext) -> Self {
             Self {
                 context,
@@ -276,7 +367,7 @@ mod tls_config {
             }
         }
 
-        // Used in case of Serverless Cloud connections.
+        /// Used in case of Serverless Cloud connections.
         #[cfg(feature = "cloud")]
         pub(crate) fn new_for_sni(
             context: TlsContext,
@@ -294,7 +385,7 @@ mod tls_config {
             }
         }
 
-        // Produces a new Tls object that is able to wrap a TCP stream.
+        /// Produces a new Tls object that is able to wrap a TCP stream.
         pub(crate) fn new_tls(&self) -> Result<Tls, TlsError> {
             let tls = match &self.context {
                 #[cfg(feature = "openssl-010")]
@@ -367,7 +458,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) tcp_keepalive_interval: Option<Duration>,
     pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     #[cfg(feature = "__tls")]
-    pub(crate) tls_config: Option<TlsConfig>,
+    pub(crate) tls_provider: Option<TlsProvider>,
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub(crate) event_sender: Option<mpsc::Sender<Event>>,
@@ -389,16 +480,23 @@ impl ConnectionConfig {
     /// Customizes the config for a specific endpoint.
     pub(crate) fn to_host_connection_config(
         &self,
-        // TODO: use this for the cloud case.
+        // Currently, this is only used for cloud; but it makes abstract sense to pass endpoint here
+        // also for non-cloud cases, so let's just allow(unused).
         #[allow(unused)] endpoint: &UntranslatedEndpoint,
     ) -> HostConnectionConfig {
+        #[cfg(feature = "__tls")]
+        let tls_config = self
+            .tls_provider
+            .as_ref()
+            .and_then(|provider| provider.make_tls_config(endpoint));
+
         HostConnectionConfig {
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
             tcp_keepalive_interval: self.tcp_keepalive_interval,
             timestamp_generator: self.timestamp_generator.clone(),
             #[cfg(feature = "__tls")]
-            tls_config: self.tls_config.clone(),
+            tls_config,
             connect_timeout: self.connect_timeout,
             event_sender: self.event_sender.clone(),
             default_consistency: self.default_consistency,
@@ -483,7 +581,7 @@ impl Default for ConnectionConfig {
             timestamp_generator: None,
             event_sender: None,
             #[cfg(feature = "__tls")]
-            tls_config: None,
+            tls_provider: None,
             connect_timeout: std::time::Duration::from_secs(5),
             default_consistency: Default::default(),
             authenticator: None,
