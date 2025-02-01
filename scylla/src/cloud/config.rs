@@ -1,13 +1,19 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::{collections::HashMap, io};
 
+use async_trait::async_trait;
 use scylla_cql::{frame::types::SerialConsistency, Consistency};
 use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
 
 use crate::client::session::TlsContext;
+use crate::cluster::metadata::UntranslatedPeer;
+use crate::cluster::node::resolve_hostname;
+use crate::errors::TranslationError;
 use crate::network::{TlsConfig, TlsError};
+use crate::policies::address_translator::AddressTranslator;
 
 #[non_exhaustive]
 #[derive(Debug, Error)]
@@ -111,6 +117,60 @@ impl CloudConfig {
             domain_name,
             host_id,
         )))
+    }
+}
+
+#[async_trait]
+impl AddressTranslator for CloudConfig {
+    async fn translate_address(
+        &self,
+        untranslated_peer: &UntranslatedPeer,
+    ) -> Result<SocketAddr, TranslationError> {
+        // If we operate in the serverless Cloud, then we substitute every node's address
+        // with the address of the proxy in the datacenter that the node resides in.
+        let UntranslatedPeer {
+            host_id,
+            untranslated_address,
+            ref datacenter,
+            ..
+        } = *untranslated_peer;
+
+        let Some(dc) = datacenter.as_deref() else {
+            warn!( // FIXME: perhaps error! would fit here better?
+                "Datacenter for node {} is empty in the Metadata fetched from the Cloud cluster; ; therefore address \
+                    broadcast by the node was left as address to open connection to.",
+                host_id
+            );
+            // FIXME: Is this acceptable to do such fallback?
+            return Ok(untranslated_address);
+        };
+
+        let Some(dc_config) = self.get_datacenters().get(dc) else {
+            warn!( // FIXME: perhaps error! would fit here better?
+                "Datacenter {} that node {} resides in not found in the Cloud config; ; therefore address \
+                    broadcast by the node was left as address to open connection to.",
+                dc, host_id
+            );
+            // FIXME: Is this acceptable to do such fallback?
+            return Ok(untranslated_address);
+        };
+
+        let hostname = dc_config.get_server();
+        let resolved = resolve_hostname(hostname).await
+            // inspect_err() is stable since 1.76.
+            // TODO: use inspect_err once we bump MSRV to at least 1.76.
+            .map_err(|err| {
+                warn!(
+                    "Couldn't resolve address: {} of datacenter {} that node {} resides in; therefore address \
+                        broadcast by the node was left as address to open connection to.",
+                    hostname, dc, host_id
+                );
+                err
+            })
+            .map_err(Arc::new)
+            .map_err(TranslationError::IoError)?;
+
+        Ok(resolved)
     }
 }
 

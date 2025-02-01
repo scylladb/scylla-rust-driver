@@ -10,9 +10,6 @@ use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
-#[cfg(feature = "cloud")]
-use crate::cluster::node::resolve_hostname;
-
 use crate::cluster::NodeAddr;
 
 use arc_swap::ArcSwap;
@@ -859,84 +856,17 @@ impl PoolRefiller {
         }
     }
 
-    #[cfg(not(feature = "cloud"))]
-    fn maybe_translate_for_serverless(
-        &self,
-        endpoint: UntranslatedEndpoint,
-    ) -> impl Future<Output = UntranslatedEndpoint> {
-        // We are not in serverless Cloud, so no modifications are necessary here.
-        async move { endpoint }
-    }
-
-    #[cfg(feature = "cloud")]
-    fn maybe_translate_for_serverless(
-        &self,
-        mut endpoint: UntranslatedEndpoint,
-    ) -> impl Future<Output = UntranslatedEndpoint> {
-        let cloud_config = self.pool_config.connection_config.cloud_config.clone();
-        async move {
-            if let Some(cloud_config) = cloud_config {
-                // If we operate in the serverless Cloud, then we substitute every node's address
-                // with the address of the proxy in the datacenter that the node resides in.
-                if let UntranslatedEndpoint::Peer(PeerEndpoint {
-                    host_id,
-                    ref mut address,
-                    ref datacenter,
-                    ..
-                }) = endpoint
-                {
-                    if let Some(dc) = datacenter.as_deref() {
-                        if let Some(dc_config) = cloud_config.get_datacenters().get(dc) {
-                            let hostname = dc_config.get_server();
-                            if let Ok(resolved) = resolve_hostname(hostname).await {
-                                *address = NodeAddr::Untranslatable(resolved)
-                            } else {
-                                warn!(
-                                        "Couldn't resolve address: {} of datacenter {} that node {} resides in; therefore address \
-                                         broadcast by the node was left as address to open connection to.",
-                                        hostname, dc, host_id
-                                    );
-                            }
-                        } else {
-                            warn!( // FIXME: perhaps error! would fit here better?
-                                    "Datacenter {} that node {} resides in not found in the Cloud config; ; therefore address \
-                                     broadcast by the node was left as address to open connection to.",
-                                    dc, host_id
-                                );
-                        }
-                    } else {
-                        warn!( // FIXME: perhaps error! would fit here better?
-                                "Datacenter for node {} is empty in the Metadata fetched from the Cloud cluster; ; therefore address \
-                                 broadcast by the node was left as address to open connection to.",
-                                host_id
-                            );
-                    }
-                }
-                endpoint
-            } else {
-                // We are not in serverless Cloud, so no modifications are necessary here.
-                endpoint
-            }
-        }
-    }
-
     // Starts opening a new connection in the background. The result of connecting
     // will be available on `ready_connections`. If the shard is specified and
     // the shard aware port is available, it will attempt to connect directly
     // to the shard using the port.
     fn start_opening_connection(&self, shard: Option<Shard>) {
         let cfg = self.pool_config.connection_config.clone();
-        let endpoint = self.endpoint.read().unwrap().clone();
-
-        // If we operate in the serverless Cloud, then we substitute every node's address
-        // with the address of the proxy in the datacenter that the node resides in.
-        // As this may may involve resolving a hostname, the whole operation is async.
-        let endpoint_fut = self.maybe_translate_for_serverless(endpoint);
+        let mut endpoint = self.endpoint.read().unwrap().clone();
 
         let fut = match (self.sharder.clone(), self.shard_aware_port, shard) {
             (Some(sharder), Some(port), Some(shard)) => async move {
                 let shard_aware_endpoint = {
-                    let mut endpoint = endpoint_fut.await;
                     endpoint.set_port(port);
                     endpoint
                 };
@@ -955,7 +885,7 @@ impl PoolRefiller {
             }
             .boxed(),
             _ => async move {
-                let non_shard_aware_endpoint = endpoint_fut.await;
+                let non_shard_aware_endpoint = endpoint;
                 let result = open_connection(non_shard_aware_endpoint, None, &cfg).await;
                 OpenedConnectionEvent {
                     result,

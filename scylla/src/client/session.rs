@@ -802,6 +802,26 @@ impl Session {
         }
 
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
+
+        #[allow(unused_labels)] // Triggers when `cloud` feature is disabled.
+        let address_translator = 'translator: {
+            #[cfg(feature = "cloud")]
+            if let Some(translator) = config.cloud_config.clone() {
+                if config.address_translator.is_some() {
+                    // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom AddressTranslator.
+                    warn!(
+                        "Overriding user-provided AddressTranslator with Scylla Cloud AddressTranslator due \
+                            to CloudConfig being provided. This is certainly an API misuse - Cloud \
+                            may not be combined with user's own AddressTranslator."
+                    )
+                }
+
+                break 'translator Some(translator as Arc<dyn AddressTranslator>);
+            }
+
+            config.address_translator
+        };
+
         let tls_provider = 'provider: {
             #[cfg(feature = "cloud")]
             if let Some(cloud_config) = config.cloud_config.clone() {
@@ -838,7 +858,7 @@ impl Session {
             connect_timeout: config.connect_timeout,
             event_sender: None,
             default_consistency: Default::default(),
-            address_translator: config.address_translator,
+            address_translator,
             #[cfg(feature = "cloud")]
             cloud_config: config.cloud_config,
             enable_write_coalescing: config.enable_write_coalescing,
