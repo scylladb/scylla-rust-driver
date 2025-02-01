@@ -370,6 +370,7 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
                 &session,
                 session.get_cluster_data().as_ref(),
                 &Query::new(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')")),
+                &(),
             )
             .await
             .unwrap();

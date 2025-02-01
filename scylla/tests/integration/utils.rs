@@ -295,6 +295,7 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
     session: &Session,
     cluster: &ClusterState,
     query: &Query,
+    values: &dyn SerializeRow,
 ) -> Result<Vec<QueryResult>, ExecutionError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
@@ -308,7 +309,7 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
                 .build();
             stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
 
-            async move { session.query_unpaged(stmt, &()).await }
+            async move { session.query_unpaged(stmt, values).await }
         })
     });
 
