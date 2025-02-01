@@ -18,7 +18,8 @@ use crate::errors::{
     RequestAttemptError, RequestError, SchemaAgreementError, TracingError, UseKeyspaceError,
 };
 use crate::frame::response::result;
-use crate::network::{Connection, ConnectionConfig, PoolConfig, TlsConfig, VerifiedKeyspaceName};
+use crate::network::TlsProvider;
+use crate::network::{Connection, ConnectionConfig, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
@@ -50,6 +51,8 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
+#[cfg(feature = "cloud")]
+use tracing::warn;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
@@ -799,13 +802,38 @@ impl Session {
         }
 
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
+        let tls_provider = 'provider: {
+            #[cfg(feature = "cloud")]
+            if let Some(cloud_config) = config.cloud_config.clone() {
+                if config.tls_context.is_some() {
+                    // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom TlsContext.
+                    warn!(
+                        "Overriding user-provided TlsContext with Scylla Cloud TlsContext due \
+                            to CloudConfig being provided. This is certainly an API misuse - Cloud \
+                            may not be combined with user's own TLS config."
+                    )
+                }
+
+                let provider = TlsProvider::new_cloud(cloud_config);
+                break 'provider Some(provider);
+            }
+            if let Some(tls_context) = config.tls_context {
+                // To silence warnings when TlsContext is an empty enum (tls features are disabled).
+                // In such case, TlsProvider is uninhabited.
+                #[allow(unused_variables)]
+                let provider = TlsProvider::new_with_global_context(tls_context);
+                #[allow(unreachable_code)]
+                break 'provider Some(provider);
+            }
+            None
+        };
 
         let connection_config = ConnectionConfig {
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
             tcp_keepalive_interval: config.tcp_keepalive_interval,
             timestamp_generator: config.timestamp_generator,
-            tls_config: config.tls_context.map(TlsConfig::new_with_global_context),
+            tls_provider,
             authenticator: config.authenticator.clone(),
             connect_timeout: config.connect_timeout,
             event_sender: None,
