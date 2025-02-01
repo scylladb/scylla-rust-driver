@@ -1,5 +1,3 @@
-#[cfg(feature = "cloud")]
-use crate::cloud::make_tls_config_for_scylla_cloud_host;
 use crate::utils::pretty::CommaSeparatedDisplayer;
 
 use super::connection::{
@@ -230,7 +228,7 @@ impl NodeConnectionPool {
                 }) => (Some(host_id), address.into_inner(), datacenter.as_deref()),
             };
 
-            pool_config.connection_config.tls_config = make_tls_config_for_scylla_cloud_host(host_id, dc, address, cloud_config)
+            pool_config.connection_config.tls_config = cloud_config.make_tls_config_for_scylla_cloud_host(host_id, dc, address)
                 // inspect_err() is stable since 1.76.
                 // TODO: use inspect_err once we bump MSRV to at least 1.76.
                 .map_err(|err| {
