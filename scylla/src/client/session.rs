@@ -824,7 +824,7 @@ impl Session {
 
         let tls_provider = 'provider: {
             #[cfg(feature = "cloud")]
-            if let Some(cloud_config) = config.cloud_config.clone() {
+            if let Some(cloud_config) = config.cloud_config {
                 if config.tls_context.is_some() {
                     // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom TlsContext.
                     warn!(
@@ -859,8 +859,6 @@ impl Session {
             event_sender: None,
             default_consistency: Default::default(),
             address_translator,
-            #[cfg(feature = "cloud")]
-            cloud_config: config.cloud_config,
             enable_write_coalescing: config.enable_write_coalescing,
             keepalive_interval: config.keepalive_interval,
             keepalive_timeout: config.keepalive_timeout,
