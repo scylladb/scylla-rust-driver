@@ -171,14 +171,14 @@ impl Peer {
 ///
 /// Built from `PeerEndpoint` if its `NodeAddr` variant implies address translation possibility.
 #[derive(Debug)]
-pub struct UntranslatedPeer {
+pub struct UntranslatedPeer<'a> {
     pub(crate) host_id: Uuid,
     pub(crate) untranslated_address: SocketAddr,
-    pub(crate) datacenter: Option<String>,
-    pub(crate) rack: Option<String>,
+    pub(crate) datacenter: Option<&'a str>,
+    pub(crate) rack: Option<&'a str>,
 }
 
-impl UntranslatedPeer {
+impl UntranslatedPeer<'_> {
     /// The unique identifier of the node in the cluster.
     #[inline]
     pub fn host_id(&self) -> Uuid {
@@ -195,13 +195,13 @@ impl UntranslatedPeer {
     /// The datacenter the node resides in.
     #[inline]
     pub fn datacenter(&self) -> Option<&str> {
-        self.datacenter.as_deref()
+        self.datacenter
     }
 
     /// The rack the node resides in.
     #[inline]
     pub fn rack(&self) -> Option<&str> {
-        self.rack.as_deref()
+        self.rack
     }
 }
 
