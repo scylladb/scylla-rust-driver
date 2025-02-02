@@ -666,7 +666,7 @@ impl MetadataReader {
             can_use_shard_aware_port: false,
         };
 
-        NodeConnectionPool::new(endpoint, pool_config, None, refresh_requester)
+        NodeConnectionPool::new(endpoint, &pool_config, None, refresh_requester)
     }
 }
 
