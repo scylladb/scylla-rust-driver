@@ -279,9 +279,9 @@ impl GenericSessionBuilder<DefaultMode> {
     /// impl AddressTranslator for IdentityTranslator {
     ///     async fn translate_address(
     ///         &self,
-    ///         untranslated_peer: &UntranslatedPeer
+    ///         untranslated_peer: &UntranslatedPeer,
     ///     ) -> Result<SocketAddr, TranslationError> {
-    ///         Ok(untranslated_peer.untranslated_address)
+    ///         Ok(untranslated_peer.untranslated_address())
     ///     }
     /// }
     ///
