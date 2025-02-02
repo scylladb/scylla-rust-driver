@@ -170,6 +170,7 @@ impl Peer {
 /// Data used to issue connections to a node that is possibly subject to address translation.
 ///
 /// Built from `PeerEndpoint` if its `NodeAddr` variant implies address translation possibility.
+#[derive(Debug)]
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct UntranslatedPeer {
     pub host_id: Uuid,
