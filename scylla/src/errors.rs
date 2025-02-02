@@ -23,7 +23,7 @@ pub use crate::authentication::AuthError;
 
 // Re-export error type from network module.
 #[cfg(feature = "__tls")]
-pub use crate::network::TlsError;
+pub use crate::network::tls::TlsError;
 
 // Re-export error types from scylla-cql.
 pub use scylla_cql::deserialize::{DeserializationError, TypeCheckError};

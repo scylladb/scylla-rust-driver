@@ -5,15 +5,19 @@
 //! - NodeConnectionPool - a manager that keeps a desired number of connections opened to each shard.
 
 mod connection;
-#[cfg(feature = "unstable-cloud")]
-pub(crate) use connection::TlsConfig;
-#[cfg(feature = "__tls")]
-pub use connection::TlsError;
-#[cfg(feature = "__tls")]
-pub(crate) use connection::TlsProvider;
 pub(crate) use connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 
 mod connection_pool;
 
 pub use connection_pool::PoolSize;
 pub(crate) use connection_pool::{NodeConnectionPool, PoolConfig};
+
+#[cfg(feature = "__tls")]
+pub(crate) mod tls;
+
+// #[cfg(feature = "unstable-cloud")]
+// pub(crate) use tls::TlsConfig;
+// #[cfg(feature = "__tls")]
+// pub use tls::TlsError;
+// #[cfg(feature = "__tls")]
+// pub(crate) use tls::TlsProvider;
