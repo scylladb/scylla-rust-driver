@@ -1,6 +1,6 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 use super::execution_profile::ExecutionProfile;
 use super::execution_profile::ExecutionProfileHandle;
 use super::session::{Session, SessionConfig};
@@ -8,7 +8,7 @@ use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 #[cfg(feature = "__tls")]
 use crate::client::session::TlsContext;
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
 use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
@@ -19,7 +19,7 @@ use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,15 +41,15 @@ impl SessionBuilderKind for DefaultMode {}
 
 pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 #[derive(Clone)]
 pub enum CloudMode {}
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 impl sealed::Sealed for CloudMode {}
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 impl SessionBuilderKind for CloudMode {}
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 pub type CloudSessionBuilder = GenericSessionBuilder<CloudMode>;
 
 /// SessionBuilder is used to create new Session instances
@@ -361,7 +361,7 @@ impl GenericSessionBuilder<DefaultMode> {
 // NOTE: this `impl` block contains configuration options specific for **Cloud** [`Session`].
 // This means that if an option fits both non-Cloud and Cloud `Session`s, it should NOT be put
 // here, but rather in `impl<K> GenericSessionBuilder<K>` block.
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 impl CloudSessionBuilder {
     /// Creates a new SessionBuilder with default configuration,
     /// based on provided path to Scylla Cloud Config yaml.
