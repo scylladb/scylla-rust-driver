@@ -19,7 +19,6 @@ default = []
 openssl-010 = ["dep:tokio-openssl", "dep:openssl"]
 rustls-023 = ["dep:tokio-rustls", "dep:rustls"]
 cloud = [
-    "openssl-010",
     "scylla-cql/serde",
     "dep:serde_yaml",
     "dep:serde",
