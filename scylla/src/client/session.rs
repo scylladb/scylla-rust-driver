@@ -18,7 +18,7 @@ use crate::errors::{
     RequestAttemptError, RequestError, SchemaAgreementError, TracingError, UseKeyspaceError,
 };
 use crate::frame::response::result;
-use crate::network::TlsProvider;
+use crate::network::tls::TlsProvider;
 use crate::network::{Connection, ConnectionConfig, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};

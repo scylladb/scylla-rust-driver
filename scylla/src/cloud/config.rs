@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::client::session::TlsContext;
 use crate::cluster::node::resolve_hostname;
 use crate::errors::TranslationError;
-use crate::network::{TlsConfig, TlsError};
+use crate::network::tls::{TlsConfig, TlsError};
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 
 #[non_exhaustive]
