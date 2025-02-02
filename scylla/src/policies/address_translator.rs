@@ -37,10 +37,10 @@ impl AddressTranslator for HashMap<SocketAddr, SocketAddr> {
         &self,
         untranslated_peer: &UntranslatedPeer,
     ) -> Result<SocketAddr, TranslationError> {
-        match self.get(&untranslated_peer.untranslated_address) {
+        match self.get(&untranslated_peer.untranslated_address()) {
             Some(&translated_addr) => Ok(translated_addr),
             None => Err(TranslationError::NoRuleForAddress(
-                untranslated_peer.untranslated_address,
+                untranslated_peer.untranslated_address(),
             )),
         }
     }
@@ -56,7 +56,7 @@ impl AddressTranslator for HashMap<&'static str, &'static str> {
     ) -> Result<SocketAddr, TranslationError> {
         for (&rule_addr_str, &translated_addr_str) in self.iter() {
             if let Ok(rule_addr) = SocketAddr::from_str(rule_addr_str) {
-                if rule_addr == untranslated_peer.untranslated_address {
+                if rule_addr == untranslated_peer.untranslated_address() {
                     return SocketAddr::from_str(translated_addr_str).map_err(|reason| {
                         TranslationError::InvalidAddressInRule {
                             translated_addr_str,
@@ -67,7 +67,7 @@ impl AddressTranslator for HashMap<&'static str, &'static str> {
             }
         }
         Err(TranslationError::NoRuleForAddress(
-            untranslated_peer.untranslated_address,
+            untranslated_peer.untranslated_address(),
         ))
     }
 }
