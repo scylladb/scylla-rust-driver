@@ -110,6 +110,28 @@ impl CloudConfig {
                 let context = builder.build();
                 TlsContext::OpenSsl010(context)
             }
+            #[cfg(all(not(feature = "openssl-010"), feature = "rustls-023"))]
+            TlsInfo::Rustls023 { cert_chain, key } => {
+                use rustls::ClientConfig;
+                use std::sync::Arc;
+
+                let mut root_store = rustls::RootCertStore::empty();
+                root_store.add(datacenter.rustls_ca().clone())?;
+                let builder = ClientConfig::builder();
+                let builder = if datacenter.get_insecure_skip_tls_verify() {
+                    let supported = builder.crypto_provider().signature_verification_algorithms;
+                    builder
+                        .dangerous()
+                        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {
+                            supported,
+                        }))
+                } else {
+                    builder.with_root_certificates(root_store)
+                };
+
+                let config = builder.with_client_auth_cert(cert_chain.clone(), key.clone_key())?;
+                TlsContext::Rustls023(Arc::new(config))
+            }
         };
 
         Ok(Some(TlsConfig::new_for_sni(
@@ -192,6 +214,11 @@ pub(crate) enum TlsInfo {
         key: openssl::pkey::PKey<openssl::pkey::Private>,
         cert: openssl::x509::X509,
     },
+    #[cfg(all(not(feature = "openssl-010"), feature = "rustls-023"))]
+    Rustls023 {
+        cert_chain: Vec<rustls::pki_types::CertificateDer<'static>>,
+        key: rustls::pki_types::PrivateKeyDer<'static>,
+    },
 }
 
 impl TlsInfo {
@@ -201,6 +228,15 @@ impl TlsInfo {
             let cert = openssl::x509::X509::from_pem(cert)?;
             let key = openssl::pkey::PKey::private_key_from_pem(key)?;
             Ok(TlsInfo::OpenSsl010 { key, cert })
+        }
+
+        #[cfg(all(not(feature = "openssl-010"), feature = "rustls-023"))]
+        {
+            use rustls::pki_types::pem::PemObject;
+            let key = rustls::pki_types::PrivateKeyDer::from_pem_slice(key)?;
+            let cert_chain: Vec<_> = rustls::pki_types::CertificateDer::pem_slice_iter(cert)
+                .collect::<Result<_, _>>()?;
+            Ok(TlsInfo::Rustls023 { cert_chain, key })
         }
     }
 }
@@ -226,6 +262,8 @@ impl AuthInfo {
 pub(crate) struct Datacenter {
     #[cfg(feature = "openssl-010")]
     openssl_ca: openssl::x509::X509,
+    #[cfg(all(not(feature = "openssl-010"), feature = "rustls-023"))]
+    rustls_ca: rustls::pki_types::CertificateDer<'static>,
     server: String,
     #[allow(unused)]
     tls_server_name: Option<String>,
@@ -239,6 +277,11 @@ impl Datacenter {
     #[cfg(feature = "openssl-010")]
     pub(crate) fn openssl_ca(&self) -> &openssl::x509::X509 {
         &self.openssl_ca
+    }
+
+    #[cfg(all(not(feature = "openssl-010"), feature = "rustls-023"))]
+    pub(crate) fn rustls_ca(&self) -> &rustls::pki_types::CertificateDer<'static> {
+        &self.rustls_ca
     }
 
     pub(crate) fn get_server(&self) -> &str {
@@ -637,9 +680,18 @@ mod deserialize {
             let openssl_ca =
                 openssl::x509::X509::from_pem(&cert_pem[..]).map_err(TlsError::from)?;
 
+            #[cfg(all(not(feature = "openssl-010"), feature = "rustls-023"))]
+            let rustls_ca = {
+                use rustls::pki_types::pem::PemObject as _;
+                rustls::pki_types::CertificateDer::from_pem_slice(cert_pem.as_ref())
+                    .map_err(TlsError::from)?
+            };
+
             Ok(super::Datacenter {
                 #[cfg(feature = "openssl-010")]
                 openssl_ca,
+                #[cfg(all(not(feature = "openssl-010"), feature = "rustls-023"))]
+                rustls_ca,
                 server: datacenter.server,
                 node_domain,
                 insecure_skip_tls_verify: datacenter.insecureSkipTlsVerify.unwrap_or(false),
@@ -992,5 +1044,47 @@ mod deserialize {
                 assert_eq!(datacenter.tls_server_name, Some("tls_server".into()));
             }
         }
+    }
+}
+
+#[cfg(all(not(feature = "openssl-010"), feature = "rustls-023"))]
+#[derive(Debug)]
+struct NoCertificateVerification {
+    supported: rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+#[cfg(all(not(feature = "openssl-010"), feature = "rustls-023"))]
+impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.supported.supported_schemes()
     }
 }
