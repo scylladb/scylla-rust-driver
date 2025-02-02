@@ -7,9 +7,9 @@ use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::AuthenticatorProvider;
 use crate::batch::batch_values;
 use crate::batch::{Batch, BatchStatement};
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 use crate::cloud::CloudConfig;
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
@@ -51,7 +51,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 use tracing::warn;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
@@ -201,7 +201,7 @@ pub struct SessionConfig {
     pub host_filter: Option<Arc<dyn HostFilter>>,
 
     /// If the driver is to connect to ScyllaCloud, there is a config for it.
-    #[cfg(feature = "cloud")]
+    #[cfg(feature = "unstable-cloud")]
     pub cloud_config: Option<Arc<CloudConfig>>,
 
     /// If true, the driver will inject a small delay before flushing data
@@ -280,7 +280,7 @@ impl SessionConfig {
             address_translator: None,
             host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
-            #[cfg(feature = "cloud")]
+            #[cfg(feature = "unstable-cloud")]
             cloud_config: None,
             enable_write_coalescing: true,
             tracing_info_fetch_attempts: NonZeroU32::new(10).unwrap(),
@@ -781,7 +781,7 @@ impl Session {
     pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
         let known_nodes = config.known_nodes;
 
-        #[cfg(feature = "cloud")]
+        #[cfg(feature = "unstable-cloud")]
         let cloud_known_nodes: Option<Vec<InternalKnownNode>> =
             if let Some(ref cloud_config) = config.cloud_config {
                 let cloud_servers = cloud_config
@@ -799,7 +799,7 @@ impl Session {
                 None
             };
 
-        #[cfg(not(feature = "cloud"))]
+        #[cfg(not(feature = "unstable-cloud"))]
         let cloud_known_nodes: Option<Vec<InternalKnownNode>> = None;
 
         let known_nodes = cloud_known_nodes
@@ -814,7 +814,7 @@ impl Session {
 
         #[allow(unused_labels)] // Triggers when `cloud` feature is disabled.
         let address_translator = 'translator: {
-            #[cfg(feature = "cloud")]
+            #[cfg(feature = "unstable-cloud")]
             if let Some(translator) = config.cloud_config.clone() {
                 if config.address_translator.is_some() {
                     // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom AddressTranslator.
@@ -832,7 +832,7 @@ impl Session {
         };
 
         let tls_provider = 'provider: {
-            #[cfg(feature = "cloud")]
+            #[cfg(feature = "unstable-cloud")]
             if let Some(cloud_config) = config.cloud_config {
                 if config.tls_context.is_some() {
                     // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom TlsContext.
