@@ -132,8 +132,8 @@ impl Node {
     /// The underlying pool is preserved and notified about the IP change.
     /// # Arguments
     ///
-    /// `node` - previous definition of that node
-    /// `address` - new address to connect to
+    /// - `node` - previous definition of that node
+    /// - `address` - new address to connect to
     pub(crate) fn inherit_with_ip_changed(node: &Node, endpoint: PeerEndpoint) -> Self {
         let address = endpoint.address;
         if let Some(ref pool) = node.pool {
