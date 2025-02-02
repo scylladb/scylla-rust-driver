@@ -2005,8 +2005,8 @@ async fn maybe_translated_addr(
                         .translate_address(&UntranslatedPeer {
                             host_id,
                             untranslated_address: addr,
-                            datacenter,
-                            rack,
+                            datacenter: datacenter.as_deref(),
+                            rack: rack.as_deref(),
                         })
                         .await;
                     if let Err(ref err) = res {
