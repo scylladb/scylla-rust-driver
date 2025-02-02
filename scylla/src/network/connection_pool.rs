@@ -193,8 +193,7 @@ impl std::fmt::Debug for NodeConnectionPool {
 impl NodeConnectionPool {
     pub(crate) fn new(
         endpoint: UntranslatedEndpoint,
-        // TODO: pass &PoolConfig (by shared reference)
-        pool_config: PoolConfig,
+        pool_config: &PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_empty_notifier: broadcast::Sender<()>,
     ) -> Self {

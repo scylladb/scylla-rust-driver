@@ -96,7 +96,7 @@ impl Node {
     /// `rack` - optional rack name
     pub(crate) fn new(
         peer: PeerEndpoint,
-        pool_config: PoolConfig,
+        pool_config: &PoolConfig,
         keyspace_name: Option<VerifiedKeyspaceName>,
         enabled: bool,
     ) -> Self {
