@@ -5,7 +5,7 @@
 //! - NodeConnectionPool - a manager that keeps a desired number of connections opened to each shard.
 
 mod connection;
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 pub(crate) use connection::TlsConfig;
 #[cfg(feature = "__tls")]
 pub use connection::TlsError;
