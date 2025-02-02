@@ -69,7 +69,7 @@ type PerKsTableResult<T, E> = PerKsTable<Result<T, E>>;
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
-    connection_config: ConnectionConfig,
+    control_connection_pool_config: PoolConfig,
 
     control_connection_endpoint: UntranslatedEndpoint,
     control_connection: NodeConnectionPool,
@@ -424,16 +424,27 @@ impl MetadataReader {
         // - send received events via server_event_sender
         connection_config.event_sender = Some(server_event_sender);
 
+        let control_connection_pool_config = PoolConfig {
+            connection_config,
+
+            // We want to have only one connection to receive events from
+            pool_size: PoolSize::PerHost(NonZeroUsize::new(1).unwrap()),
+
+            // The shard-aware port won't be used with PerHost pool size anyway,
+            // so explicitly disable it here
+            can_use_shard_aware_port: false,
+        };
+
         let control_connection = Self::make_control_connection_pool(
             control_connection_endpoint.clone(),
-            connection_config.clone(),
+            &control_connection_pool_config,
             control_connection_repair_requester.clone(),
         );
 
         Ok(MetadataReader {
+            control_connection_pool_config,
             control_connection_endpoint,
             control_connection,
-            connection_config,
             known_peers: initial_peers
                 .into_iter()
                 .map(UntranslatedEndpoint::ContactPoint)
@@ -545,7 +556,7 @@ impl MetadataReader {
             self.control_connection_endpoint = peer.clone();
             self.control_connection = Self::make_control_connection_pool(
                 self.control_connection_endpoint.clone(),
-                self.connection_config.clone(),
+                &self.control_connection_pool_config,
                 self.control_connection_repair_requester.clone(),
             );
 
@@ -642,7 +653,7 @@ impl MetadataReader {
 
                     self.control_connection = Self::make_control_connection_pool(
                         self.control_connection_endpoint.clone(),
-                        self.connection_config.clone(),
+                        &self.control_connection_pool_config,
                         self.control_connection_repair_requester.clone(),
                     );
                 }
@@ -652,21 +663,10 @@ impl MetadataReader {
 
     fn make_control_connection_pool(
         endpoint: UntranslatedEndpoint,
-        connection_config: ConnectionConfig,
+        pool_config: &PoolConfig,
         refresh_requester: broadcast::Sender<()>,
     ) -> NodeConnectionPool {
-        let pool_config = PoolConfig {
-            connection_config,
-
-            // We want to have only one connection to receive events from
-            pool_size: PoolSize::PerHost(NonZeroUsize::new(1).unwrap()),
-
-            // The shard-aware port won't be used with PerHost pool size anyway,
-            // so explicitly disable it here
-            can_use_shard_aware_port: false,
-        };
-
-        NodeConnectionPool::new(endpoint, &pool_config, None, refresh_requester)
+        NodeConnectionPool::new(endpoint, pool_config, None, refresh_requester)
     }
 }
 
