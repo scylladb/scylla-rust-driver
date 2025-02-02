@@ -872,7 +872,7 @@ impl PoolRefiller {
                     endpoint
                 };
                 let result = open_connection_to_shard_aware_port(
-                    shard_aware_endpoint,
+                    &shard_aware_endpoint,
                     shard,
                     sharder.clone(),
                     &cfg,
@@ -887,7 +887,7 @@ impl PoolRefiller {
             .boxed(),
             _ => async move {
                 let non_shard_aware_endpoint = endpoint;
-                let result = open_connection(non_shard_aware_endpoint, None, &cfg).await;
+                let result = open_connection(&non_shard_aware_endpoint, None, &cfg).await;
                 OpenedConnectionEvent {
                     result,
                     requested_shard: None,
@@ -1172,20 +1172,15 @@ mod tests {
         // to the right shard
         let sharder = Sharder::new(ShardCount::new(3).unwrap(), 12);
 
-        // Open the connections
-        let mut conns = Vec::new();
+        let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+            address: connect_address,
+            datacenter: None,
+        });
 
-        for _ in 0..connections_number {
-            conns.push(open_connection_to_shard_aware_port(
-                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
-                    address: connect_address,
-                    datacenter: None,
-                }),
-                0,
-                sharder.clone(),
-                &connection_config,
-            ));
-        }
+        // Open the connections
+        let conns = (0..connections_number).map(|_| {
+            open_connection_to_shard_aware_port(&endpoint, 0, sharder.clone(), &connection_config)
+        });
 
         let joined = futures::future::join_all(conns).await;
 

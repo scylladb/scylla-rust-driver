@@ -2050,16 +2050,16 @@ impl Connection {
 }
 
 async fn maybe_translated_addr(
-    endpoint: UntranslatedEndpoint,
+    endpoint: &UntranslatedEndpoint,
     address_translator: Option<&dyn AddressTranslator>,
 ) -> Result<SocketAddr, TranslationError> {
-    match endpoint {
-        UntranslatedEndpoint::ContactPoint(addr) => Ok(addr.address),
+    match *endpoint {
+        UntranslatedEndpoint::ContactPoint(ref addr) => Ok(addr.address),
         UntranslatedEndpoint::Peer(PeerEndpoint {
             host_id,
             address,
-            datacenter,
-            rack,
+            ref datacenter,
+            ref rack,
         }) => match address {
             NodeAddr::Translatable(addr) => {
                 // In this case, addr is subject to AddressTranslator.
@@ -2094,7 +2094,7 @@ async fn maybe_translated_addr(
 ///
 /// At the beginning, translates node's address, if it is subject to address translation.
 pub(super) async fn open_connection(
-    endpoint: UntranslatedEndpoint,
+    endpoint: &UntranslatedEndpoint,
     source_port: Option<u16>,
     config: &HostConnectionConfig,
 ) -> Result<(Connection, ErrorReceiver), ConnectionError> {
@@ -2212,7 +2212,7 @@ pub(super) async fn open_connection(
 }
 
 pub(super) async fn open_connection_to_shard_aware_port(
-    endpoint: UntranslatedEndpoint,
+    endpoint: &UntranslatedEndpoint,
     shard: Shard,
     sharder: Sharder,
     config: &HostConnectionConfig,
@@ -2221,7 +2221,7 @@ pub(super) async fn open_connection_to_shard_aware_port(
     let source_port_iter = sharder.iter_source_ports_for_shard(shard);
 
     for port in source_port_iter {
-        let connect_result = open_connection(endpoint.clone(), Some(port), config).await;
+        let connect_result = open_connection(endpoint, Some(port), config).await;
 
         match connect_result {
             Err(err) if err.is_address_unavailable_for_use() => continue, // If we can't use this port, try the next one
@@ -2530,7 +2530,7 @@ mod tests {
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
         let (connection, _) = super::open_connection(
-            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+            &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: addr,
                 datacenter: None,
             }),
@@ -2655,7 +2655,7 @@ mod tests {
 
         let subtest = |enable_coalescing: bool, ks: String| async move {
             let (connection, _) = super::open_connection(
-                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+                &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address: addr,
                     datacenter: None,
                 }),
@@ -2787,8 +2787,12 @@ mod tests {
             .unwrap();
 
         // We must interrupt the driver's full connection opening, because our proxy does not interact further after Startup.
+        let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+            address: proxy_addr,
+            datacenter: None,
+        });
         let (startup_without_lwt_optimisation, _shard) = select! {
-            _ = open_connection(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint{address: proxy_addr, datacenter: None}), None, &config) => unreachable!(),
+            _ = open_connection(&endpoint, None, &config) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
@@ -2796,7 +2800,7 @@ mod tests {
             .change_request_rules(Some(make_rules(options_with_lwt_optimisation_support)));
 
         let (startup_with_lwt_optimisation, _shard) = select! {
-            _ = open_connection(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint{address: proxy_addr, datacenter: None}), None, &config) => unreachable!(),
+            _ = open_connection(&endpoint, None, &config) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
@@ -2855,7 +2859,7 @@ mod tests {
 
         // Setup connection normally, without obstruction
         let (conn, mut error_receiver) = open_connection(
-            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+            &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: proxy_addr,
                 datacenter: None,
             }),
