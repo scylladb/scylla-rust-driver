@@ -1,7 +1,7 @@
 //! This module contains various errors which can be returned by [`Session`](crate::client::session::Session).
 
 #[cfg(feature = "__tls")]
-pub use crate::network::TlsError;
+pub use crate::network::tls::TlsError;
 
 // Re-export DbError type and types that it depends on
 // so they can be found in `scylla::errors`.
