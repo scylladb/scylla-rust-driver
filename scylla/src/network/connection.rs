@@ -336,6 +336,8 @@ mod tls_config {
         #[cfg(feature = "rustls-023")]
         Rustls023 {
             connector: tokio_rustls::TlsConnector,
+            #[cfg(feature = "cloud")]
+            sni: Option<rustls::pki_types::ServerName<'static>>,
         },
     }
 
@@ -348,6 +350,12 @@ mod tls_config {
     pub enum TlsError {
         #[cfg(feature = "openssl-010")]
         OpenSsl010(#[from] openssl::error::ErrorStack),
+        #[cfg(feature = "rustls-023")]
+        InvalidName(#[from] rustls::pki_types::InvalidDnsNameError),
+        #[cfg(feature = "rustls-023")]
+        PemParse(#[from] rustls::pki_types::pem::Error),
+        #[cfg(feature = "rustls-023")]
+        Rustls023(#[from] rustls::Error),
     }
 
     impl From<TlsError> for io::Error {
@@ -355,6 +363,12 @@ mod tls_config {
             match value {
                 #[cfg(feature = "openssl-010")]
                 TlsError::OpenSsl010(e) => e.into(),
+                #[cfg(feature = "rustls-023")]
+                TlsError::InvalidName(e) => io::Error::new(io::ErrorKind::Other, e),
+                #[cfg(feature = "rustls-023")]
+                TlsError::PemParse(e) => io::Error::new(io::ErrorKind::Other, e),
+                #[cfg(feature = "rustls-023")]
+                TlsError::Rustls023(e) => io::Error::new(io::ErrorKind::Other, e),
             }
         }
     }
@@ -403,8 +417,19 @@ mod tls_config {
                 #[cfg(feature = "rustls-023")]
                 TlsContext::Rustls023(config) => {
                     let connector = tokio_rustls::TlsConnector::from(config.clone());
+                    #[cfg(feature = "cloud")]
+                    let sni = self
+                        .sni
+                        .as_deref()
+                        .map(rustls::pki_types::ServerName::try_from)
+                        .transpose()?
+                        .map(|s| s.to_owned());
 
-                    Tls::Rustls023 { connector }
+                    Tls::Rustls023 {
+                        connector,
+                        #[cfg(feature = "cloud")]
+                        sni,
+                    }
                 }
             };
 
@@ -1590,8 +1615,16 @@ impl Connection {
                     handle
                 }
                 #[cfg(feature = "rustls-023")]
-                Tls::Rustls023 { connector } => {
+                Tls::Rustls023 {
+                    connector,
+                    #[cfg(feature = "cloud")]
+                    sni,
+                } => {
                     use rustls::pki_types::ServerName;
+                    #[cfg(feature = "cloud")]
+                    let server_name =
+                        sni.unwrap_or_else(|| ServerName::IpAddress(node_address.into()));
+                    #[cfg(not(feature = "cloud"))]
                     let server_name = ServerName::IpAddress(node_address.into());
                     let stream = connector.connect(server_name, stream).await?;
                     let (task, handle) = Self::router(
