@@ -75,4 +75,4 @@ let session: Session = SessionBuilder::new()
 # }
 ```
 
-See the full [openssl example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls.rs) and [rustls example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls-rustls.rs) for more details.
+See the full [openssl example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls-openssl.rs) and [rustls example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls-rustls.rs) for more details.
