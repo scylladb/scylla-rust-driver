@@ -44,6 +44,11 @@ use crate::response::query_result::{IntoRowsResultError, SingleRowError};
 #[non_exhaustive]
 #[allow(deprecated)]
 pub enum ExecutionError {
+    /// Failed to prepare the statement.
+    /// Applies to unprepared statements with non-empty value parameters.
+    #[error("Failed to prepare the statement: {0}")]
+    PrepareError(#[from] PrepareError),
+
     /// Database sent a response containing some error with a message
     #[error("Database returned an error: {0}, Error message: {1}")]
     DbError(DbError, String),
@@ -150,6 +155,25 @@ impl From<response::Error> for ExecutionError {
     }
 }
 
+/// An error returned by [`Session::prepare()`][crate::client::session::Session::prepare].
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum PrepareError {
+    /// Failed to find a node with working connection pool.
+    #[error("Failed to find a node with working connection pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
+    /// Failed to prepare statement on every connection from the pool.
+    #[error("Preparation failed on every connection from the selected pool. First attempt error: {first_attempt}")]
+    AllAttemptsFailed { first_attempt: RequestAttemptError },
+
+    /// Prepared statement id mismatch.
+    #[error(
+        "Prepared statement id mismatch between multiple connections - all result ids should be equal."
+    )]
+    PreparedStatementIdsMismatch,
+}
+
 /// Error that occurred during session creation
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
@@ -187,12 +211,6 @@ pub enum ProtocolError {
         "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
     )]
     UnexpectedResponse(CqlResponseKind),
-
-    /// Prepared statement id mismatch.
-    #[error(
-        "Prepared statement id mismatch between multiple connections - all result ids should be equal."
-    )]
-    PreparedStatementIdsMismatch,
 
     /// Prepared statement id changed after repreparation.
     #[error(
