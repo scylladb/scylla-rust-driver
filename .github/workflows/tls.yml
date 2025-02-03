@@ -33,7 +33,7 @@ jobs:
       run: docker compose -f test/tls/docker-compose-tls.yml up -d
 
     - name: Run tests
-      run: SCYLLA_URI=172.44.0.2 RUST_LOG=trace cargo run --example tls
+      run: SCYLLA_URI=172.44.0.2 RUST_LOG=trace cargo run --example tls-openssl
 
     - name: Stop the cluster
       if: ${{ always() }}
