@@ -760,6 +760,7 @@ mod deserialize {
     }
 
     impl super::CloudConfig {
+        /// Load cloud configuration data from the provided reader.
         pub fn from_reader<R: Read>(
             mut config_reader: R,
             tls_provider: CloudTlsProvider,
@@ -768,6 +769,7 @@ mod deserialize {
             Self::try_from((config, tls_provider))
         }
 
+        /// Load cloud configuration data from a file.
         pub fn read_from_yaml(
             config_path: impl AsRef<Path>,
             tls_provider: CloudTlsProvider,
