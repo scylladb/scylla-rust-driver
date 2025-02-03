@@ -494,10 +494,6 @@ pub enum BadQuery {
     /// Too many queries in the batch statement
     #[error("Number of Queries in Batch Statement supplied is {0} which has exceeded the max value of 65,535")]
     TooManyQueriesInBatchStatement(usize),
-
-    /// Other reasons of bad query
-    #[error("{0}")]
-    Other(String),
 }
 
 /// Invalid keyspace name given to `Session::use_keyspace()`
