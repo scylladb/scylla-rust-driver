@@ -48,10 +48,6 @@ name = "logging_log"
 path = "logging_log.rs"
 
 [[example]]
-name = "tls"
-path = "tls.rs"
-
-[[example]]
 name = "cqlsh-rs"
 path = "cqlsh-rs.rs"
 
@@ -122,6 +118,10 @@ path = "query_history.rs"
 [[example]]
 name = "cloud"
 path = "cloud.rs"
+
+[[example]]
+name = "tls-openssl"
+path = "tls-openssl.rs"
 
 
 [[example]]
