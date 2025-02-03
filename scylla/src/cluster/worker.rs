@@ -21,18 +21,6 @@ use super::state::{ClusterState, ClusterStateNeatDebug};
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All state can be accessed by cloning Arc<ClusterState> in the `state` field
-//
-// NOTE: This structure was intentionally made cloneable. The reason for this
-// is to make it possible to use two different Session APIs in the same program
-// that share the same session resources.
-//
-// It is safe to do because the Cluster struct is just a facade for the real,
-// "semantic" Cluster object. Cloned instance of this struct will use the same
-// ClusterState and worker and will observe the same state.
-//
-// TODO: revert this commit (one making Cluster clonable) once the legacy
-// deserialization API is removed.
-#[derive(Clone)]
 pub(crate) struct Cluster {
     // `ArcSwap<ClusterState>` is wrapped in `Arc` to support sharing cluster state
     // between `Cluster` and `ClusterWorker`
@@ -41,7 +29,7 @@ pub(crate) struct Cluster {
     refresh_channel: tokio::sync::mpsc::Sender<RefreshRequest>,
     use_keyspace_channel: tokio::sync::mpsc::Sender<UseKeyspaceRequest>,
 
-    _worker_handle: Arc<RemoteHandle<()>>,
+    _worker_handle: RemoteHandle<()>,
 }
 
 /// Enables printing [Cluster] struct in a neat way, by skipping the rather useless
@@ -172,7 +160,7 @@ impl Cluster {
             state: cluster_state,
             refresh_channel: refresh_sender,
             use_keyspace_channel: use_keyspace_sender,
-            _worker_handle: Arc::new(worker_handle),
+            _worker_handle: worker_handle,
         };
 
         Ok(result)
