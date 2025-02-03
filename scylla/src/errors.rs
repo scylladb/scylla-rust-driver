@@ -212,12 +212,6 @@ pub enum ProtocolError {
     )]
     UnexpectedResponse(CqlResponseKind),
 
-    /// Prepared statement id mismatch.
-    #[error(
-        "Prepared statement id mismatch between multiple connections - all result ids should be equal."
-    )]
-    PreparedStatementIdsMismatch,
-
     /// Prepared statement id changed after repreparation.
     #[error(
         "Prepared statement id changed after repreparation; md5 sum (computed from the query string) should stay the same;\
