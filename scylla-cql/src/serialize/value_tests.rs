@@ -1,9 +1,6 @@
 use crate::frame::response::result::{
     CollectionType, ColumnType, CqlValue, NativeType, UserDefinedType,
 };
-use crate::frame::value::{
-    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint, MaybeUnset, Unset,
-};
 use crate::macros::SerializeValue;
 use crate::serialize::value::{
     BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
@@ -12,6 +9,9 @@ use crate::serialize::value::{
     TupleTypeCheckErrorKind, UdtSerializationErrorKind, UdtTypeCheckErrorKind,
 };
 use crate::serialize::{CellWriter, SerializationError};
+use crate::value::{
+    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint, MaybeUnset, Unset,
+};
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};

@@ -9,7 +9,7 @@
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
-use scylla::frame::value::Counter;
+use scylla::value::Counter;
 
 // Add to counter value
 let to_add: Counter = Counter(100);

@@ -16,17 +16,15 @@ use std::fmt::Display;
 use thiserror::Error;
 
 use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::{frame_errors::LowLevelDeserializationError, value::CqlVarintBorrowed};
-use crate::frame::{response::result::CollectionType, types};
-use crate::frame::{
-    response::result::UserDefinedType,
-    value::{
-        Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
-    },
-};
-use crate::frame::{
-    response::result::{deser_cql_value, ColumnType, CqlValue, NativeType},
-    value::CqlDecimalBorrowed,
+use crate::frame::frame_errors::LowLevelDeserializationError;
+use crate::frame::response::result::CollectionType;
+use crate::frame::response::result::UserDefinedType;
+use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue, NativeType};
+use crate::frame::types;
+use crate::value::CqlVarintBorrowed;
+use crate::value::{
+    Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
+    CqlTimeuuid, CqlVarint,
 };
 
 /// A type that can be deserialized from a column value inside a row that was

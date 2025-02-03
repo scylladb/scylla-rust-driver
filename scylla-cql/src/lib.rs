@@ -10,6 +10,8 @@ pub mod macros {
 pub mod deserialize;
 pub mod serialize;
 
+pub mod value;
+
 pub use crate::frame::types::Consistency;
 
 #[doc(hidden)]

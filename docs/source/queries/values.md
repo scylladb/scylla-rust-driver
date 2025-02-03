@@ -118,7 +118,7 @@ Using `Unset` results in better performance:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::frame::value::{MaybeUnset, Unset};
+use scylla::value::{MaybeUnset, Unset};
 
 // Inserting a null results in suboptimal performance
 let null_i32: Option<i32> = None;

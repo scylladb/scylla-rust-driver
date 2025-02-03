@@ -14,12 +14,12 @@ use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::response::result::{
     CollectionType, ColumnType, CqlValue, NativeType, UserDefinedType,
 };
-use crate::frame::value::{
+use crate::serialize::value::SerializeValue;
+use crate::serialize::CellWriter;
+use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlVarint, CqlVarintBorrowed,
 };
-use crate::serialize::value::SerializeValue;
-use crate::serialize::CellWriter;
 
 use super::{
     mk_deser_err, BuiltinDeserializationError, BuiltinDeserializationErrorKind,

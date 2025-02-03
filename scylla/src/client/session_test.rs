@@ -28,9 +28,9 @@ use futures::{FutureExt, StreamExt as _, TryStreamExt};
 use itertools::Itertools;
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 use scylla_cql::frame::response::result::Row;
-use scylla_cql::frame::value::CqlVarint;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
 use scylla_cql::serialize::value::SerializeValue;
+use scylla_cql::value::CqlVarint;
 use std::collections::{BTreeMap, HashMap};
 use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -383,7 +383,7 @@ async fn test_prepared_statement() {
 
 #[tokio::test]
 async fn test_counter_batch() {
-    use crate::frame::value::Counter;
+    use crate::value::Counter;
     use scylla_cql::frame::request::batch::BatchType;
 
     setup_tracing();

@@ -4,7 +4,6 @@ pub mod request;
 pub mod response;
 pub mod server_event_type;
 pub mod types;
-pub mod value;
 
 use bytes::{Buf, BufMut, Bytes};
 use frame_errors::{

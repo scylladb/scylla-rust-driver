@@ -14,7 +14,7 @@ use crate::frame::frame_errors::{
 use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types;
-use crate::frame::value::{
+use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
 use bytes::{Buf, Bytes};
@@ -1766,8 +1766,8 @@ mod tests {
     use super::NativeType::{self, *};
     use super::{CollectionType, UserDefinedType};
     use crate as scylla;
-    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
     use crate::serialize::CellWriter;
+    use crate::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
     use scylla::frame::response::result::{ColumnType, CqlValue};
     use std::str::FromStr;
     use std::sync::Arc;

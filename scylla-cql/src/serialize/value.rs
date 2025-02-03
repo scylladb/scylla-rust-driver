@@ -15,13 +15,13 @@ use uuid::Uuid;
 
 use crate::frame::response::result::{CollectionType, ColumnType, CqlValue, NativeType};
 use crate::frame::types::vint_encode;
-use crate::frame::value::{
+use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlVarint, CqlVarintBorrowed, MaybeUnset, Unset,
 };
 
 #[cfg(feature = "chrono-04")]
-use crate::frame::value::ValueOverflow;
+use crate::value::ValueOverflow;
 
 use super::writers::WrittenCellProof;
 use super::{CellWriter, SerializationError};

@@ -196,7 +196,7 @@ impl std::hash::Hash for CqlTimeuuid {
 /// The type is not very useful in most use cases.
 /// However, users can make use of more complex types
 /// such as `num_bigint::BigInt` (v0.3/v0.4).
-/// The library support (e.g. conversion from [`CqlValue`](super::response::result::CqlValue)) for these types is
+/// The library support (e.g. conversion from [`CqlValue`](crate::frame::response::result::CqlValue)) for these types is
 /// enabled via `num-bigint-03` and `num-bigint-04` crate features.
 ///
 /// This struct holds owned bytes. If you wish to borrow the bytes instead,
@@ -338,7 +338,7 @@ impl<V: AsVarintSlice> AsNormalizedVarintSlice for V {
 /// # Example
 ///
 /// ```rust
-/// # use scylla_cql::frame::value::CqlVarint;
+/// # use scylla_cql::value::CqlVarint;
 /// let non_normalized_bytes = vec![0x00, 0x01];
 /// let normalized_bytes = vec![0x01];
 /// assert_eq!(
@@ -364,7 +364,7 @@ impl std::hash::Hash for CqlVarint {
 /// # Example
 ///
 /// ```rust
-/// # use scylla_cql::frame::value::CqlVarintBorrowed;
+/// # use scylla_cql::value::CqlVarintBorrowed;
 /// let non_normalized_bytes = &[0x00, 0x01];
 /// let normalized_bytes = &[0x01];
 /// assert_eq!(
@@ -439,7 +439,7 @@ impl From<CqlVarintBorrowed<'_>> for num_bigint_04::BigInt {
 /// The type is not very useful in most use cases.
 /// However, users can make use of more complex types
 /// such as `bigdecimal::BigDecimal` (v0.4).
-/// The library support (e.g. conversion from [`CqlValue`](super::response::result::CqlValue)) for the type is
+/// The library support (e.g. conversion from [`CqlValue`](crate::frame::response::result::CqlValue)) for the type is
 /// enabled via `bigdecimal-04` crate feature.
 ///
 /// # DB data format

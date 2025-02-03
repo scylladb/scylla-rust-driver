@@ -5,7 +5,6 @@ use crate::frame::response::result::{
     CollectionType, ColumnSpec, ColumnType, NativeType, TableSpec,
 };
 use crate::frame::types::RawValue;
-use crate::frame::value::MaybeUnset;
 use crate::macros::SerializeRow;
 use crate::serialize::row::{
     BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
@@ -18,6 +17,7 @@ use crate::serialize::value::{
 };
 use crate::serialize::writers::WrittenCellProof;
 use crate::serialize::{CellWriter, RowWriter, SerializationError};
+use crate::value::MaybeUnset;
 
 use assert_matches::assert_matches;
 

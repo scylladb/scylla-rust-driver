@@ -103,8 +103,10 @@ pub mod macros;
 #[doc(inline)]
 pub use macros::*;
 
+pub use scylla_cql::value;
+
 pub mod frame {
-    pub use scylla_cql::frame::{frame_errors, value, Authenticator, Compression};
+    pub use scylla_cql::frame::{frame_errors, Authenticator, Compression};
     pub(crate) use scylla_cql::frame::{
         parse_response_body_extensions, protocol_features, read_response_frame, request,
         server_event_type, FrameParams, SerializedRequest,
