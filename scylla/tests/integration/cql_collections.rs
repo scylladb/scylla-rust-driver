@@ -3,7 +3,7 @@ use crate::utils::{
     PerformDDL,
 };
 use scylla::client::session::Session;
-use scylla::frame::response::result::CqlValue;
+use scylla::value::CqlValue;
 use scylla_cql::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 

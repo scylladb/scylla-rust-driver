@@ -19,12 +19,12 @@ use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, Type
 use crate::frame::frame_errors::LowLevelDeserializationError;
 use crate::frame::response::result::CollectionType;
 use crate::frame::response::result::UserDefinedType;
-use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue, NativeType};
+use crate::frame::response::result::{ColumnType, NativeType};
 use crate::frame::types;
 use crate::value::CqlVarintBorrowed;
 use crate::value::{
-    Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
-    CqlTimeuuid, CqlVarint,
+    deser_cql_value, Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime,
+    CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
 };
 
 /// A type that can be deserialized from a column value inside a row that was

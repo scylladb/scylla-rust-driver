@@ -1,5 +1,5 @@
+use crate::value::CqlValue;
 use chrono::{LocalResult, TimeZone, Utc};
-use scylla_cql::frame::response::result::CqlValue;
 use scylla_cql::value::{CqlDate, CqlTime, CqlTimestamp};
 
 use std::borrow::Borrow;
@@ -231,8 +231,7 @@ impl<T: std::fmt::Debug> std::fmt::Display for DisplayUsingDebug<T> {
 mod tests {
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
-    use scylla_cql::frame::response::result::CqlValue;
-    use scylla_cql::value::{CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp};
+    use crate::value::{CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlValue};
 
     use crate::test_utils::setup_tracing;
     use crate::utils::pretty::CqlValueDisplayer;

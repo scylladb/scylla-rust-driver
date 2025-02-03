@@ -12,8 +12,9 @@ or a custom struct which derives from `SerializeRow`.
 A few examples:
 ```rust
 # extern crate scylla;
-# use scylla::{SerializeRow, frame::response::result::CqlValue};
+# use scylla::SerializeRow;
 # use scylla::client::session::Session;
+# use scylla::value::CqlValue;
 # use std::error::Error;
 # use std::collections::HashMap;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {

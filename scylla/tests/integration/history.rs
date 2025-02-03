@@ -4,11 +4,11 @@ use std::sync::Arc;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use futures::StreamExt;
 use scylla::errors::{RequestAttemptError, RequestError};
-use scylla::frame::response::result::Row;
 use scylla::observability::history::{
     AttemptResult, HistoryCollector, RequestHistoryResult, StructuredHistory, TimePoint,
 };
 use scylla::query::Query;
+use scylla::value::Row;
 
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 

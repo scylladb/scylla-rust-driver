@@ -13,11 +13,11 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::frame::response::result::{CollectionType, ColumnType, CqlValue, NativeType};
+use crate::frame::response::result::{CollectionType, ColumnType, NativeType};
 use crate::frame::types::vint_encode;
 use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
-    CqlTimeuuid, CqlVarint, CqlVarintBorrowed, MaybeUnset, Unset,
+    CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, MaybeUnset, Unset,
 };
 
 #[cfg(feature = "chrono-04")]
