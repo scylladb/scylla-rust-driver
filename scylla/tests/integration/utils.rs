@@ -97,7 +97,7 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
     // Cassandra doesn't have a concept of features, so first detect
     // if there is the `supported_features` column in system.local
 
-    let meta = session.get_cluster_data();
+    let meta = session.get_cluster_state();
     let system_local = meta
         .get_keyspace_info()
         .get("system")

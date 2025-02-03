@@ -67,7 +67,7 @@ pub(crate) struct PreparedIteratorConfig {
     pub(crate) prepared: PreparedStatement,
     pub(crate) values: SerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
-    pub(crate) cluster_data: Arc<ClusterState>,
+    pub(crate) cluster_state: Arc<ClusterState>,
     pub(crate) metrics: Arc<Metrics>,
 }
 
@@ -160,11 +160,11 @@ where
     SpanCreator: Fn() -> RequestSpan,
 {
     // Contract: this function MUST send at least one item through self.sender
-    async fn work(mut self, cluster_data: Arc<ClusterState>) -> PageSendAttemptedProof {
+    async fn work(mut self, cluster_state: Arc<ClusterState>) -> PageSendAttemptedProof {
         let load_balancer = self.execution_profile.load_balancing_policy.clone();
         let statement_info = self.statement_info.clone();
         let query_plan =
-            load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
+            load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_state);
 
         let mut last_error: RequestError = RequestError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
@@ -685,7 +685,7 @@ impl QueryPager {
     pub(crate) async fn new_for_query(
         query: Query,
         execution_profile: Arc<ExecutionProfileInner>,
-        cluster_data: Arc<ClusterState>,
+        cluster_state: Arc<ClusterState>,
         metrics: Arc<Metrics>,
     ) -> Result<Self, NextRowError> {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
@@ -758,7 +758,7 @@ impl QueryPager {
                 span_creator,
             };
 
-            worker.work(cluster_data).await
+            worker.work(cluster_state).await
         };
 
         Self::new_from_worker_future(worker_task, receiver).await
@@ -840,7 +840,7 @@ impl QueryPager {
                 {
                     Some(
                         config
-                            .cluster_data
+                            .cluster_state
                             .get_token_endpoints_iter(table_spec, token)
                             .map(|(node, shard)| (node.clone(), shard))
                             .collect(),
@@ -878,7 +878,7 @@ impl QueryPager {
                 span_creator,
             };
 
-            worker.work(config.cluster_data).await
+            worker.work(config.cluster_state).await
         };
 
         Self::new_from_worker_future(worker_task, receiver).await

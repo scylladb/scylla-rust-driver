@@ -247,11 +247,11 @@ async fn test_prepared_statement() {
         let mut pk = SerializedValues::new();
         pk.add_value(&17_i32, &ColumnType::Native(NativeType::Int))
             .unwrap();
-        let cluster_data_token = session
-            .get_cluster_data()
+        let cluster_state_token = session
+            .get_cluster_state()
             .compute_token(&ks, "t2", &pk)
             .unwrap();
-        assert_eq!(token, cluster_data_token);
+        assert_eq!(token, cluster_state_token);
     }
     {
         let (value,): (i64,) = session
@@ -269,11 +269,11 @@ async fn test_prepared_statement() {
                 .unwrap(),
         );
         assert_eq!(token, prepared_token);
-        let cluster_data_token = session
-            .get_cluster_data()
+        let cluster_state_token = session
+            .get_cluster_state()
             .compute_token(&ks, "complex_pk", &serialized_values_complex_pk)
             .unwrap();
-        assert_eq!(token, cluster_data_token);
+        assert_eq!(token, cluster_state_token);
     }
 
     // Verify that correct data was inserted
@@ -628,11 +628,11 @@ async fn test_token_calculation() {
         let prepared_token = Murmur3Partitioner
             .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
-        let cluster_data_token = session
-            .get_cluster_data()
+        let cluster_state_token = session
+            .get_cluster_state()
             .compute_token(&ks, "t3", &serialized_values)
             .unwrap();
-        assert_eq!(token, cluster_data_token);
+        assert_eq!(token, cluster_state_token);
     }
 }
 
@@ -1634,8 +1634,8 @@ async fn test_schema_types_in_metadata() {
     session.await_schema_agreement().await.unwrap();
     session.refresh_metadata().await.unwrap();
 
-    let cluster_data = session.get_cluster_data();
-    let tables = &cluster_data.get_keyspace_info()[&ks].tables;
+    let cluster_state = session.get_cluster_state();
+    let tables = &cluster_state.get_keyspace_info()[&ks].tables;
 
     assert_eq!(
         tables.keys().sorted().collect::<Vec<_>>(),
@@ -1764,8 +1764,8 @@ async fn test_user_defined_types_in_metadata() {
     session.await_schema_agreement().await.unwrap();
     session.refresh_metadata().await.unwrap();
 
-    let cluster_data = session.get_cluster_data();
-    let user_defined_types = &cluster_data.get_keyspace_info()[&ks].user_defined_types;
+    let cluster_state = session.get_cluster_state();
+    let user_defined_types = &cluster_state.get_keyspace_info()[&ks].user_defined_types;
 
     assert_eq!(
         user_defined_types.keys().sorted().collect::<Vec<_>>(),
@@ -1819,8 +1819,8 @@ async fn test_column_kinds_in_metadata() {
     session.await_schema_agreement().await.unwrap();
     session.refresh_metadata().await.unwrap();
 
-    let cluster_data = session.get_cluster_data();
-    let columns = &cluster_data.get_keyspace_info()[&ks].tables["t"].columns;
+    let cluster_state = session.get_cluster_state();
+    let columns = &cluster_state.get_keyspace_info()[&ks].tables["t"].columns;
 
     assert_eq!(columns["a"].kind, ColumnKind::Clustering);
     assert_eq!(columns["b"].kind, ColumnKind::Clustering);
@@ -1867,8 +1867,8 @@ async fn test_primary_key_ordering_in_metadata() {
     session.await_schema_agreement().await.unwrap();
     session.refresh_metadata().await.unwrap();
 
-    let cluster_data = session.get_cluster_data();
-    let table = &cluster_data.get_keyspace_info()[&ks].tables["t"];
+    let cluster_state = session.get_cluster_state();
+    let table = &cluster_state.get_keyspace_info()[&ks].tables["t"];
 
     assert_eq!(table.partition_key, vec!["c", "e"]);
     assert_eq!(table.clustering_key, vec!["b", "a"]);
@@ -1909,8 +1909,8 @@ async fn test_table_partitioner_in_metadata() {
     session.await_schema_agreement().await.unwrap();
     session.refresh_metadata().await.unwrap();
 
-    let cluster_data = session.get_cluster_data();
-    let tables = &cluster_data.get_keyspace_info()[&ks].tables;
+    let cluster_state = session.get_cluster_state();
+    let tables = &cluster_state.get_keyspace_info()[&ks].tables;
     let table = &tables["t"];
     let cdc_table = &tables["t_scylla_cdc_log"];
 
@@ -1975,10 +1975,10 @@ async fn test_turning_off_schema_fetching() {
         .unwrap();
 
     session.refresh_metadata().await.unwrap();
-    let cluster_data = &session.get_cluster_data();
-    let keyspace = &cluster_data.get_keyspace_info()[&ks];
+    let cluster_state = &session.get_cluster_state();
+    let keyspace = &cluster_state.get_keyspace_info()[&ks];
 
-    let datacenter_repfactors: HashMap<String, usize> = cluster_data
+    let datacenter_repfactors: HashMap<String, usize> = cluster_state
         .replica_locator()
         .datacenter_names()
         .iter()
@@ -2400,7 +2400,7 @@ async fn test_views_in_schema_info() {
     session.refresh_metadata().await.unwrap();
 
     let keyspace_meta = session
-        .get_cluster_data()
+        .get_cluster_state()
         .get_keyspace_info()
         .get(&ks)
         .unwrap()
@@ -2560,8 +2560,8 @@ async fn test_refresh_metadata_after_schema_agreement() {
         .await
         .unwrap();
 
-    let cluster_data = session.get_cluster_data();
-    let metadata = cluster_data.get_keyspace_info();
+    let cluster_state = session.get_cluster_state();
+    let metadata = cluster_state.get_keyspace_info();
     let keyspace_metadata = metadata.get(ks.as_str());
     assert_ne!(keyspace_metadata, None);
 
@@ -2770,11 +2770,11 @@ async fn test_keyspaces_to_fetch() {
     }
     session_default.await_schema_agreement().await.unwrap();
     assert!(session_default
-        .get_cluster_data()
+        .get_cluster_state()
         .keyspaces
         .contains_key(&ks1));
     assert!(session_default
-        .get_cluster_data()
+        .get_cluster_state()
         .keyspaces
         .contains_key(&ks2));
 
@@ -2783,16 +2783,16 @@ async fn test_keyspaces_to_fetch() {
         .build()
         .await
         .unwrap();
-    assert!(session1.get_cluster_data().keyspaces.contains_key(&ks1));
-    assert!(!session1.get_cluster_data().keyspaces.contains_key(&ks2));
+    assert!(session1.get_cluster_state().keyspaces.contains_key(&ks1));
+    assert!(!session1.get_cluster_state().keyspaces.contains_key(&ks2));
 
     let session_all = create_new_session_builder()
         .keyspaces_to_fetch([] as [String; 0])
         .build()
         .await
         .unwrap();
-    assert!(session_all.get_cluster_data().keyspaces.contains_key(&ks1));
-    assert!(session_all.get_cluster_data().keyspaces.contains_key(&ks2));
+    assert!(session_all.get_cluster_state().keyspaces.contains_key(&ks1));
+    assert!(session_all.get_cluster_state().keyspaces.contains_key(&ks2));
 }
 
 // Reproduces the problem with execute_iter mentioned in #608.
@@ -2835,7 +2835,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
         .unwrap();
 
     // Create a keyspace with replication factor that is larger than the cluster size
-    let cluster_size = session.get_cluster_data().get_nodes_info().len();
+    let cluster_size = session.get_cluster_state().get_nodes_info().len();
     let ks = unique_keyspace_name();
     let mut create_ks = format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}", ks, cluster_size + 1);
     if scylla_supports_tablets(&session).await {
@@ -3185,14 +3185,14 @@ async fn test_api_migration_session_sharing() {
         let session_shared = session.make_shared_session_with_legacy_api();
 
         // If we are unlucky then we will race with metadata fetch/cluster update
-        // and both invocations will return different cluster data. This should be
+        // and both invocations will return different cluster state. This should be
         // SUPER rare, but in order to reduce the chance of flakiness to a minimum
-        // we will try it three times in a row. Cluster data is updated once per
+        // we will try it three times in a row. Cluster state is updated once per
         // minute, so this should be good enough.
         let mut matched = false;
         for _ in 0..3 {
-            let cd1 = session.get_cluster_data();
-            let cd2 = session_shared.get_cluster_data();
+            let cd1 = session.get_cluster_state();
+            let cd2 = session_shared.get_cluster_state();
 
             if Arc::ptr_eq(&cd1, &cd2) {
                 matched = true;
@@ -3207,8 +3207,8 @@ async fn test_api_migration_session_sharing() {
 
         let mut matched = false;
         for _ in 0..3 {
-            let cd1 = session.get_cluster_data();
-            let cd2 = session_shared.get_cluster_data();
+            let cd1 = session.get_cluster_state();
+            let cd2 = session_shared.get_cluster_state();
 
             if Arc::ptr_eq(&cd1, &cd2) {
                 matched = true;
@@ -3238,7 +3238,7 @@ async fn test_vector_type_metadata() {
         .unwrap();
 
     session.refresh_metadata().await.unwrap();
-    let metadata = session.get_cluster_data();
+    let metadata = session.get_cluster_state();
     let columns = &metadata.keyspaces[&ks].tables["t"].columns;
     assert_eq!(
         columns["b"].typ,

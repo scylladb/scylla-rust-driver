@@ -44,8 +44,8 @@ struct Tablet {
 }
 
 async fn get_tablets(session: &Session, ks: &str, table: &str) -> Vec<Tablet> {
-    let cluster_data = session.get_cluster_data();
-    let endpoints = cluster_data.get_nodes_info();
+    let cluster_state = session.get_cluster_state();
+    let endpoints = cluster_state.get_nodes_info();
     for endpoint in endpoints.iter() {
         info!(
             "Endpoint id: {}, address: {}",
@@ -453,7 +453,7 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
             // as such queries cannot be token-aware anyway
             send_unprepared_query_everywhere(
                 &session,
-                session.get_cluster_data().as_ref(),
+                session.get_cluster_state().as_ref(),
                 &Query::new(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')")),
             )
             .await
@@ -555,7 +555,7 @@ async fn test_lwt_optimization_works_with_tablets() {
                 );
                 send_statement_everywhere(
                     &session,
-                    session.get_cluster_data().as_ref(),
+                    session.get_cluster_state().as_ref(),
                     &prepared_insert,
                     values,
                 )

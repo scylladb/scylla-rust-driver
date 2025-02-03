@@ -30,10 +30,10 @@ pub struct ClusterState {
 pub(crate) struct ClusterStateNeatDebug<'a>(pub(crate) &'a Arc<ClusterState>);
 impl std::fmt::Debug for ClusterStateNeatDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let cluster_data = &self.0;
+        let cluster_state = &self.0;
 
         f.debug_struct("ClusterState")
-            .field("known_peers", &cluster_data.known_peers)
+            .field("known_peers", &cluster_state.known_peers)
             .field("ring", {
                 struct RingSizePrinter(usize);
                 impl std::fmt::Debug for RingSizePrinter {
@@ -41,9 +41,9 @@ impl std::fmt::Debug for ClusterStateNeatDebug<'_> {
                         write!(f, "<size={}>", self.0)
                     }
                 }
-                &RingSizePrinter(cluster_data.locator.ring().len())
+                &RingSizePrinter(cluster_state.locator.ring().len())
             })
-            .field("keyspaces", &cluster_data.keyspaces.keys())
+            .field("keyspaces", &cluster_state.keyspaces.keys())
             .finish_non_exhaustive()
     }
 }
