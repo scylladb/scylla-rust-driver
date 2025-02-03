@@ -18,25 +18,28 @@ jobs:
   tls:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    services:
-      scylladb:
-        image: scylla-tls
-        build: ./test/tls
-        ports:
-          - 9042:9042
-          - 9142:9142
-        options:
-          --health-cmd "cqlsh --debug"
-          --health-interval 5s
-          --health-retries 10
     env:
       working-directory: ./scylla
     steps:
     - uses: actions/checkout@v3
+
     - name: Update rust toolchain
       run: rustup update
+
     - name: Check
       run: cargo check --verbose --features "ssl"
       working-directory: ${{env.working-directory}}
-    - name: Run tls example
-      run: cargo run --example tls
+
+    - name: Start the cluster
+      run: docker compose -f test/tls/docker-compose-tls.yml up -d
+
+    - name: Run tests
+      run: SCYLLA_URI=172.44.0.2 RUST_LOG=trace cargo run --example tls
+
+    - name: Stop the cluster
+      if: ${{ always() }}
+      run: docker compose -f test/tls/docker-compose-tls.yml stop
+
+    - name: Print the cluster logs
+      if: ${{ always() }}
+      run: docker compose -f test/tls/docker-compose-tls.yml logs
