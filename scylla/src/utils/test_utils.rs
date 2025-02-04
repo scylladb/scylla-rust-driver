@@ -1,12 +1,16 @@
+use scylla_cql::frame::response::error::DbError;
+use tracing::{error, warn};
+
 use crate::client::caching_session::CachingSession;
 use crate::client::execution_profile::ExecutionProfile;
 use crate::client::session::Session;
 use crate::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::cluster::ClusterState;
 use crate::cluster::NodeRef;
-use crate::errors::ExecutionError;
+use crate::errors::{ExecutionError, RequestAttemptError};
 use crate::network::Connection;
 use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
+use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::query::Query;
 use crate::routing::Shard;
 use std::sync::Arc;
@@ -142,12 +146,54 @@ impl LoadBalancingPolicy for SchemaQueriesLBP {
     }
 }
 
+#[derive(Debug, Default)]
+struct SchemaQueriesRetrySession {
+    count: usize,
+}
+
+impl RetrySession for SchemaQueriesRetrySession {
+    fn decide_should_retry(&mut self, request_info: RequestInfo) -> RetryDecision {
+        match request_info.error {
+            RequestAttemptError::DbError(DbError::ServerError, s)
+                if s == "Failed to apply group 0 change due to concurrent modification" =>
+            {
+                self.count += 1;
+                // Give up if there are many failures.
+                // In this case we really should do something about it in the
+                // core, because it is absurd for DDL queries to fail this often.
+                if self.count >= 10 {
+                    error!("Received TENTH(!) group 0 concurrent modification error during DDL. Please fix Scylla Core.");
+                    RetryDecision::DontRetry
+                } else {
+                    warn!("Received group 0 concurrent modification error during DDL. Performing retry #{}.", self.count);
+                    RetryDecision::RetrySameNode(None)
+                }
+            }
+            _ => RetryDecision::DontRetry,
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Default::default()
+    }
+}
+
+#[derive(Debug)]
+struct SchemaQueriesRetryPolicy;
+
+impl RetryPolicy for SchemaQueriesRetryPolicy {
+    fn new_session(&self) -> Box<dyn RetrySession> {
+        Box::new(SchemaQueriesRetrySession::default())
+    }
+}
+
 fn apply_ddl_lbp(query: &mut Query) {
     let policy = query
         .get_execution_profile_handle()
         .map(|profile| profile.pointee_to_builder())
         .unwrap_or(ExecutionProfile::builder())
         .load_balancing_policy(Arc::new(SchemaQueriesLBP))
+        .retry_policy(Arc::new(SchemaQueriesRetryPolicy))
         .build();
     query.set_execution_profile_handle(Some(policy.into_handle()));
 }
