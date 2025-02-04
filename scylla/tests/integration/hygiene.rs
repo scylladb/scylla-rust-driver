@@ -179,7 +179,10 @@ macro_rules! test_crate {
             #[allow(unused_imports)]
             use _scylla::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
             #[allow(unused_imports)]
-            use _scylla::value::CqlValue;
+            use _scylla::value::{
+                Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
+                CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, MaybeUnset, Row, Unset, ValueOverflow
+            };
         }
 
         // Test attributes for value struct with name flavor
