@@ -166,6 +166,15 @@ impl Node {
         self.down_marker.load(Ordering::Relaxed)
     }
 
+    /// Returns true if the driver has any open connections in the pool for this
+    /// node.
+    pub fn is_connected(&self) -> bool {
+        let Ok(pool) = self.get_pool() else {
+            return false;
+        };
+        pool.is_connected()
+    }
+
     /// Returns a boolean which indicates whether this node was is enabled.
     /// Only enabled nodes will have connections open. For disabled nodes,
     /// no connections will be opened.

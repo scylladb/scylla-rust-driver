@@ -226,6 +226,16 @@ impl NodeConnectionPool {
         }
     }
 
+    pub(crate) fn is_connected(&self) -> bool {
+        let maybe_conns = self.conns.load();
+        match maybe_conns.as_ref() {
+            MaybePoolConnections::Initializing => false,
+            MaybePoolConnections::Broken(_) => false,
+            // Here we use the assumption that _pool_connections is always non-empty.
+            MaybePoolConnections::Ready(_pool_connections) => true,
+        }
+    }
+
     pub(crate) fn update_endpoint(&self, new_endpoint: PeerEndpoint) {
         *self.endpoint.write().unwrap() = UntranslatedEndpoint::Peer(new_endpoint);
     }
