@@ -162,8 +162,23 @@ impl Node {
         self.get_pool()?.connection_for_shard(shard)
     }
 
-    pub fn is_down(&self) -> bool {
+    /// Is the node down according to CQL events?
+    /// This status is unreliable and should not be used.
+    /// See [Node::is_connected] for a better way of checking node availability.
+    // TODO: When control connection is broken, we should mark
+    // all nodes as being up.
+    #[allow(unused)]
+    pub(crate) fn is_down(&self) -> bool {
         self.down_marker.load(Ordering::Relaxed)
+    }
+
+    /// Returns true if the driver has any open connections in the pool for this
+    /// node.
+    pub fn is_connected(&self) -> bool {
+        let Ok(pool) = self.get_pool() else {
+            return false;
+        };
+        pool.is_connected()
     }
 
     /// Returns a boolean which indicates whether this node was is enabled.
