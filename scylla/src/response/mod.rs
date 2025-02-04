@@ -7,7 +7,6 @@
 //! - [QueryRowsResult](query_result::QueryRowsResult) - a result of CQL QUERY/EXECUTE/BATCH
 //!   request that contains some rows, which can be deserialized by the user.
 
-pub mod legacy_query_result;
 pub mod query_result;
 mod request_response;
 

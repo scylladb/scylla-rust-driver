@@ -8,11 +8,8 @@ use scylla_cql::deserialize::row::DeserializeRow;
 use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
 use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::response::result::{
-    ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, RawMetadataAndRawRows, Row, TableSpec,
+    ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, RawMetadataAndRawRows, TableSpec,
 };
-
-#[allow(deprecated)]
-use super::legacy_query_result::{IntoLegacyQueryResultError, LegacyQueryResult};
 
 /// A view over specification of a table in the database.
 #[derive(Debug, Clone, Copy)]
@@ -254,42 +251,6 @@ impl QueryResult {
             warnings,
             tracing_id,
         })
-    }
-
-    /// Transforms itself into the legacy result type, by eagerly deserializing rows
-    /// into the Row type. This is inefficient, and should only be used during transition
-    /// period to the new API.
-    #[deprecated(
-        since = "0.15.0",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[allow(deprecated)]
-    pub fn into_legacy_result(self) -> Result<LegacyQueryResult, IntoLegacyQueryResultError> {
-        if let Some(raw_rows) = self.raw_metadata_and_rows {
-            let raw_rows_with_metadata = raw_rows.deserialize_metadata()?;
-
-            let deserialized_rows = raw_rows_with_metadata
-                .rows_iter::<Row>()?
-                .collect::<Result<Vec<_>, DeserializationError>>()?;
-            let serialized_size = raw_rows_with_metadata.rows_bytes_size();
-            let metadata = raw_rows_with_metadata.into_metadata();
-
-            Ok(LegacyQueryResult {
-                rows: Some(deserialized_rows),
-                warnings: self.warnings,
-                tracing_id: self.tracing_id,
-                metadata: Some(metadata),
-                serialized_size,
-            })
-        } else {
-            Ok(LegacyQueryResult {
-                rows: None,
-                warnings: self.warnings,
-                tracing_id: self.tracing_id,
-                metadata: None,
-                serialized_size: 0,
-            })
-        }
     }
 }
 

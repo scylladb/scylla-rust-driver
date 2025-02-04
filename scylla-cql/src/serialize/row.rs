@@ -3,7 +3,6 @@
 // Note: When editing above doc-comment edit the corresponding comment on
 // re-export module in scylla crate too.
 
-use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Display;
 use std::hash::BuildHasher;
@@ -16,8 +15,6 @@ use crate::frame::request::RequestDeserializationError;
 use crate::frame::response::result::ColumnType;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types;
-#[allow(deprecated)]
-use crate::frame::value::{LegacySerializedValues, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::value::SerializeValue;
@@ -89,22 +86,6 @@ pub trait SerializeRow {
     /// the bind marker types and names so that the values can be properly
     /// type checked and serialized.
     fn is_empty(&self) -> bool;
-}
-
-macro_rules! fallback_impl_contents {
-    () => {
-        fn serialize(
-            &self,
-            ctx: &RowSerializationContext<'_>,
-            writer: &mut RowWriter,
-        ) -> Result<(), SerializationError> {
-            serialize_legacy_row(self, ctx, writer)
-        }
-        #[inline]
-        fn is_empty(&self) -> bool {
-            LegacySerializedValues::is_empty(self)
-        }
-    };
 }
 
 macro_rules! impl_serialize_row_for_unit {
@@ -288,16 +269,6 @@ impl<T: SerializeRow + ?Sized> SerializeRow for &T {
     }
 }
 
-#[allow(deprecated)]
-impl SerializeRow for LegacySerializedValues {
-    fallback_impl_contents!();
-}
-
-#[allow(deprecated)]
-impl SerializeRow for Cow<'_, LegacySerializedValues> {
-    fallback_impl_contents!();
-}
-
 macro_rules! impl_tuple {
     (
         $($typs:ident),*;
@@ -369,202 +340,6 @@ impl_tuples!(
     t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15;
     16
 );
-
-/// Implements the [`SerializeRow`] trait for a type, provided that the type
-/// already implements the legacy
-/// [`ValueList`](crate::frame::value::ValueList) trait.
-///
-/// # Note
-///
-/// The translation from one trait to another encounters a performance penalty
-/// and does not utilize the stronger guarantees of `SerializeRow`. Before
-/// resorting to this macro, you should consider other options instead:
-///
-/// - If the impl was generated using the `ValueList` procedural macro, you
-///   should switch to the `SerializeRow` procedural macro. *The new macro
-///   behaves differently by default, so please read its documentation first!*
-/// - If the impl was written by hand, it is still preferable to rewrite it
-///   manually. You have an opportunity to make your serialization logic
-///   type-safe and potentially improve performance.
-///
-/// Basically, you should consider using the macro if you have a hand-written
-/// impl and the moment it is not easy/not desirable to rewrite it.
-///
-/// # Example
-///
-/// ```rust
-/// # use std::borrow::Cow;
-/// # use scylla_cql::frame::value::{Value, ValueList, SerializedResult, LegacySerializedValues};
-/// # use scylla_cql::impl_serialize_row_via_value_list;
-/// struct NoGenerics {}
-/// impl ValueList for NoGenerics {
-///     fn serialized(&self) -> SerializedResult<'_> {
-///         ().serialized()
-///     }
-/// }
-/// impl_serialize_row_via_value_list!(NoGenerics);
-///
-/// // Generic types are also supported. You must specify the bounds if the
-/// // struct/enum contains any.
-/// struct WithGenerics<T, U: Clone>(T, U);
-/// impl<T: Value, U: Clone + Value> ValueList for WithGenerics<T, U> {
-///     fn serialized(&self) -> SerializedResult<'_> {
-///         let mut values = LegacySerializedValues::new();
-///         values.add_value(&self.0);
-///         values.add_value(&self.1.clone());
-///         Ok(Cow::Owned(values))
-///     }
-/// }
-/// impl_serialize_row_via_value_list!(WithGenerics<T, U: Clone>);
-/// ```
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-#[macro_export]
-macro_rules! impl_serialize_row_via_value_list {
-    ($t:ident$(<$($targ:tt $(: $tbound:tt)?),*>)?) => {
-        impl $(<$($targ $(: $tbound)?),*>)? $crate::serialize::row::SerializeRow
-        for $t$(<$($targ),*>)?
-        where
-            Self: $crate::frame::value::ValueList,
-        {
-            fn serialize(
-                &self,
-                ctx: &$crate::serialize::row::RowSerializationContext<'_>,
-                writer: &mut $crate::serialize::writers::RowWriter,
-            ) -> ::std::result::Result<(), $crate::serialize::SerializationError> {
-                $crate::serialize::row::serialize_legacy_row(self, ctx, writer)
-            }
-
-            #[inline]
-            fn is_empty(&self) -> bool {
-                match $crate::frame::value::ValueList::serialized(self) {
-                    Ok(s) => s.is_empty(),
-                    Err(e) => false
-                }
-            }
-        }
-    };
-}
-
-/// Implements [`SerializeRow`] if the type wrapped over implements [`ValueList`].
-///
-/// See the [`impl_serialize_row_via_value_list`] macro on information about
-/// the properties of the [`SerializeRow`] implementation.
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-pub struct ValueListAdapter<T>(pub T);
-
-#[allow(deprecated)]
-impl<T> SerializeRow for ValueListAdapter<T>
-where
-    T: ValueList,
-{
-    #[inline]
-    fn serialize(
-        &self,
-        ctx: &RowSerializationContext<'_>,
-        writer: &mut RowWriter,
-    ) -> Result<(), SerializationError> {
-        serialize_legacy_row(&self.0, ctx, writer)
-    }
-
-    #[inline]
-    fn is_empty(&self) -> bool {
-        match self.0.serialized() {
-            Ok(s) => s.is_empty(),
-            Err(_) => false,
-        }
-    }
-}
-
-/// Serializes an object implementing [`ValueList`] by using the [`RowWriter`]
-/// interface.
-///
-/// The function first serializes the value with [`ValueList::serialized`], then
-/// parses the result and serializes it again with given `RowWriter`. In case
-/// or serialized values with names, they are converted to serialized values
-/// without names, based on the information about the bind markers provided
-/// in the [`RowSerializationContext`].
-///
-/// It is a lazy and inefficient way to implement `RowWriter` via an existing
-/// `ValueList` impl.
-///
-/// Returns an error if `ValueList::serialized` call failed or, in case of
-/// named serialized values, some bind markers couldn't be matched to a
-/// named value.
-///
-/// See [`impl_serialize_row_via_value_list`] which generates a boilerplate
-/// [`SerializeRow`] implementation that uses this function.
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-#[allow(deprecated)]
-pub fn serialize_legacy_row<T: ValueList>(
-    r: &T,
-    ctx: &RowSerializationContext<'_>,
-    writer: &mut RowWriter,
-) -> Result<(), SerializationError> {
-    let serialized =
-        <T as ValueList>::serialized(r).map_err(|err| SerializationError(Arc::new(err)))?;
-
-    let mut append_value = |value: RawValue| {
-        let cell_writer = writer.make_cell_writer();
-        let _proof = match value {
-            RawValue::Null => cell_writer.set_null(),
-            RawValue::Unset => cell_writer.set_unset(),
-            // The unwrap below will succeed because the value was successfully
-            // deserialized from the CQL format, so it must have had correct
-            // size.
-            RawValue::Value(v) => cell_writer.set_value(v).unwrap(),
-        };
-    };
-
-    if !serialized.has_names() {
-        serialized.iter().for_each(append_value);
-    } else {
-        let mut values_by_name = serialized
-            .iter_name_value_pairs()
-            .map(|(k, v)| (k.unwrap(), (v, false)))
-            .collect::<HashMap<_, _>>();
-        let mut unused_count = values_by_name.len();
-
-        for col in ctx.columns() {
-            let (val, visited) = values_by_name.get_mut(col.name()).ok_or_else(|| {
-                SerializationError(Arc::new(
-                    ValueListToSerializeRowAdapterError::ValueMissingForBindMarker {
-                        name: col.name().to_owned(),
-                    },
-                ))
-            })?;
-            if !*visited {
-                *visited = true;
-                unused_count -= 1;
-            }
-            append_value(*val);
-        }
-
-        if unused_count != 0 {
-            // Choose the lexicographically earliest name for the sake
-            // of deterministic errors
-            let name = values_by_name
-                .iter()
-                .filter_map(|(k, (_, visited))| (!visited).then_some(k))
-                .min()
-                .unwrap()
-                .to_string();
-            return Err(SerializationError::new(
-                ValueListToSerializeRowAdapterError::NoBindMarkerWithName { name },
-            ));
-        }
-    }
-
-    Ok(())
-}
 
 /// Failed to type check values for a statement, represented by one of the types
 /// built into the driver.
@@ -711,34 +486,6 @@ impl Display for BuiltinSerializationErrorKind {
             }
         }
     }
-}
-
-/// Describes a failure to translate the output of the [`ValueList`] legacy trait
-/// into an output of the [`SerializeRow`] trait.
-#[derive(Error, Debug)]
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-#[allow(deprecated)]
-pub enum ValueListToSerializeRowAdapterError {
-    /// The values generated by the [`ValueList`] trait were provided in
-    /// name-value pairs, and there is a column in the statement for which
-    /// there is no corresponding named value.
-    #[error("Missing named value for column {name}")]
-    ValueMissingForBindMarker {
-        /// Name of the bind marker for which there is no value.
-        name: String,
-    },
-
-    /// The values generated by the [`ValueList`] trait were provided in
-    /// name-value pairs, and there is a named value which does not match
-    /// to any of the columns.
-    #[error("There is no bind marker with name {name}, but a value for it was provided")]
-    NoBindMarkerWithName {
-        /// Name of the value that does not match to any of the bind markers.
-        name: String,
-    },
 }
 
 /// A buffer containing already serialized values.
@@ -951,17 +698,13 @@ mod doctests {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::borrow::Cow;
     use std::collections::BTreeMap;
 
     use crate::frame::response::result::{
         CollectionType, ColumnSpec, ColumnType, NativeType, TableSpec,
     };
     use crate::frame::types::RawValue;
-    #[allow(deprecated)]
-    use crate::frame::value::{LegacySerializedValues, MaybeUnset, SerializedResult, ValueList};
-    #[allow(deprecated)]
-    use crate::serialize::row::ValueListAdapter;
+    use crate::frame::value::MaybeUnset;
     use crate::serialize::{RowWriter, SerializationError};
 
     use super::{
@@ -975,74 +718,6 @@ pub(crate) mod tests {
 
     fn col_spec<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
         ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
-    }
-
-    #[allow(deprecated)]
-    #[test]
-    fn test_legacy_fallback() {
-        let row = (
-            1i32,
-            "Ala ma kota",
-            None::<i64>,
-            MaybeUnset::Unset::<String>,
-        );
-
-        let mut legacy_data = Vec::new();
-        <_ as ValueList>::write_to_request(&row, &mut legacy_data).unwrap();
-
-        let mut new_data = Vec::new();
-        let mut new_data_writer = RowWriter::new(&mut new_data);
-        let ctx = RowSerializationContext {
-            columns: &[
-                col_spec("a", ColumnType::Native(NativeType::Int)),
-                col_spec("b", ColumnType::Native(NativeType::Text)),
-                col_spec("c", ColumnType::Native(NativeType::BigInt)),
-                col_spec("b", ColumnType::Native(NativeType::Ascii)),
-            ],
-        };
-        <_ as SerializeRow>::serialize(&row, &ctx, &mut new_data_writer).unwrap();
-        assert_eq!(new_data_writer.value_count(), 4);
-
-        // Skip the value count
-        assert_eq!(&legacy_data[2..], new_data);
-    }
-
-    #[allow(deprecated)]
-    #[test]
-    fn test_legacy_fallback_with_names() {
-        let sorted_row = (
-            1i32,
-            "Ala ma kota",
-            None::<i64>,
-            MaybeUnset::Unset::<String>,
-        );
-
-        let mut sorted_row_data = Vec::new();
-        <_ as ValueList>::write_to_request(&sorted_row, &mut sorted_row_data).unwrap();
-
-        let mut unsorted_row = LegacySerializedValues::new();
-        unsorted_row.add_named_value("a", &1i32).unwrap();
-        unsorted_row.add_named_value("b", &"Ala ma kota").unwrap();
-        unsorted_row
-            .add_named_value("d", &MaybeUnset::Unset::<String>)
-            .unwrap();
-        unsorted_row.add_named_value("c", &None::<i64>).unwrap();
-
-        let mut unsorted_row_data = Vec::new();
-        let mut unsorted_row_data_writer = RowWriter::new(&mut unsorted_row_data);
-        let ctx = RowSerializationContext {
-            columns: &[
-                col_spec("a", ColumnType::Native(NativeType::Int)),
-                col_spec("b", ColumnType::Native(NativeType::Text)),
-                col_spec("c", ColumnType::Native(NativeType::BigInt)),
-                col_spec("d", ColumnType::Native(NativeType::Ascii)),
-            ],
-        };
-        <_ as SerializeRow>::serialize(&unsorted_row, &ctx, &mut unsorted_row_data_writer).unwrap();
-        assert_eq!(unsorted_row_data_writer.value_count(), 4);
-
-        // Skip the value count
-        assert_eq!(&sorted_row_data[2..], unsorted_row_data);
     }
 
     #[test]
@@ -1095,31 +770,6 @@ pub(crate) mod tests {
 
     fn col<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
         ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
-    }
-
-    #[allow(deprecated)]
-    #[test]
-    fn test_legacy_wrapper() {
-        struct Foo;
-        impl ValueList for Foo {
-            fn serialized(&self) -> SerializedResult<'_> {
-                let mut values = LegacySerializedValues::new();
-                values.add_value(&123i32)?;
-                values.add_value(&321i32)?;
-                Ok(Cow::Owned(values))
-            }
-        }
-
-        let columns = &[
-            col_spec("a", ColumnType::Native(NativeType::Int)),
-            col_spec("b", ColumnType::Native(NativeType::Int)),
-        ];
-        let buf = do_serialize(ValueListAdapter(Foo), columns);
-        let expected = vec![
-            0, 0, 0, 4, 0, 0, 0, 123, // First value
-            0, 0, 0, 4, 0, 0, 1, 65, // Second value
-        ];
-        assert_eq!(buf, expected);
     }
 
     fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {

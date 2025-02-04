@@ -3,45 +3,18 @@ pub mod frame;
 pub mod macros {
     pub use scylla_macros::DeserializeRow;
     pub use scylla_macros::DeserializeValue;
-    pub use scylla_macros::FromRow;
-    pub use scylla_macros::FromUserType;
-    pub use scylla_macros::IntoUserType;
     pub use scylla_macros::SerializeRow;
     pub use scylla_macros::SerializeValue;
-    pub use scylla_macros::ValueList;
-
-    // Reexports for derive(IntoUserType)
-    pub use bytes::{BufMut, Bytes, BytesMut};
-
-    #[allow(deprecated)]
-    pub use crate::impl_from_cql_value_from_method;
-
-    #[allow(deprecated)]
-    pub use crate::impl_serialize_row_via_value_list;
-    #[allow(deprecated)]
-    pub use crate::impl_serialize_value_via_value;
 }
 
 pub mod deserialize;
 pub mod serialize;
 
-pub use crate::frame::response::cql_to_rust;
-#[allow(deprecated)]
-pub use crate::frame::response::cql_to_rust::FromRow;
-
 pub use crate::frame::types::Consistency;
 
 #[doc(hidden)]
 pub mod _macro_internal {
-    #[allow(deprecated)]
-    pub use crate::frame::response::cql_to_rust::{
-        FromCqlVal, FromCqlValError, FromRow, FromRowError,
-    };
-    pub use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row};
-    #[allow(deprecated)]
-    pub use crate::frame::value::{
-        LegacySerializedValues, SerializedResult, Value, ValueList, ValueTooBig,
-    };
+    pub use crate::frame::response::result::{ColumnSpec, ColumnType};
     pub use crate::macros::*;
 
     pub use crate::deserialize::row::{

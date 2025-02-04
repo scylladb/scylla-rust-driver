@@ -1,42 +1,3 @@
-/// Derive macro for the [`FromRow`](crate::frame::response::cql_to_rust::FromRow) trait
-/// which deserializes a row to given Rust structure.
-///
-/// It is supported for structs with either named or unnamed fields.
-/// It works only for simple structs without generics etc.
-///
-/// ---
-///
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-pub use scylla_cql::macros::FromRow;
-
-/// #[derive(FromUserType)] allows to parse struct as a User Defined Type
-///
-/// Works only on simple structs without generics etc
-///
-/// ---
-///
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-pub use scylla_cql::macros::FromUserType;
-
-/// #[derive(IntoUserType)] allows to pass struct a User Defined Type Value in queries
-///
-/// Works only on simple structs without generics etc
-///
-/// ---
-///
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-#[allow(deprecated)]
-pub use scylla_cql::macros::IntoUserType;
-
 /// Derive macro for the [`SerializeValue`](crate::serialize::value::SerializeValue) trait
 /// which serializes given Rust structure as a User Defined Type (UDT).
 ///
@@ -486,28 +447,3 @@ pub use scylla_macros::DeserializeValue;
 /// to a column with the same name. This attribute allows to match to a column
 /// with provided name.
 pub use scylla_macros::DeserializeRow;
-
-/// #[derive(ValueList)] allows to pass struct as a list of values for a query
-///
-/// ---
-///
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-pub use scylla_cql::macros::ValueList;
-
-#[deprecated(
-    since = "0.15.0",
-    note = "Legacy deserialization API is inefficient and is going to be removed soon"
-)]
-#[allow(deprecated)]
-pub use scylla_cql::macros::impl_from_cql_value_from_method;
-
-#[allow(deprecated)]
-pub use scylla_cql::macros::impl_serialize_row_via_value_list;
-#[allow(deprecated)]
-pub use scylla_cql::macros::impl_serialize_value_via_value;
-
-// Reexports for derive(IntoUserType)
-pub use bytes::{BufMut, Bytes, BytesMut};

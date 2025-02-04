@@ -4,9 +4,6 @@
 // Note: When editing above doc-comment edit the corresponding comment on
 // re-export module in scylla crate too.
 
-#[allow(deprecated)]
-use crate::frame::value::{LegacyBatchValues, LegacyBatchValuesIterator};
-
 use super::row::{RowSerializationContext, SerializeRow};
 use super::{RowWriter, SerializationError};
 
@@ -324,71 +321,5 @@ impl<T: BatchValues + ?Sized> BatchValues for &T {
     #[inline]
     fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
         <T as BatchValues>::batch_values_iter(*self)
-    }
-}
-
-/// A newtype wrapper which adjusts an existing types that implement
-/// [`LegacyBatchValues`] to the current [`BatchValues`] API.
-///
-/// Note that the [`LegacyBatchValues`] trait is deprecated and will be
-/// removed in the future, and you should prefer using [`BatchValues`] as it is
-/// more type-safe.
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-pub struct LegacyBatchValuesAdapter<T>(pub T);
-
-#[allow(deprecated)]
-impl<T> BatchValues for LegacyBatchValuesAdapter<T>
-where
-    T: LegacyBatchValues,
-{
-    type BatchValuesIter<'r>
-        = LegacyBatchValuesIteratorAdapter<T::LegacyBatchValuesIter<'r>>
-    where
-        Self: 'r;
-
-    #[inline]
-    fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
-        LegacyBatchValuesIteratorAdapter(self.0.batch_values_iter())
-    }
-}
-
-/// A newtype wrapper which adjusts an existing types that implement
-/// [`LegacyBatchValuesIterator`] to the current [`BatchValuesIterator`] API.
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-pub struct LegacyBatchValuesIteratorAdapter<T>(pub T);
-
-#[allow(deprecated)]
-impl<'r, T> BatchValuesIterator<'r> for LegacyBatchValuesIteratorAdapter<T>
-where
-    T: LegacyBatchValuesIterator<'r>,
-{
-    #[inline]
-    fn serialize_next(
-        &mut self,
-        ctx: &RowSerializationContext<'_>,
-        writer: &mut RowWriter,
-    ) -> Option<Result<(), SerializationError>> {
-        self.0.next_serialized().map(|sv| {
-            sv.map_err(SerializationError::new)
-                .and_then(|sv| sv.serialize(ctx, writer))
-        })
-    }
-
-    #[inline]
-    fn is_empty_next(&mut self) -> Option<bool> {
-        self.0
-            .next_serialized()
-            .map(|sv| sv.is_ok_and(|sv| sv.len() == 0))
-    }
-
-    #[inline]
-    fn skip_next(&mut self) -> Option<()> {
-        self.0.skip_next()
     }
 }

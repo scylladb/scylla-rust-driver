@@ -12,7 +12,6 @@ use std::{
     sync::Arc,
 };
 
-#[allow(deprecated)]
 use scylla_cql::{
     deserialize::{DeserializationError, TypeCheckError},
     frame::{
@@ -24,7 +23,6 @@ use scylla_cql::{
         },
         request::CqlRequestKind,
         response::CqlResponseKind,
-        value::SerializeValuesError,
     },
     serialize::SerializationError,
 };
@@ -33,16 +31,12 @@ use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-#[allow(deprecated)]
 use crate::client::pager::NextRowError;
-#[allow(deprecated)]
-use crate::response::legacy_query_result::IntoLegacyQueryResultError;
 use crate::response::query_result::{IntoRowsResultError, SingleRowError};
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-#[allow(deprecated)]
 pub enum ExecutionError {
     /// Failed to prepare the statement.
     /// Applies to unprepared statements with non-empty value parameters.
@@ -124,23 +118,6 @@ pub enum ExecutionError {
     /// An error occurred during async iteration over rows of result.
     #[error("An error occurred during async iteration over rows of result: {0}")]
     NextRowError(#[from] NextRowError),
-
-    /// Failed to convert [`QueryResult`][crate::response::query_result::QueryResult]
-    /// into [`LegacyQueryResult`][crate::response::legacy_query_result::LegacyQueryResult].
-    #[deprecated(
-        since = "0.15.1",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[allow(deprecated)]
-    #[error("Failed to convert `QueryResult` into `LegacyQueryResult`: {0}")]
-    IntoLegacyQueryResultError(#[from] IntoLegacyQueryResultError),
-}
-
-#[allow(deprecated)]
-impl From<SerializeValuesError> for ExecutionError {
-    fn from(serialized_err: SerializeValuesError) -> ExecutionError {
-        ExecutionError::BadQuery(BadQuery::SerializeValuesError(serialized_err))
-    }
 }
 
 impl From<SerializationError> for ExecutionError {
@@ -177,7 +154,6 @@ pub enum PrepareError {
 /// Error that occurred during session creation
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-#[allow(deprecated)]
 pub enum NewSessionError {
     /// Failed to resolve hostname passed in Session creation
     #[error("Couldn't resolve any hostname: {0:?}")]
@@ -493,15 +469,6 @@ pub enum TablesMetadataError {
 #[error("Invalid query passed to Session")]
 #[non_exhaustive]
 pub enum BadQuery {
-    /// Failed to serialize values passed to a query - values too big
-    #[deprecated(
-        since = "0.15.1",
-        note = "Legacy serialization API is not type-safe and is going to be removed soon"
-    )]
-    #[error("Serializing values failed: {0} ")]
-    #[allow(deprecated)]
-    SerializeValuesError(#[from] SerializeValuesError),
-
     #[error("Serializing values failed: {0} ")]
     SerializationError(#[from] SerializationError),
 

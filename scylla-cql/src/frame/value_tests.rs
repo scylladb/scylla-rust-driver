@@ -1,19 +1,18 @@
-// TODO: remove this once deprecated items are deleted.
-#![allow(deprecated)]
-
 use crate::frame::response::result::{CollectionType, NativeType, UserDefinedType};
 use crate::frame::value::{CqlTimeuuid, CqlVarint};
-use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
-use crate::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};
-use crate::serialize::row::{RowSerializationContext, SerializeRow};
-use crate::serialize::value::SerializeValue;
-use crate::serialize::{CellWriter, RowWriter};
+use crate::frame::{response::result::CqlValue, types::RawValue};
+use crate::serialize::batch::{BatchValues, BatchValuesIterator};
+use crate::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
+use crate::serialize::value::{mk_ser_err, SerializeValue};
+use crate::serialize::value::{
+    BuiltinSerializationError as BuiltinTypeSerializationError,
+    BuiltinSerializationErrorKind as BuiltinTypeSerializationErrorKind,
+};
+use crate::serialize::writers::WrittenCellProof;
+use crate::serialize::{CellWriter, RowWriter, SerializationError};
 
 use super::response::result::{ColumnSpec, ColumnType, TableSpec};
-use super::value::{
-    CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacyBatchValues, LegacySerializedValues,
-    MaybeUnset, SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
-};
+use super::value::{CqlDate, CqlDuration, CqlTime, CqlTimestamp, MaybeUnset, Unset};
 #[cfg(test)]
 use assert_matches::assert_matches;
 use bytes::BufMut;
@@ -26,27 +25,24 @@ use std::sync::Arc;
 use std::{borrow::Cow, convert::TryInto};
 use uuid::Uuid;
 
-fn serialized<T>(val: T, typ: ColumnType) -> Vec<u8>
-where
-    T: Value + SerializeValue,
-{
-    let mut result: Vec<u8> = Vec::new();
-    Value::serialize(&val, &mut result).unwrap();
-
-    let mut new_result: Vec<u8> = Vec::new();
-    let writer = CellWriter::new(&mut new_result);
-    SerializeValue::serialize(&val, &typ, writer).unwrap();
-
-    assert_eq!(result, new_result);
-
-    result
-}
-
-fn serialized_only_new<T: SerializeValue>(val: T, typ: ColumnType) -> Vec<u8> {
+fn serialized<T: SerializeValue>(val: T, typ: ColumnType) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::new();
     let writer = CellWriter::new(&mut result);
     SerializeValue::serialize(&val, &typ, writer).unwrap();
     result
+}
+
+// For now it is only used in a test that is also behind this feature flag,
+// so without it it throws a warning about being unused.
+#[cfg(feature = "chrono-04")]
+fn try_serialized<T: SerializeValue>(
+    val: T,
+    typ: ColumnType,
+) -> Result<Vec<u8>, SerializationError> {
+    let mut result: Vec<u8> = Vec::new();
+    let writer = CellWriter::new(&mut result);
+    SerializeValue::serialize(&val, &typ, writer)?;
+    Ok(result)
 }
 
 fn compute_hash<T: Hash>(x: &T) -> u64 {
@@ -189,7 +185,7 @@ fn varint_test_cases_from_spec() -> Vec<(i64, Vec<u8>)> {
 #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
 fn generic_num_bigint_serialization<B>()
 where
-    B: From<i64> + Value + SerializeValue,
+    B: From<i64> + SerializeValue,
 {
     let cases_from_the_spec: &[(i64, Vec<u8>)] = &varint_test_cases_from_spec();
 
@@ -465,10 +461,12 @@ fn naive_time_04_serialization() {
 
     // Leap second must return error on serialize
     let leap_second = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_500_000_000).unwrap();
-    let mut buffer = Vec::new();
-    assert_eq!(
-        <_ as Value>::serialize(&leap_second, &mut buffer),
-        Err(ValueTooBig)
+    let err = try_serialized(leap_second, ColumnType::Native(NativeType::Time)).unwrap_err();
+    assert_matches!(
+        err.downcast_ref::<BuiltinTypeSerializationError>()
+            .unwrap()
+            .kind,
+        BuiltinTypeSerializationErrorKind::ValueOverflow
     )
 }
 
@@ -889,8 +887,7 @@ fn cqlvalue_serialization() {
         ]
     );
 
-    // Unlike the legacy Value trait, SerializeValue takes case of reordering
-    // the fields
+    // SerializeValue takes case of reordering the fields
     let udt = CqlValue::UserDefinedType {
         keyspace: "ks".to_string(),
         name: "t".to_string(),
@@ -901,7 +898,7 @@ fn cqlvalue_serialization() {
     };
 
     assert_eq!(
-        serialized_only_new(udt, typ.clone()),
+        serialized(udt, typ.clone()),
         vec![
             0, 0, 0, 12, // size of the whole thing
             0, 0, 0, 4, 0, 0, 0, 123, // foo: 123_i32
@@ -989,26 +986,26 @@ fn unset_value() {
 
 #[test]
 fn ref_value() {
-    fn serialized_generic<T: Value>(val: T) -> Vec<u8> {
+    fn serialized<T: SerializeValue>(val: T, typ: &ColumnType) -> Vec<u8> {
         let mut result: Vec<u8> = Vec::new();
-        val.serialize(&mut result).unwrap();
+        let writer = CellWriter::new(&mut result);
+        SerializeValue::serialize(&val, typ, writer).unwrap();
         result
     }
-
     // This trickery is needed to prevent the compiler from performing deref coercions on refs
     // and effectively defeating the purpose of this test. With specialisations provided
     // in such an explicit way, the compiler is not allowed to coerce.
-    fn check<T: Value>(x: &T, y: T) {
-        assert_eq!(serialized_generic::<&T>(x), serialized_generic::<T>(y));
+    fn check<T: SerializeValue>(x: &T, y: T, typ: &ColumnType) {
+        assert_eq!(serialized::<&T>(x, typ), serialized::<T>(y, typ));
     }
 
-    check(&1_i32, 1_i32);
+    check(&1_i32, 1_i32, &ColumnType::Native(NativeType::Int));
 }
 
 #[test]
 fn empty_serialized_values() {
-    const EMPTY: LegacySerializedValues = LegacySerializedValues::new();
-    assert_eq!(EMPTY.len(), 0);
+    const EMPTY: SerializedValues = SerializedValues::new();
+    assert_eq!(EMPTY.element_count(), 0);
     assert!(EMPTY.is_empty());
     assert_eq!(EMPTY.iter().next(), None);
 
@@ -1019,13 +1016,15 @@ fn empty_serialized_values() {
 
 #[test]
 fn serialized_values() {
-    let mut values = LegacySerializedValues::new();
+    let mut values = SerializedValues::new();
     assert!(values.is_empty());
 
     // Add first value
-    values.add_value(&8_i8).unwrap();
+    values
+        .add_value(&8_i8, &ColumnType::Native(NativeType::TinyInt))
+        .unwrap();
     {
-        assert_eq!(values.len(), 1);
+        assert_eq!(values.element_count(), 1);
         assert!(!values.is_empty());
 
         let mut request = Vec::<u8>::new();
@@ -1039,9 +1038,11 @@ fn serialized_values() {
     }
 
     // Add second value
-    values.add_value(&16_i16).unwrap();
+    values
+        .add_value(&16_i16, &ColumnType::Native(NativeType::SmallInt))
+        .unwrap();
     {
-        assert_eq!(values.len(), 2);
+        assert_eq!(values.element_count(), 2);
         assert!(!values.is_empty());
 
         let mut request = Vec::<u8>::new();
@@ -1059,24 +1060,36 @@ fn serialized_values() {
 
     // Add a value that's too big, recover gracefully
     struct TooBigValue;
-    impl Value for TooBigValue {
-        fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+    impl SerializeValue for TooBigValue {
+        fn serialize<'b>(
+            &self,
+            typ: &ColumnType,
+            writer: CellWriter<'b>,
+        ) -> Result<WrittenCellProof<'b>, SerializationError> {
             // serialize some
-            buf.put_i32(1);
+            writer.into_value_builder().append_bytes(&[1u8]);
 
             // then throw an error
-            Err(ValueTooBig)
+            Err(mk_ser_err::<Self>(
+                typ,
+                BuiltinTypeSerializationErrorKind::SizeOverflow,
+            ))
         }
     }
 
-    assert_eq!(
-        values.add_value(&TooBigValue),
-        Err(SerializeValuesError::ValueTooBig(ValueTooBig))
+    let err = values
+        .add_value(&TooBigValue, &ColumnType::Native(NativeType::Ascii))
+        .unwrap_err();
+    let err_inner = err.downcast_ref::<BuiltinTypeSerializationError>().unwrap();
+
+    assert_matches!(
+        err_inner.kind,
+        BuiltinTypeSerializationErrorKind::SizeOverflow
     );
 
     // All checks for two values should still pass
     {
-        assert_eq!(values.len(), 2);
+        assert_eq!(values.element_count(), 2);
         assert!(!values.is_empty());
 
         let mut request = Vec::<u8>::new();
@@ -1095,16 +1108,16 @@ fn serialized_values() {
 
 #[test]
 fn unit_value_list() {
-    let serialized_unit: LegacySerializedValues =
-        <() as ValueList>::serialized(&()).unwrap().into_owned();
+    let serialized_unit: SerializedValues =
+        SerializedValues::from_serializable(&RowSerializationContext::empty(), &()).unwrap();
     assert!(serialized_unit.is_empty());
 }
 
 #[test]
 fn empty_array_value_list() {
-    let serialized_arr: LegacySerializedValues = <[u8; 0] as ValueList>::serialized(&[])
-        .unwrap()
-        .into_owned();
+    let serialized_arr: SerializedValues =
+        SerializedValues::from_serializable(&RowSerializationContext::empty(), &[] as &[u8; 0])
+            .unwrap();
     assert!(serialized_arr.is_empty());
 }
 
@@ -1156,57 +1169,25 @@ fn col_spec<'a>(name: impl Into<Cow<'a, str>>, typ: ColumnType<'a>) -> ColumnSpe
     }
 }
 
-fn serialize_values<T: ValueList + SerializeRow>(
-    vl: T,
-    columns: &[ColumnSpec],
-) -> LegacySerializedValues {
-    let serialized = <T as ValueList>::serialized(&vl).unwrap().into_owned();
-    let mut old_serialized = Vec::new();
-    serialized.write_to_request(&mut old_serialized);
-
+fn serialize_values<T: SerializeRow>(vl: T, columns: &[ColumnSpec]) -> SerializedValues {
     let ctx = RowSerializationContext { columns };
-    let mut new_serialized = vec![0, 0];
-    let mut writer = RowWriter::new(&mut new_serialized);
-    <T as SerializeRow>::serialize(&vl, &ctx, &mut writer).unwrap();
-    let value_count: u16 = writer.value_count().try_into().unwrap();
-    let is_empty = writer.value_count() == 0;
+    let serialized: SerializedValues = SerializedValues::from_serializable(&ctx, &vl).unwrap();
 
-    // Prepend with value count, like `ValueList` does
-    new_serialized[0..2].copy_from_slice(&value_count.to_be_bytes());
-
-    assert_eq!(old_serialized, new_serialized);
-    assert_eq!(<T as SerializeRow>::is_empty(&vl), is_empty);
-    assert_eq!(serialized.is_empty(), is_empty);
-
-    serialized
-}
-
-fn serialize_values_only_new<T: SerializeRow>(vl: T, columns: &[ColumnSpec]) -> Vec<u8> {
-    let ctx = RowSerializationContext { columns };
-    let mut serialized = vec![0, 0];
-    let mut writer = RowWriter::new(&mut serialized);
-    <T as SerializeRow>::serialize(&vl, &ctx, &mut writer).unwrap();
-    let value_count: u16 = writer.value_count().try_into().unwrap();
-    let is_empty = writer.value_count() == 0;
-
-    // Prepend with value count, like `ValueList` does
-    serialized[0..2].copy_from_slice(&value_count.to_be_bytes());
-
-    assert_eq!(<T as SerializeRow>::is_empty(&vl), is_empty);
+    assert_eq!(<T as SerializeRow>::is_empty(&vl), serialized.is_empty());
 
     serialized
 }
 
 #[test]
 fn tuple_value_list() {
-    fn check_i8_tuple(tuple: impl ValueList + SerializeRow, expected: core::ops::Range<u8>) {
+    fn check_i8_tuple(tuple: impl SerializeRow, expected: core::ops::Range<u8>) {
         let typs = expected
             .clone()
             .enumerate()
             .map(|(i, _)| col_spec(format!("col_{i}"), ColumnType::Native(NativeType::TinyInt)))
             .collect::<Vec<_>>();
         let serialized = serialize_values(tuple, &typs);
-        assert_eq!(serialized.len() as usize, expected.len());
+        assert_eq!(serialized.element_count() as usize, expected.len());
 
         let serialized_vals: Vec<u8> = serialized
             .iter()
@@ -1277,9 +1258,7 @@ fn tuple_value_list() {
 
 #[test]
 fn map_value_list() {
-    // The legacy ValueList would serialize this as a list of named values,
-    // whereas the new SerializeRow will order the values by their names.
-
+    // SerializeRow will order the values by their names.
     // Note that the alphabetical order of the keys is "ala", "kota", "ma",
     // but the impl sorts properly.
     let row = BTreeMap::from_iter([("ala", 1), ("ma", 2), ("kota", 3)]);
@@ -1288,9 +1267,11 @@ fn map_value_list() {
         col_spec("ma", ColumnType::Native(NativeType::Int)),
         col_spec("kota", ColumnType::Native(NativeType::Int)),
     ];
-    let new_values = serialize_values_only_new(row.clone(), cols);
+    let values = serialize_values(row.clone(), cols);
+    let mut values_bytes = Vec::new();
+    values.write_to_request(&mut values_bytes);
     assert_eq!(
-        new_values,
+        values_bytes,
         vec![
             0, 3, // value count: 3
             0, 0, 0, 4, 0, 0, 0, 1, // ala: 1
@@ -1298,14 +1279,6 @@ fn map_value_list() {
             0, 0, 0, 4, 0, 0, 0, 3, // kota: 3
         ]
     );
-
-    // While ValueList will serialize differently, the fallback SerializeRow impl
-    // should convert it to how serialized BTreeMap would look like if serialized
-    // directly through SerializeRow.
-    let ser = <_ as ValueList>::serialized(&row).unwrap();
-    let fallbacked = serialize_values_only_new(ser, cols);
-
-    assert_eq!(new_values, fallbacked);
 }
 
 #[test]
@@ -1328,57 +1301,15 @@ fn ref_value_list() {
     );
 }
 
-#[test]
-fn serialized_values_value_list() {
-    let mut ser_values = LegacySerializedValues::new();
-    ser_values.add_value(&1_i32).unwrap();
-    ser_values.add_value(&"qwertyuiop").unwrap();
-
-    let ser_ser_values: Cow<LegacySerializedValues> = ser_values.serialized().unwrap();
-    assert_matches!(ser_ser_values, Cow::Borrowed(_));
-
-    assert_eq!(&ser_values, ser_ser_values.as_ref());
+fn make_batch_value_iter<BV: BatchValues>(bv: &BV) -> BV::BatchValuesIter<'_> {
+    <BV as BatchValues>::batch_values_iter(bv)
 }
 
-#[test]
-fn cow_serialized_values_value_list() {
-    let cow_ser_values: Cow<LegacySerializedValues> = Cow::Owned(LegacySerializedValues::new());
+fn serialize_batch_value_iterator<'a>(
+    bvi: &mut impl BatchValuesIterator<'a>,
 
-    let serialized: Cow<LegacySerializedValues> = cow_ser_values.serialized().unwrap();
-    assert_matches!(serialized, Cow::Borrowed(_));
-
-    assert_eq!(cow_ser_values.as_ref(), serialized.as_ref());
-}
-
-fn make_batch_value_iters<'bv, BV: BatchValues + LegacyBatchValues>(
-    bv: &'bv BV,
-    adapter_bv: &'bv LegacyBatchValuesAdapter<&'bv BV>,
-) -> (
-    BV::LegacyBatchValuesIter<'bv>,
-    BV::BatchValuesIter<'bv>,
-    <LegacyBatchValuesAdapter<&'bv BV> as BatchValues>::BatchValuesIter<'bv>,
-) {
-    (
-        <BV as LegacyBatchValues>::batch_values_iter(bv),
-        <BV as BatchValues>::batch_values_iter(bv),
-        <_ as BatchValues>::batch_values_iter(adapter_bv),
-    )
-}
-
-fn serialize_batch_value_iterators<'a>(
-    (legacy_bvi, bvi, bvi_adapted): &mut (
-        impl LegacyBatchValuesIterator<'a>,
-        impl BatchValuesIterator<'a>,
-        impl BatchValuesIterator<'a>,
-    ),
     columns: &[ColumnSpec],
 ) -> Vec<u8> {
-    let mut legacy_data = Vec::new();
-    legacy_bvi
-        .write_next_to_request(&mut legacy_data)
-        .unwrap()
-        .unwrap();
-
     fn serialize_bvi<'bv>(
         bvi: &mut impl BatchValuesIterator<'bv>,
         ctx: &RowSerializationContext,
@@ -1392,26 +1323,20 @@ fn serialize_batch_value_iterators<'a>(
     }
 
     let ctx = RowSerializationContext { columns };
-    let data = serialize_bvi(bvi, &ctx);
-    let adapted_data = serialize_bvi(bvi_adapted, &ctx);
-
-    assert_eq!(legacy_data, data);
-    assert_eq!(adapted_data, data);
-    data
+    serialize_bvi(bvi, &ctx)
 }
 
 #[test]
 fn slice_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
-    let legacy_batch_values = LegacyBatchValuesAdapter(&batch_values);
 
-    let mut iters = make_batch_value_iters(&batch_values, &legacy_batch_values);
+    let mut iter = make_batch_value_iter(&batch_values);
     {
         let cols = &[
             col_spec("a", ColumnType::Native(NativeType::TinyInt)),
             col_spec("b", ColumnType::Native(NativeType::TinyInt)),
         ];
-        let request = serialize_batch_value_iterators(&mut iters, cols);
+        let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 
@@ -1422,7 +1347,7 @@ fn slice_batch_values() {
             col_spec("c", ColumnType::Native(NativeType::TinyInt)),
             col_spec("d", ColumnType::Native(NativeType::TinyInt)),
         ];
-        let request = serialize_batch_value_iterators(&mut iters, cols);
+        let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(
             request,
             vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
@@ -1431,30 +1356,35 @@ fn slice_batch_values() {
 
     {
         let cols = &[col_spec("a", ColumnType::Native(NativeType::TinyInt))];
-        let request = serialize_batch_value_iterators(&mut iters, cols);
+        let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
     }
 
-    assert_eq!(iters.0.write_next_to_request(&mut Vec::new()), None);
+    assert_matches!(
+        iter.serialize_next(
+            &RowSerializationContext::empty(),
+            &mut RowWriter::new(&mut Vec::new())
+        ),
+        None
+    );
 
     let ctx = RowSerializationContext { columns: &[] };
     let mut data = Vec::new();
     let mut writer = RowWriter::new(&mut data);
-    assert!(iters.1.serialize_next(&ctx, &mut writer).is_none());
+    assert!(iter.serialize_next(&ctx, &mut writer).is_none());
 }
 
 #[test]
 fn vec_batch_values() {
     let batch_values: Vec<Vec<i8>> = vec![vec![1, 2], vec![2, 3, 4, 5], vec![6]];
-    let legacy_batch_values = LegacyBatchValuesAdapter(&batch_values);
 
-    let mut iters = make_batch_value_iters(&batch_values, &legacy_batch_values);
+    let mut iter = make_batch_value_iter(&batch_values);
     {
         let cols = &[
             col_spec("a", ColumnType::Native(NativeType::TinyInt)),
             col_spec("b", ColumnType::Native(NativeType::TinyInt)),
         ];
-        let request = serialize_batch_value_iterators(&mut iters, cols);
+        let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 
@@ -1465,7 +1395,7 @@ fn vec_batch_values() {
             col_spec("c", ColumnType::Native(NativeType::TinyInt)),
             col_spec("d", ColumnType::Native(NativeType::TinyInt)),
         ];
-        let request = serialize_batch_value_iterators(&mut iters, cols);
+        let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(
             request,
             vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
@@ -1474,23 +1404,23 @@ fn vec_batch_values() {
 
     {
         let cols = &[col_spec("a", ColumnType::Native(NativeType::TinyInt))];
-        let request = serialize_batch_value_iterators(&mut iters, cols);
+        let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
     }
 }
 
 #[test]
 fn tuple_batch_values() {
-    fn check_twoi32_tuple(tuple: impl BatchValues + LegacyBatchValues, size: usize) {
-        let legacy_tuple = LegacyBatchValuesAdapter(&tuple);
-        let mut iters = make_batch_value_iters(&tuple, &legacy_tuple);
+    fn check_twoi32_tuple(tuple: impl BatchValues, size: usize) {
+        let mut iter = make_batch_value_iter(&tuple);
+
         for i in 0..size {
             let cols = &[
                 col_spec("a", ColumnType::Native(NativeType::Int)),
                 col_spec("b", ColumnType::Native(NativeType::Int)),
             ];
 
-            let request = serialize_batch_value_iterators(&mut iters, cols);
+            let request = serialize_batch_value_iterator(&mut iter, cols);
 
             let mut expected: Vec<u8> = Vec::new();
             let i: i32 = i.try_into().unwrap();
@@ -1683,11 +1613,10 @@ fn ref_batch_values() {
     ];
 
     return check_ref_bv::<&&&&&[&[i8]]>(&&&&batch_values, cols);
-    fn check_ref_bv<B: BatchValues + LegacyBatchValues>(batch_values: B, cols: &[ColumnSpec]) {
-        let legacy_batch_values = LegacyBatchValuesAdapter(&batch_values);
-        let mut iters = make_batch_value_iters(&batch_values, &legacy_batch_values);
+    fn check_ref_bv<B: BatchValues>(batch_values: B, cols: &[ColumnSpec]) {
+        let mut iter = make_batch_value_iter(&batch_values);
 
-        let request = serialize_batch_value_iterators(&mut iters, cols);
+        let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 }
@@ -1695,14 +1624,11 @@ fn ref_batch_values() {
 #[test]
 #[allow(clippy::needless_borrow)]
 fn check_ref_tuple() {
-    fn assert_has_batch_values<BV: BatchValues + LegacyBatchValues>(
-        bv: BV,
-        cols: &[&[ColumnSpec]],
-    ) {
-        let legacy_bv = LegacyBatchValuesAdapter(&bv);
-        let mut iters = make_batch_value_iters(&bv, &legacy_bv);
+    fn assert_has_batch_values<BV: BatchValues>(bv: BV, cols: &[&[ColumnSpec]]) {
+        let mut iter = make_batch_value_iter(&bv);
+
         for cols in cols {
-            serialize_batch_value_iterators(&mut iters, cols);
+            serialize_batch_value_iterator(&mut iter, cols);
         }
     }
     let s = String::from("hello");
@@ -1726,18 +1652,6 @@ fn check_ref_tuple() {
 #[test]
 fn check_batch_values_iterator_is_not_lending() {
     // This is an interesting property if we want to improve the batch shard selection heuristic
-    fn f(bv: impl LegacyBatchValues) {
-        let mut it = bv.batch_values_iter();
-        let mut it2 = bv.batch_values_iter();
-        // Make sure we can hold all these at the same time
-        let v = vec![
-            it.next_serialized().unwrap().unwrap(),
-            it2.next_serialized().unwrap().unwrap(),
-            it.next_serialized().unwrap().unwrap(),
-            it2.next_serialized().unwrap().unwrap(),
-        ];
-        let _ = v;
-    }
     fn g(bv: impl BatchValues) {
         let mut it = bv.batch_values_iter();
         let mut it2 = bv.batch_values_iter();
@@ -1756,6 +1670,5 @@ fn check_batch_values_iterator_is_not_lending() {
         ];
         let _ = v;
     }
-    f(((10,), (11,)));
     g(((10,), (11,)));
 }

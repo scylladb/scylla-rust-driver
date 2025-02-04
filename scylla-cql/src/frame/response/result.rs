@@ -1,5 +1,3 @@
-#[allow(deprecated)]
-use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::result::{RawRowIterator, TypedRowIterator};
 use crate::deserialize::row::DeserializeRow;
 use crate::deserialize::value::{
@@ -658,18 +656,6 @@ pub struct PreparedMetadata {
 #[derive(Debug, Default, PartialEq)]
 pub struct Row {
     pub columns: Vec<Option<CqlValue>>,
-}
-
-impl Row {
-    /// Allows converting Row into tuple of rust types or custom struct deriving FromRow
-    #[deprecated(
-        since = "0.15.0",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[allow(deprecated)]
-    pub fn into_typed<RowT: FromRow>(self) -> StdResult<RowT, FromRowError> {
-        RowT::from_row(self)
-    }
 }
 
 /// RESULT:Rows response, in partially serialized form.
@@ -1781,6 +1767,7 @@ mod tests {
     use super::{CollectionType, UserDefinedType};
     use crate as scylla;
     use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
+    use crate::serialize::CellWriter;
     use scylla::frame::response::result::{ColumnType, CqlValue};
     use std::str::FromStr;
     use std::sync::Arc;
@@ -2547,14 +2534,17 @@ mod tests {
         );
     }
 
-    #[allow(deprecated)]
     #[test]
     fn test_serialize_empty() {
-        use crate::frame::value::Value;
-
+        use crate::serialize::value::SerializeValue;
         let empty = CqlValue::Empty;
         let mut v = Vec::new();
-        empty.serialize(&mut v).unwrap();
+        SerializeValue::serialize(
+            &empty,
+            &ColumnType::Native(NativeType::Ascii),
+            CellWriter::new(&mut v),
+        )
+        .unwrap();
 
         assert_eq!(v, vec![0, 0, 0, 0]);
     }

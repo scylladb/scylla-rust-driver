@@ -15,10 +15,9 @@ use uuid::Uuid;
 
 use crate::frame::response::result::{CollectionType, ColumnType, CqlValue, NativeType};
 use crate::frame::types::vint_encode;
-#[allow(deprecated)]
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
-    CqlTimeuuid, CqlVarint, CqlVarintBorrowed, MaybeUnset, Unset, Value,
+    CqlTimeuuid, CqlVarint, CqlVarintBorrowed, MaybeUnset, Unset,
 };
 
 #[cfg(feature = "chrono-04")]
@@ -905,159 +904,6 @@ fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
         .map_err(|_| mk_ser_err_named(rust_name, typ, BuiltinSerializationErrorKind::SizeOverflow))
 }
 
-/// Implements the [`SerializeValue`] trait for a type, provided that the type
-/// already implements the legacy [`Value`](crate::frame::value::Value) trait.
-///
-/// # Note
-///
-/// The translation from one trait to another encounters a performance penalty
-/// and does not utilize the stronger guarantees of `SerializeValue`. Before
-/// resorting to this macro, you should consider other options instead:
-///
-/// - If the impl was generated using the `Value` procedural macro, you should
-///   switch to the `SerializeValue` procedural macro. *The new macro behaves
-///   differently by default, so please read its documentation first!*
-/// - If the impl was written by hand, it is still preferable to rewrite it
-///   manually. You have an opportunity to make your serialization logic
-///   type-safe and potentially improve performance.
-///
-/// Basically, you should consider using the macro if you have a hand-written
-/// impl and the moment it is not easy/not desirable to rewrite it.
-///
-/// # Example
-///
-/// ```rust
-/// # use scylla_cql::frame::value::{Value, ValueTooBig};
-/// # use scylla_cql::impl_serialize_value_via_value;
-/// struct NoGenerics {}
-/// impl Value for NoGenerics {
-///     fn serialize<'b>(&self, _buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-///         Ok(())
-///     }
-/// }
-/// impl_serialize_value_via_value!(NoGenerics);
-///
-/// // Generic types are also supported. You must specify the bounds if the
-/// // struct/enum contains any.
-/// struct WithGenerics<T, U: Clone>(T, U);
-/// impl<T: Value, U: Clone + Value> Value for WithGenerics<T, U> {
-///     fn serialize<'b>(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-///         self.0.serialize(buf)?;
-///         self.1.clone().serialize(buf)?;
-///         Ok(())
-///     }
-/// }
-/// impl_serialize_value_via_value!(WithGenerics<T, U: Clone>);
-/// ```
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-#[macro_export]
-macro_rules! impl_serialize_value_via_value {
-    ($t:ident$(<$($targ:tt $(: $tbound:tt)?),*>)?) => {
-        impl $(<$($targ $(: $tbound)?),*>)? $crate::serialize::value::SerializeValue
-        for $t$(<$($targ),*>)?
-        where
-            Self: $crate::frame::value::Value,
-        {
-            fn serialize<'b>(
-                &self,
-                _typ: &$crate::frame::response::result::ColumnType,
-                writer: $crate::serialize::writers::CellWriter<'b>,
-            ) -> ::std::result::Result<
-                $crate::serialize::writers::WrittenCellProof<'b>,
-                $crate::serialize::SerializationError,
-            > {
-                $crate::serialize::value::serialize_legacy_value(self, writer)
-            }
-        }
-    };
-}
-
-/// Implements [`SerializeValue`] if the type wrapped over implements [`Value`].
-///
-/// See the [`impl_serialize_value_via_value`] macro on information about
-/// the properties of the [`SerializeValue`] implementation.
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-pub struct ValueAdapter<T>(pub T);
-
-#[allow(deprecated)]
-impl<T> SerializeValue for ValueAdapter<T>
-where
-    T: Value,
-{
-    #[inline]
-    fn serialize<'b>(
-        &self,
-        _typ: &ColumnType,
-        writer: CellWriter<'b>,
-    ) -> Result<WrittenCellProof<'b>, SerializationError> {
-        serialize_legacy_value(&self.0, writer)
-    }
-}
-
-/// Serializes a value implementing [`Value`] by using the [`CellWriter`]
-/// interface.
-///
-/// The function first serializes the value with [`Value::serialize`], then
-/// parses the result and serializes it again with given `CellWriter`. It is
-/// a lazy and inefficient way to implement `CellWriter` via an existing `Value`
-/// impl.
-///
-/// Returns an error if the result of the `Value::serialize` call was not
-/// a properly encoded `[value]` as defined in the CQL protocol spec.
-///
-/// See [`impl_serialize_value_via_value`] which generates a boilerplate
-/// [`SerializeValue`] implementation that uses this function.
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-#[allow(deprecated)]
-pub fn serialize_legacy_value<'b, T: Value>(
-    v: &T,
-    writer: CellWriter<'b>,
-) -> Result<WrittenCellProof<'b>, SerializationError> {
-    // It's an inefficient and slightly tricky but correct implementation.
-    let mut buf = Vec::new();
-    <T as Value>::serialize(v, &mut buf)
-        .map_err(|_| SerializationError::new(ValueToSerializeValueAdapterError::TooBig))?;
-
-    // Analyze the output.
-    // All this dance shows how unsafe our previous interface was...
-    if buf.len() < 4 {
-        return Err(SerializationError(Arc::new(
-            ValueToSerializeValueAdapterError::TooShort { size: buf.len() },
-        )));
-    }
-
-    let (len_bytes, contents) = buf.split_at(4);
-    let len = i32::from_be_bytes(len_bytes.try_into().unwrap());
-    match len {
-        -2 => Ok(writer.set_unset()),
-        -1 => Ok(writer.set_null()),
-        len if len >= 0 => {
-            if contents.len() != len as usize {
-                Err(SerializationError(Arc::new(
-                    ValueToSerializeValueAdapterError::DeclaredVsActualSizeMismatch {
-                        declared: len as usize,
-                        actual: contents.len(),
-                    },
-                )))
-            } else {
-                Ok(writer.set_value(contents).unwrap()) // len <= i32::MAX, so unwrap will succeed
-            }
-        }
-        _ => Err(SerializationError(Arc::new(
-            ValueToSerializeValueAdapterError::InvalidDeclaredSize { size: len },
-        ))),
-    }
-}
-
 /// Type checking of one of the built-in types failed.
 #[derive(Debug, Error, Clone)]
 #[error("Failed to type check Rust type {rust_name} against CQL type {got:?}: {kind}")]
@@ -1105,7 +951,7 @@ pub struct BuiltinSerializationError {
     pub kind: BuiltinSerializationErrorKind,
 }
 
-fn mk_ser_err<T>(
+pub(crate) fn mk_ser_err<T>(
     got: &ColumnType,
     kind: impl Into<BuiltinSerializationErrorKind>,
 ) -> SerializationError {
@@ -1493,44 +1339,6 @@ impl Display for UdtSerializationErrorKind {
     }
 }
 
-/// Describes a failure to translate the output of the [`Value`] legacy trait
-/// into an output of the [`SerializeValue`] trait.
-#[deprecated(
-    since = "0.15.1",
-    note = "Legacy serialization API is not type-safe and is going to be removed soon"
-)]
-#[allow(deprecated)]
-#[derive(Error, Debug)]
-pub enum ValueToSerializeValueAdapterError {
-    /// The value is too bit to be serialized as it exceeds the maximum 2GB size limit.
-    #[error("The value is too big to be serialized as it exceeds the maximum 2GB size limit")]
-    TooBig,
-
-    /// Output produced by the Value trait is less than 4 bytes in size and cannot be considered to be a proper CQL-encoded value.
-    #[error("Output produced by the Value trait is too short to be considered a value: {size} < 4 minimum bytes")]
-    TooShort {
-        /// Size of the produced data.
-        size: usize,
-    },
-
-    /// Mismatch between the value size written at the beginning and the actual size of the data appended to the Vec.
-    #[error("Mismatch between the declared value size vs. actual size: {declared} != {actual}")]
-    DeclaredVsActualSizeMismatch {
-        /// The declared size of the output.
-        declared: usize,
-
-        /// The actual size of the output.
-        actual: usize,
-    },
-
-    /// The value size written at the beginning is invalid (it is negative and less than -2).
-    #[error("Invalid declared value size: {size}")]
-    InvalidDeclaredSize {
-        /// Declared size of the output.
-        size: i32,
-    },
-}
-
 mod doctests {
     /// ```compile_fail
     ///
@@ -1630,47 +1438,24 @@ mod doctests {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
-
     use crate::frame::response::result::{
         CollectionType, ColumnType, CqlValue, NativeType, UserDefinedType,
     };
-    #[allow(deprecated)]
-    use crate::frame::value::{Counter, MaybeUnset, Unset, Value, ValueTooBig};
-    #[allow(deprecated)]
+    use crate::frame::value::{Counter, Unset};
     use crate::serialize::value::{
         BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
         BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind,
         SetOrListSerializationErrorKind, SetOrListTypeCheckErrorKind, TupleSerializationErrorKind,
-        TupleTypeCheckErrorKind, ValueAdapter,
+        TupleTypeCheckErrorKind,
     };
     use crate::serialize::{CellWriter, SerializationError};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     use assert_matches::assert_matches;
     use scylla_macros::SerializeValue;
 
     use super::{SerializeValue, UdtSerializationErrorKind, UdtTypeCheckErrorKind};
-
-    #[allow(deprecated)]
-    fn check_compat<V: Value + SerializeValue>(v: V) {
-        let mut legacy_data = Vec::new();
-        <V as Value>::serialize(&v, &mut legacy_data).unwrap();
-
-        let mut new_data = Vec::new();
-        let new_data_writer = CellWriter::new(&mut new_data);
-        <V as SerializeValue>::serialize(&v, &ColumnType::Native(NativeType::Int), new_data_writer)
-            .unwrap();
-
-        assert_eq!(legacy_data, new_data);
-    }
-
-    #[test]
-    fn test_legacy_fallback() {
-        check_compat(123i32);
-        check_compat(None::<i32>);
-        check_compat(MaybeUnset::Unset::<i32>);
-    }
 
     #[test]
     fn test_dyn_serialize_value() {
@@ -1712,27 +1497,6 @@ pub(crate) mod tests {
 
     fn do_serialize_err<T: SerializeValue>(t: T, typ: &ColumnType) -> SerializationError {
         do_serialize_result(t, typ).unwrap_err()
-    }
-
-    #[allow(deprecated)]
-    #[test]
-    fn test_legacy_wrapper() {
-        struct Foo;
-        impl Value for Foo {
-            fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-                let s = "Ala ma kota";
-                buf.extend_from_slice(&(s.len() as i32).to_be_bytes());
-                buf.extend_from_slice(s.as_bytes());
-                Ok(())
-            }
-        }
-
-        let buf = do_serialize(ValueAdapter(Foo), &ColumnType::Native(NativeType::Text));
-        let expected = vec![
-            0, 0, 0, 11, // Length of the value
-            65, 108, 97, 32, 109, 97, 32, 107, 111, 116, 97, // The string
-        ];
-        assert_eq!(buf, expected);
     }
 
     fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {

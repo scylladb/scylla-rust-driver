@@ -49,7 +49,6 @@ Now it can be sent and received just like any other CQL value:
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
 use scylla::macros::{DeserializeValue, SerializeValue};
-use scylla::cql_to_rust::FromCqlVal;
 
 #[derive(Debug, DeserializeValue, SerializeValue)]
 struct MyType {

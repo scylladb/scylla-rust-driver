@@ -26,8 +26,6 @@ use tokio::sync::mpsc;
 
 use crate::client::execution_profile::ExecutionProfileInner;
 use crate::cluster::{ClusterState, NodeRef};
-#[allow(deprecated)]
-use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{RequestAttemptError, RequestError};
 use crate::frame::response::result;
@@ -557,13 +555,6 @@ where
 /// needs to be cast into a typed stream. This is done by use of `rows_stream()` method.
 /// As the method is generic over the target type, the turbofish syntax
 /// can come in handy there, e.g. `query_pager.rows_stream::<(i32, String, Uuid)>()`.
-///
-/// A pre-0.15.0 interface is also available, although deprecated:
-/// `into_legacy()` method converts QueryPager to LegacyRowIterator,
-/// enabling Stream'ed operation on rows being eagerly deserialized
-/// to the middle-man [Row](scylla_cql::frame::response::result::Row) type.
-/// This is inefficient, especially if [Row](scylla_cql::frame::response::result::Row)
-/// is not the intended target type.
 pub struct QueryPager {
     current_page: RawRowLendingIterator,
     page_receiver: mpsc::Receiver<Result<ReceivedPage, NextPageError>>,
@@ -666,20 +657,6 @@ impl QueryPager {
         self,
     ) -> Result<TypedRowStream<RowT>, TypeCheckError> {
         TypedRowStream::<RowT>::new(self)
-    }
-
-    /// Converts this iterator into an iterator over rows parsed as given type,
-    /// using the legacy deserialization framework.
-    /// This is inefficient, because all rows are being eagerly deserialized
-    /// to a middle-man [Row](scylla_cql::frame::response::result::Row) type.
-    #[deprecated(
-        since = "0.15.0",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[allow(deprecated)]
-    #[inline]
-    pub fn into_legacy(self) -> LegacyRowIterator {
-        LegacyRowIterator::new(self)
     }
 
     pub(crate) async fn new_for_query(
@@ -1082,128 +1059,3 @@ pub enum NextRowError {
     #[error("Row deserialization error: {0}")]
     RowDeserializationError(#[from] DeserializationError),
 }
-
-mod legacy {
-    #![allow(deprecated)]
-    use scylla_cql::frame::response::result::{ColumnSpec, Row};
-
-    use super::*;
-
-    /// Iterator over rows returned by paged queries.
-    ///
-    /// Allows to easily access rows without worrying about handling multiple pages.
-    #[deprecated(
-        since = "0.15.0",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    pub struct LegacyRowIterator {
-        raw_stream: QueryPager,
-    }
-
-    impl Stream for LegacyRowIterator {
-        type Item = Result<Row, LegacyNextRowError>;
-
-        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            let mut s = self.as_mut();
-
-            let next_fut = s.raw_stream.next();
-            futures::pin_mut!(next_fut);
-
-            let next_column_iter = ready_some_ok!(next_fut.poll(cx));
-
-            let next_ready_row = Row::deserialize(next_column_iter)
-                .map_err(LegacyNextRowError::RowDeserializationError);
-
-            Poll::Ready(Some(next_ready_row))
-        }
-    }
-
-    impl LegacyRowIterator {
-        pub(super) fn new(raw_stream: QueryPager) -> Self {
-            Self { raw_stream }
-        }
-
-        /// If tracing was enabled returns tracing ids of all finished page queries
-        pub fn get_tracing_ids(&self) -> &[Uuid] {
-            self.raw_stream.tracing_ids()
-        }
-
-        /// Returns specification of row columns
-        pub fn get_column_specs(&self) -> &[ColumnSpec<'_>] {
-            self.raw_stream.column_specs().inner()
-        }
-
-        pub fn into_typed<RowT>(self) -> LegacyTypedRowIterator<RowT> {
-            LegacyTypedRowIterator {
-                row_iterator: self,
-                _phantom_data: Default::default(),
-            }
-        }
-    }
-
-    /// Iterator over rows returned by paged queries
-    /// where each row is parsed as the given type\
-    /// Returned by `RowIterator::into_typed`
-    #[deprecated(
-        since = "0.15.0",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[allow(deprecated)]
-    pub struct LegacyTypedRowIterator<RowT> {
-        row_iterator: LegacyRowIterator,
-        _phantom_data: std::marker::PhantomData<RowT>,
-    }
-
-    impl<RowT> LegacyTypedRowIterator<RowT> {
-        /// If tracing was enabled returns tracing ids of all finished page queries
-        #[inline]
-        pub fn get_tracing_ids(&self) -> &[Uuid] {
-            self.row_iterator.get_tracing_ids()
-        }
-
-        /// Returns specification of row columns
-        #[inline]
-        pub fn get_column_specs(&self) -> &[ColumnSpec<'_>] {
-            self.row_iterator.get_column_specs()
-        }
-    }
-
-    /// Couldn't get next typed row from the iterator
-    #[deprecated(
-        since = "0.15.1",
-        note = "Legacy deserialization API is inefficient and is going to be removed soon"
-    )]
-    #[derive(Error, Debug, Clone)]
-    pub enum LegacyNextRowError {
-        /// Query to fetch next page has failed
-        #[error(transparent)]
-        NextRowError(#[from] NextRowError),
-
-        /// Parsing values in row as given types failed
-        #[error(transparent)]
-        FromRowError(#[from] FromRowError),
-
-        /// Row deserialization error
-        #[error("Row deserialization error: {0}")]
-        RowDeserializationError(#[from] DeserializationError),
-    }
-
-    /// Fetching pages is asynchronous so `LegacyTypedRowIterator` does not implement the `Iterator` trait.\
-    /// Instead it uses the asynchronous `Stream` trait
-    impl<RowT: FromRow> Stream for LegacyTypedRowIterator<RowT> {
-        type Item = Result<RowT, LegacyNextRowError>;
-
-        fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            let mut s = self.as_mut();
-
-            let next_row = ready_some_ok!(Pin::new(&mut s.row_iterator).poll_next(cx));
-            let typed_row_res = RowT::from_row(next_row).map_err(|e| e.into());
-            Poll::Ready(Some(typed_row_res))
-        }
-    }
-
-    // LegacyTypedRowIterator can be moved freely for any RowT so it's Unpin
-    impl<RowT> Unpin for LegacyTypedRowIterator<RowT> {}
-}
-#[allow(deprecated)]
-pub use legacy::{LegacyNextRowError, LegacyRowIterator, LegacyTypedRowIterator};
