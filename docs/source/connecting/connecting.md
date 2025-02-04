@@ -97,7 +97,7 @@ use scylla::cloud::CloudConfig;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let file = File::open("config_data.yaml").unwrap();
+    let mut file = File::open("config_data.yaml").unwrap();
     let config = CloudConfig::from_reader(&mut file).unwrap();
     let session = CloudSessionBuilder::from_config(config)
         .build()
