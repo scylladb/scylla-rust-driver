@@ -26,7 +26,7 @@ pub struct Unset;
 pub struct Counter(pub i64);
 
 /// Enum providing a way to represent a value that might be unset
-#[derive(Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum MaybeUnset<V> {
     #[default]
     Unset,
