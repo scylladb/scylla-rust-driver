@@ -44,6 +44,10 @@ pub enum ExecutionError {
     #[error("Failed to prepare the statement: {0}")]
     PrepareError(#[from] PrepareError),
 
+    /// An error returned by last attempt of request execution.
+    #[error(transparent)]
+    LastAttemptError(#[from] RequestAttemptError),
+
     /// Database sent a response containing some error with a message
     #[error("Database returned an error: {0}, Error message: {1}")]
     DbError(DbError, String),
@@ -830,7 +834,7 @@ impl RequestError {
             RequestError::EmptyPlan => ExecutionError::EmptyPlan,
             RequestError::ConnectionPoolError(e) => e.into(),
             RequestError::RequestTimeout(dur) => ExecutionError::RequestTimeout(dur),
-            RequestError::LastAttemptError(e) => e.into_execution_error(),
+            RequestError::LastAttemptError(e) => ExecutionError::LastAttemptError(e),
         }
     }
 }
@@ -901,38 +905,6 @@ pub enum RequestAttemptError {
     /// statement's id is not included in the batch.
     #[error("Reprepared statement's id does not exist in the batch.")]
     RepreparedIdMissingInBatch,
-}
-
-impl RequestAttemptError {
-    /// Converts the error to [`ExecutionError`].
-    pub fn into_execution_error(self) -> ExecutionError {
-        match self {
-            RequestAttemptError::CqlRequestSerialization(e) => e.into(),
-            RequestAttemptError::DbError(err, msg) => ExecutionError::DbError(err, msg),
-            RequestAttemptError::CqlResultParseError(e) => e.into(),
-            RequestAttemptError::CqlErrorParseError(e) => e.into(),
-            RequestAttemptError::BrokenConnectionError(e) => e.into(),
-            RequestAttemptError::UnexpectedResponse(response) => {
-                ProtocolError::UnexpectedResponse(response).into()
-            }
-            RequestAttemptError::BodyExtensionsParseError(e) => e.into(),
-            RequestAttemptError::UnableToAllocStreamId => ExecutionError::UnableToAllocStreamId,
-            RequestAttemptError::RepreparedIdChanged {
-                statement,
-                expected_id,
-                reprepared_id,
-            } => ProtocolError::RepreparedIdChanged {
-                statement,
-                expected_id,
-                reprepared_id,
-            }
-            .into(),
-            RequestAttemptError::RepreparedIdMissingInBatch => {
-                ProtocolError::RepreparedIdMissingInBatch.into()
-            }
-            RequestAttemptError::SerializationError(e) => e.into(),
-        }
-    }
 }
 
 impl From<response::error::Error> for RequestAttemptError {
