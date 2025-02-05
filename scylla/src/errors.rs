@@ -80,13 +80,13 @@ pub enum ExecutionError {
     )]
     RequestTimeout(std::time::Duration),
 
-    /// Schema agreement timed out.
-    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
-    SchemaAgreementTimeout(std::time::Duration),
-
     /// 'USE KEYSPACE <>' request failed.
     #[error("'USE KEYSPACE <>' request failed: {0}")]
     UseKeyspaceError(#[from] UseKeyspaceError),
+
+    /// Failed to await automatic schema agreement.
+    #[error("Failed to await schema agreement: {0}")]
+    SchemaAgreementError(#[from] SchemaAgreementError),
 }
 
 impl From<SerializationError> for ExecutionError {
@@ -162,10 +162,6 @@ pub enum NewSessionError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ProtocolError {
-    /// A protocol error appeared during schema version fetch.
-    #[error("Schema version fetch protocol error: {0}")]
-    SchemaVersionFetch(#[from] SchemaVersionFetchError),
-
     /// Unable extract a partition key based on prepared statement's metadata.
     #[error("Unable extract a partition key based on prepared statement's metadata")]
     PartitionKeyExtraction,
@@ -198,10 +194,22 @@ pub enum UseKeyspaceError {
     RequestTimeout(std::time::Duration),
 }
 
-/// A protocol error that occurred during schema version fetch.
+/// An error that occurred when awating schema agreement.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-pub enum SchemaVersionFetchError {
+pub enum SchemaAgreementError {
+    /// Failed to find a node with working connection pool.
+    #[error("Failed to find a node with working connection pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
+    /// Failed to execute schema version query on one of the connections.
+    ///
+    /// The driver attempts to fetch schema version on all connections in the pool (for all nodes).
+    /// It expects all of the requests to succeed. If at least one request fails, schema version
+    /// fetch is considered failed. This variant contains an error from one of the failing request attempts.
+    #[error("Failed to execute schema version query: {0}")]
+    RequestError(#[from] RequestAttemptError),
+
     /// Failed to convert schema version query result into rows result.
     #[error("Failed to convert schema version query result into rows result: {0}")]
     TracesEventsIntoRowsResultError(IntoRowsResultError),
@@ -209,6 +217,10 @@ pub enum SchemaVersionFetchError {
     /// Failed to deserialize a single row from schema version query response.
     #[error(transparent)]
     SingleRowError(SingleRowError),
+
+    /// Schema agreement timed out.
+    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
+    Timeout(std::time::Duration),
 }
 
 /// An error that occurred during tracing info fetch.

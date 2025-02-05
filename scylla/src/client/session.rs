@@ -15,7 +15,7 @@ use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
     BadQuery, ExecutionError, MetadataError, NewSessionError, PagerExecutionError, PrepareError,
-    RequestAttemptError, RequestError, TracingError, UseKeyspaceError,
+    RequestAttemptError, RequestError, SchemaAgreementError, TracingError, UseKeyspaceError,
 };
 use crate::frame::response::result;
 #[cfg(feature = "ssl")]
@@ -1938,7 +1938,7 @@ impl Session {
         last_error.map(Result::Err)
     }
 
-    async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, ExecutionError> {
+    async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, SchemaAgreementError> {
         loop {
             tokio::time::sleep(self.schema_agreement_interval).await;
             if let Some(agreed_version) = self.check_schema_agreement().await? {
@@ -1947,18 +1947,18 @@ impl Session {
         }
     }
 
-    pub async fn await_schema_agreement(&self) -> Result<Uuid, ExecutionError> {
+    pub async fn await_schema_agreement(&self) -> Result<Uuid, SchemaAgreementError> {
         timeout(
             self.schema_agreement_timeout,
             self.await_schema_agreement_indefinitely(),
         )
         .await
-        .unwrap_or(Err(ExecutionError::SchemaAgreementTimeout(
+        .unwrap_or(Err(SchemaAgreementError::Timeout(
             self.schema_agreement_timeout,
         )))
     }
 
-    pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, ExecutionError> {
+    pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, SchemaAgreementError> {
         let cluster_state = self.get_cluster_state();
         let connections_iter = cluster_state.iter_working_connections()?;
 

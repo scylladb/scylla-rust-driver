@@ -10,8 +10,8 @@ use crate::cluster::NodeAddr;
 use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
-    ExecutionError, InternalRequestError, ProtocolError, RequestAttemptError, ResponseParseError,
-    SchemaVersionFetchError, TranslationError, UseKeyspaceError,
+    InternalRequestError, RequestAttemptError, ResponseParseError, SchemaAgreementError,
+    TranslationError, UseKeyspaceError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
@@ -1261,20 +1261,14 @@ impl Connection {
         }
     }
 
-    pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, ExecutionError> {
+    pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, SchemaAgreementError> {
         let (version_id,) = self
             .query_unpaged(LOCAL_VERSION)
             .await?
             .into_rows_result()
-            .map_err(|err| {
-                ExecutionError::ProtocolError(ProtocolError::SchemaVersionFetch(
-                    SchemaVersionFetchError::TracesEventsIntoRowsResultError(err),
-                ))
-            })?
+            .map_err(SchemaAgreementError::TracesEventsIntoRowsResultError)?
             .single_row::<(Uuid,)>()
-            .map_err(|err| {
-                ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::SingleRowError(err))
-            })?;
+            .map_err(SchemaAgreementError::SingleRowError)?;
 
         Ok(version_id)
     }
