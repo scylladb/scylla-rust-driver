@@ -507,7 +507,7 @@ impl SerializedValues {
     pub const EMPTY: &'static SerializedValues = &SerializedValues::new();
 
     /// Constructs `SerializedValues` from given [`SerializeRow`] object.
-    pub fn from_serializable<T: SerializeRow>(
+    pub fn from_serializable<T: SerializeRow + ?Sized>(
         ctx: &RowSerializationContext,
         row: &T,
     ) -> Result<Self, SerializationError> {
