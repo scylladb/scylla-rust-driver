@@ -821,13 +821,12 @@ impl Connection {
     pub(crate) async fn query_unpaged(
         &self,
         query: impl Into<Query>,
-    ) -> Result<QueryResult, ExecutionError> {
+    ) -> Result<QueryResult, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         let query: Query = query.into();
 
         self.query_raw_unpaged(&query)
             .await
-            .map_err(ExecutionError::LastAttemptError)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -889,11 +888,10 @@ impl Connection {
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
-    ) -> Result<QueryResult, ExecutionError> {
+    ) -> Result<QueryResult, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values)
             .await
-            .map_err(ExecutionError::LastAttemptError)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -1048,7 +1046,7 @@ impl Connection {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<QueryResult, ExecutionError> {
+    ) -> Result<QueryResult, RequestAttemptError> {
         self.batch_with_consistency(
             batch,
             values,
@@ -1058,7 +1056,6 @@ impl Connection {
             batch.config.serial_consistency.flatten(),
         )
         .await
-        .map_err(ExecutionError::LastAttemptError)
         .and_then(QueryResponse::into_query_result)
     }
 
