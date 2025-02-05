@@ -161,11 +161,7 @@ pub enum NewSessionError {
 /// of internal driver API - a driver bug.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-pub enum ProtocolError {
-    /// Unable extract a partition key based on prepared statement's metadata.
-    #[error("Unable extract a partition key based on prepared statement's metadata")]
-    PartitionKeyExtraction,
-}
+pub enum ProtocolError {}
 
 /// An error that occurred during `USE KEYSPACE <>` request.
 #[derive(Error, Debug, Clone)]
@@ -437,6 +433,10 @@ pub enum TablesMetadataError {
 #[error("Invalid query passed to Session")]
 #[non_exhaustive]
 pub enum BadQuery {
+    /// Unable extract a partition key based on prepared statement's metadata.
+    #[error("Unable extract a partition key based on prepared statement's metadata")]
+    PartitionKeyExtraction,
+
     #[error("Serializing values failed: {0} ")]
     SerializationError(#[from] SerializationError),
 

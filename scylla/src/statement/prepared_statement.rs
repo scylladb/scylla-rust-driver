@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use super::{PageSize, StatementConfig};
 use crate::client::execution_profile::ExecutionProfileHandle;
-use crate::errors::{BadQuery, ExecutionError, ProtocolError};
+use crate::errors::{BadQuery, ExecutionError};
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::observability::history::HistoryListener;
@@ -498,7 +498,7 @@ impl PartitionKeyError {
     pub fn into_execution_error(self) -> ExecutionError {
         match self {
             PartitionKeyError::PartitionKeyExtraction(_) => {
-                ExecutionError::ProtocolError(ProtocolError::PartitionKeyExtraction)
+                ExecutionError::BadQuery(BadQuery::PartitionKeyExtraction)
             }
             PartitionKeyError::TokenCalculation(TokenCalculationError::ValueTooLong(
                 values_len,
