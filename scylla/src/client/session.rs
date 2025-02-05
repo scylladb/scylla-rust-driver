@@ -15,7 +15,7 @@ use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
     BadQuery, ExecutionError, MetadataError, NewSessionError, PrepareError, ProtocolError,
-    RequestAttemptError, RequestError, TracingProtocolError, UseKeyspaceError,
+    RequestAttemptError, RequestError, TracingError, UseKeyspaceError,
 };
 use crate::frame::response::result;
 #[cfg(feature = "ssl")]
@@ -1550,7 +1550,7 @@ impl Session {
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/tracing/tracing.html)
     /// for more information about query tracing
-    pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, ExecutionError> {
+    pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, TracingError> {
         // tracing_info_fetch_attempts is NonZeroU32 so at least one attempt will be made
         for _ in 0..self.tracing_info_fetch_attempts.get() {
             let current_try: Option<TracingInfo> = self
@@ -1563,7 +1563,7 @@ impl Session {
             };
         }
 
-        Err(ProtocolError::Tracing(TracingProtocolError::EmptyResults).into())
+        Err(TracingError::EmptyResults)
     }
 
     /// Gets the name of the keyspace that is currently set, or `None` if no
@@ -1588,7 +1588,7 @@ impl Session {
         &self,
         tracing_id: &Uuid,
         consistency: Option<Consistency>,
-    ) -> Result<Option<TracingInfo>, ExecutionError> {
+    ) -> Result<Option<TracingInfo>, TracingError> {
         // Query system_traces.sessions for TracingInfo
         let mut traces_session_query =
             Query::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
@@ -1609,17 +1609,15 @@ impl Session {
         // Get tracing info
         let maybe_tracing_info: Option<TracingInfo> = traces_session_res
             .into_rows_result()
-            .map_err(|err| {
-                ProtocolError::Tracing(TracingProtocolError::TracesSessionIntoRowsResultError(err))
-            })?
+            .map_err(TracingError::TracesSessionIntoRowsResultError)?
             .maybe_first_row()
             .map_err(|err| match err {
                 MaybeFirstRowError::TypeCheckFailed(e) => {
-                    ProtocolError::Tracing(TracingProtocolError::TracesSessionInvalidColumnType(e))
+                    TracingError::TracesSessionInvalidColumnType(e)
                 }
-                MaybeFirstRowError::DeserializationFailed(e) => ProtocolError::Tracing(
-                    TracingProtocolError::TracesSessionDeserializationFailed(e),
-                ),
+                MaybeFirstRowError::DeserializationFailed(e) => {
+                    TracingError::TracesSessionDeserializationFailed(e)
+                }
             })?;
 
         let mut tracing_info = match maybe_tracing_info {
@@ -1628,20 +1626,16 @@ impl Session {
         };
 
         // Get tracing events
-        let tracing_event_rows_result = traces_events_res.into_rows_result().map_err(|err| {
-            ProtocolError::Tracing(TracingProtocolError::TracesEventsIntoRowsResultError(err))
-        })?;
+        let tracing_event_rows_result = traces_events_res
+            .into_rows_result()
+            .map_err(TracingError::TracesEventsIntoRowsResultError)?;
         let tracing_event_rows = tracing_event_rows_result.rows().map_err(|err| match err {
-            RowsError::TypeCheckFailed(err) => {
-                ProtocolError::Tracing(TracingProtocolError::TracesEventsInvalidColumnType(err))
-            }
+            RowsError::TypeCheckFailed(err) => TracingError::TracesEventsInvalidColumnType(err),
         })?;
 
         tracing_info.events = tracing_event_rows
             .collect::<Result<_, _>>()
-            .map_err(|err| {
-                ProtocolError::Tracing(TracingProtocolError::TracesEventsDeserializationFailed(err))
-            })?;
+            .map_err(TracingError::TracesEventsDeserializationFailed)?;
 
         if tracing_info.events.is_empty() {
             return Ok(None);

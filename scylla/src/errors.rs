@@ -211,10 +211,6 @@ pub enum ProtocolError {
     #[error("Unable extract a partition key based on prepared statement's metadata")]
     PartitionKeyExtraction,
 
-    /// A protocol error occurred during tracing info fetch.
-    #[error("Tracing info fetch protocol error: {0}")]
-    Tracing(#[from] TracingProtocolError),
-
     /// Driver tried to reprepare a statement in the batch, but the reprepared
     /// statement's id is not included in the batch.
     #[error("Reprepared statement's id does not exist in the batch.")]
@@ -261,10 +257,16 @@ pub enum SchemaVersionFetchError {
     SingleRowError(SingleRowError),
 }
 
-/// A protocol error that occurred during tracing info fetch.
+/// An error that occurred during tracing info fetch.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-pub enum TracingProtocolError {
+pub enum TracingError {
+    /// Failed to execute query to either "system_traces.sessions" or "system_traces.events".
+    #[error(
+        "Failed to execute queries to \"system_traces.sessions\" or \"system_traces.events\" system tables: {0}"
+    )]
+    ExecutionError(#[from] ExecutionError),
+
     /// Failed to convert result of system_traces.session query to rows result.
     #[error("Failed to convert result of system_traces.session query to rows result")]
     TracesSessionIntoRowsResultError(IntoRowsResultError),
