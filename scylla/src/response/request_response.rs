@@ -6,7 +6,7 @@ use scylla_cql::frame::response::{NonErrorResponse, Response};
 use tracing::error;
 use uuid::Uuid;
 
-use crate::errors::{ExecutionError, RequestAttemptError};
+use crate::errors::RequestAttemptError;
 use crate::frame::response::{self, result};
 use crate::response::query_result::QueryResult;
 
@@ -43,7 +43,7 @@ impl QueryResponse {
             .into_query_result_and_paging_state()
     }
 
-    pub(crate) fn into_query_result(self) -> Result<QueryResult, ExecutionError> {
+    pub(crate) fn into_query_result(self) -> Result<QueryResult, RequestAttemptError> {
         self.into_non_error_query_response()?.into_query_result()
     }
 }
@@ -84,7 +84,7 @@ impl NonErrorQueryResponse {
         ))
     }
 
-    pub(crate) fn into_query_result(self) -> Result<QueryResult, ExecutionError> {
+    pub(crate) fn into_query_result(self) -> Result<QueryResult, RequestAttemptError> {
         let (result, paging_state) = self.into_query_result_and_paging_state()?;
 
         if !paging_state.finished() {
@@ -92,9 +92,7 @@ impl NonErrorQueryResponse {
                 "Internal driver API misuse or a server bug: nonfinished paging state\
                 would be discarded by `NonErrorQueryResponse::into_query_result`"
             );
-            return Err(ExecutionError::LastAttemptError(
-                RequestAttemptError::NonfinishedPagingState,
-            ));
+            return Err(RequestAttemptError::NonfinishedPagingState);
         }
 
         Ok(result)
