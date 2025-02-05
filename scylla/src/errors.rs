@@ -48,10 +48,6 @@ pub enum ExecutionError {
     #[error(transparent)]
     LastAttemptError(#[from] RequestAttemptError),
 
-    /// Database sent a response containing some error with a message
-    #[error("Database returned an error: {0}, Error message: {1}")]
-    DbError(DbError, String),
-
     /// Caller passed an invalid query
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
@@ -96,12 +92,6 @@ pub enum ExecutionError {
 impl From<SerializationError> for ExecutionError {
     fn from(serialized_err: SerializationError) -> ExecutionError {
         ExecutionError::BadQuery(BadQuery::SerializationError(serialized_err))
-    }
-}
-
-impl From<response::Error> for ExecutionError {
-    fn from(error: response::Error) -> ExecutionError {
-        ExecutionError::DbError(error.error, error.reason)
     }
 }
 
@@ -944,7 +934,7 @@ pub(crate) enum ResponseParseError {
 mod tests {
     use scylla_cql::Consistency;
 
-    use super::{DbError, ExecutionError, WriteType};
+    use super::{DbError, ExecutionError, RequestAttemptError, WriteType};
 
     #[test]
     fn write_type_from_str() {
@@ -989,8 +979,10 @@ mod tests {
         assert_eq!(db_error_displayed, expected_dberr_msg);
 
         // Test that ExecutionError::DbError::(DbError::Unavailable) is displayed correctly
-        let execution_error =
-            ExecutionError::DbError(db_error, "a message about unavailable error".to_string());
+        let execution_error = ExecutionError::LastAttemptError(RequestAttemptError::DbError(
+            db_error,
+            "a message about unavailable error".to_string(),
+        ));
         let execution_error_displayed: String = format!("{}", execution_error);
 
         let mut expected_execution_err_msg = "Database returned an error: ".to_string();
