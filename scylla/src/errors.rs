@@ -69,10 +69,6 @@ pub enum ExecutionError {
     #[error("No connections in the pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
 
-    /// Protocol error.
-    #[error("Protocol error: {0}")]
-    ProtocolError(#[from] ProtocolError),
-
     /// Failed to run a request within a provided client timeout.
     #[error(
         "Request execution exceeded a client timeout of {}ms",
@@ -152,16 +148,6 @@ pub enum NewSessionError {
     #[error("'USE KEYSPACE <>' request failed: {0}")]
     UseKeyspaceError(#[from] UseKeyspaceError),
 }
-
-/// A protocol error.
-///
-/// It indicates an inconsistency between CQL protocol
-/// and server's behavior.
-/// In some cases, it could also represent a misuse
-/// of internal driver API - a driver bug.
-#[derive(Error, Debug, Clone)]
-#[non_exhaustive]
-pub enum ProtocolError {}
 
 /// An error that occurred during `USE KEYSPACE <>` request.
 #[derive(Error, Debug, Clone)]
