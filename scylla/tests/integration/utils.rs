@@ -1,4 +1,6 @@
+use futures::future::try_join_all;
 use futures::Future;
+use itertools::Either;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
@@ -7,8 +9,11 @@ use scylla::cluster::NodeRef;
 use scylla::deserialize::DeserializeValue;
 use scylla::errors::ExecutionError;
 use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
+use scylla::prepared_statement::PreparedStatement;
 use scylla::query::Query;
+use scylla::response::query_result::QueryResult;
 use scylla::routing::Shard;
+use scylla::serialize::row::SerializeRow;
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
@@ -232,4 +237,114 @@ impl PerformDDL for Session {
         apply_ddl_lbp(&mut query);
         self.query_unpaged(query, &[]).await.map(|_| ())
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct SingleTargetLBP {
+    target: (Arc<scylla::cluster::Node>, Option<u32>),
+}
+
+impl LoadBalancingPolicy for SingleTargetLBP {
+    fn pick<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        _cluster: &'a ClusterState,
+    ) -> Option<(NodeRef<'a>, Option<u32>)> {
+        Some((&self.target.0, self.target.1))
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        _cluster: &'a ClusterState,
+    ) -> FallbackPlan<'a> {
+        Box::new(std::iter::empty())
+    }
+
+    fn name(&self) -> String {
+        "SingleTargetLBP".to_owned()
+    }
+}
+
+async fn for_each_target_execute<ExecuteFn, ExecuteFut>(
+    cluster: &ClusterState,
+    execute: ExecuteFn,
+) -> Result<Vec<QueryResult>, ExecutionError>
+where
+    ExecuteFn: Fn(Arc<scylla::cluster::Node>, Option<Shard>) -> ExecuteFut,
+    ExecuteFut: Future<Output = Result<QueryResult, ExecutionError>>,
+{
+    let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
+        let maybe_shard_count: Option<u16> = node.sharder().map(|sharder| sharder.nr_shards.into());
+        match maybe_shard_count {
+            Some(shard_count) => Either::Left(
+                (0..shard_count).map(|shard| execute(node.clone(), Some(shard as u32))),
+            ),
+            None => Either::Right(std::iter::once(execute(node.clone(), None))),
+        }
+    });
+
+    try_join_all(tasks).await
+}
+
+pub(crate) async fn execute_prepared_statement_everywhere(
+    session: &Session,
+    cluster: &ClusterState,
+    statement: &PreparedStatement,
+    values: &dyn SerializeRow,
+) -> Result<Vec<QueryResult>, ExecutionError> {
+    async fn send_to_target(
+        session: &Session,
+        node: Arc<scylla::cluster::Node>,
+        shard: Option<Shard>,
+        statement: &PreparedStatement,
+        values: &dyn SerializeRow,
+    ) -> Result<QueryResult, ExecutionError> {
+        let mut stmt = statement.clone();
+        let values_ref = &values;
+        let policy = SingleTargetLBP {
+            target: (node, shard),
+        };
+        let execution_profile = ExecutionProfile::builder()
+            .load_balancing_policy(Arc::new(policy))
+            .build();
+        stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
+
+        session.execute_unpaged(&stmt, values_ref).await
+    }
+
+    for_each_target_execute(cluster, |node, shard| {
+        send_to_target(session, node, shard, statement, values)
+    })
+    .await
+}
+
+pub(crate) async fn execute_unprepared_statement_everywhere(
+    session: &Session,
+    cluster: &ClusterState,
+    query: &Query,
+    values: &dyn SerializeRow,
+) -> Result<Vec<QueryResult>, ExecutionError> {
+    async fn send_to_target(
+        session: &Session,
+        node: Arc<scylla::cluster::Node>,
+        shard: Option<Shard>,
+        mut statement: Query,
+        values: &dyn SerializeRow,
+    ) -> Result<QueryResult, ExecutionError> {
+        let policy = SingleTargetLBP {
+            target: (node, shard),
+        };
+        let execution_profile = ExecutionProfile::builder()
+            .load_balancing_policy(Arc::new(policy))
+            .build();
+        statement.set_execution_profile_handle(Some(execution_profile.into_handle()));
+
+        session.query_unpaged(statement, values).await
+    }
+
+    for_each_target_execute(cluster, |node, shard| {
+        send_to_target(session, node, shard, query.clone(), values)
+    })
+    .await
 }
