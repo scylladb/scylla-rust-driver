@@ -15,7 +15,7 @@ use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
     BadQuery, ExecutionError, MetadataError, NewSessionError, PagerExecutionError, PrepareError,
-    ProtocolError, RequestAttemptError, RequestError, TracingError, UseKeyspaceError,
+    RequestAttemptError, RequestError, TracingError, UseKeyspaceError,
 };
 use crate::frame::response::result;
 #[cfg(feature = "ssl")]
@@ -867,7 +867,9 @@ impl Session {
             .await?;
         if !paging_state_response.finished() {
             error!("Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
-            return Err(ProtocolError::NonfinishedPagingState.into());
+            return Err(ExecutionError::LastAttemptError(
+                RequestAttemptError::NonfinishedPagingState,
+            ));
         }
         Ok(result)
     }
@@ -1173,7 +1175,9 @@ impl Session {
             .await?;
         if !paging_state.finished() {
             error!("Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
-            return Err(ProtocolError::NonfinishedPagingState.into());
+            return Err(ExecutionError::LastAttemptError(
+                RequestAttemptError::NonfinishedPagingState,
+            ));
         }
         Ok(result)
     }

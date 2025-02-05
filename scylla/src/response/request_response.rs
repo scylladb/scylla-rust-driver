@@ -6,7 +6,7 @@ use scylla_cql::frame::response::{NonErrorResponse, Response};
 use tracing::error;
 use uuid::Uuid;
 
-use crate::errors::{ExecutionError, ProtocolError, RequestAttemptError};
+use crate::errors::{ExecutionError, RequestAttemptError};
 use crate::frame::response::{self, result};
 use crate::response::query_result::QueryResult;
 
@@ -92,7 +92,9 @@ impl NonErrorQueryResponse {
                 "Internal driver API misuse or a server bug: nonfinished paging state\
                 would be discarded by `NonErrorQueryResponse::into_query_result`"
             );
-            return Err(ProtocolError::NonfinishedPagingState.into());
+            return Err(ExecutionError::LastAttemptError(
+                RequestAttemptError::NonfinishedPagingState,
+            ));
         }
 
         Ok(result)

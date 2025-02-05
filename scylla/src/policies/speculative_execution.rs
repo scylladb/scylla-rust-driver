@@ -117,7 +117,8 @@ fn can_be_ignored<ResT>(result: &Result<ResT, RequestError>) -> bool {
                     | RequestAttemptError::CqlErrorParseError(_)
                     | RequestAttemptError::UnexpectedResponse(_)
                     | RequestAttemptError::RepreparedIdChanged { .. }
-                    | RequestAttemptError::RepreparedIdMissingInBatch => false,
+                    | RequestAttemptError::RepreparedIdMissingInBatch
+                    | RequestAttemptError::NonfinishedPagingState => false,
 
                     // Errors that can be ignored
                     RequestAttemptError::BrokenConnectionError(_)

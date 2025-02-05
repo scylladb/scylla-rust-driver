@@ -166,10 +166,6 @@ pub enum ProtocolError {
     #[error("Schema version fetch protocol error: {0}")]
     SchemaVersionFetch(#[from] SchemaVersionFetchError),
 
-    /// A result with nonfinished paging state received for unpaged query.
-    #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
-    NonfinishedPagingState,
-
     /// Unable extract a partition key based on prepared statement's metadata.
     #[error("Unable extract a partition key based on prepared statement's metadata")]
     PartitionKeyExtraction,
@@ -849,6 +845,10 @@ pub enum RequestAttemptError {
     /// statement's id is not included in the batch.
     #[error("Reprepared statement's id does not exist in the batch.")]
     RepreparedIdMissingInBatch,
+
+    /// A result with nonfinished paging state received for unpaged query.
+    #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
+    NonfinishedPagingState,
 }
 
 impl From<response::error::Error> for RequestAttemptError {
