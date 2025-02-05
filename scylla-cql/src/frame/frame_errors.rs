@@ -11,7 +11,6 @@ pub use super::request::{
     startup::StartupSerializationError,
 };
 
-use super::response::result::TableSpec;
 use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
 use thiserror::Error;
@@ -425,9 +424,6 @@ pub struct ColumnSpecParseError {
 pub enum ColumnSpecParseErrorKind {
     #[error("Invalid table spec: {0}")]
     TableSpecParseError(#[from] TableSpecParseError),
-    // TODO: remove this variant before the next major release.
-    #[error("Table spec differs across columns - got specs: {0:?} and {1:?}")]
-    TableSpecDiffersAcrossColumns(TableSpec<'static>, TableSpec<'static>),
     #[error("Malformed column name: {0}")]
     ColumnNameParseError(#[from] LowLevelDeserializationError),
     #[error("Invalid column type: {0}")]
