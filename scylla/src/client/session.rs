@@ -999,7 +999,7 @@ impl Session {
     async fn handle_set_keyspace_response(
         &self,
         response: &NonErrorQueryResponse,
-    ) -> Result<(), ExecutionError> {
+    ) -> Result<(), UseKeyspaceError> {
         if let Some(set_keyspace) = response.as_set_keyspace() {
             debug!(
                 "Detected USE KEYSPACE query, setting session's keyspace to {}",
