@@ -988,9 +988,7 @@ impl Session {
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response
-            .into_query_result_and_paging_state()
-            .map_err(RequestAttemptError::into_execution_error)?;
+        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1295,9 +1293,7 @@ impl Session {
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response
-            .into_query_result_and_paging_state()
-            .map_err(RequestAttemptError::into_execution_error)?;
+        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
