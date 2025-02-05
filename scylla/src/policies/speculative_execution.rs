@@ -15,7 +15,7 @@ pub struct Context {
 }
 
 /// The policy that decides if the driver will send speculative queries to the
-/// next hosts when the current host takes too long to respond.
+/// next targets when the current target takes too long to respond.
 pub trait SpeculativeExecutionPolicy: std::fmt::Debug + Send + Sync {
     /// The maximum number of speculative executions that will be triggered
     /// for a given request (does not include the initial request)
@@ -38,7 +38,7 @@ pub struct SimpleSpeculativeExecutionPolicy {
 }
 
 /// A policy that triggers speculative executions when the request to the current
-/// host is above a given percentile.
+/// target is above a given percentile.
 #[derive(Debug, Clone)]
 pub struct PercentileSpeculativeExecutionPolicy {
     /// The maximum number of speculative executions that will be triggered
