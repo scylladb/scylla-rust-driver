@@ -56,14 +56,6 @@ pub enum ExecutionError {
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
 
-    /// Failed to serialize CQL request.
-    #[error("Failed to serialize CQL request: {0}")]
-    CqlRequestSerialization(#[from] CqlRequestSerializationError),
-
-    /// Failed to deserialize frame body extensions.
-    #[error(transparent)]
-    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
-
     /// Load balancing policy returned an empty plan.
     #[error(
         "Load balancing policy returned an empty plan.\
@@ -72,14 +64,6 @@ pub enum ExecutionError {
         then this is most probably a driver bug!"
     )]
     EmptyPlan,
-
-    /// Received a RESULT server response, but failed to deserialize it.
-    #[error(transparent)]
-    CqlResultParseError(#[from] CqlResultParseError),
-
-    /// Received an ERROR server response, but failed to deserialize it.
-    #[error("Failed to deserialize ERROR response: {0}")]
-    CqlErrorParseError(#[from] CqlErrorParseError),
 
     /// A metadata error occurred during schema agreement.
     #[error("Cluster metadata fetch error occurred during automatic schema agreement: {0}")]
@@ -92,14 +76,6 @@ pub enum ExecutionError {
     /// Protocol error.
     #[error("Protocol error: {0}")]
     ProtocolError(#[from] ProtocolError),
-
-    /// A connection has been broken during query execution.
-    #[error(transparent)]
-    BrokenConnection(#[from] BrokenConnectionError),
-
-    /// Driver was unable to allocate a stream id to execute a query on.
-    #[error("Unable to allocate stream id")]
-    UnableToAllocStreamId,
 
     /// Failed to run a request within a provided client timeout.
     #[error(
@@ -196,23 +172,6 @@ pub enum NewSessionError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ProtocolError {
-    /// Received an unexpected response when RESULT or ERROR was expected.
-    #[error(
-        "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
-    )]
-    UnexpectedResponse(CqlResponseKind),
-
-    /// Prepared statement id changed after repreparation.
-    #[error(
-        "Prepared statement id changed after repreparation; md5 sum (computed from the query string) should stay the same;\
-        Statement: \"{statement}\"; expected id: {expected_id:?}; reprepared id: {reprepared_id:?}"
-    )]
-    RepreparedIdChanged {
-        statement: String,
-        expected_id: Vec<u8>,
-        reprepared_id: Vec<u8>,
-    },
-
     /// A protocol error appeared during schema version fetch.
     #[error("Schema version fetch protocol error: {0}")]
     SchemaVersionFetch(#[from] SchemaVersionFetchError),
@@ -224,11 +183,6 @@ pub enum ProtocolError {
     /// Unable extract a partition key based on prepared statement's metadata.
     #[error("Unable extract a partition key based on prepared statement's metadata")]
     PartitionKeyExtraction,
-
-    /// Driver tried to reprepare a statement in the batch, but the reprepared
-    /// statement's id is not included in the batch.
-    #[error("Reprepared statement's id does not exist in the batch.")]
-    RepreparedIdMissingInBatch,
 }
 
 /// An error that occurred during `USE KEYSPACE <>` request.
