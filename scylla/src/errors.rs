@@ -29,6 +29,7 @@ use scylla_cql::{
 
 use thiserror::Error;
 
+use crate::client::pager::NextPageError;
 use crate::{authentication::AuthError, frame::response};
 
 use crate::client::pager::NextRowError;
@@ -110,14 +111,6 @@ pub enum ExecutionError {
     /// 'USE KEYSPACE <>' request failed.
     #[error("'USE KEYSPACE <>' request failed: {0}")]
     UseKeyspaceError(#[from] UseKeyspaceError),
-
-    // TODO: This should not belong here, but it requires changes to error types
-    // returned in async iterator API. This should be handled in separate PR.
-    // The reason this needs to be included is that topology.rs makes use of iter API and returns ExecutionError.
-    // Once iter API is adjusted, we can then adjust errors returned by topology module (e.g. refactor MetadataError and not include it in ExecutionError).
-    /// An error occurred during async iteration over rows of result.
-    #[error("An error occurred during async iteration over rows of result: {0}")]
-    NextRowError(#[from] NextRowError),
 }
 
 impl From<SerializationError> for ExecutionError {
@@ -149,6 +142,23 @@ pub enum PrepareError {
         "Prepared statement id mismatch between multiple connections - all result ids should be equal."
     )]
     PreparedStatementIdsMismatch,
+}
+
+/// An error that occurred during construction of [`QueryPager`][crate::client::pager::QueryPager].
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum PagerExecutionError {
+    /// Failed to prepare the statement.
+    #[error("Failed to prepare the statement to be used by the pager: {0}")]
+    PrepareError(#[from] PrepareError),
+
+    /// Failed to serialize statement parameters.
+    #[error("Failed to serialize statement parameters: {0}")]
+    SerializationError(#[from] SerializationError),
+
+    /// Failed to fetch the first page of the result.
+    #[error("Failed to fetch the first page of the result: {0}")]
+    NextPageError(#[from] NextPageError),
 }
 
 /// Error that occurred during session creation

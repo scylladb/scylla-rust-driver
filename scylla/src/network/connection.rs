@@ -1017,6 +1017,7 @@ impl Connection {
 
         QueryPager::new_for_connection_query_iter(query, self, consistency, serial_consistency)
             .await
+            .map_err(NextRowError::NextPageError)
     }
 
     /// Executes a prepared statements and fetches its results over multiple pages, using
@@ -1039,6 +1040,7 @@ impl Connection {
             serial_consistency,
         )
         .await
+        .map_err(NextRowError::NextPageError)
     }
 
     #[allow(dead_code)]

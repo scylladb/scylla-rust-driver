@@ -664,7 +664,7 @@ impl QueryPager {
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_state: Arc<ClusterState>,
         metrics: Arc<Metrics>,
-    ) -> Result<Self, NextRowError> {
+    ) -> Result<Self, NextPageError> {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
 
         let consistency = query
@@ -743,7 +743,7 @@ impl QueryPager {
 
     pub(crate) async fn new_for_prepared_statement(
         config: PreparedIteratorConfig,
-    ) -> Result<Self, NextRowError> {
+    ) -> Result<Self, NextPageError> {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
 
         let consistency = config
@@ -866,7 +866,7 @@ impl QueryPager {
         connection: Arc<Connection>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<Self, NextRowError> {
+    ) -> Result<Self, NextPageError> {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
 
         let page_size = query.get_validated_page_size();
@@ -896,7 +896,7 @@ impl QueryPager {
         connection: Arc<Connection>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<Self, NextRowError> {
+    ) -> Result<Self, NextPageError> {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
 
         let page_size = prepared.get_validated_page_size();
@@ -924,7 +924,7 @@ impl QueryPager {
     async fn new_from_worker_future(
         worker_task: impl Future<Output = PageSendAttemptedProof> + Send + 'static,
         mut receiver: mpsc::Receiver<Result<ReceivedPage, NextPageError>>,
-    ) -> Result<Self, NextRowError> {
+    ) -> Result<Self, NextPageError> {
         tokio::task::spawn(worker_task);
 
         // This unwrap is safe because:
@@ -933,10 +933,7 @@ impl QueryPager {
         // - That future is polled in a tokio::task which isn't going to be
         //   cancelled
         let page_received = receiver.recv().await.unwrap()?;
-        let raw_rows_with_deserialized_metadata =
-            page_received.rows.deserialize_metadata().map_err(|err| {
-                NextRowError::NextPageError(NextPageError::ResultMetadataParseError(err))
-            })?;
+        let raw_rows_with_deserialized_metadata = page_received.rows.deserialize_metadata()?;
 
         Ok(Self {
             current_page: RawRowLendingIterator::new(raw_rows_with_deserialized_metadata),
