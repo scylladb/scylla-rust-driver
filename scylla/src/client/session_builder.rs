@@ -362,11 +362,10 @@ impl GenericSessionBuilder<DefaultMode> {
 // here, but rather in `impl<K> GenericSessionBuilder<K>` block.
 #[cfg(feature = "cloud")]
 impl CloudSessionBuilder {
-    /// Creates a new SessionBuilder with default configuration,
-    /// based on provided path to Scylla Cloud Config yaml.
-    pub fn new(cloud_config: impl AsRef<Path>) -> Result<Self, CloudConfigError> {
+    /// Creates a new SessionBuilder with default configuration, based
+    /// on the provided [`CloudConfig`].
+    pub fn from_config(cloud_config: CloudConfig) -> Self {
         let mut config = SessionConfig::new();
-        let cloud_config = CloudConfig::read_from_yaml(cloud_config)?;
         let mut exec_profile_builder = ExecutionProfile::builder();
         if let Some(default_consistency) = cloud_config.get_default_consistency() {
             exec_profile_builder = exec_profile_builder.consistency(default_consistency);
@@ -377,10 +376,17 @@ impl CloudSessionBuilder {
         }
         config.default_execution_profile_handle = exec_profile_builder.build().into_handle();
         config.cloud_config = Some(Arc::new(cloud_config));
-        Ok(CloudSessionBuilder {
+        CloudSessionBuilder {
             config,
             kind: PhantomData,
-        })
+        }
+    }
+
+    /// Creates a new SessionBuilder with default configuration,
+    /// based on provided path to Scylla Cloud Config yaml.
+    pub fn new(cloud_config: impl AsRef<Path>) -> Result<Self, CloudConfigError> {
+        let cloud_config = CloudConfig::read_from_yaml(cloud_config)?;
+        Ok(Self::from_config(cloud_config))
     }
 }
 

@@ -102,7 +102,7 @@ impl AuthInfo {
     }
 }
 
-/// Contains cloud datacenter configuration for creating TLS connections to its nodes.  
+/// Contains cloud datacenter configuration for creating TLS connections to its nodes.
 #[derive(Debug)]
 pub(crate) struct Datacenter {
     certificate_authority: X509,
@@ -541,10 +541,16 @@ mod deserialize {
     }
 
     impl super::CloudConfig {
-        pub fn read_from_yaml(config_path: impl AsRef<Path>) -> Result<Self, CloudConfigError> {
-            let mut yaml = File::open(config_path)?;
-            let config = RawCloudConfig::try_from_reader(&mut yaml)?;
+        /// Load cloud configuration data from the provided reader.
+        pub fn from_reader<R: Read>(mut config_reader: R) -> Result<Self, CloudConfigError> {
+            let config = RawCloudConfig::try_from_reader(&mut config_reader)?;
             Self::try_from(config)
+        }
+
+        /// Load cloud configuration data from a file.
+        pub fn read_from_yaml(config_path: impl AsRef<Path>) -> Result<Self, CloudConfigError> {
+            let yaml = File::open(config_path)?;
+            Self::from_reader(yaml)
         }
     }
 
