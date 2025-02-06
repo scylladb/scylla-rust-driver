@@ -54,8 +54,8 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                     RequestAttemptError::DbError(DbError::Unavailable { .. }, _) => {
                         // JAVA-764: if the requested consistency level is serial, it means that the operation failed at
                         // the paxos phase of a LWT.
-                        // Retry on the next host, on the assumption that the initial coordinator could be network-isolated.
-                        RetryDecision::RetryNextNode(None)
+                        // Retry on the next target, on the assumption that the initial coordinator could be network-isolated.
+                        RetryDecision::RetryNextTarget(None)
                     }
                     _ => RetryDecision::DontRetry,
                 };
@@ -65,18 +65,18 @@ impl RetrySession for DowngradingConsistencyRetrySession {
 
         fn max_likely_to_work_cl(known_ok: i32, previous_cl: Consistency) -> RetryDecision {
             let decision = if known_ok >= 3 {
-                RetryDecision::RetrySameNode(Some(Consistency::Three))
+                RetryDecision::RetrySameTarget(Some(Consistency::Three))
             } else if known_ok == 2 {
-                RetryDecision::RetrySameNode(Some(Consistency::Two))
+                RetryDecision::RetrySameTarget(Some(Consistency::Two))
             } else if known_ok == 1 || previous_cl == Consistency::EachQuorum {
                 // JAVA-1005: EACH_QUORUM does not report a global number of alive replicas
                 // so even if we get 0 alive replicas, there might be
                 // a node up in some other datacenter
-                RetryDecision::RetrySameNode(Some(Consistency::One))
+                RetryDecision::RetrySameTarget(Some(Consistency::One))
             } else {
                 RetryDecision::DontRetry
             };
-            if let RetryDecision::RetrySameNode(new_cl) = decision {
+            if let RetryDecision::RetrySameTarget(new_cl) = decision {
                 debug!(
                     "Decided to lower required consistency from {} to {:?}.",
                     previous_cl, new_cl
@@ -93,7 +93,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
             | RequestAttemptError::DbError(DbError::ServerError, _)
             | RequestAttemptError::DbError(DbError::TruncateError, _) => {
                 if request_info.is_idempotent {
-                    RetryDecision::RetryNextNode(None)
+                    RetryDecision::RetryNextTarget(None)
                 } else {
                     RetryDecision::DontRetry
                 }
@@ -125,7 +125,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                     max_likely_to_work_cl(*received, cl)
                 } else if !*data_present {
                     self.was_retry = true;
-                    RetryDecision::RetrySameNode(None)
+                    RetryDecision::RetrySameTarget(None)
                 } else {
                     RetryDecision::DontRetry
                 }
@@ -153,7 +153,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                             // retry with whatever consistency should allow to persist all
                             max_likely_to_work_cl(*received, cl)
                         }
-                        WriteType::BatchLog => RetryDecision::RetrySameNode(None),
+                        WriteType::BatchLog => RetryDecision::RetrySameTarget(None),
 
                         _ => RetryDecision::DontRetry,
                     }
@@ -161,10 +161,10 @@ impl RetrySession for DowngradingConsistencyRetrySession {
             }
             // The node is still bootstrapping it can't execute the request, we should try another one
             RequestAttemptError::DbError(DbError::IsBootstrapping, _) => {
-                RetryDecision::RetryNextNode(None)
+                RetryDecision::RetryNextTarget(None)
             }
             // Connection to the contacted node is overloaded, try another one
-            RequestAttemptError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
+            RequestAttemptError::UnableToAllocStreamId => RetryDecision::RetryNextTarget(None),
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
@@ -311,20 +311,20 @@ mod tests {
         let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
-            RetryDecision::RetryNextNode(None)
+            RetryDecision::RetryNextTarget(None)
         );
     }
 
     fn max_likely_to_work_cl(known_ok: i32, current_cl: Consistency) -> RetryDecision {
         if known_ok >= 3 {
-            RetryDecision::RetrySameNode(Some(Consistency::Three))
+            RetryDecision::RetrySameTarget(Some(Consistency::Three))
         } else if known_ok == 2 {
-            RetryDecision::RetrySameNode(Some(Consistency::Two))
+            RetryDecision::RetrySameTarget(Some(Consistency::Two))
         } else if known_ok == 1 || current_cl == Consistency::EachQuorum {
             // JAVA-1005: EACH_QUORUM does not report a global number of alive replicas
             // so even if we get 0 alive replicas, there might be
             // a node up in some other datacenter
-            RetryDecision::RetrySameNode(Some(Consistency::One))
+            RetryDecision::RetrySameTarget(Some(Consistency::One))
         } else {
             RetryDecision::DontRetry
         }
@@ -359,13 +359,13 @@ mod tests {
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
                 policy.decide_should_retry(make_request_info_with_cl(&error, false, cl)),
-                RetryDecision::RetryNextNode(None)
+                RetryDecision::RetryNextTarget(None)
             );
 
             let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
             assert_eq!(
                 policy.decide_should_retry(make_request_info_with_cl(&error, true, cl)),
-                RetryDecision::RetryNextNode(None)
+                RetryDecision::RetryNextTarget(None)
             );
         }
     }
@@ -433,7 +433,7 @@ mod tests {
                     false,
                     cl
                 )),
-                RetryDecision::RetrySameNode(None)
+                RetryDecision::RetrySameTarget(None)
             );
             assert_eq!(
                 policy.decide_should_retry(make_request_info_with_cl(
@@ -452,7 +452,7 @@ mod tests {
                     true,
                     cl
                 )),
-                RetryDecision::RetrySameNode(None)
+                RetryDecision::RetrySameTarget(None)
             );
             assert_eq!(
                 policy.decide_should_retry(make_request_info_with_cl(
@@ -523,7 +523,7 @@ mod tests {
                 )),
                 expected_decision
             );
-            if let RetryDecision::RetrySameNode(new_cl) = expected_decision {
+            if let RetryDecision::RetrySameTarget(new_cl) = expected_decision {
                 assert_eq!(
                     policy.decide_should_retry(make_request_info_with_cl(
                         &not_enough_responses_with_data,
@@ -544,7 +544,7 @@ mod tests {
                 )),
                 expected_decision
             );
-            if let RetryDecision::RetrySameNode(new_cl) = expected_decision {
+            if let RetryDecision::RetrySameTarget(new_cl) = expected_decision {
                 assert_eq!(
                     policy.decide_should_retry(make_request_info_with_cl(
                         &not_enough_responses_with_data,
@@ -593,7 +593,7 @@ mod tests {
                         true,
                         cl
                     )),
-                    RetryDecision::RetrySameNode(None)
+                    RetryDecision::RetrySameTarget(None)
                 );
                 assert_eq!(
                     policy.decide_should_retry(make_request_info_with_cl(

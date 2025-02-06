@@ -1916,12 +1916,12 @@ impl Session {
                 last_error = Some(request_error.into());
 
                 match retry_decision {
-                    RetryDecision::RetrySameNode(new_cl) => {
+                    RetryDecision::RetrySameTarget(new_cl) => {
                         self.metrics.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
-                    RetryDecision::RetryNextNode(new_cl) => {
+                    RetryDecision::RetryNextTarget(new_cl) => {
                         self.metrics.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;

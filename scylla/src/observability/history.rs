@@ -626,7 +626,7 @@ mod tests {
         history_collector.log_attempt_error(
             attempt_id,
             &unexpected_response(CqlResponseKind::Ready),
-            &RetryDecision::RetrySameNode(Some(Consistency::Quorum)),
+            &RetryDecision::RetrySameTarget(Some(Consistency::Quorum)),
         );
 
         let second_attempt_id: AttemptId =
@@ -653,7 +653,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
 |   Error: Received unexpected response from the server: READY. Expected RESULT or ERROR response.
-|   Retry decision: RetrySameNode(Some(Quorum))
+|   Retry decision: RetrySameTarget(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
@@ -737,7 +737,7 @@ mod tests {
         history_collector.log_attempt_error(
             attempt1,
             &unexpected_response(CqlResponseKind::Event),
-            &RetryDecision::RetryNextNode(Some(Consistency::Quorum)),
+            &RetryDecision::RetryNextTarget(Some(Consistency::Quorum)),
         );
         let _attempt2: AttemptId =
             history_collector.log_attempt_start(request_id, None, node3_addr());
@@ -749,7 +749,7 @@ mod tests {
         history_collector.log_attempt_error(
             spec2_attempt1,
             &no_stream_id_error(),
-            &RetryDecision::RetrySameNode(Some(Consistency::Quorum)),
+            &RetryDecision::RetrySameTarget(Some(Consistency::Quorum)),
         );
 
         let spec2_attempt2: AttemptId =
@@ -761,7 +761,7 @@ mod tests {
         history_collector.log_attempt_error(
             spec1_attempt1,
             &unavailable_error(),
-            &RetryDecision::RetryNextNode(Some(Consistency::Quorum)),
+            &RetryDecision::RetryNextTarget(Some(Consistency::Quorum)),
         );
 
         let _spec4_attempt1: AttemptId =
@@ -780,7 +780,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
 |   Error: Received unexpected response from the server: EVENT. Expected RESULT or ERROR response.
-|   Retry decision: RetryNextNode(Some(Quorum))
+|   Retry decision: RetryNextTarget(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.3:19042
 |   request send time: 2022-02-22 20:22:22 UTC
@@ -793,7 +793,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
 |   Error: Database returned an error: Not enough nodes are alive to satisfy required consistency level (consistency: Quorum, required: 2, alive: 1), Error message: Not enough nodes to satisfy consistency
-|   Retry decision: RetryNextNode(Some(Quorum))
+|   Retry decision: RetryNextTarget(Some(Quorum))
 |
 |
 | > Speculative fiber #1
@@ -802,7 +802,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
 |   Error: Unable to allocate stream id
-|   Retry decision: RetrySameNode(Some(Quorum))
+|   Retry decision: RetrySameTarget(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
@@ -836,7 +836,7 @@ mod tests {
         history_collector.log_attempt_error(
             request1_attempt1,
             &unexpected_response(CqlResponseKind::Supported),
-            &RetryDecision::RetryNextNode(Some(Consistency::Quorum)),
+            &RetryDecision::RetryNextTarget(Some(Consistency::Quorum)),
         );
         let request1_attempt2: AttemptId =
             history_collector.log_attempt_start(request1_id, None, node2_addr());
@@ -859,7 +859,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
 |   Error: Received unexpected response from the server: SUPPORTED. Expected RESULT or ERROR response.
-|   Retry decision: RetryNextNode(Some(Quorum))
+|   Retry decision: RetryNextTarget(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.2:19042
 |   request send time: 2022-02-22 20:22:22 UTC
