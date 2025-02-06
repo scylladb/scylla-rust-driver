@@ -112,7 +112,6 @@ impl Cluster {
             known_nodes,
             control_connection_repair_sender,
             pool_config.connection_config.clone(),
-            pool_config.keepalive_interval,
             server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,

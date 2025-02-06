@@ -1,5 +1,8 @@
 //! This module contains various errors which can be returned by [`Session`](crate::client::session::Session).
 
+#[cfg(feature = "__tls")]
+pub use crate::network::tls::TlsError;
+
 // Re-export DbError type and types that it depends on
 // so they can be found in `scylla::errors`.
 pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
@@ -598,6 +601,10 @@ pub enum TranslationError {
         translated_addr_str: &'static str,
         reason: AddrParseError,
     },
+
+    /// An I/O error occurred during address translation.
+    #[error("An I/O error occurred during address translation: {0}")]
+    IoError(Arc<std::io::Error>),
 }
 
 /// An error that occurred during connection setup request execution.

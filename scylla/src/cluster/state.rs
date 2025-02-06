@@ -96,7 +96,7 @@ impl ClusterState {
                     peer_tokens = tokens;
                     Arc::new(Node::new(
                         peer_endpoint,
-                        pool_config.clone(),
+                        pool_config,
                         used_keyspace.clone(),
                         is_enabled,
                     ))
