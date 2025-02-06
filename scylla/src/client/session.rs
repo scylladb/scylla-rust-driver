@@ -999,7 +999,7 @@ impl Session {
     async fn handle_set_keyspace_response(
         &self,
         response: &NonErrorQueryResponse,
-    ) -> Result<(), ExecutionError> {
+    ) -> Result<(), UseKeyspaceError> {
         if let Some(set_keyspace) = response.as_set_keyspace() {
             debug!(
                 "Detected USE KEYSPACE query, setting session's keyspace to {}",
@@ -1446,7 +1446,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn prepare_batch(&self, batch: &Batch) -> Result<Batch, ExecutionError> {
+    pub async fn prepare_batch(&self, batch: &Batch) -> Result<Batch, PrepareError> {
         let mut prepared_batch = batch.clone();
 
         try_join_all(
@@ -1458,7 +1458,7 @@ impl Session {
                         let prepared = self.prepare(query.clone()).await?;
                         *statement = BatchStatement::PreparedStatement(prepared);
                     }
-                    Ok::<(), ExecutionError>(())
+                    Ok::<(), PrepareError>(())
                 }),
         )
         .await?;
