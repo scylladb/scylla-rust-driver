@@ -8,7 +8,7 @@
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
-use scylla::frame::value::CqlDuration;
+use scylla::value::CqlDuration;
 
 // Insert some duration into the table
 let to_insert: CqlDuration = CqlDuration { months: 1, days: 2, nanoseconds: 3 };

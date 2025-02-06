@@ -5,10 +5,10 @@ use rustyline::{CompletionType, Config, Context, Editor};
 use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::frame::response::result::Row;
 use scylla::frame::Compression;
 use scylla::response::query_result::IntoRowsResultError;
 use scylla::response::query_result::QueryResult;
+use scylla::value::Row;
 use std::env;
 
 #[derive(Helper, Highlighter, Validator, Hinter)]

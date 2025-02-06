@@ -259,8 +259,8 @@ mod tests {
         create_new_session_builder, scylla_supports_tablets, setup_tracing, PerformDDL,
     };
     use crate::utils::test_utils::unique_keyspace_name;
+    use crate::value::Row;
     use futures::TryStreamExt;
-    use scylla_cql::frame::response::result::Row;
     use std::collections::BTreeSet;
 
     use super::CachingSession;

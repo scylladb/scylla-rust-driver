@@ -12,7 +12,7 @@ Without any feature flags, the user can interact with `decimal` type by making u
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
-use scylla::frame::value::CqlDecimal;
+use scylla::value::CqlDecimal;
 use std::str::FromStr;
 
 // Insert a decimal (123.456) into the table

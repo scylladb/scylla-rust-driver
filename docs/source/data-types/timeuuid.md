@@ -12,7 +12,7 @@ Also, `value::CqlTimeuuid` is a wrapper for `uuid::Uuid` with custom ordering lo
 # use std::str::FromStr;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
-use scylla::frame::value::CqlTimeuuid;
+use scylla::value::CqlTimeuuid;
 
 // Insert some timeuuid into the table
 let to_insert: CqlTimeuuid = CqlTimeuuid::from_str("8e14e760-7fa8-11eb-bc66-000000000001")?;
@@ -51,7 +51,7 @@ and now you're gonna be able to use the `uuid::v1` features:
 # use std::error::Error;
 # use std::str::FromStr;
 use futures::TryStreamExt;
-use scylla::frame::value::CqlTimeuuid;
+use scylla::value::CqlTimeuuid;
 use uuid::Uuid;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 

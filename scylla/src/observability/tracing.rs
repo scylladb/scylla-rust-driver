@@ -1,6 +1,6 @@
-use crate::frame::value::CqlTimestamp;
+use crate::value::CqlTimestamp;
 use itertools::Itertools;
-use scylla_cql::frame::value::CqlTimeuuid;
+use scylla_cql::value::CqlTimeuuid;
 use scylla_macros::DeserializeRow;
 use std::collections::HashMap;
 use std::net::IpAddr;

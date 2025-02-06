@@ -7,7 +7,7 @@ Internally [timestamp](https://docs.scylladb.com/stable/cql/types.html#timestamp
 
 ## CqlTimestamp
 
-Without any extra features enabled, only `frame::value::CqlTimestamp` is available. It's an
+Without any extra features enabled, only `value::CqlTimestamp` is available. It's an
 [`i64`](https://doc.rust-lang.org/std/primitive.i64.html) wrapper and it matches the internal time representation. It's
 the only type that supports full range of values that database accepts.
 
@@ -19,7 +19,7 @@ However, for most use cases other types are more practical. See following sectio
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::frame::value::CqlTimestamp;
+use scylla::value::CqlTimestamp;
 use futures::TryStreamExt;
 
 // 64 seconds since unix epoch, 1970-01-01 00:01:04

@@ -7,7 +7,7 @@ Internally [date](https://docs.scylladb.com/stable/cql/types.html#dates) is repr
 
 ## CqlDate
 
-Without any extra features enabled, only `frame::value::CqlDate` is available. It's an
+Without any extra features enabled, only `value::CqlDate` is available. It's an
 [`u32`](https://doc.rust-lang.org/std/primitive.u32.html) wrapper and it matches the internal date representation.
 
 However, for most use cases other types are more practical. See following sections for `chrono` and `time`.
@@ -18,7 +18,7 @@ However, for most use cases other types are more practical. See following sectio
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::frame::value::CqlDate;
+use scylla::value::CqlDate;
 use futures::TryStreamExt;
 
 // 1970-01-08

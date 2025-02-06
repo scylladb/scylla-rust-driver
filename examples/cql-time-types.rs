@@ -6,8 +6,8 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use futures::{StreamExt as _, TryStreamExt as _};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::frame::response::result::CqlValue;
-use scylla::frame::value::{CqlDate, CqlTime, CqlTimestamp};
+use scylla::value::CqlValue;
+use scylla::value::{CqlDate, CqlTime, CqlTimestamp};
 use std::env;
 
 #[tokio::main]

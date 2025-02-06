@@ -6,7 +6,8 @@ use thiserror::Error;
 
 use super::value::DeserializeValue;
 use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row};
+use crate::frame::response::result::{ColumnSpec, ColumnType};
+use crate::value::{CqlValue, Row};
 
 /// Represents a raw, unparsed column value.
 #[non_exhaustive]

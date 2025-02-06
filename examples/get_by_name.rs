@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::frame::response::result::Row;
+use scylla::value::Row;
 use std::env;
 
 #[tokio::main]

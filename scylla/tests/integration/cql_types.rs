@@ -1,8 +1,7 @@
 use itertools::Itertools;
 use scylla::client::session::Session;
-use scylla::frame::response::result::CqlValue;
-use scylla::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint};
 use scylla::serialize::value::SerializeValue;
+use scylla::value::{Counter, CqlDate, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint};
 use scylla::{DeserializeValue, SerializeValue};
 use std::cmp::PartialEq;
 use std::fmt::Debug;

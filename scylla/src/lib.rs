@@ -103,8 +103,16 @@ pub mod macros;
 #[doc(inline)]
 pub use macros::*;
 
+pub mod value {
+    // Every `pub` item is re-exported here, apart from `deser_cql_value`.
+    pub use scylla_cql::value::{
+        Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
+        CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, MaybeUnset, Row, Unset, ValueOverflow,
+    };
+}
+
 pub mod frame {
-    pub use scylla_cql::frame::{frame_errors, value, Authenticator, Compression};
+    pub use scylla_cql::frame::{frame_errors, Authenticator, Compression};
     pub(crate) use scylla_cql::frame::{
         parse_response_body_extensions, protocol_features, read_response_frame, request,
         server_event_type, FrameParams, SerializedRequest,
@@ -123,8 +131,8 @@ pub mod frame {
 
             pub(crate) use scylla_cql::frame::response::result::*;
             pub use scylla_cql::frame::response::result::{
-                CollectionType, ColumnSpec, ColumnType, CqlValue, NativeType, PartitionKeyIndex,
-                Row, TableSpec, UserDefinedType,
+                CollectionType, ColumnSpec, ColumnType, NativeType, PartitionKeyIndex, TableSpec,
+                UserDefinedType,
             };
         }
     }

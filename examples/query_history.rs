@@ -4,9 +4,9 @@ use anyhow::Result;
 use futures::StreamExt as _;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::frame::response::result::Row;
 use scylla::observability::history::{HistoryCollector, StructuredHistory};
 use scylla::query::Query;
+use scylla::value::Row;
 use std::env;
 use std::sync::Arc;
 

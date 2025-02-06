@@ -115,9 +115,10 @@ macro_rules! test_crate {
             use ::tracing::info;
             use _scylla::deserialize::DeserializeValue;
             use _scylla::deserialize::FrameSlice;
-            use _scylla::frame::response::result::{ColumnType, NativeType, CqlValue, UserDefinedType};
+            use _scylla::frame::response::result::{ColumnType, NativeType, UserDefinedType};
             use _scylla::serialize::value::SerializeValue;
             use _scylla::serialize::writers::CellWriter;
+            use _scylla::value::CqlValue;
 
             setup_tracing();
 
@@ -176,7 +177,12 @@ macro_rules! test_crate {
         #[test]
         fn test_types_imports() {
             #[allow(unused_imports)]
-            use _scylla::frame::response::result::{CollectionType, ColumnType, NativeType, CqlValue, UserDefinedType};
+            use _scylla::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
+            #[allow(unused_imports)]
+            use _scylla::value::{
+                Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
+                CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, MaybeUnset, Row, Unset, ValueOverflow
+            };
         }
 
         // Test attributes for value struct with name flavor
