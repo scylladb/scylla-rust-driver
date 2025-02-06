@@ -25,13 +25,11 @@ pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
 pub use scylla_cql::frame::response::CqlResponseKind;
 pub use scylla_cql::serialize::SerializationError;
 
-use std::{
-    error::Error,
-    io::ErrorKind,
-    net::{AddrParseError, IpAddr, SocketAddr},
-    num::ParseIntError,
-    sync::Arc,
-};
+use std::error::Error;
+use std::io::ErrorKind;
+use std::net::{AddrParseError, IpAddr, SocketAddr};
+use std::num::ParseIntError;
+use std::sync::Arc;
 
 use thiserror::Error;
 
