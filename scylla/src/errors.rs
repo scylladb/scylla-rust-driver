@@ -39,15 +39,6 @@ use crate::response::query_result::{IntoRowsResultError, SingleRowError};
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ExecutionError {
-    /// Failed to prepare the statement.
-    /// Applies to unprepared statements with non-empty value parameters.
-    #[error("Failed to prepare the statement: {0}")]
-    PrepareError(#[from] PrepareError),
-
-    /// An error returned by last attempt of request execution.
-    #[error(transparent)]
-    LastAttemptError(#[from] RequestAttemptError),
-
     /// Caller passed an invalid query
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
@@ -61,13 +52,18 @@ pub enum ExecutionError {
     )]
     EmptyPlan,
 
-    /// A metadata error occurred during schema agreement.
-    #[error("Cluster metadata fetch error occurred during automatic schema agreement: {0}")]
-    MetadataError(#[from] MetadataError),
+    /// Failed to prepare the statement.
+    /// Applies to unprepared statements with non-empty value parameters.
+    #[error("Failed to prepare the statement: {0}")]
+    PrepareError(#[from] PrepareError),
 
     /// Selected node's connection pool is in invalid state.
     #[error("No connections in the pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
+
+    /// An error returned by last attempt of request execution.
+    #[error(transparent)]
+    LastAttemptError(#[from] RequestAttemptError),
 
     /// Failed to run a request within a provided client timeout.
     #[error(
@@ -83,6 +79,10 @@ pub enum ExecutionError {
     /// Failed to await automatic schema agreement.
     #[error("Failed to await schema agreement: {0}")]
     SchemaAgreementError(#[from] SchemaAgreementError),
+
+    /// A metadata error occurred during schema agreement.
+    #[error("Cluster metadata fetch error occurred during automatic schema agreement: {0}")]
+    MetadataError(#[from] MetadataError),
 }
 
 impl From<SerializationError> for ExecutionError {
