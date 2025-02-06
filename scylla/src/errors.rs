@@ -1,12 +1,10 @@
 //! This module contains various errors which can be returned by [`Session`](crate::client::session::Session).
 
-use std::{
-    error::Error,
-    io::ErrorKind,
-    net::{AddrParseError, IpAddr, SocketAddr},
-    num::ParseIntError,
-    sync::Arc,
-};
+use std::error::Error;
+use std::io::ErrorKind;
+use std::net::{AddrParseError, IpAddr, SocketAddr};
+use std::num::ParseIntError;
+use std::sync::Arc;
 
 use thiserror::Error;
 
