@@ -15,7 +15,7 @@ use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
     BadQuery, ExecutionError, MetadataError, NewSessionError, PagerExecutionError, PrepareError,
-    ProtocolError, RequestAttemptError, RequestError, TracingError, UseKeyspaceError,
+    RequestAttemptError, RequestError, SchemaAgreementError, TracingError, UseKeyspaceError,
 };
 use crate::frame::response::result;
 #[cfg(feature = "ssl")]
@@ -867,7 +867,9 @@ impl Session {
             .await?;
         if !paging_state_response.finished() {
             error!("Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
-            return Err(ProtocolError::NonfinishedPagingState.into());
+            return Err(ExecutionError::LastAttemptError(
+                RequestAttemptError::NonfinishedPagingState,
+            ));
         }
         Ok(result)
     }
@@ -988,9 +990,7 @@ impl Session {
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response
-            .into_query_result_and_paging_state()
-            .map_err(RequestAttemptError::into_execution_error)?;
+        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1175,7 +1175,9 @@ impl Session {
             .await?;
         if !paging_state.finished() {
             error!("Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
-            return Err(ProtocolError::NonfinishedPagingState.into());
+            return Err(ExecutionError::LastAttemptError(
+                RequestAttemptError::NonfinishedPagingState,
+            ));
         }
         Ok(result)
     }
@@ -1295,9 +1297,7 @@ impl Session {
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response
-            .into_query_result_and_paging_state()
-            .map_err(RequestAttemptError::into_execution_error)?;
+        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1938,7 +1938,7 @@ impl Session {
         last_error.map(Result::Err)
     }
 
-    async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, ExecutionError> {
+    async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, SchemaAgreementError> {
         loop {
             tokio::time::sleep(self.schema_agreement_interval).await;
             if let Some(agreed_version) = self.check_schema_agreement().await? {
@@ -1947,18 +1947,18 @@ impl Session {
         }
     }
 
-    pub async fn await_schema_agreement(&self) -> Result<Uuid, ExecutionError> {
+    pub async fn await_schema_agreement(&self) -> Result<Uuid, SchemaAgreementError> {
         timeout(
             self.schema_agreement_timeout,
             self.await_schema_agreement_indefinitely(),
         )
         .await
-        .unwrap_or(Err(ExecutionError::SchemaAgreementTimeout(
+        .unwrap_or(Err(SchemaAgreementError::Timeout(
             self.schema_agreement_timeout,
         )))
     }
 
-    pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, ExecutionError> {
+    pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, SchemaAgreementError> {
         let cluster_state = self.get_cluster_state();
         let connections_iter = cluster_state.iter_working_connections()?;
 
