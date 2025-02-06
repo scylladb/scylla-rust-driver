@@ -1,8 +1,29 @@
 //! This module contains various errors which can be returned by [`Session`](crate::client::session::Session).
 
-// Re-export DbError type and types that it depends on
-// so they can be found in `scylla::errors`.
+// Re-export error types from pager module.
+pub use crate::client::pager::{NextPageError, NextRowError};
+
+// Re-export error types from query_result module.
+pub use crate::response::query_result::{
+    FirstRowError, IntoRowsResultError, MaybeFirstRowError, ResultNotRowsError, RowsError,
+    SingleRowError,
+};
+
+// Re-export error type from authentication module.
+pub use crate::authentication::AuthError;
+
+// Re-export error types from scylla-cql.
+pub use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
+pub use scylla_cql::frame::frame_errors::{
+    CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
+    CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError, CqlResponseParseError,
+    CqlResultParseError, CqlSupportedParseError, FrameBodyExtensionsParseError,
+    FrameHeaderParseError,
+};
+pub use scylla_cql::frame::request::CqlRequestKind;
 pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
+pub use scylla_cql::frame::response::CqlResponseKind;
+pub use scylla_cql::serialize::SerializationError;
 
 use std::{
     error::Error,
@@ -12,28 +33,9 @@ use std::{
     sync::Arc,
 };
 
-use scylla_cql::{
-    deserialize::{DeserializationError, TypeCheckError},
-    frame::{
-        frame_errors::{
-            CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
-            CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError,
-            CqlResponseParseError, CqlResultParseError, CqlSupportedParseError,
-            FrameBodyExtensionsParseError, FrameHeaderParseError,
-        },
-        request::CqlRequestKind,
-        response::CqlResponseKind,
-    },
-    serialize::SerializationError,
-};
-
 use thiserror::Error;
 
-use crate::client::pager::NextPageError;
-use crate::{authentication::AuthError, frame::response};
-
-use crate::client::pager::NextRowError;
-use crate::response::query_result::{IntoRowsResultError, SingleRowError};
+use crate::frame::response;
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
