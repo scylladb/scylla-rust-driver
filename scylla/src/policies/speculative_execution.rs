@@ -2,7 +2,6 @@ use futures::{
     future::FutureExt,
     stream::{FuturesUnordered, StreamExt},
 };
-use scylla_cql::frame::response::error::DbError;
 use std::{future::Future, sync::Arc, time::Duration};
 use tracing::{trace_span, warn, Instrument};
 
@@ -125,44 +124,7 @@ fn can_be_ignored<ResT>(result: &Result<ResT, RequestError>) -> bool {
                     | RequestAttemptError::UnableToAllocStreamId => true,
 
                     // Handle DbErrors
-                    RequestAttemptError::DbError(db_error, _) => {
-                        // Do not remove this lint!
-                        // It's there for a reason - we don't want new variants
-                        // automatically fall under `_` pattern when they are introduced.
-                        #[deny(clippy::wildcard_enum_match_arm)]
-                        match db_error {
-                            // Errors that will almost certainly appear on other nodes as well
-                            DbError::SyntaxError
-                            | DbError::Invalid
-                            | DbError::AlreadyExists { .. }
-                            | DbError::Unauthorized
-                            | DbError::ProtocolError => false,
-
-                            // Errors that should not appear there - thus, should not be ignored.
-                            DbError::AuthenticationError | DbError::Other(_) => false,
-
-                            // For now, let's assume that UDF failure is not transient - don't ignore it
-                            // TODO: investigate
-                            DbError::FunctionFailure { .. } => false,
-
-                            // Not sure when these can appear - don't ignore them
-                            // TODO: Investigate these errors
-                            DbError::ConfigError | DbError::TruncateError => false,
-
-                            // Errors that we can ignore and perform a retry on some other node
-                            DbError::Unavailable { .. }
-                            | DbError::Overloaded
-                            | DbError::IsBootstrapping
-                            | DbError::ReadTimeout { .. }
-                            | DbError::WriteTimeout { .. }
-                            | DbError::ReadFailure { .. }
-                            | DbError::WriteFailure { .. }
-                            // Preparation may succeed on some other node.
-                            | DbError::Unprepared { .. }
-                            | DbError::ServerError
-                            | DbError::RateLimitReached { .. } => true,
-                        }
-                    }
+                    RequestAttemptError::DbError(db_error, _) => db_error.can_speculative_retry(),
                 }
             }
         },
