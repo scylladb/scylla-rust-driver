@@ -62,7 +62,7 @@ impl RetrySession for DefaultRetrySession {
             | RequestAttemptError::DbError(DbError::ServerError, _)
             | RequestAttemptError::DbError(DbError::TruncateError, _) => {
                 if request_info.is_idempotent {
-                    RetryDecision::RetryNextNode(None)
+                    RetryDecision::RetryNextTarget(None)
                 } else {
                     RetryDecision::DontRetry
                 }
@@ -75,7 +75,7 @@ impl RetrySession for DefaultRetrySession {
             RequestAttemptError::DbError(DbError::Unavailable { .. }, _) => {
                 if !self.was_unavailable_retry {
                     self.was_unavailable_retry = true;
-                    RetryDecision::RetryNextNode(None)
+                    RetryDecision::RetryNextTarget(None)
                 } else {
                     RetryDecision::DontRetry
                 }
@@ -97,7 +97,7 @@ impl RetrySession for DefaultRetrySession {
             ) => {
                 if !self.was_read_timeout_retry && received >= required && !*data_present {
                     self.was_read_timeout_retry = true;
-                    RetryDecision::RetrySameNode(None)
+                    RetryDecision::RetrySameTarget(None)
                 } else {
                     RetryDecision::DontRetry
                 }
@@ -112,17 +112,17 @@ impl RetrySession for DefaultRetrySession {
                     && *write_type == WriteType::BatchLog
                 {
                     self.was_write_timeout_retry = true;
-                    RetryDecision::RetrySameNode(None)
+                    RetryDecision::RetrySameTarget(None)
                 } else {
                     RetryDecision::DontRetry
                 }
             }
             // The node is still bootstrapping it can't execute the request, we should try another one
             RequestAttemptError::DbError(DbError::IsBootstrapping, _) => {
-                RetryDecision::RetryNextNode(None)
+                RetryDecision::RetryNextTarget(None)
             }
             // Connection to the contacted node is overloaded, try another one
-            RequestAttemptError::UnableToAllocStreamId => RetryDecision::RetryNextNode(None),
+            RequestAttemptError::UnableToAllocStreamId => RetryDecision::RetryNextTarget(None),
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
@@ -236,7 +236,7 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_request_info(&error, true)),
-            RetryDecision::RetryNextNode(None)
+            RetryDecision::RetryNextTarget(None)
         );
     }
 
@@ -266,13 +266,13 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_request_info(&error, false)),
-            RetryDecision::RetryNextNode(None)
+            RetryDecision::RetryNextTarget(None)
         );
 
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_request_info(&error, true)),
-            RetryDecision::RetryNextNode(None)
+            RetryDecision::RetryNextTarget(None)
         );
     }
 
@@ -292,7 +292,7 @@ mod tests {
         let mut policy_not_idempotent = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy_not_idempotent.decide_should_retry(make_request_info(&error, false)),
-            RetryDecision::RetryNextNode(None)
+            RetryDecision::RetryNextTarget(None)
         );
         assert_eq!(
             policy_not_idempotent.decide_should_retry(make_request_info(&error, false)),
@@ -302,7 +302,7 @@ mod tests {
         let mut policy_idempotent = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy_idempotent.decide_should_retry(make_request_info(&error, true)),
-            RetryDecision::RetryNextNode(None)
+            RetryDecision::RetryNextTarget(None)
         );
         assert_eq!(
             policy_idempotent.decide_should_retry(make_request_info(&error, true)),
@@ -329,7 +329,7 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_request_info(&enough_responses_no_data, false)),
-            RetryDecision::RetrySameNode(None)
+            RetryDecision::RetrySameTarget(None)
         );
         assert_eq!(
             policy.decide_should_retry(make_request_info(&enough_responses_no_data, false)),
@@ -340,7 +340,7 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_request_info(&enough_responses_no_data, true)),
-            RetryDecision::RetrySameNode(None)
+            RetryDecision::RetrySameTarget(None)
         );
         assert_eq!(
             policy.decide_should_retry(make_request_info(&enough_responses_no_data, true)),
@@ -425,7 +425,7 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_request_info(&good_write_type, true)),
-            RetryDecision::RetrySameNode(None)
+            RetryDecision::RetrySameTarget(None)
         );
         assert_eq!(
             policy.decide_should_retry(make_request_info(&good_write_type, true)),

@@ -166,7 +166,7 @@ impl RetrySession for SchemaQueriesRetrySession {
                     RetryDecision::DontRetry
                 } else {
                     warn!("Received group 0 concurrent modification error during DDL. Performing retry #{}.", self.count);
-                    RetryDecision::RetrySameNode(None)
+                    RetryDecision::RetrySameTarget(None)
                 }
             }
             _ => RetryDecision::DontRetry,

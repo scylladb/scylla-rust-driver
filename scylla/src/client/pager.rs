@@ -236,12 +236,12 @@ where
                 last_error = request_error.into();
 
                 match retry_decision {
-                    RetryDecision::RetrySameNode(cl) => {
+                    RetryDecision::RetrySameTarget(cl) => {
                         self.metrics.inc_retries_num();
                         current_consistency = cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
-                    RetryDecision::RetryNextNode(cl) => {
+                    RetryDecision::RetryNextTarget(cl) => {
                         self.metrics.inc_retries_num();
                         current_consistency = cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;
