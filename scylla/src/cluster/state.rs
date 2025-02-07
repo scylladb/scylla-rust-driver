@@ -1,4 +1,4 @@
-use crate::errors::{BadQuery, ConnectionPoolError};
+use crate::errors::ConnectionPoolError;
 use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
 use crate::policies::host_filter::HostFilter;
 use crate::prepared_statement::TokenCalculationError;
@@ -204,7 +204,7 @@ impl ClusterState {
         keyspace: &str,
         table: &str,
         partition_key: &SerializedValues,
-    ) -> Result<Token, BadQuery> {
+    ) -> Result<Token, TokenCalculationError> {
         let partitioner = self
             .keyspaces
             .get(keyspace)
@@ -213,11 +213,7 @@ impl ClusterState {
             .and_then(PartitionerName::from_str)
             .unwrap_or_default();
 
-        calculate_token_for_partition_key(partition_key, &partitioner).map_err(|err| match err {
-            TokenCalculationError::ValueTooLong(values_len) => {
-                BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())
-            }
-        })
+        calculate_token_for_partition_key(partition_key, &partitioner)
     }
 
     /// Access to replicas owning a given token
@@ -255,7 +251,7 @@ impl ClusterState {
         keyspace: &str,
         table: &str,
         partition_key: &SerializedValues,
-    ) -> Result<Vec<(Arc<Node>, Shard)>, BadQuery> {
+    ) -> Result<Vec<(Arc<Node>, Shard)>, TokenCalculationError> {
         let token = self.compute_token(keyspace, table, partition_key)?;
         Ok(self.get_token_endpoints(keyspace, table, token))
     }
