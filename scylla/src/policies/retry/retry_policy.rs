@@ -19,8 +19,8 @@ pub struct RequestInfo<'a> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RetryDecision {
-    RetrySameNode(Option<Consistency>), // None means that the same consistency should be used as before
-    RetryNextNode(Option<Consistency>), // ditto
+    RetrySameTarget(Option<Consistency>), // None means that the same consistency should be used as before
+    RetryNextTarget(Option<Consistency>), // ditto
     DontRetry,
     IgnoreWriteError,
 }
