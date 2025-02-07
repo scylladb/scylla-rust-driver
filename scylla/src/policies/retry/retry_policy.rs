@@ -20,6 +20,7 @@ pub struct RequestInfo<'a> {
 /// Returned by implementations of RetryPolicy. Instructs the driver on what
 /// to do about the request after it failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RetryDecision {
     /// Request will be sent to the same shard on the same host.
     RetrySameTarget(Option<Consistency>), // None means that the same consistency should be used as before
