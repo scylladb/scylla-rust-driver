@@ -609,9 +609,7 @@ mod tests {
     use std::sync::Arc;
 
     use bytes::Bytes;
-    use scylla_cql::frame::response::result::{
-        CollectionType, ColumnType, CqlValue, NativeType, TableSpec,
-    };
+    use scylla_cql::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
     use scylla_cql::serialize::value::SerializeValue;
     use scylla_cql::serialize::CellWriter;
     use tracing::debug;
@@ -624,6 +622,7 @@ mod tests {
     };
     use crate::routing::Token;
     use crate::test_utils::setup_tracing;
+    use crate::value::CqlValue;
 
     use super::{TableTablets, Tablet, TabletReplicas, TabletsInfo};
 

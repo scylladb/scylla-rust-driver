@@ -7,7 +7,7 @@ midnight. It can't be negative or exceed `86399999999999` (23:59:59.999999999).
 
 ## CqlTime
 
-Without any extra features enabled, only `frame::value::CqlTime` is available. It's an
+Without any extra features enabled, only `value::CqlTime` is available. It's an
 [`i64`](https://doc.rust-lang.org/std/primitive.i64.html) wrapper and it matches the internal time representation.
 
 However, for most use cases other types are more practical. See following sections for `chrono` and `time`.
@@ -18,7 +18,7 @@ However, for most use cases other types are more practical. See following sectio
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::frame::value::CqlTime;
+use scylla::value::CqlTime;
 use futures::TryStreamExt;
 
 // 64 seconds since midnight

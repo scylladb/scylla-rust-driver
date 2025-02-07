@@ -1,5 +1,17 @@
+use std::net::IpAddr;
+use std::result::Result as StdResult;
+
 use thiserror::Error;
 use uuid::Uuid;
+
+use crate::deserialize::value::{
+    mk_deser_err, BuiltinDeserializationErrorKind, MapIterator, UdtIterator,
+};
+use crate::deserialize::DeserializationError;
+use crate::deserialize::DeserializeValue;
+use crate::deserialize::FrameSlice;
+use crate::frame::response::result::{CollectionType, ColumnType};
+use crate::frame::types;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[error("Value is too large to fit in the CQL type")]
@@ -196,7 +208,7 @@ impl std::hash::Hash for CqlTimeuuid {
 /// The type is not very useful in most use cases.
 /// However, users can make use of more complex types
 /// such as `num_bigint::BigInt` (v0.3/v0.4).
-/// The library support (e.g. conversion from [`CqlValue`](super::response::result::CqlValue)) for these types is
+/// The library support (e.g. conversion from [`CqlValue`]) for these types is
 /// enabled via `num-bigint-03` and `num-bigint-04` crate features.
 ///
 /// This struct holds owned bytes. If you wish to borrow the bytes instead,
@@ -338,7 +350,7 @@ impl<V: AsVarintSlice> AsNormalizedVarintSlice for V {
 /// # Example
 ///
 /// ```rust
-/// # use scylla_cql::frame::value::CqlVarint;
+/// # use scylla_cql::value::CqlVarint;
 /// let non_normalized_bytes = vec![0x00, 0x01];
 /// let normalized_bytes = vec![0x01];
 /// assert_eq!(
@@ -364,7 +376,7 @@ impl std::hash::Hash for CqlVarint {
 /// # Example
 ///
 /// ```rust
-/// # use scylla_cql::frame::value::CqlVarintBorrowed;
+/// # use scylla_cql::value::CqlVarintBorrowed;
 /// let non_normalized_bytes = &[0x00, 0x01];
 /// let normalized_bytes = &[0x01];
 /// assert_eq!(
@@ -439,7 +451,7 @@ impl From<CqlVarintBorrowed<'_>> for num_bigint_04::BigInt {
 /// The type is not very useful in most use cases.
 /// However, users can make use of more complex types
 /// such as `bigdecimal::BigDecimal` (v0.4).
-/// The library support (e.g. conversion from [`CqlValue`](super::response::result::CqlValue)) for the type is
+/// The library support (e.g. conversion from [`CqlValue`]) for the type is
 /// enabled via `bigdecimal-04` crate feature.
 ///
 /// # DB data format
@@ -778,4 +790,462 @@ pub struct CqlDuration {
     pub months: i32,
     pub days: i32,
     pub nanoseconds: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum CqlValue {
+    Ascii(String),
+    Boolean(bool),
+    Blob(Vec<u8>),
+    Counter(Counter),
+    Decimal(CqlDecimal),
+    /// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
+    /// Can be converted to chrono::NaiveDate (-262145-1-1 to 262143-12-31) using as_date
+    Date(CqlDate),
+    Double(f64),
+    Duration(CqlDuration),
+    Empty,
+    Float(f32),
+    Int(i32),
+    BigInt(i64),
+    Text(String),
+    /// Milliseconds since unix epoch
+    Timestamp(CqlTimestamp),
+    Inet(IpAddr),
+    List(Vec<CqlValue>),
+    Map(Vec<(CqlValue, CqlValue)>),
+    Set(Vec<CqlValue>),
+    UserDefinedType {
+        keyspace: String,
+        name: String,
+        /// Order of `fields` vector must match the order of fields as defined in the UDT. The
+        /// driver does not check it by itself, so incorrect data will be written if the order is
+        /// wrong.
+        fields: Vec<(String, Option<CqlValue>)>,
+    },
+    SmallInt(i16),
+    TinyInt(i8),
+    /// Nanoseconds since midnight
+    Time(CqlTime),
+    Timeuuid(CqlTimeuuid),
+    Tuple(Vec<Option<CqlValue>>),
+    Uuid(Uuid),
+    Varint(CqlVarint),
+}
+
+impl CqlValue {
+    pub fn as_ascii(&self) -> Option<&String> {
+        match self {
+            Self::Ascii(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_cql_date(&self) -> Option<CqlDate> {
+        match self {
+            Self::Date(d) => Some(*d),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    #[cfg(feature = "chrono-04")]
+    pub(crate) fn as_naive_date_04(&self) -> Option<chrono_04::NaiveDate> {
+        self.as_cql_date().and_then(|date| date.try_into().ok())
+    }
+
+    #[cfg(test)]
+    #[cfg(feature = "time-03")]
+    pub(crate) fn as_date_03(&self) -> Option<time_03::Date> {
+        self.as_cql_date().and_then(|date| date.try_into().ok())
+    }
+
+    pub fn as_cql_timestamp(&self) -> Option<CqlTimestamp> {
+        match self {
+            Self::Timestamp(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    #[cfg(feature = "chrono-04")]
+    pub(crate) fn as_datetime_04(&self) -> Option<chrono_04::DateTime<chrono_04::Utc>> {
+        self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
+    }
+
+    #[cfg(test)]
+    #[cfg(feature = "time-03")]
+    pub(crate) fn as_offset_date_time_03(&self) -> Option<time_03::OffsetDateTime> {
+        self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
+    }
+
+    pub fn as_cql_time(&self) -> Option<CqlTime> {
+        match self {
+            Self::Time(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    #[cfg(feature = "chrono-04")]
+    pub(crate) fn as_naive_time_04(&self) -> Option<chrono_04::NaiveTime> {
+        self.as_cql_time().and_then(|ts| ts.try_into().ok())
+    }
+
+    #[cfg(test)]
+    #[cfg(feature = "time-03")]
+    pub(crate) fn as_time_03(&self) -> Option<time_03::Time> {
+        self.as_cql_time().and_then(|ts| ts.try_into().ok())
+    }
+
+    pub fn as_cql_duration(&self) -> Option<CqlDuration> {
+        match self {
+            Self::Duration(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_counter(&self) -> Option<Counter> {
+        match self {
+            Self::Counter(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_boolean(&self) -> Option<bool> {
+        match self {
+            Self::Boolean(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_double(&self) -> Option<f64> {
+        match self {
+            Self::Double(d) => Some(*d),
+            _ => None,
+        }
+    }
+
+    pub fn as_uuid(&self) -> Option<Uuid> {
+        match self {
+            Self::Uuid(u) => Some(*u),
+            _ => None,
+        }
+    }
+
+    pub fn as_float(&self) -> Option<f32> {
+        match self {
+            Self::Float(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    pub fn as_int(&self) -> Option<i32> {
+        match self {
+            Self::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_bigint(&self) -> Option<i64> {
+        match self {
+            Self::BigInt(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_tinyint(&self) -> Option<i8> {
+        match self {
+            Self::TinyInt(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_smallint(&self) -> Option<i16> {
+        match self {
+            Self::SmallInt(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_blob(&self) -> Option<&Vec<u8>> {
+        match self {
+            Self::Blob(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_text(&self) -> Option<&String> {
+        match self {
+            Self::Text(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_timeuuid(&self) -> Option<CqlTimeuuid> {
+        match self {
+            Self::Timeuuid(u) => Some(*u),
+            _ => None,
+        }
+    }
+
+    pub fn into_string(self) -> Option<String> {
+        match self {
+            Self::Ascii(s) => Some(s),
+            Self::Text(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn into_blob(self) -> Option<Vec<u8>> {
+        match self {
+            Self::Blob(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    pub fn as_inet(&self) -> Option<IpAddr> {
+        match self {
+            Self::Inet(a) => Some(*a),
+            _ => None,
+        }
+    }
+
+    pub fn as_list(&self) -> Option<&Vec<CqlValue>> {
+        match self {
+            Self::List(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_set(&self) -> Option<&Vec<CqlValue>> {
+        match self {
+            Self::Set(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_map(&self) -> Option<&Vec<(CqlValue, CqlValue)>> {
+        match self {
+            Self::Map(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_udt(&self) -> Option<&Vec<(String, Option<CqlValue>)>> {
+        match self {
+            Self::UserDefinedType { fields, .. } => Some(fields),
+            _ => None,
+        }
+    }
+
+    pub fn into_vec(self) -> Option<Vec<CqlValue>> {
+        match self {
+            Self::List(s) => Some(s),
+            Self::Set(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn into_pair_vec(self) -> Option<Vec<(CqlValue, CqlValue)>> {
+        match self {
+            Self::Map(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn into_udt_pair_vec(self) -> Option<Vec<(String, Option<CqlValue>)>> {
+        match self {
+            Self::UserDefinedType { fields, .. } => Some(fields),
+            _ => None,
+        }
+    }
+
+    pub fn into_cql_varint(self) -> Option<CqlVarint> {
+        match self {
+            Self::Varint(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    pub fn into_cql_decimal(self) -> Option<CqlDecimal> {
+        match self {
+            Self::Decimal(i) => Some(i),
+            _ => None,
+        }
+    }
+    // TODO
+}
+
+pub fn deser_cql_value(
+    typ: &ColumnType,
+    buf: &mut &[u8],
+) -> StdResult<CqlValue, DeserializationError> {
+    use crate::frame::response::result::ColumnType::*;
+    use crate::frame::response::result::NativeType::*;
+
+    if buf.is_empty() {
+        match typ {
+            Native(Ascii) | Native(Blob) | Native(Text) => {
+                // can't be empty
+            }
+            _ => return Ok(CqlValue::Empty),
+        }
+    }
+    // The `new_borrowed` version of FrameSlice is deficient in that it does not hold
+    // a `Bytes` reference to the frame, only a slice.
+    // This is not a problem here, fortunately, because none of CqlValue variants contain
+    // any `Bytes` - only exclusively owned types - so we never call FrameSlice::to_bytes().
+    let v = Some(FrameSlice::new_borrowed(buf));
+
+    Ok(match typ {
+        Native(Ascii) => {
+            let s = String::deserialize(typ, v)?;
+            CqlValue::Ascii(s)
+        }
+        Native(Boolean) => {
+            let b = bool::deserialize(typ, v)?;
+            CqlValue::Boolean(b)
+        }
+        Native(Blob) => {
+            let b = Vec::<u8>::deserialize(typ, v)?;
+            CqlValue::Blob(b)
+        }
+        Native(Date) => {
+            let d = CqlDate::deserialize(typ, v)?;
+            CqlValue::Date(d)
+        }
+        Native(Counter) => {
+            let c = crate::value::Counter::deserialize(typ, v)?;
+            CqlValue::Counter(c)
+        }
+        Native(Decimal) => {
+            let d = CqlDecimal::deserialize(typ, v)?;
+            CqlValue::Decimal(d)
+        }
+        Native(Double) => {
+            let d = f64::deserialize(typ, v)?;
+            CqlValue::Double(d)
+        }
+        Native(Float) => {
+            let f = f32::deserialize(typ, v)?;
+            CqlValue::Float(f)
+        }
+        Native(Int) => {
+            let i = i32::deserialize(typ, v)?;
+            CqlValue::Int(i)
+        }
+        Native(SmallInt) => {
+            let si = i16::deserialize(typ, v)?;
+            CqlValue::SmallInt(si)
+        }
+        Native(TinyInt) => {
+            let ti = i8::deserialize(typ, v)?;
+            CqlValue::TinyInt(ti)
+        }
+        Native(BigInt) => {
+            let bi = i64::deserialize(typ, v)?;
+            CqlValue::BigInt(bi)
+        }
+        Native(Text) => {
+            let s = String::deserialize(typ, v)?;
+            CqlValue::Text(s)
+        }
+        Native(Timestamp) => {
+            let t = CqlTimestamp::deserialize(typ, v)?;
+            CqlValue::Timestamp(t)
+        }
+        Native(Time) => {
+            let t = CqlTime::deserialize(typ, v)?;
+            CqlValue::Time(t)
+        }
+        Native(Timeuuid) => {
+            let t = CqlTimeuuid::deserialize(typ, v)?;
+            CqlValue::Timeuuid(t)
+        }
+        Native(Duration) => {
+            let d = CqlDuration::deserialize(typ, v)?;
+            CqlValue::Duration(d)
+        }
+        Native(Inet) => {
+            let i = IpAddr::deserialize(typ, v)?;
+            CqlValue::Inet(i)
+        }
+        Native(Uuid) => {
+            let uuid = uuid::Uuid::deserialize(typ, v)?;
+            CqlValue::Uuid(uuid)
+        }
+        Native(Varint) => {
+            let vi = CqlVarint::deserialize(typ, v)?;
+            CqlValue::Varint(vi)
+        }
+        Collection {
+            typ: CollectionType::List(_type_name),
+            ..
+        } => {
+            let l = Vec::<CqlValue>::deserialize(typ, v)?;
+            CqlValue::List(l)
+        }
+        Collection {
+            typ: CollectionType::Map(_key_type, _value_type),
+            ..
+        } => {
+            let iter = MapIterator::<'_, '_, CqlValue, CqlValue>::deserialize(typ, v)?;
+            let m: Vec<(CqlValue, CqlValue)> = iter.collect::<StdResult<_, _>>()?;
+            CqlValue::Map(m)
+        }
+        Collection {
+            typ: CollectionType::Set(_type_name),
+            ..
+        } => {
+            let s = Vec::<CqlValue>::deserialize(typ, v)?;
+            CqlValue::Set(s)
+        }
+        Vector { .. } => {
+            return Err(mk_deser_err::<CqlValue>(
+                typ,
+                BuiltinDeserializationErrorKind::Unsupported,
+            ))
+        }
+        UserDefinedType {
+            definition: udt, ..
+        } => {
+            let iter = UdtIterator::deserialize(typ, v)?;
+            let fields: Vec<(String, Option<CqlValue>)> = iter
+                .map(|((col_name, col_type), res)| {
+                    res.and_then(|v| {
+                        let val = Option::<CqlValue>::deserialize(col_type, v.flatten())?;
+                        Ok((col_name.clone().into_owned(), val))
+                    })
+                })
+                .collect::<StdResult<_, _>>()?;
+
+            CqlValue::UserDefinedType {
+                keyspace: udt.keyspace.clone().into_owned(),
+                name: udt.name.clone().into_owned(),
+                fields,
+            }
+        }
+        Tuple(type_names) => {
+            let t = type_names
+                .iter()
+                .map(|typ| -> StdResult<_, DeserializationError> {
+                    let raw = types::read_bytes_opt(buf).map_err(|e| {
+                        mk_deser_err::<CqlValue>(
+                            typ,
+                            BuiltinDeserializationErrorKind::RawCqlBytesReadError(e),
+                        )
+                    })?;
+                    raw.map(|v| CqlValue::deserialize(typ, Some(FrameSlice::new_borrowed(v))))
+                        .transpose()
+                })
+                .collect::<StdResult<_, _>>()?;
+            CqlValue::Tuple(t)
+        }
+    })
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct Row {
+    pub columns: Vec<Option<CqlValue>>,
 }
