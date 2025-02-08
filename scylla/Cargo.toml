@@ -43,7 +43,6 @@ full-serialization = [
 [dependencies]
 scylla-macros = { version = "0.7.0", path = "../scylla-macros" }
 scylla-cql = { version = "0.4.0", path = "../scylla-cql" }
-byteorder = "1.3.4"
 bytes = "1.0.1"
 futures = "0.3.6"
 hashbrown = "0.14"
@@ -56,7 +55,6 @@ tokio = { version = "1.34", features = [
     "rt",
     "macros",
 ] }
-snap = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 rand = "0.8.3"
 thiserror = "2.0.6"
@@ -67,7 +65,6 @@ openssl = { version = "0.10.32", optional = true }
 tokio-openssl = { version = "0.6.1", optional = true }
 arc-swap = "1.3.0"
 dashmap = "5.2"
-lz4_flex = { version = "0.11.1" }
 smallvec = "1.8.0"
 async-trait = "0.1.56"
 serde = { version = "1.0", features = ["derive"], optional = true }
