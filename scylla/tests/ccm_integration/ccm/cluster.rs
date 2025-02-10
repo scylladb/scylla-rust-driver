@@ -19,6 +19,7 @@ use tracing::debug;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DBType {
     Scylla,
+    #[allow(dead_code)]
     Cassandra,
 }
 
@@ -748,7 +749,7 @@ impl Cluster {
                     "stop",
                     &self.opts.name,
                     "--config-dir",
-                    &self.config_dir().to_string_lossy().into_owned(),
+                    &self.config_dir().to_string_lossy(),
                 ],
                 RunOptions::new(),
             )
@@ -773,7 +774,7 @@ impl Cluster {
                 "remove",
                 &self.opts.name,
                 "--config-dir",
-                &self.config_dir().to_string_lossy().into_owned(),
+                &self.config_dir().to_string_lossy(),
             ])
             .output()
         {
@@ -798,7 +799,7 @@ impl Cluster {
                     "remove",
                     &self.opts.name,
                     "--config-dir",
-                    &self.config_dir().to_string_lossy().into_owned(),
+                    &self.config_dir().to_string_lossy(),
                 ],
                 RunOptions::new(),
             )

@@ -15,7 +15,7 @@ use tracing::info;
 pub(crate) static CLUSTER_VERSION: LazyLock<String> =
     LazyLock::new(|| std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:6.2.2".to_string()));
 
-const TEST_KEEP_CLUSTER_ON_FAILURE: LazyLock<bool> = LazyLock::new(|| {
+static TEST_KEEP_CLUSTER_ON_FAILURE: LazyLock<bool> = LazyLock::new(|| {
     std::env::var("TEST_KEEP_CLUSTER_ON_FAILURE")
         .unwrap_or("".to_string())
         .parse::<bool>()
@@ -25,7 +25,7 @@ const TEST_KEEP_CLUSTER_ON_FAILURE: LazyLock<bool> = LazyLock::new(|| {
 /// CCM does not allow to have one active cluster within one config directory
 /// To have more than two active CCM cluster at the same time we isolate each cluster into separate
 /// config director, each config directory is created in `ROOT_CCM_DIR`.
-pub(crate) const ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
+static ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
     let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
     let ccm_root_dir_env = std::env::var("CCM_ROOT_DIR");
     let ccm_root_dir = match ccm_root_dir_env {
