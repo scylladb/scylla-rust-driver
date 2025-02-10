@@ -27,9 +27,10 @@ async fn get_session(cluster: &Cluster) -> Session {
 }
 
 #[tokio::test]
+#[cfg_attr(not(ccm_tests), ignore)]
 async fn test_cluster_lifecycle1() {
     setup_tracing();
-    async fn test(cluster: Arc<Mutex<Cluster>>) -> () {
+    async fn test(cluster: Arc<Mutex<Cluster>>) {
         let cluster = cluster.lock().await;
         let session = get_session(&cluster).await;
 
@@ -55,9 +56,10 @@ async fn test_cluster_lifecycle1() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(ccm_tests), ignore)]
 async fn test_cluster_lifecycle2() {
     setup_tracing();
-    async fn test(cluster: Arc<Mutex<Cluster>>) -> () {
+    async fn test(cluster: Arc<Mutex<Cluster>>) {
         let cluster = cluster.lock().await;
         let session = get_session(&cluster).await;
 
