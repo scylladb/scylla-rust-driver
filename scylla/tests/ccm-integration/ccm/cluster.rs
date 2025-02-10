@@ -1,5 +1,5 @@
-use crate::logged_cmd::{LoggedCmd, RunOptions};
-use crate::node_config::NodeConfig;
+use super::logged_cmd::{LoggedCmd, RunOptions};
+use super::node_config::NodeConfig;
 use anyhow::{Context, Error};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
@@ -12,59 +12,57 @@ use tokio::fs::{metadata, File};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::RwLock;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DBType {
     Scylla,
     Cassandra,
-    Datastax,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClusterOptions {
-    // Cluster Name
+    /// Cluster Name
     pub(crate) name: String,
-    // What to database to run: Scylla, Cassandra or Datastax
+    /// What to database to run: Scylla, Cassandra or Datastax
     pub(crate) db_type: DBType,
-    // Scylla or Cassandra version string that goes to CCM.
-    // Examples: `release:6.2.2`, `unstable:master/2021-05-24T17:16:53Z`
+    /// Scylla or Cassandra version string that goes to CCM.
+    /// Examples: `release:6.2.2`, `unstable:master/2021-05-24T17:16:53Z`
     pub(crate) version: String,
-    // CCM allocates node ip addresses based on this prefix:
-    // if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
+    /// CCM allocates node ip addresses based on this prefix:
+    /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
     pub(crate) ip_prefix: NetPrefix,
-    // CCM does not allow to have one active cluster within one config directory
-    // To have more than two active CCM cluster at the same time we isolate each cluster into separate
-    // config director, each config directory is created in `root_dir`.
-    // Example: root_dir = `/tmp/ccm`, config directory for cluster `test_cluster_1` is going be `/tmp/ccm/test_cluster_1`
-    //  and cluster directory (that is created and managed  by CCM) for this cluster is going to be `/tmp/ccm/test_cluster_1/test_cluster_1`
+    /// CCM does not allow to have one active cluster within one config directory
+    /// To have more than two active CCM cluster at the same time we isolate each cluster into separate
+    /// config director, each config directory is created in `root_dir`.
+    /// Example: root_dir = `/tmp/ccm`, config directory for cluster `test_cluster_1` is going be `/tmp/ccm/test_cluster_1`
+    ///  and cluster directory (that is created and managed  by CCM) for this cluster is going to be `/tmp/ccm/test_cluster_1/test_cluster_1`
     pub(crate) root_dir: String,
-    // Number of nodes to populate
-    // [1,2] - DC1 contains 1 node, DC2 contains 2 nodes
+    /// Number of nodes to populate
+    /// [1,2] - DC1 contains 1 node, DC2 contains 2 nodes
     pub(crate) nodes: Vec<u8>,
-    // Number of vCPU for Scylla to occupy
+    /// Number of vCPU for Scylla to occupy
     pub(crate) smp: u16,
-    // Amount of MB for Scylla to occupy has to be bigger than smp*512
+    /// Amount of MB for Scylla to occupy has to be bigger than smp*512
     pub(crate) memory: u32,
-    // scylla.yaml or cassandra.yaml
+    /// scylla.yaml or cassandra.yaml
     pub(crate) config: NodeConfig,
-    // Don't call `ccm remove` when cluster instance is dropped
+    /// Don't call `ccm remove` when cluster instance is dropped
     pub(crate) do_not_remove_on_drop: bool,
 }
 
 impl ClusterOptions {
-    // A `--config-dir` for ccm
-    // Since ccm does not support parallel access to different cluster in the same `config-dir`
-    // we had to isolate each cluster into its own config directory
+    /// A `--config-dir` for ccm
+    /// Since ccm does not support parallel access to different cluster in the same `config-dir`
+    /// we had to isolate each cluster into its own config directory
     fn config_dir(&self) -> String {
         format!("{}/{}", self.root_dir, self.name)
     }
 
-    // A directory that is created by CCM where it stores this cluster
+    /// A directory that is created by CCM where it stores this cluster
     fn cluster_dir(&self) -> String {
         format!("{}/{}/{}", self.root_dir, self.name, self.name)
     }
 
-    // A file to store all ccm logs
+    /// A file to store all ccm logs
     fn ccm_log_file(&self) -> String {
         format!("{}/{}/ccm.log", self.root_dir, self.name)
     }
@@ -90,23 +88,23 @@ impl Default for ClusterOptions {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct NodeOptions {
-    // Node ID, needed to compose ccm commands properly
+    /// Node ID, needed to compose ccm commands properly
     pub(crate) id: u16,
-    // Database Type: Cassandra, Scylla or Datastax
+    /// Database Type: Cassandra, Scylla or Datastax
     pub(crate) db_type: DBType,
-    // Scylla or Cassandra version string that goes to CCM.
-    // Examples: `release:6.2.2`, `unstable:master/2021-05-24T17:16:53Z`
+    /// Scylla or Cassandra version string that goes to CCM.
+    /// Examples: `release:6.2.2`, `unstable:master/2021-05-24T17:16:53Z`
     pub(crate) version: String,
-    // Datacenter ID
+    /// Datacenter ID
     pub(crate) datacenter_id: u16,
-    // CCM allocates node ip addresses based on this prefix:
-    // if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
+    /// CCM allocates node ip addresses based on this prefix:
+    /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
     pub(crate) ip_prefix: NetPrefix,
-    // A `--config-dir` for ccm
+    /// A `--config-dir` for ccm
     pub(crate) config_dir: String,
-    // Number of vCPU for Scylla to occupy
+    /// Number of vCPU for Scylla to occupy
     pub(crate) smp: u16,
-    // Amount of MB for Scylla to occupy has to be bigger than smp*512
+    /// Amount of MB for Scylla to occupy has to be bigger than smp*512
     pub(crate) memory: u32,
 }
 
