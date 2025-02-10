@@ -20,6 +20,9 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install scylla-ccm
         run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
+      - name: Run CCM command to create the ~/.ccm dir
+        continue-on-error: true
+        run: ccm status
       - name: Update rust toolchain
         run: rustup update
       - name: Run CCM tests
