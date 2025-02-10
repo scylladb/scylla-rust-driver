@@ -8,9 +8,8 @@ use std::sync::atomic::AtomicI32;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-// A simple abstraction to run commands, log command, exit code its stderr, stdout to a file
-//  and optionally to own stderr/stdout
-// It should allow to run multiple commands in parallel
+/// A simple abstraction to run commands, and emit logs during its execution.
+/// It should allow to run multiple commands in parallel.
 pub(crate) struct LoggedCmd {
     run_id: AtomicI32,
 }
