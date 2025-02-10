@@ -516,9 +516,7 @@ impl Cluster {
             },
         }
 
-        let lcmd = LoggedCmd::new(opts.ccm_log_file())
-            .await
-            .with_context(|| format!("failed to create command logger {}", opts.ccm_log_file()))?;
+        let lcmd = LoggedCmd::new().await;
 
         let mut cluster = Cluster {
             destroyed: false,

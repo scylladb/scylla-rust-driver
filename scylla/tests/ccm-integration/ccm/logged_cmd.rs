@@ -5,18 +5,13 @@ use std::io;
 use std::ops::Deref;
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::AtomicI32;
-use std::sync::Arc;
-use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::Mutex;
-use tokio::task;
 
 // A simple abstraction to run commands, log command, exit code its stderr, stdout to a file
 //  and optionally to own stderr/stdout
 // It should allow to run multiple commands in parallel
 pub(crate) struct LoggedCmd {
-    file: Arc<Mutex<File>>,
     run_id: AtomicI32,
 }
 
@@ -50,18 +45,10 @@ impl RunOptions {
 }
 
 impl LoggedCmd {
-    pub(crate) async fn new(file_name: String) -> Result<Self, Error> {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(file_name.as_str())
-            .await
-            .with_context(|| format!("failed to open ccm log file {}", file_name))?;
-
-        Ok(LoggedCmd {
-            file: Arc::new(Mutex::new(file)),
+    pub(crate) async fn new() -> Self {
+        LoggedCmd {
             run_id: AtomicI32::new(1),
-        })
+        }
     }
 
     async fn process_child_result(
@@ -188,17 +175,6 @@ impl LoggedCmd {
     }
 }
 
-impl Drop for LoggedCmd {
-    fn drop(&mut self) {
-        let file = self.file.clone();
-        task::spawn(async move {
-            if let Err(e) = file.lock().await.sync_all().await {
-                eprintln!("Failed to sync file: {}", e);
-            }
-        });
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,9 +185,7 @@ mod tests {
     async fn test_run_command_success() {
         let log_file = "/tmp/test_log_success.txt";
         let _ = fs::remove_file(log_file).await;
-        let runner = LoggedCmd::new(log_file.to_string())
-            .await
-            .expect("Failed to set log file");
+        let runner = LoggedCmd::new().await;
 
         // Run a simple echo command
         runner
@@ -231,9 +205,7 @@ mod tests {
     async fn test_run_command_failure() {
         let log_file = "/tmp/test_log_failure.txt";
         let _ = fs::remove_file(log_file).await;
-        let runner = LoggedCmd::new(log_file.to_string())
-            .await
-            .expect("Failed to set log file");
+        let runner = LoggedCmd::new().await;
 
         // Run a command that will fail
         let err = runner
@@ -258,9 +230,7 @@ mod tests {
     async fn test_run_command_with_env() {
         let log_file = "/tmp/test_log_env.txt";
         let _ = fs::remove_file(log_file).await;
-        let runner = LoggedCmd::new(log_file.to_string())
-            .await
-            .expect("Failed to set log file");
+        let runner = LoggedCmd::new().await;
 
         let mut env_vars: HashMap<String, String> = HashMap::new();
         env_vars.insert("TEST_ENV".to_string(), "12345".to_string());
