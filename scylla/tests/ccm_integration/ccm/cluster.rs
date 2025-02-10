@@ -45,20 +45,6 @@ pub(crate) struct ClusterOptions {
     pub(crate) do_not_remove_on_drop: bool,
 }
 
-impl ClusterOptions {
-    /// A `--config-dir` for ccm
-    /// Since ccm does not support parallel access to different cluster in the same `config-dir`
-    /// we had to isolate each cluster into its own config directory
-    fn config_dir(&self) -> String {
-        format!("{}/{}", *ROOT_CCM_DIR, self.name)
-    }
-
-    /// A directory that is created by CCM where it stores this cluster
-    fn cluster_dir(&self) -> String {
-        format!("{}/{}/{}", *ROOT_CCM_DIR, self.name, self.name)
-    }
-}
-
 impl Default for ClusterOptions {
     fn default() -> Self {
         ClusterOptions {
@@ -90,8 +76,6 @@ pub(crate) struct NodeOptions {
     /// CCM allocates node ip addresses based on this prefix:
     /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
     pub(crate) ip_prefix: NetPrefix,
-    /// A `--config-dir` for ccm
-    pub(crate) config_dir: String,
     /// Number of vCPU for Scylla to occupy
     pub(crate) smp: u16,
     /// Amount of MB for Scylla to occupy has to be bigger than smp*512
@@ -110,7 +94,6 @@ impl NodeOptions {
             datacenter_id: 1,
             db_type: value.db_type.clone(),
             version: value.version.clone(),
-            config_dir: value.config_dir().to_string(),
             ip_prefix: value.ip_prefix.clone(),
             smp: value.smp,
             memory: value.memory,
@@ -235,16 +218,24 @@ pub(crate) struct Node {
     opts: NodeOptions,
     config: NodeConfig,
     logged_cmd: Arc<LoggedCmd>,
+    /// A `--config-dir` for ccm
+    config_dir: String,
 }
 
 #[allow(dead_code)]
 impl Node {
-    fn new(opts: NodeOptions, config: NodeConfig, logged_cmd: Arc<LoggedCmd>) -> Self {
+    fn new(
+        opts: NodeOptions,
+        config: NodeConfig,
+        logged_cmd: Arc<LoggedCmd>,
+        config_dir: String,
+    ) -> Self {
         Node {
             opts,
             config,
             logged_cmd,
             status: NodeStatus::Stopped,
+            config_dir,
         }
     }
 
@@ -302,7 +293,7 @@ impl Node {
             self.opts.name(),
             "start".to_string(),
             "--config-dir".to_string(),
-            self.opts.config_dir.clone(),
+            self.config_dir.clone(),
         ];
 
         let NodeStartOptions {
@@ -332,7 +323,7 @@ impl Node {
             self.opts.name(),
             "stop".to_string(),
             "--config-dir".to_string(),
-            self.opts.config_dir.clone(),
+            self.config_dir.clone(),
         ];
 
         let NodeStopOptions {
@@ -361,7 +352,7 @@ impl Node {
             self.opts.name(),
             "remove".to_string(),
             "--config-dir".to_string(),
-            self.opts.config_dir.clone(),
+            self.config_dir.clone(),
         ];
         self.logged_cmd
             .run_command("ccm", &args, RunOptions::new())
@@ -375,7 +366,7 @@ impl Node {
             self.opts.name(),
             "updateconf".to_string(),
             "--config-dir".to_string(),
-            self.opts.config_dir.clone(),
+            self.config_dir.clone(),
         ];
 
         // converting config to space separated list of `key:value`
@@ -461,6 +452,8 @@ pub(crate) struct Cluster {
     destroyed: bool,
     logged_cmd: Arc<LoggedCmd>,
     opts: ClusterOptions,
+    ccm_dir: String,
+    cluster_dir: String,
 }
 
 impl Drop for Cluster {
@@ -476,6 +469,18 @@ pub(crate) const DEFAULT_SMP: u16 = 1;
 
 #[allow(dead_code)]
 impl Cluster {
+    /// A `--config-dir` for ccm
+    /// Since ccm does not support parallel access to different cluster in the same `config-dir`
+    /// we had to isolate each cluster into its own config directory
+    fn config_dir(&self) -> &str {
+        &self.ccm_dir
+    }
+
+    /// A directory that is created by CCM where it stores this cluster
+    fn cluster_dir(&self) -> &str {
+        &self.cluster_dir
+    }
+
     /// This method looks at all busy /24 networks in 127.0.0.0/8 and return first available
     /// network goes as busy if anything is listening on any port and any address in this network
     /// 127.0.0.0/24 is skipped and never returned
@@ -540,7 +545,7 @@ impl Cluster {
                 "--remote-debug-port".to_string(),
                 node.debug_port().to_string(),
                 "--config-dir".to_string(),
-                node.opts.config_dir.clone(),
+                node.config_dir.clone(),
             ];
             match node.opts.db_type {
                 DBType::Scylla => {
@@ -565,6 +570,7 @@ impl Cluster {
             },
             self.opts.config.clone(),
             self.logged_cmd.clone(),
+            self.config_dir().to_string(),
         );
         let node = Arc::new(RwLock::new(node));
         self.nodes.push(node.clone());
@@ -577,28 +583,29 @@ impl Cluster {
             opts.ip_prefix = Self::sniff_ipv4_prefix().await?
         };
 
-        match metadata(opts.config_dir().as_str()).await {
+        let ccm_dir = format!("{}/{}", *ROOT_CCM_DIR, opts.name);
+        let cluster_dir = format!("{}/{}", ccm_dir, opts.name);
+
+        println!("Config dir: {}", ccm_dir);
+
+        match metadata(ccm_dir.as_str()).await {
             Ok(mt) => {
                 if !mt.is_dir() {
                     return Err(Error::msg(format!(
                         "{} already exists and it is not a directory",
-                        opts.config_dir()
+                        ccm_dir
                     )));
                 }
             }
             Err(err) => match err.kind() {
                 std::io::ErrorKind::NotFound => {
-                    tokio::fs::create_dir_all(opts.config_dir().as_str())
+                    tokio::fs::create_dir_all(ccm_dir.as_str())
                         .await
-                        .with_context(
-                            || format! {"failed to create root directory {}", opts.config_dir()},
-                        )?;
+                        .with_context(|| format! {"failed to create root directory {}", ccm_dir})?;
                 }
                 _ => {
-                    return Err(Error::from(err).context(format!(
-                        "failed to create root directory {}",
-                        opts.config_dir()
-                    )));
+                    return Err(Error::from(err)
+                        .context(format!("failed to create root directory {}", ccm_dir)));
                 }
             },
         }
@@ -610,6 +617,8 @@ impl Cluster {
             nodes: NodeList::new(),
             logged_cmd: Arc::new(lcmd),
             opts: opts.clone(),
+            ccm_dir,
+            cluster_dir,
         };
 
         for datacenter_id in 0..opts.nodes.len() {
@@ -642,7 +651,7 @@ impl Cluster {
             "-i".to_string(),
             self.opts.ip_prefix.to_string(),
             "--config-dir".to_string(),
-            config_dir.clone(),
+            config_dir.to_string(),
         ];
         if self.opts.db_type == DBType::Scylla {
             args.push("--scylla".to_string());
@@ -665,7 +674,7 @@ impl Cluster {
             "-n".to_string(),
             nodes_str,
             "--config-dir".to_string(),
-            config_dir.clone(),
+            config_dir.to_string(),
         ];
         self.logged_cmd
             .run_command("ccm", &args, RunOptions::new())
@@ -688,7 +697,7 @@ impl Cluster {
         let mut args = vec![
             "start".to_string(),
             "--config-dir".to_string(),
-            self.opts.config_dir(),
+            self.config_dir().to_string(),
         ];
 
         let NodeStartOptions {
@@ -725,12 +734,7 @@ impl Cluster {
             .logged_cmd
             .run_command(
                 "ccm",
-                &[
-                    "stop",
-                    &self.opts.name,
-                    "--config-dir",
-                    &self.opts.config_dir(),
-                ],
+                &["stop", &self.opts.name, "--config-dir", &self.config_dir()],
                 RunOptions::new(),
             )
             .await
@@ -754,7 +758,7 @@ impl Cluster {
                 "remove",
                 &self.opts.name,
                 "--config-dir",
-                &self.opts.config_dir(),
+                &self.config_dir(),
             ])
             .output()
         {
@@ -779,7 +783,7 @@ impl Cluster {
                     "remove",
                     &self.opts.name,
                     "--config-dir",
-                    &self.opts.config_dir(),
+                    &self.config_dir(),
                 ],
                 RunOptions::new(),
             )
