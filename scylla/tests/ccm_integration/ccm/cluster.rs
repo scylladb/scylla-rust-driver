@@ -130,14 +130,65 @@ pub(crate) enum NodeStatus {
     Deleted,
 }
 
+/// Options to start the node with.
+/// It controls `--no-wait`, `--wait-other-notice` and `--wait-for-binary-proto` ccm options.
 #[allow(dead_code)]
-pub(crate) enum NodeStartOption {
-    // Don't wait node to start
-    NoWait,
-    // Wait till other nodes recognize started node
-    WaitOtherNotice,
-    // Wait till started node report that client port is opened and operational
-    WaitForBinaryProto,
+pub(crate) struct NodeStartOptions {
+    /// Don't wait for the node to start. Corresponds to `--no-wait` option in ccm.
+    no_wait: bool,
+    /// Wait till other nodes recognize started node. Corresponds to `--wait-other-notice` option in ccm.
+    wait_other_notice: bool,
+    /// Wait till started node report that client port is opened and operational.
+    /// Corresponds to `--wait-for-binary-proto` option in ccm.
+    wait_for_binary_proto: bool,
+}
+
+/// The default start options. Enable following ccm options:
+/// - `--wait-other-notice`
+/// - `--wait-for-binary-proto`
+///
+/// The `--no-wait` option is not enabled.
+impl Default for NodeStartOptions {
+    fn default() -> Self {
+        Self {
+            no_wait: false,
+            wait_other_notice: true,
+            wait_for_binary_proto: true,
+        }
+    }
+}
+
+impl NodeStartOptions {
+    /// Creates the default start options. Enables following ccm options:
+    /// - `--wait-other-notice`
+    /// - `--wait-for-binary-proto`
+    ///
+    /// The `--no-wait` option is not enabled.
+    #[allow(dead_code)]
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enables or disables the `--no-wait` ccm option.
+    #[allow(dead_code)]
+    pub(crate) fn no_wait(mut self, no_wait: bool) -> Self {
+        self.no_wait = no_wait;
+        self
+    }
+
+    /// Enables or disables the `--wait-other-notice` ccm option.
+    #[allow(dead_code)]
+    pub(crate) fn wait_other_notice(mut self, wait_other_notice: bool) -> Self {
+        self.wait_other_notice = wait_other_notice;
+        self
+    }
+
+    /// Enables or disables the `--wait-for-binary-proto` ccm option.
+    #[allow(dead_code)]
+    pub(crate) fn wait_for_binary_proto(mut self, wait_for_binary_proto: bool) -> Self {
+        self.wait_for_binary_proto = wait_for_binary_proto;
+        self
+    }
 }
 
 /// Options to stop the node with.
@@ -242,24 +293,29 @@ impl Node {
         env
     }
 
-    pub(crate) async fn start(&mut self, opts: Option<&[NodeStartOption]>) -> Result<(), Error> {
+    /// This method starts the node. User can provide optional [`NodeStartOptions`] to control the behavior of the node start.
+    /// If `None` is provided, the default options are used (see the implementation of Default for [`NodeStartOptions`]).
+    pub(crate) async fn start(&mut self, opts: Option<NodeStartOptions>) -> Result<(), Error> {
         let mut args: Vec<String> = vec![
             self.opts.name(),
             "start".to_string(),
             "--config-dir".to_string(),
             self.opts.config_dir.clone(),
         ];
-        for opt in opts.unwrap_or(&[
-            NodeStartOption::WaitForBinaryProto,
-            NodeStartOption::WaitOtherNotice,
-        ]) {
-            match opt {
-                NodeStartOption::NoWait => args.push("--no-wait".to_string()),
-                NodeStartOption::WaitOtherNotice => args.push("--wait-other-notice".to_string()),
-                NodeStartOption::WaitForBinaryProto => {
-                    args.push("--wait-for-binary-proto".to_string())
-                }
-            }
+
+        let NodeStartOptions {
+            no_wait,
+            wait_other_notice,
+            wait_for_binary_proto,
+        } = opts.unwrap_or_default();
+        if no_wait {
+            args.push("--no-wait".to_string());
+        }
+        if wait_other_notice {
+            args.push("--wait-other-notice".to_string());
+        }
+        if wait_for_binary_proto {
+            args.push("--wait-for-binary-proto".to_string());
         }
 
         self.logged_cmd
@@ -624,23 +680,28 @@ impl Cluster {
         env
     }
 
-    pub(crate) async fn start(&self, opts: Option<&[NodeStartOption]>) -> Result<(), Error> {
+    /// This method starts the cluster. User can provide optional [`NodeStartOptions`] to control the behavior of the nodes start.
+    /// If `None` is provided, the default options are used (see the implementation of Default for [`NodeStartOptions`]).
+    pub(crate) async fn start(&self, opts: Option<NodeStartOptions>) -> Result<(), Error> {
         let mut args = vec![
             "start".to_string(),
             "--config-dir".to_string(),
             self.opts.config_dir(),
         ];
-        for opt in opts.unwrap_or(&[
-            NodeStartOption::WaitForBinaryProto,
-            NodeStartOption::WaitOtherNotice,
-        ]) {
-            match opt {
-                NodeStartOption::NoWait => args.push("--no-wait".to_string()),
-                NodeStartOption::WaitOtherNotice => args.push("--wait-other-notice".to_string()),
-                NodeStartOption::WaitForBinaryProto => {
-                    args.push("--wait-for-binary-proto".to_string())
-                }
-            }
+
+        let NodeStartOptions {
+            no_wait,
+            wait_other_notice,
+            wait_for_binary_proto,
+        } = opts.unwrap_or_default();
+        if no_wait {
+            args.push("--no-wait".to_string());
+        }
+        if wait_other_notice {
+            args.push("--wait-other-notice".to_string());
+        }
+        if wait_for_binary_proto {
+            args.push("--wait-for-binary-proto".to_string());
         }
 
         self.logged_cmd
