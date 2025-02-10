@@ -22,6 +22,7 @@ use tracing::{error, warn};
 
 use scylla_proxy::{Node, Proxy, ProxyError, RunningProxy, ShardAwareness};
 
+#[allow(dead_code)]
 pub(crate) fn setup_tracing() {
     let _ = tracing_subscriber::fmt::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -29,8 +30,10 @@ pub(crate) fn setup_tracing() {
         .try_init();
 }
 
+#[allow(dead_code)]
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
+#[allow(dead_code)]
 pub(crate) fn unique_keyspace_name() -> String {
     let cnt = UNIQUE_COUNTER.fetch_add(1, Ordering::SeqCst);
     let name = format!(
@@ -45,6 +48,7 @@ pub(crate) fn unique_keyspace_name() -> String {
     name
 }
 
+#[allow(dead_code)]
 pub(crate) async fn test_with_3_node_cluster<F, Fut>(
     shard_awareness: ShardAwareness,
     test: F,
@@ -95,6 +99,7 @@ where
     running_proxy.finish().await
 }
 
+#[allow(dead_code)]
 pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
     // Cassandra doesn't have a concept of features, so first detect
     // if there is the `supported_features` column in system.local
@@ -127,6 +132,7 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
         .any(|f| f == feature)
 }
 
+#[allow(dead_code)]
 pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
     supports_feature(session, "TABLETS").await
 }
@@ -134,6 +140,7 @@ pub(crate) async fn scylla_supports_tablets(session: &Session) -> bool {
 // Creates a generic session builder based on conditional compilation configuration
 // For SessionBuilder of DefaultMode type, adds localhost to known hosts, as all of the tests
 // connect to localhost.
+#[allow(dead_code)]
 pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilderKind> {
     let session_builder = {
         #[cfg(not(scylla_cloud_tests))]
@@ -168,6 +175,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
 
 // Shorthands for better readability.
 // Copied from Scylla because we don't want to make it public there.
+#[allow(dead_code)]
 pub(crate) trait DeserializeOwnedValue:
     for<'frame, 'metadata> DeserializeValue<'frame, 'metadata>
 {
@@ -182,6 +190,7 @@ impl<T> DeserializeOwnedValue for T where
 // This is to make sure that all DDL queries land on the same node,
 // to prevent errors from concurrent DDL queries executed on different nodes.
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SchemaQueriesLBP;
 
 impl LoadBalancingPolicy for SchemaQueriesLBP {
@@ -210,6 +219,7 @@ impl LoadBalancingPolicy for SchemaQueriesLBP {
 }
 
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct SchemaQueriesRetrySession {
     count: usize,
 }
@@ -242,14 +252,16 @@ impl RetrySession for SchemaQueriesRetrySession {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SchemaQueriesRetryPolicy;
 
 impl RetryPolicy for SchemaQueriesRetryPolicy {
     fn new_session(&self) -> Box<dyn RetrySession> {
-        Box::new(SchemaQueriesRetrySession::default())
+        Box::<SchemaQueriesRetrySession>::default()
     }
 }
 
+#[allow(dead_code)]
 fn apply_ddl_lbp(query: &mut Query) {
     let policy = query
         .get_execution_profile_handle()
@@ -265,6 +277,7 @@ fn apply_ddl_lbp(query: &mut Query) {
 // we'll be able to do session.ddl(...) instead of perform_ddl(&session, ...)
 // or something like that.
 #[async_trait::async_trait]
+#[allow(dead_code)]
 pub(crate) trait PerformDDL {
     async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError>;
 }
