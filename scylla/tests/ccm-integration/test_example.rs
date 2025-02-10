@@ -1,5 +1,5 @@
 use crate::ccm::cluster::{Cluster, ClusterOptions};
-use crate::ccm::CLUSTER_VERSION;
+use crate::ccm::{cluster_1_node, run_ccm_test, CLUSTER_VERSION};
 use anyhow::{Context, Error};
 
 use scylla::client::session::Session;
@@ -16,8 +16,6 @@ async fn cluster_1_options() -> ClusterOptions {
         ..ClusterOptions::default()
     }
 }
-
-
 
 async fn get_session(cluster: &Cluster) -> Session {
     let endpoints = cluster.nodes.get_contact_endpoints().await;

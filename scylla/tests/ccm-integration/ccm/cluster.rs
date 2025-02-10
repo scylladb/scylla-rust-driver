@@ -459,9 +459,6 @@ impl Cluster {
                 DBType::Scylla => {
                     args.push("--scylla".to_string());
                 }
-                DBType::Datastax => {
-                    args.push("--dse".to_string());
-                }
                 DBType::Cassandra => {}
             }
             node.logged_cmd

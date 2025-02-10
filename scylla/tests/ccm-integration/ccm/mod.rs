@@ -2,7 +2,12 @@ pub(crate) mod cluster;
 mod logged_cmd;
 pub(crate) mod node_config;
 
+use std::sync::Arc;
+
+use anyhow::{Context, Error};
+use cluster::{Cluster, ClusterOptions};
 use lazy_static::lazy_static;
+use tokio::sync::RwLock;
 
 lazy_static! {
     pub static ref CLUSTER_VERSION: String =
@@ -13,7 +18,31 @@ lazy_static! {
         .unwrap_or(false);
 }
 
-async fn run_ccm_test<C, T, CFut, TFut>(cb: C, test_body: T)
+pub(crate) async fn cluster_1_node() -> Arc<RwLock<Cluster>> {
+    let mut cluster = Cluster::new(ClusterOptions {
+        name: "cluster_1_node".to_string(),
+        version: CLUSTER_VERSION.clone(),
+        nodes: vec![1],
+        ..ClusterOptions::default()
+    })
+    .await
+    .context("Failed to create cluster")
+    .unwrap();
+
+    cluster
+        .init()
+        .await
+        .context("failed to initialize cluster")
+        .unwrap();
+    cluster
+        .start(None)
+        .await
+        .context("failed to start cluster")
+        .unwrap();
+    Arc::new(RwLock::new(cluster))
+}
+
+pub(crate) async fn run_ccm_test<C, T, CFut, TFut>(cb: C, test_body: T)
 where
     C: FnOnce() -> CFut,
     CFut: std::future::Future<Output = Arc<RwLock<Cluster>>>,
