@@ -140,12 +140,40 @@ pub(crate) enum NodeStartOption {
     WaitForBinaryProto,
 }
 
+/// Options to stop the node with.
+/// It allows to control the value of `--no-wait` and `--not-gently` ccm options.
 #[allow(dead_code)]
-pub(crate) enum NodeStopOption {
-    // Don't wait node to properly stop
-    NoWait,
-    // Force-terminate node with `kill -9`
-    Kill,
+pub(crate) struct NodeStopOptions {
+    /// Dont't wait for the node to properly stop.
+    no_wait: bool,
+    /// Force-terminate node with `kill -9`.
+    not_gently: bool,
+}
+
+impl NodeStopOptions {
+    /// Create a new `NodeStopOptions` with default values.
+    /// All ccm options are disabled by default.
+    #[allow(dead_code)]
+    pub(crate) fn new() -> Self {
+        NodeStopOptions {
+            no_wait: false,
+            not_gently: false,
+        }
+    }
+
+    /// Enables or disables the `--no-wait` cmm option.
+    #[allow(dead_code)]
+    pub(crate) fn no_wait(&mut self, no_wait: bool) -> &mut Self {
+        self.no_wait = no_wait;
+        self
+    }
+
+    /// Enables or disables the `--not-gently` ccm option.
+    #[allow(dead_code)]
+    pub(crate) fn not_gently(&mut self, not_gently: bool) -> &mut Self {
+        self.not_gently = not_gently;
+        self
+    }
 }
 
 #[allow(dead_code)]
@@ -241,19 +269,25 @@ impl Node {
         Ok(())
     }
 
-    pub(crate) async fn stop(&mut self, opts: Option<&[NodeStopOption]>) -> Result<(), Error> {
+    pub(crate) async fn stop(&mut self, opts: NodeStopOptions) -> Result<(), Error> {
         let mut args: Vec<String> = vec![
             self.opts.name(),
             "stop".to_string(),
             "--config-dir".to_string(),
             self.opts.config_dir.clone(),
         ];
-        for opt in opts.unwrap_or(&[]) {
-            match opt {
-                NodeStopOption::NoWait => args.push("--no-wait".to_string()),
-                NodeStopOption::Kill => args.push("--not-gently".to_string()),
-            }
+
+        let NodeStopOptions {
+            no_wait,
+            not_gently,
+        } = opts;
+        if no_wait {
+            args.push("--no-wait".to_string());
         }
+        if not_gently {
+            args.push("--not-gently".to_string());
+        }
+
         self.logged_cmd
             .run_command("ccm", &args, RunOptions::new().with_env(self.get_ccm_env()))
             .await?;
