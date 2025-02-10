@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use crate::ccm::cluster::{Cluster, ClusterOptions};
 use crate::ccm::{run_ccm_test, CLUSTER_VERSION};
 
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use tokio::sync::Mutex;
 
 fn cluster_1_node() -> ClusterOptions {
     ClusterOptions {
@@ -24,7 +27,8 @@ async fn get_session(cluster: &Cluster) -> Session {
 
 #[tokio::test]
 async fn test_cluster_lifecycle1() {
-    async fn test(cluster: &mut Cluster) -> () {
+    async fn test(cluster: Arc<Mutex<Cluster>>) -> () {
+        let cluster = cluster.lock().await;
         let session = get_session(&cluster).await;
 
         let rows = session
@@ -50,8 +54,9 @@ async fn test_cluster_lifecycle1() {
 
 #[tokio::test]
 async fn test_cluster_lifecycle2() {
-    async fn test(cluster: &mut Cluster) -> () {
-        let session = get_session(cluster).await;
+    async fn test(cluster: Arc<Mutex<Cluster>>) -> () {
+        let cluster = cluster.lock().await;
+        let session = get_session(&cluster).await;
 
         let rows = session
             .query_unpaged("select data_center from system.local", &[])
