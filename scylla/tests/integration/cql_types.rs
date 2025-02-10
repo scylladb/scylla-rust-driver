@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
-use crate::utils::{
+use crate::common::utils::{
     create_new_session_builder, scylla_supports_tablets, setup_tracing, unique_keyspace_name,
     DeserializeOwnedValue, PerformDDL,
 };

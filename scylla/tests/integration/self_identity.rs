@@ -1,4 +1,4 @@
-use crate::utils::{setup_tracing, test_with_3_node_cluster};
+use crate::common::utils::{setup_tracing, test_with_3_node_cluster};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::client::SelfIdentity;

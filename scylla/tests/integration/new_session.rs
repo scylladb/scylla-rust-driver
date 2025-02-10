@@ -1,4 +1,4 @@
-use crate::utils::setup_tracing;
+use crate::common::utils::setup_tracing;
 
 use assert_matches::assert_matches;
 use scylla::client::session_builder::SessionBuilder;

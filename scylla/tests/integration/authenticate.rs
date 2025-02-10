@@ -1,4 +1,4 @@
-use crate::utils::{setup_tracing, unique_keyspace_name, PerformDDL};
+use crate::common::utils::{setup_tracing, unique_keyspace_name, PerformDDL};
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use scylla::authentication::{AuthError, AuthenticatorProvider, AuthenticatorSession};
