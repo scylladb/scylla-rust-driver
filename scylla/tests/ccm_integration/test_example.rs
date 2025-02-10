@@ -1,14 +1,10 @@
 use crate::ccm::cluster::{Cluster, ClusterOptions};
-use crate::ccm::{cluster_1_node, run_ccm_test, CLUSTER_VERSION};
-use anyhow::{Context, Error};
+use crate::ccm::{run_ccm_test, CLUSTER_VERSION};
 
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use std::ops::Deref;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
-async fn cluster_1_options() -> ClusterOptions {
+fn cluster_1_node() -> ClusterOptions {
     ClusterOptions {
         name: "cluster_1_node".to_string(),
         version: CLUSTER_VERSION.clone(),
@@ -28,58 +24,52 @@ async fn get_session(cluster: &Cluster) -> Session {
 
 #[tokio::test]
 async fn test_cluster_lifecycle1() {
-    run_ccm_test(cluster_1_node, |cluster| async move {
-        let cluster_arc = cluster.clone();
-        let cluster_lock = cluster_arc.write().await;
-        let cluster = cluster_lock.deref();
-        let session = get_session(cluster).await;
+    async fn test(cluster: &mut Cluster) -> () {
+        let session = get_session(&cluster).await;
 
         let rows = session
             .query_unpaged("select data_center from system.local", &[])
             .await
-            .context("failed to execute query")?
+            .expect("failed to execute query")
             .into_rows_result()
-            .context("failed to get rows")?
+            .expect("failed to get rows")
             .rows::<(String,)>()
-            .context("failed to deserialize rows")?
+            .expect("failed to deserialize rows")
             .try_fold(Vec::new(), |mut out, rec| match rec {
                 Ok(val) => {
                     out.push(val.0);
                     Ok(out)
                 }
                 Err(err) => Err(err),
-            })?;
+            })
+            .unwrap();
         println!("{:?}", rows);
-        Ok(())
-    })
-    .await;
+    }
+    run_ccm_test(cluster_1_node, test).await;
 }
 
 #[tokio::test]
 async fn test_cluster_lifecycle2() {
-    async fn test(cluster: Arc<RwLock<Cluster>>) -> Result<(), Error> {
-        let cluster_arc = cluster.clone();
-        let cluster_lock = cluster_arc.write().await;
-        let cluster = cluster_lock.deref();
+    async fn test(cluster: &mut Cluster) -> () {
         let session = get_session(cluster).await;
 
         let rows = session
             .query_unpaged("select data_center from system.local", &[])
             .await
-            .context("failed to execute query")?
+            .expect("failed to execute query")
             .into_rows_result()
-            .context("failed to get rows")?
+            .expect("failed to get rows")
             .rows::<(String,)>()
-            .context("failed to deserialize rows")?
+            .expect("failed to deserialize rows")
             .try_fold(Vec::new(), |mut out, rec| match rec {
                 Ok(val) => {
                     out.push(val.0);
                     Ok(out)
                 }
                 Err(err) => Err(err),
-            })?;
+            })
+            .unwrap();
         println!("{:?}", rows);
-        Ok(())
     }
     run_ccm_test(cluster_1_node, test).await;
 }
