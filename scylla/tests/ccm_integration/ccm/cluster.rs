@@ -586,7 +586,7 @@ impl Cluster {
             Ok(mt) => {
                 if !mt.is_dir() {
                     return Err(Error::msg(format!(
-                        "{} already exists and it is not a dictionary",
+                        "{} already exists and it is not a directory",
                         opts.config_dir()
                     )));
                 }
