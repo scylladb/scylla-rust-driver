@@ -18,4 +18,5 @@ mod silent_prepare_batch;
 mod silent_prepare_query;
 mod skip_metadata_optimization;
 mod tablets;
-pub(crate) mod utils;
+#[path = "../common/utils.rs"]
+mod utils;
