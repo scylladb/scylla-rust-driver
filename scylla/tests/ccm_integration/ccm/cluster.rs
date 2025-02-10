@@ -159,6 +159,10 @@ impl Default for NodeStartOptions {
 }
 
 impl NodeStartOptions {
+    const NO_WAIT: &str = "--no-wait";
+    const WAIT_OTHER_NOTICE: &str = "--wait-other-notice";
+    const WAIT_FOR_BINARY_PROTO: &str = "--wait-for-binary-proto";
+
     /// Creates the default start options. Enables following ccm options:
     /// - `--wait-other-notice`
     /// - `--wait-for-binary-proto`
@@ -202,6 +206,9 @@ pub(crate) struct NodeStopOptions {
 }
 
 impl NodeStopOptions {
+    const NO_WAIT: &str = "--no-wait";
+    const NOT_GENTLY: &str = "--not-gently";
+
     /// Create a new `NodeStopOptions` with default values.
     /// All ccm options are disabled by default.
     #[allow(dead_code)]
@@ -309,13 +316,13 @@ impl Node {
             wait_for_binary_proto,
         } = opts.unwrap_or_default();
         if no_wait {
-            args.push("--no-wait".to_string());
+            args.push(NodeStartOptions::NO_WAIT.to_string());
         }
         if wait_other_notice {
-            args.push("--wait-other-notice".to_string());
+            args.push(NodeStartOptions::WAIT_OTHER_NOTICE.to_string());
         }
         if wait_for_binary_proto {
-            args.push("--wait-for-binary-proto".to_string());
+            args.push(NodeStartOptions::WAIT_FOR_BINARY_PROTO.to_string());
         }
 
         self.logged_cmd
@@ -338,10 +345,10 @@ impl Node {
             not_gently,
         } = opts;
         if no_wait {
-            args.push("--no-wait".to_string());
+            args.push(NodeStopOptions::NO_WAIT.to_string());
         }
         if not_gently {
-            args.push("--not-gently".to_string());
+            args.push(NodeStopOptions::NOT_GENTLY.to_string());
         }
 
         self.logged_cmd
@@ -695,13 +702,13 @@ impl Cluster {
             wait_for_binary_proto,
         } = opts.unwrap_or_default();
         if no_wait {
-            args.push("--no-wait".to_string());
+            args.push(NodeStartOptions::NO_WAIT.to_string());
         }
         if wait_other_notice {
-            args.push("--wait-other-notice".to_string());
+            args.push(NodeStartOptions::WAIT_OTHER_NOTICE.to_string());
         }
         if wait_for_binary_proto {
-            args.push("--wait-for-binary-proto".to_string());
+            args.push(NodeStartOptions::WAIT_FOR_BINARY_PROTO.to_string());
         }
 
         self.logged_cmd
