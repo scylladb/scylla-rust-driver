@@ -1,0 +1,29 @@
+name: CCM tests
+
+on:
+  push:
+    branches:
+    - main
+    - 'branch-*'
+  pull_request:
+    branches:
+    - '**'
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install scylla-ccm
+        run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
+      - name: Run CCM command to create the ~/.ccm dir
+        continue-on-error: true
+        run: ccm status
+      - name: Run CCM tests
+        run: RUST_LOG=trace make ccm-test
