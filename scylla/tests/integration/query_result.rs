@@ -1,4 +1,6 @@
+use assert_matches::assert_matches;
 use futures::TryStreamExt;
+use scylla::errors::PagerExecutionError;
 use scylla::{
     batch::{Batch, BatchType},
     client::session::Session,
@@ -137,6 +139,44 @@ async fn query_iter_should_iterate_over_all_pages_asynchronously_cross_partition
 }
 
 #[tokio::test]
+async fn query_iter_no_results() {
+    let (session, ks) = initialize_cluster_two_partitions().await;
+
+    let query = Query::new(format!("SELECT * FROM {}.t where k0 = ?", ks));
+
+    let query_result = session.query_iter(query, ("part3",)).await.unwrap();
+    let mut iter = query_result.rows_stream::<(String, i32, i32)>().unwrap();
+
+    assert_eq!(iter.try_next().await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn query_iter_prepare_error() {
+    let (session, ks) = initialize_cluster_two_partitions().await;
+
+    // Wrong table name
+    let query = Query::new(format!("SELECT * FROM {}.test where k0 = ?", ks));
+
+    assert_matches!(
+        session.query_iter(query, (PARTITION_KEY1,)).await,
+        Err(PagerExecutionError::PrepareError(_))
+    );
+}
+
+#[tokio::test]
+async fn query_iter_serialization_error() {
+    let (session, ks) = initialize_cluster_two_partitions().await;
+
+    let query = Query::new(format!("SELECT * FROM {}.t where k0 = ?", ks));
+
+    // Wrong value type
+    assert_matches!(
+        session.query_iter(query, (1,)).await,
+        Err(PagerExecutionError::SerializationError(_))
+    );
+}
+
+#[tokio::test]
 async fn execute_single_page_should_only_iterate_over_rows_in_current_page() {
     let (session, ks) = initialize_cluster_two_partitions().await;
 
@@ -220,4 +260,38 @@ async fn execute_iter_should_iterate_over_all_pages_asynchronously_cross_partiti
         i += 1;
     }
     assert_eq!(i, 2 * ROWS_PER_PARTITION);
+}
+
+#[tokio::test]
+async fn execute_iter_no_results() {
+    let (session, ks) = initialize_cluster_two_partitions().await;
+
+    let prepared_query = session
+        .prepare(format!("SELECT * FROM {}.t where k0 = ?", ks))
+        .await
+        .unwrap();
+
+    let query_result = session
+        .execute_iter(prepared_query, ("part3",))
+        .await
+        .unwrap();
+    let mut iter = query_result.rows_stream::<(String, i32, i32)>().unwrap();
+
+    assert_eq!(iter.try_next().await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn execute_iter_serialization_error() {
+    let (session, ks) = initialize_cluster_two_partitions().await;
+
+    let prepared_query = session
+        .prepare(format!("SELECT * FROM {}.t where k0 = ?", ks))
+        .await
+        .unwrap();
+
+    // Wrong value type
+    assert_matches!(
+        session.execute_iter(prepared_query, (1,)).await,
+        Err(PagerExecutionError::SerializationError(_))
+    )
 }
