@@ -7,7 +7,7 @@ use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::task;
@@ -70,39 +70,15 @@ impl LoggedCmd {
         run_id: i32,
         stderr: Vec<u8>,
         command_with_args: String,
-        writer: Arc<Mutex<File>>,
     ) -> Result<ExitStatus, Error> {
         match status {
             Ok(status) => {
                 match status.code() {
                     Some(code) => {
-                        writer
-                            .lock()
-                            .await
-                            .write_all(
-                                format!(
-                                    "{:15} -> status = {}\n",
-                                    format!("exited[{}]", run_id),
-                                    code
-                                )
-                                .as_bytes(),
-                            )
-                            .await
-                            .ok();
+                        tracing::info!("{:15} -> status = {}", format!("exited[{}]", run_id), code);
                     }
                     None => {
-                        writer
-                            .lock()
-                            .await
-                            .write_all(
-                                format!(
-                                    "{:15} -> status = unknown\n",
-                                    format!("exited[{}]", run_id)
-                                )
-                                .as_bytes(),
-                            )
-                            .await
-                            .ok();
+                        tracing::info!("{:15} -> status = unknown", format!("exited[{}]", run_id));
                     }
                 }
                 if !allow_failure && !status.success() {
@@ -117,19 +93,11 @@ impl LoggedCmd {
                 Ok(status)
             }
             Err(e) => {
-                writer
-                    .lock()
-                    .await
-                    .write_all(
-                        format!(
-                            "{:15} -> failed to wait on child process: = {}\n",
-                            format!("exited[{}]", run_id),
-                            e
-                        )
-                        .as_bytes(),
-                    )
-                    .await
-                    .ok();
+                tracing::info!(
+                    "{:15} -> failed to wait on child process: = {}",
+                    format!("exited[{}]", run_id),
+                    e
+                );
                 Err(Error::from(e).context(format!("Command `{}` failed", command_with_args,)))
             }
         }
@@ -166,15 +134,7 @@ impl LoggedCmd {
         let RunOptions { env, allow_failure } = opts;
         if !env.is_empty() {
             for (key, value) in &env {
-                self.file
-                    .lock()
-                    .await
-                    .write_all(
-                        format!("{:15} -> {}={}\n", format!("env[{}]", run_id), key, value)
-                            .as_bytes(),
-                    )
-                    .await
-                    .ok();
+                tracing::info!("{:15} -> {}={}", format!("env[{}]", run_id), key, value);
             }
             cmd.envs(env);
         }
@@ -182,23 +142,14 @@ impl LoggedCmd {
         let mut child = cmd.spawn().with_context(|| {
             format!("failed to spawn child process for command {command_with_args}",)
         })?;
-        self.file
-            .lock()
-            .await
-            .write_all(
-                format!(
-                    "{:15} -> {}\n",
-                    format!("started[{}]", run_id),
-                    command_with_args,
-                )
-                .as_bytes(),
-            )
-            .await
-            .ok();
+        tracing::info!(
+            "{:15} -> {}",
+            format!("started[{}]", run_id),
+            command_with_args,
+        );
 
         let stdout_task = Self::stream_reader(
             child.stdout.take().expect("Failed to capture stdout"),
-            self.file.clone(),
             format!("{:15} -> ", format!("stdout[{}]", run_id)),
             None,
         );
@@ -206,29 +157,17 @@ impl LoggedCmd {
         let mut stderr: Vec<u8> = Vec::new();
         let stderr_task = Self::stream_reader(
             child.stderr.take().expect("Failed to capture stderr"),
-            self.file.clone(),
             format!("{:15} -> ", format!("stderr[{}]", run_id)),
             Some(&mut stderr),
         );
 
         let (_, _, status) = tokio::join!(stdout_task, stderr_task, child.wait());
-        LoggedCmd::process_child_result(
-            status,
-            allow_failure,
-            run_id,
-            stderr,
-            command_with_args,
-            self.file.clone(),
-        )
-        .await
+        LoggedCmd::process_child_result(status, allow_failure, run_id, stderr, command_with_args)
+            .await
     }
 
-    async fn stream_reader<T>(
-        stream: T,
-        writer: Arc<Mutex<File>>,
-        prefix: String,
-        buffer: Option<&mut Vec<u8>>,
-    ) where
+    async fn stream_reader<T>(stream: T, prefix: String, buffer: Option<&mut Vec<u8>>)
+    where
         T: tokio::io::AsyncRead + Unpin + Send + 'static,
     {
         let reader = BufReader::new(stream);
@@ -236,21 +175,13 @@ impl LoggedCmd {
         match buffer {
             Some(buffer) => {
                 while let Some(line) = lines.next_line().await.ok().flatten() {
-                    let _ = writer
-                        .lock()
-                        .await
-                        .write_all(format!("{} {}\n", prefix, line).as_bytes())
-                        .await;
+                    tracing::debug!("{} {}", prefix, line);
                     buffer.extend_from_slice(line.as_bytes());
                 }
             }
             None => {
                 while let Some(line) = lines.next_line().await.ok().flatten() {
-                    let _ = writer
-                        .lock()
-                        .await
-                        .write_all(format!("{} {}\n", prefix, line).as_bytes())
-                        .await;
+                    tracing::debug!("{} {}", prefix, line);
                 }
             }
         }
