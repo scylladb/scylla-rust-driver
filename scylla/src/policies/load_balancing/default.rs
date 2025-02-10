@@ -2867,7 +2867,8 @@ mod latency_awareness {
                 | RequestAttemptError::BodyExtensionsParseError(_)
                 | RequestAttemptError::RepreparedIdChanged { .. }
                 | RequestAttemptError::RepreparedIdMissingInBatch
-                | RequestAttemptError::UnexpectedResponse(_) => true,
+                | RequestAttemptError::UnexpectedResponse(_)
+                | RequestAttemptError::NonfinishedPagingState => true,
             }
         }
     }

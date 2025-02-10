@@ -10,8 +10,8 @@ use crate::cluster::NodeAddr;
 use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
-    ExecutionError, InternalRequestError, ProtocolError, RequestAttemptError, ResponseParseError,
-    SchemaVersionFetchError, TranslationError, UseKeyspaceError,
+    InternalRequestError, RequestAttemptError, ResponseParseError, SchemaAgreementError,
+    TranslationError, UseKeyspaceError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
@@ -821,13 +821,12 @@ impl Connection {
     pub(crate) async fn query_unpaged(
         &self,
         query: impl Into<Query>,
-    ) -> Result<QueryResult, ExecutionError> {
+    ) -> Result<QueryResult, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         let query: Query = query.into();
 
         self.query_raw_unpaged(&query)
             .await
-            .map_err(RequestAttemptError::into_execution_error)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -889,11 +888,10 @@ impl Connection {
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
-    ) -> Result<QueryResult, ExecutionError> {
+    ) -> Result<QueryResult, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values)
             .await
-            .map_err(RequestAttemptError::into_execution_error)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -1048,7 +1046,7 @@ impl Connection {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<QueryResult, ExecutionError> {
+    ) -> Result<QueryResult, RequestAttemptError> {
         self.batch_with_consistency(
             batch,
             values,
@@ -1058,7 +1056,6 @@ impl Connection {
             batch.config.serial_consistency.flatten(),
         )
         .await
-        .map_err(RequestAttemptError::into_execution_error)
         .and_then(QueryResponse::into_query_result)
     }
 
@@ -1264,20 +1261,14 @@ impl Connection {
         }
     }
 
-    pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, ExecutionError> {
+    pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, SchemaAgreementError> {
         let (version_id,) = self
             .query_unpaged(LOCAL_VERSION)
             .await?
             .into_rows_result()
-            .map_err(|err| {
-                ExecutionError::ProtocolError(ProtocolError::SchemaVersionFetch(
-                    SchemaVersionFetchError::TracesEventsIntoRowsResultError(err),
-                ))
-            })?
+            .map_err(SchemaAgreementError::TracesEventsIntoRowsResultError)?
             .single_row::<(Uuid,)>()
-            .map_err(|err| {
-                ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::SingleRowError(err))
-            })?;
+            .map_err(SchemaAgreementError::SingleRowError)?;
 
         Ok(version_id)
     }

@@ -1,64 +1,47 @@
 //! This module contains various errors which can be returned by [`Session`](crate::client::session::Session).
 
-// Re-export DbError type and types that it depends on
-// so they can be found in `scylla::errors`.
-pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
-
-use std::{
-    error::Error,
-    io::ErrorKind,
-    net::{AddrParseError, IpAddr, SocketAddr},
-    num::ParseIntError,
-    sync::Arc,
-};
-
-use scylla_cql::{
-    deserialize::{DeserializationError, TypeCheckError},
-    frame::{
-        frame_errors::{
-            CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
-            CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError,
-            CqlResponseParseError, CqlResultParseError, CqlSupportedParseError,
-            FrameBodyExtensionsParseError, FrameHeaderParseError,
-        },
-        request::CqlRequestKind,
-        response::CqlResponseKind,
-    },
-    serialize::SerializationError,
-};
+use std::error::Error;
+use std::io::ErrorKind;
+use std::net::{AddrParseError, IpAddr, SocketAddr};
+use std::num::ParseIntError;
+use std::sync::Arc;
 
 use thiserror::Error;
 
-use crate::client::pager::NextPageError;
-use crate::{authentication::AuthError, frame::response};
+use crate::frame::response;
 
-use crate::client::pager::NextRowError;
-use crate::response::query_result::{IntoRowsResultError, SingleRowError};
+// Re-export error types from pager module.
+pub use crate::client::pager::{NextPageError, NextRowError};
+
+// Re-export error types from query_result module.
+pub use crate::response::query_result::{
+    FirstRowError, IntoRowsResultError, MaybeFirstRowError, ResultNotRowsError, RowsError,
+    SingleRowError,
+};
+
+// Re-export error type from authentication module.
+pub use crate::authentication::AuthError;
+
+// Re-export error types from scylla-cql.
+pub use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
+pub use scylla_cql::frame::frame_errors::{
+    CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
+    CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError, CqlResponseParseError,
+    CqlResultParseError, CqlSupportedParseError, FrameBodyExtensionsParseError,
+    FrameHeaderParseError,
+};
+pub use scylla_cql::frame::request::CqlRequestKind;
+pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
+pub use scylla_cql::frame::response::CqlResponseKind;
+pub use scylla_cql::serialize::SerializationError;
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ExecutionError {
-    /// Failed to prepare the statement.
-    /// Applies to unprepared statements with non-empty value parameters.
-    #[error("Failed to prepare the statement: {0}")]
-    PrepareError(#[from] PrepareError),
-
-    /// Database sent a response containing some error with a message
-    #[error("Database returned an error: {0}, Error message: {1}")]
-    DbError(DbError, String),
-
     /// Caller passed an invalid query
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
-
-    /// Failed to serialize CQL request.
-    #[error("Failed to serialize CQL request: {0}")]
-    CqlRequestSerialization(#[from] CqlRequestSerializationError),
-
-    /// Failed to deserialize frame body extensions.
-    #[error(transparent)]
-    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
 
     /// Load balancing policy returned an empty plan.
     #[error(
@@ -69,33 +52,18 @@ pub enum ExecutionError {
     )]
     EmptyPlan,
 
-    /// Received a RESULT server response, but failed to deserialize it.
-    #[error(transparent)]
-    CqlResultParseError(#[from] CqlResultParseError),
-
-    /// Received an ERROR server response, but failed to deserialize it.
-    #[error("Failed to deserialize ERROR response: {0}")]
-    CqlErrorParseError(#[from] CqlErrorParseError),
-
-    /// A metadata error occurred during schema agreement.
-    #[error("Cluster metadata fetch error occurred during automatic schema agreement: {0}")]
-    MetadataError(#[from] MetadataError),
+    /// Failed to prepare the statement.
+    /// Applies to unprepared statements with non-empty value parameters.
+    #[error("Failed to prepare the statement: {0}")]
+    PrepareError(#[from] PrepareError),
 
     /// Selected node's connection pool is in invalid state.
     #[error("No connections in the pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
 
-    /// Protocol error.
-    #[error("Protocol error: {0}")]
-    ProtocolError(#[from] ProtocolError),
-
-    /// A connection has been broken during query execution.
+    /// An error returned by last attempt of request execution.
     #[error(transparent)]
-    BrokenConnection(#[from] BrokenConnectionError),
-
-    /// Driver was unable to allocate a stream id to execute a query on.
-    #[error("Unable to allocate stream id")]
-    UnableToAllocStreamId,
+    LastAttemptError(#[from] RequestAttemptError),
 
     /// Failed to run a request within a provided client timeout.
     #[error(
@@ -104,24 +72,22 @@ pub enum ExecutionError {
     )]
     RequestTimeout(std::time::Duration),
 
-    /// Schema agreement timed out.
-    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
-    SchemaAgreementTimeout(std::time::Duration),
-
     /// 'USE KEYSPACE <>' request failed.
     #[error("'USE KEYSPACE <>' request failed: {0}")]
     UseKeyspaceError(#[from] UseKeyspaceError),
+
+    /// Failed to await automatic schema agreement.
+    #[error("Failed to await schema agreement: {0}")]
+    SchemaAgreementError(#[from] SchemaAgreementError),
+
+    /// A metadata error occurred during schema agreement.
+    #[error("Cluster metadata fetch error occurred during automatic schema agreement: {0}")]
+    MetadataError(#[from] MetadataError),
 }
 
 impl From<SerializationError> for ExecutionError {
     fn from(serialized_err: SerializationError) -> ExecutionError {
         ExecutionError::BadQuery(BadQuery::SerializationError(serialized_err))
-    }
-}
-
-impl From<response::Error> for ExecutionError {
-    fn from(error: response::Error) -> ExecutionError {
-        ExecutionError::DbError(error.error, error.reason)
     }
 }
 
@@ -183,50 +149,6 @@ pub enum NewSessionError {
     UseKeyspaceError(#[from] UseKeyspaceError),
 }
 
-/// A protocol error.
-///
-/// It indicates an inconsistency between CQL protocol
-/// and server's behavior.
-/// In some cases, it could also represent a misuse
-/// of internal driver API - a driver bug.
-#[derive(Error, Debug, Clone)]
-#[non_exhaustive]
-pub enum ProtocolError {
-    /// Received an unexpected response when RESULT or ERROR was expected.
-    #[error(
-        "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
-    )]
-    UnexpectedResponse(CqlResponseKind),
-
-    /// Prepared statement id changed after repreparation.
-    #[error(
-        "Prepared statement id changed after repreparation; md5 sum (computed from the query string) should stay the same;\
-        Statement: \"{statement}\"; expected id: {expected_id:?}; reprepared id: {reprepared_id:?}"
-    )]
-    RepreparedIdChanged {
-        statement: String,
-        expected_id: Vec<u8>,
-        reprepared_id: Vec<u8>,
-    },
-
-    /// A protocol error appeared during schema version fetch.
-    #[error("Schema version fetch protocol error: {0}")]
-    SchemaVersionFetch(#[from] SchemaVersionFetchError),
-
-    /// A result with nonfinished paging state received for unpaged query.
-    #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
-    NonfinishedPagingState,
-
-    /// Unable extract a partition key based on prepared statement's metadata.
-    #[error("Unable extract a partition key based on prepared statement's metadata")]
-    PartitionKeyExtraction,
-
-    /// Driver tried to reprepare a statement in the batch, but the reprepared
-    /// statement's id is not included in the batch.
-    #[error("Reprepared statement's id does not exist in the batch.")]
-    RepreparedIdMissingInBatch,
-}
-
 /// An error that occurred during `USE KEYSPACE <>` request.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
@@ -254,10 +176,22 @@ pub enum UseKeyspaceError {
     RequestTimeout(std::time::Duration),
 }
 
-/// A protocol error that occurred during schema version fetch.
+/// An error that occurred when awating schema agreement.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
-pub enum SchemaVersionFetchError {
+pub enum SchemaAgreementError {
+    /// Failed to find a node with working connection pool.
+    #[error("Failed to find a node with working connection pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
+    /// Failed to execute schema version query on one of the connections.
+    ///
+    /// The driver attempts to fetch schema version on all connections in the pool (for all nodes).
+    /// It expects all of the requests to succeed. If at least one request fails, schema version
+    /// fetch is considered failed. This variant contains an error from one of the failing request attempts.
+    #[error("Failed to execute schema version query: {0}")]
+    RequestError(#[from] RequestAttemptError),
+
     /// Failed to convert schema version query result into rows result.
     #[error("Failed to convert schema version query result into rows result: {0}")]
     TracesEventsIntoRowsResultError(IntoRowsResultError),
@@ -265,6 +199,10 @@ pub enum SchemaVersionFetchError {
     /// Failed to deserialize a single row from schema version query response.
     #[error(transparent)]
     SingleRowError(SingleRowError),
+
+    /// Schema agreement timed out.
+    #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
+    Timeout(std::time::Duration),
 }
 
 /// An error that occurred during tracing info fetch.
@@ -481,6 +419,10 @@ pub enum TablesMetadataError {
 #[error("Invalid query passed to Session")]
 #[non_exhaustive]
 pub enum BadQuery {
+    /// Unable extract a partition key based on prepared statement's metadata.
+    #[error("Unable extract a partition key based on prepared statement's metadata")]
+    PartitionKeyExtraction,
+
     #[error("Serializing values failed: {0} ")]
     SerializationError(#[from] SerializationError),
 
@@ -830,7 +772,7 @@ impl RequestError {
             RequestError::EmptyPlan => ExecutionError::EmptyPlan,
             RequestError::ConnectionPoolError(e) => e.into(),
             RequestError::RequestTimeout(dur) => ExecutionError::RequestTimeout(dur),
-            RequestError::LastAttemptError(e) => e.into_execution_error(),
+            RequestError::LastAttemptError(e) => ExecutionError::LastAttemptError(e),
         }
     }
 }
@@ -901,38 +843,10 @@ pub enum RequestAttemptError {
     /// statement's id is not included in the batch.
     #[error("Reprepared statement's id does not exist in the batch.")]
     RepreparedIdMissingInBatch,
-}
 
-impl RequestAttemptError {
-    /// Converts the error to [`ExecutionError`].
-    pub fn into_execution_error(self) -> ExecutionError {
-        match self {
-            RequestAttemptError::CqlRequestSerialization(e) => e.into(),
-            RequestAttemptError::DbError(err, msg) => ExecutionError::DbError(err, msg),
-            RequestAttemptError::CqlResultParseError(e) => e.into(),
-            RequestAttemptError::CqlErrorParseError(e) => e.into(),
-            RequestAttemptError::BrokenConnectionError(e) => e.into(),
-            RequestAttemptError::UnexpectedResponse(response) => {
-                ProtocolError::UnexpectedResponse(response).into()
-            }
-            RequestAttemptError::BodyExtensionsParseError(e) => e.into(),
-            RequestAttemptError::UnableToAllocStreamId => ExecutionError::UnableToAllocStreamId,
-            RequestAttemptError::RepreparedIdChanged {
-                statement,
-                expected_id,
-                reprepared_id,
-            } => ProtocolError::RepreparedIdChanged {
-                statement,
-                expected_id,
-                reprepared_id,
-            }
-            .into(),
-            RequestAttemptError::RepreparedIdMissingInBatch => {
-                ProtocolError::RepreparedIdMissingInBatch.into()
-            }
-            RequestAttemptError::SerializationError(e) => e.into(),
-        }
-    }
+    /// A result with nonfinished paging state received for unpaged query.
+    #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
+    NonfinishedPagingState,
 }
 
 impl From<response::error::Error> for RequestAttemptError {
@@ -1018,7 +932,7 @@ pub(crate) enum ResponseParseError {
 mod tests {
     use scylla_cql::Consistency;
 
-    use super::{DbError, ExecutionError, WriteType};
+    use super::{DbError, ExecutionError, RequestAttemptError, WriteType};
 
     #[test]
     fn write_type_from_str() {
@@ -1063,8 +977,10 @@ mod tests {
         assert_eq!(db_error_displayed, expected_dberr_msg);
 
         // Test that ExecutionError::DbError::(DbError::Unavailable) is displayed correctly
-        let execution_error =
-            ExecutionError::DbError(db_error, "a message about unavailable error".to_string());
+        let execution_error = ExecutionError::LastAttemptError(RequestAttemptError::DbError(
+            db_error,
+            "a message about unavailable error".to_string(),
+        ));
         let execution_error_displayed: String = format!("{}", execution_error);
 
         let mut expected_execution_err_msg = "Database returned an error: ".to_string();

@@ -9,7 +9,9 @@ use crate::cluster::metadata::{
     CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType,
 };
 use crate::deserialize::DeserializeOwnedValue;
-use crate::errors::{BadKeyspaceName, DbError, ExecutionError, UseKeyspaceError};
+use crate::errors::{
+    BadKeyspaceName, DbError, ExecutionError, RequestAttemptError, UseKeyspaceError,
+};
 use crate::observability::tracing::TracingInfo;
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::prepared_statement::PreparedStatement;
@@ -948,7 +950,9 @@ async fn test_db_errors() {
     // SyntaxError on bad query
     assert!(matches!(
         session.query_unpaged("gibberish", &[]).await,
-        Err(ExecutionError::DbError(DbError::SyntaxError, _))
+        Err(ExecutionError::LastAttemptError(
+            RequestAttemptError::DbError(DbError::SyntaxError, _)
+        ))
     ));
 
     // AlreadyExists when creating a keyspace for the second time
@@ -956,7 +960,7 @@ async fn test_db_errors() {
 
     let create_keyspace_res = session.ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await;
     let keyspace_exists_error: DbError = match create_keyspace_res {
-        Err(ExecutionError::DbError(e, _)) => e,
+        Err(ExecutionError::LastAttemptError(RequestAttemptError::DbError(e, _))) => e,
         _ => panic!("Second CREATE KEYSPACE didn't return an error!"),
     };
 
@@ -981,7 +985,7 @@ async fn test_db_errors() {
         .ddl(format!("CREATE TABLE {}.tab (a text primary key)", ks))
         .await;
     let create_tab_error: DbError = match create_table_res {
-        Err(ExecutionError::DbError(e, _)) => e,
+        Err(ExecutionError::LastAttemptError(RequestAttemptError::DbError(e, _))) => e,
         _ => panic!("Second CREATE TABLE didn't return an error!"),
     };
 
@@ -2621,7 +2625,10 @@ async fn test_rate_limit_exceeded_exception() {
     use crate::errors::OperationType;
 
     match maybe_err.expect("Rate limit error didn't occur") {
-        ExecutionError::DbError(DbError::RateLimitReached { op_type, .. }, _) => {
+        ExecutionError::LastAttemptError(RequestAttemptError::DbError(
+            DbError::RateLimitReached { op_type, .. },
+            _,
+        )) => {
             assert_eq!(op_type, OperationType::Write);
         }
         err => panic!("Unexpected error type received: {:?}", err),
