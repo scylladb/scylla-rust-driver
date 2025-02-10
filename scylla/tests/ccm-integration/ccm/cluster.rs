@@ -61,11 +61,6 @@ impl ClusterOptions {
     fn cluster_dir(&self) -> String {
         format!("{}/{}/{}", self.root_dir, self.name, self.name)
     }
-
-    /// A file to store all ccm logs
-    fn ccm_log_file(&self) -> String {
-        format!("{}/{}/ccm.log", self.root_dir, self.name)
-    }
 }
 
 impl Default for ClusterOptions {
