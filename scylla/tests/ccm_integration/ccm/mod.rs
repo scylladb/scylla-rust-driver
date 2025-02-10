@@ -2,12 +2,11 @@ pub(crate) mod cluster;
 mod logged_cmd;
 pub(crate) mod node_config;
 
-use std::sync::Arc;
+use std::ops::AsyncFnOnce;
 
-use anyhow::{Context, Error};
-use cluster::{Cluster, ClusterOptions};
+use cluster::Cluster;
+use cluster::ClusterOptions;
 use lazy_static::lazy_static;
-use tokio::sync::RwLock;
 
 lazy_static! {
     pub static ref CLUSTER_VERSION: String =
@@ -18,43 +17,28 @@ lazy_static! {
         .unwrap_or(false);
 }
 
-pub(crate) async fn cluster_1_node() -> Arc<RwLock<Cluster>> {
-    let mut cluster = Cluster::new(ClusterOptions {
-        name: "cluster_1_node".to_string(),
-        version: CLUSTER_VERSION.clone(),
-        nodes: vec![1],
-        ..ClusterOptions::default()
-    })
-    .await
-    .context("Failed to create cluster")
-    .unwrap();
-
-    cluster
-        .init()
-        .await
-        .context("failed to initialize cluster")
-        .unwrap();
-    cluster
-        .start(None)
-        .await
-        .context("failed to start cluster")
-        .unwrap();
-    Arc::new(RwLock::new(cluster))
-}
-
-pub(crate) async fn run_ccm_test<C, T, CFut, TFut>(cb: C, test_body: T)
+pub(crate) async fn run_ccm_test<C, T>(make_cluster_options: C, test_body: T)
 where
-    C: FnOnce() -> CFut,
-    CFut: std::future::Future<Output = Arc<RwLock<Cluster>>>,
-    T: FnOnce(Arc<RwLock<Cluster>>) -> TFut,
-    TFut: std::future::Future<Output = Result<(), Error>>,
+    C: FnOnce() -> ClusterOptions,
+    T: AsyncFnOnce(&mut Cluster) -> (),
 {
-    let cluster_arc = cb().await;
-    {
-        let res = test_body(cluster_arc.clone()).await;
-        if res.is_err() && *TEST_KEEP_CLUSTER_ON_FAILURE {
-            println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
-            cluster_arc.write().await.set_keep_on_drop(true);
+    let cluster_options = make_cluster_options();
+    let mut cluster = Cluster::new(cluster_options)
+        .await
+        .expect("Failed to create cluster");
+    cluster.init().await.expect("failed to initialize cluster");
+    cluster.start(None).await.expect("failed to start cluster");
+
+    struct ClusterWrapper(Cluster);
+    impl Drop for ClusterWrapper {
+        fn drop(&mut self) {
+            if std::thread::panicking() && *TEST_KEEP_CLUSTER_ON_FAILURE {
+                println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
+                self.0.set_keep_on_drop(true);
+            }
         }
     }
+    let mut wrapper = ClusterWrapper(cluster);
+    test_body(&mut wrapper.0).await;
+    std::mem::drop(wrapper);
 }
