@@ -16,6 +16,7 @@ use tokio::task;
 //  and optionally to own stderr/stdout
 // It should allow to run multiple commands in parallel
 pub(crate) struct LoggedCmd {
+    file: Arc<Mutex<File>>,
     run_id: AtomicI32,
 }
 
