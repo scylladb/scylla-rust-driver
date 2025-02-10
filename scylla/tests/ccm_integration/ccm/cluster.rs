@@ -481,9 +481,9 @@ pub(crate) const DEFAULT_SMP: u16 = 1;
 
 #[allow(dead_code)]
 impl Cluster {
-    // This method looks at all busy /24 networks in 127.0.0.0/8 and return first available
-    // network goes as busy if anything is listening on any port and any address in this network
-    // 127.0.0.0/24 is skipped and never returned
+    /// This method looks at all busy /24 networks in 127.0.0.0/8 and return first available
+    /// network goes as busy if anything is listening on any port and any address in this network
+    /// 127.0.0.0/24 is skipped and never returned
     async fn sniff_ipv4_prefix() -> Result<NetPrefix, Error> {
         let mut used_ips: HashSet<IpAddr> = HashSet::new();
         let file = File::open("/proc/net/tcp").await?;
