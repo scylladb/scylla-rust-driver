@@ -20,12 +20,33 @@ pub(crate) struct LoggedCmd {
     run_id: AtomicI32,
 }
 
-#[allow(dead_code)]
-pub(crate) enum RunOptions {
-    None,
-    Env(HashMap<String, String>),
-    AllowFailure,
-    AllowFailureWithEnv(HashMap<String, String>),
+/// A set of options for the command to run.
+pub(crate) struct RunOptions {
+    /// Environment variables for the command.
+    env: HashMap<String, String>,
+    /// A flag telling whether the command is allowed to fail.
+    /// If set to true, and command fails, the error is not propagated.
+    allow_failure: bool,
+}
+
+impl RunOptions {
+    /// The default run options. With empty environment and `allow_failure` set to false.
+    pub(crate) fn new() -> Self {
+        RunOptions {
+            env: HashMap::new(),
+            allow_failure: false,
+        }
+    }
+
+    pub(crate) fn with_env(mut self, env: HashMap<String, String>) -> Self {
+        self.env = env;
+        self
+    }
+
+    pub(crate) fn allow_failure(mut self, allow: bool) -> Self {
+        self.allow_failure = allow;
+        self
+    }
 }
 
 impl LoggedCmd {
@@ -41,15 +62,6 @@ impl LoggedCmd {
             file: Arc::new(Mutex::new(file)),
             run_id: AtomicI32::new(1),
         })
-    }
-
-    fn get_run_options(opts: RunOptions) -> (HashMap<String, String>, bool) {
-        match opts {
-            RunOptions::None => (HashMap::new(), false),
-            RunOptions::Env(new_env) => (new_env, false),
-            RunOptions::AllowFailure => (HashMap::new(), true),
-            RunOptions::AllowFailureWithEnv(new_env) => (new_env, true),
-        }
     }
 
     async fn process_child_result(
@@ -151,7 +163,7 @@ impl LoggedCmd {
             .collect::<Vec<String>>()
             .join(" ");
 
-        let (env, allow_failure) = LoggedCmd::get_run_options(opts);
+        let RunOptions { env, allow_failure } = opts;
         if !env.is_empty() {
             for (key, value) in &env {
                 self.file
@@ -272,7 +284,7 @@ mod tests {
 
         // Run a simple echo command
         runner
-            .run_command("echo", &["Test Success"], RunOptions::None)
+            .run_command("echo", &["Test Success"], RunOptions::new())
             .await
             .unwrap();
 
@@ -294,7 +306,7 @@ mod tests {
 
         // Run a command that will fail
         let err = runner
-            .run_command("ls", &["/nonexistent_path"], RunOptions::None)
+            .run_command("ls", &["/nonexistent_path"], RunOptions::new())
             .await
             .err();
 
@@ -323,7 +335,11 @@ mod tests {
         env_vars.insert("TEST_ENV".to_string(), "12345".to_string());
 
         runner
-            .run_command("printenv", &["TEST_ENV"], RunOptions::Env(env_vars))
+            .run_command(
+                "printenv",
+                &["TEST_ENV"],
+                RunOptions::new().with_env(env_vars),
+            )
             .await
             .unwrap();
 

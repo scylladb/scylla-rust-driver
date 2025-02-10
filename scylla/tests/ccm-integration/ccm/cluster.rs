@@ -240,7 +240,7 @@ impl Node {
         }
 
         self.logged_cmd
-            .run_command("ccm", &args, RunOptions::Env(self.get_ccm_env()))
+            .run_command("ccm", &args, RunOptions::new().with_env(self.get_ccm_env()))
             .await?;
         self.set_status(NodeStatus::Started);
         Ok(())
@@ -260,7 +260,7 @@ impl Node {
             }
         }
         self.logged_cmd
-            .run_command("ccm", &args, RunOptions::Env(self.get_ccm_env()))
+            .run_command("ccm", &args, RunOptions::new().with_env(self.get_ccm_env()))
             .await?;
         self.set_status(NodeStatus::Stopped);
         Ok(())
@@ -277,7 +277,7 @@ impl Node {
             self.opts.config_dir.clone(),
         ];
         self.logged_cmd
-            .run_command("ccm", &args, RunOptions::None)
+            .run_command("ccm", &args, RunOptions::new())
             .await?;
         self.set_status(NodeStatus::Deleted);
         Ok(())
@@ -306,7 +306,7 @@ impl Node {
 
         args.extend(additional);
         self.logged_cmd
-            .run_command("ccm", &args, RunOptions::None)
+            .run_command("ccm", &args, RunOptions::new())
             .await?;
         Ok(())
     }
@@ -462,7 +462,7 @@ impl Cluster {
                 DBType::Cassandra => {}
             }
             node.logged_cmd
-                .run_command("ccm", &args, RunOptions::Env(node.get_ccm_env()))
+                .run_command("ccm", &args, RunOptions::new().with_env(node.get_ccm_env()))
                 .await
                 .expect("failed to add node");
         }
@@ -563,7 +563,7 @@ impl Cluster {
             args.push("--scylla".to_string());
         }
         self.logged_cmd
-            .run_command("ccm", &args, RunOptions::None)
+            .run_command("ccm", &args, RunOptions::new())
             .await?;
         let nodes_str = self
             .opts
@@ -583,7 +583,7 @@ impl Cluster {
             config_dir.clone(),
         ];
         self.logged_cmd
-            .run_command("ccm", &args, RunOptions::None)
+            .run_command("ccm", &args, RunOptions::new())
             .await?;
         Ok(())
     }
@@ -617,7 +617,7 @@ impl Cluster {
         }
 
         self.logged_cmd
-            .run_command("ccm", &args, RunOptions::Env(self.get_ccm_env()))
+            .run_command("ccm", &args, RunOptions::new().with_env(self.get_ccm_env()))
             .await?;
         for node in self.nodes.iter() {
             let mut node = node.write().await;
@@ -641,7 +641,7 @@ impl Cluster {
                     "--config-dir",
                     &self.opts.config_dir(),
                 ],
-                RunOptions::None,
+                RunOptions::new(),
             )
             .await
         {
@@ -691,7 +691,7 @@ impl Cluster {
                     "--config-dir",
                     &self.opts.config_dir(),
                 ],
-                RunOptions::None,
+                RunOptions::new(),
             )
             .await
         {
