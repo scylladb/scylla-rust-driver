@@ -1,5 +1,7 @@
 use crate::errors::{BadQuery, ConnectionPoolError};
 use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
+#[cfg(feature = "metrics")]
+use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
 use crate::prepared_statement::TokenCalculationError;
 use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
@@ -57,6 +59,7 @@ impl ClusterState {
 
     /// Creates new ClusterState using information about topology held in `metadata`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,
@@ -65,6 +68,7 @@ impl ClusterState {
         host_filter: Option<&dyn HostFilter>,
         mut tablets: TabletsInfo,
         old_keyspaces: &HashMap<String, Keyspace>,
+        #[cfg(feature = "metrics")] metrics: &Arc<Metrics>,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
@@ -99,6 +103,8 @@ impl ClusterState {
                         pool_config.clone(),
                         used_keyspace.clone(),
                         is_enabled,
+                        #[cfg(feature = "metrics")]
+                        metrics.clone(),
                     ))
                 }
             };

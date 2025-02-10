@@ -3,9 +3,11 @@
 //! - driver-side tracing,
 //! - cluster-side tracing,
 //! - request execution history,
+//! - atomic histogram,
 //! - driver metrics.
 
 pub(crate) mod driver_tracing;
 pub mod history;
+#[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod tracing;
