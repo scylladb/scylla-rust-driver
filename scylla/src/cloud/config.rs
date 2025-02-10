@@ -139,15 +139,12 @@ impl AddressTranslator for CloudConfig {
 
         let hostname = dc_config.get_server();
         let resolved = resolve_hostname(hostname).await
-            // inspect_err() is stable since 1.76.
-            // TODO: use inspect_err once we bump MSRV to at least 1.76.
-            .map_err(|err| {
+            .inspect_err(|_err| {
                 warn!(
                     "Couldn't resolve address: {} of datacenter {} that node {} resides in; therefore address \
                         broadcast by the node was left as address to open connection to.",
                     hostname, dc, host_id
                 );
-                err
             })
             .map_err(Arc::new)
             .map_err(TranslationError::IoError)?;
