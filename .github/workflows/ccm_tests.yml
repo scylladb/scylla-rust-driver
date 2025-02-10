@@ -23,4 +23,4 @@ jobs:
       - name: Update rust toolchain
         run: rustup update
       - name: Run CCM tests
-        run: RUST_LOG=trace cargo test --verbose --test ccm_integration
+        run: RUSTFLAGS="--cfg ccm_tests" RUST_LOG=trace cargo test --verbose --test ccm_integration
