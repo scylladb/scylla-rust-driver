@@ -6,13 +6,15 @@ use anyhow::{Context, Error};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::net::{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::fs::{metadata, File};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::RwLock;
+use tracing::debug;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DBType {
@@ -219,7 +221,7 @@ pub(crate) struct Node {
     config: NodeConfig,
     logged_cmd: Arc<LoggedCmd>,
     /// A `--config-dir` for ccm
-    config_dir: String,
+    config_dir: PathBuf,
 }
 
 #[allow(dead_code)]
@@ -228,7 +230,7 @@ impl Node {
         opts: NodeOptions,
         config: NodeConfig,
         logged_cmd: Arc<LoggedCmd>,
-        config_dir: String,
+        config_dir: PathBuf,
     ) -> Self {
         Node {
             opts,
@@ -293,7 +295,7 @@ impl Node {
             self.opts.name(),
             "start".to_string(),
             "--config-dir".to_string(),
-            self.config_dir.clone(),
+            self.config_dir.to_string_lossy().to_string(),
         ];
 
         let NodeStartOptions {
@@ -323,7 +325,7 @@ impl Node {
             self.opts.name(),
             "stop".to_string(),
             "--config-dir".to_string(),
-            self.config_dir.clone(),
+            self.config_dir.to_string_lossy().to_string(),
         ];
 
         let NodeStopOptions {
@@ -352,7 +354,7 @@ impl Node {
             self.opts.name(),
             "remove".to_string(),
             "--config-dir".to_string(),
-            self.config_dir.clone(),
+            self.config_dir.to_string_lossy().to_string(),
         ];
         self.logged_cmd
             .run_command("ccm", &args, RunOptions::new())
@@ -366,7 +368,7 @@ impl Node {
             self.opts.name(),
             "updateconf".to_string(),
             "--config-dir".to_string(),
-            self.config_dir.clone(),
+            self.config_dir.to_string_lossy().to_string(),
         ];
 
         // converting config to space separated list of `key:value`
@@ -452,8 +454,8 @@ pub(crate) struct Cluster {
     destroyed: bool,
     logged_cmd: Arc<LoggedCmd>,
     opts: ClusterOptions,
-    ccm_dir: String,
-    cluster_dir: String,
+    ccm_dir: TempDir,
+    cluster_dir: PathBuf,
 }
 
 impl Drop for Cluster {
@@ -472,12 +474,12 @@ impl Cluster {
     /// A `--config-dir` for ccm
     /// Since ccm does not support parallel access to different cluster in the same `config-dir`
     /// we had to isolate each cluster into its own config directory
-    fn config_dir(&self) -> &str {
-        &self.ccm_dir
+    fn config_dir(&self) -> &Path {
+        self.ccm_dir.path()
     }
 
     /// A directory that is created by CCM where it stores this cluster
-    fn cluster_dir(&self) -> &str {
+    fn cluster_dir(&self) -> &Path {
         &self.cluster_dir
     }
 
@@ -545,7 +547,7 @@ impl Cluster {
                 "--remote-debug-port".to_string(),
                 node.debug_port().to_string(),
                 "--config-dir".to_string(),
-                node.config_dir.clone(),
+                node.config_dir.to_string_lossy().to_string(),
             ];
             match node.opts.db_type {
                 DBType::Scylla => {
@@ -570,7 +572,7 @@ impl Cluster {
             },
             self.opts.config.clone(),
             self.logged_cmd.clone(),
-            self.config_dir().to_string(),
+            self.config_dir().to_owned(),
         );
         let node = Arc::new(RwLock::new(node));
         self.nodes.push(node.clone());
@@ -583,29 +585,33 @@ impl Cluster {
             opts.ip_prefix = Self::sniff_ipv4_prefix().await?
         };
 
-        let ccm_dir = format!("{}/{}", *ROOT_CCM_DIR, opts.name);
-        let cluster_dir = format!("{}/{}", ccm_dir, opts.name);
+        let ccm_dir = TempDir::with_prefix_in(&opts.name, &*ROOT_CCM_DIR)
+            .context("Failed to create temp dir for the cluster")?;
+        let ccm_dir_path = ccm_dir.path();
+        let cluster_dir = ccm_dir.path().join(&opts.name);
 
-        println!("Config dir: {}", ccm_dir);
+        println!("Config dir: {:?}", ccm_dir.path());
 
-        match metadata(ccm_dir.as_str()).await {
+        match metadata(ccm_dir_path).await {
             Ok(mt) => {
                 if !mt.is_dir() {
                     return Err(Error::msg(format!(
-                        "{} already exists and it is not a directory",
-                        ccm_dir
+                        "{:?} already exists and it is not a directory",
+                        ccm_dir_path
                     )));
                 }
             }
             Err(err) => match err.kind() {
                 std::io::ErrorKind::NotFound => {
-                    tokio::fs::create_dir_all(ccm_dir.as_str())
-                        .await
-                        .with_context(|| format! {"failed to create root directory {}", ccm_dir})?;
+                    tokio::fs::create_dir_all(ccm_dir_path).await.with_context(
+                        || format! {"failed to create root directory {:?}", ccm_dir_path},
+                    )?;
                 }
                 _ => {
-                    return Err(Error::from(err)
-                        .context(format!("failed to create root directory {}", ccm_dir)));
+                    return Err(Error::from(err).context(format!(
+                        "failed to create root directory {:?}",
+                        ccm_dir_path
+                    )));
                 }
             },
         }
@@ -631,8 +637,12 @@ impl Cluster {
     }
 
     pub(crate) async fn init(&mut self) -> Result<(), Error> {
-        let cluster_dir = PathBuf::from(self.opts.cluster_dir());
-        let config_dir = self.opts.config_dir();
+        let cluster_dir = PathBuf::from(self.cluster_dir());
+        let config_dir = self.config_dir();
+        debug!(
+            "Init cluster, cluster_dir: {:?}, config_dir: {:?}",
+            cluster_dir, config_dir
+        );
         if cluster_dir.exists() {
             tokio::fs::remove_dir_all(&cluster_dir)
                 .await
@@ -651,7 +661,7 @@ impl Cluster {
             "-i".to_string(),
             self.opts.ip_prefix.to_string(),
             "--config-dir".to_string(),
-            config_dir.to_string(),
+            config_dir.to_string_lossy().into_owned(),
         ];
         if self.opts.db_type == DBType::Scylla {
             args.push("--scylla".to_string());
@@ -674,7 +684,7 @@ impl Cluster {
             "-n".to_string(),
             nodes_str,
             "--config-dir".to_string(),
-            config_dir.to_string(),
+            config_dir.to_string_lossy().into_owned(),
         ];
         self.logged_cmd
             .run_command("ccm", &args, RunOptions::new())
@@ -697,7 +707,7 @@ impl Cluster {
         let mut args = vec![
             "start".to_string(),
             "--config-dir".to_string(),
-            self.config_dir().to_string(),
+            self.config_dir().to_string_lossy().into_owned(),
         ];
 
         let NodeStartOptions {
@@ -734,7 +744,12 @@ impl Cluster {
             .logged_cmd
             .run_command(
                 "ccm",
-                &["stop", &self.opts.name, "--config-dir", &self.config_dir()],
+                &[
+                    "stop",
+                    &self.opts.name,
+                    "--config-dir",
+                    &self.config_dir().to_string_lossy().into_owned(),
+                ],
                 RunOptions::new(),
             )
             .await
@@ -758,7 +773,7 @@ impl Cluster {
                 "remove",
                 &self.opts.name,
                 "--config-dir",
-                &self.config_dir(),
+                &self.config_dir().to_string_lossy().into_owned(),
             ])
             .output()
         {
@@ -783,7 +798,7 @@ impl Cluster {
                     "remove",
                     &self.opts.name,
                     "--config-dir",
-                    &self.config_dir(),
+                    &self.config_dir().to_string_lossy().into_owned(),
                 ],
                 RunOptions::new(),
             )
