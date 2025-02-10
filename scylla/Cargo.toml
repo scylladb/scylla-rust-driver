@@ -88,6 +88,7 @@ assert_matches = "1.5.0"
 rand_chacha = "0.3.1"
 time = "0.3"
 anyhow = "1.0.95"
+serde_yaml = {version = "0.9.34"}
 
 [[bench]]
 name = "benchmark"
