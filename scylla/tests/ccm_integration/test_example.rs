@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::ccm::cluster::{Cluster, ClusterOptions};
 use crate::ccm::{run_ccm_test, CLUSTER_VERSION};
+use crate::common::utils::setup_tracing;
 
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -27,6 +28,7 @@ async fn get_session(cluster: &Cluster) -> Session {
 
 #[tokio::test]
 async fn test_cluster_lifecycle1() {
+    setup_tracing();
     async fn test(cluster: Arc<Mutex<Cluster>>) -> () {
         let cluster = cluster.lock().await;
         let session = get_session(&cluster).await;
@@ -54,6 +56,7 @@ async fn test_cluster_lifecycle1() {
 
 #[tokio::test]
 async fn test_cluster_lifecycle2() {
+    setup_tracing();
     async fn test(cluster: Arc<Mutex<Cluster>>) -> () {
         let cluster = cluster.lock().await;
         let session = get_session(&cluster).await;

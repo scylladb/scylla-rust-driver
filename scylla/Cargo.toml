@@ -89,6 +89,7 @@ anyhow = "1.0.95"
 tokio = { version = "1.34", features = ["test-util", "fs", "process"] }
 serde_yaml = {version = "0.9.34+deprecated"}
 time = "0.3.36"
+tempfile = "3.16"
 
 [[bench]]
 name = "benchmark"

@@ -2,19 +2,20 @@ pub(crate) mod cluster;
 mod logged_cmd;
 pub(crate) mod node_config;
 
-use std::cell::LazyCell;
 use std::ops::AsyncFnOnce;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use cluster::Cluster;
 use cluster::ClusterOptions;
 use tokio::sync::Mutex;
 use tracing::info;
 
-pub(crate) const CLUSTER_VERSION: LazyCell<String> =
-    LazyCell::new(|| std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:6.2.2".to_string()));
+pub(crate) static CLUSTER_VERSION: LazyLock<String> =
+    LazyLock::new(|| std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:6.2.2".to_string()));
 
-const TEST_KEEP_CLUSTER_ON_FAILURE: LazyCell<bool> = LazyCell::new(|| {
+const TEST_KEEP_CLUSTER_ON_FAILURE: LazyLock<bool> = LazyLock::new(|| {
     std::env::var("TEST_KEEP_CLUSTER_ON_FAILURE")
         .unwrap_or("".to_string())
         .parse::<bool>()
@@ -24,10 +25,10 @@ const TEST_KEEP_CLUSTER_ON_FAILURE: LazyCell<bool> = LazyCell::new(|| {
 /// CCM does not allow to have one active cluster within one config directory
 /// To have more than two active CCM cluster at the same time we isolate each cluster into separate
 /// config director, each config directory is created in `ROOT_CCM_DIR`.
-pub(crate) const ROOT_CCM_DIR: LazyCell<String> = LazyCell::new(|| {
+pub(crate) const ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
     let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
     let ccm_root_dir_env = std::env::var("CCM_ROOT_DIR");
-    match ccm_root_dir_env {
+    let ccm_root_dir = match ccm_root_dir_env {
         Ok(x) => x,
         Err(e) => {
             info!(
@@ -36,7 +37,14 @@ pub(crate) const ROOT_CCM_DIR: LazyCell<String> = LazyCell::new(|| {
             );
             cargo_manifest_dir.to_string() + "/ccm_data"
         }
+    };
+    let path = PathBuf::from(&ccm_root_dir);
+    if !path.try_exists().unwrap() {
+        info!("Directory {:?} not found, creating", path);
+        std::fs::create_dir(path).unwrap();
     }
+
+    ccm_root_dir
 });
 
 pub(crate) async fn run_ccm_test<C, T>(make_cluster_options: C, test_body: T)
