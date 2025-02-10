@@ -1,3 +1,5 @@
+use crate::ccm::ROOT_CCM_DIR;
+
 use super::logged_cmd::{LoggedCmd, RunOptions};
 use super::node_config::NodeConfig;
 use anyhow::{Context, Error};
@@ -30,12 +32,6 @@ pub(crate) struct ClusterOptions {
     /// CCM allocates node ip addresses based on this prefix:
     /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
     pub(crate) ip_prefix: NetPrefix,
-    /// CCM does not allow to have one active cluster within one config directory
-    /// To have more than two active CCM cluster at the same time we isolate each cluster into separate
-    /// config director, each config directory is created in `root_dir`.
-    /// Example: root_dir = `/tmp/ccm`, config directory for cluster `test_cluster_1` is going be `/tmp/ccm/test_cluster_1`
-    ///  and cluster directory (that is created and managed  by CCM) for this cluster is going to be `/tmp/ccm/test_cluster_1/test_cluster_1`
-    pub(crate) root_dir: String,
     /// Number of nodes to populate
     /// [1,2] - DC1 contains 1 node, DC2 contains 2 nodes
     pub(crate) nodes: Vec<u8>,
@@ -54,12 +50,12 @@ impl ClusterOptions {
     /// Since ccm does not support parallel access to different cluster in the same `config-dir`
     /// we had to isolate each cluster into its own config directory
     fn config_dir(&self) -> String {
-        format!("{}/{}", self.root_dir, self.name)
+        format!("{}/{}", *ROOT_CCM_DIR, self.name)
     }
 
     /// A directory that is created by CCM where it stores this cluster
     fn cluster_dir(&self) -> String {
-        format!("{}/{}/{}", self.root_dir, self.name, self.name)
+        format!("{}/{}/{}", *ROOT_CCM_DIR, self.name, self.name)
     }
 }
 
@@ -70,7 +66,6 @@ impl Default for ClusterOptions {
             db_type: DBType::Scylla,
             version: "".to_string(),
             ip_prefix: NetPrefix::empty(),
-            root_dir: "/tmp/ccm".to_string(),
             nodes: Vec::new(),
             smp: DEFAULT_SMP,
             memory: DEFAULT_MEMORY,

@@ -2,22 +2,42 @@ pub(crate) mod cluster;
 mod logged_cmd;
 pub(crate) mod node_config;
 
+use std::cell::LazyCell;
 use std::future::Future;
 use std::sync::Arc;
 
 use cluster::Cluster;
 use cluster::ClusterOptions;
-use lazy_static::lazy_static;
 use tokio::sync::Mutex;
+use tracing::info;
 
-lazy_static! {
-    pub static ref CLUSTER_VERSION: String =
-        std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:6.2.2".to_string());
-    static ref TEST_KEEP_CLUSTER_ON_FAILURE: bool = !std::env::var("TEST_KEEP_CLUSTER_ON_FAILURE")
+pub(crate) const CLUSTER_VERSION: LazyCell<String> =
+    LazyCell::new(|| std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:6.2.2".to_string()));
+
+const TEST_KEEP_CLUSTER_ON_FAILURE: LazyCell<bool> = LazyCell::new(|| {
+    std::env::var("TEST_KEEP_CLUSTER_ON_FAILURE")
         .unwrap_or("".to_string())
         .parse::<bool>()
-        .unwrap_or(false);
-}
+        .unwrap_or(false)
+});
+
+/// CCM does not allow to have one active cluster within one config directory
+/// To have more than two active CCM cluster at the same time we isolate each cluster into separate
+/// config director, each config directory is created in `ROOT_CCM_DIR`.
+pub(crate) const ROOT_CCM_DIR: LazyCell<String> = LazyCell::new(|| {
+    let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let ccm_root_dir_env = std::env::var("CCM_ROOT_DIR");
+    match ccm_root_dir_env {
+        Ok(x) => x,
+        Err(e) => {
+            info!(
+                "CCM_ROOT_DIR env malformed or not present: {}. Using {}/ccm_data for ccm data.",
+                e, cargo_manifest_dir
+            );
+            cargo_manifest_dir.to_string() + "/ccm_data"
+        }
+    }
+});
 
 pub(crate) async fn run_ccm_test<C, T, Fut>(make_cluster_options: C, test_body: T)
 where
