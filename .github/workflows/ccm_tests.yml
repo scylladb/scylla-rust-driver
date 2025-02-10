@@ -22,5 +22,5 @@ jobs:
         run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
       - name: Update rust toolchain
         run: rustup update
-      - name: Run cloud tests
+      - name: Run CCM tests
         run: RUST_LOG=trace cargo test --verbose --test ccm_integration
