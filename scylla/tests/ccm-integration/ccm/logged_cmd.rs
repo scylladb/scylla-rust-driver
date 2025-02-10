@@ -179,12 +179,69 @@ impl LoggedCmd {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use tokio::fs;
+    use std::fmt::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing::field::Field;
+    use tracing::subscriber::DefaultGuard;
+    use tracing::Subscriber;
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::registry::LookupSpan;
+    use tracing_subscriber::{Layer, Registry};
+
+    /// Collects the log message from an event.
+    /// Created for test purposes, to test the logs emitted by LoggedCmd API.
+    struct PrintlnVisitor {
+        log_message: String,
+    }
+
+    impl tracing::field::Visit for PrintlnVisitor {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if self.log_message.is_empty() {
+                write!(self.log_message, "{:?}", value).unwrap();
+            } else {
+                write!(self.log_message, ", {}: {:?}", field, value).unwrap();
+            }
+        }
+    }
+
+    struct VecCollector {
+        logs: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S> Layer<S> for VecCollector
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+    {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let mut logs = self.logs.lock().unwrap();
+
+            let mut visitor = PrintlnVisitor {
+                log_message: String::new(),
+            };
+            event.record(&mut visitor);
+
+            logs.push(visitor.log_message);
+        }
+    }
+
+    impl VecCollector {
+        fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
+            let logs = Arc::new(Mutex::new(Vec::new()));
+            (Self { logs: logs.clone() }, logs)
+        }
+    }
+
+    fn setup_tracing_collected_logs() -> (Arc<Mutex<Vec<String>>>, DefaultGuard) {
+        let (vec_collector, logs) = VecCollector::new();
+        let subscriber = Registry::default().with(vec_collector);
+        let guard = tracing::subscriber::set_default(subscriber);
+
+        (logs, guard)
+    }
 
     #[tokio::test]
     async fn test_run_command_success() {
-        let log_file = "/tmp/test_log_success.txt";
-        let _ = fs::remove_file(log_file).await;
+        let (logs, _guard) = setup_tracing_collected_logs();
         let runner = LoggedCmd::new().await;
 
         // Run a simple echo command
@@ -193,18 +250,13 @@ mod tests {
             .await
             .unwrap();
 
-        drop(runner);
-
-        let log_contents = fs::read_to_string(log_file).await.unwrap();
-        assert_eq!(log_contents, "started[1]      -> echo Test Success\nstdout[1]       ->  Test Success\nexited[1]       -> status = 0\n");
-
-        let _ = fs::remove_file(log_file).await;
+        let log_contents = logs.lock().unwrap().join("\n");
+        assert_eq!(log_contents, "started[1]      -> echo Test Success\nstdout[1]       ->  Test Success\nexited[1]       -> status = 0");
     }
 
     #[tokio::test]
     async fn test_run_command_failure() {
-        let log_file = "/tmp/test_log_failure.txt";
-        let _ = fs::remove_file(log_file).await;
+        let (logs, _guard) = setup_tracing_collected_logs();
         let runner = LoggedCmd::new().await;
 
         // Run a command that will fail
@@ -219,21 +271,38 @@ mod tests {
             .to_string()
             .contains("No such file or directory"));
 
-        drop(runner);
+        let log_contents = logs.lock().unwrap().join("\n");
+        assert_eq!(log_contents, "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2");
+    }
 
-        let log_contents = fs::read_to_string(log_file).await.unwrap();
-        assert_eq!(log_contents, "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2\n");
-        let _ = fs::remove_file(log_file).await;
+    #[tokio::test]
+    async fn test_run_command_allow_failure() {
+        let (logs, _guard) = setup_tracing_collected_logs();
+        let runner = LoggedCmd::new().await;
+
+        // Run a command that will fail
+        let status = runner
+            .run_command(
+                "ls",
+                &["/nonexistent_path"],
+                RunOptions::new().allow_failure(true),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(status.code(), Some(2));
+
+        let log_contents = logs.lock().unwrap().join("\n");
+        assert_eq!(log_contents, "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2");
     }
 
     #[tokio::test]
     async fn test_run_command_with_env() {
-        let log_file = "/tmp/test_log_env.txt";
-        let _ = fs::remove_file(log_file).await;
+        let (logs, _guard) = setup_tracing_collected_logs();
         let runner = LoggedCmd::new().await;
 
-        let mut env_vars: HashMap<String, String> = HashMap::new();
-        env_vars.insert("TEST_ENV".to_string(), "12345".to_string());
+        let env_vars: HashMap<String, String> =
+            [("TEST_ENV".to_string(), "12345".to_string())].into();
 
         runner
             .run_command(
@@ -244,10 +313,7 @@ mod tests {
             .await
             .unwrap();
 
-        drop(runner);
-
-        let log_contents = fs::read_to_string(log_file).await.unwrap();
-        assert_eq!(log_contents, "env[1]          -> TEST_ENV=12345\nstarted[1]      -> printenv TEST_ENV\nstdout[1]       ->  12345\nexited[1]       -> status = 0\n");
-        let _ = fs::remove_file(log_file).await;
+        let log_contents = logs.lock().unwrap().join("\n");
+        assert_eq!(log_contents, "env[1]          -> TEST_ENV=12345\nstarted[1]      -> printenv TEST_ENV\nstdout[1]       ->  12345\nexited[1]       -> status = 0");
     }
 }
