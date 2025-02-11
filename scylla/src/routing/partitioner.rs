@@ -16,8 +16,9 @@ use std::num::Wrapping;
 use crate::{prepared_statement::TokenCalculationError, routing::Token};
 
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Clone, PartialEq, Debug, Default)]
-pub(crate) enum PartitionerName {
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[non_exhaustive]
+pub enum PartitionerName {
     #[default]
     Murmur3,
     CDC,
@@ -48,8 +49,9 @@ impl Partitioner for PartitionerName {
     }
 }
 
+// TODO: make this back `pub(crate)` in this PR.
 #[allow(clippy::upper_case_acronyms)]
-pub(crate) enum PartitionerHasherAny {
+pub enum PartitionerHasherAny {
     Murmur3(Murmur3PartitionerHasher),
     CDC(CDCPartitionerHasher),
 }
