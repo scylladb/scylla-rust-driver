@@ -84,9 +84,8 @@ impl Sharder {
 
         // Choose smallest available port number to begin at after wrapping
         // apply the formula from draw_source_port_for_shard for lowest possible gen_range result
-        let first_valid_port = (49152 + self.nr_shards.get() - 1) / self.nr_shards.get()
-            * self.nr_shards.get()
-            + shard as u16;
+        let first_valid_port =
+            49152u16.div_ceil(self.nr_shards.get()) * self.nr_shards.get() + shard as u16;
 
         let before_wrap = (starting_port..=65535).step_by(self.nr_shards.get().into());
         let after_wrap = (first_valid_port..starting_port).step_by(self.nr_shards.get().into());
@@ -191,7 +190,7 @@ mod tests {
         setup_tracing();
         let nr_shards = 4;
         let max_port_num = 65535;
-        let min_port_num = (49152 + nr_shards - 1) / nr_shards * nr_shards;
+        let min_port_num = 49152u16.div_ceil(nr_shards) * nr_shards;
 
         let sharder = Sharder::new(ShardCount::new(nr_shards).unwrap(), 12);
 
