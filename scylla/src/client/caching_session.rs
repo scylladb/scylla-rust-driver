@@ -1,4 +1,6 @@
 use crate::batch::{Batch, BatchStatement};
+use crate::client::pager::QueryPager;
+use crate::client::session::Session;
 use crate::errors::{ExecutionError, PagerExecutionError, PrepareError};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -8,6 +10,7 @@ use crate::routing::partitioner::PartitionerName;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
+use itertools::Itertools;
 use scylla_cql::frame::response::result::{PreparedMetadata, ResultMetadata};
 use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::SerializeRow;
@@ -15,9 +18,6 @@ use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::BuildHasher;
 use std::sync::Arc;
-
-use crate::client::pager::QueryPager;
-use crate::client::session::Session;
 
 /// Contains just the parts of a prepared statement that were returned
 /// from the database. All remaining parts (query string, page size,
@@ -42,7 +42,7 @@ where
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
     max_capacity: usize,
-    cache: DashMap<String, RawPreparedStatementData, S>,
+    cache: DashMap<Arc<str>, RawPreparedStatementData, S>,
 }
 
 impl<S> fmt::Debug for CachingSession<S>
@@ -202,7 +202,7 @@ where
                 raw.is_confirmed_lwt,
                 raw.metadata.clone(),
                 raw.result_metadata.clone(),
-                query.contents,
+                Arc::clone(&query.contents),
                 page_size,
                 query.config,
             );
@@ -217,10 +217,7 @@ where
                 // Don't hold a reference into the map (that's why the to_string() is called)
                 // This is because the documentation of the remove fn tells us that it may deadlock
                 // when holding some sort of reference into the map
-                let query = self.cache.iter().next().map(|c| c.key().to_string());
-
-                // Don't inline this: https://stackoverflow.com/questions/69873846/an-owned-value-is-still-references-somehow
-                if let Some(q) = query {
+                if let Some(q) = self.cache.iter().next().map(|c| Arc::clone(c.key())) {
                     self.cache.remove(&q);
                 }
             }

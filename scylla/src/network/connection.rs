@@ -629,7 +629,7 @@ impl Connection {
                     .prepared_flags_contain_lwt_mark(p.prepared_metadata.flags as u32),
                 p.prepared_metadata,
                 Arc::new(p.result_metadata),
-                query.contents.clone(),
+                Arc::clone(&query.contents),
                 query.get_validated_page_size(),
                 query.config.clone(),
             ),
@@ -657,7 +657,7 @@ impl Connection {
         // of statement contents
         if reprepared.get_id() != previous_prepared.get_id() {
             Err(RequestAttemptError::RepreparedIdChanged {
-                statement: reprepare_query.contents,
+                statement: reprepare_query.contents.to_string(),
                 expected_id: previous_prepared.get_id().clone().into(),
                 reprepared_id: reprepared.get_id().clone().into(),
             })
@@ -956,7 +956,7 @@ impl Connection {
                 &execute_frame,
                 true,
                 prepared_statement.config.tracing,
-                cached_metadata,
+                Arc::clone(&cached_metadata),
             )
             .await?;
 
@@ -1161,7 +1161,7 @@ impl Connection {
         let mut batch: Cow<Batch> = Cow::Owned(Batch::new_from(init_batch));
         for stmt in &init_batch.statements {
             match stmt {
-                BatchStatement::Query(query) => match prepared_queries.get(query.contents.as_str())
+                BatchStatement::Query(query) => match prepared_queries.get(&query.contents)
                 {
                     Some(prepared) => batch.to_mut().append_statement(prepared.clone()),
                     None => batch.to_mut().append_statement(query.clone()),
@@ -1278,7 +1278,7 @@ impl Connection {
         request: &impl SerializableRequest,
         compress: bool,
         tracing: bool,
-        cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+        cached_metadata: Option<Arc<ResultMetadata<'static>>>,
     ) -> Result<QueryResponse, InternalRequestError> {
         let compression = if compress {
             self.config.compression

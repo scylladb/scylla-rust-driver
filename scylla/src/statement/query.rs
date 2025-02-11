@@ -13,15 +13,15 @@ use std::time::Duration;
 pub struct Query {
     pub(crate) config: StatementConfig,
 
-    pub contents: String,
+    pub contents: Arc<str>,
     page_size: PageSize,
 }
 
 impl Query {
     /// Creates a new `Query` from a CQL query string.
-    pub fn new(query_text: impl Into<String>) -> Self {
+    pub fn new(query_text: impl AsRef<str>) -> Self {
         Self {
-            contents: query_text.into(),
+            contents: query_text.as_ref().into(),
             page_size: PageSize::default(),
             config: Default::default(),
         }
@@ -171,6 +171,6 @@ impl From<String> for Query {
 
 impl<'a> From<&'a str> for Query {
     fn from(s: &'a str) -> Query {
-        Query::new(s.to_owned())
+        Query::new(s.to_string())
     }
 }

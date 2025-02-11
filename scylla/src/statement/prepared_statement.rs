@@ -103,7 +103,7 @@ pub struct PreparedStatement {
 struct PreparedStatementSharedData {
     metadata: PreparedMetadata,
     result_metadata: Arc<ResultMetadata<'static>>,
-    statement: String,
+    statement: Box<str>, // Could use DST to inline STR
 }
 
 impl Clone for PreparedStatement {
@@ -112,7 +112,7 @@ impl Clone for PreparedStatement {
             config: self.config.clone(),
             prepare_tracing_ids: Vec::new(),
             id: self.id.clone(),
-            shared: self.shared.clone(),
+            shared: Arc::clone(&self.shared),
             page_size: self.page_size,
             partitioner_name: self.partitioner_name.clone(),
             is_confirmed_lwt: self.is_confirmed_lwt,
@@ -126,7 +126,7 @@ impl PreparedStatement {
         is_lwt: bool,
         metadata: PreparedMetadata,
         result_metadata: Arc<ResultMetadata<'static>>,
-        statement: String,
+        statement: Arc<str>,
         page_size: PageSize,
         config: StatementConfig,
     ) -> Self {
@@ -135,7 +135,7 @@ impl PreparedStatement {
             shared: Arc::new(PreparedStatementSharedData {
                 metadata,
                 result_metadata,
-                statement,
+                statement: Box::from(statement.as_ref()),
             }),
             prepare_tracing_ids: Vec::new(),
             page_size,
@@ -408,8 +408,8 @@ impl PreparedStatement {
     }
 
     /// Access metadata about the result of prepared statement returned by the database
-    pub(crate) fn get_result_metadata(&self) -> &Arc<ResultMetadata<'static>> {
-        &self.shared.result_metadata
+    pub(crate) fn get_result_metadata(&self) -> Arc<ResultMetadata<'static>> {
+        Arc::clone(&self.shared.result_metadata)
     }
 
     /// Access column specifications of the result set returned after the execution of this statement
