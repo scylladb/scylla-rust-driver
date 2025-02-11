@@ -1,4 +1,5 @@
 use futures::Future;
+use scylla::client::caching_session::CachingSession;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
@@ -288,5 +289,14 @@ impl PerformDDL for Session {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
         self.query_unpaged(query, &[]).await.map(|_| ())
+    }
+}
+
+#[async_trait::async_trait]
+impl PerformDDL for CachingSession {
+    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError> {
+        let mut query = query.into();
+        apply_ddl_lbp(&mut query);
+        self.execute_unpaged(query, &[]).await.map(|_| ())
     }
 }

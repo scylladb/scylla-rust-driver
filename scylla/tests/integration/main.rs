@@ -14,6 +14,7 @@ mod new_session;
 mod query_result;
 mod retries;
 mod self_identity;
+mod session;
 mod shards;
 mod silent_prepare_batch;
 mod silent_prepare_query;
