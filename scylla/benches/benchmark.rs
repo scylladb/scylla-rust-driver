@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
 use bytes::BytesMut;
-use scylla::routing::partitioner::{calculate_token_for_partition_key, Murmur3Partitioner};
+use scylla::routing::partitioner::{calculate_token_for_partition_key, PartitionerName};
 use scylla_cql::frame::response::result::{ColumnType, NativeType};
 use scylla_cql::frame::types;
 use scylla_cql::serialize::row::SerializedValues;
@@ -84,7 +84,9 @@ fn calculate_token_bench(c: &mut Criterion) {
         .unwrap();
 
     c.bench_function("calculate_token_from_partition_key simple pk", |b| {
-        b.iter(|| calculate_token_for_partition_key(&serialized_simple_pk, &Murmur3Partitioner))
+        b.iter(|| {
+            calculate_token_for_partition_key(&serialized_simple_pk, &PartitionerName::Murmur3)
+        })
     });
 
     c.bench_function(
@@ -93,14 +95,16 @@ fn calculate_token_bench(c: &mut Criterion) {
             b.iter(|| {
                 calculate_token_for_partition_key(
                     &serialized_simple_pk_long_column,
-                    &Murmur3Partitioner,
+                    &PartitionerName::Murmur3,
                 )
             })
         },
     );
 
     c.bench_function("calculate_token_from_partition_key complex pk", |b| {
-        b.iter(|| calculate_token_for_partition_key(&serialized_complex_pk, &Murmur3Partitioner))
+        b.iter(|| {
+            calculate_token_for_partition_key(&serialized_complex_pk, &PartitionerName::Murmur3)
+        })
     });
 
     c.bench_function(
@@ -109,7 +113,7 @@ fn calculate_token_bench(c: &mut Criterion) {
             b.iter(|| {
                 calculate_token_for_partition_key(
                     &serialized_values_long_column,
-                    &Murmur3Partitioner,
+                    &PartitionerName::Murmur3,
                 )
             })
         },

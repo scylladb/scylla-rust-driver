@@ -16,8 +16,9 @@ use std::num::Wrapping;
 use crate::{prepared_statement::TokenCalculationError, routing::Token};
 
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Clone, PartialEq, Debug, Default)]
-pub(crate) enum PartitionerName {
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[non_exhaustive]
+pub enum PartitionerName {
     #[default]
     Murmur3,
     CDC,
@@ -75,11 +76,12 @@ impl PartitionerHasher for PartitionerHasherAny {
 /// The Partitioners' design is based on std::hash design: `Partitioner`
 /// corresponds to `HasherBuilder`, and `PartitionerHasher` to `Hasher`.
 /// See their documentation for more details.
-pub trait Partitioner {
+pub(crate) trait Partitioner {
     type Hasher: PartitionerHasher;
 
     fn build_hasher(&self) -> Self::Hasher;
 
+    #[allow(unused)] // Currently, no public API uses this.
     fn hash_one(&self, data: &[u8]) -> Token {
         let mut hasher = self.build_hasher();
         hasher.write(data);
@@ -92,12 +94,12 @@ pub trait Partitioner {
 /// Instances of this trait are created by a `Partitioner` and are stateful.
 /// At any point, one can call `finish()` and a `Token` will be computed
 /// based on values that has been fed so far.
-pub trait PartitionerHasher {
+pub(crate) trait PartitionerHasher {
     fn write(&mut self, pk_part: &[u8]);
     fn finish(&self) -> Token;
 }
 
-pub struct Murmur3Partitioner;
+pub(crate) struct Murmur3Partitioner;
 
 impl Partitioner for Murmur3Partitioner {
     type Hasher = Murmur3PartitionerHasher;
@@ -112,7 +114,7 @@ impl Partitioner for Murmur3Partitioner {
     }
 }
 
-pub struct Murmur3PartitionerHasher {
+pub(crate) struct Murmur3PartitionerHasher {
     total_len: usize,
     buf: [u8; Self::BUF_CAPACITY],
     h1: Wrapping<i64>,
@@ -278,9 +280,9 @@ enum CDCPartitionerHasherState {
     Computed(Token),
 }
 
-pub struct CDCPartitioner;
+pub(crate) struct CDCPartitioner;
 
-pub struct CDCPartitionerHasher {
+pub(crate) struct CDCPartitionerHasher {
     state: CDCPartitionerHasherState,
 }
 
@@ -346,9 +348,9 @@ impl PartitionerHasher for CDCPartitionerHasher {
 ///
 /// NOTE: the provided values must completely constitute partition key
 /// and be in the order defined in CREATE TABLE statement.
-pub fn calculate_token_for_partition_key<P: Partitioner>(
+pub fn calculate_token_for_partition_key(
     serialized_partition_key_values: &SerializedValues,
-    partitioner: &P,
+    partitioner: &PartitionerName,
 ) -> Result<Token, TokenCalculationError> {
     let mut partitioner_hasher = partitioner.build_hasher();
 
