@@ -3044,7 +3044,7 @@ async fn test_manual_primary_key_computation() {
 
         let token_by_hand = calculate_token_for_partition_key(
             serialized_pk_values_in_pk_order,
-            &Murmur3Partitioner,
+            &PartitionerName::Murmur3,
         )
         .unwrap();
         println!(
