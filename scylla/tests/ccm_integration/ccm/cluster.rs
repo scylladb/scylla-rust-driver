@@ -1,19 +1,18 @@
-use crate::ccm::ROOT_CCM_DIR;
+use crate::ccm::{IP_ALLOCATOR, ROOT_CCM_DIR};
 
+use super::ip_allocator::NetPrefix;
 use super::logged_cmd::{LoggedCmd, RunOptions};
 use super::node_config::NodeConfig;
 use anyhow::{Context, Error};
 use scylla::client::session_builder::SessionBuilder;
-use std::collections::{HashMap, HashSet};
-use std::fmt::Display;
-use std::net::{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr};
+use std::collections::HashMap;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tokio::fs::{metadata, File};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::fs::metadata;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -450,6 +449,13 @@ impl Drop for Cluster {
     fn drop(&mut self) {
         if !self.opts.do_not_remove_on_drop {
             self.destroy_sync().ok();
+
+            // Return the IP prefix to the pool.
+            IP_ALLOCATOR
+                .lock()
+                .expect("Failed to acquire IP_ALLOCATOR lock")
+                .free_ip_prefix(&self.opts.ip_prefix)
+                .expect("Failed to return ip prefix");
         }
     }
 }
@@ -530,7 +536,10 @@ impl Cluster {
     pub(crate) async fn new(opts: ClusterOptions) -> Result<Self, Error> {
         let mut opts = opts.clone();
         if opts.ip_prefix.is_empty() {
-            opts.ip_prefix = NetPrefix::sniff_ipv4_prefix().await?
+            opts.ip_prefix = IP_ALLOCATOR
+                .lock()
+                .expect("Failed to acquire IP_ALLOCATOR lock")
+                .alloc_ip_prefix()?
         };
 
         let config_dir = TempDir::with_prefix_in(&opts.name, &*ROOT_CCM_DIR)
@@ -756,154 +765,5 @@ impl Cluster {
 
     pub(crate) fn nodes(&self) -> &NodeList {
         &self.nodes
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct NetPrefix(IpAddr);
-
-impl NetPrefix {
-    /// This method looks at all busy /24 networks in 127.0.0.0/8 and return first available
-    /// network goes as busy if anything is listening on any port and any address in this network
-    /// 127.0.0.0/24 is skipped and never returned
-    async fn sniff_ipv4_prefix() -> Result<NetPrefix, Error> {
-        let mut used_ips: HashSet<IpAddr> = HashSet::new();
-        let file = File::open("/proc/net/tcp").await?;
-        let mut lines = BufReader::new(file).lines();
-        while let Some(line) = lines.next_line().await? {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if let Some(ip_hex) = parts.get(1) {
-                let ip_port: Vec<&str> = ip_hex.split(':').collect();
-                if let Some(ip_hex) = ip_port.first() {
-                    if let Ok(ip) = u32::from_str_radix(ip_hex, 16) {
-                        used_ips.insert(
-                            Ipv4Addr::new(ip as u8, (ip >> 8) as u8, (ip >> 16) as u8, 0).into(),
-                        );
-                    }
-                }
-            }
-        }
-
-        for a in 0..=255 {
-            for b in 0..=255 {
-                if a == 0 && b == 0 {
-                    continue;
-                }
-                let ip_prefix: IpAddr = Ipv4Addr::new(127, a, b, 0).into();
-                if !used_ips.contains(&ip_prefix) {
-                    return Ok(ip_prefix.into());
-                }
-            }
-        }
-        Err(Error::msg("All ip ranges are busy"))
-    }
-
-    fn empty() -> Self {
-        NetPrefix(IpAddr::V6(Ipv6Addr::UNSPECIFIED))
-    }
-
-    fn is_empty(&self) -> bool {
-        self.0.is_unspecified()
-    }
-
-    fn from_string(value: String) -> Result<Self, AddrParseError> {
-        Ok(IpAddr::from_str(&value)?.into())
-    }
-
-    fn to_str(&self) -> String {
-        match self.0 {
-            IpAddr::V4(v4) => {
-                let octets = v4.octets();
-                format!("{}.{}.{}.", octets[0], octets[1], octets[2])
-            }
-            IpAddr::V6(v6) => {
-                let mut segments = v6.segments();
-                segments[7] = 0; // Set last segment to 0
-                let new_ip = Ipv6Addr::from(segments);
-                let formatted = new_ip.to_string();
-                formatted.rsplit_once(':').map(|x| x.0).unwrap().to_string() + ":"
-            }
-        }
-    }
-
-    fn to_ipaddress(&self, id: u16) -> IpAddr {
-        match self.0 {
-            IpAddr::V4(v4) => {
-                let mut octets = v4.octets();
-                octets[3] = id as u8;
-                IpAddr::V4(Ipv4Addr::from(octets))
-            }
-            IpAddr::V6(v6) => {
-                let mut segments = v6.segments();
-                segments[7] = id;
-                IpAddr::V6(Ipv6Addr::from(segments))
-            }
-        }
-    }
-}
-
-impl Display for NetPrefix {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<IpAddr> for NetPrefix {
-    fn from(ip: IpAddr) -> Self {
-        NetPrefix(ip)
-    }
-}
-
-impl From<NetPrefix> for String {
-    fn from(value: NetPrefix) -> Self {
-        value.0.to_string()
-    }
-}
-
-impl Default for NetPrefix {
-    fn default() -> Self {
-        NetPrefix::empty()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_ipv4_prefix() {
-        let ip = NetPrefix::from_string("192.168.1.100".to_string()).unwrap();
-        assert_eq!(ip.to_str(), "192.168.1.");
-    }
-
-    #[test]
-    fn test_ipv4_loopback() {
-        let ip = NetPrefix::from_string("127.0.0.1".to_string()).unwrap();
-        assert_eq!(ip.to_str(), "127.0.0.");
-    }
-
-    #[test]
-    fn test_ipv4_edge_case() {
-        let ip = NetPrefix::from_string("0.0.0.0".to_string()).unwrap();
-        assert_eq!(ip.to_str(), "0.0.0.");
-    }
-
-    #[test]
-    fn test_ipv6_prefix() {
-        let ip =
-            NetPrefix::from_string("2001:0db8:85a3:0000:0000:8a2e:0370:7334".to_string()).unwrap();
-        assert_eq!(ip.to_str(), "2001:db8:85a3::8a2e:370:");
-    }
-
-    #[test]
-    fn test_ipv6_loopback() {
-        let ip = NetPrefix::from_string("::1".to_string()).unwrap();
-        assert_eq!(ip.to_str(), "::");
-    }
-
-    #[test]
-    fn test_ipv6_shortened() {
-        let ip = NetPrefix::from_string("2001:db8::ff00:42:8329".to_string()).unwrap();
-        assert_eq!(ip.to_str(), "2001:db8::ff00:42:");
     }
 }
