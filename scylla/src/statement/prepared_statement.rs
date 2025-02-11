@@ -418,7 +418,7 @@ impl PreparedStatement {
     }
 
     /// Get the name of the partitioner used for this statement.
-    pub(crate) fn get_partitioner_name(&self) -> &PartitionerName {
+    pub fn get_partitioner_name(&self) -> &PartitionerName {
         &self.partitioner_name
     }
 
