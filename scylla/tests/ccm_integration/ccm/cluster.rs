@@ -3,6 +3,7 @@ use crate::ccm::ROOT_CCM_DIR;
 use super::logged_cmd::{LoggedCmd, RunOptions};
 use super::node_config::NodeConfig;
 use anyhow::{Context, Error};
+use scylla::client::session_builder::SessionBuilder;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::net::{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr};
@@ -746,6 +747,11 @@ impl Cluster {
             }
             Err(e) => Err(e),
         }
+    }
+
+    pub(crate) async fn make_session_builder(&self) -> SessionBuilder {
+        let endpoints = self.nodes.get_contact_endpoints().await;
+        SessionBuilder::new().known_nodes(endpoints)
     }
 
     pub(crate) fn nodes(&self) -> &NodeList {
