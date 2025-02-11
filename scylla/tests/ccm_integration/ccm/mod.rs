@@ -1,7 +1,6 @@
 pub(crate) mod cluster;
 mod ip_allocator;
 mod logged_cmd;
-pub(crate) mod node_config;
 
 use std::future::Future;
 use std::path::PathBuf;

@@ -2,14 +2,12 @@ use crate::ccm::{IP_ALLOCATOR, ROOT_CCM_DIR};
 
 use super::ip_allocator::NetPrefix;
 use super::logged_cmd::{LoggedCmd, RunOptions};
-use super::node_config::NodeConfig;
 use anyhow::{Context, Error};
 use scylla::client::session_builder::SessionBuilder;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::str::FromStr;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::fs::metadata;
@@ -42,8 +40,6 @@ pub(crate) struct ClusterOptions {
     pub(crate) smp: u16,
     /// Amount of MB for Scylla to occupy has to be bigger than smp*512
     pub(crate) memory: u32,
-    /// scylla.yaml or cassandra.yaml
-    pub(crate) config: NodeConfig,
     /// Don't call `ccm remove` when cluster instance is dropped
     pub(crate) do_not_remove_on_drop: bool,
 }
@@ -58,7 +54,6 @@ impl Default for ClusterOptions {
             nodes: Vec::new(),
             smp: DEFAULT_SMP,
             memory: DEFAULT_MEMORY,
-            config: NodeConfig::default(),
             do_not_remove_on_drop: false,
         }
     }
@@ -219,7 +214,6 @@ impl NodeStopOptions {
 pub(crate) struct Node {
     status: NodeStatus,
     opts: NodeOptions,
-    config: NodeConfig,
     logged_cmd: Arc<LoggedCmd>,
     /// A `--config-dir` for ccm
     config_dir: PathBuf,
@@ -227,15 +221,9 @@ pub(crate) struct Node {
 
 #[allow(dead_code)]
 impl Node {
-    fn new(
-        opts: NodeOptions,
-        config: NodeConfig,
-        logged_cmd: Arc<LoggedCmd>,
-        config_dir: PathBuf,
-    ) -> Self {
+    fn new(opts: NodeOptions, logged_cmd: Arc<LoggedCmd>, config_dir: PathBuf) -> Self {
         Node {
             opts,
-            config,
             logged_cmd,
             status: NodeStatus::Stopped,
             config_dir,
@@ -259,25 +247,11 @@ impl Node {
     }
 
     pub(crate) fn broadcast_rpc_address(&self) -> IpAddr {
-        match self.config.get("broadcast_rpc_address", NodeConfig::Null) {
-            NodeConfig::Null => self.opts.ip_prefix.to_ipaddress(self.opts.id),
-            NodeConfig::String(value) => IpAddr::from_str(value.as_str())
-                .with_context(|| format!("unexpected content of broadcast_rpc_address: {value}"))
-                .unwrap(),
-            other => {
-                panic!("unexpected content of broadcast_rpc_address: {other:#?}")
-            }
-        }
+        self.opts.ip_prefix.to_ipaddress(self.opts.id)
     }
 
     pub(crate) fn native_transport_port(&self) -> u16 {
-        match self.config.get("native_transport_port", NodeConfig::Null) {
-            NodeConfig::Null => 9042,
-            NodeConfig::Int(value) => value as u16,
-            other => {
-                panic!("unexpected content of native_transport_port: {other:#?}")
-            }
-        }
+        9042
     }
 
     fn get_ccm_env(&self) -> HashMap<String, String> {
@@ -361,34 +335,6 @@ impl Node {
             .run_command("ccm", &args, RunOptions::new())
             .await?;
         self.set_status(NodeStatus::Deleted);
-        Ok(())
-    }
-
-    pub(crate) async fn sync_config(&self) -> Result<(), Error> {
-        let mut args = vec![
-            self.opts.name(),
-            "updateconf".to_string(),
-            "--config-dir".to_string(),
-            self.config_dir.to_string_lossy().to_string(),
-        ];
-
-        // converting config to space separated list of `key:value`
-        // example:
-        //      value: 1.1.1.1
-        //      obj:
-        //          value2: 2.2.2.2
-        // should become "value:1.1.1.1 obj.value2:2.2.2.2"
-        let additional: Vec<String> = self
-            .config
-            .to_flat_string()
-            .split_whitespace()
-            .map(String::from)
-            .collect();
-
-        args.extend(additional);
-        self.logged_cmd
-            .run_command("ccm", &args, RunOptions::new())
-            .await?;
         Ok(())
     }
 
@@ -524,7 +470,6 @@ impl Cluster {
                 datacenter_id: datacenter_id.unwrap_or(1),
                 ..NodeOptions::from_cluster_opts(&self.opts)
             },
-            self.opts.config.clone(),
             self.logged_cmd.clone(),
             self.config_dir().to_owned(),
         );

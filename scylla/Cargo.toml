@@ -88,7 +88,6 @@ rand_chacha = "0.3.1"
 time = "0.3"
 anyhow = "1.0.95"
 tokio = { version = "1.34", features = ["test-util", "fs", "process"] }
-serde_yaml = {version = "0.9.34"}
 tempfile = "3.16"
 
 [[bench]]
