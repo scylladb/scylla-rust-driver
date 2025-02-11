@@ -831,6 +831,69 @@ async fn test_get_tracing_info(session: &Session, ks: String) {
     let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
     assert!(!tracing_info.events.is_empty());
     assert!(!tracing_info.nodes().is_empty());
+
+    // Check if the request type matches
+    assert_eq!(tracing_info.request.as_ref().unwrap(), "Execute CQL3 query");
+
+    // Check if we're using Scylla or Cassandra
+    let is_scylla = session
+        .get_cluster_state()
+        .get_nodes_info()
+        .first()
+        .unwrap()
+        .sharder()
+        .is_some();
+
+    if is_scylla {
+        // For Scylla, duration should be available immediately
+        assert!(tracing_info.duration.unwrap() > 0);
+    } else {
+        // For Cassandra, we might need to wait for the duration
+        let mut attempts = 0;
+        let max_attempts = 10;
+        let mut duration_opt;
+
+        while attempts < max_attempts {
+            duration_opt = session
+                .get_tracing_info(&tracing_id)
+                .await
+                .unwrap()
+                .duration;
+            if let Some(duration) = duration_opt {
+                assert!(duration > 0);
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            attempts += 1;
+        }
+
+        if attempts == max_attempts {
+            panic!("Duration was not available after {} attempts", max_attempts);
+        }
+    }
+
+    // Verify started_at timestamp is present
+    assert!(tracing_info.started_at.unwrap().0 > 0);
+
+    // Check parameters
+    assert!(tracing_info
+        .parameters
+        .as_ref()
+        .unwrap()
+        .contains_key("consistency_level"));
+    assert!(tracing_info
+        .parameters
+        .as_ref()
+        .unwrap()
+        .contains_key("query"));
+
+    // Check events
+    for event in &tracing_info.events {
+        assert!(!event.activity.as_ref().unwrap().is_empty());
+        assert!(event.source.is_some());
+        assert!(event.source_elapsed.unwrap() >= 0);
+        assert!(!event.activity.as_ref().unwrap().is_empty());
+    }
 }
 
 async fn test_tracing_query_iter(session: &Session, ks: String) {
