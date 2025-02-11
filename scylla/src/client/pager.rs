@@ -555,6 +555,7 @@ where
 /// needs to be cast into a typed stream. This is done by use of `rows_stream()` method.
 /// As the method is generic over the target type, the turbofish syntax
 /// can come in handy there, e.g. `query_pager.rows_stream::<(i32, String, Uuid)>()`.
+#[derive(Debug)]
 pub struct QueryPager {
     current_page: RawRowLendingIterator,
     page_receiver: mpsc::Receiver<Result<ReceivedPage, NextPageError>>,
@@ -640,7 +641,7 @@ impl QueryPager {
     /// Type-checks the iterator against given type.
     ///
     /// This is automatically called upon transforming [QueryPager] into [TypedRowStream].
-    /// Can be used with `next()` for manual deserialization. See `next()` for an example.
+    // Can be used with `next()` for manual deserialization.
     #[inline]
     pub fn type_check<'frame, 'metadata, RowT: DeserializeRow<'frame, 'metadata>>(
         &self,
@@ -970,6 +971,17 @@ impl QueryPager {
 pub struct TypedRowStream<RowT: 'static> {
     raw_row_lending_stream: QueryPager,
     _phantom: std::marker::PhantomData<RowT>,
+}
+
+// Manual implementation not to depend on RowT implementing Debug.
+// Explanation: automatic derive of Debug would impose the RowT: Debug
+// constaint for the Debug impl.
+impl<T> std::fmt::Debug for TypedRowStream<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TypedRowStream")
+            .field("raw_row_lending_stream", &self.raw_row_lending_stream)
+            .finish()
+    }
 }
 
 impl<RowT> Unpin for TypedRowStream<RowT> {}
