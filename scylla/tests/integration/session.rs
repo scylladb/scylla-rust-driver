@@ -831,6 +831,39 @@ async fn test_get_tracing_info(session: &Session, ks: String) {
     let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
     assert!(!tracing_info.events.is_empty());
     assert!(!tracing_info.nodes().is_empty());
+
+    // Check if the request type matches
+    assert_eq!(tracing_info.request.unwrap(), "Execute CQL3 query");
+
+    // Verify duration is positive when Scylla is used
+    if session
+        .get_cluster_state()
+        .get_nodes_info()
+        .first()
+        .unwrap()
+        .sharder()
+        .is_some()
+    {
+        assert!(tracing_info.duration.unwrap() > 0);
+    }
+    // Verify started_at timestamp is present
+    assert!(tracing_info.started_at.unwrap().0 > 0);
+
+    // Check parameters
+    assert!(tracing_info
+        .parameters
+        .clone()
+        .unwrap()
+        .contains_key("consistency_level"));
+    assert!(tracing_info.parameters.unwrap().contains_key("query"));
+
+    // Check events
+    for event in tracing_info.events {
+        assert!(!event.activity.clone().unwrap().is_empty());
+        assert!(event.source.is_some());
+        assert!(event.source_elapsed.unwrap() >= 0);
+        assert!(!event.activity.unwrap().is_empty());
+    }
 }
 
 async fn test_tracing_query_iter(session: &Session, ks: String) {
