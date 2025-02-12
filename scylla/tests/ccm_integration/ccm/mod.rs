@@ -55,17 +55,126 @@ static ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
     ccm_root_dir
 });
 
+pub(crate) static DB_TLS_CERT_PATH: LazyLock<String> = LazyLock::new(|| {
+    let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let db_cert_path_env = std::env::var("DB_TLS_CERT_PATH");
+    let db_cert_path = match db_cert_path_env {
+        Ok(x) => x,
+        Err(e) => {
+            info!(
+                "DB_TLS_CERT_PATH env malformed or not present: {}. Using {}/../test/tls/db.crt for db cert.",
+                e, cargo_manifest_dir
+            );
+            cargo_manifest_dir.to_string() + "/../test/tls/db.crt"
+        }
+    };
+
+    let path = PathBuf::from(&db_cert_path);
+    if !path.try_exists().unwrap() {
+        panic!("DB cert file {:?} not found", path);
+    }
+
+    db_cert_path
+});
+
+pub(crate) static DB_TLS_KEY_PATH: LazyLock<String> = LazyLock::new(|| {
+    let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let db_key_path_env = std::env::var("DB_TLS_KEY_PATH");
+    let db_key_path = match db_key_path_env {
+        Ok(x) => x,
+        Err(e) => {
+            info!(
+                "DB_TLS_KEY_PATH env malformed or not present: {}. Using {}/../test/tls/db.key for db key.",
+                e, cargo_manifest_dir
+            );
+            cargo_manifest_dir.to_string() + "/../test/tls/db.key"
+        }
+    };
+
+    let path = PathBuf::from(&db_key_path);
+    if !path.try_exists().unwrap() {
+        panic!("DB key file {:?} not found", path);
+    }
+
+    db_key_path
+});
+
+#[cfg(feature = "ssl")]
+pub(crate) static CA_TLS_CERT_PATH: LazyLock<String> = LazyLock::new(|| {
+    let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let ca_cert_path_env = std::env::var("CA_TLS_CERT_PATH");
+    let ca_cert_path = match ca_cert_path_env {
+        Ok(x) => x,
+        Err(e) => {
+            info!(
+                "CA_TLS_CERT_PATH env malformed or not present: {}. Using {}/../test/tls/ca.crt for ca cert.",
+                e, cargo_manifest_dir
+            );
+            cargo_manifest_dir.to_string() + "/../test/tls/ca.crt"
+        }
+    };
+
+    let path = PathBuf::from(&ca_cert_path);
+    if !path.try_exists().unwrap() {
+        panic!("DB cert file {:?} not found", path);
+    }
+
+    ca_cert_path
+});
+
 pub(crate) async fn run_ccm_test<C, T, Fut>(make_cluster_options: C, test_body: T)
 where
     C: FnOnce() -> ClusterOptions,
     T: FnOnce(Arc<tokio::sync::Mutex<Cluster>>) -> Fut,
     Fut: Future<Output = ()>,
 {
+    run_ccm_test_with_configuration(
+        make_cluster_options,
+        |cluster| async move { cluster },
+        test_body,
+    )
+    .await
+}
+
+/// Run a CCM test with a custom configuration logic before the cluster starts.
+///
+/// ### Example
+/// ```
+/// # use crate::ccm::cluster::Cluster;
+/// # use crate::ccm::run_ccm_test_with_configuration;
+/// # use std::sync::{Arc, Mutex};
+/// async fn configure_cluster(cluster: Cluster) -> Cluster {
+///    // Do some configuration here
+///    cluster.updateconf([("foo", "bar")]).await.expect("failed to update conf");
+///    cluster
+/// }
+///
+/// async fn test(cluster: Arc<Mutex<Cluster>>) {
+///     let cluster = cluster.lock().await;
+///     let session = cluster.make_session_builder().await.build().await.unwrap();
+///
+///     println!("Succesfully connected to the cluster!");
+/// }
+///
+/// run_ccm_test_with_configuration(ClusterOptions::default, configure_cluster, test).await;
+/// ```
+pub(crate) async fn run_ccm_test_with_configuration<C, Conf, ConfFut, T, TFut>(
+    make_cluster_options: C,
+    configure: Conf,
+    test_body: T,
+) where
+    C: FnOnce() -> ClusterOptions,
+    Conf: FnOnce(Cluster) -> ConfFut,
+    ConfFut: Future<Output = Cluster>,
+    T: FnOnce(Arc<tokio::sync::Mutex<Cluster>>) -> TFut,
+    TFut: Future<Output = ()>,
+{
     let cluster_options = make_cluster_options();
     let mut cluster = Cluster::new(cluster_options)
         .await
         .expect("Failed to create cluster");
     cluster.init().await.expect("failed to initialize cluster");
+    cluster = configure(cluster).await;
     cluster.start(None).await.expect("failed to start cluster");
 
     struct ClusterWrapper(Arc<tokio::sync::Mutex<Cluster>>);

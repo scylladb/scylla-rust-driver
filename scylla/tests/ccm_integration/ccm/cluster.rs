@@ -2,6 +2,7 @@ use crate::ccm::{IP_ALLOCATOR, ROOT_CCM_DIR};
 
 use super::ip_allocator::NetPrefix;
 use super::logged_cmd::{LoggedCmd, RunOptions};
+use super::{DB_TLS_CERT_PATH, DB_TLS_KEY_PATH};
 use anyhow::{Context, Error};
 use scylla::client::session_builder::SessionBuilder;
 use std::collections::HashMap;
@@ -262,6 +263,68 @@ impl Node {
             format!("--smp={} --memory={}M", self.opts.smp, self.opts.memory),
         );
         env
+    }
+
+    /// Executes `ccm updateconf` and applies it for this node.
+    /// It accepts the key-value pairs to update the configuration.
+    ///
+    /// ### Example
+    /// ```
+    /// # use crate::ccm::cluster::Node;
+    /// # async fn check_only_compiles(node: &Node) -> Result<(), Box<dyn Error>> {
+    /// let args = [
+    ///     ("client_encryption_options.enabled", "true"),
+    ///     ("client_encryption_options.certificate", "db.cert"),
+    ///     ("client_encryption_options.keyfile", "db.key"),
+    /// ];
+    ///
+    /// node.updateconf(args).await?
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// The code above is equivalent to the following scylla.yaml:
+    /// ```yaml
+    /// client_encryption_options:
+    ///   enabled: true
+    ///   certificate: db.cert
+    ///   keyfile: db.key
+    /// ```
+    pub(crate) async fn updateconf<K, V>(
+        &self,
+        key_values: impl IntoIterator<Item = (K, V)>,
+    ) -> Result<(), Error>
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let config_dir = &self.config_dir;
+        let mut args: Vec<String> = vec![
+            self.opts.name(),
+            "updateconf".to_string(),
+            "--config-dir".to_string(),
+            config_dir.to_string_lossy().into_owned(),
+        ];
+        for (k, v) in key_values.into_iter() {
+            args.push(format!("{}:{}", k.as_ref(), v.as_ref()));
+        }
+
+        self.logged_cmd
+            .run_command("ccm", &args, RunOptions::new())
+            .await?;
+        Ok(())
+    }
+
+    /// Configures TLS based on the paths provided in the environment variables `DB_TLS_CERT_PATH` and `DB_TLS_KEY_PATH`.
+    /// If the paths are not provided, the default certificate and key are taken from `./test/tls/db.crt` and `./test/tls/db.key`.
+    pub(crate) async fn configure_tls(&self) -> Result<(), Error> {
+        let args = [
+            ("client_encryption_options.enabled", "true"),
+            ("client_encryption_options.certificate", &DB_TLS_CERT_PATH),
+            ("client_encryption_options.keyfile", &DB_TLS_KEY_PATH),
+        ];
+
+        self.updateconf(args).await
     }
 
     /// This method starts the node. User can provide optional [`NodeStartOptions`] to control the behavior of the node start.
@@ -579,6 +642,67 @@ impl Cluster {
             .run_command("ccm", &args, RunOptions::new())
             .await?;
         Ok(())
+    }
+
+    /// Executes `ccm updateconf` and applies it for all nodes in the cluster.
+    /// It accepts the key-value pairs to update the configuration.
+    ///
+    /// ### Example
+    /// ```
+    /// # use crate::ccm::cluster::Cluster;
+    /// # async fn check_only_compiles(cluster: &Cluster) -> Result<(), Box<dyn Error>> {
+    /// let args = [
+    ///     ("client_encryption_options.enabled", "true"),
+    ///     ("client_encryption_options.certificate", "db.cert"),
+    ///     ("client_encryption_options.keyfile", "db.key"),
+    /// ];
+    ///
+    /// cluster.updateconf(args).await?
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// The code above is equivalent to the following scylla.yaml:
+    /// ```yaml
+    /// client_encryption_options:
+    ///   enabled: true
+    ///   certificate: db.cert
+    ///   keyfile: db.key
+    /// ```
+    pub(crate) async fn updateconf<K, V>(
+        &self,
+        key_values: impl IntoIterator<Item = (K, V)>,
+    ) -> Result<(), Error>
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let config_dir = self.config_dir();
+        let mut args: Vec<String> = vec![
+            "updateconf".to_string(),
+            "--config-dir".to_string(),
+            config_dir.to_string_lossy().into_owned(),
+        ];
+        for (k, v) in key_values.into_iter() {
+            args.push(format!("{}:{}", k.as_ref(), v.as_ref()));
+        }
+
+        self.logged_cmd
+            .run_command("ccm", &args, RunOptions::new())
+            .await?;
+        Ok(())
+    }
+
+    /// Configures TLS based on the paths provided in the environment variables `DB_TLS_CERT_PATH` and `DB_TLS_KEY_PATH`.
+    /// If the paths are not provided, the default certificate and key are taken from `./test/tls/db.crt` and `./test/tls/db.key`.
+    pub(crate) async fn configure_tls(&self) -> Result<(), Error> {
+        let args = [
+            ("client_encryption_options.enabled", "true"),
+            ("client_encryption_options.certificate", &DB_TLS_CERT_PATH),
+            ("client_encryption_options.keyfile", &DB_TLS_KEY_PATH),
+        ];
+
+        self.updateconf(args).await
     }
 
     fn get_ccm_env(&self) -> HashMap<String, String> {
