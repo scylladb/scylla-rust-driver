@@ -61,25 +61,12 @@ where
     T: FnOnce(Arc<tokio::sync::Mutex<Cluster>>) -> Fut,
     Fut: Future<Output = ()>,
 {
-    let cluster_options = make_cluster_options();
-    let mut cluster = Cluster::new(cluster_options)
-        .await
-        .expect("Failed to create cluster");
-    cluster.init().await.expect("failed to initialize cluster");
-    cluster.start(None).await.expect("failed to start cluster");
-
-    struct ClusterWrapper(Arc<tokio::sync::Mutex<Cluster>>);
-    impl Drop for ClusterWrapper {
-        fn drop(&mut self) {
-            if std::thread::panicking() && *TEST_KEEP_CLUSTER_ON_FAILURE {
-                println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
-                self.0.blocking_lock().set_keep_on_drop(true);
-            }
-        }
-    }
-    let wrapper = ClusterWrapper(Arc::new(tokio::sync::Mutex::new(cluster)));
-    test_body(Arc::clone(&wrapper.0)).await;
-    std::mem::drop(wrapper);
+    run_ccm_test_with_configuration(
+        make_cluster_options,
+        |cluster| async move { cluster },
+        test_body,
+    )
+    .await
 }
 
 /// Run a CCM test with a custom configuration logic before the cluster starts.
