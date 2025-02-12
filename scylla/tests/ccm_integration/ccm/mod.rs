@@ -55,6 +55,73 @@ static ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
     ccm_root_dir
 });
 
+pub(crate) static DB_TLS_CERT_PATH: LazyLock<String> = LazyLock::new(|| {
+    let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let db_cert_path_env = std::env::var("DB_TLS_CERT_PATH");
+    let db_cert_path = match db_cert_path_env {
+        Ok(x) => x,
+        Err(e) => {
+            info!(
+                "DB_TLS_CERT_PATH env malformed or not present: {}. Using {}/../test/tls/db.crt for db cert.",
+                e, cargo_manifest_dir
+            );
+            cargo_manifest_dir.to_string() + "/../test/tls/db.crt"
+        }
+    };
+
+    let path = PathBuf::from(&db_cert_path);
+    if !path.try_exists().unwrap() {
+        panic!("DB cert file {:?} not found", path);
+    }
+
+    db_cert_path
+});
+
+pub(crate) static DB_TLS_KEY_PATH: LazyLock<String> = LazyLock::new(|| {
+    let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let db_key_path_env = std::env::var("DB_TLS_KEY_PATH");
+    let db_key_path = match db_key_path_env {
+        Ok(x) => x,
+        Err(e) => {
+            info!(
+                "DB_TLS_KEY_PATH env malformed or not present: {}. Using {}/../test/tls/db.key for db key.",
+                e, cargo_manifest_dir
+            );
+            cargo_manifest_dir.to_string() + "/../test/tls/db.key"
+        }
+    };
+
+    let path = PathBuf::from(&db_key_path);
+    if !path.try_exists().unwrap() {
+        panic!("DB key file {:?} not found", path);
+    }
+
+    db_key_path
+});
+
+#[cfg(feature = "ssl")]
+pub(crate) static CA_TLS_CERT_PATH: LazyLock<String> = LazyLock::new(|| {
+    let cargo_manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let ca_cert_path_env = std::env::var("CA_TLS_CERT_PATH");
+    let ca_cert_path = match ca_cert_path_env {
+        Ok(x) => x,
+        Err(e) => {
+            info!(
+                "CA_TLS_CERT_PATH env malformed or not present: {}. Using {}/../test/tls/ca.crt for ca cert.",
+                e, cargo_manifest_dir
+            );
+            cargo_manifest_dir.to_string() + "/../test/tls/ca.crt"
+        }
+    };
+
+    let path = PathBuf::from(&ca_cert_path);
+    if !path.try_exists().unwrap() {
+        panic!("DB cert file {:?} not found", path);
+    }
+
+    ca_cert_path
+});
+
 pub(crate) async fn run_ccm_test<C, T, Fut>(make_cluster_options: C, test_body: T)
 where
     C: FnOnce() -> ClusterOptions,
