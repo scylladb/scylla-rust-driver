@@ -1,4 +1,4 @@
-use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
+use crate::common::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
 use scylla::client::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;

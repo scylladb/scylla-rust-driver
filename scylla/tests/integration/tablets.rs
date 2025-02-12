@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::utils::{
+use crate::common::utils::{
     scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
     PerformDDL,
 };

@@ -1,4 +1,4 @@
-use crate::utils::{
+use crate::common::utils::{
     create_new_session_builder, setup_tracing, unique_keyspace_name, DeserializeOwnedValue,
     PerformDDL,
 };

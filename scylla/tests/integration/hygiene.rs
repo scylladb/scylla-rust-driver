@@ -36,7 +36,7 @@ macro_rules! test_crate {
         }
         #[test]
         fn test_row_ser_deser() {
-            use crate::utils::setup_tracing;
+            use crate::common::utils::setup_tracing;
             use ::bytes::Bytes;
             use ::core::primitive::u8;
             use ::std::assert_eq;
@@ -102,7 +102,7 @@ macro_rules! test_crate {
 
         #[test]
         fn test_value_ser_deser() {
-            use crate::utils::setup_tracing;
+            use crate::common::utils::setup_tracing;
             use ::bytes::Bytes;
             use ::core::primitive::u8;
             use ::std::assert_eq;

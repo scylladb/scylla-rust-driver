@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
+use crate::common::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
 use assert_matches::assert_matches;
 use scylla::batch::{Batch, BatchStatement, BatchType};
 use scylla::client::execution_profile::ExecutionProfile;

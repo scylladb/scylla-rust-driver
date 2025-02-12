@@ -20,5 +20,5 @@ mod silent_prepare_batch;
 mod silent_prepare_query;
 mod skip_metadata_optimization;
 mod tablets;
-#[path = "../common/utils.rs"]
-mod utils;
+#[path = "../common/mod.rs"]
+mod common;

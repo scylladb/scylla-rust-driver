@@ -5,10 +5,10 @@ use scylla::frame::frame_errors::BatchSerializationError;
 use scylla::frame::frame_errors::CqlRequestSerializationError;
 use scylla::query::Query;
 
-use crate::utils::create_new_session_builder;
-use crate::utils::setup_tracing;
-use crate::utils::unique_keyspace_name;
-use crate::utils::PerformDDL;
+use crate::common::utils::create_new_session_builder;
+use crate::common::utils::setup_tracing;
+use crate::common::utils::unique_keyspace_name;
+use crate::common::utils::PerformDDL;
 
 use assert_matches::assert_matches;
 

@@ -3,7 +3,7 @@ use assert_matches::assert_matches;
 use scylla::client::session::Session;
 use scylla::value::{CqlDuration, CqlValue};
 
-use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
+use crate::common::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 
 #[tokio::test]
 async fn test_cqlvalue_udt() {

@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use scylla::client::session::Session;
 
-use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
+use crate::common::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 use scylla::batch::Batch;
 use scylla::batch::BatchType;
 use scylla::errors::{BadQuery, ExecutionError};
