@@ -174,6 +174,7 @@ impl NodeStartOptions {
 /// Options to stop the node with.
 /// It allows to control the value of `--no-wait` and `--not-gently` ccm options.
 #[allow(dead_code)]
+#[derive(Default)]
 pub(crate) struct NodeStopOptions {
     /// Dont't wait for the node to properly stop.
     no_wait: bool,
@@ -295,7 +296,7 @@ impl Node {
         Ok(())
     }
 
-    pub(crate) async fn stop(&mut self, opts: NodeStopOptions) -> Result<(), Error> {
+    pub(crate) async fn stop(&mut self, opts: Option<NodeStopOptions>) -> Result<(), Error> {
         let mut args: Vec<String> = vec![
             self.opts.name(),
             "stop".to_string(),
@@ -306,7 +307,7 @@ impl Node {
         let NodeStopOptions {
             no_wait,
             not_gently,
-        } = opts;
+        } = opts.unwrap_or_default();
         if no_wait {
             args.push(NodeStopOptions::NO_WAIT.to_string());
         }
