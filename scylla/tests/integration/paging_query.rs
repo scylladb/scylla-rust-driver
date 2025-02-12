@@ -1,17 +1,33 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
+use assert_matches::assert_matches;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::errors::{BadQuery, ExecutionError, RequestAttemptError};
+use scylla::prepared_statement::PreparedStatement;
 use scylla::query::Query;
-use scylla_cql::frame::request::query::PagingState;
+use scylla::response::query_result::QueryResult;
+use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
+use scylla_cql::frame::request::RequestOpcode;
+use scylla_cql::frame::response::error::DbError;
 use scylla_cql::Consistency;
-use scylla_proxy::{ProxyError, ShardAwareness, WorkerError};
+use scylla_cql::_macro_internal::SerializeRow;
+use scylla_proxy::{
+    Condition, ProxyError, RequestReaction, RequestRule, RunningProxy, ShardAwareness, WorkerError,
+};
 use std::collections::HashMap;
+use std::error::Error;
 use std::net::SocketAddr;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-const PAGE_SIZE: usize = 10;
-const ITEMS: usize = 20;
+const PAGE_SIZE: i32 = 10;
+const ITEMS: i32 = 20;
+
+#[derive(Clone)]
+enum Statement {
+    Prepared(PreparedStatement),
+    Simple(Query),
+}
 
 async fn prepare_data(
     proxy_uris: [String; 3],
@@ -46,7 +62,7 @@ async fn prepare_data(
 
     prepared_insert.set_consistency(Consistency::Quorum);
 
-    for i in 0..ITEMS as i32 {
+    for i in 0..ITEMS {
         session
             .execute_unpaged(&prepared_insert, (i,))
             .await
@@ -56,28 +72,71 @@ async fn prepare_data(
     (ks, session)
 }
 
-#[tokio::test]
-async fn test_paging_single_page_result() {
+async fn execute_statement(
+    session: impl AsRef<Session>,
+    statement: Statement,
+    args: impl SerializeRow,
+    paging_state: PagingState,
+) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
+    match statement {
+        Statement::Simple(query) => {
+            session
+                .as_ref()
+                .query_single_page(query, args, paging_state)
+                .await
+        }
+        Statement::Prepared(prepared) => {
+            session
+                .as_ref()
+                .execute_single_page(&prepared, args, paging_state)
+                .await
+        }
+    }
+}
+
+async fn execute_test<F, Fut>(query: impl AsRef<str>, callback: F)
+where
+    F: Fn(Arc<Session>, RunningProxy, Statement) -> Fut,
+    Fut: std::future::Future<Output = Result<RunningProxy, Box<dyn Error>>>,
+{
     setup_tracing();
+
     let result = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, running_proxy| async move {
             let (ks, session) = prepare_data(proxy_uris, translation_map).await;
+            let session = Arc::new(session);
 
-            let mut query = Query::from(format!("SELECT a FROM {}.t WHERE a = ?", ks));
+            let query = query.as_ref().to_string().replace("%keyspace%", &ks);
+
+            let mut query = Query::from(query.clone());
             query.set_consistency(Consistency::Quorum);
-            query.set_page_size(10);
+            query.set_page_size(PAGE_SIZE);
 
-            let state = PagingState::default();
-            let result = session.query_single_page(query, (0,), state).await;
+            let mut prepared = session.prepare(query.clone()).await.unwrap();
+            prepared.set_consistency(Consistency::Quorum);
+            prepared.set_page_size(PAGE_SIZE);
 
-            assert!(result.is_ok());
-            let (query_result, paging_state_response) = result.unwrap();
+            let mut running_proxy = callback(
+                Arc::clone(&session),
+                running_proxy,
+                Statement::Simple(query),
+            )
+            .await
+            .unwrap();
 
-            assert_eq!(query_result.into_rows_result().unwrap().rows_num(), 1);
-            assert!(paging_state_response.finished());
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_response_rules(None);
+                node.change_request_rules(None);
+            });
 
-            running_proxy
+            callback(
+                Arc::clone(&session),
+                running_proxy,
+                Statement::Prepared(prepared),
+            )
+            .await
+            .unwrap()
         },
     )
     .await;
@@ -88,153 +147,186 @@ async fn test_paging_single_page_result() {
         Err(err) => panic!("{err:?}"),
     }
 }
+
 #[tokio::test]
-async fn test_paging_single_page_result_prepared() {
-    setup_tracing();
-    let result = test_with_3_node_cluster(
-        ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, running_proxy| async move {
-            let (ks, session) = prepare_data(proxy_uris, translation_map).await;
+async fn test_paging_single_page_result() {
+    execute_test(
+        "SELECT a FROM %keyspace%.t WHERE a = ?",
+        |session, running_proxy, statement| async move {
+            let (query_result, paging_state_response) =
+                execute_statement(&session, statement, (0,), PagingState::start()).await?;
 
-            let mut query = session
-                .prepare(format!("SELECT a FROM {}.t WHERE a = ?", ks))
-                .await
-                .unwrap();
-            query.set_consistency(Consistency::Quorum);
-            query.set_page_size(10);
-
-            let state = PagingState::default();
-            let result = session.execute_single_page(&query, (0,), state).await;
-
-            assert!(result.is_ok());
-            let (query_result, paging_state_response) = result.unwrap();
-
-            assert_eq!(query_result.into_rows_result().unwrap().rows_num(), 1);
+            assert_eq!(query_result.into_rows_result()?.rows_num(), 1);
             assert!(paging_state_response.finished());
 
-            running_proxy
+            Ok(running_proxy)
         },
     )
     .await;
-
-    match result {
-        Ok(_) => {}
-        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
-        Err(err) => panic!("{err:?}"),
-    }
 }
 
 #[tokio::test]
 async fn test_paging_multiple_no_errors() {
-    setup_tracing();
-    let result = test_with_3_node_cluster(
-        ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, running_proxy| async move {
-            let (ks, session) = prepare_data(proxy_uris, translation_map).await;
+    execute_test(
+        "SELECT a FROM %keyspace%.t",
+        |session, running_proxy, statement| async move {
+            let mut state = PagingState::start();
 
-            let mut query = session
-                .prepare(format!("SELECT a FROM {}.t WHERE a = ?", ks))
-                .await
+            for _ in 0..ITEMS / PAGE_SIZE {
+                let (query_result, paging_state_response) =
+                    execute_statement(&session, statement.clone(), &[], state.clone()).await?;
+                match paging_state_response.into_paging_control_flow() {
+                    ControlFlow::Break(_) => {
+                        panic!("Unexpected break");
+                    }
+                    ControlFlow::Continue(new_paging_state) => {
+                        assert_eq!(
+                            query_result.into_rows_result()?.rows_num(),
+                            PAGE_SIZE as usize
+                        );
+                        state = new_paging_state;
+                    }
+                }
+            }
+
+            Ok(running_proxy)
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_paging_error() {
+    execute_test(
+        "SELECT a FROM %keyspace%.t WHERE a = ?",
+        |session, running_proxy, statement| async move {
+            let result = execute_statement(
+                &session,
+                statement.clone(),
+                ("hello world",),
+                PagingState::start(),
+            )
+            .await
+            .unwrap_err();
+
+            match statement {
+                Statement::Simple(_) => {
+                    assert_matches!(
+                        result,
+                        ExecutionError::LastAttemptError(RequestAttemptError::SerializationError(
+                            _
+                        ))
+                    );
+                }
+                Statement::Prepared(_) => {
+                    assert_matches!(
+                        result,
+                        ExecutionError::BadQuery(BadQuery::SerializationError(_))
+                    );
+                }
+            }
+
+            Ok(running_proxy)
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_paging_error_on_next_page() {
+    execute_test(
+        "SELECT a FROM %keyspace%.t",
+        |session, mut running_proxy, statement| async move {
+            let mut state = PagingState::start();
+            let (_, paging_state_resp) =
+                execute_statement(&session, statement.clone(), (), state.clone()).await?;
+
+            state = paging_state_resp
+                .into_paging_control_flow()
+                .continue_value()
                 .unwrap();
-            query.set_consistency(Consistency::Quorum);
-            query.set_page_size(10);
 
-            let mut state = PagingState::default();
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_request_rules(Some(vec![
+                    RequestRule(
+                        Condition::RequestOpcode(RequestOpcode::Execute),
+                        RequestReaction::forge_with_error(DbError::ServerError),
+                    ),
+                    RequestRule(
+                        Condition::RequestOpcode(RequestOpcode::Query),
+                        RequestReaction::forge_with_error(DbError::ServerError),
+                    ),
+                ]))
+            });
 
-            let mut counter = 0;
-            loop {
-                let result = session
-                    .execute_single_page(&query, &(), state.clone())
-                    .await;
-                let (query_result, paging_state_response) = result.unwrap();
-                match paging_state_response.into_paging_control_flow() {
-                    ControlFlow::Break(()) => {
-                        break;
-                    }
-                    ControlFlow::Continue(new_paging_state) => {
-                        assert_eq!(query_result.into_rows_result().unwrap().rows_num(), 10);
-                        state = new_paging_state;
-                    }
-                }
+            let result = execute_statement(&session, statement.clone(), (), state.clone())
+                .await
+                .unwrap_err();
 
-                counter += 1;
-            }
+            assert_matches!(
+                result,
+                ExecutionError::LastAttemptError(RequestAttemptError::DbError(
+                    DbError::ServerError,
+                    ..
+                ))
+            );
 
-            assert_eq!(counter, ITEMS / PAGE_SIZE);
-
-            running_proxy
+            Ok(running_proxy)
         },
     )
     .await;
-
-    match result {
-        Ok(_) => {}
-        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
-        Err(err) => panic!("{err:?}"),
-    }
 }
-
-#[tokio::test]
-async fn test_paging_multiple_no_errors_prepared() {
-    setup_tracing();
-    let result = test_with_3_node_cluster(
-        ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, running_proxy| async move {
-            let (ks, session) = prepare_data(proxy_uris, translation_map).await;
-
-            let mut query = Query::from(format!("SELECT a FROM {}.t", ks));
-            query.set_consistency(Consistency::Quorum);
-            query.set_page_size(PAGE_SIZE as i32);
-
-            let mut state = PagingState::default();
-
-            let mut counter = 0;
-            loop {
-                let result = session
-                    .query_single_page(query.clone(), &(), state.clone())
-                    .await;
-                let (query_result, paging_state_response) = result.unwrap();
-                match paging_state_response.into_paging_control_flow() {
-                    ControlFlow::Break(()) => {
-                        break;
-                    }
-                    ControlFlow::Continue(new_paging_state) => {
-                        assert_eq!(query_result.into_rows_result().unwrap().rows_num(), 10);
-                        state = new_paging_state;
-                    }
-                }
-
-                counter += 1;
-            }
-
-            assert_eq!(counter, ITEMS / PAGE_SIZE);
-
-            running_proxy
-        },
-    )
-    .await;
-
-    match result {
-        Ok(_) => {}
-        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
-        Err(err) => panic!("{err:?}"),
-    }
-}
-
-#[tokio::test]
-async fn test_paging_error() {}
-
-#[tokio::test]
-async fn test_paging_error_prepared() {}
-
-#[tokio::test]
-async fn test_paging_error_on_next_page() {}
-
-#[tokio::test]
-async fn test_paging_error_on_next_page_prepared() {}
-
-#[tokio::test]
-async fn test_paging_wrong_page_state() {}
-
-#[tokio::test]
-async fn test_paging_wrong_page_state_prepared() {}
+//
+// #[tokio::test]
+// async fn test_paging_wrong_page_state() {
+//     execute_test(
+//         "SELECT a FROM %keyspace%.t",
+//         |session, mut running_proxy, statement| async move {
+//             let mut state = PagingState::start();
+//             let (_, paging_state_resp) =
+//                 execute_statement(&session, statement.clone(), (), state.clone()).await?;
+//
+//             state = paging_state_resp
+//                 .into_paging_control_flow()
+//                 .continue_value()
+//                 .unwrap();
+//
+//             running_proxy.running_nodes.iter_mut().for_each(|node| {
+//                 let response =
+//                     RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+//                         ResponseFrame {
+//                             params: params.for_response(),
+//                             opcode: ResponseOpcode::Event,
+//                             body: Bytes::new(),
+//                         }
+//                     }));
+//
+//                 node.change_request_rules(Some(vec![
+//                     RequestRule(
+//                         Condition::RequestOpcode(RequestOpcode::Execute),
+//                         response.clone(),
+//                     ),
+//                     RequestRule(
+//                         Condition::RequestOpcode(RequestOpcode::Query),
+//                         response.clone(),
+//                     ),
+//                 ]));
+//             });
+//
+//             let result = execute_statement(&session, statement, (), state.clone())
+//                 .await
+//                 .unwrap_err();
+//
+//             assert_matches!(
+//                 result,
+//                 ExecutionError::LastAttemptError(RequestAttemptError::DbError(
+//                     DbError::ServerError,
+//                     ..
+//                 ),)
+//             );
+//
+//             Ok(running_proxy)
+//         },
+//     )
+//     .await;
+// }
