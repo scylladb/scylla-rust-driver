@@ -47,6 +47,8 @@ jobs:
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "full-serialization"
     - name: Cargo check with all features
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --all-features
+    - name: Cargo check with ssl feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "ssl"
     - name: Cargo check with secrecy-08 feature
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secrecy-08"
     - name: Cargo check with chrono-04 feature
