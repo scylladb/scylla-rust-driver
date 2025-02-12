@@ -66,6 +66,14 @@ jobs:
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "num-bigint-04"
     - name: Cargo check with bigdecimal-04 feature
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "bigdecimal-04"
+
+    # TLS-related feature sets.
+    - name: Cargo check with openssl-x feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "openssl-010"
+    - name: Cargo check with rustls-x feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "rustls-023"
+    # (openssl-x, rustls-x) is checked in tls.yml.
+
     - name: Build scylla-cql
       run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml" --features "full-serialization"
     - name: Build
