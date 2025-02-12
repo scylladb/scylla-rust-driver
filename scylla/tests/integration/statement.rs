@@ -3,9 +3,44 @@ use scylla::{
     batch::{Batch, BatchType},
     query::Query,
     response::PagingState,
+    statement::SerialConsistency,
 };
+use scylla_cql::Consistency;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+
+#[tokio::test]
+async fn test_prepared_config() {
+    use std::time::Duration;
+
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+
+    let mut query = Query::new("SELECT * FROM system_schema.tables");
+    query.set_is_idempotent(true);
+    query.set_page_size(42);
+    query.set_consistency(Consistency::One);
+    query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
+    query.set_tracing(true);
+    query.set_request_timeout(Some(Duration::from_millis(1)));
+    query.set_timestamp(Some(42));
+
+    let prepared_statement = session.prepare(query).await.unwrap();
+
+    assert!(prepared_statement.get_is_idempotent());
+    assert_eq!(prepared_statement.get_page_size(), 42);
+    assert_eq!(prepared_statement.get_consistency(), Some(Consistency::One));
+    assert_eq!(
+        prepared_statement.get_serial_consistency(),
+        Some(SerialConsistency::LocalSerial)
+    );
+    assert!(prepared_statement.get_tracing());
+    assert_eq!(
+        prepared_statement.get_request_timeout(),
+        Some(Duration::from_millis(1))
+    );
+    assert_eq!(prepared_statement.get_timestamp(), Some(42));
+}
 
 #[tokio::test]
 async fn test_timestamp() {

@@ -1013,21 +1013,6 @@ async fn test_request_timeout() {
     }
 }
 
-#[tokio::test]
-async fn test_prepared_config() {
-    setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
-
-    let mut query = Query::new("SELECT * FROM system_schema.tables");
-    query.set_is_idempotent(true);
-    query.set_page_size(42);
-
-    let prepared_statement = session.prepare(query).await.unwrap();
-
-    assert!(prepared_statement.get_is_idempotent());
-    assert_eq!(prepared_statement.get_page_size(), 42);
-}
-
 fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType<'_>> {
     Arc::new(UserDefinedType {
         name: "type_a".into(),
