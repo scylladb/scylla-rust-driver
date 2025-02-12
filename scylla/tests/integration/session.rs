@@ -1153,10 +1153,10 @@ async fn test_request_timeout() {
 
         let mut query: Query = Query::new("SELECT * FROM system_schema.tables");
         query.set_request_timeout(Some(Duration::from_millis(1)));
-        match session.query_unpaged(query, &[]).await {
-            Ok(_) => panic!("the query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
-        }
+        assert_matches!(
+            session.query_unpaged(query, &[]).await,
+            Err(ExecutionError::RequestTimeout(_))
+        );
 
         let mut prepared = session
             .prepare("SELECT * FROM system_schema.tables")
@@ -1164,10 +1164,10 @@ async fn test_request_timeout() {
             .unwrap();
 
         prepared.set_request_timeout(Some(Duration::from_millis(1)));
-        match session.execute_unpaged(&prepared, &[]).await {
-            Ok(_) => panic!("the prepared query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
-        };
+        assert_matches!(
+            session.execute_unpaged(&prepared, &[]).await,
+            Err(ExecutionError::RequestTimeout(_))
+        );
     }
     {
         let timeouting_session = create_new_session_builder()
@@ -1178,10 +1178,10 @@ async fn test_request_timeout() {
 
         let mut query = Query::new("SELECT * FROM system_schema.tables");
 
-        match timeouting_session.query_unpaged(query.clone(), &[]).await {
-            Ok(_) => panic!("the query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
-        };
+        assert_matches!(
+            timeouting_session.query_unpaged(query.clone(), &[]).await,
+            Err(ExecutionError::RequestTimeout(_))
+        );
 
         query.set_request_timeout(Some(Duration::from_secs(10000)));
 
@@ -1194,10 +1194,10 @@ async fn test_request_timeout() {
             .await
             .unwrap();
 
-        match timeouting_session.execute_unpaged(&prepared, &[]).await {
-            Ok(_) => panic!("the prepared query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
-        };
+        assert_matches!(
+            timeouting_session.execute_unpaged(&prepared, &[]).await,
+            Err(ExecutionError::RequestTimeout(_))
+        );
 
         prepared.set_request_timeout(Some(Duration::from_secs(10000)));
 
