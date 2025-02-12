@@ -1,5 +1,6 @@
 mod authenticate;
 mod batch;
+mod caching_session;
 mod consistency;
 mod cql_collections;
 mod cql_types;
