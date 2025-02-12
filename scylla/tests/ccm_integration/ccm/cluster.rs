@@ -263,6 +263,56 @@ impl Node {
         env
     }
 
+    /// Executes `ccm updateconf` and applies it for this node.
+    /// It accepts the key-value pairs to update the configuration.
+    ///
+    /// ### Example
+    /// ```
+    /// # use crate::ccm::cluster::Node;
+    /// # async fn check_only_compiles(node: &Node) -> Result<(), Box<dyn Error>> {
+    /// let args = [
+    ///     ("client_encryption_options.enabled", "true"),
+    ///     ("client_encryption_options.certificate", "db.cert"),
+    ///     ("client_encryption_options.keyfile", "db.key"),
+    /// ];
+    ///
+    /// node.updateconf(args).await?
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// The code above is equivalent to the following scylla.yaml:
+    /// ```yaml
+    /// client_encryption_options:
+    ///   enabled: true
+    ///   certificate: db.cert
+    ///   keyfile: db.key
+    /// ```
+    pub(crate) async fn updateconf<K, V>(
+        &self,
+        key_values: impl IntoIterator<Item = (K, V)>,
+    ) -> Result<(), Error>
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let config_dir = &self.config_dir;
+        let mut args: Vec<String> = vec![
+            self.opts.name(),
+            "updateconf".to_string(),
+            "--config-dir".to_string(),
+            config_dir.to_string_lossy().into_owned(),
+        ];
+        for (k, v) in key_values.into_iter() {
+            args.push(format!("{}:{}", k.as_ref(), v.as_ref()));
+        }
+
+        self.logged_cmd
+            .run_command("ccm", &args, RunOptions::new())
+            .await?;
+        Ok(())
+    }
+
     /// This method starts the node. User can provide optional [`NodeStartOptions`] to control the behavior of the node start.
     /// If `None` is provided, the default options are used (see the implementation of Default for [`NodeStartOptions`]).
     pub(crate) async fn start(&mut self, opts: Option<NodeStartOptions>) -> Result<(), Error> {
@@ -574,6 +624,55 @@ impl Cluster {
             "--config-dir".to_string(),
             config_dir.to_string_lossy().into_owned(),
         ];
+        self.logged_cmd
+            .run_command("ccm", &args, RunOptions::new())
+            .await?;
+        Ok(())
+    }
+
+    /// Executes `ccm updateconf` and applies it for all nodes in the cluster.
+    /// It accepts the key-value pairs to update the configuration.
+    ///
+    /// ### Example
+    /// ```
+    /// # use crate::ccm::cluster::Cluster;
+    /// # async fn check_only_compiles(cluster: &Cluster) -> Result<(), Box<dyn Error>> {
+    /// let args = [
+    ///     ("client_encryption_options.enabled", "true"),
+    ///     ("client_encryption_options.certificate", "db.cert"),
+    ///     ("client_encryption_options.keyfile", "db.key"),
+    /// ];
+    ///
+    /// cluster.updateconf(args).await?
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// The code above is equivalent to the following scylla.yaml:
+    /// ```yaml
+    /// client_encryption_options:
+    ///   enabled: true
+    ///   certificate: db.cert
+    ///   keyfile: db.key
+    /// ```
+    pub(crate) async fn updateconf<K, V>(
+        &self,
+        key_values: impl IntoIterator<Item = (K, V)>,
+    ) -> Result<(), Error>
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let config_dir = self.config_dir();
+        let mut args: Vec<String> = vec![
+            "updateconf".to_string(),
+            "--config-dir".to_string(),
+            config_dir.to_string_lossy().into_owned(),
+        ];
+        for (k, v) in key_values.into_iter() {
+            args.push(format!("{}:{}", k.as_ref(), v.as_ref()));
+        }
+
         self.logged_cmd
             .run_command("ccm", &args, RunOptions::new())
             .await?;
