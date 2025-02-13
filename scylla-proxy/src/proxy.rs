@@ -868,8 +868,12 @@ impl Doorkeeper {
 }
 
 mod compression {
+    use scylla_cql::frame::request::{
+        options, DeserializableRequest as _, RequestDeserializationError, Startup,
+    };
     use scylla_cql::frame::Compression;
     use std::sync::{Arc, OnceLock};
+    use tracing::{error, warn};
 
     type CompressionInfo = Arc<OnceLock<Option<Compression>>>;
 
@@ -885,6 +889,25 @@ mod compression {
             compression: Option<Compression>,
         ) -> Result<(), Option<Compression>> {
             self.0.set(compression)
+        }
+
+        pub(crate) fn set_from_startup(
+            &self,
+            mut body: &[u8],
+        ) -> Result<Option<Compression>, RequestDeserializationError> {
+            let startup = Startup::deserialize(&mut body)?;
+            let maybe_compression = startup.options.get(options::COMPRESSION);
+            let maybe_compression = maybe_compression.and_then(|compression| {
+                compression
+                    .parse::<Compression>()
+                    .inspect_err(|err| error!("STARTUP compression error: {}", err))
+                    .ok()
+            });
+            let _ = self.set(maybe_compression).inspect_err(|_| {
+                warn!("Captured second or further STARTUP frame on the same connection")
+            });
+
+            Ok(maybe_compression)
         }
     }
 
@@ -1154,7 +1177,19 @@ impl ProxyWorker {
                     Some(request) => {
                         if request.opcode == RequestOpcode::Register {
                             event_registered_flag.store(true, Ordering::Relaxed);
+                        } else if request.opcode == RequestOpcode::Startup {
+                            match compression.set_from_startup(&request.body) {
+                                Err(err) => error!("Failed to deserialize STARTUP frame: {}", err),
+                                Ok(read_compression) => info!(
+                                    "Intercepted STARTUP frame ({} -> {} ({})), so set compression accordingly to {:?}.",
+                                    driver_addr,
+                                    DisplayableRealAddrOption(real_addr),
+                                    DisplayableShard(shard),
+                                    read_compression
+                                )
+                            };
                         }
+
                         let ctx = EvaluationContext {
                             connection_seq_no: connection_no,
                             opcode: FrameOpcode::Request(request.opcode),
