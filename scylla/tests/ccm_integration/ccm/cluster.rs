@@ -105,6 +105,7 @@ pub(crate) enum NodeStatus {
     Stopped,
     Started,
     Deleted,
+    Paused,
 }
 
 /// Options to start the node with.
@@ -382,6 +383,38 @@ impl Node {
             .run_command("ccm", &args, RunOptions::new().with_env(self.get_ccm_env()))
             .await?;
         self.set_status(NodeStatus::Stopped);
+        Ok(())
+    }
+
+    /// Pauses the node by sending SIGSTOP signal to the process.
+    pub(crate) async fn pause(&mut self) -> Result<(), Error> {
+        let args: Vec<String> = vec![
+            self.opts.name(),
+            "pause".to_string(),
+            "--config-dir".to_string(),
+            self.config_dir.to_string_lossy().to_string(),
+        ];
+
+        self.logged_cmd
+            .run_command("ccm", &args, RunOptions::new().with_env(self.get_ccm_env()))
+            .await?;
+        self.set_status(NodeStatus::Paused);
+        Ok(())
+    }
+
+    /// Resumes the node by sending SIGCONT signal to the process.
+    pub(crate) async fn resume(&mut self) -> Result<(), Error> {
+        let args: Vec<String> = vec![
+            self.opts.name(),
+            "resume".to_string(),
+            "--config-dir".to_string(),
+            self.config_dir.to_string_lossy().to_string(),
+        ];
+
+        self.logged_cmd
+            .run_command("ccm", &args, RunOptions::new().with_env(self.get_ccm_env()))
+            .await?;
+        self.set_status(NodeStatus::Started);
         Ok(())
     }
 
