@@ -55,7 +55,7 @@ async fn prepare_data(session: impl AsRef<Session>) -> String {
     prepared_insert.set_consistency(Consistency::Quorum);
     #[cfg(scylla_cloud_tests)]
     prepared_insert.set_consistency(Consistency::One);
-    
+
     for i in 0..ITEMS {
         session
             .execute_unpaged(&prepared_insert, (i,))
