@@ -1,12 +1,16 @@
 use std::net::SocketAddr;
 
-use scylla_cql::frame::frame_errors::{FrameHeaderParseError, LowLevelDeserializationError};
+use scylla_cql::frame::frame_errors::{
+    FrameBodyExtensionsParseError, FrameHeaderParseError, LowLevelDeserializationError,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ReadFrameError {
     #[error("Failed to read frame header: {0}")]
     Header(#[from] FrameHeaderParseError),
+    #[error("Failed to decompress frame: {0}")]
+    Compression(#[from] FrameBodyExtensionsParseError),
 }
 
 #[derive(Debug, Error)]

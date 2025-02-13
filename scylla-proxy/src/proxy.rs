@@ -868,12 +868,16 @@ impl Doorkeeper {
 }
 
 mod compression {
+    use bytes::Bytes;
     use scylla_cql::frame::request::{
         options, DeserializableRequest as _, RequestDeserializationError, Startup,
     };
-    use scylla_cql::frame::Compression;
-    use std::sync::{Arc, OnceLock};
+    use scylla_cql::frame::{
+        decompress, flag, frame_errors::FrameBodyExtensionsParseError, Compression,
+    };
     use tracing::{error, warn};
+
+    use std::sync::{Arc, OnceLock};
 
     type CompressionInfo = Arc<OnceLock<Option<Compression>>>;
 
@@ -923,6 +927,17 @@ mod compression {
         /// inner Option is the compression (or lack of it) negotiated.
         pub(crate) fn get(&self) -> Option<Option<Compression>> {
             self.0.get().copied()
+        }
+        pub(crate) fn maybe_decompress_body(
+            &self,
+            flags: u8,
+            body: Bytes,
+        ) -> Result<Bytes, FrameBodyExtensionsParseError> {
+            match (flags & flag::COMPRESSION != 0, self.get().flatten()) {
+                (true, Some(compression)) => decompress(&body, compression).map(Into::into),
+                (true, None) => Err(FrameBodyExtensionsParseError::NoCompressionNegotiated),
+                (false, _) => Ok(body),
+            }
         }
     }
 

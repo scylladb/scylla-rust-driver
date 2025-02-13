@@ -321,7 +321,9 @@ pub(crate) async fn read_frame(
         }
     }
 
-    Ok((frame_params, opcode, body.into_inner().into()))
+    let body = compression.maybe_decompress_body(flags, body.into_inner().into())?;
+
+    Ok((frame_params, opcode, body))
 }
 
 pub(crate) async fn read_request_frame(
