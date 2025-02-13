@@ -5,6 +5,7 @@ use crate::frame::{
 };
 use crate::{RequestOpcode, TargetShard};
 use bytes::Bytes;
+use compression::no_compression;
 use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -815,6 +816,7 @@ impl Doorkeeper {
             FrameOpcode::Request(RequestOpcode::Options),
             &Bytes::new(),
             connection,
+            &no_compression(),
         )
         .await
         .map_err(DoorkeeperError::ObtainingShardNumber)?;
@@ -1121,7 +1123,7 @@ impl ProxyWorker {
                         driver_addr,
                         &response.opcode
                     );
-                    if response.write(&mut write_half).await.is_err() {
+                    if response.write(&mut write_half, &compression).await.is_err() {
                         if terminate_notifier.try_recv().is_err()
                             && connection_close_notifier.try_recv().is_err()
                         {
@@ -1170,7 +1172,7 @@ impl ProxyWorker {
                         &request.opcode
                     );
 
-                    if request.write(&mut write_half).await.is_err() {
+                    if request.write(&mut write_half, &compression).await.is_err() {
                         if terminate_notifier.try_recv().is_err()
                             && connection_close_notifier.try_recv().is_err()
                         {
@@ -1484,6 +1486,7 @@ mod tests {
             FrameOpcode::Response(ResponseOpcode::Supported),
             &body,
             conn,
+            &no_compression(),
         )
         .await
         .unwrap();
@@ -1550,7 +1553,9 @@ mod tests {
         let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-            write_frame(params, opcode, &body, &mut conn).await.unwrap();
+            write_frame(params, opcode, &body, &mut conn, &no_compression())
+                .await
+                .unwrap();
             conn
         };
 
@@ -1785,13 +1790,13 @@ mod tests {
         let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-            write_frame(params1, opcode1, &body1, &mut conn)
+            write_frame(params1, opcode1, &body1, &mut conn, &no_compression())
                 .await
                 .unwrap();
-            write_frame(params2, opcode2, &body2, &mut conn)
+            write_frame(params2, opcode2, &body2, &mut conn, &no_compression())
                 .await
                 .unwrap();
-            write_frame(params3, opcode3, &body3, &mut conn)
+            write_frame(params3, opcode3, &body3, &mut conn, &no_compression())
                 .await
                 .unwrap();
 
@@ -1887,7 +1892,7 @@ mod tests {
             body: &Bytes,
         ) -> Result<RequestFrame, ReadFrameError> {
             let (send_res, recv_res) = join(
-                write_frame(params, opcode, &body.clone(), driver),
+                write_frame(params, opcode, &body.clone(), driver, &no_compression()),
                 read_request_frame(node, &no_compression()),
             )
             .await;
@@ -2002,7 +2007,7 @@ mod tests {
             body: &Bytes,
         ) -> Result<RequestFrame, ReadFrameError> {
             let (send_res, recv_res) = join(
-                write_frame(params, opcode, &body.clone(), driver),
+                write_frame(params, opcode, &body.clone(), driver, &no_compression()),
                 read_request_frame(node, &no_compression()),
             )
             .await;
@@ -2079,7 +2084,7 @@ mod tests {
 
         let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
-            write_frame(params, request_opcode, &body, &mut conn)
+            write_frame(params, request_opcode, &body, &mut conn, &no_compression())
                 .await
                 .unwrap();
             conn
@@ -2087,9 +2092,15 @@ mod tests {
 
         let mock_node_action = async {
             let (mut conn, _) = mock_node_listener.accept().await.unwrap();
-            write_frame(params.for_response(), response_opcode, &body, &mut conn)
-                .await
-                .unwrap();
+            write_frame(
+                params.for_response(),
+                response_opcode,
+                &body,
+                &mut conn,
+                &no_compression(),
+            )
+            .await
+            .unwrap();
             conn
         };
 
@@ -2209,10 +2220,10 @@ mod tests {
         let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-            write_frame(params1, opcode1, &body1, &mut conn)
+            write_frame(params1, opcode1, &body1, &mut conn, &no_compression())
                 .await
                 .unwrap();
-            write_frame(params2, opcode2, &body2, &mut conn)
+            write_frame(params2, opcode2, &body2, &mut conn, &no_compression())
                 .await
                 .unwrap();
             conn
@@ -2260,7 +2271,9 @@ mod tests {
 
         let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-        write_frame(params, opcode, &body, &mut conn).await.unwrap();
+        write_frame(params, opcode, &body, &mut conn, &no_compression())
+            .await
+            .unwrap();
         // We assert that after sufficiently long time, no error happens inside proxy.
         tokio::time::sleep(Duration::from_millis(3)).await;
         running_proxy.finish().await.unwrap();
@@ -2338,13 +2351,13 @@ mod tests {
 
         let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-        write_frame(params1, opcode1, &body1, &mut conn)
+        write_frame(params1, opcode1, &body1, &mut conn, &no_compression())
             .await
             .unwrap();
-        write_frame(params2, opcode2, &body2, &mut conn)
+        write_frame(params2, opcode2, &body2, &mut conn, &no_compression())
             .await
             .unwrap();
-        write_frame(params3, opcode3, &body3, &mut conn)
+        write_frame(params3, opcode3, &body3, &mut conn, &no_compression())
             .await
             .unwrap();
 
@@ -2451,9 +2464,15 @@ mod tests {
                 let socket = bind_socket_for_shard(shards_count, driver_shard).await;
                 let mut conn = socket.connect(node_proxy_addr).await.unwrap();
 
-                write_frame(params, request_opcode, body_ref, &mut conn)
-                    .await
-                    .unwrap();
+                write_frame(
+                    params,
+                    request_opcode,
+                    body_ref,
+                    &mut conn,
+                    &no_compression(),
+                )
+                .await
+                .unwrap();
                 conn
             };
 
@@ -2471,9 +2490,15 @@ mod tests {
                             &no_compression(),
                         )
                         .await;
-                        write_frame(params.for_response(), response_opcode, body_ref, &mut conn)
-                            .await
-                            .unwrap();
+                        write_frame(
+                            params.for_response(),
+                            response_opcode,
+                            body_ref,
+                            &mut conn,
+                            &no_compression(),
+                        )
+                        .await
+                        .unwrap();
                         conn
                     })
                     .collect::<Vec<_>>();
@@ -2581,6 +2606,7 @@ mod tests {
                 FrameOpcode::Request(req_opcode),
                 (body_base.to_string() + "|request|").as_bytes(),
                 client_socket_ref,
+                &no_compression(),
             )
             .await
             .unwrap();
@@ -2596,6 +2622,7 @@ mod tests {
                 FrameOpcode::Response(resp_opcode),
                 (body_base.to_string() + "|response|").as_bytes(),
                 server_socket_ref,
+                &no_compression(),
             )
             .await
             .unwrap();
