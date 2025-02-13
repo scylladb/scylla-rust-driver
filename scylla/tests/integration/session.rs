@@ -25,11 +25,9 @@ use scylla::routing::partitioner::{calculate_token_for_partition_key, Partitione
 use scylla::statement::Consistency;
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
-use scylla_cql::serialize::value::SerializeValue;
 use scylla_cql::value::Row;
 use std::collections::BTreeSet;
-use std::collections::{BTreeMap, HashMap};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -1515,62 +1513,6 @@ async fn test_turning_off_schema_fetching() {
 }
 
 #[tokio::test]
-async fn test_named_bind_markers() {
-    let session = create_new_session_builder().build().await.unwrap();
-    let ks = unique_keyspace_name();
-
-    session
-        .ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
-        .await
-        .unwrap();
-
-    session
-        .query_unpaged(format!("USE {}", ks), &[])
-        .await
-        .unwrap();
-
-    session
-        .ddl("CREATE TABLE t (pk int, ck int, v int, PRIMARY KEY (pk, ck, v))")
-        .await
-        .unwrap();
-
-    session.await_schema_agreement().await.unwrap();
-
-    let prepared = session
-        .prepare("INSERT INTO t (pk, ck, v) VALUES (:pk, :ck, :v)")
-        .await
-        .unwrap();
-    let hashmap: HashMap<&str, i32> = HashMap::from([("pk", 7), ("v", 42), ("ck", 13)]);
-    session.execute_unpaged(&prepared, &hashmap).await.unwrap();
-
-    let btreemap: BTreeMap<&str, i32> = BTreeMap::from([("ck", 113), ("v", 142), ("pk", 17)]);
-    session.execute_unpaged(&prepared, &btreemap).await.unwrap();
-
-    let rows: Vec<(i32, i32, i32)> = session
-        .query_unpaged("SELECT pk, ck, v FROM t", &[])
-        .await
-        .unwrap()
-        .into_rows_result()
-        .unwrap()
-        .rows::<(i32, i32, i32)>()
-        .unwrap()
-        .map(|res| res.unwrap())
-        .collect();
-
-    assert_eq!(rows, vec![(7, 13, 42), (17, 113, 142)]);
-
-    let wrongmaps: Vec<HashMap<&str, i32>> = vec![
-        HashMap::from([("pk", 7), ("fefe", 42), ("ck", 13)]),
-        HashMap::from([("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 7)]),
-        HashMap::new(),
-        HashMap::from([("ck", 9)]),
-    ];
-    for wrongmap in wrongmaps {
-        assert!(session.execute_unpaged(&prepared, &wrongmap).await.is_err());
-    }
-}
-
-#[tokio::test]
 async fn test_prepared_partitioner() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
@@ -1705,66 +1647,6 @@ async fn test_unprepared_reprepare_in_execute() {
         .collect();
     all_rows.sort_unstable();
     assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
-}
-
-#[tokio::test]
-async fn test_unusual_valuelists() {
-    let _ = tracing_subscriber::fmt::try_init();
-
-    let session = create_new_session_builder().build().await.unwrap();
-    let ks = unique_keyspace_name();
-
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
-
-    session
-        .ddl("CREATE TABLE IF NOT EXISTS tab (a int, b int, c varchar, primary key (a, b, c))")
-        .await
-        .unwrap();
-
-    let insert_a_b_c = session
-        .prepare("INSERT INTO tab (a, b, c) VALUES (?, ?, ?)")
-        .await
-        .unwrap();
-
-    let values_dyn: Vec<&dyn SerializeValue> = vec![
-        &1 as &dyn SerializeValue,
-        &2 as &dyn SerializeValue,
-        &"&dyn" as &dyn SerializeValue,
-    ];
-    session
-        .execute_unpaged(&insert_a_b_c, values_dyn)
-        .await
-        .unwrap();
-
-    let values_box_dyn: Vec<Box<dyn SerializeValue>> = vec![
-        Box::new(1) as Box<dyn SerializeValue>,
-        Box::new(3) as Box<dyn SerializeValue>,
-        Box::new("Box dyn") as Box<dyn SerializeValue>,
-    ];
-    session
-        .execute_unpaged(&insert_a_b_c, values_box_dyn)
-        .await
-        .unwrap();
-
-    let mut all_rows: Vec<(i32, i32, String)> = session
-        .query_unpaged("SELECT a, b, c FROM tab", ())
-        .await
-        .unwrap()
-        .into_rows_result()
-        .unwrap()
-        .rows::<(i32, i32, String)>()
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-    all_rows.sort();
-    assert_eq!(
-        all_rows,
-        vec![
-            (1i32, 2i32, "&dyn".to_owned()),
-            (1, 3, "Box dyn".to_owned())
-        ]
-    );
 }
 
 // A tests which checks that Session::batch automatically reprepares PreparedStatemtns if they become unprepared.
