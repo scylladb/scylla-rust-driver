@@ -53,7 +53,9 @@ async fn prepare_data(session: impl AsRef<Session>) -> String {
 
     #[cfg(not(scylla_cloud_tests))]
     prepared_insert.set_consistency(Consistency::Quorum);
-
+    #[cfg(scylla_cloud_tests)]
+    prepared_insert.set_consistency(Consistency::One);
+    
     for i in 0..ITEMS {
         session
             .execute_unpaged(&prepared_insert, (i,))
@@ -103,11 +105,16 @@ where
     let mut query = Query::from(query.clone());
     #[cfg(not(scylla_cloud_tests))]
     query.set_consistency(Consistency::Quorum);
+    #[cfg(scylla_cloud_tests)]
+    query.set_consistency(Consistency::One);
+
     query.set_page_size(PAGE_SIZE);
 
     let mut prepared = session.prepare(query.clone()).await.unwrap();
     #[cfg(not(scylla_cloud_tests))]
     prepared.set_consistency(Consistency::Quorum);
+    #[cfg(scylla_cloud_tests)]
+    prepared.set_consistency(Consistency::One);
     prepared.set_page_size(PAGE_SIZE);
 
     let mut running_proxy = callback(
