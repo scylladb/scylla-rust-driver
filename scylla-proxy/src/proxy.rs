@@ -868,12 +868,16 @@ impl Doorkeeper {
 }
 
 mod compression {
+    use bytes::Bytes;
     use scylla_cql::frame::request::{
         DeserializableRequest as _, RequestDeserializationError, Startup,
     };
-    use scylla_cql::frame::Compression;
-    use std::sync::{Arc, OnceLock};
+    use scylla_cql::frame::{
+        decompress, frame_errors::FrameBodyExtensionsParseError, Compression, FLAG_COMPRESSION,
+    };
     use tracing::{error, warn};
+
+    use std::sync::{Arc, OnceLock};
 
     type CompressionInfo = Arc<OnceLock<Option<Compression>>>;
 
@@ -925,6 +929,17 @@ mod compression {
         /// inner Option is the compression (or lack of it) negotiated.
         pub(crate) fn get(&self) -> Option<Option<Compression>> {
             self.0.get().copied()
+        }
+        pub(crate) fn maybe_decompress_body(
+            &self,
+            flags: u8,
+            body: Bytes,
+        ) -> Result<Bytes, FrameBodyExtensionsParseError> {
+            match (flags & FLAG_COMPRESSION != 0, self.get().flatten()) {
+                (true, Some(compression)) => decompress(&body, compression).map(Into::into),
+                (true, None) => Err(FrameBodyExtensionsParseError::NoCompressionNegotiated),
+                (false, _) => Ok(body),
+            }
         }
     }
 
@@ -2588,9 +2603,10 @@ mod tests {
             .await
             .unwrap();
 
-            let received_response = read_frame(client_socket_ref, FrameType::Response, &no_compression())
-                .await
-                .unwrap();
+            let received_response =
+                read_frame(client_socket_ref, FrameType::Response, &no_compression())
+                    .await
+                    .unwrap();
             assert_eq!(received_response.1, FrameOpcode::Response(resp_opcode));
         }
 
