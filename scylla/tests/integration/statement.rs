@@ -1,19 +1,20 @@
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 use assert_matches::assert_matches;
-use scylla::errors::BadQuery;
-use scylla::errors::ExecutionError;
-use scylla::serialize::value::SerializeValue;
+use futures::TryStreamExt;
 use scylla::{
     batch::{Batch, BatchType},
+    client::session::Session,
+    errors::{
+        BadQuery, DbError, ExecutionError, NextPageError, PagerExecutionError, RequestAttemptError,
+        RequestError,
+    },
     query::Query,
     response::PagingState,
-    serialize,
+    serialize::{self, value::SerializeValue},
     statement::SerialConsistency,
 };
 use scylla_cql::Consistency;
-use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 #[tokio::test]
@@ -458,4 +459,665 @@ async fn test_unusual_valuelists() {
             (2i32, 1, "&dyn,Box".to_owned())
         ]
     );
+}
+
+const KEY: &str = "test";
+
+/// Initialize a cluster with two tables table and insert some data into one of them.
+/// Returns a session.
+///
+/// # Example
+/// ```rust
+/// let session = initialize_cluster_two_tables().await;
+/// ```
+async fn initialize_cluster_two_tables() -> Session {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+
+    let ks = unique_keyspace_name();
+
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
+    session
+        .ddl("CREATE TABLE IF NOT EXISTS test (k text, v int, PRIMARY KEY(k, v))")
+        .await
+        .unwrap();
+
+    for i in 0..100 {
+        session
+            .query_unpaged("INSERT INTO test (k, v) VALUES (?, ?)", (KEY, i))
+            .await
+            .unwrap();
+    }
+
+    session
+        .ddl("CREATE TABLE IF NOT EXISTS test2 (k text primary key, v int)")
+        .await
+        .unwrap();
+
+    session
+}
+
+#[tokio::test]
+async fn should_fail_when_too_many_positional_values_provided() {
+    let session = initialize_cluster_two_tables().await;
+    let query = Query::new("SELECT v FROM test WHERE k=?");
+
+    let result = session.query_unpaged(query.clone(), (KEY, 1)).await;
+    let Err(ExecutionError::LastAttemptError(RequestAttemptError::SerializationError(e))) = result
+    else {
+        panic!("Expected WrongColumnCount error");
+    };
+    assert_matches!(
+        e.downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+        serialize::row::BuiltinTypeCheckErrorKind::WrongColumnCount {
+            rust_cols: 2,
+            cql_cols: 1,
+        }
+    );
+
+    let result = session.query_iter(query.clone(), (KEY, 1)).await;
+    let Err(PagerExecutionError::SerializationError(e)) = result else {
+        panic!("Expected WrongColumnCount error");
+    };
+
+    assert_matches!(
+        e.downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+        serialize::row::BuiltinTypeCheckErrorKind::WrongColumnCount {
+            rust_cols: 2,
+            cql_cols: 1,
+        }
+    );
+
+    let result = session
+        .query_single_page(query.clone(), (KEY, 1), PagingState::start())
+        .await;
+    let Err(ExecutionError::LastAttemptError(RequestAttemptError::SerializationError(e))) = result
+    else {
+        panic!("Expected WrongColumnCount error");
+    };
+    assert_matches!(
+        e.downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+        serialize::row::BuiltinTypeCheckErrorKind::WrongColumnCount {
+            rust_cols: 2,
+            cql_cols: 1,
+        }
+    );
+
+    let prepared_query = session.prepare(query).await.unwrap();
+
+    let result = session.execute_unpaged(&prepared_query, (KEY, 1)).await;
+    let Err(ExecutionError::BadQuery(BadQuery::SerializationError(e))) = result else {
+        panic!("Expected WrongColumnCount error");
+    };
+    assert_matches!(
+        e.downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+        serialize::row::BuiltinTypeCheckErrorKind::WrongColumnCount {
+            rust_cols: 2,
+            cql_cols: 1,
+        }
+    );
+
+    let result = session.execute_iter(prepared_query.clone(), (KEY, 1)).await;
+    let Err(PagerExecutionError::SerializationError(e)) = result else {
+        panic!("Expected WrongColumnCount error");
+    };
+    assert_matches!(
+        e.downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+        serialize::row::BuiltinTypeCheckErrorKind::WrongColumnCount {
+            rust_cols: 2,
+            cql_cols: 1,
+        }
+    );
+
+    let result = session
+        .execute_single_page(&prepared_query, (KEY, 1), PagingState::start())
+        .await;
+    let Err(ExecutionError::BadQuery(BadQuery::SerializationError(e))) = result else {
+        panic!("Expected WrongColumnCount error");
+    };
+    assert_matches!(
+        e.downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+        serialize::row::BuiltinTypeCheckErrorKind::WrongColumnCount {
+            rust_cols: 2,
+            cql_cols: 1,
+        }
+    );
+}
+
+#[tokio::test]
+async fn should_fail_when_not_enough_positional_values_provided() {
+    let session = initialize_cluster_two_tables().await;
+
+    let query = Query::new("SELECT v FROM test WHERE k=?");
+
+    let result = session.query_unpaged(query.clone(), ()).await;
+    assert_matches!(
+        result,
+        Err(ExecutionError::LastAttemptError(
+            RequestAttemptError::DbError(DbError::Invalid, message)
+        )) if message.contains("Invalid amount of bind variables")
+    );
+
+    let result = session.query_iter(query.clone(), ()).await;
+    assert_matches!(
+        result,
+        Err(PagerExecutionError::NextPageError(
+            NextPageError::RequestFailure(RequestError::LastAttemptError(
+                RequestAttemptError::DbError(DbError::Invalid, message)
+            ))
+        )) if message.contains("Invalid amount of bind variables")
+    );
+
+    let result = session
+        .query_single_page(query.clone(), (), PagingState::start())
+        .await;
+    assert_matches!(
+        result,
+        Err(ExecutionError::LastAttemptError(
+            RequestAttemptError::DbError(DbError::Invalid, message)
+        )) if message.contains("Invalid amount of bind variables")
+    );
+
+    let prepared_query = session.prepare(query).await.unwrap();
+
+    let result = session.execute_unpaged(&prepared_query, ()).await;
+    let Err(ExecutionError::BadQuery(BadQuery::SerializationError(e))) = result else {
+        panic!("Expected WrongColumnCount error");
+    };
+    assert_matches!(
+        e.downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+        serialize::row::BuiltinTypeCheckErrorKind::WrongColumnCount {
+            rust_cols: 0,
+            cql_cols: 1,
+        }
+    );
+
+    let result = session.execute_iter(prepared_query.clone(), ()).await;
+    let Err(PagerExecutionError::SerializationError(e)) = result else {
+        panic!("Expected WrongColumnCount error");
+    };
+    assert_matches!(
+        e.downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+        serialize::row::BuiltinTypeCheckErrorKind::WrongColumnCount {
+            rust_cols: 0,
+            cql_cols: 1,
+        }
+    );
+
+    let result = session
+        .execute_single_page(&prepared_query, (), PagingState::start())
+        .await;
+    let Err(ExecutionError::BadQuery(BadQuery::SerializationError(e))) = result else {
+        panic!("Expected WrongColumnCount error");
+    };
+    assert_matches!(
+        e.downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+        serialize::row::BuiltinTypeCheckErrorKind::WrongColumnCount {
+            rust_cols: 0,
+            cql_cols: 1,
+        }
+    );
+}
+
+#[tokio::test]
+async fn should_allow_nulls_in_positional_values() {
+    let session = initialize_cluster_two_tables().await;
+
+    let insert_query = Query::new("INSERT INTO test2 (k, v) VALUES (?, ?)");
+    let select_query = Query::new("SELECT k, v FROM test2 WHERE k=?");
+
+    {
+        let name = "name1";
+        let result = session
+            .query_unpaged(insert_query.clone(), (name, None::<i32>))
+            .await;
+        assert!(result.is_ok());
+
+        let rows = session
+            .query_unpaged(select_query.clone(), (name,))
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap();
+        assert_eq!(rows.rows_num(), 1);
+        let row = rows.single_row::<(String, Option<i32>)>().unwrap();
+        assert_eq!(row, (name.to_string(), None));
+    }
+    {
+        let name = "name2";
+        let result = session
+            .query_iter(insert_query.clone(), (name, None::<i32>))
+            .await;
+        assert!(result.is_ok());
+
+        let mut iter = session
+            .query_iter(select_query.clone(), (name,))
+            .await
+            .unwrap()
+            .rows_stream::<(String, Option<i32>)>()
+            .unwrap();
+
+        let mut i = 0;
+        while let Some((a, b)) = iter.try_next().await.unwrap() {
+            assert_eq!(a, name);
+            assert!(b.is_none());
+            i += 1;
+        }
+        assert_eq!(i, 1);
+    }
+
+    let result = session
+        .query_single_page(
+            insert_query.clone(),
+            ("name3", None::<i32>),
+            PagingState::start(),
+        )
+        .await;
+    assert!(result.is_ok());
+
+    let prepared_insert_query = session.prepare(insert_query).await.unwrap();
+    let prepared_select_query = session.prepare(select_query).await.unwrap();
+
+    {
+        let name = "name4";
+        let result = session
+            .execute_unpaged(&prepared_insert_query, (name, None::<i32>))
+            .await;
+        assert!(result.is_ok());
+
+        let rows = session
+            .execute_unpaged(&prepared_select_query, (name,))
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap();
+        assert_eq!(rows.rows_num(), 1);
+        let row = rows.single_row::<(String, Option<i32>)>().unwrap();
+        assert_eq!(row, (name.to_string(), None));
+    }
+    {
+        let name = "name5";
+        let result = session
+            .execute_iter(prepared_insert_query.clone(), (name, None::<i32>))
+            .await;
+        assert!(result.is_ok());
+
+        let mut iter = session
+            .execute_iter(prepared_select_query.clone(), (name,))
+            .await
+            .unwrap()
+            .rows_stream::<(String, Option<i32>)>()
+            .unwrap();
+
+        let mut i = 0;
+        while let Some((a, b)) = iter.try_next().await.unwrap() {
+            assert_eq!(a, name);
+            assert!(b.is_none());
+            i += 1;
+        }
+        assert_eq!(i, 1);
+    }
+
+    let result = session
+        .execute_single_page(
+            &prepared_insert_query,
+            ("name6", None::<i32>),
+            PagingState::start(),
+        )
+        .await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn should_allow_nulls_in_named_bind_markers() {
+    let session = initialize_cluster_two_tables().await;
+
+    let query = Query::new("INSERT INTO test2 (k, v) VALUES (:k, :v)");
+    let select_query = Query::new("SELECT k, v FROM test2 WHERE k=?");
+
+    let prepared_query = session.prepare(query.clone()).await.unwrap();
+
+    #[derive(scylla::SerializeRow)]
+    struct TestStruct<'a> {
+        k: &'a str,
+        v: Option<i32>,
+    }
+
+    {
+        let name = "name1";
+        session
+            .query_unpaged(
+                query.clone(),
+                TestStruct {
+                    k: name,
+                    v: None::<i32>,
+                },
+            )
+            .await
+            .unwrap();
+        let rows: Vec<(String, Option<i32>)> = session
+            .query_unpaged(select_query.clone(), (name,))
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .rows::<(String, Option<i32>)>()
+            .unwrap()
+            .map(|res| res.unwrap())
+            .collect();
+
+        assert_eq!(rows, vec![(name.to_string(), None::<i32>)]);
+    }
+    {
+        let name = "name2";
+        session
+            .query_iter(
+                query.clone(),
+                TestStruct {
+                    k: name,
+                    v: None::<i32>,
+                },
+            )
+            .await
+            .unwrap();
+        let rows: Vec<(String, Option<i32>)> = session
+            .query_unpaged(select_query.clone(), (name,))
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .rows::<(String, Option<i32>)>()
+            .unwrap()
+            .map(|res| res.unwrap())
+            .collect();
+
+        assert_eq!(rows, vec![(name.to_string(), None::<i32>)]);
+    }
+    {
+        let name = "name3";
+        session
+            .execute_unpaged(
+                &prepared_query,
+                TestStruct {
+                    k: name,
+                    v: None::<i32>,
+                },
+            )
+            .await
+            .unwrap();
+        let rows: Vec<(String, Option<i32>)> = session
+            .query_unpaged(select_query.clone(), (name,))
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .rows::<(String, Option<i32>)>()
+            .unwrap()
+            .map(|res| res.unwrap())
+            .collect();
+
+        assert_eq!(rows, vec![(name.to_string(), None::<i32>)]);
+    }
+    {
+        let name = "name4";
+        session
+            .execute_iter(
+                prepared_query.clone(),
+                TestStruct {
+                    k: name,
+                    v: None::<i32>,
+                },
+            )
+            .await
+            .unwrap();
+        let rows: Vec<(String, Option<i32>)> = session
+            .query_unpaged(select_query.clone(), (name,))
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .rows::<(String, Option<i32>)>()
+            .unwrap()
+            .map(|res| res.unwrap())
+            .collect();
+
+        assert_eq!(rows, vec![(name.to_string(), None::<i32>)]);
+    }
+}
+
+#[tokio::test]
+async fn test_named_bind_markers_with_case_sensitive_id() {
+    let session = initialize_cluster_two_tables().await;
+
+    let regular_query = Query::new("SELECT count(*) FROM test2 WHERE k=:theKey");
+    let prepared_regular_query = session.prepare(regular_query.clone()).await.unwrap();
+    let case_sensitive_query = Query::new("SELECT count(*) FROM test2 WHERE k=:\"theKey\"");
+    let prepared_case_sensitive_query =
+        session.prepare(case_sensitive_query.clone()).await.unwrap();
+
+    let hashmap_case_sensitive: HashMap<&str, &str> = HashMap::from([("theKey", "name")]);
+    let hashmap_regular: HashMap<&str, &str> = HashMap::from([("thekey", "name")]);
+    {
+        let result = session
+            .query_unpaged(regular_query.clone(), &hashmap_case_sensitive)
+            .await;
+        let Err(ExecutionError::LastAttemptError(RequestAttemptError::SerializationError(e))) =
+            result
+        else {
+            panic!("Expected ValueMissingForColumn error");
+        };
+        assert_matches!(&e
+            .downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+            serialize::row::BuiltinTypeCheckErrorKind::ValueMissingForColumn { name }
+                if name == "thekey");
+
+        let rows = session
+            .query_unpaged(regular_query.clone(), &hashmap_regular)
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap();
+        assert_eq!(rows.rows_num(), 1);
+        assert!(rows.single_row::<(i64,)>().unwrap().0 == 0);
+
+        let result = session
+            .query_unpaged(case_sensitive_query.clone(), &hashmap_regular)
+            .await;
+        let Err(ExecutionError::LastAttemptError(RequestAttemptError::SerializationError(e))) =
+            result
+        else {
+            panic!("Expected ValueMissingForColumn error");
+        };
+        assert_matches!(&e
+            .downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+            serialize::row::BuiltinTypeCheckErrorKind::ValueMissingForColumn { name }
+                if name == "theKey");
+
+        let rows = session
+            .query_unpaged(case_sensitive_query.clone(), &hashmap_case_sensitive)
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap();
+        assert_eq!(rows.rows_num(), 1);
+        assert!(rows.single_row::<(i64,)>().unwrap().0 == 0);
+    }
+    {
+        let result = session
+            .query_iter(regular_query.clone(), &hashmap_case_sensitive)
+            .await;
+        let Err(PagerExecutionError::SerializationError(e)) = result else {
+            panic!("Expected ValueMissingForColumn error");
+        };
+
+        assert_matches!(&e
+            .downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+            serialize::row::BuiltinTypeCheckErrorKind::ValueMissingForColumn { name }
+                if name == "thekey");
+
+        let mut iter = session
+            .query_iter(regular_query.clone(), &hashmap_regular)
+            .await
+            .unwrap()
+            .rows_stream::<(i64,)>()
+            .unwrap();
+        let mut i = 0;
+        while let Some((a,)) = iter.try_next().await.unwrap() {
+            assert_eq!(a, 0);
+            i += 1;
+        }
+        assert_eq!(i, 1);
+
+        let result = session
+            .query_iter(case_sensitive_query.clone(), &hashmap_regular)
+            .await;
+        let Err(PagerExecutionError::SerializationError(e)) = result else {
+            panic!("Expected ValueMissingForColumn error");
+        };
+        assert_matches!(&e
+            .downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+            serialize::row::BuiltinTypeCheckErrorKind::ValueMissingForColumn { name }
+                if name == "theKey");
+
+        let mut iter = session
+            .query_iter(case_sensitive_query.clone(), &hashmap_case_sensitive)
+            .await
+            .unwrap()
+            .rows_stream::<(i64,)>()
+            .unwrap();
+        let mut i = 0;
+        while let Some((a,)) = iter.try_next().await.unwrap() {
+            assert_eq!(a, 0);
+            i += 1;
+        }
+        assert_eq!(i, 1);
+    }
+    {
+        let result = session
+            .execute_unpaged(&prepared_regular_query, &hashmap_case_sensitive)
+            .await;
+        let Err(ExecutionError::BadQuery(BadQuery::SerializationError(e))) = result else {
+            panic!("Expected ValueMissingForColumn error");
+        };
+        assert_matches!(&e
+            .downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+            serialize::row::BuiltinTypeCheckErrorKind::ValueMissingForColumn { name }
+                if name == "thekey");
+
+        let rows = session
+            .execute_unpaged(&prepared_regular_query, &hashmap_regular)
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap();
+        assert_eq!(rows.rows_num(), 1);
+        assert!(rows.single_row::<(i64,)>().unwrap().0 == 0);
+
+        let result = session
+            .execute_unpaged(&prepared_case_sensitive_query, &hashmap_regular)
+            .await;
+        let Err(ExecutionError::BadQuery(BadQuery::SerializationError(e))) = result else {
+            panic!("Expected ValueMissingForColumn error");
+        };
+        assert_matches!(&e
+            .downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+            serialize::row::BuiltinTypeCheckErrorKind::ValueMissingForColumn { name }
+                if name == "theKey");
+
+        let rows = session
+            .execute_unpaged(&prepared_case_sensitive_query, &hashmap_case_sensitive)
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap();
+        assert_eq!(rows.rows_num(), 1);
+        assert!(rows.single_row::<(i64,)>().unwrap().0 == 0);
+    }
+    {
+        let result = session
+            .execute_iter(prepared_regular_query.clone(), &hashmap_case_sensitive)
+            .await;
+        let Err(PagerExecutionError::SerializationError(e)) = result else {
+            panic!("Expected ValueMissingForColumn error");
+        };
+        assert_matches!(&e
+            .downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+            serialize::row::BuiltinTypeCheckErrorKind::ValueMissingForColumn { name }
+                if name == "thekey");
+
+        let mut iter = session
+            .execute_iter(prepared_regular_query.clone(), &hashmap_regular)
+            .await
+            .unwrap()
+            .rows_stream::<(i64,)>()
+            .unwrap();
+        let mut i = 0;
+        while let Some((a,)) = iter.try_next().await.unwrap() {
+            assert_eq!(a, 0);
+            i += 1;
+        }
+        assert_eq!(i, 1);
+
+        let result = session
+            .execute_iter(prepared_case_sensitive_query.clone(), &hashmap_regular)
+            .await;
+        let Err(PagerExecutionError::SerializationError(e)) = result else {
+            panic!("Expected ValueMissingForColumn error");
+        };
+        assert_matches!(&e
+            .downcast_ref::<serialize::row::BuiltinTypeCheckError>()
+            .unwrap()
+            .kind,
+            serialize::row::BuiltinTypeCheckErrorKind::ValueMissingForColumn { name }
+                if name == "theKey");
+
+        let mut iter = session
+            .execute_iter(
+                prepared_case_sensitive_query.clone(),
+                &hashmap_case_sensitive,
+            )
+            .await
+            .unwrap()
+            .rows_stream::<(i64,)>()
+            .unwrap();
+        let mut i = 0;
+        while let Some((a,)) = iter.try_next().await.unwrap() {
+            assert_eq!(a, 0);
+            i += 1;
+        }
+        assert_eq!(i, 1);
+    }
 }
