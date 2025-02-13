@@ -48,7 +48,7 @@ pub(crate) enum FrameOpcode {
     Response(ResponseOpcode),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestFrame {
     pub params: FrameParams,
     pub opcode: RequestOpcode,
@@ -73,7 +73,7 @@ impl RequestFrame {
         Request::deserialize(&mut &self.body[..], self.opcode)
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResponseFrame {
     pub params: FrameParams,
     pub opcode: ResponseOpcode,
