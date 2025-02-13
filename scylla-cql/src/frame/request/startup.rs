@@ -9,6 +9,8 @@ use crate::{
     frame::types,
 };
 
+use super::DeserializableRequest;
+
 pub struct Startup<'a> {
     pub options: HashMap<Cow<'a, str>, Cow<'a, str>>,
 }
@@ -30,4 +32,16 @@ pub enum StartupSerializationError {
     /// Failed to serialize startup options.
     #[error("Malformed startup options: {0}")]
     OptionsSerialization(TryFromIntError),
+}
+
+impl DeserializableRequest for Startup<'_> {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, super::RequestDeserializationError> {
+        // Note: this is inefficient, but it's only used for tests and it's not common
+        // to deserialize STARTUP frames anyway.
+        let options = types::read_string_map(buf)?
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        Ok(Self { options })
+    }
 }
