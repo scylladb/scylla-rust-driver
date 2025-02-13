@@ -2008,7 +2008,7 @@ mod tests {
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
 
-        let delay = Duration::from_millis(30);
+        let delay = Duration::from_millis(60);
 
         let proxy = Proxy::new([Node::new(
             node1_real_addr,
