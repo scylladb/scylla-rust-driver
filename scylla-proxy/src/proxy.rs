@@ -1596,7 +1596,7 @@ mod tests {
         let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
 
         let params1 = FrameParams {
-            flags: 3,
+            flags: 2,
             version: 0x42,
             stream: 42,
         };
@@ -2142,7 +2142,7 @@ mod tests {
         let running_proxy = proxy.run().await.unwrap();
 
         let params1 = FrameParams {
-            flags: 3,
+            flags: 2,
             version: 0x42,
             stream: 42,
         };
