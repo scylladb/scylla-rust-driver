@@ -946,10 +946,10 @@ impl ProxyWorker {
                             })?;
 
                     debug!(
-                        "Intercepted Cluster ({}) -> Driver ({}) ({}) frame. opcode: {:?}.",
+                        "Intercepted Cluster ({}) ({}) -> Driver ({}) frame. opcode: {:?}.",
                         real_addr,
-                        driver_addr,
                         DisplayableShard(shard),
+                        driver_addr,
                         &frame.opcode
                     );
 
@@ -988,10 +988,10 @@ impl ProxyWorker {
                     };
 
                     debug!(
-                        "Sending Proxy ({}) -> Driver ({}) ({}) frame. opcode: {:?}.",
+                        "Sending Proxy ({}) ({}) -> Driver ({}) frame. opcode: {:?}.",
                         proxy_addr,
-                        driver_addr,
                         DisplayableShard(shard),
+                        driver_addr,
                         &response.opcode
                     );
                     if response.write(&mut write_half).await.is_err() {
