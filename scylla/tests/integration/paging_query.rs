@@ -1,4 +1,7 @@
-use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
+use crate::utils::{
+    create_new_session_builder, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL,
+};
 use assert_matches::assert_matches;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -14,9 +17,7 @@ use scylla_cql::_macro_internal::SerializeRow;
 use scylla_proxy::{
     Condition, ProxyError, RequestReaction, RequestRule, RunningProxy, ShardAwareness, WorkerError,
 };
-use std::collections::HashMap;
 use std::error::Error;
-use std::net::SocketAddr;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
@@ -29,18 +30,9 @@ enum Statement {
     Simple(Query),
 }
 
-async fn prepare_data(
-    proxy_uris: [String; 3],
-    translation_map: HashMap<SocketAddr, SocketAddr>,
-) -> (String, Session) {
-    let session = SessionBuilder::new()
-        .known_node(proxy_uris[0].as_str())
-        .address_translator(Arc::new(translation_map))
-        .build()
-        .await
-        .unwrap();
-
+async fn prepare_data(session: impl AsRef<Session>) -> String {
     let ks = unique_keyspace_name();
+    let session = session.as_ref();
 
     session.ddl(
         format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")
@@ -69,7 +61,7 @@ async fn prepare_data(
             .unwrap();
     }
 
-    (ks, session)
+    ks
 }
 
 async fn execute_statement(
@@ -94,49 +86,81 @@ async fn execute_statement(
     }
 }
 
-async fn execute_test<F, Fut>(query: impl AsRef<str>, callback: F)
+async fn test_callback<F, Fut>(
+    session: Arc<Session>,
+    query: impl AsRef<str>,
+    callback: F,
+    running_proxy: Option<RunningProxy>,
+) -> Option<RunningProxy>
 where
-    F: Fn(Arc<Session>, RunningProxy, Statement) -> Fut,
-    Fut: std::future::Future<Output = Result<RunningProxy, Box<dyn Error>>>,
+    F: Fn(Arc<Session>, Option<RunningProxy>, Statement) -> Fut,
+    Fut: std::future::Future<Output = Result<Option<RunningProxy>, Box<dyn Error>>>,
+{
+    let ks = prepare_data(Arc::clone(&session)).await;
+
+    let query = query.as_ref().to_string().replace("%keyspace%", &ks);
+
+    let mut query = Query::from(query.clone());
+    query.set_consistency(Consistency::Quorum);
+    query.set_page_size(PAGE_SIZE);
+
+    let mut prepared = session.prepare(query.clone()).await.unwrap();
+    prepared.set_consistency(Consistency::Quorum);
+    prepared.set_page_size(PAGE_SIZE);
+
+    let mut running_proxy = callback(
+        Arc::clone(&session),
+        running_proxy,
+        Statement::Simple(query),
+    )
+    .await
+    .unwrap();
+
+    if let Some(ref mut running_proxy) = running_proxy {
+        running_proxy.running_nodes.iter_mut().for_each(|node| {
+            node.change_response_rules(None);
+            node.change_request_rules(None);
+        });
+    }
+
+    callback(
+        Arc::clone(&session),
+        running_proxy,
+        Statement::Prepared(prepared),
+    )
+    .await
+    .unwrap()
+}
+
+async fn execute_test<F, Fut>(query: impl AsRef<str>, callback: F, init_cluster: bool)
+where
+    F: Fn(Arc<Session>, Option<RunningProxy>, Statement) -> Fut,
+    Fut: std::future::Future<Output = Result<Option<RunningProxy>, Box<dyn Error>>>,
 {
     setup_tracing();
+
+    if !init_cluster {
+        let session = Arc::new(create_new_session_builder().build().await.unwrap());
+
+        test_callback(session, query, callback, None).await;
+        return;
+    }
 
     let result = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, running_proxy| async move {
-            let (ks, session) = prepare_data(proxy_uris, translation_map).await;
-            let session = Arc::new(session);
+            let session = Arc::new(
+                SessionBuilder::new()
+                    .known_node(proxy_uris[0].as_str())
+                    .address_translator(Arc::new(translation_map))
+                    .build()
+                    .await
+                    .unwrap(),
+            );
 
-            let query = query.as_ref().to_string().replace("%keyspace%", &ks);
-
-            let mut query = Query::from(query.clone());
-            query.set_consistency(Consistency::Quorum);
-            query.set_page_size(PAGE_SIZE);
-
-            let mut prepared = session.prepare(query.clone()).await.unwrap();
-            prepared.set_consistency(Consistency::Quorum);
-            prepared.set_page_size(PAGE_SIZE);
-
-            let mut running_proxy = callback(
-                Arc::clone(&session),
-                running_proxy,
-                Statement::Simple(query),
-            )
-            .await
-            .unwrap();
-
-            running_proxy.running_nodes.iter_mut().for_each(|node| {
-                node.change_response_rules(None);
-                node.change_request_rules(None);
-            });
-
-            callback(
-                Arc::clone(&session),
-                running_proxy,
-                Statement::Prepared(prepared),
-            )
-            .await
-            .unwrap()
+            test_callback(session, query, callback, Some(running_proxy))
+                .await
+                .unwrap()
         },
     )
     .await;
@@ -161,6 +185,28 @@ async fn test_paging_single_page_result() {
 
             Ok(running_proxy)
         },
+        false,
+    )
+    .await;
+}
+#[tokio::test]
+async fn test_paging_single_page_single_result() {
+    execute_test(
+        "SELECT a FROM %keyspace%.t WHERE a = ?",
+        |session, running_proxy, statement| async move {
+            let (query_result, paging_state_response) =
+                execute_statement(&session, statement, (0,), PagingState::start()).await?;
+
+            let results = query_result.into_rows_result()?;
+            assert_eq!(results.rows_num(), 1);
+            assert!(paging_state_response.finished());
+
+            let (a,) = results.single_row::<(i32,)>()?;
+            assert_eq!(a, 0);
+
+            Ok(running_proxy)
+        },
+        false,
     )
     .await;
 }
@@ -191,11 +237,13 @@ async fn test_paging_multiple_no_errors() {
 
             Ok(running_proxy)
         },
+        false,
     )
     .await;
 }
 
 #[tokio::test]
+#[cfg(not(scylla_cloud_tests))]
 async fn test_paging_error() {
     execute_test(
         "SELECT a FROM %keyspace%.t WHERE a = ?",
@@ -228,11 +276,13 @@ async fn test_paging_error() {
 
             Ok(running_proxy)
         },
+        true,
     )
     .await;
 }
 
 #[tokio::test]
+#[cfg(not(scylla_cloud_tests))]
 async fn test_paging_error_on_next_page() {
     execute_test(
         "SELECT a FROM %keyspace%.t",
@@ -246,18 +296,23 @@ async fn test_paging_error_on_next_page() {
                 .continue_value()
                 .unwrap();
 
-            running_proxy.running_nodes.iter_mut().for_each(|node| {
-                node.change_request_rules(Some(vec![
-                    RequestRule(
-                        Condition::RequestOpcode(RequestOpcode::Execute),
-                        RequestReaction::forge_with_error(DbError::ServerError),
-                    ),
-                    RequestRule(
-                        Condition::RequestOpcode(RequestOpcode::Query),
-                        RequestReaction::forge_with_error(DbError::ServerError),
-                    ),
-                ]))
-            });
+            running_proxy
+                .as_mut()
+                .unwrap()
+                .running_nodes
+                .iter_mut()
+                .for_each(|node| {
+                    node.change_request_rules(Some(vec![
+                        RequestRule(
+                            Condition::RequestOpcode(RequestOpcode::Execute),
+                            RequestReaction::forge_with_error(DbError::ServerError),
+                        ),
+                        RequestRule(
+                            Condition::RequestOpcode(RequestOpcode::Query),
+                            RequestReaction::forge_with_error(DbError::ServerError),
+                        ),
+                    ]))
+                });
 
             let result = execute_statement(&session, statement.clone(), (), state.clone())
                 .await
@@ -273,60 +328,7 @@ async fn test_paging_error_on_next_page() {
 
             Ok(running_proxy)
         },
+        true,
     )
     .await;
 }
-//
-// #[tokio::test]
-// async fn test_paging_wrong_page_state() {
-//     execute_test(
-//         "SELECT a FROM %keyspace%.t",
-//         |session, mut running_proxy, statement| async move {
-//             let mut state = PagingState::start();
-//             let (_, paging_state_resp) =
-//                 execute_statement(&session, statement.clone(), (), state.clone()).await?;
-//
-//             state = paging_state_resp
-//                 .into_paging_control_flow()
-//                 .continue_value()
-//                 .unwrap();
-//
-//             running_proxy.running_nodes.iter_mut().for_each(|node| {
-//                 let response =
-//                     RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
-//                         ResponseFrame {
-//                             params: params.for_response(),
-//                             opcode: ResponseOpcode::Event,
-//                             body: Bytes::new(),
-//                         }
-//                     }));
-//
-//                 node.change_request_rules(Some(vec![
-//                     RequestRule(
-//                         Condition::RequestOpcode(RequestOpcode::Execute),
-//                         response.clone(),
-//                     ),
-//                     RequestRule(
-//                         Condition::RequestOpcode(RequestOpcode::Query),
-//                         response.clone(),
-//                     ),
-//                 ]));
-//             });
-//
-//             let result = execute_statement(&session, statement, (), state.clone())
-//                 .await
-//                 .unwrap_err();
-//
-//             assert_matches!(
-//                 result,
-//                 ExecutionError::LastAttemptError(RequestAttemptError::DbError(
-//                     DbError::ServerError,
-//                     ..
-//                 ),)
-//             );
-//
-//             Ok(running_proxy)
-//         },
-//     )
-//     .await;
-// }
