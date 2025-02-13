@@ -1,7 +1,6 @@
 mod batch;
 mod consistency;
 mod cql_collections;
-mod cql_value;
 mod default_policy;
 mod execution_profiles;
 mod history;
