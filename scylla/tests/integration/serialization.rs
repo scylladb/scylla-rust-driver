@@ -78,6 +78,63 @@ fn assert_error_is_not_overflow_or_expected_non_null(error: &DeserializationErro
     }
 }
 
+// Native type test, which expects value to have the display trait and be trivially copyable
+async fn run_native_serialize_test<T>(table_name: &str, type_name: &str, values: &[Option<T>])
+where
+    T: SerializeValue
+        + DeserializeOwnedValue
+        + FromStr
+        + Debug
+        + Clone
+        + PartialEq
+        + Default
+        + Display
+        + Copy,
+{
+    let session = prepare_test_table(table_name, type_name, true).await;
+    tracing::debug!("Active keyspace: {}", session.get_keyspace().unwrap());
+
+    for original_value in values {
+        session
+            .query_unpaged(
+                format!("INSERT INTO {} (id, val) VALUES (1, ?)", table_name),
+                (&original_value,),
+            )
+            .await
+            .unwrap();
+
+        let selected_value: Vec<T> = session
+            .query_unpaged(format!("SELECT val FROM {}", table_name), &[])
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .rows::<(T,)>()
+            .unwrap()
+            .map(|row| match row {
+                Ok((val,)) => val,
+                Err(e) => {
+                    assert_error_is_not_expected_non_null(&e);
+                    T::default()
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for value in selected_value {
+            tracing::debug!(
+                "Received: {} | Expected: {}",
+                value,
+                if original_value.is_none() {
+                    T::default()
+                } else {
+                    original_value.unwrap()
+                }
+            );
+            assert_eq!(value, original_value.unwrap_or(T::default()));
+        }
+    }
+}
+
 // Test for types that either don't have the Display trait or foreign types from other libraries
 async fn run_foreign_serialize_test<T>(table_name: &str, type_name: &str, values: &[Option<T>])
 where
@@ -264,6 +321,146 @@ async fn run_literal_input_maybe_empty_output_test<X>(
             assert_eq!(Some(read_value), *expected_val);
         }
     }
+}
+
+// Scalar types
+
+#[tokio::test]
+async fn test_serialize_deserialize_bigint() {
+    setup_tracing();
+    const TABLE_NAME: &str = "bigint_serialization_test";
+
+    let test_cases = [
+        Some(i64::MIN),
+        Some(i64::MAX),
+        Some(1),
+        Some(-1),
+        Some(0),
+        None,
+    ];
+
+    run_native_serialize_test(TABLE_NAME, "bigint", &test_cases).await;
+}
+
+#[tokio::test]
+async fn test_serialize_deserialize_int() {
+    setup_tracing();
+    const TABLE_NAME: &str = "int_serialization_test";
+
+    let test_cases = [
+        Some(i32::MIN),
+        Some(i32::MAX),
+        Some(1),
+        Some(-1),
+        Some(0),
+        None,
+    ];
+
+    run_native_serialize_test(TABLE_NAME, "int", &test_cases).await;
+}
+
+#[tokio::test]
+async fn test_serialize_deserialize_smallint() {
+    setup_tracing();
+    const TABLE_NAME: &str = "smallint_serialization_test";
+
+    let test_cases = [
+        Some(i16::MIN),
+        Some(i16::MAX),
+        Some(1),
+        Some(-1),
+        Some(0),
+        None,
+    ];
+
+    run_native_serialize_test(TABLE_NAME, "smallint", &test_cases).await;
+}
+
+#[tokio::test]
+async fn test_serialize_deserialize_tinyint() {
+    setup_tracing();
+    const TABLE_NAME: &str = "tinyint_serialization_test";
+
+    let test_cases = [
+        Some(i8::MIN),
+        Some(i8::MAX),
+        Some(1),
+        Some(-1),
+        Some(0),
+        None,
+    ];
+
+    run_native_serialize_test(TABLE_NAME, "tinyint", &test_cases).await;
+}
+
+#[tokio::test]
+async fn test_serialize_deserialize_float() {
+    setup_tracing();
+    const TABLE_NAME: &str = "float_serialization_test";
+
+    let test_cases = [
+        Some(f32::MIN),
+        Some(f32::MAX),
+        Some(1.0),
+        Some(-1.0),
+        Some(0.0),
+        None,
+    ];
+
+    run_native_serialize_test(TABLE_NAME, "float", &test_cases).await;
+}
+
+#[tokio::test]
+async fn test_serialize_deserialize_bool() {
+    setup_tracing();
+    const TABLE_NAME: &str = "bool_serialization_test";
+
+    let test_cases = [Some(true), Some(false), None];
+
+    run_native_serialize_test(TABLE_NAME, "boolean", &test_cases).await;
+}
+
+#[tokio::test]
+async fn test_serialize_deserialize_double() {
+    setup_tracing();
+    const TABLE_NAME: &str = "double_serialization_test";
+
+    let test_cases = [
+        Some(f64::MIN),
+        Some(f64::MAX),
+        Some(1.0),
+        Some(-1.0),
+        Some(0.0),
+        None,
+    ];
+
+    run_native_serialize_test(TABLE_NAME, "double", &test_cases).await;
+}
+
+#[tokio::test]
+async fn test_serialize_deserialize_double_literal() {
+    setup_tracing();
+    const TABLE_NAME: &str = "double_serialization_test";
+
+    let test_cases: Vec<(String, f64)> = [f64::MIN, f64::MAX, 1.0, -1.0, 0.0, 0.1]
+        .iter()
+        .map(|val| (val.to_string(), *val))
+        .collect();
+
+    run_literal_and_bound_value_test(TABLE_NAME, "double", test_cases.as_slice(), false).await;
+}
+
+#[tokio::test]
+async fn test_serialize_deserialize_float_literal() {
+    setup_tracing();
+    const TABLE_NAME: &str = "float_serialization_test";
+
+    let test_cases: Vec<(String, f32)> = [f32::MIN, f32::MAX, 1.0, -1.0, 0.0, 0.1]
+        .iter()
+        .map(|val| (val.to_string(), *val))
+        .collect();
+
+    run_literal_and_bound_value_test(TABLE_NAME, "float", test_cases.as_slice(), false).await;
 }
 
 // Arbitrary precision types
@@ -1223,6 +1420,19 @@ async fn test_serialize_deserialize_offset_date_time_03_high_precision_rounding_
 //UUID Types
 
 #[tokio::test]
+async fn test_serialize_deserialize_uuid() {
+    setup_tracing();
+    const TABLE_NAME: &str = "uuid_serialization_test";
+
+    let tests: Vec<(String, uuid::Uuid)> = (0..100)
+        .map(|_| uuid::Uuid::new_v4())
+        .map(|new_uuid| (new_uuid.to_string(), new_uuid))
+        .collect();
+
+    run_literal_and_bound_value_test(TABLE_NAME, "uuid", tests.as_slice(), false).await;
+}
+
+#[tokio::test]
 async fn test_serialize_deserialize_timeuuid() {
     setup_tracing();
     const TABLE_NAME: &str = "timeuuid_serialization_test";
@@ -1328,6 +1538,35 @@ async fn test_serialize_deserialize_timeuuid_ordering() {
 
         assert_eq!(sorted_timeuuid_vals, rust_sorted_timeuuids);
     }
+}
+
+#[tokio::test]
+async fn test_serialize_deserialize_strings_varchar() {
+    let table_name = "varchar_serialization_test";
+
+    let test_cases: Vec<(&str, String)> = vec![
+        ("Hello, World!", String::from("Hello, World!")),
+        ("Hello, Мир", String::from("Hello, Мир")), // multi-byte string
+        ("🦀A🦀B🦀C", String::from("🦀A🦀B🦀C")),
+        ("おはようございます", String::from("おはようございます")),
+    ];
+
+    run_literal_and_bound_value_test(table_name, "varchar", test_cases.as_slice(), true).await;
+}
+
+#[tokio::test]
+async fn test_serialize_deserialize_strings_ascii() {
+    let table_name = "ascii_serialization_test";
+
+    let test_cases: Vec<(&str, String)> = vec![
+        ("Hello, World!", String::from("Hello, World!")),
+        (
+            str::from_utf8(&[0x0, 0x7f]).unwrap(),
+            String::from_utf8(vec![0x0, 0x7f]).unwrap(),
+        ), // min/max ASCII values
+    ];
+
+    run_literal_and_bound_value_test(table_name, "varchar", test_cases.as_slice(), true).await;
 }
 
 // UDT Types
