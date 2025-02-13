@@ -230,7 +230,7 @@ fn serialize_error_specific_fields(
 pub(crate) async fn write_frame(
     params: FrameParams,
     opcode: FrameOpcode,
-    body: &Bytes,
+    body: &[u8],
     writer: &mut (impl AsyncWrite + Unpin),
 ) -> Result<(), tokio::io::Error> {
     let mut header = [0; HEADER_SIZE];

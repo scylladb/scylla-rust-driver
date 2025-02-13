@@ -2405,7 +2405,7 @@ mod tests {
             write_frame(
                 params,
                 FrameOpcode::Request(req_opcode),
-                &(body_base.to_string() + "|request|").into(),
+                (body_base.to_string() + "|request|").as_bytes(),
                 client_socket_ref,
             )
             .await
@@ -2419,7 +2419,7 @@ mod tests {
             write_frame(
                 params.for_response(),
                 FrameOpcode::Response(resp_opcode),
-                &(body_base.to_string() + "|response|").into(),
+                (body_base.to_string() + "|response|").as_bytes(),
                 server_socket_ref,
             )
             .await
