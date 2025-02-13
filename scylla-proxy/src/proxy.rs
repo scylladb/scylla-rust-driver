@@ -1294,6 +1294,7 @@ pub fn get_exclusive_local_address() -> IpAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::errors::ReadFrameError;
     use crate::frame::{read_frame, read_request_frame, FrameType};
     use crate::{
         setup_tracing, Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction,
@@ -1302,7 +1303,6 @@ mod tests {
     use bytes::{BufMut, BytesMut};
     use futures::future::{join, join3};
     use rand::RngCore;
-    use scylla_cql::frame::frame_errors::FrameHeaderParseError;
     use scylla_cql::frame::types::write_string_multimap;
     use std::collections::HashMap;
     use std::mem;
@@ -1721,7 +1721,7 @@ mod tests {
             params: FrameParams,
             opcode: FrameOpcode,
             body: &Bytes,
-        ) -> Result<RequestFrame, FrameHeaderParseError> {
+        ) -> Result<RequestFrame, ReadFrameError> {
             let (send_res, recv_res) = join(
                 write_frame(params, opcode, &body.clone(), driver),
                 read_request_frame(node),
@@ -1836,7 +1836,7 @@ mod tests {
             params: FrameParams,
             opcode: FrameOpcode,
             body: &Bytes,
-        ) -> Result<RequestFrame, FrameHeaderParseError> {
+        ) -> Result<RequestFrame, ReadFrameError> {
             let (send_res, recv_res) = join(
                 write_frame(params, opcode, &body.clone(), driver),
                 read_request_frame(node),
