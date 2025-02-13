@@ -11,6 +11,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use tracing::warn;
 
+use crate::errors::ReadFrameError;
+
 const HEADER_SIZE: usize = 9;
 
 // Parts of the frame header which are not determined by the request/response type.
@@ -253,7 +255,7 @@ pub(crate) async fn write_frame(
 pub(crate) async fn read_frame(
     reader: &mut (impl AsyncRead + Unpin),
     frame_type: FrameType,
-) -> Result<(FrameParams, FrameOpcode, Bytes), FrameHeaderParseError> {
+) -> Result<(FrameParams, FrameOpcode, Bytes), ReadFrameError> {
     let mut raw_header = [0u8; HEADER_SIZE];
     reader
         .read_exact(&mut raw_header[..])
@@ -269,7 +271,7 @@ pub(crate) async fn read_frame(
             FrameType::Response => (FrameHeaderParseError::FrameFromClient, 0x80, "response"),
         };
         if version & 0x80 != valid_direction {
-            return Err(err);
+            return Err(err.into());
         }
         let protocol_version = version & 0x7F;
         if protocol_version != 0x04 {
@@ -311,10 +313,9 @@ pub(crate) async fn read_frame(
             .map_err(|err| FrameHeaderParseError::BodyChunkIoError(body.remaining_mut(), err))?;
         if n == 0 {
             // EOF, too early
-            return Err(FrameHeaderParseError::ConnectionClosed(
-                body.remaining_mut(),
-                length,
-            ));
+            return Err(
+                FrameHeaderParseError::ConnectionClosed(body.remaining_mut(), length).into(),
+            );
         }
     }
 
@@ -323,7 +324,7 @@ pub(crate) async fn read_frame(
 
 pub(crate) async fn read_request_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<RequestFrame, FrameHeaderParseError> {
+) -> Result<RequestFrame, ReadFrameError> {
     read_frame(reader, FrameType::Request)
         .await
         .map(|(params, opcode, body)| RequestFrame {
@@ -338,7 +339,7 @@ pub(crate) async fn read_request_frame(
 
 pub(crate) async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<ResponseFrame, FrameHeaderParseError> {
+) -> Result<ResponseFrame, ReadFrameError> {
     read_frame(reader, FrameType::Response)
         .await
         .map(|(params, opcode, body)| ResponseFrame {

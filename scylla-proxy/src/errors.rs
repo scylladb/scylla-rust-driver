@@ -4,6 +4,12 @@ use scylla_cql::frame::frame_errors::{FrameHeaderParseError, LowLevelDeserializa
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+pub enum ReadFrameError {
+    #[error("Failed to read frame header: {0}")]
+    Header(#[from] FrameHeaderParseError),
+}
+
+#[derive(Debug, Error)]
 pub enum DoorkeeperError {
     #[error("Listen on {0} failed with {1}")]
     Listen(SocketAddr, std::io::Error),
@@ -20,7 +26,7 @@ pub enum DoorkeeperError {
     #[error("Could not send Options frame for obtaining shards number: {0}")]
     ObtainingShardNumber(std::io::Error),
     #[error("Could not send read Supported frame for obtaining shards number: {0}")]
-    ObtainingShardNumberFrame(FrameHeaderParseError),
+    ObtainingShardNumberFrame(ReadFrameError),
     #[error("Could not read Supported options: {0}")]
     ObtainingShardNumberParseOptions(LowLevelDeserializationError),
     #[error("ShardInfo parameters missing")]
