@@ -633,12 +633,25 @@ impl Doorkeeper {
         let (tx_driver, rx_driver) = mpsc::unbounded_channel::<ResponseFrame>();
         let event_register_flag = Arc::new(AtomicBool::new(false));
 
-        tokio::task::spawn(new_worker().receiver_from_driver(driver_read, tx_request));
+        let (
+            compression_writer_request_processor,
+            compression_reader_receiver_from_driver,
+            compression_reader_receiver_from_cluster,
+            compression_reader_sender_to_driver,
+            compression_reader_sender_to_cluster,
+        ) = compression::make_compression_infra();
+
+        tokio::task::spawn(new_worker().receiver_from_driver(
+            driver_read,
+            tx_request,
+            compression_reader_receiver_from_driver,
+        ));
         tokio::task::spawn(new_worker().sender_to_driver(
             driver_write,
             rx_driver,
             connection_close_tx.subscribe(),
             self.terminate_signaler.subscribe(),
+            compression_reader_sender_to_driver,
         ));
         tokio::task::spawn(new_worker().request_processor(
             rx_request,
@@ -648,6 +661,7 @@ impl Doorkeeper {
             self.node.request_rules().clone(),
             connection_close_tx.clone(),
             event_register_flag.clone(),
+            compression_writer_request_processor,
         ));
         if let InternalNode::Real {
             ref response_rules, ..
@@ -659,8 +673,13 @@ impl Doorkeeper {
                 rx_cluster,
                 connection_close_tx.subscribe(),
                 self.terminate_signaler.subscribe(),
+                compression_reader_sender_to_cluster,
             ));
-            tokio::task::spawn(new_worker().receiver_from_cluster(cluster_read, tx_response));
+            tokio::task::spawn(new_worker().receiver_from_cluster(
+                cluster_read,
+                tx_response,
+                compression_reader_receiver_from_cluster,
+            ));
             tokio::task::spawn(new_worker().response_processor(
                 rx_response,
                 tx_driver,
@@ -848,6 +867,61 @@ impl Doorkeeper {
     }
 }
 
+mod compression {
+    use scylla_cql::frame::Compression;
+    use std::sync::{Arc, OnceLock};
+
+    type CompressionInfo = Arc<OnceLock<Option<Compression>>>;
+
+    /// The write end of compression config for a connection.
+    ///
+    /// Used by the request processor upon STARTUP frame captured
+    /// and compression setting retrieved from it.
+    #[derive(Debug, Clone)]
+    pub(crate) struct CompressionWriter(CompressionInfo);
+    impl CompressionWriter {
+        pub(crate) fn set(
+            &self,
+            compression: Option<Compression>,
+        ) -> Result<(), Option<Compression>> {
+            self.0.set(compression)
+        }
+    }
+
+    /// The read end of compression config for a connection.
+    ///
+    /// Used by frame (de)serializers.
+    #[derive(Debug, Clone)]
+    pub(crate) struct CompressionReader(CompressionInfo);
+    impl CompressionReader {
+        /// Return the compression negotiated for the connection.
+        ///
+        /// Outer Option signifies whether the negotiation took place,
+        /// inner Option is the compression (or lack of it) negotiated.
+        pub(crate) fn get(&self) -> Option<Option<Compression>> {
+            self.0.get().copied()
+        }
+    }
+
+    pub(crate) fn make_compression_infra() -> (
+        CompressionWriter,
+        CompressionReader,
+        CompressionReader,
+        CompressionReader,
+        CompressionReader,
+    ) {
+        let info = Arc::new(OnceLock::new());
+        (
+            CompressionWriter(info.clone()),
+            CompressionReader(info.clone()),
+            CompressionReader(info.clone()),
+            CompressionReader(info.clone()),
+            CompressionReader(info),
+        )
+    }
+}
+pub(crate) use compression::{CompressionReader, CompressionWriter};
+
 struct ProxyWorker {
     terminate_notifier: TerminateNotifier,
     finish_guard: FinishGuard,
@@ -896,6 +970,7 @@ impl ProxyWorker {
         self,
         mut read_half: (impl AsyncRead + Unpin),
         request_processor_tx: mpsc::UnboundedSender<RequestFrame>,
+        compression: CompressionReader,
     ) {
         let shard = self.shard;
         self.run_until_interrupted(
@@ -930,6 +1005,7 @@ impl ProxyWorker {
         self,
         mut read_half: (impl AsyncRead + Unpin),
         response_processor_tx: mpsc::UnboundedSender<ResponseFrame>,
+        compression: CompressionReader,
     ) {
         let shard = self.shard;
         self.run_until_interrupted(
@@ -969,6 +1045,7 @@ impl ProxyWorker {
         mut responses_rx: mpsc::UnboundedReceiver<ResponseFrame>,
         mut connection_close_notifier: ConnectionCloseNotifier,
         mut terminate_notifier: TerminateNotifier,
+        compression: CompressionReader,
     ) {
         let shard = self.shard;
         self.run_until_interrupted(
@@ -1015,6 +1092,7 @@ impl ProxyWorker {
         mut requests_rx: mpsc::UnboundedReceiver<RequestFrame>,
         mut connection_close_notifier: ConnectionCloseNotifier,
         mut terminate_notifier: TerminateNotifier,
+        compression: CompressionReader,
     ) {
         let shard = self.shard;
         self.run_until_interrupted(
@@ -1067,6 +1145,7 @@ impl ProxyWorker {
         request_rules: Arc<Mutex<Vec<RequestRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
         event_registered_flag: Arc<AtomicBool>,
+        compression: CompressionWriter,
     ) {
         let shard = self.shard;
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
