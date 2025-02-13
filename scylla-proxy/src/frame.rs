@@ -62,12 +62,14 @@ impl RequestFrame {
     pub(crate) async fn write(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
+        compression: &CompressionReader,
     ) -> Result<(), tokio::io::Error> {
         write_frame(
             self.params,
             FrameOpcode::Request(self.opcode),
             &self.body,
             writer,
+            compression,
         )
         .await
     }
@@ -136,12 +138,14 @@ impl ResponseFrame {
     pub(crate) async fn write(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
+        compression: &CompressionReader,
     ) -> Result<(), tokio::io::Error> {
         write_frame(
             self.params,
             FrameOpcode::Response(self.opcode),
             &self.body,
             writer,
+            compression,
         )
         .await
     }
@@ -235,6 +239,7 @@ pub(crate) async fn write_frame(
     opcode: FrameOpcode,
     body: &[u8],
     writer: &mut (impl AsyncWrite + Unpin),
+    compression: &CompressionReader,
 ) -> Result<(), tokio::io::Error> {
     let mut header = [0; HEADER_SIZE];
 
