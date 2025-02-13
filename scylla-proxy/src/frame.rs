@@ -56,7 +56,7 @@ pub struct RequestFrame {
 }
 
 impl RequestFrame {
-    pub async fn write(
+    pub(crate) async fn write(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
     ) -> Result<(), tokio::io::Error> {
