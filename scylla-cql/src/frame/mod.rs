@@ -14,6 +14,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
 
 use std::fmt::Display;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::{collections::HashMap, convert::TryFrom};
 
@@ -54,6 +55,27 @@ impl Compression {
         match self {
             Compression::Lz4 => "lz4",
             Compression::Snappy => "snappy",
+        }
+    }
+}
+
+/// Unknown compression.
+#[derive(Error, Debug, Clone)]
+#[error("Unknown compression: {name}")]
+pub struct CompressionFromStrError {
+    name: String,
+}
+
+impl FromStr for Compression {
+    type Err = CompressionFromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "lz4" => Ok(Self::Lz4),
+            "snappy" => Ok(Self::Snappy),
+            other => Err(Self::Err {
+                name: other.to_owned(),
+            }),
         }
     }
 }
