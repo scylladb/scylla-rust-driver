@@ -816,7 +816,7 @@ impl Doorkeeper {
             FrameOpcode::Request(RequestOpcode::Options),
             &Bytes::new(),
             connection,
-            &no_compression()
+            &no_compression(),
         )
         .await
         .map_err(DoorkeeperError::ObtainingShardNumber)?;
@@ -870,16 +870,29 @@ impl Doorkeeper {
 }
 
 mod compression {
+    use std::error::Error;
+    use std::sync::{Arc, OnceLock};
+
     use bytes::Bytes;
+    use scylla_cql::frame::frame_errors::{
+        CqlRequestSerializationError, FrameBodyExtensionsParseError,
+    };
     use scylla_cql::frame::request::{
         DeserializableRequest as _, RequestDeserializationError, Startup,
     };
-    use scylla_cql::frame::{
-        decompress, frame_errors::FrameBodyExtensionsParseError, Compression, FLAG_COMPRESSION,
-    };
+    use scylla_cql::frame::{compress_append, decompress, Compression, FLAG_COMPRESSION};
     use tracing::{error, warn};
 
-    use std::sync::{Arc, OnceLock};
+    #[derive(Debug, thiserror::Error)]
+    pub(crate) enum CompressionError {
+        /// Body Snap compression failed.
+        #[error("Snap compression error: {0}")]
+        SnapCompressError(Arc<dyn Error + Sync + Send>),
+
+        /// Frame is to be compressed, but no compression was negotiated for the connection.
+        #[error("Frame is to be compressed, but no compression negotiated for connection.")]
+        NoCompressionNegotiated,
+    }
 
     type CompressionInfo = Arc<OnceLock<Option<Compression>>>;
 
@@ -932,6 +945,26 @@ mod compression {
         pub(crate) fn get(&self) -> Option<Option<Compression>> {
             self.0.get().copied()
         }
+
+        pub(crate) fn maybe_compress_body(
+            &self,
+            flags: u8,
+            body: &[u8],
+        ) -> Result<Option<Bytes>, CompressionError> {
+            match (flags & FLAG_COMPRESSION != 0, self.get().flatten()) {
+                (true, Some(compression)) => {
+                    let mut buf = Vec::new();
+                    compress_append(body, compression, &mut buf).map_err(|err| {
+                        let CqlRequestSerializationError::SnapCompressError(err) = err else {unreachable!("BUG: compress_append returned variant different than SnapCompressError")};
+                        CompressionError::SnapCompressError(err)
+                    })?;
+                    Ok(Some(Bytes::from(buf)))
+                }
+                (true, None) => Err(CompressionError::NoCompressionNegotiated),
+                (false, _) => Ok(None),
+            }
+        }
+
         pub(crate) fn maybe_decompress_body(
             &self,
             flags: u8,
@@ -1556,7 +1589,9 @@ mod tests {
         let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-            write_frame(params, opcode, &body, &mut conn, &no_compression()).await.unwrap();
+            write_frame(params, opcode, &body, &mut conn, &no_compression())
+                .await
+                .unwrap();
             conn
         };
 
@@ -2093,9 +2128,15 @@ mod tests {
 
         let mock_node_action = async {
             let (mut conn, _) = mock_node_listener.accept().await.unwrap();
-            write_frame(params.for_response(), response_opcode, &body, &mut conn, &no_compression())
-                .await
-                .unwrap();
+            write_frame(
+                params.for_response(),
+                response_opcode,
+                &body,
+                &mut conn,
+                &no_compression(),
+            )
+            .await
+            .unwrap();
             conn
         };
 
@@ -2266,7 +2307,9 @@ mod tests {
 
         let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-        write_frame(params, opcode, &body, &mut conn, &no_compression()).await.unwrap();
+        write_frame(params, opcode, &body, &mut conn, &no_compression())
+            .await
+            .unwrap();
         // We assert that after sufficiently long time, no error happens inside proxy.
         tokio::time::sleep(Duration::from_millis(3)).await;
         running_proxy.finish().await.unwrap();
@@ -2457,9 +2500,15 @@ mod tests {
                 let socket = bind_socket_for_shard(shards_count, driver_shard).await;
                 let mut conn = socket.connect(node_proxy_addr).await.unwrap();
 
-                write_frame(params, request_opcode, body_ref, &mut conn, &no_compression())
-                    .await
-                    .unwrap();
+                write_frame(
+                    params,
+                    request_opcode,
+                    body_ref,
+                    &mut conn,
+                    &no_compression(),
+                )
+                .await
+                .unwrap();
                 conn
             };
 
@@ -2477,9 +2526,15 @@ mod tests {
                             &no_compression(),
                         )
                         .await;
-                        write_frame(params.for_response(), response_opcode, body_ref, &mut conn, &no_compression())
-                            .await
-                            .unwrap();
+                        write_frame(
+                            params.for_response(),
+                            response_opcode,
+                            body_ref,
+                            &mut conn,
+                            &no_compression(),
+                        )
+                        .await
+                        .unwrap();
                         conn
                     })
                     .collect::<Vec<_>>();
@@ -2587,7 +2642,7 @@ mod tests {
                 FrameOpcode::Request(req_opcode),
                 (body_base.to_string() + "|request|").as_bytes(),
                 client_socket_ref,
-                &no_compression()
+                &no_compression(),
             )
             .await
             .unwrap();
@@ -2603,7 +2658,7 @@ mod tests {
                 FrameOpcode::Response(resp_opcode),
                 (body_base.to_string() + "|response|").as_bytes(),
                 server_socket_ref,
-                &no_compression()
+                &no_compression(),
             )
             .await
             .unwrap();
