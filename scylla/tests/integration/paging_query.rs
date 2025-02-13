@@ -1,7 +1,6 @@
-use crate::utils::{
-    create_new_session_builder, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
-    PerformDDL,
-};
+#[cfg(scylla_cloud_tests)]
+use crate::utils::create_new_session_builder;
+use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
 use assert_matches::assert_matches;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -52,6 +51,7 @@ async fn prepare_data(session: impl AsRef<Session>) -> String {
         .await
         .unwrap();
 
+    #[cfg(not(scylla_cloud_tests))]
     prepared_insert.set_consistency(Consistency::Quorum);
 
     for i in 0..ITEMS {
@@ -101,10 +101,12 @@ where
     let query = query.as_ref().to_string().replace("%keyspace%", &ks);
 
     let mut query = Query::from(query.clone());
+    #[cfg(not(scylla_cloud_tests))]
     query.set_consistency(Consistency::Quorum);
     query.set_page_size(PAGE_SIZE);
 
     let mut prepared = session.prepare(query.clone()).await.unwrap();
+    #[cfg(not(scylla_cloud_tests))]
     prepared.set_consistency(Consistency::Quorum);
     prepared.set_page_size(PAGE_SIZE);
 
@@ -132,20 +134,20 @@ where
     .unwrap()
 }
 
-async fn execute_test<F, Fut>(query: impl AsRef<str>, callback: F, init_cluster: bool)
+async fn execute_test<F, Fut>(query: impl AsRef<str>, callback: F)
 where
     F: Fn(Arc<Session>, Option<RunningProxy>, Statement) -> Fut,
     Fut: std::future::Future<Output = Result<Option<RunningProxy>, Box<dyn Error>>>,
 {
     setup_tracing();
 
-    if !init_cluster {
+    #[cfg(scylla_cloud_tests)]
+    {
         let session = Arc::new(create_new_session_builder().build().await.unwrap());
-
         test_callback(session, query, callback, None).await;
-        return;
     }
 
+    #[cfg(not(scylla_cloud_tests))]
     let result = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, running_proxy| async move {
@@ -165,6 +167,7 @@ where
     )
     .await;
 
+    #[cfg(not(scylla_cloud_tests))]
     match result {
         Ok(_) => {}
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => {}
@@ -185,7 +188,6 @@ async fn test_paging_single_page_result() {
 
             Ok(running_proxy)
         },
-        false,
     )
     .await;
 }
@@ -206,7 +208,6 @@ async fn test_paging_single_page_single_result() {
 
             Ok(running_proxy)
         },
-        false,
     )
     .await;
 }
@@ -237,7 +238,6 @@ async fn test_paging_multiple_no_errors() {
 
             Ok(running_proxy)
         },
-        false,
     )
     .await;
 }
@@ -276,7 +276,6 @@ async fn test_paging_error() {
 
             Ok(running_proxy)
         },
-        true,
     )
     .await;
 }
@@ -291,10 +290,10 @@ async fn test_paging_error_on_next_page() {
             let (_, paging_state_resp) =
                 execute_statement(&session, statement.clone(), (), state.clone()).await?;
 
-            state = paging_state_resp
-                .into_paging_control_flow()
-                .continue_value()
-                .unwrap();
+            state = match paging_state_resp.into_paging_control_flow() {
+                ControlFlow::Continue(x) => x,
+                ControlFlow::Break(..) => panic!("Unexpected break"),
+            };
 
             running_proxy
                 .as_mut()
@@ -328,7 +327,6 @@ async fn test_paging_error_on_next_page() {
 
             Ok(running_proxy)
         },
-        true,
     )
     .await;
 }
