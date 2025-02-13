@@ -1,4 +1,5 @@
 mod batch;
+mod compression;
 mod consistency;
 mod cql_collections;
 mod cql_types;
