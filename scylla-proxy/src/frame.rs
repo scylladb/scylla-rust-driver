@@ -22,13 +22,13 @@ pub struct FrameParams {
 }
 
 impl FrameParams {
-    pub fn for_request(&self) -> FrameParams {
+    pub const fn for_request(&self) -> FrameParams {
         Self {
             version: self.version & 0x7F,
             ..*self
         }
     }
-    pub fn for_response(&self) -> FrameParams {
+    pub const fn for_response(&self) -> FrameParams {
         Self {
             version: 0x80 | (self.version & 0x7F),
             ..*self
