@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::utils::SingleTargetLBP;
 use crate::utils::{
     scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
     PerformDDL,
@@ -12,10 +13,6 @@ use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::cluster::ClusterState;
 use scylla::cluster::Node;
-use scylla::cluster::NodeRef;
-use scylla::policies::load_balancing::FallbackPlan;
-use scylla::policies::load_balancing::LoadBalancingPolicy;
-use scylla::policies::load_balancing::RoutingInfo;
 use scylla::prepared_statement::PreparedStatement;
 use scylla::query::Query;
 use scylla::response::query_result::QueryResult;
@@ -154,33 +151,6 @@ fn calculate_key_per_tablet(tablets: &[Tablet], prepared: &PreparedStatement) ->
     assert!(present_tablets.iter().all(|x| *x));
 
     value_lists
-}
-
-#[derive(Debug)]
-struct SingleTargetLBP {
-    target: (Arc<Node>, Option<u32>),
-}
-
-impl LoadBalancingPolicy for SingleTargetLBP {
-    fn pick<'a>(
-        &'a self,
-        _query: &'a RoutingInfo,
-        _cluster: &'a ClusterState,
-    ) -> Option<(NodeRef<'a>, Option<u32>)> {
-        Some((&self.target.0, self.target.1))
-    }
-
-    fn fallback<'a>(
-        &'a self,
-        _query: &'a RoutingInfo,
-        _cluster: &'a ClusterState,
-    ) -> FallbackPlan<'a> {
-        Box::new(std::iter::empty())
-    }
-
-    fn name(&self) -> String {
-        "SingleTargetLBP".to_owned()
-    }
 }
 
 async fn send_statement_everywhere(

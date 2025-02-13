@@ -300,3 +300,31 @@ impl PerformDDL for CachingSession {
         self.execute_unpaged(query, &[]).await.map(|_| ())
     }
 }
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) struct SingleTargetLBP {
+    pub(crate) target: (Arc<scylla::cluster::Node>, Option<u32>),
+}
+
+impl LoadBalancingPolicy for SingleTargetLBP {
+    fn pick<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        _cluster: &'a ClusterState,
+    ) -> Option<(NodeRef<'a>, Option<u32>)> {
+        Some((&self.target.0, self.target.1))
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        _cluster: &'a ClusterState,
+    ) -> FallbackPlan<'a> {
+        Box::new(std::iter::empty())
+    }
+
+    fn name(&self) -> String {
+        "SingleTargetLBP".to_owned()
+    }
+}
