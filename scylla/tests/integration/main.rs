@@ -1,7 +1,6 @@
 mod batch;
 mod consistency;
 mod cql_collections;
-mod cql_types;
 mod cql_value;
 mod default_policy;
 mod execution_profiles;
@@ -13,6 +12,7 @@ mod new_session;
 mod query_result;
 mod retries;
 mod self_identity;
+mod serialization;
 mod session;
 mod shards;
 mod silent_prepare_batch;
