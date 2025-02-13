@@ -705,6 +705,15 @@ impl Cluster {
         self.updateconf(args).await
     }
 
+    /// Enables the `PasswordAuthenticator` for the cluster.
+    // Consider making it accept an enum in the future. Supported authenticators:
+    // https://github.com/scylladb/scylladb/blob/529ff3efa57553eef6b0239b03b81581b70fb9ed/db/config.cc#L1045-L1051.
+    pub(crate) async fn enable_password_authentication(&self) -> Result<(), Error> {
+        let args = [("authenticator", "PasswordAuthenticator")];
+
+        self.updateconf(args).await
+    }
+
     fn get_ccm_env(&self) -> HashMap<String, String> {
         let mut env: HashMap<String, String> = HashMap::new();
         env.insert(

@@ -1,4 +1,3 @@
-mod authenticate;
 mod batch;
 mod consistency;
 mod cql_collections;
