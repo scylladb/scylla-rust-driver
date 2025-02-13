@@ -241,6 +241,12 @@ pub(crate) async fn write_frame(
     writer: &mut (impl AsyncWrite + Unpin),
     compression: &CompressionReader,
 ) -> Result<(), tokio::io::Error> {
+    let compressed_body = compression
+        .maybe_compress_body(params.flags, body)
+        .map_err(|e| tokio::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+    let body = compressed_body.as_deref().unwrap_or(body);
+
     let mut header = [0; HEADER_SIZE];
 
     header[0] = params.version;

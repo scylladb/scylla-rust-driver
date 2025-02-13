@@ -870,16 +870,29 @@ impl Doorkeeper {
 }
 
 mod compression {
+    use std::error::Error;
+    use std::sync::{Arc, OnceLock};
+
     use bytes::Bytes;
+    use scylla_cql::frame::frame_errors::{
+        CqlRequestSerializationError, FrameBodyExtensionsParseError,
+    };
     use scylla_cql::frame::request::{
         options, DeserializableRequest as _, RequestDeserializationError, Startup,
     };
-    use scylla_cql::frame::{
-        decompress, flag, frame_errors::FrameBodyExtensionsParseError, Compression,
-    };
+    use scylla_cql::frame::{compress_append, decompress, flag, Compression};
     use tracing::{error, warn};
 
-    use std::sync::{Arc, OnceLock};
+    #[derive(Debug, thiserror::Error)]
+    pub(crate) enum CompressionError {
+        /// Body Snap compression failed.
+        #[error("Snap compression error: {0}")]
+        SnapCompressError(Arc<dyn Error + Sync + Send>),
+
+        /// Frame is to be compressed, but no compression was negotiated for the connection.
+        #[error("Frame is to be compressed, but no compression negotiated for connection.")]
+        NoCompressionNegotiated,
+    }
 
     type CompressionInfo = Arc<OnceLock<Option<Compression>>>;
 
@@ -930,6 +943,28 @@ mod compression {
         pub(crate) fn get(&self) -> Option<Option<Compression>> {
             self.0.get().copied()
         }
+
+        pub(crate) fn maybe_compress_body(
+            &self,
+            flags: u8,
+            body: &[u8],
+        ) -> Result<Option<Bytes>, CompressionError> {
+            match (flags & flag::COMPRESSION != 0, self.get().flatten()) {
+                (true, Some(compression)) => {
+                    let mut buf = Vec::new();
+                    compress_append(body, compression, &mut buf).map_err(|err| {
+                        let CqlRequestSerializationError::SnapCompressError(err) = err else {
+                            unreachable!("BUG: compress_append returned variant different than SnapCompressError")
+                        };
+                        CompressionError::SnapCompressError(err)
+                    })?;
+                    Ok(Some(Bytes::from(buf)))
+                }
+                (true, None) => Err(CompressionError::NoCompressionNegotiated),
+                (false, _) => Ok(None),
+            }
+        }
+
         pub(crate) fn maybe_decompress_body(
             &self,
             flags: u8,
