@@ -1,27 +1,26 @@
-use assert_matches::assert_matches;
-use itertools::Itertools;
-use scylla::client::session::Session;
-use scylla::serialize::value::SerializeValue;
-use scylla::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint};
-use scylla::{DeserializeValue, SerializeValue};
-use std::cmp::PartialEq;
-use std::fmt::Debug;
+use core::str;
+use std::fmt::{Debug, Display};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
+use std::vec;
 
 use crate::utils::{
     create_new_session_builder, scylla_supports_tablets, setup_tracing, unique_keyspace_name,
     DeserializeOwnedValue, PerformDDL,
 };
+use assert_matches::assert_matches;
+use itertools::Itertools;
+use scylla::client::session::Session;
+use scylla::deserialize::row::BuiltinDeserializationError;
+use scylla::deserialize::value::{Emptiable, MaybeEmpty};
+use scylla::errors::DeserializationError;
+use scylla::serialize::value::SerializeValue;
+use scylla::value::{
+    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
+};
+use scylla::{DeserializeValue, SerializeValue};
 
-// Used to prepare a table for test
-// Creates a new keyspace, without tablets if requested and the ScyllaDB instance supports them.
-// Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
-async fn init_test_maybe_without_tablets(
-    table_name: &str,
-    type_name: &str,
-    supports_tablets: bool,
-) -> Session {
+async fn prepare_test_table(table_name: &str, type_name: &str, supports_tablets: bool) -> Session {
     let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -54,99 +53,226 @@ async fn init_test_maybe_without_tablets(
     session
 }
 
-// Used to prepare a table for test
-// Creates a new keyspace
-// Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
-async fn init_test(table_name: &str, type_name: &str) -> Session {
-    init_test_maybe_without_tablets(table_name, type_name, true).await
+fn assert_error_is_not_expected_non_null(error: &DeserializationError) {
+    match &error.downcast_ref::<BuiltinDeserializationError>().unwrap().kind{
+        scylla::deserialize::row::BuiltinDeserializationErrorKind::ColumnDeserializationFailed { err, .. } => match err.downcast_ref::<scylla::deserialize::value::BuiltinDeserializationError>().unwrap().kind {
+            scylla::deserialize::value::BuiltinDeserializationErrorKind::ExpectedNonNull => {
+            },
+            _ => panic!("Unexpected error: {:?}", error),
+        }
+        _ => panic!("Unexpected error: {:?}", error),
+    }
 }
 
-// This function tests serialization and deserialization mechanisms by sending insert and select
-// queries to running Scylla instance.
-// To do so, it:
-// Prepares a table for tests (by creating test keyspace and table {table_name} using init_test)
-// Runs a test that, for every element of `tests`:
-// - inserts 2 values (one encoded as string and one as bound values) into table {type_name}
-// - selects this 2 values and compares them with expected value
-// Expected values and bound values are computed using T::from_str
-async fn run_tests<T>(tests: &[&str], type_name: &str)
+#[cfg(any(feature = "chrono-04", feature = "time-03",))]
+fn assert_error_is_not_overflow_or_expected_non_null(error: &DeserializationError) {
+    match &error.downcast_ref::<BuiltinDeserializationError>().unwrap().kind {
+            scylla::deserialize::row::BuiltinDeserializationErrorKind::ColumnDeserializationFailed { err, .. } => match err.downcast_ref::<scylla::deserialize::value::BuiltinDeserializationError>().unwrap().kind {
+                scylla::deserialize::value::BuiltinDeserializationErrorKind::ValueOverflow => {
+                },
+                scylla::deserialize::value::BuiltinDeserializationErrorKind::ExpectedNonNull => {
+                },
+                _ => panic!("Unexpected error: {:?}", error),
+            }
+            _ => panic!("Unexpected error: {:?}", error),
+    }
+}
+
+// Test for types that either don't have the Display trait or foreign types from other libraries
+async fn run_foreign_serialize_test<T>(table_name: &str, type_name: &str, values: &[Option<T>])
 where
-    T: SerializeValue + DeserializeOwnedValue + FromStr + Debug + Clone + PartialEq,
+    T: SerializeValue + DeserializeOwnedValue + Debug + Clone + PartialEq,
 {
-    let session: Session = init_test(type_name, type_name).await;
-    session.await_schema_agreement().await.unwrap();
+    let session = prepare_test_table(table_name, type_name, true).await;
 
-    for test in tests.iter() {
-        let insert_string_encoded_value =
-            format!("INSERT INTO {} (id, val) VALUES (0, {})", type_name, test);
+    for original_value in values {
         session
-            .query_unpaged(insert_string_encoded_value, &[])
+            .query_unpaged(
+                format!("INSERT INTO {} (id, val) VALUES (1, ?)", table_name),
+                (&original_value,),
+            )
             .await
             .unwrap();
 
-        let insert_bound_value = format!("INSERT INTO {} (id, val) VALUES (1, ?)", type_name);
-        let value_to_bound = T::from_str(test).ok().unwrap();
-        session
-            .query_unpaged(insert_bound_value, (value_to_bound,))
-            .await
-            .unwrap();
-
-        let select_values = format!("SELECT val from {}", type_name);
-        let read_values: Vec<T> = session
-            .query_unpaged(select_values, &[])
+        let selected_value: Vec<T> = session
+            .query_unpaged(format!("SELECT val FROM {}", table_name), &[])
             .await
             .unwrap()
             .into_rows_result()
             .unwrap()
             .rows::<(T,)>()
             .unwrap()
-            .map(Result::unwrap)
+            .filter_map(|row| match row {
+                Ok((_,)) => row.ok(),
+                Err(e) => {
+                    assert_error_is_not_expected_non_null(&e);
+                    None
+                }
+            })
             .map(|row| row.0)
             .collect::<Vec<_>>();
 
-        let expected_value = T::from_str(test).ok().unwrap();
-        assert_eq!(read_values, vec![expected_value.clone(), expected_value]);
+        for value in selected_value {
+            assert_eq!(Some(value), *original_value);
+        }
     }
 }
 
-#[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
-fn varint_test_cases() -> Vec<&'static str> {
-    vec![
-        "0",
-        "1",
-        "127",
-        "128",
-        "129",
-        "-1",
-        "-128",
-        "-129",
-        "123456789012345678901234567890",
-        "-123456789012345678901234567890",
-        // Test cases for numbers that can't be contained in u/i128.
-        "1234567890123456789012345678901234567890",
-        "-1234567890123456789012345678901234567890",
-    ]
+async fn run_literal_and_bound_value_test<LitVal, BoundVal>(
+    table_name: &str,
+    type_name: &str,
+    values: &[(LitVal, BoundVal)],
+    escape_literal: bool,
+) where
+    LitVal: Display + Clone + PartialEq,
+    BoundVal: SerializeValue + DeserializeOwnedValue + Debug + Clone + PartialEq,
+{
+    fn error_handler(error: &DeserializationError) {
+        assert_error_is_not_expected_non_null(error);
+    }
+
+    run_literal_and_bound_value_test_with_callback(
+        table_name,
+        type_name,
+        values,
+        escape_literal,
+        &error_handler,
+    )
+    .await;
 }
 
-#[cfg(feature = "num-bigint-03")]
-#[tokio::test]
-async fn test_varint03() {
-    setup_tracing();
-    let tests = varint_test_cases();
-    run_tests::<num_bigint_03::BigInt>(&tests, "varint").await;
+// Test that inserts a raw literal value inside the query and compares it to a boundable type
+async fn run_literal_and_bound_value_test_with_callback<LitVal, BoundVal, ErrHandler>(
+    table_name: &str,
+    type_name: &str,
+    values: &[(LitVal, BoundVal)],
+    escape_literal: bool,
+    err_handler: &ErrHandler,
+) where
+    LitVal: Display + Clone + PartialEq,
+    BoundVal: SerializeValue + DeserializeOwnedValue + Debug + Clone + PartialEq,
+    ErrHandler: Fn(&DeserializationError),
+{
+    let session = prepare_test_table(table_name, type_name, true).await;
+
+    for (literal_val, bound_val) in values {
+        session
+            .query_unpaged(
+                format!(
+                    "INSERT INTO {} (id, val) VALUES (1, {})",
+                    table_name,
+                    if escape_literal {
+                        format!("'{}'", literal_val)
+                    } else {
+                        literal_val.to_string()
+                    }
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let read_literal_val: Vec<BoundVal> = session
+            .query_unpaged(format!("SELECT val FROM {}", table_name), &[])
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .rows::<(BoundVal,)>()
+            .unwrap()
+            .filter_map(|row| match row {
+                Ok((_,)) => row.ok(),
+                Err(e) => {
+                    err_handler(&e);
+                    None
+                }
+            })
+            .map(|row| row.0)
+            .collect::<Vec<_>>();
+
+        session
+            .query_unpaged(
+                format!("INSERT INTO {} (id, val) VALUES (1, ?)", table_name),
+                (&bound_val,),
+            )
+            .await
+            .unwrap();
+
+        let read_bound_val: Vec<BoundVal> = session
+            .query_unpaged(format!("SELECT val FROM {}", table_name), &[])
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .rows::<(BoundVal,)>()
+            .unwrap()
+            .filter_map(|row| match row {
+                Ok((_,)) => row.ok(),
+                Err(e) => {
+                    err_handler(&e);
+                    None
+                }
+            })
+            .map(|row| row.0)
+            .collect::<Vec<_>>();
+
+        for (read_literal, read_bound) in read_literal_val.iter().zip(read_bound_val.iter()) {
+            assert_eq!(*read_literal, *bound_val);
+            assert_eq!(*read_bound, *bound_val);
+        }
+    }
 }
 
-#[cfg(feature = "num-bigint-04")]
-#[tokio::test]
-async fn test_varint04() {
-    setup_tracing();
-    let tests = varint_test_cases();
-    run_tests::<num_bigint_04::BigInt>(&tests, "varint").await;
+// Special test for types that can return MaybeEmpty containers for certain results
+async fn run_literal_input_maybe_empty_output_test<X>(
+    table_name: &str,
+    type_name: &str,
+    values: &[(Option<&str>, Option<MaybeEmpty<X>>)],
+) where
+    X: SerializeValue + DeserializeOwnedValue + Debug + Clone + PartialEq + Emptiable,
+{
+    let session = prepare_test_table(table_name, type_name, true).await;
+
+    for (input_val, expected_val) in values {
+        let query = format!(
+            "INSERT INTO {} (id, val) VALUES (1, '{}')",
+            table_name,
+            &input_val.unwrap()
+        );
+        tracing::debug!("Executing query: {}", query);
+        session.query_unpaged(query, &[]).await.unwrap();
+
+        let selected_values: Vec<MaybeEmpty<X>> = session
+            .query_unpaged(format!("SELECT val FROM {}", table_name), &[])
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .rows::<(MaybeEmpty<X>,)>()
+            .unwrap()
+            .filter_map(|row| match row {
+                Ok((_,)) => row.ok(),
+                Err(e) => {
+                    assert_error_is_not_expected_non_null(&e);
+                    None
+                }
+            })
+            .map(|row| row.0)
+            .collect::<Vec<_>>();
+
+        for read_value in selected_values {
+            assert_eq!(Some(read_value), *expected_val);
+        }
+    }
 }
 
+// Arbitrary precision types
+
 #[tokio::test]
-async fn test_cql_varint() {
+async fn test_serialize_deserialize_cql_varint() {
     setup_tracing();
+    const TABLE_NAME: &str = "varint_serialization_test";
+
     let tests = [
         vec![0x00],       // 0
         vec![0x01],       // 1
@@ -165,124 +291,107 @@ async fn test_cql_varint() {
         ], // -123456789012345678901234567890
     ];
 
-    let table_name = "cql_varint_tests";
-    let session: Session = create_new_session_builder().build().await.unwrap();
-    let ks = unique_keyspace_name();
+    let mut test_cases: Vec<Option<CqlVarint>> = tests
+        .iter()
+        .map(|val| Some(CqlVarint::from_signed_bytes_be_slice(val)))
+        .collect();
+    test_cases.push(None);
 
-    session
-        .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
-        ))
-        .await
-        .unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    run_foreign_serialize_test(TABLE_NAME, "varint", test_cases.as_slice()).await;
+}
 
-    session
-        .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val varint)",
-            table_name
-        ))
-        .await
-        .unwrap();
+#[cfg(any(
+    feature = "num-bigint-03",
+    feature = "num-bigint-04",
+    feature = "bigdecimal-04"
+))]
+fn test_num_set() -> Vec<&'static str> {
+    vec![
+        "0",
+        "-1",
+        "1",
+        "127",
+        "128",
+        "-127",
+        "-128",
+        "255",
+        "123456789012345678901234567890",
+        "-123456789012345678901234567890",
+        // Test cases for numbers that can't be contained in u/i128.
+        "1234567890123456789012345678901234567890",
+        "-1234567890123456789012345678901234567890",
+    ]
+}
 
-    let prepared_insert = session
-        .prepare(format!(
-            "INSERT INTO {} (id, val) VALUES (0, ?)",
-            table_name
-        ))
-        .await
-        .unwrap();
-    let prepared_select = session
-        .prepare(format!("SELECT val FROM {} WHERE id = 0", table_name))
-        .await
-        .unwrap();
+#[cfg(feature = "num-bigint-03")]
+#[tokio::test]
+async fn test_serialize_deserialize_num_bigint_03_varint() {
+    use num_bigint_03::BigInt;
 
-    for test in tests {
-        let cql_varint = CqlVarint::from_signed_bytes_be_slice(&test);
-        session
-            .execute_unpaged(&prepared_insert, (&cql_varint,))
-            .await
-            .unwrap();
+    setup_tracing();
+    const TABLE_NAME: &str = "bn03_varint_serialization_test";
 
-        let read_values: Vec<CqlVarint> = session
-            .execute_unpaged(&prepared_select, &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .rows::<(CqlVarint,)>()
-            .unwrap()
-            .map(Result::unwrap)
-            .map(|row| row.0)
-            .collect::<Vec<_>>();
+    let mut test_cases: Vec<Option<BigInt>> = test_num_set()
+        .iter()
+        .map(|val| Some(BigInt::from_str(val).expect("Failed to parse BigInt")))
+        .collect();
+    test_cases.push(None);
 
-        assert_eq!(read_values, vec![cql_varint])
-    }
+    run_foreign_serialize_test(TABLE_NAME, "varint", test_cases.as_slice()).await;
+}
+
+#[cfg(feature = "num-bigint-04")]
+#[tokio::test]
+async fn test_serialize_deserialize_num_bigint_04_varint() {
+    use num_bigint_04::BigInt;
+
+    setup_tracing();
+    const TABLE_NAME: &str = "bn04_varint_serialization_test";
+
+    let mut test_cases: Vec<Option<BigInt>> = test_num_set()
+        .iter()
+        .map(|val| Some(BigInt::from_str(val).expect("Failed to parse BigInt")))
+        .collect();
+    test_cases.push(None);
+
+    run_foreign_serialize_test(TABLE_NAME, "varint", test_cases.as_slice()).await;
 }
 
 #[cfg(feature = "bigdecimal-04")]
 #[tokio::test]
-async fn test_decimal() {
-    setup_tracing();
-    let tests = [
-        "4.2",
-        "0",
-        "1.999999999999999999999999999999999999999",
-        "997",
-        "123456789012345678901234567890.1234567890",
-        "-123456789012345678901234567890.1234567890",
-    ];
+async fn test_serialize_deserialize_num_bigdecimal_04_varint() {
+    use bigdecimal_04::BigDecimal;
 
-    run_tests::<bigdecimal_04::BigDecimal>(&tests, "decimal").await;
+    setup_tracing();
+    const TABLE_NAME: &str = "bd04_decimal_serialization_test";
+
+    let mut test_cases: Vec<Option<BigDecimal>> = test_num_set()
+        .iter()
+        .map(|val| Some(BigDecimal::from_str(val).expect("Failed to parse BigInt")))
+        .collect();
+    test_cases.push(None);
+
+    run_foreign_serialize_test(TABLE_NAME, "decimal", test_cases.as_slice()).await;
 }
 
-#[tokio::test]
-async fn test_bool() {
-    setup_tracing();
-    let tests = ["true", "false"];
-
-    run_tests::<bool>(&tests, "boolean").await;
-}
+// Special types
 
 #[tokio::test]
-async fn test_float() {
+async fn test_serialize_deserialize_counter() {
     setup_tracing();
-    let max = f32::MAX.to_string();
-    let min = f32::MIN.to_string();
-    let tests = [
-        "3.14",
-        "997",
-        "0.1",
-        "128",
-        "-128",
-        max.as_str(),
-        min.as_str(),
-    ];
+    const TABLE_NAME: &str = "counter_serialization_test";
+    let test_cases = [-1, 0, 1, 127, 1000, i64::MAX, i64::MIN];
+    let session: Session = prepare_test_table(TABLE_NAME, "counter", false).await;
 
-    run_tests::<f32>(&tests, "float").await;
-}
-
-#[tokio::test]
-async fn test_counter() {
-    setup_tracing();
-    let big_increment = i64::MAX.to_string();
-    let tests = ["1", "997", big_increment.as_str()];
-
-    // Can't use run_tests, because counters are special and can't be inserted
-    let type_name = "counter";
-    let session: Session = init_test_maybe_without_tablets(type_name, type_name, false).await;
-
-    for (i, test) in tests.iter().enumerate() {
-        let update_bound_value = format!("UPDATE {} SET val = val + ? WHERE id = ?", type_name);
-        let value_to_bound = Counter(i64::from_str(test).unwrap());
+    for (i, test_value) in test_cases.iter().enumerate() {
+        let prepared_statement = format!("UPDATE {} SET val = val + ? WHERE id = ?", TABLE_NAME);
+        let value_to_bind = Counter(*test_value);
         session
-            .query_unpaged(update_bound_value, (value_to_bound, i as i32))
+            .query_unpaged(prepared_statement, (value_to_bind, i as i32))
             .await
             .unwrap();
 
-        let select_values = format!("SELECT val FROM {} WHERE id = ?", type_name);
+        let select_values = format!("SELECT val FROM {} WHERE id = ?", TABLE_NAME);
         let read_values: Vec<Counter> = session
             .query_unpaged(select_values, (i as i32,))
             .await
@@ -295,19 +404,170 @@ async fn test_counter() {
             .map(|row| row.0)
             .collect::<Vec<_>>();
 
-        let expected_value = Counter(i64::from_str(test).unwrap());
+        let expected_value = Counter(*test_value);
         assert_eq!(read_values, vec![expected_value]);
     }
 }
 
+#[tokio::test]
+async fn test_serialize_deserialize_inet() {
+    setup_tracing();
+    const TABLE_NAME: &str = "inet_serialization_test";
+
+    let mut test_cases: Vec<(Option<&str>, Option<MaybeEmpty<IpAddr>>)> = vec![
+        ("0.0.0.0", IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+        ("127.0.0.1", IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
+        ("10.0.0.1", IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+        (
+            "255.255.255.255",
+            IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
+        ),
+        ("::0", IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))),
+        ("::1", IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))),
+        (
+            "2001:db8::8a2e:370:7334",
+            IpAddr::V6(Ipv6Addr::new(
+                0x2001, 0x0db8, 0, 0, 0, 0x8a2e, 0x0370, 0x7334,
+            )),
+        ),
+        (
+            "2001:0db8:0000:0000:0000:8a2e:0370:7334",
+            IpAddr::V6(Ipv6Addr::new(
+                0x2001, 0x0db8, 0, 0, 0, 0x8a2e, 0x0370, 0x7334,
+            )),
+        ),
+        (
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            IpAddr::V6(Ipv6Addr::new(
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+            )),
+        ),
+    ]
+    .iter()
+    .map(|(str_val, inet_val)| (Some(*str_val), Some(MaybeEmpty::Value(*inet_val))))
+    .collect();
+
+    test_cases.push((Some(""), Some(MaybeEmpty::Empty)));
+
+    run_literal_input_maybe_empty_output_test(TABLE_NAME, "inet", test_cases.as_slice()).await;
+}
+
+// Blob type
+
+#[tokio::test]
+async fn test_serialize_deserialize_blob() {
+    setup_tracing();
+    const TABLE_NAME: &str = "blob_serialization_test";
+
+    let long_blob: Vec<u8> = vec![0x11; 1234];
+    let mut long_blob_str: String = "0x".to_string();
+    long_blob_str.extend(std::iter::repeat('1').take(2 * 1234));
+
+    let test_cases: Vec<(Option<&str>, Option<Vec<u8>>)> = vec![
+        ("0x", vec![]),
+        ("0x00", vec![0x00]),
+        ("0x01", vec![0x01]),
+        ("0xff", vec![0xff]),
+        ("0x1122", vec![0x11, 0x22]),
+        ("0x112233", vec![0x11, 0x22, 0x33]),
+        ("0x11223344", vec![0x11, 0x22, 0x33, 0x44]),
+        ("0x1122334455", vec![0x11, 0x22, 0x33, 0x44, 0x55]),
+        ("0x112233445566", vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]),
+        (
+            "0x11223344556677",
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
+        ),
+        (
+            "0x1122334455667788",
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
+        ),
+        (&long_blob_str, long_blob),
+    ]
+    .iter()
+    .map(|(str_val, blob_val)| (Some(*str_val), Some(blob_val.clone())))
+    .collect();
+
+    let session = prepare_test_table(TABLE_NAME, "blob", true).await;
+
+    for (input_val, expected_val) in test_cases {
+        let query = format!(
+            "INSERT INTO {} (id, val) VALUES (1, {})",
+            TABLE_NAME,
+            &input_val.unwrap()
+        );
+        tracing::debug!("Executing query: {}", query);
+        session.query_unpaged(query, &[]).await.unwrap();
+
+        let selected_values: Vec<Vec<u8>> = session
+            .query_unpaged(format!("SELECT val FROM {}", TABLE_NAME), &[])
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .rows::<(Vec<u8>,)>()
+            .unwrap()
+            .filter_map(|row| match row {
+                Ok((_,)) => row.ok(),
+                Err(e) => {
+                    assert_error_is_not_expected_non_null(&e);
+                    None
+                }
+            })
+            .map(|row| row.0)
+            .collect::<Vec<_>>();
+
+        for read_value in selected_values {
+            assert_eq!(Some(read_value), expected_val);
+        }
+
+        //as bound value
+        let query = format!("INSERT INTO {} (id, val) VALUES (1, ?)", TABLE_NAME,);
+        tracing::debug!("Executing query: {}", query);
+        session
+            .query_unpaged(query, (expected_val.clone().unwrap(),))
+            .await
+            .unwrap();
+
+        let selected_values: Vec<Vec<u8>> = session
+            .query_unpaged(format!("SELECT val FROM {}", TABLE_NAME), &[])
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .rows::<(Vec<u8>,)>()
+            .unwrap()
+            .filter_map(|row: Result<(Vec<u8>,), DeserializationError>| match row {
+                Ok((_,)) => row.ok(),
+                Err(e) => {
+                    assert_error_is_not_expected_non_null(&e);
+                    None
+                }
+            })
+            .map(|row| row.0)
+            .collect::<Vec<_>>();
+
+        for read_value in selected_values {
+            assert_eq!(Some(read_value), expected_val);
+        }
+    }
+}
+
+// Date, Time, Duration Types
+
 #[cfg(feature = "chrono-04")]
 #[tokio::test]
-async fn test_naive_date_04() {
+async fn test_serialize_deserialize_naive_date_04() {
     setup_tracing();
+    const TABLE_NAME: &str = "chrono_04_serialization_test";
     use chrono::Datelike;
     use chrono::NaiveDate;
-
-    let session: Session = init_test("chrono_naive_date_tests", "date").await;
 
     let min_naive_date: NaiveDate = NaiveDate::MIN;
     let min_naive_date_string = min_naive_date.format("%Y-%m-%d").to_string();
@@ -349,62 +609,21 @@ async fn test_naive_date_04() {
         //("5881580-07-11", None),
     ];
 
-    for (date_text, date) in tests.iter() {
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO chrono_naive_date_tests (id, val) VALUES (0, '{}')",
-                    date_text
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let read_date: Option<NaiveDate> = session
-            .query_unpaged("SELECT val from chrono_naive_date_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .rows::<(NaiveDate,)>()
-            .unwrap()
-            .next()
-            .unwrap()
-            .ok()
-            .map(|row| row.0);
-
-        assert_eq!(read_date, *date);
-
-        // If date is representable by NaiveDate try inserting it and reading again
-        if let Some(naive_date) = date {
-            session
-                .query_unpaged(
-                    "INSERT INTO chrono_naive_date_tests (id, val) VALUES (0, ?)",
-                    (naive_date,),
-                )
-                .await
-                .unwrap();
-
-            let (read_date,): (NaiveDate,) = session
-                .query_unpaged("SELECT val from chrono_naive_date_tests", &[])
-                .await
-                .unwrap()
-                .into_rows_result()
-                .unwrap()
-                .single_row::<(NaiveDate,)>()
-                .unwrap();
-            assert_eq!(read_date, *naive_date);
-        }
-    }
+    run_literal_and_bound_value_test_with_callback(
+        TABLE_NAME,
+        "date",
+        &tests,
+        true,
+        &assert_error_is_not_overflow_or_expected_non_null,
+    )
+    .await;
 }
 
 #[tokio::test]
-async fn test_cql_date() {
+async fn test_serialize_deserialize_cql_date() {
     setup_tracing();
+    const TABLE_NAME: &str = "cql_date_serialization_test";
     // Tests value::Date which allows to insert dates outside NaiveDate range
-
-    let session: Session = init_test("cql_date_tests", "date").await;
 
     let tests = [
         ("1970-01-01", CqlDate(2_u32.pow(31))),
@@ -415,29 +634,14 @@ async fn test_cql_date() {
         //("5881580-07-11", Date(u32::MAX)),
     ];
 
-    for (date_text, date) in &tests {
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO cql_date_tests (id, val) VALUES (0, '{}')",
-                    date_text
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
+    run_literal_and_bound_value_test(TABLE_NAME, "date", &tests, true).await;
+}
 
-        let (read_date,): (CqlDate,) = session
-            .query_unpaged("SELECT val from cql_date_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlDate,)>()
-            .unwrap();
-
-        assert_eq!(read_date, *date);
-    }
+#[tokio::test]
+async fn test_serialize_deserialize_cql_date_invalid_dates() {
+    setup_tracing();
+    const TABLE_NAME: &str = "cql_date_serialization_test";
+    let session = prepare_test_table(TABLE_NAME, "date", true).await;
 
     // 1 less/more than min/max values allowed by the database should cause error
     session
@@ -459,11 +663,10 @@ async fn test_cql_date() {
 
 #[cfg(feature = "time-03")]
 #[tokio::test]
-async fn test_date_03() {
+async fn test_serialize_deserialize_date_03() {
     setup_tracing();
     use time::{Date, Month::*};
-
-    let session: Session = init_test("time_date_tests", "date").await;
+    const TABLE_NAME: &str = "date_03_serialization_test";
 
     let tests = [
         // Basic test values
@@ -500,60 +703,22 @@ async fn test_date_03() {
         ("-5877641-06-23", None),
     ];
 
-    for (date_text, date) in tests.iter() {
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO time_date_tests (id, val) VALUES (0, '{}')",
-                    date_text
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let read_date = session
-            .query_unpaged("SELECT val from time_date_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(Date,)>()
-            .ok()
-            .map(|val| val.0);
-
-        assert_eq!(read_date, *date);
-
-        // If date is representable by time::Date try inserting it and reading again
-        if let Some(date) = date {
-            session
-                .query_unpaged(
-                    "INSERT INTO time_date_tests (id, val) VALUES (0, ?)",
-                    (date,),
-                )
-                .await
-                .unwrap();
-
-            let (read_date,) = session
-                .query_unpaged("SELECT val from time_date_tests", &[])
-                .await
-                .unwrap()
-                .into_rows_result()
-                .unwrap()
-                .first_row::<(Date,)>()
-                .unwrap();
-            assert_eq!(read_date, *date);
-        }
-    }
+    run_literal_and_bound_value_test_with_callback(
+        TABLE_NAME,
+        "date",
+        &tests,
+        true,
+        &assert_error_is_not_overflow_or_expected_non_null,
+    )
+    .await;
 }
 
 #[tokio::test]
-async fn test_cql_time() {
+async fn test_serialize_deserialize_cql_time() {
     setup_tracing();
+    const TABLE_NAME: &str = "time_serialization_test";
     // CqlTime is an i64 - nanoseconds since midnight
     // in range 0..=86399999999999
-
-    let session: Session = init_test("cql_time_tests", "time").await;
 
     let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
     assert_eq!(max_time, 86399999999999);
@@ -566,53 +731,15 @@ async fn test_cql_time() {
         ("23:59:59.999999999", CqlTime(max_time)),
     ];
 
-    for (time_str, time_duration) in &tests {
-        // Insert time as a string and verify that it matches
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO cql_time_tests (id, val) VALUES (0, '{}')",
-                    time_str
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
+    run_literal_and_bound_value_test(TABLE_NAME, "time", &tests, true).await;
+}
 
-        let (read_time,) = session
-            .query_unpaged("SELECT val from cql_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlTime,)>()
-            .unwrap();
+#[tokio::test]
+async fn test_serialize_deserialize_cql_time_invalid_values() {
+    setup_tracing();
+    const TABLE_NAME: &str = "time_serialization_test";
+    let session = prepare_test_table(TABLE_NAME, "time", true).await;
 
-        assert_eq!(read_time, *time_duration);
-
-        // Insert time as a bound CqlTime value and verify that it matches
-        session
-            .query_unpaged(
-                "INSERT INTO cql_time_tests (id, val) VALUES (0, ?)",
-                (*time_duration,),
-            )
-            .await
-            .unwrap();
-
-        let (read_time,) = session
-            .query_unpaged("SELECT val from cql_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlTime,)>()
-            .unwrap();
-
-        assert_eq!(read_time, *time_duration);
-    }
-
-    // Tests with invalid time values
-    // Make sure that database rejects them
     let invalid_tests = [
         "-01:00:00",
         // "-00:00:01", - actually this gets parsed as 0h 0m 1s, looks like a harmless bug
@@ -627,8 +754,8 @@ async fn test_cql_time() {
         session
             .query_unpaged(
                 format!(
-                    "INSERT INTO cql_time_tests (id, val) VALUES (0, '{}')",
-                    time_str
+                    "INSERT INTO {} (id, val) VALUES (0, '{}')",
+                    TABLE_NAME, time_str
                 ),
                 &[],
             )
@@ -639,11 +766,10 @@ async fn test_cql_time() {
 
 #[cfg(feature = "chrono-04")]
 #[tokio::test]
-async fn test_naive_time_04() {
+async fn test_serialize_deserialize_naive_time_04() {
     setup_tracing();
     use chrono::NaiveTime;
-
-    let session = init_test("chrono_time_tests", "time").await;
+    const TABLE_NAME: &str = "chrono_04_time_serialization_test";
 
     let tests = [
         ("00:00:00", NaiveTime::MIN),
@@ -666,55 +792,22 @@ async fn test_naive_time_04() {
         ),
     ];
 
-    for (time_text, time) in tests.iter() {
-        // Insert as string and read it again
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO chrono_time_tests (id, val) VALUES (0, '{}')",
-                    time_text
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
+    run_literal_and_bound_value_test(TABLE_NAME, "time", &tests, true).await;
+}
 
-        let (read_time,) = session
-            .query_unpaged("SELECT val from chrono_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(NaiveTime,)>()
-            .unwrap();
-
-        assert_eq!(read_time, *time);
-
-        // Insert as type and read it again
-        session
-            .query_unpaged(
-                "INSERT INTO chrono_time_tests (id, val) VALUES (0, ?)",
-                (time,),
-            )
-            .await
-            .unwrap();
-
-        let (read_time,) = session
-            .query_unpaged("SELECT val from chrono_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(NaiveTime,)>()
-            .unwrap();
-        assert_eq!(read_time, *time);
-    }
+#[cfg(feature = "chrono-04")]
+#[tokio::test]
+async fn test_serialize_deserialize_naive_time_04_leap_seconds() {
+    setup_tracing();
+    use chrono::NaiveTime;
+    const TABLE_NAME: &str = "chrono_04_time_serialization_test";
+    let session = prepare_test_table(TABLE_NAME, "time", true).await;
 
     // chrono can represent leap seconds, this should not panic
     let leap_second = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_500_000_000);
     session
         .query_unpaged(
-            "INSERT INTO cql_time_tests (id, val) VALUES (0, ?)",
+            format!("INSERT INTO {} (id, val) VALUES (0, ?)", TABLE_NAME),
             (leap_second,),
         )
         .await
@@ -723,11 +816,10 @@ async fn test_naive_time_04() {
 
 #[cfg(feature = "time-03")]
 #[tokio::test]
-async fn test_time_03() {
+async fn test_serialize_deserialize_time_03() {
     setup_tracing();
     use time::Time;
-
-    let session = init_test("time_time_tests", "time").await;
+    const TABLE_NAME: &str = "chrono_03_time_serialization_test";
 
     let tests = [
         ("00:00:00", Time::MIDNIGHT),
@@ -750,63 +842,13 @@ async fn test_time_03() {
         ),
     ];
 
-    for (time_text, time) in tests.iter() {
-        // Insert as string and read it again
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO time_time_tests (id, val) VALUES (0, '{}')",
-                    time_text
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_time,) = session
-            .query_unpaged("SELECT val from time_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(Time,)>()
-            .unwrap();
-
-        assert_eq!(read_time, *time);
-
-        // Insert as type and read it again
-        session
-            .query_unpaged(
-                "INSERT INTO time_time_tests (id, val) VALUES (0, ?)",
-                (time,),
-            )
-            .await
-            .unwrap();
-
-        let (read_time,) = session
-            .query_unpaged("SELECT val from time_time_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(Time,)>()
-            .unwrap();
-        assert_eq!(read_time, *time);
-    }
+    run_literal_and_bound_value_test(TABLE_NAME, "time", &tests, true).await;
 }
 
 #[tokio::test]
-async fn test_cql_timestamp() {
+async fn test_serialize_deserialize_cql_timestamp() {
     setup_tracing();
-    let session: Session = init_test("cql_timestamp_tests", "timestamp").await;
-
-    //let epoch_date = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
-
-    //let before_epoch = NaiveDate::from_ymd_opt(1333, 4, 30).unwrap();
-    //let before_epoch_offset = before_epoch.signed_duration_since(epoch_date);
-
-    //let after_epoch = NaiveDate::from_ymd_opt(2020, 3, 8).unwrap();
-    //let after_epoch_offset = after_epoch.signed_duration_since(epoch_date);
+    const TABLE_NAME: &str = "timestamp_serialization_test";
 
     let tests = [
         ("0", CqlTimestamp(0)),
@@ -825,59 +867,109 @@ async fn test_cql_timestamp() {
         //("2011-02-03T04:05:00.000+0000", Duration::milliseconds(1299038700000)),
     ];
 
-    for (timestamp_str, timestamp_duration) in &tests {
-        // Insert timestamp as a string and verify that it matches
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO cql_timestamp_tests (id, val) VALUES (0, '{}')",
-                    timestamp_str
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
+    run_literal_and_bound_value_test(TABLE_NAME, "timestamp", &tests, true).await;
+}
 
-        let (read_timestamp,) = session
-            .query_unpaged("SELECT val from cql_timestamp_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlTimestamp,)>()
-            .unwrap();
+#[tokio::test]
+async fn test_serialize_deserialize_cqlvalue_duration() {
+    setup_tracing();
+    let session: Session = create_new_session_builder().build().await.unwrap();
 
-        assert_eq!(read_timestamp, *timestamp_duration);
+    let ks = unique_keyspace_name();
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+                {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
+            ks
+        ))
+        .await
+        .unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
-        // Insert timestamp as a bound CqlTimestamp value and verify that it matches
-        session
-            .query_unpaged(
-                "INSERT INTO cql_timestamp_tests (id, val) VALUES (0, ?)",
-                (*timestamp_duration,),
-            )
-            .await
-            .unwrap();
+    let duration_cql_value = CqlValue::Duration(CqlDuration {
+        months: 6,
+        days: 9,
+        nanoseconds: 21372137,
+    });
 
-        let (read_timestamp,) = session
-            .query_unpaged("SELECT val from cql_timestamp_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlTimestamp,)>()
-            .unwrap();
+    session.ddl("CREATE TABLE IF NOT EXISTS cqlvalue_duration_test (pk int, ck int, v duration, primary key (pk, ck))").await.unwrap();
+    let fixture_queries = vec![
+        (
+            "INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 0, ?)",
+            vec![&duration_cql_value],
+        ),
+        (
+            "INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 1, 89h4m48s)",
+            vec![],
+        ),
+        (
+            "INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 2, PT89H8M53S)",
+            vec![],
+        ),
+        (
+            "INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 3, P0000-00-00T89:09:09)",
+            vec![],
+        ),
+    ];
 
-        assert_eq!(read_timestamp, *timestamp_duration);
+    for query in fixture_queries {
+        session.query_unpaged(query.0, query.1).await.unwrap();
     }
+
+    let rows_result = session
+        .query_unpaged(
+            "SELECT v FROM cqlvalue_duration_test WHERE pk = ?",
+            (CqlValue::Int(0),),
+        )
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap();
+
+    let mut rows_iter = rows_result.rows::<(CqlValue,)>().unwrap();
+
+    let (first_value,) = rows_iter.next().unwrap().unwrap();
+    assert_eq!(first_value, duration_cql_value);
+
+    let (second_value,) = rows_iter.next().unwrap().unwrap();
+    assert_eq!(
+        second_value,
+        CqlValue::Duration(CqlDuration {
+            months: 0,
+            days: 0,
+            nanoseconds: 320_688_000_000_000,
+        })
+    );
+
+    let (third_value,) = rows_iter.next().unwrap().unwrap();
+    assert_eq!(
+        third_value,
+        CqlValue::Duration(CqlDuration {
+            months: 0,
+            days: 0,
+            nanoseconds: 320_933_000_000_000,
+        })
+    );
+
+    let (fourth_value,) = rows_iter.next().unwrap().unwrap();
+    assert_eq!(
+        fourth_value,
+        CqlValue::Duration(CqlDuration {
+            months: 0,
+            days: 0,
+            nanoseconds: 320_949_000_000_000,
+        })
+    );
+
+    assert_matches!(rows_iter.next(), None);
 }
 
 #[cfg(feature = "chrono-04")]
 #[tokio::test]
-async fn test_date_time_04() {
+async fn test_serialize_deserialize_date_time_04() {
     setup_tracing();
-    use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-
-    let session = init_test("chrono_datetime_tests", "timestamp").await;
+    use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
+    const TABLE_NAME: &str = "timestamp_serialization_test";
 
     let tests = [
         ("0", DateTime::from_timestamp(0, 0).unwrap()),
@@ -924,49 +1016,16 @@ async fn test_date_time_04() {
         ),
     ];
 
-    for (datetime_text, datetime) in tests.iter() {
-        // Insert as string and read it again
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, '{}')",
-                    datetime_text
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
+    run_literal_and_bound_value_test(TABLE_NAME, "timestamp", &tests, true).await;
+}
 
-        let (read_datetime,) = session
-            .query_unpaged("SELECT val from chrono_datetime_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(DateTime<Utc>,)>()
-            .unwrap();
-
-        assert_eq!(read_datetime, *datetime);
-
-        // Insert as type and read it again
-        session
-            .query_unpaged(
-                "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, ?)",
-                (datetime,),
-            )
-            .await
-            .unwrap();
-
-        let (read_datetime,) = session
-            .query_unpaged("SELECT val from chrono_datetime_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(DateTime<Utc>,)>()
-            .unwrap();
-        assert_eq!(read_datetime, *datetime);
-    }
+#[cfg(feature = "chrono-04")]
+#[tokio::test]
+async fn test_serialize_deserialize_date_time_04_high_precision_round_down() {
+    setup_tracing();
+    use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+    const TABLE_NAME: &str = "timestamp_serialization_test";
+    let session = prepare_test_table(TABLE_NAME, "timestamp", true).await;
 
     // chrono datetime has higher precision, round excessive submillisecond time down
     let nanosecond_precision_1st_half = NaiveDateTime::new(
@@ -981,14 +1040,14 @@ async fn test_date_time_04() {
     .and_utc();
     session
         .query_unpaged(
-            "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, ?)",
+            format!("INSERT INTO {} (id, val) VALUES (0, ?)", TABLE_NAME),
             (nanosecond_precision_1st_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from chrono_datetime_tests", &[])
+        .query_unpaged(format!("SELECT val from {}", TABLE_NAME), &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1009,14 +1068,14 @@ async fn test_date_time_04() {
     .and_utc();
     session
         .query_unpaged(
-            "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, ?)",
+            format!("INSERT INTO {} (id, val) VALUES (0, ?)", TABLE_NAME),
             (nanosecond_precision_2nd_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from chrono_datetime_tests", &[])
+        .query_unpaged(format!("SELECT val from {}", TABLE_NAME), &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1033,20 +1092,19 @@ async fn test_date_time_04() {
     .and_utc();
     session
         .query_unpaged(
-            "INSERT INTO cql_datetime_tests (id, val) VALUES (0, ?)",
+            format!("INSERT INTO {} (id, val) VALUES (0, ?)", TABLE_NAME),
             (leap_second,),
         )
         .await
-        .unwrap_err();
+        .unwrap();
 }
 
 #[cfg(feature = "time-03")]
 #[tokio::test]
-async fn test_offset_date_time_03() {
+async fn test_serialize_deserialize_offset_date_time_03() {
     setup_tracing();
     use time::{Date, Month::*, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
-
-    let session = init_test("time_datetime_tests", "timestamp").await;
+    const TABLE_NAME: &str = "timestamp_serialization_test";
 
     let tests = [
         ("0", OffsetDateTime::UNIX_EPOCH),
@@ -1093,49 +1151,16 @@ async fn test_offset_date_time_03() {
         ),
     ];
 
-    for (datetime_text, datetime) in tests.iter() {
-        // Insert as string and read it again
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO time_datetime_tests (id, val) VALUES (0, '{}')",
-                    datetime_text
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
+    run_literal_and_bound_value_test(TABLE_NAME, "timestamp", &tests, true).await;
+}
 
-        let (read_datetime,) = session
-            .query_unpaged("SELECT val from time_datetime_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(OffsetDateTime,)>()
-            .unwrap();
-
-        assert_eq!(read_datetime, *datetime);
-
-        // Insert as type and read it again
-        session
-            .query_unpaged(
-                "INSERT INTO time_datetime_tests (id, val) VALUES (0, ?)",
-                (datetime,),
-            )
-            .await
-            .unwrap();
-
-        let (read_datetime,) = session
-            .query_unpaged("SELECT val from time_datetime_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .first_row::<(OffsetDateTime,)>()
-            .unwrap();
-        assert_eq!(read_datetime, *datetime);
-    }
+#[cfg(feature = "time-03")]
+#[tokio::test]
+async fn test_serialize_deserialize_offset_date_time_03_high_precision_rounding_down() {
+    setup_tracing();
+    use time::{Date, Month::*, OffsetDateTime, PrimitiveDateTime, Time};
+    const TABLE_NAME: &str = "timestamp_serialization_test";
+    let session = prepare_test_table(TABLE_NAME, "timestamp", true).await;
 
     // time datetime has higher precision, round excessive submillisecond time down
     let nanosecond_precision_1st_half = PrimitiveDateTime::new(
@@ -1150,14 +1175,14 @@ async fn test_offset_date_time_03() {
     .assume_utc();
     session
         .query_unpaged(
-            "INSERT INTO time_datetime_tests (id, val) VALUES (0, ?)",
+            format!("INSERT INTO {} (id, val) VALUES (0, ?)", TABLE_NAME),
             (nanosecond_precision_1st_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from time_datetime_tests", &[])
+        .query_unpaged(format!("SELECT val from {}", TABLE_NAME), &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1178,14 +1203,14 @@ async fn test_offset_date_time_03() {
     .assume_utc();
     session
         .query_unpaged(
-            "INSERT INTO time_datetime_tests (id, val) VALUES (0, ?)",
+            format!("INSERT INTO {} (id, val) VALUES (0, ?)", TABLE_NAME),
             (nanosecond_precision_2nd_half,),
         )
         .await
         .unwrap();
 
     let (read_datetime,) = session
-        .query_unpaged("SELECT val from time_datetime_tests", &[])
+        .query_unpaged(format!("SELECT val from {}", TABLE_NAME), &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1195,82 +1220,40 @@ async fn test_offset_date_time_03() {
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
 }
 
+//UUID Types
+
 #[tokio::test]
-async fn test_timeuuid() {
+async fn test_serialize_deserialize_timeuuid() {
     setup_tracing();
-    let session: Session = init_test("timeuuid_tests", "timeuuid").await;
+    const TABLE_NAME: &str = "timeuuid_serialization_test";
 
     // A few random timeuuids generated manually
     let tests = [
         (
             "8e14e760-7fa8-11eb-bc66-000000000001",
-            [
+            CqlTimeuuid::from_bytes([
                 0x8e, 0x14, 0xe7, 0x60, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
-            ],
+            ]),
         ),
         (
             "9b349580-7fa8-11eb-bc66-000000000001",
-            [
+            CqlTimeuuid::from_bytes([
                 0x9b, 0x34, 0x95, 0x80, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
-            ],
+            ]),
         ),
         (
             "5d74bae0-7fa3-11eb-bc66-000000000001",
-            [
+            CqlTimeuuid::from_bytes([
                 0x5d, 0x74, 0xba, 0xe0, 0x7f, 0xa3, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
-            ],
+            ]),
         ),
     ];
 
-    for (timeuuid_str, timeuuid_bytes) in &tests {
-        // Insert timeuuid as a string and verify that it matches
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO timeuuid_tests (id, val) VALUES (0, {})",
-                    timeuuid_str
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_timeuuid,): (CqlTimeuuid,) = session
-            .query_unpaged("SELECT val from timeuuid_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlTimeuuid,)>()
-            .unwrap();
-
-        assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
-
-        // Insert timeuuid as a bound value and verify that it matches
-        let test_uuid: CqlTimeuuid = CqlTimeuuid::from_slice(timeuuid_bytes.as_ref()).unwrap();
-        session
-            .query_unpaged(
-                "INSERT INTO timeuuid_tests (id, val) VALUES (0, ?)",
-                (test_uuid,),
-            )
-            .await
-            .unwrap();
-
-        let (read_timeuuid,): (CqlTimeuuid,) = session
-            .query_unpaged("SELECT val from timeuuid_tests", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(CqlTimeuuid,)>()
-            .unwrap();
-
-        assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
-    }
+    run_literal_and_bound_value_test(TABLE_NAME, "timeuuid", &tests, false).await;
 }
 
 #[tokio::test]
-async fn test_timeuuid_ordering() {
+async fn test_serialize_deserialize_timeuuid_ordering() {
     setup_tracing();
     let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
@@ -1347,163 +1330,10 @@ async fn test_timeuuid_ordering() {
     }
 }
 
-#[tokio::test]
-async fn test_inet() {
-    setup_tracing();
-    let session: Session = init_test("inet_tests", "inet").await;
-
-    let tests = [
-        ("0.0.0.0", IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
-        ("127.0.0.1", IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
-        ("10.0.0.1", IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
-        (
-            "255.255.255.255",
-            IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
-        ),
-        ("::0", IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))),
-        ("::1", IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))),
-        (
-            "2001:db8::8a2e:370:7334",
-            IpAddr::V6(Ipv6Addr::new(
-                0x2001, 0x0db8, 0, 0, 0, 0x8a2e, 0x0370, 0x7334,
-            )),
-        ),
-        (
-            "2001:0db8:0000:0000:0000:8a2e:0370:7334",
-            IpAddr::V6(Ipv6Addr::new(
-                0x2001, 0x0db8, 0, 0, 0, 0x8a2e, 0x0370, 0x7334,
-            )),
-        ),
-        (
-            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
-            IpAddr::V6(Ipv6Addr::new(
-                u16::MAX,
-                u16::MAX,
-                u16::MAX,
-                u16::MAX,
-                u16::MAX,
-                u16::MAX,
-                u16::MAX,
-                u16::MAX,
-            )),
-        ),
-    ];
-
-    for (inet_str, inet) in &tests {
-        // Insert inet as a string and verify that it matches
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO inet_tests (id, val) VALUES (0, '{}')",
-                    inet_str
-                ),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_inet,): (IpAddr,) = session
-            .query_unpaged("SELECT val from inet_tests WHERE id = 0", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(IpAddr,)>()
-            .unwrap();
-
-        assert_eq!(read_inet, *inet);
-
-        // Insert inet as a bound value and verify that it matches
-        session
-            .query_unpaged("INSERT INTO inet_tests (id, val) VALUES (0, ?)", (inet,))
-            .await
-            .unwrap();
-
-        let (read_inet,): (IpAddr,) = session
-            .query_unpaged("SELECT val from inet_tests WHERE id = 0", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(IpAddr,)>()
-            .unwrap();
-
-        assert_eq!(read_inet, *inet);
-    }
-}
+// UDT Types
 
 #[tokio::test]
-async fn test_blob() {
-    setup_tracing();
-    let session: Session = init_test("blob_tests", "blob").await;
-
-    let long_blob: Vec<u8> = vec![0x11; 1234];
-    let mut long_blob_str: String = "0x".to_string();
-    long_blob_str.extend(std::iter::repeat('1').take(2 * 1234));
-
-    let tests = [
-        ("0x", vec![]),
-        ("0x00", vec![0x00]),
-        ("0x01", vec![0x01]),
-        ("0xff", vec![0xff]),
-        ("0x1122", vec![0x11, 0x22]),
-        ("0x112233", vec![0x11, 0x22, 0x33]),
-        ("0x11223344", vec![0x11, 0x22, 0x33, 0x44]),
-        ("0x1122334455", vec![0x11, 0x22, 0x33, 0x44, 0x55]),
-        ("0x112233445566", vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]),
-        (
-            "0x11223344556677",
-            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
-        ),
-        (
-            "0x1122334455667788",
-            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
-        ),
-        (&long_blob_str, long_blob),
-    ];
-
-    for (blob_str, blob) in &tests {
-        // Insert blob as a string and verify that it matches
-        session
-            .query_unpaged(
-                format!("INSERT INTO blob_tests (id, val) VALUES (0, {})", blob_str),
-                &[],
-            )
-            .await
-            .unwrap();
-
-        let (read_blob,): (Vec<u8>,) = session
-            .query_unpaged("SELECT val from blob_tests WHERE id = 0", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(Vec<u8>,)>()
-            .unwrap();
-
-        assert_eq!(read_blob, *blob);
-
-        // Insert blob as a bound value and verify that it matches
-        session
-            .query_unpaged("INSERT INTO blob_tests (id, val) VALUES (0, ?)", (blob,))
-            .await
-            .unwrap();
-
-        let (read_blob,): (Vec<u8>,) = session
-            .query_unpaged("SELECT val from blob_tests WHERE id = 0", &[])
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row::<(Vec<u8>,)>()
-            .unwrap();
-
-        assert_eq!(read_blob, *blob);
-    }
-}
-
-#[tokio::test]
-async fn test_udt_after_schema_update() {
+async fn test_serialize_deserialize_udt_after_schema_update() {
     setup_tracing();
     let table_name = "udt_tests";
     let type_name = "usertype1";
@@ -1631,9 +1461,9 @@ async fn test_udt_after_schema_update() {
 }
 
 #[tokio::test]
-async fn test_empty() {
+async fn test_serialize_deserialize_empty() {
     setup_tracing();
-    let session: Session = init_test("empty_tests", "int").await;
+    let session: Session = prepare_test_table("empty_tests", "int", true).await;
 
     session
         .query_unpaged(
@@ -1865,9 +1695,8 @@ async fn test_udt_with_missing_field() {
     .await;
 }
 
-
 #[tokio::test]
-async fn test_cqlvalue_udt() {
+async fn test_serialize_deserialize_cqlvalue_udt() {
     setup_tracing();
     let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
@@ -1914,98 +1743,4 @@ async fn test_cqlvalue_udt() {
     let (received_udt_cql_value,) = rows_result.single_row::<(CqlValue,)>().unwrap();
 
     assert_eq!(received_udt_cql_value, udt_cql_value);
-}
-
-#[tokio::test]
-async fn test_cqlvalue_duration() {
-    setup_tracing();
-    let session: Session = create_new_session_builder().build().await.unwrap();
-
-    let ks = unique_keyspace_name();
-    session
-        .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-                {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
-        ))
-        .await
-        .unwrap();
-    session.use_keyspace(&ks, false).await.unwrap();
-
-    let duration_cql_value = CqlValue::Duration(CqlDuration {
-        months: 6,
-        days: 9,
-        nanoseconds: 21372137,
-    });
-
-    session.ddl("CREATE TABLE IF NOT EXISTS cqlvalue_duration_test (pk int, ck int, v duration, primary key (pk, ck))").await.unwrap();
-    let fixture_queries = vec![
-        (
-            "INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 0, ?)",
-            vec![&duration_cql_value],
-        ),
-        (
-            "INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 1, 89h4m48s)",
-            vec![],
-        ),
-        (
-            "INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 2, PT89H8M53S)",
-            vec![],
-        ),
-        (
-            "INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 3, P0000-00-00T89:09:09)",
-            vec![],
-        ),
-    ];
-
-    for query in fixture_queries {
-        session.query_unpaged(query.0, query.1).await.unwrap();
-    }
-
-    let rows_result = session
-        .query_unpaged(
-            "SELECT v FROM cqlvalue_duration_test WHERE pk = ?",
-            (CqlValue::Int(0),),
-        )
-        .await
-        .unwrap()
-        .into_rows_result()
-        .unwrap();
-
-    let mut rows_iter = rows_result.rows::<(CqlValue,)>().unwrap();
-
-    let (first_value,) = rows_iter.next().unwrap().unwrap();
-    assert_eq!(first_value, duration_cql_value);
-
-    let (second_value,) = rows_iter.next().unwrap().unwrap();
-    assert_eq!(
-        second_value,
-        CqlValue::Duration(CqlDuration {
-            months: 0,
-            days: 0,
-            nanoseconds: 320_688_000_000_000,
-        })
-    );
-
-    let (third_value,) = rows_iter.next().unwrap().unwrap();
-    assert_eq!(
-        third_value,
-        CqlValue::Duration(CqlDuration {
-            months: 0,
-            days: 0,
-            nanoseconds: 320_933_000_000_000,
-        })
-    );
-
-    let (fourth_value,) = rows_iter.next().unwrap().unwrap();
-    assert_eq!(
-        fourth_value,
-        CqlValue::Duration(CqlDuration {
-            months: 0,
-            days: 0,
-            nanoseconds: 320_949_000_000_000,
-        })
-    );
-
-    assert_matches!(rows_iter.next(), None);
 }
