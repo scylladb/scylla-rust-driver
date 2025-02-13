@@ -259,7 +259,7 @@ async fn test_timestamp_generator() {
 
     impl TimestampGenerator for LocalTimestampGenerator {
         fn next_timestamp(&self) -> i64 {
-            let timestamp = random::<i64>().abs();
+            let timestamp = (random::<u64>() as i64).abs();
             self.generated_timestamps.lock().unwrap().insert(timestamp);
             timestamp
         }
