@@ -1,4 +1,5 @@
 mod batch;
+mod cluster_state_tests;
 mod consistency;
 mod cql_collections;
 mod cql_types;
