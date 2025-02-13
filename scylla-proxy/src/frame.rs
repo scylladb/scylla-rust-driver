@@ -12,6 +12,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::warn;
 
 use crate::errors::ReadFrameError;
+use crate::proxy::CompressionReader;
 
 const HEADER_SIZE: usize = 9;
 
@@ -255,6 +256,7 @@ pub(crate) async fn write_frame(
 pub(crate) async fn read_frame(
     reader: &mut (impl AsyncRead + Unpin),
     frame_type: FrameType,
+    compression: &CompressionReader,
 ) -> Result<(FrameParams, FrameOpcode, Bytes), ReadFrameError> {
     let mut raw_header = [0u8; HEADER_SIZE];
     reader
@@ -324,8 +326,9 @@ pub(crate) async fn read_frame(
 
 pub(crate) async fn read_request_frame(
     reader: &mut (impl AsyncRead + Unpin),
+    compression: &CompressionReader,
 ) -> Result<RequestFrame, ReadFrameError> {
-    read_frame(reader, FrameType::Request)
+    read_frame(reader, FrameType::Request, compression)
         .await
         .map(|(params, opcode, body)| RequestFrame {
             params,
@@ -339,8 +342,9 @@ pub(crate) async fn read_request_frame(
 
 pub(crate) async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
+    compression: &CompressionReader,
 ) -> Result<ResponseFrame, ReadFrameError> {
-    read_frame(reader, FrameType::Response)
+    read_frame(reader, FrameType::Response, compression)
         .await
         .map(|(params, opcode, body)| ResponseFrame {
             params,
