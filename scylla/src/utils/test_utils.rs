@@ -54,7 +54,10 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
     }
 
     let result = session
-        .query_unpaged("SELECT supported_features FROM system.local", ())
+        .query_unpaged(
+            "SELECT supported_features FROM system.local WHERE key='local'",
+            (),
+        )
         .await
         .unwrap()
         .into_rows_result()

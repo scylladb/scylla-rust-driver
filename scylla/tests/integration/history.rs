@@ -111,7 +111,7 @@ async fn successful_query_history() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
-    let mut query = Query::new("SELECT * FROM system.local");
+    let mut query = Query::new("SELECT * FROM system.local WHERE key='local'");
     let history_collector = Arc::new(HistoryCollector::new());
     query.set_history_listener(history_collector.clone());
 

@@ -757,7 +757,7 @@ async fn query_peers(
         .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
     let mut local_query =
-        Query::new("select host_id, rpc_address, data_center, rack, tokens from system.local");
+        Query::new("select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'");
     local_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
     let local_query_stream = conn
         .clone()

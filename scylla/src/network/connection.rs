@@ -2586,7 +2586,7 @@ mod tests {
         // As everything is normal, these queries should succeed.
         for _ in 0..3 {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            conn.query_unpaged("SELECT host_id FROM system.local")
+            conn.query_unpaged("SELECT host_id FROM system.local WHERE key='local'")
                 .await
                 .unwrap();
         }
@@ -2610,7 +2610,7 @@ mod tests {
 
         // As the router is invalidated, all further queries should immediately
         // return error.
-        conn.query_unpaged("SELECT host_id FROM system.local")
+        conn.query_unpaged("SELECT host_id FROM system.local WHERE key='local'")
             .await
             .unwrap_err();
 
