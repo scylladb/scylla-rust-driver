@@ -14,6 +14,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
 
 use std::fmt::Display;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::{collections::HashMap, convert::TryFrom};
 
@@ -23,10 +24,10 @@ use response::ResponseOpcode;
 const HEADER_SIZE: usize = 9;
 
 // Frame flags
-const FLAG_COMPRESSION: u8 = 0x01;
-const FLAG_TRACING: u8 = 0x02;
-const FLAG_CUSTOM_PAYLOAD: u8 = 0x04;
-const FLAG_WARNING: u8 = 0x08;
+pub const FLAG_COMPRESSION: u8 = 0x01;
+pub const FLAG_TRACING: u8 = 0x02;
+pub const FLAG_CUSTOM_PAYLOAD: u8 = 0x04;
+pub const FLAG_WARNING: u8 = 0x08;
 
 // All of the Authenticators supported by Scylla
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -52,6 +53,27 @@ impl Compression {
         match self {
             Compression::Lz4 => "lz4",
             Compression::Snappy => "snappy",
+        }
+    }
+}
+
+/// Unknown compression.
+#[derive(Error, Debug, Clone)]
+#[error("Unknown compression: {name}")]
+pub struct CompressionFromStrError {
+    name: String,
+}
+
+impl FromStr for Compression {
+    type Err = CompressionFromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "lz4" => Ok(Self::Lz4),
+            "snappy" => Ok(Self::Snappy),
+            other => Err(Self::Err {
+                name: other.to_owned(),
+            }),
         }
     }
 }
@@ -238,7 +260,7 @@ pub fn parse_response_body_extensions(
     })
 }
 
-fn compress_append(
+pub fn compress_append(
     uncomp_body: &[u8],
     compression: Compression,
     out: &mut Vec<u8>,
@@ -264,7 +286,7 @@ fn compress_append(
     }
 }
 
-fn decompress(
+pub fn decompress(
     mut comp_body: &[u8],
     compression: Compression,
 ) -> Result<Vec<u8>, FrameBodyExtensionsParseError> {

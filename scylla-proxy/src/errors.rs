@@ -1,7 +1,17 @@
 use std::net::SocketAddr;
 
-use scylla_cql::frame::frame_errors::{FrameHeaderParseError, LowLevelDeserializationError};
+use scylla_cql::frame::frame_errors::{
+    FrameBodyExtensionsParseError, FrameHeaderParseError, LowLevelDeserializationError,
+};
 use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ReadFrameError {
+    #[error("Failed to read frame header: {0}")]
+    Header(#[from] FrameHeaderParseError),
+    #[error("Failed to decompress frame: {0}")]
+    Compression(#[from] FrameBodyExtensionsParseError),
+}
 
 #[derive(Debug, Error)]
 pub enum DoorkeeperError {
@@ -20,7 +30,7 @@ pub enum DoorkeeperError {
     #[error("Could not send Options frame for obtaining shards number: {0}")]
     ObtainingShardNumber(std::io::Error),
     #[error("Could not send read Supported frame for obtaining shards number: {0}")]
-    ObtainingShardNumberFrame(FrameHeaderParseError),
+    ObtainingShardNumberFrame(ReadFrameError),
     #[error("Could not read Supported options: {0}")]
     ObtainingShardNumberParseOptions(LowLevelDeserializationError),
     #[error("ShardInfo parameters missing")]
