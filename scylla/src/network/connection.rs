@@ -3,7 +3,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::client::pager::{NextRowError, QueryPager};
 use crate::client::Compression;
 use crate::client::SelfIdentity;
-use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
+use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 use crate::cluster::NodeAddr;
 use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
@@ -19,7 +19,7 @@ use crate::frame::{
     server_event_type::EventType,
     FrameParams, SerializedRequest,
 };
-use crate::policies::address_translator::AddressTranslator;
+use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::query::Query;
 use crate::response::query_result::QueryResult;

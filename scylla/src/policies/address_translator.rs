@@ -3,9 +3,47 @@ use std::net::SocketAddr;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
+use uuid::Uuid;
 
-use crate::cluster::metadata::UntranslatedPeer;
 use crate::errors::TranslationError;
+
+/// Data used to issue connections to a node that is possibly subject to address translation.
+///
+/// Built from `PeerEndpoint` if its `NodeAddr` variant implies address translation possibility.
+#[derive(Debug)]
+pub struct UntranslatedPeer<'a> {
+    pub(crate) host_id: Uuid,
+    pub(crate) untranslated_address: SocketAddr,
+    pub(crate) datacenter: Option<&'a str>,
+    pub(crate) rack: Option<&'a str>,
+}
+
+impl UntranslatedPeer<'_> {
+    /// The unique identifier of the node in the cluster.
+    #[inline]
+    pub fn host_id(&self) -> Uuid {
+        self.host_id
+    }
+
+    /// The address of the node in the cluster as broadcast by the node itself.
+    /// It may be subject to address translation.
+    #[inline]
+    pub fn untranslated_address(&self) -> SocketAddr {
+        self.untranslated_address
+    }
+
+    /// The datacenter the node resides in.
+    #[inline]
+    pub fn datacenter(&self) -> Option<&str> {
+        self.datacenter
+    }
+
+    /// The rack the node resides in.
+    #[inline]
+    pub fn rack(&self) -> Option<&str> {
+        self.rack
+    }
+}
 
 /// Translates IP addresses received from ScyllaDB nodes into locally reachable addresses.
 ///
