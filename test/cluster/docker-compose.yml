@@ -23,7 +23,7 @@ services:
       --smp 2
       --memory 1G
     healthcheck:
-      test: [ "CMD", "cqlsh", "scylla1", "-e", "select * from system.local" ]
+      test: [ "CMD", "cqlsh", "scylla1", "-e", "select * from system.local WHERE key='local'" ]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -41,7 +41,7 @@ services:
       --smp 2
       --memory 1G
     healthcheck:
-      test: [ "CMD", "cqlsh", "scylla2", "-e", "select * from system.local" ]
+      test: [ "CMD", "cqlsh", "scylla2", "-e", "select * from system.local WHERE key='local'" ]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -62,7 +62,7 @@ services:
       --smp 2
       --memory 1G
     healthcheck:
-      test: [ "CMD", "cqlsh", "scylla3", "-e", "select * from system.local" ]
+      test: [ "CMD", "cqlsh", "scylla3", "-e", "select * from system.local WHERE key='local'" ]
       interval: 5s
       timeout: 5s
       retries: 60
