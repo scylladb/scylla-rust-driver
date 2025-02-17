@@ -90,7 +90,7 @@
 //! # Ok(())
 //! # }
 //! ```
-//! See the [book](https://rust-driver.docs.scylladb.com/stable/queries/result.html) for more receiving methods
+//! See the [book](https://rust-driver.docs.scylladb.com/stable/statements/result.html) for more receiving methods
 
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 

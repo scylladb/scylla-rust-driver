@@ -6,7 +6,7 @@
    index
    quickstart/quickstart
    connecting/connecting
-   queries/queries
+   statements/statements
    execution-profiles/execution-profiles
    data-types/data-types
    load-balancing/load-balancing
