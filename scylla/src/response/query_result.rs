@@ -18,11 +18,13 @@ pub struct ColumnSpecs<'slice, 'spec> {
 }
 
 impl<'slice, 'spec> ColumnSpecs<'slice, 'spec> {
-    pub(crate) fn new(specs: &'slice [ColumnSpec<'spec>]) -> Self {
+    /// Creates new [`ColumnSpecs`] wrapper from a slice.
+    pub fn new(specs: &'slice [ColumnSpec<'spec>]) -> Self {
         Self { specs }
     }
 
-    pub(crate) fn inner(&self) -> &'slice [ColumnSpec<'spec>] {
+    /// Returns a slice of col specs encompassed by this struct.
+    pub fn as_slice(&self) -> &'slice [ColumnSpec<'spec>] {
         self.specs
     }
 

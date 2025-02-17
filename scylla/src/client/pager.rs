@@ -646,7 +646,7 @@ impl QueryPager {
     pub fn type_check<'frame, 'metadata, RowT: DeserializeRow<'frame, 'metadata>>(
         &self,
     ) -> Result<(), TypeCheckError> {
-        RowT::type_check(self.column_specs().inner())
+        RowT::type_check(self.column_specs().as_slice())
     }
 
     /// Casts the iterator to a given row type, enabling [Stream]'ed operations
