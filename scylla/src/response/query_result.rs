@@ -79,16 +79,19 @@ impl<'res> ColumnSpecView<'res> {
 
 /// A view over specification of columns returned by the database.
 #[derive(Debug, Clone, Copy)]
-pub struct ColumnSpecs<'res> {
-    specs: &'res [ColumnSpec<'res>],
+pub struct ColumnSpecs<'slice, 'spec> {
+    specs: &'slice [ColumnSpec<'spec>],
 }
 
-impl<'res> ColumnSpecs<'res> {
-    pub(crate) fn new(specs: &'res [ColumnSpec<'res>]) -> Self {
+impl<'slice, 'spec> ColumnSpecs<'slice, 'spec>
+where
+    'slice: 'spec,
+{
+    pub(crate) fn new(specs: &'slice [ColumnSpec<'spec>]) -> Self {
         Self { specs }
     }
 
-    pub(crate) fn inner(&self) -> &'res [ColumnSpec<'res>] {
+    pub(crate) fn inner(&self) -> &'slice [ColumnSpec<'spec>] {
         self.specs
     }
 
@@ -101,13 +104,13 @@ impl<'res> ColumnSpecs<'res> {
 
     /// Returns specification of k-th column returned from the database.
     #[inline]
-    pub fn get_by_index(&self, k: usize) -> Option<ColumnSpecView<'res>> {
+    pub fn get_by_index(&self, k: usize) -> Option<ColumnSpecView<'spec>> {
         self.specs.get(k).map(ColumnSpecView::new_from_column_spec)
     }
 
     /// Returns specification of the column with given name returned from the database.
     #[inline]
-    pub fn get_by_name(&self, name: &str) -> Option<(usize, ColumnSpecView<'res>)> {
+    pub fn get_by_name(&self, name: &str) -> Option<(usize, ColumnSpecView<'spec>)> {
         self.specs
             .iter()
             .enumerate()
@@ -118,7 +121,7 @@ impl<'res> ColumnSpecs<'res> {
     /// Returns iterator over specification of columns returned from the database,
     /// ordered by column order in the response.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = ColumnSpecView<'res>> {
+    pub fn iter(&self) -> impl Iterator<Item = ColumnSpecView<'spec>> {
         self.specs.iter().map(ColumnSpecView::new_from_column_spec)
     }
 }
@@ -316,7 +319,7 @@ impl QueryRowsResult {
 
     /// Returns column specifications.
     #[inline]
-    pub fn column_specs(&self) -> ColumnSpecs {
+    pub fn column_specs(&self) -> ColumnSpecs<'_, '_> {
         ColumnSpecs::new(self.raw_rows_with_metadata.metadata().col_specs())
     }
 

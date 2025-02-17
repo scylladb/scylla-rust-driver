@@ -955,7 +955,7 @@ impl QueryPager {
 
     /// Returns specification of row columns
     #[inline]
-    pub fn column_specs(&self) -> ColumnSpecs<'_> {
+    pub fn column_specs(&self) -> ColumnSpecs<'_, '_> {
         ColumnSpecs::new(self.current_page.metadata().col_specs())
     }
 
