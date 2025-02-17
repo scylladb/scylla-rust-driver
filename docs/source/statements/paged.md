@@ -25,8 +25,8 @@ while prefetching the next one. This limits latency and is a convenient abstract
 > don't use it for statements that do not benefit from paging. In particular, avoid using it
 > for non-SELECTs.
 
-On API level, `Session::query_iter` and `Session::execute_iter` take a [simple query](simple.md)
-or a [prepared query](prepared.md), respectively, and return a `QueryPager`. `QueryPager` needs
+On API level, `Session::query_iter` and `Session::execute_iter` take a [unprepared statement](unprepared.md)
+or a [prepared statement](prepared.md), respectively, and return a `QueryPager`. `QueryPager` needs
 to be converted into typed `Stream` (by calling `QueryPager::rows_stream::<RowT>`) in order to
 deserialize rows.
 
@@ -38,14 +38,14 @@ deserialize rows.
 
 > ***Warning***\
 > In case of unprepared variant (`Session::query_iter`) if the values are not empty
-> driver will first fully prepare a query (which means issuing additional request to each
+> driver will first fully prepare a statement (which means issuing additional request to each
 > node in a cluster). This will have a performance penalty - how big it is depends on
 > the size of your cluster (more nodes - more requests) and the size of returned
 > result (more returned pages - more amortized penalty). In any case, it is preferable to
 > use `Session::execute_iter`.
 
 ### Examples
-Use `query_iter` to perform a [simple query](simple.md) with paging:
+Use `query_iter` to perform an [unprepared query](unprepared.md) with paging:
 ```rust
 # extern crate scylla;
 # extern crate futures;
@@ -94,12 +94,12 @@ while let Some(next_row_res) = rows_stream.next().await {
 # }
 ```
 
-Query values can be passed to `query_iter` and `execute_iter` just like in a [simple query](simple.md)
+Statement values can be passed to `query_iter` and `execute_iter` just like in an [unprepared statement](unprepared.md)
 
 ### Configuring page size
 It's possible to configure the size of a single page.
 
-On a `Query`:
+On a `Statement`:
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;
@@ -227,8 +227,8 @@ loop {
 ```
 
 ### Performance
-For the best performance use [prepared queries](prepared.md).
-See [query types overview](queries.md).
+For the best performance use [prepared statements](prepared.md).
+See [statement types overview](statements.md).
 
 ## Best practices
 

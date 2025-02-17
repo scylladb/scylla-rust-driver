@@ -17,8 +17,8 @@ use scylla::observability::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;
 
-// Create a Query manually and enable tracing
-let mut query: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(4)");
+// Create a Statement manually and enable tracing
+let mut query: Statement = Statement::new("SELECT * FROM ks.tab");
 query.set_tracing(true);
 
 // Create a paged query iterator and fetch pages
@@ -55,12 +55,12 @@ use scylla::observability::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;
 
-// Prepare the query
+// Prepare the statement
 let mut prepared: PreparedStatement = session
     .prepare("SELECT a FROM ks.tab")
     .await?;
 
-// Enable tracing for the prepared query
+// Enable tracing for the prepared statement
 prepared.set_tracing(true);
 
 // Create a paged query iterator and fetch pages

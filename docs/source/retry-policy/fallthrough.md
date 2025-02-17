@@ -29,7 +29,7 @@ let session: Session = SessionBuilder::new()
 # }
 ```
 
-To use in a [simple query](../queries/simple.md):
+To use in an [unprepared statement](../statements/unprepared.md):
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;
@@ -45,18 +45,18 @@ let handle = ExecutionProfile::builder()
     .build()
     .into_handle();
 
-// Create a Query manually and set the retry policy
-let mut my_query: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
-my_query.set_execution_profile_handle(Some(handle));
+// Create a Statement manually and set the retry policy
+let mut my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_statement.set_execution_profile_handle(Some(handle));
 
-// Run the query using this retry policy
+// Execute the statement using this retry policy
 let to_insert: i32 = 12345;
-session.query_unpaged(my_query, (to_insert,)).await?;
+session.query_unpaged(my_statement, (to_insert,)).await?;
 # Ok(())
 # }
 ```
 
-To use in a [prepared query](../queries/prepared.md):
+To use in a [prepared statement](../statements/prepared.md):
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;

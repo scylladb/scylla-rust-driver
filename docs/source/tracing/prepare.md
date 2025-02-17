@@ -13,7 +13,7 @@ use scylla::statement::prepared::PreparedStatement;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
-// Prepare the query with tracing enabled
+// Prepare the statement with tracing enabled
 let mut to_prepare: Statement = Statement::new("SELECT a FROM ks.tab");
 to_prepare.set_tracing(true);
 

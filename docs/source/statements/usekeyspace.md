@@ -1,6 +1,6 @@
 # USE keyspace
 
-Using a keyspace allows to omit keyspace name in queries.
+Using a keyspace allows to omit keyspace name in statements.
 
 For example in `cqlsh` one could write:
 ```sql
@@ -38,7 +38,7 @@ session
 
 session.use_keyspace("my_keyspace", false).await?;
 
-// Now we can omit keyspace name in the query
+// Now we can omit keyspace name in the statement
 session
     .query_unpaged("INSERT INTO tab (a) VALUES ('test2')", &[])
     .await?;
@@ -49,7 +49,7 @@ session
 The first argument is the keyspace name.\
 The second argument states whether this name is case sensitive.
 
-It is also possible to send raw use keyspace query using `Session::query_*` instead of `Session::use_keyspace` such as:
+It is also possible to send raw use keyspace statement using `Session::query_*` instead of `Session::use_keyspace` such as:
 
 ```rust
 # extern crate scylla;
@@ -64,9 +64,9 @@ session.query_unpaged("USE my_keyspace", &[]).await?;
 This method has a slightly worse latency than `Session::use_keyspace` - there are two roundtrips needed instead of one.
 Therefore, `Session::use_keyspace` is the preferred method for setting keyspaces.
 
-### Multiple use queries at once
-Don't run multiple `use_keyspace` queries at once. 
-This could end up with half of connections using one keyspace and the other half using the other.
+### Multiple use keyspace requests at once
+Don't run multiple `use_keyspace` requests at once. 
+This could end up with a part of connections using one keyspace and another part using another.
 
 ### Case sensitivity
 

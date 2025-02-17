@@ -1,9 +1,9 @@
 # Tracing a simple/prepared/batch query
 
-[Simple query](../queries/simple.md), [prepared query](../queries/prepared.md) and [batch query](../queries/batch.md)
-return a `QueryResult` which contains a `tracing_id` if tracing was enabled.
+[Unprepared statement](../statements/unprepared.md), [prepared statement](../statements/prepared.md) and [batch statement](../statements/batch.md)
+execution return a `QueryResult` which contains a `tracing_id` if tracing was enabled.
 
-### Tracing a simple query
+### Tracing an unprepared statement execution
 ```rust
 # extern crate scylla;
 # extern crate uuid;
@@ -15,11 +15,11 @@ use scylla::response::query_result::QueryResult;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
-// Create a Query manually and enable tracing
-let mut query: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(4)");
-query.set_tracing(true);
+// Create a Statement manually and enable tracing
+let mut statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(4)");
+statement.set_tracing(true);
 
-let res: QueryResult = session.query_unpaged(query, &[]).await?;
+let res: QueryResult = session.query_unpaged(statement, &[]).await?;
 let tracing_id: Option<Uuid> = res.tracing_id();
 
 if let Some(id) = tracing_id {
@@ -31,7 +31,7 @@ if let Some(id) = tracing_id {
 # }
 ```
 
-### Tracing a prepared query
+### Tracing a prepared statement
 ```rust
 # extern crate scylla;
 # extern crate uuid;
@@ -43,12 +43,12 @@ use scylla::response::query_result::QueryResult;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
-// Prepare the query
+// Prepare the statement
 let mut prepared: PreparedStatement = session
     .prepare("SELECT a FROM ks.tab")
     .await?;
 
-// Enable tracing for the prepared query
+// Enable tracing for the prepared statement
 prepared.set_tracing(true);
 
 let res: QueryResult = session.execute_unpaged(&prepared, &[]).await?;
@@ -63,7 +63,7 @@ if let Some(id) = tracing_id {
 # }
 ```
 
-### Tracing a batch query
+### Tracing a batch statement
 ```rust
 # extern crate scylla;
 # extern crate uuid;

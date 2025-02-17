@@ -27,7 +27,7 @@ Idempotence has to be specified manually, the driver is not able to figure it ou
 use scylla::statement::unprepared::Statement;
 use scylla::statement::prepared::PreparedStatement;
 
-// Specify that a Query is idempotent
+// Specify that a Statement is idempotent
 let mut my_query: Statement = Statement::new("SELECT a FROM ks.tab");
 my_query.set_is_idempotent(true);
 

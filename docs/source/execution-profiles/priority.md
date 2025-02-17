@@ -35,18 +35,18 @@ let session: Session = SessionBuilder::new()
 
 let mut query = Statement::from("SELECT * FROM ks.table");
 
-// Query is not assigned any specific profile, so session's profile is applied.
-// Therefore, the query will be executed with Consistency::One.
+// Statement is not assigned any specific profile, so session's profile is applied.
+// Therefore, the statement will be executed with Consistency::One.
 session.query_unpaged(query.clone(), ()).await?;
 
 query.set_execution_profile_handle(Some(query_profile.into_handle()));
-// Query's profile is applied.
-// Therefore, the query will be executed with Consistency::Two.
+// Statement's profile is applied.
+// Therefore, the statement will be executed with Consistency::Two.
 session.query_unpaged(query.clone(), ()).await?;
 
 query.set_consistency(Consistency::Three);
-// An option is set directly on the query.
-// Therefore, the query will be executed with Consistency::Three.
+// An option is set directly on the Statement.
+// Therefore, the statement will be executed with Consistency::Three.
 session.query_unpaged(query, ()).await?;
 
 # Ok(())

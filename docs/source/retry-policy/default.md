@@ -30,7 +30,7 @@ let session: Session = SessionBuilder::new()
 # }
 ```
 
-To use in a [simple query](../queries/simple.md):
+To use in an [unprepared statement](../statements/unprepared.md):
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;
@@ -41,25 +41,25 @@ use scylla::statement::unprepared::Statement;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::policies::retry::DefaultRetryPolicy;
 
-// Create a Query manually and set the retry policy
-let mut my_query: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
-my_query.set_retry_policy(Some(Arc::new(DefaultRetryPolicy::new())));
+// Create a Statement manually and set the retry policy
+let mut my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_statement.set_retry_policy(Some(Arc::new(DefaultRetryPolicy::new())));
 
 // You can also set retry policy in an execution profile
 let handle = ExecutionProfile::builder()
     .retry_policy(Arc::new(DefaultRetryPolicy::new()))
     .build()
     .into_handle();
-my_query.set_execution_profile_handle(Some(handle));
+my_statement.set_execution_profile_handle(Some(handle));
 
-// Run the query using this retry policy
+// Execute the statement using this retry policy
 let to_insert: i32 = 12345;
-session.query_unpaged(my_query, (to_insert,)).await?;
+session.query_unpaged(my_statement, (to_insert,)).await?;
 # Ok(())
 # }
 ```
 
-To use in a [prepared query](../queries/prepared.md):
+To use in a [prepared statement](../statements/prepared.md):
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;
@@ -83,7 +83,7 @@ let handle = ExecutionProfile::builder()
     .into_handle();
 prepared.set_execution_profile_handle(Some(handle));
 
-// Run the query using this retry policy
+// Execute the statement using this retry policy
 let to_insert: i32 = 12345;
 session.execute_unpaged(&prepared, (to_insert,)).await?;
 # Ok(())

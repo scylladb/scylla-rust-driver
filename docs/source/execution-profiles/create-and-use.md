@@ -28,7 +28,7 @@ let session: Session = SessionBuilder::new()
 ```
 
 ### Example
-To create an `ExecutionProfile` and attach it to a `Query`:
+To create an `ExecutionProfile` and attach it to a `Statement`:
 ```rust
 # extern crate scylla;
 # use std::error::Error;
