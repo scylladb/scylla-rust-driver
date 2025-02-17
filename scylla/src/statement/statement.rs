@@ -6,9 +6,9 @@ use crate::policies::retry::RetryPolicy;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// CQL query statement.
+/// **Unprepared** CQL statement.
 ///
-/// This represents a CQL query that can be executed on a server.
+/// This represents a CQL statement that can be executed on a server.
 #[derive(Clone)]
 pub struct Statement {
     pub(crate) config: StatementConfig,
@@ -18,7 +18,7 @@ pub struct Statement {
 }
 
 impl Statement {
-    /// Creates a new [`Statement`] from a CQL query string.
+    /// Creates a new [`Statement`] from a CQL statement string.
     pub fn new(query_text: impl Into<String>) -> Self {
         Self {
             contents: query_text.into(),
@@ -35,7 +35,7 @@ impl Statement {
         self
     }
 
-    /// Sets the page size for this CQL query.
+    /// Sets the page size for this CQL statement.
     ///
     /// Panics if given number is nonpositive.
     pub fn set_page_size(&mut self, page_size: i32) {
@@ -44,12 +44,12 @@ impl Statement {
             .unwrap_or_else(|err| panic!("Query::set_page_size: {err}"));
     }
 
-    /// Returns the page size for this CQL query.
+    /// Returns the page size for this CQL statement.
     pub(crate) fn get_validated_page_size(&self) -> PageSize {
         self.page_size
     }
 
-    /// Returns the page size for this CQL query.
+    /// Returns the page size for this CQL statement.
     pub fn get_page_size(&self) -> i32 {
         self.page_size.inner()
     }
@@ -59,7 +59,7 @@ impl Statement {
         self.config.consistency = Some(c);
     }
 
-    /// Gets the consistency to be used when executing this query if it is filled.
+    /// Gets the consistency to be used when executing this statement if it is filled.
     /// If this is empty, the default_consistency of the session will be used.
     pub fn get_consistency(&self) -> Option<Consistency> {
         self.config.consistency
@@ -78,10 +78,10 @@ impl Statement {
     }
 
     /// Sets the idempotence of this statement
-    /// A query is idempotent if it can be applied multiple times without changing the result of the initial application
+    /// A statement is idempotent if it can be applied multiple times without changing the result of the initial application
     /// If set to `true` we can be sure that it is idempotent
     /// If set to `false` it is unknown whether it is idempotent
-    /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
+    /// This is used in [`RetryPolicy`] to decide if retrying a statement execution is safe
     pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
         self.config.is_idempotent = is_idempotent;
     }
@@ -124,7 +124,7 @@ impl Statement {
         self.config.request_timeout = timeout
     }
 
-    /// Gets client timeout associated with this query
+    /// Gets client timeout associated with this statement.
     pub fn get_request_timeout(&self) -> Option<Duration> {
         self.config.request_timeout
     }
@@ -141,7 +141,7 @@ impl Statement {
         self.config.retry_policy.as_ref()
     }
 
-    /// Sets the listener capable of listening what happens during query execution.
+    /// Sets the listener capable of listening what happens during statement execution.
     pub fn set_history_listener(&mut self, history_listener: Arc<dyn HistoryListener>) {
         self.config.history_listener = Some(history_listener);
     }
@@ -157,7 +157,7 @@ impl Statement {
         self.config.execution_profile_handle = profile_handle;
     }
 
-    /// Borrows the execution profile handle associated with this query.
+    /// Borrows the execution profile handle associated with this statement.
     pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
         self.config.execution_profile_handle.as_ref()
     }
