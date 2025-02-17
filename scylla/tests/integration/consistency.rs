@@ -10,7 +10,7 @@ use scylla::routing::{Shard, Token};
 use scylla::statement::batch::BatchStatement;
 use scylla::statement::batch::{Batch, BatchType};
 use scylla::statement::prepared::PreparedStatement;
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::statement::SerialConsistency;
 use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::Consistency;

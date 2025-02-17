@@ -35,7 +35,7 @@ use crate::routing::Shard;
 use crate::statement::batch::batch_values;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
-use crate::statement::query::Statement;
+use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize, StatementConfig};
 use arc_swap::ArcSwapOption;
 use futures::future::join_all;
@@ -602,7 +602,7 @@ impl Session {
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use std::ops::ControlFlow;
-    /// use scylla::statement::query::Statement;
+    /// use scylla::statement::unprepared::Statement;
     /// use scylla::response::{PagingState, PagingStateResponse};
     ///
     /// let paged_prepared = session

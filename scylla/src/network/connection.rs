@@ -29,7 +29,7 @@ use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardInfo, Sharder, ShardingError};
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::PreparedStatement;
-use crate::statement::query::Statement;
+use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
@@ -2262,7 +2262,7 @@ mod tests {
     use super::{open_connection, HostConnectionConfig};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
-    use crate::statement::query::Statement;
+    use crate::statement::unprepared::Statement;
     use crate::test_utils::setup_tracing;
     use crate::utils::test_utils::{unique_keyspace_name, PerformDDL};
     use futures::{StreamExt, TryStreamExt};

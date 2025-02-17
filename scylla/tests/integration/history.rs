@@ -7,7 +7,7 @@ use scylla::errors::{RequestAttemptError, RequestError};
 use scylla::observability::history::{
     AttemptResult, HistoryCollector, RequestHistoryResult, StructuredHistory, TimePoint,
 };
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::value::Row;
 
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};

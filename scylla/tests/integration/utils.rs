@@ -9,7 +9,7 @@ use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
 use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use scylla::routing::Shard;
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;

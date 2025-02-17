@@ -33,7 +33,7 @@ be warned about the clock skew, the warnings can be turned off with `without_war
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::policies::timestamp_generator::MonotonicTimestampGenerator;
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use std::sync::Arc;
 
 let session: Session = SessionBuilder::new()

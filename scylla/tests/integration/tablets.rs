@@ -19,7 +19,7 @@ use scylla::policies::load_balancing::RoutingInfo;
 use scylla::response::query_result::QueryResult;
 use scylla::serialize::row::SerializeRow;
 use scylla::statement::prepared::PreparedStatement;
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 
 use scylla::errors::ExecutionError;
 use scylla_proxy::{

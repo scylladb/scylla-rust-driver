@@ -5,7 +5,7 @@ use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::observability::history::HistoryListener;
 use crate::policies::retry::RetryPolicy;
 use crate::statement::prepared::PreparedStatement;
-use crate::statement::query::Statement;
+use crate::statement::unprepared::Statement;
 
 use super::StatementConfig;
 use super::{Consistency, SerialConsistency};

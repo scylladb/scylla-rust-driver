@@ -12,7 +12,7 @@ use scylla::policies::retry::{RetryPolicy, RetrySession};
 use scylla::policies::speculative_execution::SpeculativeExecutionPolicy;
 use scylla::routing::Shard;
 use scylla::statement::batch::{Batch, BatchStatement, BatchType};
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::statement::SerialConsistency;
 use scylla_cql::Consistency;
 use tokio::sync::mpsc;

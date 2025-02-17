@@ -12,7 +12,7 @@ If tracing is enabled the row iterator will contain a list of tracing ids for al
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::observability::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;

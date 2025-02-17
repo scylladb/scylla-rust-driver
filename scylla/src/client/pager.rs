@@ -38,7 +38,7 @@ use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
-use crate::statement::query::Statement;
+use crate::statement::unprepared::Statement;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 

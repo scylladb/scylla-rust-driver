@@ -33,7 +33,7 @@ To create an `ExecutionProfile` and attach it to a `Query`:
 # extern crate scylla;
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::statement::Consistency;
 use scylla::client::execution_profile::ExecutionProfile;
 use std::time::Duration;

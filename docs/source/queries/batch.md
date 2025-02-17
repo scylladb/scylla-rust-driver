@@ -10,7 +10,7 @@ Only `INSERT`, `UPDATE` and `DELETE` statements are allowed.
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::statement::batch::Batch;
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::statement::prepared::PreparedStatement;
 
 // Create a batch statement

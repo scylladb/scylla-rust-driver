@@ -4,7 +4,7 @@ use crate::response::{PagingState, PagingStateResponse};
 use crate::routing::partitioner::PartitionerName;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::PreparedStatement;
-use crate::statement::query::Statement;
+use crate::statement::unprepared::Statement;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
@@ -254,7 +254,7 @@ mod tests {
     use crate::routing::partitioner::PartitionerName;
     use crate::statement::batch::{Batch, BatchStatement};
     use crate::statement::prepared::PreparedStatement;
-    use crate::statement::query::Statement;
+    use crate::statement::unprepared::Statement;
     use crate::test_utils::{
         create_new_session_builder, scylla_supports_tablets, setup_tracing, PerformDDL,
     };

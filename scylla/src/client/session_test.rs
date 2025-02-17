@@ -19,7 +19,7 @@ use crate::routing::partitioner::{
 use crate::routing::Token;
 use crate::statement::batch::{Batch, BatchStatement, BatchType};
 use crate::statement::prepared::PreparedStatement;
-use crate::statement::query::Statement;
+use crate::statement::unprepared::Statement;
 use crate::statement::Consistency;
 use crate::utils::test_utils::{
     create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,

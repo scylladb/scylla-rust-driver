@@ -9,7 +9,7 @@ use scylla::observability::tracing::TracingInfo;
 use scylla::response::query_result::QueryResult;
 use scylla::statement::batch::Batch;
 use scylla::statement::prepared::PreparedStatement;
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::statement::{Consistency, SerialConsistency};
 use std::env;
 use std::num::NonZeroU32;

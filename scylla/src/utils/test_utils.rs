@@ -12,7 +12,7 @@ use crate::network::Connection;
 use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Shard;
-use crate::statement::query::Statement;
+use crate::statement::unprepared::Statement;
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
 use std::{

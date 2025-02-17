@@ -26,7 +26,7 @@ use crate::frame::response::event::Event;
 use crate::network::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
 use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
-use crate::statement::query::Statement;
+use crate::statement::unprepared::Statement;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};

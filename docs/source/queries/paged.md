@@ -105,7 +105,7 @@ On a `Query`:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 
 let mut query: Statement = Statement::new("SELECT a, b FROM ks.t");
 query.set_page_size(16);
@@ -145,7 +145,7 @@ On a `Query`:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::response::{PagingState, PagingStateResponse};
 use std::ops::ControlFlow;
 
@@ -188,7 +188,7 @@ On a `PreparedStatement`:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::response::{PagingState, PagingStateResponse};
 use std::ops::ControlFlow;
 

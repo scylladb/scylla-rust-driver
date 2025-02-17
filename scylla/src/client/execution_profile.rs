@@ -43,7 +43,7 @@
 //! # extern crate scylla;
 //! # use std::error::Error;
 //! # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-//! use scylla::statement::query::Statement;
+//! use scylla::statement::unprepared::Statement;
 //! use scylla::statement::Consistency;
 //! use scylla::client::execution_profile::ExecutionProfile;
 //! use std::time::Duration;
@@ -112,7 +112,7 @@
 //! # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 //! use scylla::client::session::Session;
 //! use scylla::client::session_builder::SessionBuilder;
-//! use scylla::statement::query::Statement;
+//! use scylla::statement::unprepared::Statement;
 //! use scylla::statement::Consistency;
 //! use scylla::client::execution_profile::ExecutionProfile;
 //!

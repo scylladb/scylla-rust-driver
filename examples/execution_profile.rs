@@ -5,7 +5,7 @@ use scylla::client::session_builder::SessionBuilder;
 use scylla::policies::load_balancing;
 use scylla::policies::retry::{DefaultRetryPolicy, FallthroughRetryPolicy};
 use scylla::policies::speculative_execution::PercentileSpeculativeExecutionPolicy;
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::statement::{Consistency, SerialConsistency};
 use std::env;
 use std::sync::Arc;

@@ -78,7 +78,7 @@ To use in a [simple query](../queries/simple.md):
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::policies::retry::DowngradingConsistencyRetryPolicy;
 

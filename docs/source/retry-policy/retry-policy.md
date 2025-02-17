@@ -24,7 +24,7 @@ Idempotence has to be specified manually, the driver is not able to figure it ou
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Statement;
+use scylla::statement::unprepared::Statement;
 use scylla::statement::prepared::PreparedStatement;
 
 // Specify that a Query is idempotent
