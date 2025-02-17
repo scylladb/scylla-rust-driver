@@ -1,46 +1,36 @@
-use histogram::Histogram;
+use histogram::{AtomicHistogram, Histogram};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use thiserror::Error;
 
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
 
-#[derive(Debug)]
-pub struct MetricsError {
-    cause: &'static str,
+/// Error that occured upon a metrics operation.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum MetricsError {
+    #[error("Histogram error: {0}")]
+    HistogramError(#[from] histogram::Error),
+    /// Error type for potential synchronisation mechanisms above
+    /// the AtomicHistogram.
+    #[error("Histogram synchronisation error: {0}")]
+    HistogramSynchronisationError(#[from] Arc<dyn std::error::Error + Send + Sync>),
+    #[error("Histogram is empty")]
+    Empty,
 }
 
-impl From<&'static str> for MetricsError {
-    fn from(err: &'static str) -> MetricsError {
-        MetricsError { cause: err }
-    }
-}
-
-impl std::fmt::Display for MetricsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "metrics error: {}", self.cause)
-    }
-}
-
-#[derive(Default, Debug)]
 pub struct Metrics {
     errors_num: AtomicU64,
     queries_num: AtomicU64,
     errors_iter_num: AtomicU64,
     queries_iter_num: AtomicU64,
     retries_num: AtomicU64,
-    histogram: Arc<Mutex<Histogram>>,
+    histogram: Arc<AtomicHistogram>,
 }
 
 impl Metrics {
     pub fn new() -> Self {
-        Self {
-            errors_num: AtomicU64::new(0),
-            queries_num: AtomicU64::new(0),
-            errors_iter_num: AtomicU64::new(0),
-            queries_iter_num: AtomicU64::new(0),
-            retries_num: AtomicU64::new(0),
-            histogram: Arc::new(Mutex::new(Histogram::new())),
-        }
+        Metrics::default()
     }
 
     /// Increments counter for errors that occurred in nonpaged queries.
@@ -76,15 +66,13 @@ impl Metrics {
     ///
     /// * `latency` - time in milliseconds that should be logged
     pub(crate) fn log_query_latency(&self, latency: u64) -> Result<(), MetricsError> {
-        let mut histogram_unlocked = self.histogram.lock().unwrap();
-        histogram_unlocked.increment(latency)?;
+        self.histogram.increment(latency)?;
         Ok(())
     }
 
     /// Returns average latency in milliseconds
     pub fn get_latency_avg_ms(&self) -> Result<u64, MetricsError> {
-        let histogram_unlocked = self.histogram.lock().unwrap();
-        Ok(histogram_unlocked.mean()?)
+        Self::mean(&self.histogram.load())
     }
 
     /// Returns latency from histogram for a given percentile
@@ -92,8 +80,13 @@ impl Metrics {
     ///
     /// * `percentile` - float value (0.0 - 100.0)
     pub fn get_latency_percentile_ms(&self, percentile: f64) -> Result<u64, MetricsError> {
-        let histogram_unlocked = self.histogram.lock().unwrap();
-        Ok(histogram_unlocked.percentile(percentile)?)
+        let bucket = self.histogram.load().percentile(percentile)?;
+
+        if let Some(p) = bucket {
+            Ok(p.count())
+        } else {
+            Err(MetricsError::Empty)
+        }
     }
 
     /// Returns counter for errors occurred in nonpaged queries
@@ -119,5 +112,57 @@ impl Metrics {
     /// Returns counter measuring how many times a retry policy has decided to retry a query
     pub fn get_retries_num(&self) -> u64 {
         self.retries_num.load(ORDER_TYPE)
+    }
+
+    // Metric implementations
+
+    fn mean(h: &Histogram) -> Result<u64, MetricsError> {
+        // Compute the mean (count each bucket as its interval's center).
+        let mut weighted_sum = 0_u128;
+        let mut count = 0_u128;
+
+        for bucket in h {
+            let mid = ((bucket.start() + bucket.end()) / 2) as u128;
+            weighted_sum += mid * bucket.count() as u128;
+            count += bucket.count() as u128;
+        }
+
+        if count != 0 {
+            Ok((weighted_sum / count) as u64)
+        } else {
+            Err(MetricsError::Empty)
+        }
+    }
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        // Config: 64ms error, values in range [0ms, ~262_000ms].
+        // Size: (2^13 + 5 * 2^12) * 8B * 2 ~= 450kB.
+        let grouping_power = 12;
+        let max_value_power = 18;
+
+        Self {
+            errors_num: AtomicU64::new(0),
+            queries_num: AtomicU64::new(0),
+            errors_iter_num: AtomicU64::new(0),
+            queries_iter_num: AtomicU64::new(0),
+            retries_num: AtomicU64::new(0),
+            histogram: Arc::new(AtomicHistogram::new(grouping_power, max_value_power).unwrap()),
+        }
+    }
+}
+
+impl std::fmt::Debug for Metrics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let h = self.histogram.load();
+        f.debug_struct("Metrics")
+            .field("errors_num", &self.errors_num)
+            .field("queries_num", &self.queries_num)
+            .field("errors_iter_num", &self.errors_iter_num)
+            .field("queries_iter_num", &self.queries_iter_num)
+            .field("retries_num", &self.retries_num)
+            .field("histogram", &h)
+            .finish()
     }
 }
