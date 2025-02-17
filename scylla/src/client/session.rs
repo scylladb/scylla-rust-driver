@@ -32,7 +32,7 @@ use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
-use crate::query::Query;
+use crate::query::Statement;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse};
 use crate::routing::partitioner::PartitionerName;
@@ -363,7 +363,7 @@ impl Session {
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/simple.html) for more information
     /// # Arguments
-    /// * `query` - statement to be executed, can be just a `&str` or the [Query] struct.
+    /// * `query` - statement to be executed, can be just a `&str` or the [`Statement`] struct.
     /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values.
     ///
     /// # Examples
@@ -404,7 +404,7 @@ impl Session {
     /// ```
     pub async fn query_unpaged(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
         self.do_query_unpaged(&query.into(), values).await
@@ -463,7 +463,7 @@ impl Session {
     /// ```
     pub async fn query_single_page(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
@@ -475,7 +475,7 @@ impl Session {
     /// This method will query all pages of the result\
     ///
     /// Returns an async iterator (stream) over all received rows\
-    /// Page size can be specified in the [Query] passed to the function
+    /// Page size can be specified in the [`Statement`] passed to the function
     ///
     /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
     /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
@@ -484,7 +484,7 @@ impl Session {
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information.
     ///
     /// # Arguments
-    /// * `query` - statement to be executed, can be just a `&str` or the [Query] struct.
+    /// * `query` - statement to be executed, can be just a `&str` or the [`Statement`] struct.
     /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values.
     ///
     /// # Example
@@ -509,7 +509,7 @@ impl Session {
     /// ```
     pub async fn query_iter(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
         self.do_query_iter(query.into(), values).await
@@ -859,7 +859,7 @@ impl Session {
 
     async fn do_query_unpaged(
         &self,
-        query: &Query,
+        query: &Statement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
         let (result, paging_state_response) = self
@@ -876,7 +876,7 @@ impl Session {
 
     async fn do_query_single_page(
         &self,
-        query: &Query,
+        query: &Statement,
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
@@ -902,7 +902,7 @@ impl Session {
     /// should be made.
     async fn query(
         &self,
-        query: &Query,
+        query: &Statement,
         values: impl SerializeRow,
         page_size: Option<PageSize>,
         paging_state: PagingState,
@@ -1033,7 +1033,7 @@ impl Session {
 
     async fn do_query_iter(
         &self,
-        query: Query,
+        query: Statement,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
         let execution_profile = query
@@ -1084,7 +1084,7 @@ impl Session {
     /// See the documentation of [`PreparedStatement`].
     ///
     /// # Arguments
-    /// * `query` - query to prepare, can be just a `&str` or the [Query] struct.
+    /// * `query` - query to prepare, can be just a `&str` or the [`Statement`] struct.
     ///
     /// # Example
     /// ```rust
@@ -1106,7 +1106,7 @@ impl Session {
     /// ```
     pub async fn prepare(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
     ) -> Result<PreparedStatement, PrepareError> {
         let query = query.into();
         let query_ref = &query;
@@ -1591,13 +1591,13 @@ impl Session {
     ) -> Result<Option<TracingInfo>, TracingError> {
         // Query system_traces.sessions for TracingInfo
         let mut traces_session_query =
-            Query::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
+            Statement::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
         traces_session_query.config.consistency = consistency;
         traces_session_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
 
         // Query system_traces.events for TracingEvents
         let mut traces_events_query =
-            Query::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
+            Statement::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
         traces_events_query.config.consistency = consistency;
         traces_events_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
 

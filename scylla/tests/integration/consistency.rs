@@ -12,7 +12,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::statement::batch::BatchStatement;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::{
     batch::{Batch, BatchType},
     statement::SerialConsistency,
@@ -68,7 +68,7 @@ async fn create_schema(session: &Session, ks: &str) {
 // The following functions perform a request with consistencies set directly on a statement.
 async fn query_consistency_set_directly(
     session: &Session,
-    query: &Query,
+    query: &Statement,
     c: Consistency,
     sc: Option<SerialConsistency>,
 ) {
@@ -107,7 +107,7 @@ async fn batch_consistency_set_directly(
 // The following functions perform a request with consistencies set on a per-statement execution profile.
 async fn query_consistency_set_on_exec_profile(
     session: &Session,
-    query: &Query,
+    query: &Statement,
     profile: ExecutionProfileHandle,
 ) {
     let mut query = query.clone();
@@ -165,11 +165,11 @@ async fn check_for_all_consistencies_and_setting_options<
     rx = after_session_init(rx).await;
 
     // We will be using these requests:
-    let query = Query::from(QUERY_STR);
+    let query = Statement::from(QUERY_STR);
     let prepared = session.prepare(QUERY_STR).await.unwrap();
     let batch = Batch::new_with_statements(
         BatchType::Logged,
-        vec![BatchStatement::Query(Query::from(QUERY_STR))],
+        vec![BatchStatement::Query(Statement::from(QUERY_STR))],
     );
 
     for (consistency, serial_consistency) in pairs_of_all_consistencies() {
@@ -476,7 +476,7 @@ async fn consistency_allows_for_paxos_selects() {
         .await
         .unwrap();
 
-    let mut query = Query::from("SELECT host_id FROM system.peers WHERE peer = '127.0.0.1'");
+    let mut query = Statement::from("SELECT host_id FROM system.peers WHERE peer = '127.0.0.1'");
     query.set_consistency(Consistency::Serial);
     session.query_unpaged(query, ()).await.unwrap();
 }
