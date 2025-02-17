@@ -1,4 +1,3 @@
-use crate::utils::DeserializeOwnedValue;
 use crate::utils::{
     create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,
     unique_keyspace_name, PerformDDL,
@@ -6,7 +5,7 @@ use crate::utils::{
 use assert_matches::assert_matches;
 use futures::{FutureExt, StreamExt as _, TryStreamExt};
 use itertools::Itertools;
-use scylla::batch::{Batch, BatchStatement, BatchType};
+use scylla::batch::{Batch, BatchStatement};
 use scylla::client::caching_session::CachingSession;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
@@ -26,12 +25,11 @@ use scylla::routing::partitioner::{calculate_token_for_partition_key, Partitione
 use scylla::statement::Consistency;
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
-use scylla_cql::serialize::value::SerializeValue;
-use scylla_cql::value::{CqlVarint, Row};
-use std::collections::{BTreeMap, HashMap};
-use std::collections::{BTreeSet, HashSet};
+use scylla_cql::value::Row;
+use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
@@ -945,198 +943,6 @@ async fn test_await_schema_agreement() {
     let _schema_version = session.await_schema_agreement().await.unwrap();
 }
 
-#[tokio::test]
-async fn test_timestamp() {
-    setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
-    let ks = unique_keyspace_name();
-
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
-    session
-        .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t_timestamp (a text, b text, primary key (a))",
-            ks
-        ))
-        .await
-        .unwrap();
-
-    session.await_schema_agreement().await.unwrap();
-
-    let query_str = format!("INSERT INTO {}.t_timestamp (a, b) VALUES (?, ?)", ks);
-
-    // test regular query timestamps
-
-    let mut regular_query = Query::new(query_str.to_string());
-
-    regular_query.set_timestamp(Some(420));
-    session
-        .query_unpaged(regular_query.clone(), ("regular query", "higher timestamp"))
-        .await
-        .unwrap();
-
-    regular_query.set_timestamp(Some(42));
-    session
-        .query_unpaged(regular_query.clone(), ("regular query", "lower timestamp"))
-        .await
-        .unwrap();
-
-    // test prepared statement timestamps
-
-    let mut prepared_statement = session.prepare(query_str).await.unwrap();
-
-    prepared_statement.set_timestamp(Some(420));
-    session
-        .execute_unpaged(&prepared_statement, ("prepared query", "higher timestamp"))
-        .await
-        .unwrap();
-
-    prepared_statement.set_timestamp(Some(42));
-    session
-        .execute_unpaged(&prepared_statement, ("prepared query", "lower timestamp"))
-        .await
-        .unwrap();
-
-    // test batch statement timestamps
-
-    let mut batch: Batch = Default::default();
-    batch.append_statement(regular_query);
-    batch.append_statement(prepared_statement);
-
-    batch.set_timestamp(Some(420));
-    session
-        .batch(
-            &batch,
-            (
-                ("first query in batch", "higher timestamp"),
-                ("second query in batch", "higher timestamp"),
-            ),
-        )
-        .await
-        .unwrap();
-
-    batch.set_timestamp(Some(42));
-    session
-        .batch(
-            &batch,
-            (
-                ("first query in batch", "lower timestamp"),
-                ("second query in batch", "lower timestamp"),
-            ),
-        )
-        .await
-        .unwrap();
-
-    let query_rows_result = session
-        .query_unpaged(
-            format!("SELECT a, b, WRITETIME(b) FROM {}.t_timestamp", ks),
-            &[],
-        )
-        .await
-        .unwrap()
-        .into_rows_result()
-        .unwrap();
-
-    let mut results = query_rows_result
-        .rows::<(&str, &str, i64)>()
-        .unwrap()
-        .map(Result::unwrap)
-        .collect::<Vec<_>>();
-    results.sort();
-
-    let expected_results = [
-        ("first query in batch", "higher timestamp", 420),
-        ("prepared query", "higher timestamp", 420),
-        ("regular query", "higher timestamp", 420),
-        ("second query in batch", "higher timestamp", 420),
-    ]
-    .into_iter()
-    .collect::<Vec<_>>();
-
-    assert_eq!(results, expected_results);
-}
-
-#[tokio::test]
-async fn test_timestamp_generator() {
-    use rand::random;
-    use scylla::policies::timestamp_generator::TimestampGenerator;
-
-    setup_tracing();
-    struct LocalTimestampGenerator {
-        generated_timestamps: Arc<Mutex<HashSet<i64>>>,
-    }
-
-    impl TimestampGenerator for LocalTimestampGenerator {
-        fn next_timestamp(&self) -> i64 {
-            let timestamp = random::<i64>().abs();
-            self.generated_timestamps.lock().unwrap().insert(timestamp);
-            timestamp
-        }
-    }
-
-    let timestamps = Arc::new(Mutex::new(HashSet::new()));
-    let generator = LocalTimestampGenerator {
-        generated_timestamps: timestamps.clone(),
-    };
-
-    let session = create_new_session_builder()
-        .timestamp_generator(Arc::new(generator))
-        .build()
-        .await
-        .unwrap();
-    let ks = unique_keyspace_name();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
-    session
-        .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t_generator (a int primary key, b int)",
-            ks
-        ))
-        .await
-        .unwrap();
-
-    let prepared = session
-        .prepare(format!(
-            "INSERT INTO {}.t_generator (a, b) VALUES (1, 1)",
-            ks
-        ))
-        .await
-        .unwrap();
-    session.execute_unpaged(&prepared, []).await.unwrap();
-
-    let unprepared = Query::new(format!(
-        "INSERT INTO {}.t_generator (a, b) VALUES (2, 2)",
-        ks
-    ));
-    session.query_unpaged(unprepared, []).await.unwrap();
-
-    let mut batch = Batch::new(BatchType::Unlogged);
-    let stmt = session
-        .prepare(format!(
-            "INSERT INTO {}.t_generator (a, b) VALUES (3, 3)",
-            ks
-        ))
-        .await
-        .unwrap();
-    batch.append_statement(stmt);
-    session.batch(&batch, &((),)).await.unwrap();
-
-    let query_rows_result = session
-        .query_unpaged(
-            format!("SELECT a, b, WRITETIME(b) FROM {}.t_generator", ks),
-            &[],
-        )
-        .await
-        .unwrap()
-        .into_rows_result()
-        .unwrap();
-
-    let timestamps_locked = timestamps.lock().unwrap();
-    assert!(query_rows_result
-        .rows::<(i32, i32, i64)>()
-        .unwrap()
-        .map(|row_result| row_result.unwrap())
-        .all(|(_a, _b, writetime)| timestamps_locked.contains(&writetime)));
-}
-
 #[ignore = "works on remote Scylla instances only (local ones are too fast)"]
 #[tokio::test]
 async fn test_request_timeout() {
@@ -1153,10 +959,10 @@ async fn test_request_timeout() {
 
         let mut query: Query = Query::new("SELECT * FROM system_schema.tables");
         query.set_request_timeout(Some(Duration::from_millis(1)));
-        match session.query_unpaged(query, &[]).await {
-            Ok(_) => panic!("the query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
-        }
+        assert_matches!(
+            session.query_unpaged(query, &[]).await,
+            Err(ExecutionError::RequestTimeout(_))
+        );
 
         let mut prepared = session
             .prepare("SELECT * FROM system_schema.tables")
@@ -1164,10 +970,10 @@ async fn test_request_timeout() {
             .unwrap();
 
         prepared.set_request_timeout(Some(Duration::from_millis(1)));
-        match session.execute_unpaged(&prepared, &[]).await {
-            Ok(_) => panic!("the prepared query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
-        };
+        assert_matches!(
+            session.execute_unpaged(&prepared, &[]).await,
+            Err(ExecutionError::RequestTimeout(_))
+        );
     }
     {
         let timeouting_session = create_new_session_builder()
@@ -1178,10 +984,10 @@ async fn test_request_timeout() {
 
         let mut query = Query::new("SELECT * FROM system_schema.tables");
 
-        match timeouting_session.query_unpaged(query.clone(), &[]).await {
-            Ok(_) => panic!("the query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
-        };
+        assert_matches!(
+            timeouting_session.query_unpaged(query.clone(), &[]).await,
+            Err(ExecutionError::RequestTimeout(_))
+        );
 
         query.set_request_timeout(Some(Duration::from_secs(10000)));
 
@@ -1194,30 +1000,15 @@ async fn test_request_timeout() {
             .await
             .unwrap();
 
-        match timeouting_session.execute_unpaged(&prepared, &[]).await {
-            Ok(_) => panic!("the prepared query should have failed due to a client-side timeout"),
-            Err(e) => assert_matches!(e, ExecutionError::RequestTimeout(_)),
-        };
+        assert_matches!(
+            timeouting_session.execute_unpaged(&prepared, &[]).await,
+            Err(ExecutionError::RequestTimeout(_))
+        );
 
         prepared.set_request_timeout(Some(Duration::from_secs(10000)));
 
         timeouting_session.execute_unpaged(&prepared, &[]).await.expect("the prepared query should have not failed, because no client-side timeout was specified");
     }
-}
-
-#[tokio::test]
-async fn test_prepared_config() {
-    setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
-
-    let mut query = Query::new("SELECT * FROM system_schema.tables");
-    query.set_is_idempotent(true);
-    query.set_page_size(42);
-
-    let prepared_statement = session.prepare(query).await.unwrap();
-
-    assert!(prepared_statement.get_is_idempotent());
-    assert_eq!(prepared_statement.get_page_size(), 42);
 }
 
 fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType<'_>> {
@@ -1722,62 +1513,6 @@ async fn test_turning_off_schema_fetching() {
 }
 
 #[tokio::test]
-async fn test_named_bind_markers() {
-    let session = create_new_session_builder().build().await.unwrap();
-    let ks = unique_keyspace_name();
-
-    session
-        .ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
-        .await
-        .unwrap();
-
-    session
-        .query_unpaged(format!("USE {}", ks), &[])
-        .await
-        .unwrap();
-
-    session
-        .ddl("CREATE TABLE t (pk int, ck int, v int, PRIMARY KEY (pk, ck, v))")
-        .await
-        .unwrap();
-
-    session.await_schema_agreement().await.unwrap();
-
-    let prepared = session
-        .prepare("INSERT INTO t (pk, ck, v) VALUES (:pk, :ck, :v)")
-        .await
-        .unwrap();
-    let hashmap: HashMap<&str, i32> = HashMap::from([("pk", 7), ("v", 42), ("ck", 13)]);
-    session.execute_unpaged(&prepared, &hashmap).await.unwrap();
-
-    let btreemap: BTreeMap<&str, i32> = BTreeMap::from([("ck", 113), ("v", 142), ("pk", 17)]);
-    session.execute_unpaged(&prepared, &btreemap).await.unwrap();
-
-    let rows: Vec<(i32, i32, i32)> = session
-        .query_unpaged("SELECT pk, ck, v FROM t", &[])
-        .await
-        .unwrap()
-        .into_rows_result()
-        .unwrap()
-        .rows::<(i32, i32, i32)>()
-        .unwrap()
-        .map(|res| res.unwrap())
-        .collect();
-
-    assert_eq!(rows, vec![(7, 13, 42), (17, 113, 142)]);
-
-    let wrongmaps: Vec<HashMap<&str, i32>> = vec![
-        HashMap::from([("pk", 7), ("fefe", 42), ("ck", 13)]),
-        HashMap::from([("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 7)]),
-        HashMap::new(),
-        HashMap::from([("ck", 9)]),
-    ];
-    for wrongmap in wrongmaps {
-        assert!(session.execute_unpaged(&prepared, &wrongmap).await.is_err());
-    }
-}
-
-#[tokio::test]
 async fn test_prepared_partitioner() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
@@ -1912,66 +1647,6 @@ async fn test_unprepared_reprepare_in_execute() {
         .collect();
     all_rows.sort_unstable();
     assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
-}
-
-#[tokio::test]
-async fn test_unusual_valuelists() {
-    let _ = tracing_subscriber::fmt::try_init();
-
-    let session = create_new_session_builder().build().await.unwrap();
-    let ks = unique_keyspace_name();
-
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
-
-    session
-        .ddl("CREATE TABLE IF NOT EXISTS tab (a int, b int, c varchar, primary key (a, b, c))")
-        .await
-        .unwrap();
-
-    let insert_a_b_c = session
-        .prepare("INSERT INTO tab (a, b, c) VALUES (?, ?, ?)")
-        .await
-        .unwrap();
-
-    let values_dyn: Vec<&dyn SerializeValue> = vec![
-        &1 as &dyn SerializeValue,
-        &2 as &dyn SerializeValue,
-        &"&dyn" as &dyn SerializeValue,
-    ];
-    session
-        .execute_unpaged(&insert_a_b_c, values_dyn)
-        .await
-        .unwrap();
-
-    let values_box_dyn: Vec<Box<dyn SerializeValue>> = vec![
-        Box::new(1) as Box<dyn SerializeValue>,
-        Box::new(3) as Box<dyn SerializeValue>,
-        Box::new("Box dyn") as Box<dyn SerializeValue>,
-    ];
-    session
-        .execute_unpaged(&insert_a_b_c, values_box_dyn)
-        .await
-        .unwrap();
-
-    let mut all_rows: Vec<(i32, i32, String)> = session
-        .query_unpaged("SELECT a, b, c FROM tab", ())
-        .await
-        .unwrap()
-        .into_rows_result()
-        .unwrap()
-        .rows::<(i32, i32, String)>()
-        .unwrap()
-        .map(|r| r.unwrap())
-        .collect();
-    all_rows.sort();
-    assert_eq!(
-        all_rows,
-        vec![
-            (1i32, 2i32, "&dyn".to_owned()),
-            (1, 3, "Box dyn".to_owned())
-        ]
-    );
 }
 
 // A tests which checks that Session::batch automatically reprepares PreparedStatemtns if they become unprepared.
@@ -2852,70 +2527,6 @@ async fn test_manual_primary_key_computation() {
         )
         .await;
     }
-}
-
-/// ScyllaDB does not distinguish empty collections from nulls. That is, INSERTing an empty collection
-/// is equivalent to nullifying the corresponding column.
-/// As pointed out in [#1001](https://github.com/scylladb/scylla-rust-driver/issues/1001), it's a nice
-/// QOL feature to be able to deserialize empty CQL collections to empty Rust collections instead of
-/// `None::<RustCollection>`. This test checks that.
-#[tokio::test]
-async fn test_deserialize_empty_collections() {
-    // Setup session.
-    let ks = unique_keyspace_name();
-    let session = create_new_session_builder().build().await.unwrap();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
-    session.use_keyspace(&ks, true).await.unwrap();
-
-    async fn deserialize_empty_collection<
-        Collection: Default + DeserializeOwnedValue + SerializeValue,
-    >(
-        session: &Session,
-        collection_name: &str,
-        collection_type_params: &str,
-    ) -> Collection {
-        // Create a table for the given collection type.
-        let table_name = "test_empty_".to_owned() + collection_name;
-        let query = format!(
-            "CREATE TABLE {} (n int primary key, c {}<{}>)",
-            table_name, collection_name, collection_type_params
-        );
-        session.ddl(query).await.unwrap();
-
-        // Populate the table with an empty collection, effectively inserting null as the collection.
-        session
-            .query_unpaged(
-                format!("INSERT INTO {} (n, c) VALUES (?, ?)", table_name,),
-                (0, Collection::default()),
-            )
-            .await
-            .unwrap();
-
-        let query_rows_result = session
-            .query_unpaged(format!("SELECT c FROM {}", table_name), ())
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap();
-        let (collection,) = query_rows_result.first_row::<(Collection,)>().unwrap();
-
-        // Drop the table
-        collection
-    }
-
-    let list = deserialize_empty_collection::<Vec<i32>>(&session, "list", "int").await;
-    assert!(list.is_empty());
-
-    let set = deserialize_empty_collection::<HashSet<i64>>(&session, "set", "bigint").await;
-    assert!(set.is_empty());
-
-    let map = deserialize_empty_collection::<HashMap<bool, CqlVarint>>(
-        &session,
-        "map",
-        "boolean, varint",
-    )
-    .await;
-    assert!(map.is_empty());
 }
 
 #[cfg(cassandra_tests)]

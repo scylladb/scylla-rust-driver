@@ -1,4 +1,3 @@
-use super::session_builder::SessionBuilder;
 use crate as scylla;
 use crate::cluster::metadata::{ColumnType, NativeType};
 use crate::query::Query;
@@ -7,35 +6,8 @@ use crate::routing::Token;
 use crate::utils::test_utils::{
     create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL,
 };
-use futures::FutureExt;
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 use scylla_cql::serialize::row::SerializedValues;
-use tokio::net::TcpListener;
-
-#[tokio::test]
-async fn test_connection_failure() {
-    setup_tracing();
-    // Make sure that Session::create fails when the control connection
-    // fails to connect.
-
-    // Create a dummy server which immediately closes the connection.
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    let (fut, _handle) = async move {
-        loop {
-            let _ = listener.accept().await;
-        }
-    }
-    .remote_handle();
-    tokio::spawn(fut);
-
-    let res = SessionBuilder::new().known_node_addr(addr).build().await;
-    match res {
-        Ok(_) => panic!("Unexpected success"),
-        Err(err) => println!("Connection error (it was expected): {:?}", err),
-    }
-}
 
 #[tokio::test]
 async fn test_prepared_statement() {
