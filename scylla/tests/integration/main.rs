@@ -18,6 +18,8 @@ mod shards;
 mod silent_prepare_batch;
 mod silent_prepare_query;
 mod skip_metadata_optimization;
+mod speculative_retry;
+mod speculative_tests_utils;
 mod tablets;
 #[path = "../common/utils.rs"]
 mod utils;

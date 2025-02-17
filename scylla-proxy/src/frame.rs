@@ -43,7 +43,7 @@ pub(crate) enum FrameType {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum FrameOpcode {
+pub enum FrameOpcode {
     Request(RequestOpcode),
     Response(ResponseOpcode),
 }

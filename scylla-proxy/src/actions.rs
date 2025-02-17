@@ -1,7 +1,7 @@
-use std::{fmt, sync::Arc, time::Duration};
-
 use bytes::Bytes;
 use rand::{Rng, RngCore};
+use std::fmt::Debug;
+use std::{fmt, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
 #[cfg(test)]
@@ -51,14 +51,41 @@ pub enum Condition {
 
     // True if any REGISTER was sent on this connection. Useful to filter out control connection messages.
     ConnectionRegisteredAnyEvent,
+
+    // A custom condition handler, allows you to customize frame matching
+    CustomCondition(ConditionHandler),
+}
+
+pub struct ConditionHandler(Arc<dyn Fn(&EvaluationContext) -> bool + Send + Sync>);
+
+impl ConditionHandler {
+    pub fn new(handler: Arc<dyn Fn(&EvaluationContext) -> bool + Send + Sync>) -> Self {
+        ConditionHandler(handler)
+    }
+
+    fn execute(&mut self, ctx: &EvaluationContext) -> bool {
+        self.0(ctx)
+    }
+}
+
+impl Debug for ConditionHandler {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ConditionHandler")
+    }
+}
+
+impl Clone for ConditionHandler {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
 }
 
 /// The context in which [`Conditions`](Condition) are evaluated.
-pub(crate) struct EvaluationContext {
-    pub(crate) connection_seq_no: usize,
-    pub(crate) connection_has_events: bool,
-    pub(crate) opcode: FrameOpcode,
-    pub(crate) frame_body: Bytes,
+pub struct EvaluationContext {
+    pub connection_seq_no: usize,
+    pub connection_has_events: bool,
+    pub opcode: FrameOpcode,
+    pub frame_body: Bytes,
 }
 
 impl Condition {
@@ -116,7 +143,11 @@ impl Condition {
                 val
             },
 
-            Condition::ConnectionRegisteredAnyEvent => ctx.connection_has_events
+            Condition::ConnectionRegisteredAnyEvent => ctx.connection_has_events,
+
+            Condition::CustomCondition(cb) => {
+                cb.execute(ctx)
+            }
         }
     }
 
@@ -134,6 +165,11 @@ impl Condition {
     /// A convenience function for creating [Condition::Or] variant.
     pub fn or(self, c2: Self) -> Self {
         Self::Or(Box::new(self), Box::new(c2))
+    }
+
+    /// A convenience function for creating [Condition::CustomCondition] variant.
+    pub fn custom(handler_fn: fn(&EvaluationContext) -> bool) -> Self {
+        Self::CustomCondition(ConditionHandler::new(Arc::new(handler_fn)))
     }
 }
 
