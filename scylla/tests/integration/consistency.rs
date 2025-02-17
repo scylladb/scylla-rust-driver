@@ -12,7 +12,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::statement::batch::BatchStatement;
-use scylla::statement::query::Statement;
+use scylla::statement::Statement;
 use scylla::{
     batch::{Batch, BatchType},
     statement::SerialConsistency,

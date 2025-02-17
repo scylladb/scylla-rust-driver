@@ -23,7 +23,6 @@ use crate::frame::{
 };
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::timestamp_generator::TimestampGenerator;
-use crate::query::Statement;
 use crate::response::query_result::QueryResult;
 use crate::response::{
     NonErrorAuthResponse, NonErrorStartupResponse, PagingState, PagingStateResponse, QueryResponse,
@@ -31,6 +30,7 @@ use crate::response::{
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardInfo, Sharder, ShardingError};
 use crate::statement::prepared_statement::PreparedStatement;
+use crate::statement::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
@@ -2210,7 +2210,7 @@ mod tests {
     use super::{open_connection, ConnectionConfig};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
-    use crate::query::Statement;
+    use crate::statement::Statement;
     use crate::test_utils::setup_tracing;
     use crate::utils::test_utils::{unique_keyspace_name, PerformDDL};
     use futures::{StreamExt, TryStreamExt};

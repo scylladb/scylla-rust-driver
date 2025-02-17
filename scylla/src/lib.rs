@@ -45,7 +45,7 @@
 //! * [Batch](crate::client::session::Session::batch)
 //!
 //! To specify options for a single query create the query object and configure it:
-//! * For simple: [`Statement`](crate::query::Statement)
+//! * For simple: [`Statement`](crate::statement::Statement)
 //! * For prepared: [PreparedStatement](crate::prepared_statement::PreparedStatement)
 //! * For batch: [Batch](crate::batch::Batch)
 //!
@@ -260,4 +260,3 @@ pub(crate) use utils::test_utils;
 
 pub use statement::batch;
 pub use statement::prepared_statement;
-pub use statement::query;

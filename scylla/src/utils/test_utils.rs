@@ -11,8 +11,8 @@ use crate::errors::{ExecutionError, RequestAttemptError};
 use crate::network::Connection;
 use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
-use crate::query::Statement;
 use crate::routing::Shard;
+use crate::statement::Statement;
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
 use std::{

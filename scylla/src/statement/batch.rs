@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::observability::history::HistoryListener;
 use crate::policies::retry::RetryPolicy;
-use crate::statement::{prepared_statement::PreparedStatement, query::Statement};
+use crate::statement::{prepared_statement::PreparedStatement, statement::Statement};
 
 use super::StatementConfig;
 use super::{Consistency, SerialConsistency};

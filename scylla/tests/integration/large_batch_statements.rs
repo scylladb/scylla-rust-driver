@@ -5,8 +5,8 @@ use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_na
 use scylla::batch::Batch;
 use scylla::batch::BatchType;
 use scylla::errors::{BadQuery, ExecutionError};
-use scylla::query::Statement;
 use scylla::response::query_result::QueryResult;
+use scylla::statement::Statement;
 
 #[tokio::test]
 async fn test_large_batch_statements() {

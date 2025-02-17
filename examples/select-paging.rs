@@ -2,8 +2,8 @@ use anyhow::Result;
 use futures::StreamExt as _;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::query::Statement;
 use scylla::response::PagingState;
+use scylla::statement::Statement;
 use std::env;
 use std::ops::ControlFlow;
 

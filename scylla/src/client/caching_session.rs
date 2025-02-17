@@ -1,10 +1,10 @@
 use crate::batch::{Batch, BatchStatement};
 use crate::errors::{ExecutionError, PagerExecutionError, PrepareError};
 use crate::prepared_statement::PreparedStatement;
-use crate::query::Statement;
 use crate::response::query_result::QueryResult;
 use crate::response::{PagingState, PagingStateResponse};
 use crate::routing::partitioner::PartitionerName;
+use crate::statement::Statement;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
@@ -252,9 +252,9 @@ mod tests {
     use crate::batch::{Batch, BatchStatement};
     use crate::client::session::Session;
     use crate::prepared_statement::PreparedStatement;
-    use crate::query::Statement;
     use crate::response::PagingState;
     use crate::routing::partitioner::PartitionerName;
+    use crate::statement::Statement;
     use crate::test_utils::{
         create_new_session_builder, scylla_supports_tablets, setup_tracing, PerformDDL,
     };

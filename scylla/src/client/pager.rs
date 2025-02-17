@@ -36,9 +36,10 @@ use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::prepared_statement::PartitionKeyError;
+use crate::prepared_statement::PreparedStatement;
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{NonErrorQueryResponse, QueryResponse};
-use crate::statement::{prepared_statement::PreparedStatement, query::Statement};
+use crate::statement::Statement;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 

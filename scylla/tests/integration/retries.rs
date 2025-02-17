@@ -4,7 +4,7 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
-use scylla::query::Statement;
+use scylla::statement::Statement;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;

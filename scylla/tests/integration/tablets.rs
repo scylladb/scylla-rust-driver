@@ -17,9 +17,9 @@ use scylla::policies::load_balancing::FallbackPlan;
 use scylla::policies::load_balancing::LoadBalancingPolicy;
 use scylla::policies::load_balancing::RoutingInfo;
 use scylla::prepared_statement::PreparedStatement;
-use scylla::query::Statement;
 use scylla::response::query_result::QueryResult;
 use scylla::serialize::row::SerializeRow;
+use scylla::statement::Statement;
 
 use scylla::errors::ExecutionError;
 use scylla_proxy::{

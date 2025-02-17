@@ -11,9 +11,9 @@ use scylla::cluster::NodeRef;
 use scylla::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::{RetryPolicy, RetrySession};
 use scylla::policies::speculative_execution::SpeculativeExecutionPolicy;
-use scylla::query::Statement;
 use scylla::routing::Shard;
 use scylla::statement::SerialConsistency;
+use scylla::statement::Statement;
 use scylla_cql::Consistency;
 use tokio::sync::mpsc;
 
