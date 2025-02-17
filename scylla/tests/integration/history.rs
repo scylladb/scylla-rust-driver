@@ -7,7 +7,7 @@ use scylla::errors::{RequestAttemptError, RequestError};
 use scylla::observability::history::{
     AttemptResult, HistoryCollector, RequestHistoryResult, StructuredHistory, TimePoint,
 };
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::value::Row;
 
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
@@ -111,7 +111,7 @@ async fn successful_query_history() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
-    let mut query = Query::new("SELECT * FROM system.local WHERE key='local'");
+    let mut query = Statement::new("SELECT * FROM system.local WHERE key='local'");
     let history_collector = Arc::new(HistoryCollector::new());
     query.set_history_listener(history_collector.clone());
 
@@ -178,7 +178,7 @@ async fn failed_query_history() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
-    let mut query = Query::new("This isnt even CQL");
+    let mut query = Statement::new("This isnt even CQL");
     let history_collector = Arc::new(HistoryCollector::new());
     query.set_history_listener(history_collector.clone());
 
@@ -232,7 +232,7 @@ async fn iterator_query_history() {
             .unwrap();
     }
 
-    let mut iter_query: Query = Query::new("SELECT * FROM t");
+    let mut iter_query: Statement = Statement::new("SELECT * FROM t");
     iter_query.set_page_size(8);
     let history_collector = Arc::new(HistoryCollector::new());
     iter_query.set_history_listener(history_collector.clone());

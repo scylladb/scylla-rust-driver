@@ -6,7 +6,7 @@ use scylla::errors::{BadQuery, ExecutionError};
 use scylla::response::query_result::QueryResult;
 use scylla::statement::batch::Batch;
 use scylla::statement::batch::BatchType;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 
 #[tokio::test]
 async fn test_large_batch_statements() {
@@ -53,7 +53,7 @@ async fn write_batch(
     let mut batch_query = Batch::new(BatchType::Unlogged);
     let mut batch_values = Vec::new();
     let query = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);
-    let query = Query::new(query);
+    let query = Statement::new(query);
     let prepared_statement = session.prepare(query).await.unwrap();
     for i in 0..n {
         let mut key = vec![0];

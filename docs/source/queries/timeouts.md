@@ -20,7 +20,7 @@ However, setting per-statement timeout to `None` results in falling back to per-
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use std::time::Duration;
 
 let uri = std::env::var("SCYLLA_URI")
@@ -49,7 +49,7 @@ let three_sec_timeout_profile_handle = ExecutionProfile::builder()
 
 // The below query will last for no more than 3 seconds, yielding a RequestTimeout error
 // if no response arrives until then.
-let mut query: Query = "TRUNCATE keyspace.table".into();
+let mut query: Statement = "TRUNCATE keyspace.table".into();
 query.set_execution_profile_handle(Some(three_sec_timeout_profile_handle));
 session
     .query_unpaged(query, ())

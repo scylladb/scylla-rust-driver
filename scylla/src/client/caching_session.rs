@@ -4,7 +4,7 @@ use crate::response::{PagingState, PagingStateResponse};
 use crate::routing::partitioner::PartitionerName;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::PreparedStatement;
-use crate::statement::query::Query;
+use crate::statement::query::Statement;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
@@ -94,7 +94,7 @@ where
     /// but uses the prepared statement cache.
     pub async fn execute_unpaged(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
         let query = query.into();
@@ -106,7 +106,7 @@ where
     /// but uses the prepared statement cache.
     pub async fn execute_iter(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
         let query = query.into();
@@ -118,7 +118,7 @@ where
     /// but uses the prepared statement cache.
     pub async fn execute_single_page(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
@@ -183,7 +183,7 @@ where
     /// Adds a prepared statement to the cache
     pub async fn add_prepared_statement(
         &self,
-        query: impl Into<&Query>,
+        query: impl Into<&Statement>,
     ) -> Result<PreparedStatement, PrepareError> {
         self.add_prepared_statement_owned(query.into().clone())
             .await
@@ -191,7 +191,7 @@ where
 
     async fn add_prepared_statement_owned(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
     ) -> Result<PreparedStatement, PrepareError> {
         let query = query.into();
 
@@ -254,7 +254,7 @@ mod tests {
     use crate::routing::partitioner::PartitionerName;
     use crate::statement::batch::{Batch, BatchStatement};
     use crate::statement::prepared::PreparedStatement;
-    use crate::statement::query::Query;
+    use crate::statement::query::Statement;
     use crate::test_utils::{
         create_new_session_builder, scylla_supports_tablets, setup_tracing, PerformDDL,
     };
@@ -610,7 +610,7 @@ mod tests {
             .await
             .unwrap();
 
-        let q = Query::new("INSERT INTO tbl (a, b) VALUES (?, ?)");
+        let q = Statement::new("INSERT INTO tbl (a, b) VALUES (?, ?)");
 
         // Insert one row with timestamp 1000
         let mut q1 = q.clone();
@@ -677,7 +677,8 @@ mod tests {
         // partitioner. It should happen when the query is prepared
         // and after it is fetched from the cache.
         let verify_partitioner = || async {
-            let query = Query::new("SELECT * FROM tbl_scylla_cdc_log WHERE \"cdc$stream_id\" = ?");
+            let query =
+                Statement::new("SELECT * FROM tbl_scylla_cdc_log WHERE \"cdc$stream_id\" = ?");
             let prepared = session.add_prepared_statement(&query).await.unwrap();
             assert_eq!(prepared.get_partitioner_name(), &PartitionerName::CDC);
         };

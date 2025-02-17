@@ -12,13 +12,13 @@ If tracing is enabled the row iterator will contain a list of tracing ids for al
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::observability::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;
 
 // Create a Query manually and enable tracing
-let mut query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(4)");
+let mut query: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(4)");
 query.set_tracing(true);
 
 // Create a paged query iterator and fetch pages

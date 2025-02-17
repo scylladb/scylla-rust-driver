@@ -10,11 +10,11 @@ A lightweight transaction query is not a separate type - it can be expressed jus
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::statement::{Consistency, SerialConsistency};
 
 // Create a Query manually to change the Consistency to ONE
-let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?) IF NOT EXISTS".to_string());
+let mut my_query: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?) IF NOT EXISTS".to_string());
 my_query.set_consistency(Consistency::One);
 // Use cross-datacenter serial consistency
 my_query.set_serial_consistency(Some(SerialConsistency::Serial));

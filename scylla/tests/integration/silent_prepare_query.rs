@@ -1,7 +1,7 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, ShardAwareness,
     WorkerError,
@@ -34,7 +34,7 @@ async fn test_prepare_query_with_values() {
             .await
             .unwrap();
 
-        let q = Query::from("INSERT INTO t (a) VALUES (?)");
+        let q = Statement::from("INSERT INTO t (a) VALUES (?)");
 
         let drop_unprepared_frame_rule = RequestRule(
             Condition::RequestOpcode(RequestOpcode::Query)
@@ -85,7 +85,7 @@ async fn test_query_with_no_values() {
             .await
             .unwrap();
 
-        let q = Query::from("INSERT INTO t (a) VALUES (1)");
+        let q = Statement::from("INSERT INTO t (a) VALUES (1)");
 
         let drop_prepared_frame_rule = RequestRule(
             Condition::RequestOpcode(RequestOpcode::Prepare)

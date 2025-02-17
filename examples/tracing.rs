@@ -8,9 +8,9 @@ use scylla::client::session_builder::SessionBuilder;
 use scylla::observability::tracing::TracingInfo;
 use scylla::response::query_result::QueryResult;
 use scylla::statement::batch::Batch;
-use scylla::statement::{
-    prepared::PreparedStatement, query::Query, Consistency, SerialConsistency,
-};
+use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::query::Statement;
+use scylla::statement::{Consistency, SerialConsistency};
 use std::env;
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
 
     // QUERY
     // Create a simple query and enable tracing for it
-    let mut query: Query = Query::new("SELECT val from examples_ks.tracing");
+    let mut query: Statement = Statement::new("SELECT val from examples_ks.tracing");
     query.set_tracing(true);
     query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
 

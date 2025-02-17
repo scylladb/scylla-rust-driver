@@ -33,7 +33,7 @@ To create an `ExecutionProfile` and attach it to a `Query`:
 # extern crate scylla;
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::statement::Consistency;
 use scylla::client::execution_profile::ExecutionProfile;
 use std::time::Duration;
@@ -45,10 +45,10 @@ let profile = ExecutionProfile::builder()
 
 let handle = profile.into_handle();
 
-let mut query1 = Query::from("SELECT * FROM ks.table");
+let mut query1 = Statement::from("SELECT * FROM ks.table");
 query1.set_execution_profile_handle(Some(handle.clone()));
 
-let mut query2 = Query::from("SELECT pk FROM ks.table WHERE pk = ?");
+let mut query2 = Statement::from("SELECT pk FROM ks.table WHERE pk = ?");
 query2.set_execution_profile_handle(Some(handle));
 # Ok(())
 # }

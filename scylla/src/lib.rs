@@ -45,7 +45,7 @@
 //! * [Batch](crate::client::session::Session::batch)
 //!
 //! To specify options for a single query create the query object and configure it:
-//! * For simple: [Query](crate::statement::query::Query)
+//! * For simple: [`Statement`](crate::statement::query::Statement)
 //! * For prepared: [PreparedStatement](crate::statement::prepared::PreparedStatement)
 //! * For batch: [Batch](crate::statement::batch::Batch)
 //!

@@ -33,7 +33,7 @@ be warned about the clock skew, the warnings can be turned off with `without_war
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::policies::timestamp_generator::MonotonicTimestampGenerator;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use std::sync::Arc;
 
 let session: Session = SessionBuilder::new()
@@ -44,7 +44,7 @@ let session: Session = SessionBuilder::new()
 
 // This query will have a timestamp generated 
 // by the monotonic timestamp generator
-let my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
+let my_query: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
 let to_insert: i32 = 12345;
 session.query_unpaged(my_query, (to_insert,)).await?;
 # Ok(())

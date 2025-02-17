@@ -25,7 +25,7 @@ Below, the remaps described above are followed in code.
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::statement::Consistency;
 use scylla::client::execution_profile::ExecutionProfile;
 
@@ -46,8 +46,8 @@ let session: Session = SessionBuilder::new()
     .build()
     .await?;
 
-let mut query1 = Query::from("SELECT * FROM ks.table");
-let mut query2 = Query::from("SELECT pk FROM ks.table WHERE pk = ?");
+let mut query1 = Statement::from("SELECT * FROM ks.table");
+let mut query2 = Statement::from("SELECT pk FROM ks.table WHERE pk = ?");
 
 query1.set_execution_profile_handle(Some(handle1.clone()));
 query2.set_execution_profile_handle(Some(handle2.clone()));

@@ -2,7 +2,7 @@ use scylla::errors::{ExecutionError, RequestAttemptError};
 use scylla::frame::frame_errors::BatchSerializationError;
 use scylla::frame::frame_errors::CqlRequestSerializationError;
 use scylla::statement::batch::{Batch, BatchType};
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 
 use crate::utils::create_new_session_builder;
 use crate::utils::setup_tracing;
@@ -30,7 +30,7 @@ async fn batch_statements_and_values_mismatch_detected() {
         .await
         .unwrap();
     batch.append_statement(stmt.clone());
-    batch.append_statement(Query::new(
+    batch.append_statement(Statement::new(
         "INSERT INTO batch_serialization_test (p, val) VALUES (3, 4)",
     ));
     batch.append_statement(stmt);

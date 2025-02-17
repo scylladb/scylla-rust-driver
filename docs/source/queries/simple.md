@@ -36,11 +36,11 @@ You can create a query manually to set custom options. For example to change que
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::statement::Consistency;
 
 // Create a Query manually to change the Consistency to ONE
-let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
+let mut my_query: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
 my_query.set_consistency(Consistency::One);
 
 // Insert a value into the table

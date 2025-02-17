@@ -19,7 +19,7 @@ use scylla::policies::load_balancing::RoutingInfo;
 use scylla::response::query_result::QueryResult;
 use scylla::serialize::row::SerializeRow;
 use scylla::statement::prepared::PreparedStatement;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 
 use scylla::errors::ExecutionError;
 use scylla_proxy::{
@@ -212,7 +212,7 @@ async fn send_statement_everywhere(
 async fn send_unprepared_query_everywhere(
     session: &Session,
     cluster: &ClusterState,
-    query: &Query,
+    query: &Statement,
 ) -> Result<Vec<QueryResult>, ExecutionError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
@@ -454,7 +454,7 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
             send_unprepared_query_everywhere(
                 &session,
                 session.get_cluster_state().as_ref(),
-                &Query::new(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')")),
+                &Statement::new(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')")),
             )
             .await
             .unwrap();

@@ -24,11 +24,11 @@ Idempotence has to be specified manually, the driver is not able to figure it ou
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::statement::prepared::PreparedStatement;
 
 // Specify that a Query is idempotent
-let mut my_query: Query = Query::new("SELECT a FROM ks.tab");
+let mut my_query: Statement = Statement::new("SELECT a FROM ks.tab");
 my_query.set_is_idempotent(true);
 
 

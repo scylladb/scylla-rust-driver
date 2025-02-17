@@ -3,7 +3,7 @@ use futures::StreamExt as _;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::response::PagingState;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use std::env;
 use std::ops::ControlFlow;
 
@@ -44,7 +44,8 @@ async fn main() -> Result<()> {
         println!("a, b, c: {}, {}, {}", a, b, c);
     }
 
-    let paged_query = Query::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(6);
+    let paged_query =
+        Statement::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(6);
 
     // Manual paging in a loop, unprepared statement.
     let mut paging_state = PagingState::start();
@@ -75,7 +76,7 @@ async fn main() -> Result<()> {
     }
 
     let paged_prepared = session
-        .prepare(Query::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(7))
+        .prepare(Statement::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(7))
         .await?;
 
     // Manual paging in a loop, prepared statement.

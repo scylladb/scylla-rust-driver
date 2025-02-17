@@ -15,7 +15,7 @@ Priorities of execution profiles and directly set options:
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::statement::Consistency;
 use scylla::client::execution_profile::ExecutionProfile;
 
@@ -33,7 +33,7 @@ let session: Session = SessionBuilder::new()
     .build()
     .await?;
 
-let mut query = Query::from("SELECT * FROM ks.table");
+let mut query = Statement::from("SELECT * FROM ks.table");
 
 // Query is not assigned any specific profile, so session's profile is applied.
 // Therefore, the query will be executed with Consistency::One.

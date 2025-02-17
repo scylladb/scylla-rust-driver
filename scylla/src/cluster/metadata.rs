@@ -26,7 +26,7 @@ use crate::frame::response::event::Event;
 use crate::network::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
 use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
-use crate::statement::query::Query;
+use crate::statement::query::Statement;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
@@ -715,7 +715,7 @@ async fn query_peers(
     connect_port: u16,
 ) -> Result<Vec<Peer>, MetadataError> {
     let mut peers_query =
-        Query::new("select host_id, rpc_address, data_center, rack, tokens from system.peers");
+        Statement::new("select host_id, rpc_address, data_center, rack, tokens from system.peers");
     peers_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
     let peers_query_stream = conn
         .clone()
@@ -736,7 +736,7 @@ async fn query_peers(
         .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
     let mut local_query =
-        Query::new("select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'");
+        Statement::new("select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'");
     local_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
     let local_query_stream = conn
         .clone()
@@ -867,7 +867,7 @@ where
         keyspaces_to_fetch: &[String],
     ) -> Result<QueryPager, MetadataFetchErrorKind> {
         if keyspaces_to_fetch.is_empty() {
-            let mut query = Query::new(query_str);
+            let mut query = Statement::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
             conn.query_iter(query)
@@ -877,7 +877,7 @@ where
             let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
             let query_str = format!("{query_str} where keyspace_name in ?");
 
-            let mut query = Query::new(query_str);
+            let mut query = Statement::new(query_str);
             query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
             let prepared = conn.prepare(&query).await?;
@@ -1784,7 +1784,7 @@ async fn query_table_partitioners(
         }
     }
 
-    let mut partitioner_query = Query::new(
+    let mut partitioner_query = Statement::new(
         "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
     );
     partitioner_query.set_page_size(METADATA_QUERY_PAGE_SIZE);

@@ -10,7 +10,7 @@ Only `INSERT`, `UPDATE` and `DELETE` statements are allowed.
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::statement::batch::Batch;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::statement::prepared::PreparedStatement;
 
 // Create a batch statement
@@ -20,7 +20,7 @@ let mut batch: Batch = Default::default();
 batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(1, 2)");
 
 // Add a simple statement created manually to the batch
-let simple: Query = Query::new("INSERT INTO ks.tab (a, b) VALUES(3, 4)");
+let simple: Statement = Statement::new("INSERT INTO ks.tab (a, b) VALUES(3, 4)");
 batch.append_statement(simple);
 
 // Add a prepared statement to the batch

@@ -9,7 +9,7 @@ use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
 use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use scylla::routing::Shard;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
@@ -258,7 +258,7 @@ impl RetryPolicy for SchemaQueriesRetryPolicy {
     }
 }
 
-fn apply_ddl_lbp(query: &mut Query) {
+fn apply_ddl_lbp(query: &mut Statement) {
     let policy = query
         .get_execution_profile_handle()
         .map(|profile| profile.pointee_to_builder())
@@ -274,12 +274,12 @@ fn apply_ddl_lbp(query: &mut Query) {
 // or something like that.
 #[async_trait::async_trait]
 pub(crate) trait PerformDDL {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError>;
+    async fn ddl(&self, query: impl Into<Statement> + Send) -> Result<(), ExecutionError>;
 }
 
 #[async_trait::async_trait]
 impl PerformDDL for Session {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError> {
+    async fn ddl(&self, query: impl Into<Statement> + Send) -> Result<(), ExecutionError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
         self.query_unpaged(query, &[]).await.map(|_| ())

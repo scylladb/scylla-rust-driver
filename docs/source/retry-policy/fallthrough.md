@@ -36,7 +36,7 @@ To use in a [simple query](../queries/simple.md):
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::policies::retry::FallthroughRetryPolicy;
 
@@ -46,7 +46,7 @@ let handle = ExecutionProfile::builder()
     .into_handle();
 
 // Create a Query manually and set the retry policy
-let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
+let mut my_query: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
 my_query.set_execution_profile_handle(Some(handle));
 
 // Run the query using this retry policy

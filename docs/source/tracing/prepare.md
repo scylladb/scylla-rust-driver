@@ -8,13 +8,13 @@
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Prepare the query with tracing enabled
-let mut to_prepare: Query = Query::new("SELECT a FROM ks.tab");
+let mut to_prepare: Statement = Statement::new("SELECT a FROM ks.tab");
 to_prepare.set_tracing(true);
 
 let mut prepared: PreparedStatement = session

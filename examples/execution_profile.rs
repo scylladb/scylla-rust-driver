@@ -5,7 +5,7 @@ use scylla::client::session_builder::SessionBuilder;
 use scylla::policies::load_balancing;
 use scylla::policies::retry::{DefaultRetryPolicy, FallthroughRetryPolicy};
 use scylla::policies::speculative_execution::PercentileSpeculativeExecutionPolicy;
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::statement::{Consistency, SerialConsistency};
 use std::env;
 use std::sync::Arc;
@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let mut query_insert: Query =
+    let mut query_insert: Statement =
         "INSERT INTO examples_ks.execution_profile (a, b, c) VALUES (?, ?, ?)".into();
 
     // As `query_insert` is set another handle than session1, the execution profile pointed by query's handle

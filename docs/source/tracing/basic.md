@@ -10,13 +10,13 @@ return a `QueryResult` which contains a `tracing_id` if tracing was enabled.
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::query::Query;
+use scylla::statement::query::Statement;
 use scylla::response::query_result::QueryResult;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Create a Query manually and enable tracing
-let mut query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(4)");
+let mut query: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(4)");
 query.set_tracing(true);
 
 let res: QueryResult = session.query_unpaged(query, &[]).await?;

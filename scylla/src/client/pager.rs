@@ -37,8 +37,8 @@ use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{NonErrorQueryResponse, QueryResponse};
-use crate::statement::prepared::PartitionKeyError;
-use crate::statement::{prepared::PreparedStatement, query::Query};
+use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
+use crate::statement::query::Statement;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
@@ -661,7 +661,7 @@ impl QueryPager {
     }
 
     pub(crate) async fn new_for_query(
-        query: Query,
+        query: Statement,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_state: Arc<ClusterState>,
         metrics: Arc<Metrics>,
@@ -863,7 +863,7 @@ impl QueryPager {
     }
 
     pub(crate) async fn new_for_connection_query_iter(
-        query: Query,
+        query: Statement,
         connection: Arc<Connection>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
