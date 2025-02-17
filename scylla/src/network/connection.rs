@@ -821,27 +821,27 @@ impl Connection {
     #[allow(dead_code)]
     pub(crate) async fn query_unpaged(
         &self,
-        query: impl Into<Statement>,
+        statement: impl Into<Statement>,
     ) -> Result<QueryResult, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        let query: Statement = query.into();
+        let statement: Statement = statement.into();
 
-        self.query_raw_unpaged(&query)
+        self.query_raw_unpaged(&statement)
             .await
             .and_then(QueryResponse::into_query_result)
     }
 
     pub(crate) async fn query_raw_unpaged(
         &self,
-        query: &Statement,
+        statement: &Statement,
     ) -> Result<QueryResponse, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_raw_with_consistency(
-            query,
-            query
+            statement,
+            statement
                 .config
                 .determine_consistency(self.config.default_consistency),
-            query.config.serial_consistency.flatten(),
+            statement.config.serial_consistency.flatten(),
             None,
             PagingState::start(),
         )
@@ -850,7 +850,7 @@ impl Connection {
 
     pub(crate) async fn query_raw_with_consistency(
         &self,
-        query: &Statement,
+        statement: &Statement,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
@@ -862,10 +862,10 @@ impl Connection {
                 .as_ref()
                 .map(|gen| gen.next_timestamp())
         };
-        let timestamp = query.get_timestamp().or_else(get_timestamp_from_gen);
+        let timestamp = statement.get_timestamp().or_else(get_timestamp_from_gen);
 
         let query_frame = query::Query {
-            contents: Cow::Borrowed(&query.contents),
+            contents: Cow::Borrowed(&statement.contents),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
@@ -878,7 +878,7 @@ impl Connection {
         };
 
         let response = self
-            .send_request(&query_frame, true, query.config.tracing, None)
+            .send_request(&query_frame, true, statement.config.tracing, None)
             .await?;
 
         Ok(response)

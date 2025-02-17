@@ -661,23 +661,23 @@ impl QueryPager {
     }
 
     pub(crate) async fn new_for_query(
-        query: Statement,
+        statement: Statement,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_state: Arc<ClusterState>,
         metrics: Arc<Metrics>,
     ) -> Result<Self, NextPageError> {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
 
-        let consistency = query
+        let consistency = statement
             .config
             .consistency
             .unwrap_or(execution_profile.consistency);
-        let serial_consistency = query
+        let serial_consistency = statement
             .config
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let page_size = query.get_validated_page_size();
+        let page_size = statement.get_validated_page_size();
 
         let routing_info = RoutingInfo {
             consistency,
@@ -685,7 +685,7 @@ impl QueryPager {
             ..Default::default()
         };
 
-        let retry_session = query
+        let retry_session = statement
             .get_retry_policy()
             .map(|rp| &**rp)
             .unwrap_or(&*execution_profile.retry_policy)
@@ -693,7 +693,7 @@ impl QueryPager {
 
         let parent_span = tracing::Span::current();
         let worker_task = async move {
-            let query_ref = &query;
+            let statement_ref = &statement;
 
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
@@ -701,7 +701,7 @@ impl QueryPager {
                 async move {
                     connection
                         .query_raw_with_consistency(
-                            query_ref,
+                            statement_ref,
                             consistency,
                             serial_consistency,
                             Some(page_size),
@@ -711,7 +711,7 @@ impl QueryPager {
                 }
             };
 
-            let query_ref = &query;
+            let query_ref = &statement;
 
             let span_creator = move || {
                 let span = RequestSpan::new_query(&query_ref.contents);
@@ -723,13 +723,13 @@ impl QueryPager {
                 sender: sender.into(),
                 page_query,
                 statement_info: routing_info,
-                query_is_idempotent: query.config.is_idempotent,
+                query_is_idempotent: statement.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session,
                 execution_profile,
                 metrics,
                 paging_state: PagingState::start(),
-                history_listener: query.config.history_listener.clone(),
+                history_listener: statement.config.history_listener.clone(),
                 current_request_id: None,
                 current_attempt_id: None,
                 parent_span,

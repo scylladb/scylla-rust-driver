@@ -34,7 +34,7 @@ async fn test_prepare_query_with_values() {
             .await
             .unwrap();
 
-        let q = Statement::from("INSERT INTO t (a) VALUES (?)");
+        let s: Statement = Statement::from("INSERT INTO t (a) VALUES (?)");
 
         let drop_unprepared_frame_rule = RequestRule(
             Condition::RequestOpcode(RequestOpcode::Query)
@@ -46,7 +46,7 @@ async fn test_prepare_query_with_values() {
         .change_request_rules(Some(vec![drop_unprepared_frame_rule]));
 
         tokio::select! {
-            _res = session.query_unpaged(q, (0,)) => (),
+            _res = session.query_unpaged(s, (0,)) => (),
             _ = tokio::time::sleep(TIMEOUT_PER_REQUEST) => panic!("Rules did not work: no received response"),
         };
 
@@ -85,7 +85,7 @@ async fn test_query_with_no_values() {
             .await
             .unwrap();
 
-        let q = Statement::from("INSERT INTO t (a) VALUES (1)");
+        let s: Statement = Statement::from("INSERT INTO t (a) VALUES (1)");
 
         let drop_prepared_frame_rule = RequestRule(
             Condition::RequestOpcode(RequestOpcode::Prepare)
@@ -97,7 +97,7 @@ async fn test_query_with_no_values() {
         .change_request_rules(Some(vec![drop_prepared_frame_rule]));
 
         tokio::select! {
-            _res = session.query_unpaged(q, ()) => (),
+            _res = session.query_unpaged(s, ()) => (),
             _ = tokio::time::sleep(TIMEOUT_PER_REQUEST) => panic!("Rules did not work: no received response"),
         };
 

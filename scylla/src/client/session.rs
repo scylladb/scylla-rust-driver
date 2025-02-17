@@ -1,5 +1,5 @@
 //! `Session` is the main object used in the driver.\
-//! It manages all connections to the cluster and allows to perform queries.
+//! It manages all connections to the cluster and allows to execute CQL requests.
 
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::pager::{PreparedIteratorConfig, QueryPager};
@@ -60,7 +60,7 @@ pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
 const TRACING_QUERY_PAGE_SIZE: i32 = 1024;
 
-/// `Session` manages connections to the cluster and allows to perform queries
+/// `Session` manages connections to the cluster and allows to execute CQL requests.
 pub struct Session {
     cluster: Cluster,
     default_execution_profile_handle: ExecutionProfileHandle,
@@ -367,24 +367,24 @@ pub(crate) enum RunRequestResult<ResT> {
 
 impl Session {
     /// Sends a request to the database and receives a response.\
-    /// Performs an unpaged query, i.e. all results are received in a single response.
+    /// Executes an unprepared CQL statement without paging, i.e. all results are received in a single response.
     ///
-    /// This is the easiest way to make a query, but performance is worse than that of prepared queries.
+    /// This is the easiest way to execute a CQL statement, but performance is worse than that of prepared statements.
     ///
-    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
-    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// It is discouraged to use this method with non-empty values argument ([`SerializeRow::is_empty()`]
+    /// trait method returns false). In such case, statement first needs to be prepared (on a single connection), so
     /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_unpaged()`] instead.
     ///
     /// As all results come in one response (no paging is done!), the memory footprint and latency may be huge
     /// for statements returning rows (i.e. SELECTs)! Prefer this method for non-SELECTs, and for SELECTs
-    /// it is best to use paged queries:
+    /// it is best to use paged requests:
     /// - to receive multiple pages and transparently iterate through them, use [query_iter](Session::query_iter).
     /// - to manually receive multiple pages and iterate through them, use [query_single_page](Session::query_single_page).
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/simple.html) for more information
     /// # Arguments
-    /// * `query` - statement to be executed, can be just a `&str` or the [`Statement`] struct.
-    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values.
+    /// * `statement` - statement to be executed, can be just a `&str` or the [`Statement`] struct.
+    /// * `values` - values bound to the statement, the easiest way is to use a tuple of bound values.
     ///
     /// # Examples
     /// ```rust
@@ -424,22 +424,22 @@ impl Session {
     /// ```
     pub async fn query_unpaged(
         &self,
-        query: impl Into<Statement>,
+        statement: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
-        self.do_query_unpaged(&query.into(), values).await
+        self.do_query_unpaged(&statement.into(), values).await
     }
 
     /// Queries a single page from the database, optionally continuing from a saved point.
     ///
-    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
-    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// It is discouraged to use this method with non-empty values argument ([`SerializeRow::is_empty()`]
+    /// trait method returns false). In such case, CQL statement first needs to be prepared (on a single connection), so
     /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_single_page()`] instead.
     ///
     /// # Arguments
     ///
-    /// * `query` - statement to be executed
-    /// * `values` - values bound to the query
+    /// * `statement` - statement to be executed
+    /// * `values` - values bound to the statement
     /// * `paging_state` - previously received paging state or [PagingState::start()]
     ///
     /// # Example
@@ -483,29 +483,29 @@ impl Session {
     /// ```
     pub async fn query_single_page(
         &self,
-        query: impl Into<Statement>,
+        statement: impl Into<Statement>,
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.do_query_single_page(&query.into(), values, paging_state)
+        self.do_query_single_page(&statement.into(), values, paging_state)
             .await
     }
 
-    /// Run an unprepared query with paging\
+    /// Execute an unprepared CQL statement with paging\
     /// This method will query all pages of the result\
     ///
     /// Returns an async iterator (stream) over all received rows\
     /// Page size can be specified in the [`Statement`] passed to the function
     ///
-    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
-    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// It is discouraged to use this method with non-empty values argument ([`SerializeRow::is_empty()`]
+    /// trait method returns false). In such case, statement first needs to be prepared (on a single connection), so
     /// driver will initially perform 2 round trips instead of 1. Please use [`Session::execute_iter()`] instead.
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information.
     ///
     /// # Arguments
-    /// * `query` - statement to be executed, can be just a `&str` or the [`Statement`] struct.
-    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values.
+    /// * `statement` - statement to be executed, can be just a `&str` or the [`Statement`] struct.
+    /// * `values` - values bound to the statement, the easiest way is to use a tuple of bound values.
     ///
     /// # Example
     ///
@@ -529,24 +529,24 @@ impl Session {
     /// ```
     pub async fn query_iter(
         &self,
-        query: impl Into<Statement>,
+        statement: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
-        self.do_query_iter(query.into(), values).await
+        self.do_query_iter(statement.into(), values).await
     }
 
     /// Execute a prepared statement. Requires a [PreparedStatement]
     /// generated using [`Session::prepare`](Session::prepare).\
-    /// Performs an unpaged query, i.e. all results are received in a single response.
+    /// Performs an unpaged request, i.e. all results are received in a single response.
     ///
     /// As all results come in one response (no paging is done!), the memory footprint and latency may be huge
     /// for statements returning rows (i.e. SELECTs)! Prefer this method for non-SELECTs, and for SELECTs
-    /// it is best to use paged queries:
+    /// it is best to use paged requests:
     /// - to receive multiple pages and transparently iterate through them, use [execute_iter](Session::execute_iter).
     /// - to manually receive multiple pages and iterate through them, use [execute_single_page](Session::execute_single_page).
     ///
-    /// Prepared queries are much faster than simple queries:
-    /// * Database doesn't need to parse the query
+    /// Prepared statements are much faster than unprepared statements:
+    /// * Database doesn't need to parse the statement string upon each execution (only once)
     /// * They are properly load balanced using token aware routing
     ///
     /// > ***Warning***\
@@ -558,7 +558,7 @@ impl Session {
     ///
     /// # Arguments
     /// * `prepared` - the prepared statement to execute, generated using [`Session::prepare`](Session::prepare)
-    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values
+    /// * `values` - values bound to the statement, the easiest way is to use a tuple of bound values
     ///
     /// # Example
     /// ```rust
@@ -567,12 +567,12 @@ impl Session {
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use scylla::statement::prepared::PreparedStatement;
     ///
-    /// // Prepare the query for later execution
+    /// // Prepare the statement for later execution
     /// let prepared: PreparedStatement = session
     ///     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     ///     .await?;
     ///
-    /// // Run the prepared query with some values, just like a simple query.
+    /// // Execute the prepared statement with some values, just like an unprepared statement.
     /// let to_insert: i32 = 12345;
     /// session.execute_unpaged(&prepared, (to_insert,)).await?;
     /// # Ok(())
@@ -592,7 +592,7 @@ impl Session {
     /// # Arguments
     ///
     /// * `prepared` - a statement prepared with [prepare](crate::client::session::Session::prepare)
-    /// * `values` - values bound to the query
+    /// * `values` - values bound to the statement
     /// * `paging_state` - continuation based on a paging state received from a previous paged query or None
     ///
     /// # Example
@@ -652,7 +652,7 @@ impl Session {
             .await
     }
 
-    /// Run a prepared query with paging.\
+    /// Execute a prepared statement with paging.\
     /// This method will query all pages of the result.\
     ///
     /// Returns an async iterator (stream) over all received rows.\
@@ -662,7 +662,7 @@ impl Session {
     ///
     /// # Arguments
     /// * `prepared` - the prepared statement to execute, generated using [`Session::prepare`](Session::prepare)
-    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values
+    /// * `values` - values bound to the statement, the easiest way is to use a tuple of bound values
     ///
     /// # Example
     ///
@@ -673,12 +673,12 @@ impl Session {
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use scylla::statement::prepared::PreparedStatement;
     ///
-    /// // Prepare the query for later execution
+    /// // Prepare the statement for later execution
     /// let prepared: PreparedStatement = session
     ///     .prepare("SELECT a, b FROM ks.t")
     ///     .await?;
     ///
-    /// // Execute the query and receive all pages
+    /// // Execute the statement and receive all pages
     /// let mut rows_stream = session
     ///    .execute_iter(prepared, &[])
     ///    .await?
@@ -699,22 +699,22 @@ impl Session {
         self.do_execute_iter(prepared.into(), values).await
     }
 
-    /// Perform a batch query\
-    /// Batch contains many `simple` or `prepared` queries which are executed at once\
-    /// Batch doesn't return any rows
+    /// Execute a batch statement\
+    /// Batch contains many `unprepared` or `prepared` statements which are executed at once\
+    /// Batch doesn't return any rows.
     ///
-    /// Batch values must contain values for each of the queries
+    /// Batch values must contain values for each of the statements.
     ///
-    /// Avoid using non-empty values (`SerializeRow::is_empty()` return false) for simple queries
-    /// inside the batch. Such queries will first need to be prepared, so the driver will need to
-    /// send (numer_of_unprepared_queries_with_values + 1) requests instead of 1 request, severly
+    /// Avoid using non-empty values ([`SerializeRow::is_empty()`] return false) for unprepared statements
+    /// inside the batch. Such statements will first need to be prepared, so the driver will need to
+    /// send (numer_of_unprepared_statements_with_values + 1) requests instead of 1 request, severly
     /// affecting performance.
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/batch.html) for more information
     ///
     /// # Arguments
     /// * `batch` - [Batch] to be performed
-    /// * `values` - List of values for each query, it's the easiest to use a tuple of tuples
+    /// * `values` - List of values for each statement, it's the easiest to use a tuple of tuples
     ///
     /// # Example
     /// ```rust
@@ -725,19 +725,19 @@ impl Session {
     ///
     /// let mut batch: Batch = Default::default();
     ///
-    /// // A query with two bound values
+    /// // A statement with two bound values
     /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(?, ?)");
     ///
-    /// // A query with one bound value
+    /// // A statement with one bound value
     /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(3, ?)");
     ///
-    /// // A query with no bound values
+    /// // A statement with no bound values
     /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(5, 6)");
     ///
-    /// // Batch values is a tuple of 3 tuples containing values for each query
-    /// let batch_values = ((1_i32, 2_i32), // Tuple with two values for the first query
-    ///                     (4_i32,),       // Tuple with one value for the second query
-    ///                     ());            // Empty tuple/unit for the third query
+    /// // Batch values is a tuple of 3 tuples containing values for each statement
+    /// let batch_values = ((1_i32, 2_i32), // Tuple with two values for the first statement
+    ///                     (4_i32,),       // Tuple with one value for the second statement
+    ///                     ());            // Empty tuple/unit for the third statement
     ///
     /// // Run the batch
     /// session.batch(&batch, batch_values).await?;
@@ -920,11 +920,11 @@ impl Session {
 
     async fn do_query_unpaged(
         &self,
-        query: &Statement,
+        statement: &Statement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
         let (result, paging_state_response) = self
-            .query(query, values, None, PagingState::start())
+            .query(statement, values, None, PagingState::start())
             .await?;
         if !paging_state_response.finished() {
             error!("Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
@@ -937,14 +937,14 @@ impl Session {
 
     async fn do_query_single_page(
         &self,
-        query: &Statement,
+        statement: &Statement,
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         self.query(
-            query,
+            statement,
             values,
-            Some(query.get_validated_page_size()),
+            Some(statement.get_validated_page_size()),
             paging_state,
         )
         .await
@@ -963,44 +963,44 @@ impl Session {
     /// should be made.
     async fn query(
         &self,
-        query: &Statement,
+        statement: &Statement,
         values: impl SerializeRow,
         page_size: Option<PageSize>,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let execution_profile = query
+        let execution_profile = statement
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
         let statement_info = RoutingInfo {
-            consistency: query
+            consistency: statement
                 .config
                 .consistency
                 .unwrap_or(execution_profile.consistency),
-            serial_consistency: query
+            serial_consistency: statement
                 .config
                 .serial_consistency
                 .unwrap_or(execution_profile.serial_consistency),
             ..Default::default()
         };
 
-        let span = RequestSpan::new_query(&query.contents);
+        let span = RequestSpan::new_query(&statement.contents);
         let span_ref = &span;
         let run_request_result = self
             .run_request(
                 statement_info,
-                &query.config,
+                &statement.config,
                 execution_profile,
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = query
+                    let serial_consistency = statement
                         .config
                         .serial_consistency
                         .unwrap_or(execution_profile.serial_consistency);
                     // Needed to avoid moving query and values into async move block
-                    let query_ref = &query;
+                    let statement_ref = &statement;
                     let values_ref = &values;
                     let paging_state_ref = &paging_state;
                     async move {
@@ -1008,7 +1008,7 @@ impl Session {
                             span_ref.record_request_size(0);
                             connection
                                 .query_raw_with_consistency(
-                                    query_ref,
+                                    statement_ref,
                                     consistency,
                                     serial_consistency,
                                     page_size,
@@ -1017,7 +1017,7 @@ impl Session {
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
                         } else {
-                            let prepared = connection.prepare(query_ref).await?;
+                            let prepared = connection.prepare(statement_ref).await?;
                             let serialized = prepared.serialize_values(values_ref)?;
                             span_ref.record_request_size(serialized.buffer_size());
                             connection
@@ -1094,17 +1094,17 @@ impl Session {
 
     async fn do_query_iter(
         &self,
-        query: Statement,
+        statement: Statement,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let execution_profile = query
+        let execution_profile = statement
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
         if values.is_empty() {
             QueryPager::new_for_query(
-                query,
+                statement,
                 execution_profile,
                 self.cluster.get_state(),
                 self.metrics.clone(),
@@ -1115,7 +1115,7 @@ impl Session {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
             // we fully prepare a statement beforehand.
-            let prepared = self.prepare(query).await?;
+            let prepared = self.prepare(statement).await?;
             let values = prepared.serialize_values(&values)?;
             QueryPager::new_for_prepared_statement(PreparedIteratorConfig {
                 prepared,
@@ -1130,10 +1130,10 @@ impl Session {
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
-    /// which can later be used to perform more efficient queries
+    /// which can later be used to perform more efficient requests.
     ///
-    /// Prepared queries are much faster than simple queries:
-    /// * Database doesn't need to parse the query
+    /// Prepared statements are much faster than unprepared statements:
+    /// * Database doesn't need to parse the statement string upon each execution (only once)
     /// * They are properly load balanced using token aware routing
     ///
     /// > ***Warning***\
@@ -1145,7 +1145,7 @@ impl Session {
     /// See the documentation of [`PreparedStatement`].
     ///
     /// # Arguments
-    /// * `query` - query to prepare, can be just a `&str` or the [`Statement`] struct.
+    /// * `statement` - statement to prepare, can be just a `&str` or the [`Statement`] struct.
     ///
     /// # Example
     /// ```rust
@@ -1154,12 +1154,12 @@ impl Session {
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use scylla::statement::prepared::PreparedStatement;
     ///
-    /// // Prepare the query for later execution
+    /// // Prepare the statement for later execution
     /// let prepared: PreparedStatement = session
     ///     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     ///     .await?;
     ///
-    /// // Run the prepared query with some values, just like a simple query
+    /// // Execute the prepared statement with some values, just like an unprepared statement.
     /// let to_insert: i32 = 12345;
     /// session.execute_unpaged(&prepared, (to_insert,)).await?;
     /// # Ok(())
@@ -1167,16 +1167,16 @@ impl Session {
     /// ```
     pub async fn prepare(
         &self,
-        query: impl Into<Statement>,
+        statement: impl Into<Statement>,
     ) -> Result<PreparedStatement, PrepareError> {
-        let query = query.into();
-        let query_ref = &query;
+        let statement = statement.into();
+        let statement_ref = &statement;
 
         let cluster_state = self.get_cluster_state();
         let connections_iter = cluster_state.iter_working_connections()?;
 
         // Prepare statements on all connections concurrently
-        let handles = connections_iter.map(|c| async move { c.prepare(query_ref).await });
+        let handles = connections_iter.map(|c| async move { c.prepare(statement_ref).await });
         let mut results = join_all(handles).await.into_iter();
 
         // If at least one prepare was successful, `prepare()` returns Ok.
@@ -1498,7 +1498,7 @@ impl Session {
     /// // Prepare all statements in the batch at once
     /// let prepared_batch: Batch = session.prepare_batch(&batch).await?;
     ///
-    /// // Specify bound values to use with each query
+    /// // Specify bound values to use with each statement
     /// let batch_values = ((1_i32, 2_i32),
     ///                     (3_i32, 4_i32));
     ///
@@ -1543,7 +1543,7 @@ impl Session {
     ///
     /// * `keyspace_name` - keyspace name to use,
     ///   keyspace names can have up to 48 alphanumeric characters and contain underscores
-    /// * `case_sensitive` - if set to true the generated query will put keyspace name in quotes
+    /// * `case_sensitive` - if set to true the generated statement will put keyspace name in quotes
     /// # Example
     /// ```rust
     /// # use scylla::client::session::Session;
@@ -1557,7 +1557,7 @@ impl Session {
     ///
     /// session.use_keyspace("my_keyspace", false).await?;
     ///
-    /// // Now we can omit keyspace name in the query
+    /// // Now we can omit keyspace name in the statement
     /// session
     ///     .query_unpaged("INSERT INTO tab (a) VALUES ('test2')", &[])
     ///     .await?;

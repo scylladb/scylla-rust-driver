@@ -52,9 +52,9 @@ async fn write_batch(
 ) -> Result<QueryResult, ExecutionError> {
     let mut batch_query = Batch::new(BatchType::Unlogged);
     let mut batch_values = Vec::new();
-    let query = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);
-    let query = Statement::new(query);
-    let prepared_statement = session.prepare(query).await.unwrap();
+    let statement_str = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);
+    let statement = Statement::new(statement_str);
+    let prepared_statement = session.prepare(statement).await.unwrap();
     for i in 0..n {
         let mut key = vec![0];
         key.extend(i.to_be_bytes().as_slice());
