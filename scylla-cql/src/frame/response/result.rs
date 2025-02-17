@@ -50,6 +50,7 @@ pub struct TableSpec<'a> {
 /// types those fields will always be set to `false` (even if the DB column
 /// corresponding to given marker / result type is frozen).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ColumnType<'frame> {
     /// Types that are "simple" (non-recursive).
     Native(NativeType),
@@ -82,6 +83,7 @@ pub enum ColumnType<'frame> {
 
 /// A [ColumnType] variants that are "simple" (non-recursive).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum NativeType {
     Ascii,
     Boolean,
@@ -110,6 +112,7 @@ pub enum NativeType {
 ///
 /// Tuple and vector are not collections because they have predefined size.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CollectionType<'frame> {
     List(Box<ColumnType<'frame>>),
     Map(Box<ColumnType<'frame>>, Box<ColumnType<'frame>>),
