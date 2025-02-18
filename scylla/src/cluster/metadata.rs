@@ -24,6 +24,8 @@ use crate::errors::{
 };
 use crate::frame::response::event::Event;
 use crate::network::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
+#[cfg(feature = "metrics")]
+use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::query::Query;
@@ -88,6 +90,9 @@ pub(crate) struct MetadataReader {
     // When a control connection breaks, the PoolRefiller of its pool uses the requester
     // to signal ClusterWorker that an immediate metadata refresh is advisable.
     control_connection_repair_requester: broadcast::Sender<()>,
+
+    #[cfg(feature = "metrics")]
+    metrics: Arc<Metrics>,
 }
 
 /// Describes all metadata retrieved from the cluster
@@ -404,6 +409,7 @@ impl MetadataReader {
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Result<Self, NewSessionError> {
         let (initial_peers, resolved_hostnames) =
             resolve_contact_points(&initial_known_nodes).await;
@@ -431,6 +437,8 @@ impl MetadataReader {
             connection_config.clone(),
             keepalive_interval,
             control_connection_repair_requester.clone(),
+            #[cfg(feature = "metrics")]
+            metrics.clone(),
         );
 
         Ok(MetadataReader {
@@ -447,6 +455,8 @@ impl MetadataReader {
             host_filter: host_filter.clone(),
             initial_known_nodes,
             control_connection_repair_requester,
+            #[cfg(feature = "metrics")]
+            metrics,
         })
     }
 
@@ -552,6 +562,8 @@ impl MetadataReader {
                 self.connection_config.clone(),
                 self.keepalive_interval,
                 self.control_connection_repair_requester.clone(),
+                #[cfg(feature = "metrics")]
+                self.metrics.clone(),
             );
 
             debug!(
@@ -650,6 +662,8 @@ impl MetadataReader {
                         self.connection_config.clone(),
                         self.keepalive_interval,
                         self.control_connection_repair_requester.clone(),
+                        #[cfg(feature = "metrics")]
+                        self.metrics.clone(),
                     );
                 }
             }
@@ -661,6 +675,7 @@ impl MetadataReader {
         connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
         refresh_requester: broadcast::Sender<()>,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> NodeConnectionPool {
         let pool_config = PoolConfig {
             connection_config,
@@ -674,7 +689,14 @@ impl MetadataReader {
             can_use_shard_aware_port: false,
         };
 
-        NodeConnectionPool::new(endpoint, pool_config, None, refresh_requester)
+        NodeConnectionPool::new(
+            endpoint,
+            pool_config,
+            None,
+            refresh_requester,
+            #[cfg(feature = "metrics")]
+            metrics,
+        )
     }
 }
 

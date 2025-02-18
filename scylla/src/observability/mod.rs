@@ -7,5 +7,6 @@
 
 pub(crate) mod driver_tracing;
 pub mod history;
+#[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod tracing;
