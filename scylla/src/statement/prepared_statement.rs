@@ -19,6 +19,7 @@ use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::observability::history::HistoryListener;
 use crate::policies::retry::RetryPolicy;
+use crate::response::query_result::ColumnSpecs;
 use crate::routing::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 use crate::routing::Token;
 
@@ -398,8 +399,8 @@ impl PreparedStatement {
     }
 
     /// Access column specifications of the bind variables of this statement
-    pub fn get_variable_col_specs(&self) -> &[ColumnSpec<'static>] {
-        &self.shared.metadata.col_specs
+    pub fn get_variable_col_specs(&self) -> ColumnSpecs<'_, 'static> {
+        ColumnSpecs::new(&self.shared.metadata.col_specs)
     }
 
     /// Access info about partition key indexes of the bind variables of this statement
@@ -413,8 +414,8 @@ impl PreparedStatement {
     }
 
     /// Access column specifications of the result set returned after the execution of this statement
-    pub fn get_result_set_col_specs(&self) -> &[ColumnSpec<'static>] {
-        self.shared.result_metadata.col_specs()
+    pub fn get_result_set_col_specs(&self) -> ColumnSpecs<'_, 'static> {
+        ColumnSpecs::new(self.shared.result_metadata.col_specs())
     }
 
     /// Get the name of the partitioner used for this statement.

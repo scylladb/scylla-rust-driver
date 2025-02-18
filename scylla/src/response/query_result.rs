@@ -8,87 +8,23 @@ use scylla_cql::deserialize::row::DeserializeRow;
 use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
 use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::response::result::{
-    ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, RawMetadataAndRawRows, TableSpec,
+    ColumnSpec, DeserializedMetadataAndRawRows, RawMetadataAndRawRows,
 };
-
-/// A view over specification of a table in the database.
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct TableSpecView<'res> {
-    table_name: &'res str,
-    ks_name: &'res str,
-}
-
-impl<'res> TableSpecView<'res> {
-    pub(crate) fn new_from_table_spec(spec: &'res TableSpec) -> Self {
-        Self {
-            table_name: spec.table_name(),
-            ks_name: spec.ks_name(),
-        }
-    }
-
-    /// The name of the table.
-    #[inline]
-    pub fn table_name(&self) -> &'res str {
-        self.table_name
-    }
-
-    /// The name of the keyspace the table resides in.
-    #[inline]
-    pub fn ks_name(&self) -> &'res str {
-        self.ks_name
-    }
-}
-
-/// A view over specification of a column returned by the database.
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
-pub struct ColumnSpecView<'res> {
-    table_spec: TableSpecView<'res>,
-    name: &'res str,
-    typ: &'res ColumnType<'res>,
-}
-
-impl<'res> ColumnSpecView<'res> {
-    pub(crate) fn new_from_column_spec(spec: &'res ColumnSpec) -> Self {
-        Self {
-            table_spec: TableSpecView::new_from_table_spec(spec.table_spec()),
-            name: spec.name(),
-            typ: spec.typ(),
-        }
-    }
-
-    /// Returns a view over specification of the table the column is part of.
-    #[inline]
-    pub fn table_spec(&self) -> TableSpecView<'res> {
-        self.table_spec
-    }
-
-    /// The column's name.
-    #[inline]
-    pub fn name(&self) -> &'res str {
-        self.name
-    }
-
-    /// The column's CQL type.
-    #[inline]
-    pub fn typ(&self) -> &'res ColumnType {
-        self.typ
-    }
-}
 
 /// A view over specification of columns returned by the database.
 #[derive(Debug, Clone, Copy)]
-pub struct ColumnSpecs<'res> {
-    specs: &'res [ColumnSpec<'res>],
+pub struct ColumnSpecs<'slice, 'spec> {
+    specs: &'slice [ColumnSpec<'spec>],
 }
 
-impl<'res> ColumnSpecs<'res> {
-    pub(crate) fn new(specs: &'res [ColumnSpec<'res>]) -> Self {
+impl<'slice, 'spec> ColumnSpecs<'slice, 'spec> {
+    /// Creates new [`ColumnSpecs`] wrapper from a slice.
+    pub fn new(specs: &'slice [ColumnSpec<'spec>]) -> Self {
         Self { specs }
     }
 
-    pub(crate) fn inner(&self) -> &'res [ColumnSpec<'res>] {
+    /// Returns a slice of col specs encompassed by this struct.
+    pub fn as_slice(&self) -> &'slice [ColumnSpec<'spec>] {
         self.specs
     }
 
@@ -101,25 +37,24 @@ impl<'res> ColumnSpecs<'res> {
 
     /// Returns specification of k-th column returned from the database.
     #[inline]
-    pub fn get_by_index(&self, k: usize) -> Option<ColumnSpecView<'res>> {
-        self.specs.get(k).map(ColumnSpecView::new_from_column_spec)
+    pub fn get_by_index(&self, k: usize) -> Option<&'slice ColumnSpec<'spec>> {
+        self.specs.get(k)
     }
 
     /// Returns specification of the column with given name returned from the database.
     #[inline]
-    pub fn get_by_name(&self, name: &str) -> Option<(usize, ColumnSpecView<'res>)> {
+    pub fn get_by_name(&self, name: &str) -> Option<(usize, &'slice ColumnSpec<'spec>)> {
         self.specs
             .iter()
             .enumerate()
             .find(|(_idx, spec)| spec.name() == name)
-            .map(|(idx, spec)| (idx, ColumnSpecView::new_from_column_spec(spec)))
     }
 
     /// Returns iterator over specification of columns returned from the database,
     /// ordered by column order in the response.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = ColumnSpecView<'res>> {
-        self.specs.iter().map(ColumnSpecView::new_from_column_spec)
+    pub fn iter(&self) -> impl Iterator<Item = &'slice ColumnSpec<'spec>> {
+        self.specs.iter()
     }
 }
 
@@ -316,7 +251,7 @@ impl QueryRowsResult {
 
     /// Returns column specifications.
     #[inline]
-    pub fn column_specs(&self) -> ColumnSpecs {
+    pub fn column_specs(&self) -> ColumnSpecs<'_, '_> {
         ColumnSpecs::new(self.raw_rows_with_metadata.metadata().col_specs())
     }
 
@@ -487,8 +422,8 @@ mod tests {
     use assert_matches::assert_matches;
     use bytes::{Bytes, BytesMut};
     use itertools::Itertools as _;
-    use scylla_cql::frame::response::result::NativeType;
-    use scylla_cql::frame::response::result::ResultMetadata;
+    use scylla_cql::frame::response::result::{ColumnType, ResultMetadata};
+    use scylla_cql::frame::response::result::{NativeType, TableSpec};
     use scylla_cql::frame::types;
 
     use super::*;
@@ -589,9 +524,7 @@ mod tests {
                 // By index
                 {
                     for (i, expected_col_spec) in column_spec_infinite_iter().enumerate().take(n) {
-                        let expected_view =
-                            ColumnSpecView::new_from_column_spec(&expected_col_spec);
-                        assert_eq!(column_specs.get_by_index(i), Some(expected_view));
+                        assert_eq!(column_specs.get_by_index(i), Some(&expected_col_spec));
                     }
 
                     assert_matches!(column_specs.get_by_index(n), None);
@@ -602,9 +535,10 @@ mod tests {
                     for (idx, expected_col_spec) in column_spec_infinite_iter().enumerate().take(n)
                     {
                         let name = expected_col_spec.name();
-                        let expected_view =
-                            ColumnSpecView::new_from_column_spec(&expected_col_spec);
-                        assert_eq!(column_specs.get_by_name(name), Some((idx, expected_view)));
+                        assert_eq!(
+                            column_specs.get_by_name(name),
+                            Some((idx, &expected_col_spec))
+                        );
                     }
 
                     assert_matches!(column_specs.get_by_name("ala ma kota"), None);
@@ -615,9 +549,7 @@ mod tests {
                     for (got_view, expected_col_spec) in
                         column_specs.iter().zip(column_spec_infinite_iter())
                     {
-                        let expected_view =
-                            ColumnSpecView::new_from_column_spec(&expected_col_spec);
-                        assert_eq!(got_view, expected_view);
+                        assert_eq!(got_view, &expected_col_spec);
                     }
                 }
             }
