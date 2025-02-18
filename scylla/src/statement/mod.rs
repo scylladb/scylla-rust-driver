@@ -15,9 +15,17 @@ use crate::policies::retry::RetryPolicy;
 
 pub mod batch;
 pub mod prepared_statement;
-pub mod query;
+
+// TODO:
+// Discuss three following approaches:
+// 1. Use `mod statement;` and `pub use statement::Statement;` in this file.
+// 2. Rename the `statement` inner module (the one that contains `Statement`). What name should it have?
+// 3. Inline the `Statement` struct here.
+#[allow(clippy::module_inception)]
+mod statement;
 
 pub use crate::frame::types::{Consistency, SerialConsistency};
+pub use statement::Statement;
 
 // This is the default common to drivers.
 const DEFAULT_PAGE_SIZE: i32 = 5000;
