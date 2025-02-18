@@ -52,13 +52,6 @@ impl<'a> RowSerializationContext<'a> {
     pub fn columns(&self) -> &'a [ColumnSpec] {
         self.columns
     }
-
-    /// Looks up and returns a column/bind marker by name.
-    // TODO: change RowSerializationContext to make this faster
-    #[inline]
-    pub fn column_by_name(&self, target: &str) -> Option<&ColumnSpec> {
-        self.columns.iter().find(|&c| c.name() == target)
-    }
 }
 
 /// Represents a set of values that can be sent along a CQL statement.
