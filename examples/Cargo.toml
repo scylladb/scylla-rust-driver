@@ -122,6 +122,10 @@ name = "cloud-openssl"
 path = "cloud-openssl.rs"
 
 [[example]]
+name = "cloud-rustls"
+path = "cloud-rustls.rs"
+
+[[example]]
 name = "tls-openssl"
 path = "tls-openssl.rs"
 
