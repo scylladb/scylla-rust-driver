@@ -118,8 +118,8 @@ name = "query_history"
 path = "query_history.rs"
 
 [[example]]
-name = "cloud"
-path = "cloud.rs"
+name = "cloud-openssl"
+path = "cloud-openssl.rs"
 
 [[example]]
 name = "tls-openssl"
