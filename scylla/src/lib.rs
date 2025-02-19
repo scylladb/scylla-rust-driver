@@ -163,10 +163,6 @@ pub mod serialize {
             BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
             BuiltinTypeCheckErrorKind,
         };
-
-        // Not part of the old framework, but something that we should
-        // still aim to remove from public API.
-        pub use scylla_cql::serialize::row::{SerializedValues, SerializedValuesIterator};
     }
 
     /// Contains the [SerializeValue][value::SerializeValue] trait and its implementations.
