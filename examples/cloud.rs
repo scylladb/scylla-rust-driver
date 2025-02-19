@@ -3,6 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use scylla::client::session_builder::CloudSessionBuilder;
+use scylla::cloud::CloudTlsProvider;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -10,7 +11,7 @@ async fn main() -> Result<()> {
     let config_path = env::args()
         .nth(1)
         .unwrap_or("examples/config_data.yaml".to_owned());
-    let session = CloudSessionBuilder::new(Path::new(&config_path))
+    let session = CloudSessionBuilder::new(Path::new(&config_path), CloudTlsProvider::OpenSsl010)
         .unwrap()
         .build()
         .await
