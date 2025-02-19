@@ -68,19 +68,26 @@ specify the secure connection bundle as follows:
 use std::path::Path;
 use std::error::Error;
 use scylla::client::session_builder::CloudSessionBuilder;
+use scylla::cloud::CloudTlsProvider;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let session = CloudSessionBuilder::new(Path::new("config_data.yaml"))
-        .unwrap()
-        .build()
-        .await
-        .unwrap();
+    let session =
+        CloudSessionBuilder::new(Path::new("config_data.yaml"), CloudTlsProvider::OpenSsl010)
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
 
     Ok(())
 }
 # }
 ```
+
+> ***Note***\
+> `CloudSessionBuilder::new()` accepts two parameters. The first is a path to the configuration file.
+> The second parameter is responsible for choosing the underlying TLS provider library.
+> For more information about providers supported currently by the driver, see [TLS](tls.md).
 
 Note that the bundle file will be provided after the serverless cluster is created. Here is an example of a
 configuration file for a serverless cluster:

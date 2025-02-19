@@ -2,6 +2,7 @@ mod config;
 
 pub use config::CloudConfig;
 pub use config::CloudConfigError;
+pub use config::CloudTlsProvider;
 
 #[cfg(all(
     feature = "cloud",

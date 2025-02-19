@@ -8,7 +8,7 @@ use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 use crate::client::session::TlsContext;
 #[cfg(feature = "cloud")]
-use crate::cloud::{CloudConfig, CloudConfigError};
+use crate::cloud::{CloudConfig, CloudConfigError, CloudTlsProvider};
 use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
@@ -363,9 +363,12 @@ impl GenericSessionBuilder<DefaultMode> {
 impl CloudSessionBuilder {
     /// Creates a new SessionBuilder with default configuration,
     /// based on provided path to Scylla Cloud Config yaml.
-    pub fn new(cloud_config: impl AsRef<Path>) -> Result<Self, CloudConfigError> {
+    pub fn new(
+        cloud_config: impl AsRef<Path>,
+        tls_provider: CloudTlsProvider,
+    ) -> Result<Self, CloudConfigError> {
         let mut config = SessionConfig::new();
-        let cloud_config = CloudConfig::read_from_yaml(cloud_config)?;
+        let cloud_config = CloudConfig::read_from_yaml(cloud_config, tls_provider)?;
         let mut exec_profile_builder = ExecutionProfile::builder();
         if let Some(default_consistency) = cloud_config.get_default_consistency() {
             exec_profile_builder = exec_profile_builder.consistency(default_consistency);
