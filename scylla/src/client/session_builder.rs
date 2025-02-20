@@ -1,25 +1,24 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 use super::execution_profile::ExecutionProfile;
 use super::execution_profile::ExecutionProfileHandle;
 use super::session::{Session, SessionConfig};
 use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
-#[cfg(feature = "cloud")]
-use crate::cloud::{CloudConfig, CloudConfigError};
+use crate::client::session::TlsContext;
+#[cfg(feature = "unstable-cloud")]
+use crate::cloud::{CloudConfig, CloudConfigError, CloudTlsProvider};
 use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::statement::Consistency;
-#[cfg(feature = "ssl")]
-use openssl::ssl::SslContext;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,15 +40,15 @@ impl SessionBuilderKind for DefaultMode {}
 
 pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 #[derive(Clone)]
 pub enum CloudMode {}
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 impl sealed::Sealed for CloudMode {}
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 impl SessionBuilderKind for CloudMode {}
 
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 pub type CloudSessionBuilder = GenericSessionBuilder<CloudMode>;
 
 /// SessionBuilder is used to create new Session instances
@@ -270,18 +269,17 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::sync::Arc;
     /// # use scylla::client::session::Session;
     /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::cluster::metadata::UntranslatedPeer;
     /// # use scylla::errors::TranslationError;
-    /// # use scylla::policies::address_translator::AddressTranslator;
+    /// # use scylla::policies::address_translator::{AddressTranslator, UntranslatedPeer};
     /// struct IdentityTranslator;
     ///
     /// #[async_trait]
     /// impl AddressTranslator for IdentityTranslator {
     ///     async fn translate_address(
     ///         &self,
-    ///         untranslated_peer: &UntranslatedPeer
+    ///         untranslated_peer: &UntranslatedPeer,
     ///     ) -> Result<SocketAddr, TranslationError> {
-    ///         Ok(untranslated_peer.untranslated_address)
+    ///         Ok(untranslated_peer.untranslated_address())
     ///     }
     /// }
     ///
@@ -323,10 +321,12 @@ impl GenericSessionBuilder<DefaultMode> {
         self
     }
 
-    /// ssl feature
-    /// Provide SessionBuilder with SslContext from openssl crate that will be
-    /// used to create an ssl connection to the database.
-    /// If set to None SSL connection won't be used.
+    /// TLS feature
+    ///
+    /// Provide SessionBuilder with TlsContext that will be
+    /// used to create a TLS connection to the database.
+    /// If set to None TLS connection won't be used.
+    ///
     /// Default is None.
     ///
     /// # Example
@@ -344,15 +344,14 @@ impl GenericSessionBuilder<DefaultMode> {
     ///
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .ssl_context(Some(context_builder.build()))
+    ///     .tls_context(Some(context_builder.build()))
     ///     .build()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "ssl")]
-    pub fn ssl_context(mut self, ssl_context: Option<SslContext>) -> Self {
-        self.config.ssl_context = ssl_context;
+    pub fn tls_context(mut self, tls_context: Option<impl Into<TlsContext>>) -> Self {
+        self.config.tls_context = tls_context.map(|t| t.into());
         self
     }
 }
@@ -360,13 +359,16 @@ impl GenericSessionBuilder<DefaultMode> {
 // NOTE: this `impl` block contains configuration options specific for **Cloud** [`Session`].
 // This means that if an option fits both non-Cloud and Cloud `Session`s, it should NOT be put
 // here, but rather in `impl<K> GenericSessionBuilder<K>` block.
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 impl CloudSessionBuilder {
     /// Creates a new SessionBuilder with default configuration,
     /// based on provided path to Scylla Cloud Config yaml.
-    pub fn new(cloud_config: impl AsRef<Path>) -> Result<Self, CloudConfigError> {
+    pub fn new(
+        cloud_config: impl AsRef<Path>,
+        tls_provider: CloudTlsProvider,
+    ) -> Result<Self, CloudConfigError> {
         let mut config = SessionConfig::new();
-        let cloud_config = CloudConfig::read_from_yaml(cloud_config)?;
+        let cloud_config = CloudConfig::read_from_yaml(cloud_config, tls_provider)?;
         let mut exec_profile_builder = ExecutionProfile::builder();
         if let Some(default_consistency) = cloud_config.get_default_consistency() {
             exec_profile_builder = exec_profile_builder.consistency(default_consistency);

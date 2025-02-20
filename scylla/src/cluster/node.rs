@@ -96,7 +96,7 @@ impl Node {
     /// `rack` - optional rack name
     pub(crate) fn new(
         peer: PeerEndpoint,
-        pool_config: PoolConfig,
+        pool_config: &PoolConfig,
         keyspace_name: Option<VerifiedKeyspaceName>,
         enabled: bool,
     ) -> Self {
@@ -132,8 +132,8 @@ impl Node {
     /// The underlying pool is preserved and notified about the IP change.
     /// # Arguments
     ///
-    /// `node` - previous definition of that node
-    /// `address` - new address to connect to
+    /// - `node` - previous definition of that node
+    /// - `address` - new address to connect to
     pub(crate) fn inherit_with_ip_changed(node: &Node, endpoint: PeerEndpoint) -> Self {
         let address = endpoint.address;
         if let Some(ref pool) = node.pool {
@@ -253,7 +253,7 @@ pub enum KnownNode {
 pub(crate) enum InternalKnownNode {
     Hostname(String),
     Address(SocketAddr),
-    #[cfg(feature = "cloud")]
+    #[cfg(feature = "unstable-cloud")]
     CloudEndpoint(CloudEndpoint),
 }
 
@@ -267,7 +267,7 @@ impl From<KnownNode> for InternalKnownNode {
 }
 
 /// Describes a database server in the serverless Scylla Cloud.
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) struct CloudEndpoint {
     pub(crate) hostname: String,
@@ -278,7 +278,7 @@ pub(crate) struct CloudEndpoint {
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
-    #[cfg_attr(not(feature = "cloud"), allow(unused))]
+    #[cfg_attr(not(feature = "unstable-cloud"), allow(unused))]
     pub(crate) datacenter: Option<String>,
 }
 
@@ -328,7 +328,7 @@ pub(crate) async fn resolve_contact_points(
                 address: *address,
                 datacenter: None,
             }),
-            #[cfg(feature = "cloud")]
+            #[cfg(feature = "unstable-cloud")]
             InternalKnownNode::CloudEndpoint(CloudEndpoint {
                 hostname,
                 datacenter,

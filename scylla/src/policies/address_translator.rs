@@ -3,9 +3,47 @@ use std::net::SocketAddr;
 use std::str::FromStr as _;
 
 use async_trait::async_trait;
+use uuid::Uuid;
 
-use crate::cluster::metadata::UntranslatedPeer;
 use crate::errors::TranslationError;
+
+/// Data used to issue connections to a node that is possibly subject to address translation.
+///
+/// Built from `PeerEndpoint` if its `NodeAddr` variant implies address translation possibility.
+#[derive(Debug)]
+pub struct UntranslatedPeer<'a> {
+    pub(crate) host_id: Uuid,
+    pub(crate) untranslated_address: SocketAddr,
+    pub(crate) datacenter: Option<&'a str>,
+    pub(crate) rack: Option<&'a str>,
+}
+
+impl UntranslatedPeer<'_> {
+    /// The unique identifier of the node in the cluster.
+    #[inline]
+    pub fn host_id(&self) -> Uuid {
+        self.host_id
+    }
+
+    /// The address of the node in the cluster as broadcast by the node itself.
+    /// It may be subject to address translation.
+    #[inline]
+    pub fn untranslated_address(&self) -> SocketAddr {
+        self.untranslated_address
+    }
+
+    /// The datacenter the node resides in.
+    #[inline]
+    pub fn datacenter(&self) -> Option<&str> {
+        self.datacenter
+    }
+
+    /// The rack the node resides in.
+    #[inline]
+    pub fn rack(&self) -> Option<&str> {
+        self.rack
+    }
+}
 
 /// Translates IP addresses received from ScyllaDB nodes into locally reachable addresses.
 ///
@@ -37,10 +75,10 @@ impl AddressTranslator for HashMap<SocketAddr, SocketAddr> {
         &self,
         untranslated_peer: &UntranslatedPeer,
     ) -> Result<SocketAddr, TranslationError> {
-        match self.get(&untranslated_peer.untranslated_address) {
+        match self.get(&untranslated_peer.untranslated_address()) {
             Some(&translated_addr) => Ok(translated_addr),
             None => Err(TranslationError::NoRuleForAddress(
-                untranslated_peer.untranslated_address,
+                untranslated_peer.untranslated_address(),
             )),
         }
     }
@@ -56,7 +94,7 @@ impl AddressTranslator for HashMap<&'static str, &'static str> {
     ) -> Result<SocketAddr, TranslationError> {
         for (&rule_addr_str, &translated_addr_str) in self.iter() {
             if let Ok(rule_addr) = SocketAddr::from_str(rule_addr_str) {
-                if rule_addr == untranslated_peer.untranslated_address {
+                if rule_addr == untranslated_peer.untranslated_address() {
                     return SocketAddr::from_str(translated_addr_str).map_err(|reason| {
                         TranslationError::InvalidAddressInRule {
                             translated_addr_str,
@@ -67,7 +105,7 @@ impl AddressTranslator for HashMap<&'static str, &'static str> {
             }
         }
         Err(TranslationError::NoRuleForAddress(
-            untranslated_peer.untranslated_address,
+            untranslated_peer.untranslated_address(),
         ))
     }
 }

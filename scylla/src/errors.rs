@@ -5,7 +5,6 @@ use std::io::ErrorKind;
 use std::net::{AddrParseError, IpAddr, SocketAddr};
 use std::num::ParseIntError;
 use std::sync::Arc;
-
 use thiserror::Error;
 
 use crate::frame::response;
@@ -21,6 +20,9 @@ pub use crate::response::query_result::{
 
 // Re-export error type from authentication module.
 pub use crate::authentication::AuthError;
+
+// Re-export error type from network module.
+pub use crate::network::tls::TlsError;
 
 // Re-export error types from scylla-cql.
 pub use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
@@ -540,6 +542,10 @@ pub enum TranslationError {
         translated_addr_str: &'static str,
         reason: AddrParseError,
     },
+
+    /// An I/O error occurred during address translation.
+    #[error("An I/O error occurred during address translation: {0}")]
+    IoError(Arc<std::io::Error>),
 }
 
 /// An error that occurred during connection setup request execution.
