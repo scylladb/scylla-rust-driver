@@ -1344,13 +1344,16 @@ impl Connection {
         router_handle: Arc<RouterHandle>,
         node_address: IpAddr,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
-        #[cfg(feature = "openssl-010")]
-        if let Some(ssl_config) = &config.ssl_config {
-            let ssl = ssl_config.new_ssl()?;
-            let mut stream = SslStream::new(ssl, stream)?;
-            let _pin = Pin::new(&mut stream).connect().await;
-
-            let (task, handle) = Self::router(
+        async fn spawn_router_and_get_handle(
+            config: ConnectionConfig,
+            stream: (impl AsyncRead + AsyncWrite + Send + 'static),
+            receiver: mpsc::Receiver<Task>,
+            error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
+            orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
+            router_handle: Arc<RouterHandle>,
+            node_address: IpAddr,
+        ) -> RemoteHandle<()> {
+            let (task, handle) = Connection::router(
                 config,
                 stream,
                 receiver,
@@ -1361,10 +1364,28 @@ impl Connection {
             )
             .remote_handle();
             tokio::task::spawn(task);
-            return Ok(handle);
+            handle
         }
 
-        let (task, handle) = Self::router(
+        #[cfg(feature = "openssl-010")]
+        if let Some(ssl_config) = &config.ssl_config {
+            let ssl = ssl_config.new_ssl()?;
+            let mut stream = SslStream::new(ssl, stream)?;
+            let _pin = Pin::new(&mut stream).connect().await;
+
+            return Ok(spawn_router_and_get_handle(
+                config,
+                stream,
+                receiver,
+                error_sender,
+                orphan_notification_receiver,
+                router_handle,
+                node_address,
+            )
+            .await);
+        }
+
+        Ok(spawn_router_and_get_handle(
             config,
             stream,
             receiver,
@@ -1373,9 +1394,7 @@ impl Connection {
             router_handle,
             node_address,
         )
-        .remote_handle();
-        tokio::task::spawn(task);
-        Ok(handle)
+        .await)
     }
 
     async fn router(
