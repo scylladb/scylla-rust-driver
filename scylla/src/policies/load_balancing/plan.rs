@@ -1,4 +1,4 @@
-use rand::{thread_rng, Rng};
+use rand::{rng, Rng};
 use tracing::error;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
@@ -98,7 +98,7 @@ impl<'a> Plan<'a> {
                     .sharder()
                     .map(|sharder| sharder.nr_shards.get())
                     .unwrap_or(1);
-                thread_rng().gen_range(0..nr_shards).into()
+                rng().random_range(0..nr_shards).into()
             }),
         )
     }

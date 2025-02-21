@@ -66,8 +66,8 @@ impl Sharder {
     /// Randomly choose a source port `p` such that `shard == shard_of_source_port(p)`.
     pub fn draw_source_port_for_shard(&self, shard: Shard) -> u16 {
         assert!(shard < self.nr_shards.get() as u32);
-        rand::thread_rng()
-            .gen_range((49152 + self.nr_shards.get() - 1)..(65535 - self.nr_shards.get() + 1))
+        rand::rng()
+            .random_range((49152 + self.nr_shards.get() - 1)..(65535 - self.nr_shards.get() + 1))
             / self.nr_shards.get()
             * self.nr_shards.get()
             + shard as u16

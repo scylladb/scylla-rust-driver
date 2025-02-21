@@ -433,7 +433,7 @@ mod tests {
                 partitioner.write(data);
             } else {
                 let pivot = if !data.is_empty() {
-                    randgen.gen_range(0..data.len())
+                    randgen.random_range(0..data.len())
                 } else {
                     0
                 };
