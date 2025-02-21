@@ -33,8 +33,8 @@ use crate::utils::pretty::{CommaSeparatedDisplayer, DisplayUsingDebug};
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
 use futures::Stream;
-use rand::seq::SliceRandom;
-use rand::{thread_rng, Rng};
+use rand::seq::{IndexedRandom, SliceRandom};
+use rand::{rng, Rng};
 use scylla_macros::DeserializeRow;
 use std::borrow::BorrowMut;
 use std::cell::Cell;
@@ -416,7 +416,7 @@ impl MetadataReader {
 
         let control_connection_endpoint = UntranslatedEndpoint::ContactPoint(
             initial_peers
-                .choose(&mut thread_rng())
+                .choose(&mut rng())
                 .expect("Tried to initialize MetadataReader with empty initial_known_nodes list!")
                 .clone(),
         );
@@ -469,7 +469,7 @@ impl MetadataReader {
         // Therefore, we try to fetch metadata from other known peers, in order.
 
         // shuffle known_peers to iterate through them in random order later
-        self.known_peers.shuffle(&mut thread_rng());
+        self.known_peers.shuffle(&mut rng());
         debug!(
             "Known peers: {}",
             CommaSeparatedDisplayer(self.known_peers.iter().map(DisplayUsingDebug))
@@ -641,7 +641,7 @@ impl MetadataReader {
                 if !self.known_peers.is_empty() {
                     self.control_connection_endpoint = self
                         .known_peers
-                        .choose(&mut thread_rng())
+                        .choose(&mut rng())
                         .expect("known_peers is empty - should be impossible")
                         .clone();
 
@@ -856,7 +856,7 @@ async fn create_peer_from_row(
             // Also, we could implement support for Cassandra's other standard partitioners
             // like RandomPartitioner or ByteOrderedPartitioner.
             trace!("Couldn't parse tokens as 64-bit integers: {}, proceeding with a dummy token. If you're using a partitioner with different token size, consider migrating to murmur3", e);
-            vec![Token::new(rand::thread_rng().gen::<i64>())]
+            vec![Token::new(rand::rng().random::<i64>())]
         }
     };
 
