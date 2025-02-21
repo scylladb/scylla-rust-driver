@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rand::thread_rng;
+use rand::rng;
 use rand::Rng;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
@@ -23,7 +23,7 @@ fn with_random_shard(node: NodeRef) -> (NodeRef, Option<Shard>) {
         .sharder()
         .map(|sharder| sharder.nr_shards.get())
         .unwrap_or(1);
-    (node, Some(thread_rng().gen_range(0..nr_shards) as Shard))
+    (node, Some(rng().random_range(0..nr_shards) as Shard))
 }
 
 impl LoadBalancingPolicy for CustomLoadBalancingPolicy {

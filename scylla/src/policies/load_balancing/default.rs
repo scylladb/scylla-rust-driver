@@ -11,7 +11,7 @@ use crate::{
     routing::{Shard, Token},
 };
 use itertools::{Either, Itertools};
-use rand::{prelude::SliceRandom, thread_rng, Rng};
+use rand::{prelude::SliceRandom, rng, Rng};
 use rand_pcg::Pcg32;
 use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::frame::types::SerialConsistency;
@@ -815,7 +815,7 @@ impl DefaultPolicy {
             let mut gen = Pcg32::new(fixed, 0);
             replica_set.choose_filtered(&mut gen, |(node, shard)| predicate(node, *shard))
         } else {
-            replica_set.choose_filtered(&mut thread_rng(), |(node, shard)| predicate(node, *shard))
+            replica_set.choose_filtered(&mut rng(), |(node, shard)| predicate(node, *shard))
         }
     }
 
@@ -853,7 +853,7 @@ impl DefaultPolicy {
         // Create a randomly rotated slice view
         let nodes_len = nodes.len();
         if nodes_len > 0 {
-            let index = rand::thread_rng().gen_range(0..nodes_len); // gen_range() panics when range is empty!
+            let index = rng().random_range(0..nodes_len); // gen_range() panics when range is empty!
             Either::Left(
                 nodes[index..]
                     .iter()
@@ -896,7 +896,7 @@ impl DefaultPolicy {
             let mut gen = Pcg32::new(fixed, 0);
             vec.shuffle(&mut gen);
         } else {
-            vec.shuffle(&mut thread_rng());
+            vec.shuffle(&mut rng());
         }
 
         vec.into_iter()
