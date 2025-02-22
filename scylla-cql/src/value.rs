@@ -102,26 +102,23 @@ impl CqlTimeuuid {
         // 4 bytes    2 bytes    2 bytes
         // time_low - time_mid - time_hi_and_version
         let bytes = self.0.as_bytes();
-        ((bytes[6] & 0x0F) as u64) << 56
-            | (bytes[7] as u64) << 48
-            | (bytes[4] as u64) << 40
-            | (bytes[5] as u64) << 32
-            | (bytes[0] as u64) << 24
-            | (bytes[1] as u64) << 16
-            | (bytes[2] as u64) << 8
-            | (bytes[3] as u64)
+        u64::from_be_bytes([
+            bytes[6] & 0x0f,
+            bytes[7],
+            bytes[4],
+            bytes[5],
+            bytes[0],
+            bytes[1],
+            bytes[2],
+            bytes[3],
+        ])
     }
 
     fn lsb(&self) -> u64 {
         let bytes = self.0.as_bytes();
-        (bytes[8] as u64) << 56
-            | (bytes[9] as u64) << 48
-            | (bytes[10] as u64) << 40
-            | (bytes[11] as u64) << 32
-            | (bytes[12] as u64) << 24
-            | (bytes[13] as u64) << 16
-            | (bytes[14] as u64) << 8
-            | (bytes[15] as u64)
+        u64::from_be_bytes([
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+        ])
     }
 
     fn lsb_signed(&self) -> u64 {
@@ -1248,4 +1245,40 @@ pub fn deser_cql_value(
 #[derive(Debug, Default, PartialEq)]
 pub struct Row {
     pub columns: Vec<Option<CqlValue>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr as _;
+
+    use super::*;
+
+    #[test]
+    fn timeuuid_msb_byte_order() {
+        let uuid = CqlTimeuuid::from_str("00010203-0405-0607-0809-0a0b0c0d0e0f").unwrap();
+
+        assert_eq!(0x0607040500010203, uuid.msb());
+    }
+
+    #[test]
+    fn timeuuid_msb_clears_version_bits() {
+        // UUID version nibble should be cleared
+        let uuid = CqlTimeuuid::from_str("ffffffff-ffff-ffff-ffff-ffffffffffff").unwrap();
+
+        assert_eq!(0x0fffffffffffffff, uuid.msb());
+    }
+
+    #[test]
+    fn timeuuid_lsb_byte_order() {
+        let uuid = CqlTimeuuid::from_str("00010203-0405-0607-0809-0a0b0c0d0e0f").unwrap();
+
+        assert_eq!(0x08090a0b0c0d0e0f, uuid.lsb());
+    }
+
+    #[test]
+    fn timeuuid_lsb_modifies_no_bits() {
+        let uuid = CqlTimeuuid::from_str("ffffffff-ffff-ffff-ffff-ffffffffffff").unwrap();
+
+        assert_eq!(0xffffffffffffffff, uuid.lsb());
+    }
 }
