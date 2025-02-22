@@ -1796,9 +1796,8 @@ impl Session {
         let result = match effective_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
-                .map(|res| res.map_err(RequestError::from))
                 .unwrap_or_else(|_| Err(RequestError::RequestTimeout(timeout))),
-            None => runner.await.map_err(RequestError::from),
+            None => runner.await,
         };
 
         if let Some((history_listener, request_id)) = history_listener_and_id {
