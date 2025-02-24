@@ -13,6 +13,8 @@ use crate::deserialize::FrameSlice;
 use crate::frame::response::result::{CollectionType, ColumnType};
 use crate::frame::types;
 
+pub use crate::pretty::CqlValueDisplayer;
+
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[error("Value is too large to fit in the CQL type")]
 pub struct ValueOverflow;
@@ -1280,5 +1282,127 @@ mod tests {
         let uuid = CqlTimeuuid::from_str("ffffffff-ffff-ffff-ffff-ffffffffffff").unwrap();
 
         assert_eq!(0xffffffffffffffff, uuid.lsb());
+    }
+
+    #[test]
+    fn test_cql_value_displayer() {
+        assert_eq!(
+            format!("{}", CqlValueDisplayer(CqlValue::Boolean(true))),
+            "true"
+        );
+        assert_eq!(format!("{}", CqlValueDisplayer(CqlValue::Int(123))), "123");
+        assert_eq!(
+            format!(
+                "{}",
+                // 123.456
+                CqlValueDisplayer(CqlValue::Decimal(
+                    CqlDecimal::from_signed_be_bytes_and_exponent(vec![0x01, 0xE2, 0x40], 3)
+                ))
+            ),
+            "blobAsDecimal(0x0000000301e240)"
+        );
+        assert_eq!(
+            format!("{}", CqlValueDisplayer(CqlValue::Float(12.75))),
+            "12.75"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                CqlValueDisplayer(CqlValue::Text("Ala ma kota".to_owned()))
+            ),
+            "'Ala ma kota'"
+        );
+        assert_eq!(
+            format!("{}", CqlValueDisplayer(CqlValue::Text("Foo's".to_owned()))),
+            "'Foo''s'"
+        );
+
+        // Time types are the most tricky
+        assert_eq!(
+            format!(
+                "{}",
+                CqlValueDisplayer(CqlValue::Date(CqlDate(40 + (1 << 31))))
+            ),
+            "'1970-02-10'"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                CqlValueDisplayer(CqlValue::Duration(CqlDuration {
+                    months: 1,
+                    days: 2,
+                    nanoseconds: 3,
+                }))
+            ),
+            "1mo2d3ns"
+        );
+        let t = chrono_04::NaiveTime::from_hms_nano_opt(6, 5, 4, 123)
+            .unwrap()
+            .signed_duration_since(chrono_04::NaiveTime::MIN);
+        let t = t.num_nanoseconds().unwrap();
+        assert_eq!(
+            format!("{}", CqlValueDisplayer(CqlValue::Time(CqlTime(t)))),
+            "'06:05:04.000000123'"
+        );
+
+        let t = chrono_04::NaiveDate::from_ymd_opt(2005, 4, 2)
+            .unwrap()
+            .and_time(chrono_04::NaiveTime::from_hms_opt(19, 37, 42).unwrap());
+        assert_eq!(
+            format!(
+                "{}",
+                CqlValueDisplayer(CqlValue::Timestamp(CqlTimestamp(
+                    t.signed_duration_since(chrono_04::NaiveDateTime::default())
+                        .num_milliseconds()
+                )))
+            ),
+            "'2005-04-02 19:37:42.000+0000'"
+        );
+
+        // Compound types
+        let list_or_set = vec![CqlValue::Int(1), CqlValue::Int(3), CqlValue::Int(2)];
+        assert_eq!(
+            format!("{}", CqlValueDisplayer(CqlValue::List(list_or_set.clone()))),
+            "[1,3,2]"
+        );
+        assert_eq!(
+            format!("{}", CqlValueDisplayer(CqlValue::Set(list_or_set.clone()))),
+            "{1,3,2}"
+        );
+
+        let tuple: Vec<_> = list_or_set
+            .into_iter()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .collect();
+        assert_eq!(
+            format!("{}", CqlValueDisplayer(CqlValue::Tuple(tuple))),
+            "(1,3,2,null)"
+        );
+
+        let map = vec![
+            (CqlValue::Text("foo".to_owned()), CqlValue::Int(123)),
+            (CqlValue::Text("bar".to_owned()), CqlValue::Int(321)),
+        ];
+        assert_eq!(
+            format!("{}", CqlValueDisplayer(CqlValue::Map(map))),
+            "{'foo':123,'bar':321}"
+        );
+
+        let fields = vec![
+            ("foo".to_owned(), Some(CqlValue::Int(123))),
+            ("bar".to_owned(), Some(CqlValue::Int(321))),
+        ];
+        assert_eq!(
+            format!(
+                "{}",
+                CqlValueDisplayer(CqlValue::UserDefinedType {
+                    keyspace: "ks".to_owned(),
+                    name: "typ".to_owned(),
+                    fields,
+                })
+            ),
+            "{foo:123,bar:321}"
+        );
     }
 }
