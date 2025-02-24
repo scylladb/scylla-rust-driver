@@ -804,6 +804,7 @@ pub struct CqlDuration {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum CqlValue {
     Ascii(String),
     Boolean(bool),
