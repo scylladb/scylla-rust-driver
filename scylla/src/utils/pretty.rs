@@ -1,5 +1,6 @@
 use crate::value::CqlValue;
 use chrono::{LocalResult, TimeZone, Utc};
+use itertools::Itertools;
 use scylla_cql::value::{CqlDate, CqlTime, CqlTimestamp};
 
 use std::borrow::Borrow;
@@ -107,30 +108,28 @@ where
             // Compound types
             CqlValue::Tuple(t) => {
                 f.write_str("(")?;
-                CommaSeparatedDisplayer(
-                    t.iter()
-                        .map(|x| MaybeNullDisplayer(x.as_ref().map(CqlValueDisplayer))),
-                )
-                .fmt(f)?;
+                t.iter()
+                    .map(|x| MaybeNullDisplayer(x.as_ref().map(CqlValueDisplayer)))
+                    .format(",")
+                    .fmt(f)?;
                 f.write_str(")")?;
             }
             CqlValue::List(v) => {
                 f.write_str("[")?;
-                CommaSeparatedDisplayer(v.iter().map(CqlValueDisplayer)).fmt(f)?;
+                v.iter().map(CqlValueDisplayer).format(",").fmt(f)?;
                 f.write_str("]")?;
             }
             CqlValue::Set(v) => {
                 f.write_str("{")?;
-                CommaSeparatedDisplayer(v.iter().map(CqlValueDisplayer)).fmt(f)?;
+                v.iter().map(CqlValueDisplayer).format(",").fmt(f)?;
                 f.write_str("}")?;
             }
             CqlValue::Map(m) => {
                 f.write_str("{")?;
-                CommaSeparatedDisplayer(
-                    m.iter()
-                        .map(|(k, v)| PairDisplayer(CqlValueDisplayer(k), CqlValueDisplayer(v))),
-                )
-                .fmt(f)?;
+                m.iter()
+                    .map(|(k, v)| PairDisplayer(CqlValueDisplayer(k), CqlValueDisplayer(v)))
+                    .format(",")
+                    .fmt(f)?;
                 f.write_str("}")?;
             }
             CqlValue::UserDefinedType {
@@ -139,10 +138,13 @@ where
                 fields,
             } => {
                 f.write_str("{")?;
-                CommaSeparatedDisplayer(fields.iter().map(|(k, v)| {
-                    PairDisplayer(k, MaybeNullDisplayer(v.as_ref().map(CqlValueDisplayer)))
-                }))
-                .fmt(f)?;
+                fields
+                    .iter()
+                    .map(|(k, v)| {
+                        PairDisplayer(k, MaybeNullDisplayer(v.as_ref().map(CqlValueDisplayer)))
+                    })
+                    .format(",")
+                    .fmt(f)?;
                 f.write_str("}")?;
             }
         }
@@ -168,27 +170,6 @@ impl Display for CqlStringLiteralDisplayer<'_> {
             f.write_str(part)?;
         }
         f.write_str("'")?;
-        Ok(())
-    }
-}
-
-pub(crate) struct CommaSeparatedDisplayer<I>(pub(crate) I);
-
-impl<I, T> Display for CommaSeparatedDisplayer<I>
-where
-    I: Iterator<Item = T> + Clone,
-    T: Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut first = true;
-        for t in self.0.clone() {
-            if first {
-                first = false;
-            } else {
-                f.write_str(",")?;
-            }
-            write!(f, "{}", t)?;
-        }
         Ok(())
     }
 }
