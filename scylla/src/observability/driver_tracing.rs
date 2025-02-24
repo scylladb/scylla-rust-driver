@@ -5,7 +5,7 @@ use crate::routing::{Shard, Token};
 use itertools::{Either, Itertools};
 use scylla_cql::frame::response::result::ColumnSpec;
 use scylla_cql::frame::response::result::RawMetadataAndRawRows;
-use scylla_cql::value::{deser_cql_value, CqlValueDisplayer};
+use scylla_cql::value::deser_cql_value;
 use std::borrow::Borrow;
 use std::fmt::Display;
 use std::sync::atomic::AtomicUsize;
@@ -173,7 +173,7 @@ fn partition_key_displayer<'ps, 'res, 'spec: 'ps>(
             .map(|(mut cell, spec)| deser_cql_value(spec.typ(), &mut cell))
     })
     .map(|c| match c {
-        Ok(c) => Either::Left(CqlValueDisplayer(c)),
+        Ok(c) => Either::Left(c),
         Err(_) => Either::Right("<decoding error>"),
     })
     .format(", ")

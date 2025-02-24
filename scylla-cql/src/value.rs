@@ -13,8 +13,6 @@ use crate::deserialize::FrameSlice;
 use crate::frame::response::result::{CollectionType, ColumnType};
 use crate::frame::types;
 
-pub use crate::pretty::CqlValueDisplayer;
-
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[error("Value is too large to fit in the CQL type")]
 pub struct ValueOverflow;
@@ -1076,6 +1074,134 @@ impl CqlValue {
     // TODO
 }
 
+/// Displays a CqlValue. The syntax should resemble the CQL literal syntax
+/// (but no guarantee is given that it's always the same).
+impl std::fmt::Display for CqlValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::pretty::{
+            CqlStringLiteralDisplayer, HexBytes, MaybeNullDisplayer, PairDisplayer,
+        };
+        use chrono_04::TimeZone;
+        use itertools::Itertools;
+
+        match self {
+            // Scalar types
+            CqlValue::Ascii(a) => write!(f, "{}", CqlStringLiteralDisplayer(a))?,
+            CqlValue::Text(t) => write!(f, "{}", CqlStringLiteralDisplayer(t))?,
+            CqlValue::Blob(b) => write!(f, "0x{:x}", HexBytes(b))?,
+            CqlValue::Empty => write!(f, "0x")?,
+            CqlValue::Decimal(d) => {
+                let (bytes, scale) = d.as_signed_be_bytes_slice_and_exponent();
+                write!(
+                    f,
+                    "blobAsDecimal(0x{:x}{:x})",
+                    HexBytes(&scale.to_be_bytes()),
+                    HexBytes(bytes)
+                )?
+            }
+            CqlValue::Float(fl) => write!(f, "{}", fl)?,
+            CqlValue::Double(d) => write!(f, "{}", d)?,
+            CqlValue::Boolean(b) => write!(f, "{}", b)?,
+            CqlValue::Int(i) => write!(f, "{}", i)?,
+            CqlValue::BigInt(bi) => write!(f, "{}", bi)?,
+            CqlValue::Inet(i) => write!(f, "'{}'", i)?,
+            CqlValue::SmallInt(si) => write!(f, "{}", si)?,
+            CqlValue::TinyInt(ti) => write!(f, "{}", ti)?,
+            CqlValue::Varint(vi) => write!(
+                f,
+                "blobAsVarint(0x{:x})",
+                HexBytes(vi.as_signed_bytes_be_slice())
+            )?,
+            CqlValue::Counter(c) => write!(f, "{}", c.0)?,
+            CqlValue::Date(CqlDate(d)) => {
+                // This is basically a copy of the code used in `impl TryInto<NaiveDate> for CqlDate` impl
+                // in scylla-cql. We can't call this impl because it is behind chrono feature in scylla-cql.
+
+                // date_days is u32 then converted to i64 then we subtract 2^31;
+                // Max value is 2^31, min value is -2^31. Both values can safely fit in chrono::Duration, this call won't panic
+                let days_since_epoch =
+                    chrono_04::Duration::try_days(*d as i64 - (1 << 31)).unwrap();
+
+                // TODO: chrono::NaiveDate does not handle the whole range
+                // supported by the `date` datatype
+                match chrono_04::NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .unwrap()
+                    .checked_add_signed(days_since_epoch)
+                {
+                    Some(d) => write!(f, "'{}'", d)?,
+                    None => f.write_str("<date out of representable range>")?,
+                }
+            }
+            CqlValue::Duration(d) => write!(f, "{}mo{}d{}ns", d.months, d.days, d.nanoseconds)?,
+            CqlValue::Time(CqlTime(t)) => {
+                write!(
+                    f,
+                    "'{:02}:{:02}:{:02}.{:09}'",
+                    t / 3_600_000_000_000,
+                    t / 60_000_000_000 % 60,
+                    t / 1_000_000_000 % 60,
+                    t % 1_000_000_000,
+                )?;
+            }
+            CqlValue::Timestamp(CqlTimestamp(t)) => {
+                match chrono_04::Utc.timestamp_millis_opt(*t) {
+                    chrono_04::LocalResult::Ambiguous(_, _) => unreachable!(), // not supposed to happen with timestamp_millis_opt
+                    chrono_04::LocalResult::Single(d) => {
+                        write!(f, "{}", d.format("'%Y-%m-%d %H:%M:%S%.3f%z'"))?
+                    }
+                    chrono_04::LocalResult::None => {
+                        f.write_str("<timestamp out of representable range>")?
+                    }
+                }
+            }
+            CqlValue::Timeuuid(t) => write!(f, "{}", t)?,
+            CqlValue::Uuid(u) => write!(f, "{}", u)?,
+
+            // Compound types
+            CqlValue::Tuple(t) => {
+                f.write_str("(")?;
+                t.iter()
+                    .map(|x| MaybeNullDisplayer(x.as_ref()))
+                    .format(",")
+                    .fmt(f)?;
+                f.write_str(")")?;
+            }
+            CqlValue::List(v) => {
+                f.write_str("[")?;
+                v.iter().format(",").fmt(f)?;
+                f.write_str("]")?;
+            }
+            CqlValue::Set(v) => {
+                f.write_str("{")?;
+                v.iter().format(",").fmt(f)?;
+                f.write_str("}")?;
+            }
+            CqlValue::Map(m) => {
+                f.write_str("{")?;
+                m.iter()
+                    .map(|(k, v)| PairDisplayer(k, v))
+                    .format(",")
+                    .fmt(f)?;
+                f.write_str("}")?;
+            }
+            CqlValue::UserDefinedType {
+                keyspace: _,
+                name: _,
+                fields,
+            } => {
+                f.write_str("{")?;
+                fields
+                    .iter()
+                    .map(|(k, v)| PairDisplayer(k, MaybeNullDisplayer(v.as_ref())))
+                    .format(",")
+                    .fmt(f)?;
+                f.write_str("}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn deser_cql_value(
     typ: &ColumnType,
     buf: &mut &[u8],
@@ -1286,53 +1412,42 @@ mod tests {
 
     #[test]
     fn test_cql_value_displayer() {
-        assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::Boolean(true))),
-            "true"
-        );
-        assert_eq!(format!("{}", CqlValueDisplayer(CqlValue::Int(123))), "123");
+        assert_eq!(format!("{}", CqlValue::Boolean(true)), "true");
+        assert_eq!(format!("{}", CqlValue::Int(123)), "123");
         assert_eq!(
             format!(
                 "{}",
                 // 123.456
-                CqlValueDisplayer(CqlValue::Decimal(
-                    CqlDecimal::from_signed_be_bytes_and_exponent(vec![0x01, 0xE2, 0x40], 3)
+                CqlValue::Decimal(CqlDecimal::from_signed_be_bytes_and_exponent(
+                    vec![0x01, 0xE2, 0x40],
+                    3
                 ))
             ),
             "blobAsDecimal(0x0000000301e240)"
         );
+        assert_eq!(format!("{}", CqlValue::Float(12.75)), "12.75");
         assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::Float(12.75))),
-            "12.75"
-        );
-        assert_eq!(
-            format!(
-                "{}",
-                CqlValueDisplayer(CqlValue::Text("Ala ma kota".to_owned()))
-            ),
+            format!("{}", CqlValue::Text("Ala ma kota".to_owned())),
             "'Ala ma kota'"
         );
         assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::Text("Foo's".to_owned()))),
+            format!("{}", CqlValue::Text("Foo's".to_owned())),
             "'Foo''s'"
         );
 
         // Time types are the most tricky
         assert_eq!(
-            format!(
-                "{}",
-                CqlValueDisplayer(CqlValue::Date(CqlDate(40 + (1 << 31))))
-            ),
+            format!("{}", CqlValue::Date(CqlDate(40 + (1 << 31)))),
             "'1970-02-10'"
         );
         assert_eq!(
             format!(
                 "{}",
-                CqlValueDisplayer(CqlValue::Duration(CqlDuration {
+                CqlValue::Duration(CqlDuration {
                     months: 1,
                     days: 2,
                     nanoseconds: 3,
-                }))
+                })
             ),
             "1mo2d3ns"
         );
@@ -1341,7 +1456,7 @@ mod tests {
             .signed_duration_since(chrono_04::NaiveTime::MIN);
         let t = t.num_nanoseconds().unwrap();
         assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::Time(CqlTime(t)))),
+            format!("{}", CqlValue::Time(CqlTime(t))),
             "'06:05:04.000000123'"
         );
 
@@ -1351,10 +1466,10 @@ mod tests {
         assert_eq!(
             format!(
                 "{}",
-                CqlValueDisplayer(CqlValue::Timestamp(CqlTimestamp(
+                CqlValue::Timestamp(CqlTimestamp(
                     t.signed_duration_since(chrono_04::NaiveDateTime::default())
                         .num_milliseconds()
-                )))
+                ))
             ),
             "'2005-04-02 19:37:42.000+0000'"
         );
@@ -1362,32 +1477,23 @@ mod tests {
         // Compound types
         let list_or_set = vec![CqlValue::Int(1), CqlValue::Int(3), CqlValue::Int(2)];
         assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::List(list_or_set.clone()))),
+            format!("{}", CqlValue::List(list_or_set.clone())),
             "[1,3,2]"
         );
-        assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::Set(list_or_set.clone()))),
-            "{1,3,2}"
-        );
+        assert_eq!(format!("{}", CqlValue::Set(list_or_set.clone())), "{1,3,2}");
 
         let tuple: Vec<_> = list_or_set
             .into_iter()
             .map(Some)
             .chain(std::iter::once(None))
             .collect();
-        assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::Tuple(tuple))),
-            "(1,3,2,null)"
-        );
+        assert_eq!(format!("{}", CqlValue::Tuple(tuple)), "(1,3,2,null)");
 
         let map = vec![
             (CqlValue::Text("foo".to_owned()), CqlValue::Int(123)),
             (CqlValue::Text("bar".to_owned()), CqlValue::Int(321)),
         ];
-        assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::Map(map))),
-            "{'foo':123,'bar':321}"
-        );
+        assert_eq!(format!("{}", CqlValue::Map(map)), "{'foo':123,'bar':321}");
 
         let fields = vec![
             ("foo".to_owned(), Some(CqlValue::Int(123))),
@@ -1396,11 +1502,11 @@ mod tests {
         assert_eq!(
             format!(
                 "{}",
-                CqlValueDisplayer(CqlValue::UserDefinedType {
+                CqlValue::UserDefinedType {
                     keyspace: "ks".to_owned(),
                     name: "typ".to_owned(),
                     fields,
-                })
+                }
             ),
             "{foo:123,bar:321}"
         );
