@@ -23,7 +23,7 @@ itertools = "0.14.0"
 num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
 num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
-chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, optional = true }
+chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, features = ["alloc"] }
 lz4_flex = { version = "0.11.1" }
 async-trait = "0.1.57"
 serde = { version = "1.0", features = ["derive"], optional = true }
@@ -46,7 +46,7 @@ harness = false
 [features]
 secrecy-08 = ["dep:secrecy-08"]
 time-03 = ["dep:time-03"]
-chrono-04 = ["dep:chrono-04"]
+chrono-04 = []
 num-bigint-03 = ["dep:num-bigint-03"]
 num-bigint-04 = ["dep:num-bigint-04"]
 bigdecimal-04 = ["dep:bigdecimal-04"]
