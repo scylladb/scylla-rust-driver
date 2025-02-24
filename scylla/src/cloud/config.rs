@@ -92,55 +92,7 @@ impl CloudConfig {
         let domain_name = datacenter.get_node_domain();
         let auth_info = self.get_current_auth_info();
 
-        let tls_context = match *auth_info.get_tls() {
-            #[cfg(feature = "openssl-010")]
-            TlsInfo::OpenSsl010 { ref key, ref cert } => {
-                use openssl::ssl::{SslContext, SslMethod, SslVerifyMode};
-                let mut builder = SslContext::builder(SslMethod::tls())?;
-                builder.set_verify(if datacenter.get_insecure_skip_tls_verify() {
-                    SslVerifyMode::NONE
-                } else {
-                    SslVerifyMode::PEER
-                });
-                let ca = datacenter.ca_cert.openssl_ca().expect(
-                    "Driver bug! User chose OpenSSL
-                    provider, but datacenter CA cert is not OpenSSL",
-                );
-                builder.cert_store_mut().add_cert(ca.clone())?;
-                builder.set_certificate(cert)?;
-                builder.set_private_key(key)?;
-                let context = builder.build();
-                TlsContext::OpenSsl010(context)
-            }
-            #[cfg(feature = "rustls-023")]
-            TlsInfo::Rustls023 {
-                ref cert_chain,
-                ref key,
-            } => {
-                use rustls::ClientConfig;
-
-                let mut root_store = rustls::RootCertStore::empty();
-                let ca = datacenter.ca_cert.rustls_ca().expect(
-                    "Driver bug! User chose Rustls
-                    provider, but datacenter CA cert is not Rustls",
-                );
-                root_store.add(ca.clone())?;
-                let builder = ClientConfig::builder();
-                let builder = if datacenter.get_insecure_skip_tls_verify() {
-                    let supported = builder.crypto_provider().signature_verification_algorithms;
-                    builder
-                        .dangerous()
-                        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {
-                            supported,
-                        }))
-                } else {
-                    builder.with_root_certificates(root_store)
-                };
-
-                let config = builder.with_client_auth_cert(cert_chain.clone(), key.clone_key())?;
-                TlsContext::Rustls023(Arc::new(config))
-            }
-        };
+        let tls_context = auth_info.get_tls().get_dc_tls_context(datacenter)?;
 
         Ok(Some(TlsConfig::new_for_sni(
             tls_context,
@@ -255,6 +207,58 @@ impl TlsInfo {
                 let cert_chain: Vec<_> = rustls::pki_types::CertificateDer::pem_slice_iter(cert)
                     .collect::<Result<_, _>>()?;
                 Ok(TlsInfo::Rustls023 { cert_chain, key })
+            }
+        }
+    }
+
+    fn get_dc_tls_context(&self, datacenter: &Datacenter) -> Result<TlsContext, TlsError> {
+        match *self {
+            #[cfg(feature = "openssl-010")]
+            TlsInfo::OpenSsl010 { ref key, ref cert } => {
+                use openssl::ssl::{SslContext, SslMethod, SslVerifyMode};
+                let mut builder = SslContext::builder(SslMethod::tls())?;
+                builder.set_verify(if datacenter.get_insecure_skip_tls_verify() {
+                    SslVerifyMode::NONE
+                } else {
+                    SslVerifyMode::PEER
+                });
+                let ca = datacenter.ca_cert.openssl_ca().expect(
+                    "Driver bug! User chose OpenSSL
+                    provider, but datacenter CA cert is not OpenSSL",
+                );
+                builder.cert_store_mut().add_cert(ca.clone())?;
+                builder.set_certificate(cert)?;
+                builder.set_private_key(key)?;
+                let context = builder.build();
+                Ok(TlsContext::OpenSsl010(context))
+            }
+            #[cfg(feature = "rustls-023")]
+            TlsInfo::Rustls023 {
+                ref cert_chain,
+                ref key,
+            } => {
+                use rustls::ClientConfig;
+
+                let mut root_store = rustls::RootCertStore::empty();
+                let ca = datacenter.ca_cert.rustls_ca().expect(
+                    "Driver bug! User chose Rustls
+                    provider, but datacenter CA cert is not Rustls",
+                );
+                root_store.add(ca.clone())?;
+                let builder = ClientConfig::builder();
+                let builder = if datacenter.get_insecure_skip_tls_verify() {
+                    let supported = builder.crypto_provider().signature_verification_algorithms;
+                    builder
+                        .dangerous()
+                        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {
+                            supported,
+                        }))
+                } else {
+                    builder.with_root_certificates(root_store)
+                };
+
+                let config = builder.with_client_auth_cert(cert_chain.clone(), key.clone_key())?;
+                Ok(TlsContext::Rustls023(Arc::new(config)))
             }
         }
     }
