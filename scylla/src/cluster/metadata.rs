@@ -28,7 +28,6 @@ use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::query::Query;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
-use crate::utils::pretty::DisplayUsingDebug;
 
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
@@ -471,10 +470,7 @@ impl MetadataReader {
 
         // shuffle known_peers to iterate through them in random order later
         self.known_peers.shuffle(&mut rng());
-        debug!(
-            "Known peers: {}",
-            self.known_peers.iter().map(DisplayUsingDebug).format(", ")
-        );
+        debug!("Known peers: {:?}", self.known_peers.iter().format(", "));
 
         let address_of_failed_control_connection = self.control_connection_endpoint.address();
         let filtered_known_peers = self
