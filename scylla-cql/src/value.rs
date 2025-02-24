@@ -591,6 +591,22 @@ pub struct CqlTimestamp(pub i64);
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CqlTime(pub i64);
 
+impl CqlDate {
+    fn try_to_chrono_04_naive_date(&self) -> Result<chrono_04::NaiveDate, ValueOverflow> {
+        let days_since_unix_epoch = self.0 as i64 - (1 << 31);
+
+        // date_days is u32 then converted to i64 then we subtract 2^31;
+        // Max value is 2^31, min value is -2^31. Both values can safely fit in chrono::Duration, this call won't panic
+        let duration_since_unix_epoch =
+            chrono_04::Duration::try_days(days_since_unix_epoch).unwrap();
+
+        chrono_04::NaiveDate::from_yo_opt(1970, 1)
+            .unwrap()
+            .checked_add_signed(duration_since_unix_epoch)
+            .ok_or(ValueOverflow)
+    }
+}
+
 #[cfg(feature = "chrono-04")]
 impl From<chrono_04::NaiveDate> for CqlDate {
     fn from(value: chrono_04::NaiveDate) -> Self {
@@ -609,17 +625,19 @@ impl TryInto<chrono_04::NaiveDate> for CqlDate {
     type Error = ValueOverflow;
 
     fn try_into(self) -> Result<chrono_04::NaiveDate, Self::Error> {
-        let days_since_unix_epoch = self.0 as i64 - (1 << 31);
+        self.try_to_chrono_04_naive_date()
+    }
+}
 
-        // date_days is u32 then converted to i64 then we subtract 2^31;
-        // Max value is 2^31, min value is -2^31. Both values can safely fit in chrono::Duration, this call won't panic
-        let duration_since_unix_epoch =
-            chrono_04::Duration::try_days(days_since_unix_epoch).unwrap();
-
-        chrono_04::NaiveDate::from_yo_opt(1970, 1)
-            .unwrap()
-            .checked_add_signed(duration_since_unix_epoch)
-            .ok_or(ValueOverflow)
+impl CqlTimestamp {
+    fn try_to_chrono_04_datetime_utc(
+        &self,
+    ) -> Result<chrono_04::DateTime<chrono_04::Utc>, ValueOverflow> {
+        use chrono_04::TimeZone;
+        match chrono_04::Utc.timestamp_millis_opt(self.0) {
+            chrono_04::LocalResult::Single(datetime) => Ok(datetime),
+            _ => Err(ValueOverflow),
+        }
     }
 }
 
@@ -635,11 +653,7 @@ impl TryInto<chrono_04::DateTime<chrono_04::Utc>> for CqlTimestamp {
     type Error = ValueOverflow;
 
     fn try_into(self) -> Result<chrono_04::DateTime<chrono_04::Utc>, Self::Error> {
-        use chrono_04::TimeZone;
-        match chrono_04::Utc.timestamp_millis_opt(self.0) {
-            chrono_04::LocalResult::Single(datetime) => Ok(datetime),
-            _ => Err(ValueOverflow),
-        }
+        self.try_to_chrono_04_datetime_utc()
     }
 }
 
@@ -1081,7 +1095,6 @@ impl std::fmt::Display for CqlValue {
         use crate::pretty::{
             CqlStringLiteralDisplayer, HexBytes, MaybeNullDisplayer, PairDisplayer,
         };
-        use chrono_04::TimeZone;
         use itertools::Itertools;
 
         match self {
@@ -1113,23 +1126,12 @@ impl std::fmt::Display for CqlValue {
                 HexBytes(vi.as_signed_bytes_be_slice())
             )?,
             CqlValue::Counter(c) => write!(f, "{}", c.0)?,
-            CqlValue::Date(CqlDate(d)) => {
-                // This is basically a copy of the code used in `impl TryInto<NaiveDate> for CqlDate` impl
-                // in scylla-cql. We can't call this impl because it is behind chrono feature in scylla-cql.
-
-                // date_days is u32 then converted to i64 then we subtract 2^31;
-                // Max value is 2^31, min value is -2^31. Both values can safely fit in chrono::Duration, this call won't panic
-                let days_since_epoch =
-                    chrono_04::Duration::try_days(*d as i64 - (1 << 31)).unwrap();
-
+            CqlValue::Date(d) => {
                 // TODO: chrono::NaiveDate does not handle the whole range
                 // supported by the `date` datatype
-                match chrono_04::NaiveDate::from_ymd_opt(1970, 1, 1)
-                    .unwrap()
-                    .checked_add_signed(days_since_epoch)
-                {
-                    Some(d) => write!(f, "'{}'", d)?,
-                    None => f.write_str("<date out of representable range>")?,
+                match d.try_to_chrono_04_naive_date() {
+                    Ok(d) => write!(f, "'{}'", d)?,
+                    Err(_) => f.write_str("<date out of representable range>")?,
                 }
             }
             CqlValue::Duration(d) => write!(f, "{}mo{}d{}ns", d.months, d.days, d.nanoseconds)?,
@@ -1143,17 +1145,10 @@ impl std::fmt::Display for CqlValue {
                     t % 1_000_000_000,
                 )?;
             }
-            CqlValue::Timestamp(CqlTimestamp(t)) => {
-                match chrono_04::Utc.timestamp_millis_opt(*t) {
-                    chrono_04::LocalResult::Ambiguous(_, _) => unreachable!(), // not supposed to happen with timestamp_millis_opt
-                    chrono_04::LocalResult::Single(d) => {
-                        write!(f, "{}", d.format("'%Y-%m-%d %H:%M:%S%.3f%z'"))?
-                    }
-                    chrono_04::LocalResult::None => {
-                        f.write_str("<timestamp out of representable range>")?
-                    }
-                }
-            }
+            CqlValue::Timestamp(ts) => match ts.try_to_chrono_04_datetime_utc() {
+                Ok(d) => write!(f, "{}", d.format("'%Y-%m-%d %H:%M:%S%.3f%z'"))?,
+                Err(_) => f.write_str("<timestamp out of representable range>")?,
+            },
             CqlValue::Timeuuid(t) => write!(f, "{}", t)?,
             CqlValue::Uuid(u) => write!(f, "{}", u)?,
 
