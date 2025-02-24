@@ -1530,6 +1530,7 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
+ "itertools 0.14.0",
  "lazy_static",
  "lz4_flex",
  "num-bigint 0.3.3",
