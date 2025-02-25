@@ -3,11 +3,14 @@ COMPOSE := docker compose -f test/cluster/docker-compose.yml
 .PHONY: all
 all: test
 
+.PHONY: static
+static: fmt-check check check-without-features check-all-features clippy clippy-all-features
+
 .PHONY: ci
-ci: fmt-check check check-without-features check-all-features clippy clippy-all-features test build
+ci: static test build
 
 .PHONY: dockerized-ci
-dockerized-ci: fmt-check check check-without-features check-all-features clippy clippy-all-features dockerized-test build
+dockerized-ci: static dockerized-test build
 
 .PHONY: fmt
 fmt:
