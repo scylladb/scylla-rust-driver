@@ -63,7 +63,7 @@ Ongoing efforts:
 
 ## Getting Help
 
-Please join the `#rust-driver` channel on [ScyllaDB Slack] to discuss any issues or questions you might have.
+We invite you to discuss any issues and ask questions on the [ScyllaDB Forum] and the `#rust-driver` channel on [ScyllaDB Slack].
 
 ## Supported Rust Versions
 Our driver's minimum supported Rust version (MSRV) is 1.70.0. Any changes:
@@ -92,6 +92,7 @@ This project is licensed under either of
 at your option.
 
 [ScyllaDB Slack]: http://slack.scylladb.com/
+[ScyllaDB Forum]: https://forum.scylladb.com/
 [Apache Cassandra®]: https://cassandra.apache.org/
 [cdrs-tokio]: https://github.com/krojew/cdrs-tokio
 [CQL binary protocol]: https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec
