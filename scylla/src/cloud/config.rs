@@ -1,11 +1,18 @@
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::{collections::HashMap, io};
 
-use openssl::{
-    pkey::{PKey, Private},
-    x509::X509,
-};
+use async_trait::async_trait;
 use scylla_cql::{frame::types::SerialConsistency, Consistency};
 use thiserror::Error;
+use tracing::warn;
+use uuid::Uuid;
+
+use crate::client::session::TlsContext;
+use crate::cluster::node::resolve_hostname;
+use crate::errors::TranslationError;
+use crate::network::tls::{TlsConfig, TlsError};
+use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 
 #[non_exhaustive]
 #[derive(Debug, Error)]
@@ -23,7 +30,7 @@ pub enum CloudConfigError {
     Validation(String),
 
     #[error("Error during key/cert parsing: {0}")]
-    Ssl(#[from] openssl::error::ErrorStack),
+    Tls(#[from] TlsError),
 }
 
 /// Configuration for creating a session to a serverless cluster.
@@ -68,27 +75,198 @@ impl CloudConfig {
             "BUG: Validation should have prevented current context's auth info pointing to unknown auth_info",
         )
     }
+
+    pub(crate) fn make_tls_config_for_scylla_cloud_host(
+        &self,
+        host_id: Option<Uuid>,
+        dc: Option<&str>,
+        proxy_address: SocketAddr,
+    ) -> Result<Option<TlsConfig>, TlsError> {
+        let Some(datacenter) = dc.and_then(|dc| self.get_datacenters().get(dc)) else {
+            warn!("Datacenter {:?} of node {:?} with addr {} not described in cloud config. Proceeding without setting SNI for the node, which will most probably result in nonworking connections,.",
+                   dc, host_id, proxy_address);
+            // FIXME: Consider returning error here.
+            return Ok(None);
+        };
+
+        let domain_name = datacenter.get_node_domain();
+        let auth_info = self.get_current_auth_info();
+
+        let tls_context = auth_info.get_tls().get_dc_tls_context(datacenter)?;
+
+        Ok(Some(TlsConfig::new_for_sni(
+            tls_context,
+            domain_name,
+            host_id,
+        )))
+    }
+}
+
+#[async_trait]
+impl AddressTranslator for CloudConfig {
+    async fn translate_address(
+        &self,
+        untranslated_peer: &UntranslatedPeer,
+    ) -> Result<SocketAddr, TranslationError> {
+        // If we operate in the serverless Cloud, then we substitute every node's address
+        // with the address of the proxy in the datacenter that the node resides in.
+        let UntranslatedPeer {
+            host_id,
+            untranslated_address,
+            ref datacenter,
+            ..
+        } = *untranslated_peer;
+
+        let Some(dc) = datacenter.as_deref() else {
+            warn!( // FIXME: perhaps error! would fit here better?
+                "Datacenter for node {} is empty in the Metadata fetched from the Cloud cluster; ; therefore address \
+                    broadcast by the node was left as address to open connection to.",
+                host_id
+            );
+            // FIXME: Is this acceptable to do such fallback?
+            return Ok(untranslated_address);
+        };
+
+        let Some(dc_config) = self.get_datacenters().get(dc) else {
+            warn!( // FIXME: perhaps error! would fit here better?
+                "Datacenter {} that node {} resides in not found in the Cloud config; ; therefore address \
+                    broadcast by the node was left as address to open connection to.",
+                dc, host_id
+            );
+            // FIXME: Is this acceptable to do such fallback?
+            return Ok(untranslated_address);
+        };
+
+        let hostname = dc_config.get_server();
+        let resolved = resolve_hostname(hostname).await
+            // inspect_err() is stable since 1.76.
+            // TODO: use inspect_err once we bump MSRV to at least 1.76.
+            .map_err(|err| {
+                warn!(
+                    "Couldn't resolve address: {} of datacenter {} that node {} resides in; therefore address \
+                        broadcast by the node was left as address to open connection to.",
+                    hostname, dc, host_id
+                );
+                err
+            })
+            .map_err(Arc::new)
+            .map_err(TranslationError::IoError)?;
+
+        Ok(resolved)
+    }
+}
+
+/// Choice of the TLS provider for the cloud connection.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub enum CloudTlsProvider {
+    #[cfg(feature = "openssl-010")]
+    OpenSsl010,
+    #[cfg(feature = "rustls-023")]
+    Rustls023,
 }
 
 /// Contains all authentication info for creating TLS connections using SNI proxy
 /// to connect to cloud nodes.
 #[derive(Debug)]
 pub(crate) struct AuthInfo {
-    key: PKey<Private>,
-    cert: X509,
+    tls: TlsInfo,
     #[allow(unused)]
     username: Option<String>,
     #[allow(unused)]
     password: Option<String>,
 }
 
-impl AuthInfo {
-    pub(crate) fn get_key(&self) -> &PKey<Private> {
-        &self.key
+#[derive(Debug)]
+pub(crate) enum TlsInfo {
+    #[cfg(feature = "openssl-010")]
+    OpenSsl010 {
+        key: openssl::pkey::PKey<openssl::pkey::Private>,
+        cert: openssl::x509::X509,
+    },
+    #[cfg(feature = "rustls-023")]
+    Rustls023 {
+        cert_chain: Vec<rustls::pki_types::CertificateDer<'static>>,
+        key: rustls::pki_types::PrivateKeyDer<'static>,
+    },
+}
+
+impl TlsInfo {
+    fn from_pem(cert: &[u8], key: &[u8], tls_provider: CloudTlsProvider) -> Result<Self, TlsError> {
+        match tls_provider {
+            #[cfg(feature = "openssl-010")]
+            CloudTlsProvider::OpenSsl010 => {
+                let cert = openssl::x509::X509::from_pem(cert)?;
+                let key = openssl::pkey::PKey::private_key_from_pem(key)?;
+                Ok(TlsInfo::OpenSsl010 { key, cert })
+            }
+            #[cfg(feature = "rustls-023")]
+            CloudTlsProvider::Rustls023 => {
+                use rustls::pki_types::pem::PemObject;
+                let key = rustls::pki_types::PrivateKeyDer::from_pem_slice(key)?;
+                let cert_chain: Vec<_> = rustls::pki_types::CertificateDer::pem_slice_iter(cert)
+                    .collect::<Result<_, _>>()?;
+                Ok(TlsInfo::Rustls023 { cert_chain, key })
+            }
+        }
     }
 
-    pub(crate) fn get_cert(&self) -> &X509 {
-        &self.cert
+    fn get_dc_tls_context(&self, datacenter: &Datacenter) -> Result<TlsContext, TlsError> {
+        match *self {
+            #[cfg(feature = "openssl-010")]
+            TlsInfo::OpenSsl010 { ref key, ref cert } => {
+                use openssl::ssl::{SslContext, SslMethod, SslVerifyMode};
+                let mut builder = SslContext::builder(SslMethod::tls())?;
+                builder.set_verify(if datacenter.get_insecure_skip_tls_verify() {
+                    SslVerifyMode::NONE
+                } else {
+                    SslVerifyMode::PEER
+                });
+                let ca = datacenter.ca_cert.openssl_ca().expect(
+                    "Driver bug! User chose OpenSSL
+                    provider, but datacenter CA cert is not OpenSSL",
+                );
+                builder.cert_store_mut().add_cert(ca.clone())?;
+                builder.set_certificate(cert)?;
+                builder.set_private_key(key)?;
+                let context = builder.build();
+                Ok(TlsContext::OpenSsl010(context))
+            }
+            #[cfg(feature = "rustls-023")]
+            TlsInfo::Rustls023 {
+                ref cert_chain,
+                ref key,
+            } => {
+                use rustls::ClientConfig;
+
+                let mut root_store = rustls::RootCertStore::empty();
+                let ca = datacenter.ca_cert.rustls_ca().expect(
+                    "Driver bug! User chose Rustls
+                    provider, but datacenter CA cert is not Rustls",
+                );
+                root_store.add(ca.clone())?;
+                let builder = ClientConfig::builder();
+                let builder = if datacenter.get_insecure_skip_tls_verify() {
+                    let supported = builder.crypto_provider().signature_verification_algorithms;
+                    builder
+                        .dangerous()
+                        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {
+                            supported,
+                        }))
+                } else {
+                    builder.with_root_certificates(root_store)
+                };
+
+                let config = builder.with_client_auth_cert(cert_chain.clone(), key.clone_key())?;
+                Ok(TlsContext::Rustls023(Arc::new(config)))
+            }
+        }
+    }
+}
+
+impl AuthInfo {
+    pub(crate) fn get_tls(&self) -> &TlsInfo {
+        &self.tls
     }
 
     #[allow(unused)]
@@ -102,10 +280,10 @@ impl AuthInfo {
     }
 }
 
-/// Contains cloud datacenter configuration for creating TLS connections to its nodes.  
+/// Contains cloud datacenter configuration for creating TLS connections to its nodes.
 #[derive(Debug)]
 pub(crate) struct Datacenter {
-    certificate_authority: X509,
+    ca_cert: TlsCert,
     server: String,
     #[allow(unused)]
     tls_server_name: Option<String>,
@@ -116,10 +294,6 @@ pub(crate) struct Datacenter {
 }
 
 impl Datacenter {
-    pub(crate) fn get_certificate_authority(&self) -> &X509 {
-        &self.certificate_authority
-    }
-
     pub(crate) fn get_server(&self) -> &str {
         &self.server
     }
@@ -143,6 +317,38 @@ impl Datacenter {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum TlsCert {
+    #[cfg(feature = "openssl-010")]
+    OpenSsl010(openssl::x509::X509),
+    #[cfg(feature = "rustls-023")]
+    Rustls023(rustls::pki_types::CertificateDer<'static>),
+}
+
+impl TlsCert {
+    #[cfg(feature = "openssl-010")]
+    fn openssl_ca(&self) -> Option<&openssl::x509::X509> {
+        // To silence the compiler warnings when enum consists of only one variant.
+        #[allow(irrefutable_let_patterns)]
+        if let TlsCert::OpenSsl010(ca) = self {
+            Some(ca)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(feature = "rustls-023")]
+    fn rustls_ca(&self) -> Option<&rustls::pki_types::CertificateDer<'static>> {
+        // To silence the compiler warnings when enum consists of only one variant.
+        #[allow(irrefutable_let_patterns)]
+        if let TlsCert::Rustls023(ca) = self {
+            Some(ca)
+        } else {
+            None
+        }
+    }
+}
+
 /// Contains the names of the primary datacenter and authentication info.
 #[derive(Debug)]
 pub(crate) struct Context {
@@ -151,12 +357,10 @@ pub(crate) struct Context {
 }
 
 mod deserialize {
-    use super::CloudConfigError;
+    use super::{CloudConfigError, CloudTlsProvider, TlsCert, TlsError, TlsInfo};
     use base64::{engine::general_purpose, Engine as _};
     use scylla_cql::{frame::types::SerialConsistency, Consistency};
     use std::{collections::HashMap, fs::File, io::Read, path::Path};
-
-    use openssl::{pkey::PKey, x509::X509};
 
     use serde::Deserialize;
     use tracing::warn;
@@ -321,10 +525,11 @@ mod deserialize {
         Ok(pem.into_boxed_slice())
     }
 
-    impl TryFrom<RawCloudConfig> for super::CloudConfig {
+    impl TryFrom<(RawCloudConfig, CloudTlsProvider)> for super::CloudConfig {
         type Error = CloudConfigError;
 
-        fn try_from(config: RawCloudConfig) -> Result<Self, Self::Error> {
+        fn try_from(v: (RawCloudConfig, CloudTlsProvider)) -> Result<Self, Self::Error> {
+            let (config, tls_provider) = v;
             if let Some(ref api_version) = config.apiVersion {
                 if !SUPPORTED_API_VERSIONS
                     .iter()
@@ -346,7 +551,8 @@ mod deserialize {
                 .datacenters
                 .into_iter()
                 .map(|(dc_name, dc_data)| {
-                    super::Datacenter::try_from(dc_data).map(|dc_data| (dc_name, dc_data))
+                    super::Datacenter::try_from((dc_data, tls_provider))
+                        .map(|dc_data| (dc_name, dc_data))
                 })
                 .collect::<Result<HashMap<String, super::Datacenter>, CloudConfigError>>()?;
 
@@ -354,7 +560,7 @@ mod deserialize {
                 .authInfos
                 .into_iter()
                 .map(|(auth_info_name, auth_info_data)| {
-                    match super::AuthInfo::try_from(auth_info_data) {
+                    match super::AuthInfo::try_from((auth_info_data, tls_provider)) {
                         Ok(auth_info_data) => Ok((auth_info_name, auth_info_data)),
                         Err(err) => Err(err),
                     }
@@ -400,10 +606,11 @@ mod deserialize {
         }
     }
 
-    impl TryFrom<AuthInfo> for super::AuthInfo {
+    impl TryFrom<(AuthInfo, CloudTlsProvider)> for super::AuthInfo {
         type Error = CloudConfigError;
 
-        fn try_from(auth_info: AuthInfo) -> Result<Self, Self::Error> {
+        fn try_from(v: (AuthInfo, CloudTlsProvider)) -> Result<Self, Self::Error> {
+            let (auth_info, tls_provider) = v;
             let cert_pem = get_pem_data_from_string_or_load_from_file(
                 "clientCertificateData",
                 "clientCertificatePath",
@@ -417,23 +624,21 @@ mod deserialize {
                 auth_info.clientKeyPath.as_deref(),
             )?;
 
-            let cert = X509::from_pem(&cert_pem[..]).map_err(CloudConfigError::Ssl)?;
-
-            let key = PKey::private_key_from_pem(&key_pem[..]).map_err(CloudConfigError::Ssl)?;
+            let tls = TlsInfo::from_pem(cert_pem.as_ref(), key_pem.as_ref(), tls_provider)?;
 
             Ok(super::AuthInfo {
-                key,
-                cert,
+                tls,
                 username: auth_info.username,
                 password: auth_info.password,
             })
         }
     }
 
-    impl TryFrom<Datacenter> for super::Datacenter {
+    impl TryFrom<(Datacenter, CloudTlsProvider)> for super::Datacenter {
         type Error = CloudConfigError;
 
-        fn try_from(datacenter: Datacenter) -> Result<Self, Self::Error> {
+        fn try_from(v: (Datacenter, CloudTlsProvider)) -> Result<Self, Self::Error> {
+            let (datacenter, tls_provider) = v;
             // Validate node domain
             // Using parts relevant to hostnames as we're dealing with a part of hostname
             // RFC-1123 Section 2.1 and RFC-952 1.
@@ -517,11 +722,25 @@ mod deserialize {
                 datacenter.certificateAuthorityPath.as_deref(),
             )?;
 
-            let certificate_authority =
-                X509::from_pem(&cert_pem[..]).map_err(CloudConfigError::Ssl)?;
+            let ca_cert = match tls_provider {
+                #[cfg(feature = "openssl-010")]
+                CloudTlsProvider::OpenSsl010 => {
+                    let openssl_ca_cert =
+                        openssl::x509::X509::from_pem(&cert_pem[..]).map_err(TlsError::from)?;
+                    TlsCert::OpenSsl010(openssl_ca_cert)
+                }
+                #[cfg(feature = "rustls-023")]
+                CloudTlsProvider::Rustls023 => {
+                    use rustls::pki_types::pem::PemObject as _;
+                    let rustls_ca_cert =
+                        rustls::pki_types::CertificateDer::from_pem_slice(cert_pem.as_ref())
+                            .map_err(TlsError::from)?;
+                    TlsCert::Rustls023(rustls_ca_cert)
+                }
+            };
 
             Ok(super::Datacenter {
-                certificate_authority,
+                ca_cert,
                 server: datacenter.server,
                 node_domain,
                 insecure_skip_tls_verify: datacenter.insecureSkipTlsVerify.unwrap_or(false),
@@ -541,23 +760,27 @@ mod deserialize {
     }
 
     impl super::CloudConfig {
-        pub fn read_from_yaml(config_path: impl AsRef<Path>) -> Result<Self, CloudConfigError> {
+        pub fn read_from_yaml(
+            config_path: impl AsRef<Path>,
+            tls_provider: CloudTlsProvider,
+        ) -> Result<Self, CloudConfigError> {
             let mut yaml = File::open(config_path)?;
             let config = RawCloudConfig::try_from_reader(&mut yaml)?;
-            Self::try_from(config)
+            Self::try_from((config, tls_provider))
         }
     }
 
     #[cfg(test)]
     mod tests {
         use crate::cloud::config::deserialize::Parameters;
+        use crate::cloud::config::TlsInfo;
+        use crate::cloud::CloudTlsProvider;
         use crate::test_utils::setup_tracing;
 
         use super::super::CloudConfig;
         use super::RawCloudConfig;
         use assert_matches::assert_matches;
         use base64::{engine::general_purpose, Engine as _};
-        use openssl::x509::X509;
         use scylla_cql::frame::types::SerialConsistency;
         use scylla_cql::Consistency;
 
@@ -598,108 +821,231 @@ mod deserialize {
             }
         }
 
-        #[test]
-        fn test_cloud_config_dc_validation_no_cert_provided() {
-            setup_tracing();
+        fn test_cloud_config_dc_validation_no_cert_provided(tls_provider: CloudTlsProvider) {
             let dc_no_cert = super::Datacenter {
                 certificateAuthorityPath: None,
                 certificateAuthorityData: None,
                 ..dc_valid()
             };
-            super::super::Datacenter::try_from(dc_no_cert).unwrap_err();
+            super::super::Datacenter::try_from((dc_no_cert, tls_provider)).unwrap_err();
         }
 
+        #[cfg(feature = "openssl-010")]
         #[test]
-        fn test_cloud_config_dc_validation_cert_not_found() {
+        fn test_cloud_config_dc_validation_no_cert_provided_openssl_010() {
             setup_tracing();
+            test_cloud_config_dc_validation_no_cert_provided(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_dc_validation_no_cert_provided_rustls_023() {
+            setup_tracing();
+            test_cloud_config_dc_validation_no_cert_provided(CloudTlsProvider::Rustls023);
+        }
+
+        fn test_cloud_config_dc_validation_cert_not_found(tls_provider: CloudTlsProvider) {
             let dc_cert_nonfound = super::Datacenter {
                 certificateAuthorityPath: Some(NO_PEM_PATH.into()),
                 certificateAuthorityData: None,
                 ..dc_valid()
             };
-            super::super::Datacenter::try_from(dc_cert_nonfound).unwrap_err();
+            super::super::Datacenter::try_from((dc_cert_nonfound, tls_provider)).unwrap_err();
         }
 
+        #[cfg(feature = "openssl-010")]
         #[test]
-        fn test_cloud_config_dc_validation_invalid_cert() {
+        fn test_cloud_config_dc_validation_cert_not_found_openssl_010() {
             setup_tracing();
+            test_cloud_config_dc_validation_cert_not_found(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_dc_validation_cert_not_found_rustls_023() {
+            setup_tracing();
+            test_cloud_config_dc_validation_cert_not_found(CloudTlsProvider::Rustls023);
+        }
+
+        fn test_cloud_config_dc_validation_invalid_cert(tls_provider: CloudTlsProvider) {
             let dc_invalid_cert = super::Datacenter {
                 certificateAuthorityData: Some("INVALID CERFITICATE".into()),
                 ..dc_valid()
             };
-            super::super::Datacenter::try_from(dc_invalid_cert).unwrap_err();
+            super::super::Datacenter::try_from((dc_invalid_cert, tls_provider)).unwrap_err();
         }
 
+        #[cfg(feature = "openssl-010")]
         #[test]
-        fn test_cloud_config_dc_validation_cert_found_bad() {
+        fn test_cloud_config_dc_validation_invalid_cert_openssl_010() {
             setup_tracing();
+            test_cloud_config_dc_validation_invalid_cert(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_dc_validation_invalid_cert_rustls_023() {
+            setup_tracing();
+            test_cloud_config_dc_validation_invalid_cert(CloudTlsProvider::Rustls023);
+        }
+
+        fn test_cloud_config_dc_validation_cert_found_bad(tls_provider: CloudTlsProvider) {
             let dc_cert_found_bad = super::Datacenter {
                 certificateAuthorityPath: Some(BAD_PEM_PATH.into()),
                 certificateAuthorityData: None,
                 ..dc_valid()
             };
-            super::super::Datacenter::try_from(dc_cert_found_bad).unwrap_err();
+            super::super::Datacenter::try_from((dc_cert_found_bad, tls_provider)).unwrap_err();
         }
 
+        #[cfg(feature = "openssl-010")]
         #[test]
-        fn test_cloud_config_dc_validation_cert_found_good() {
+        fn test_cloud_config_dc_validation_cert_found_bad_openssl_010() {
             setup_tracing();
+            test_cloud_config_dc_validation_cert_found_bad(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_dc_validation_cert_found_bad_rustls_023() {
+            setup_tracing();
+            test_cloud_config_dc_validation_cert_found_bad(CloudTlsProvider::Rustls023);
+        }
+
+        fn test_cloud_config_dc_validation_cert_found_good(tls_provider: CloudTlsProvider) {
             let dc_cert_found_good = super::Datacenter {
                 certificateAuthorityPath: Some(GOOD_PEM_PATH.into()),
                 certificateAuthorityData: None,
                 ..dc_valid()
             };
-            super::super::Datacenter::try_from(dc_cert_found_good).unwrap();
+            super::super::Datacenter::try_from((dc_cert_found_good, tls_provider)).unwrap();
         }
 
+        #[cfg(feature = "openssl-010")]
         #[test]
-        fn test_cloud_config_dc_validation_domain_empty() {
+        fn test_cloud_config_dc_validation_cert_found_good_openssl_010() {
             setup_tracing();
+            test_cloud_config_dc_validation_cert_found_good(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_dc_validation_cert_found_good_rustls_023() {
+            setup_tracing();
+            test_cloud_config_dc_validation_cert_found_good(CloudTlsProvider::Rustls023);
+        }
+
+        fn test_cloud_config_dc_validation_domain_empty(tls_provider: CloudTlsProvider) {
             let dc_bad_domain_empty = super::Datacenter {
                 nodeDomain: "".into(),
                 ..dc_valid()
             };
-            super::super::Datacenter::try_from(dc_bad_domain_empty).unwrap_err();
+            super::super::Datacenter::try_from((dc_bad_domain_empty, tls_provider)).unwrap_err();
         }
 
+        #[cfg(feature = "openssl-010")]
         #[test]
-        fn test_cloud_config_dc_validation_domain_trailing_minus() {
+        fn test_cloud_config_dc_validation_domain_empty_openssl_010() {
             setup_tracing();
+            test_cloud_config_dc_validation_domain_empty(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_dc_validation_domain_empty_rustls_023() {
+            setup_tracing();
+            test_cloud_config_dc_validation_domain_empty(CloudTlsProvider::Rustls023);
+        }
+
+        fn test_cloud_config_dc_validation_domain_trailing_minus(tls_provider: CloudTlsProvider) {
             let dc_bad_domain_trailing_minus = super::Datacenter {
                 nodeDomain: "cql.scylla-.com".into(),
                 ..dc_valid()
             };
-            super::super::Datacenter::try_from(dc_bad_domain_trailing_minus).unwrap_err();
+            super::super::Datacenter::try_from((dc_bad_domain_trailing_minus, tls_provider))
+                .unwrap_err();
         }
 
+        #[cfg(feature = "openssl-010")]
         #[test]
-        fn test_cloud_config_dc_validation_domain_interior_minus() {
+        fn test_cloud_config_dc_validation_domain_trailing_minus_openssl_010() {
             setup_tracing();
+            test_cloud_config_dc_validation_domain_trailing_minus(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_dc_validation_domain_trailing_minus_rustls_023() {
+            setup_tracing();
+            test_cloud_config_dc_validation_domain_trailing_minus(CloudTlsProvider::Rustls023);
+        }
+
+        fn test_cloud_config_dc_validation_domain_interior_minus(tls_provider: CloudTlsProvider) {
             let dc_good_domain_interior_minus = super::Datacenter {
                 nodeDomain: "cql.scylla-cloud.com".into(),
                 ..dc_valid()
             };
-            super::super::Datacenter::try_from(dc_good_domain_interior_minus).unwrap();
+            super::super::Datacenter::try_from((dc_good_domain_interior_minus, tls_provider))
+                .unwrap();
         }
 
+        #[cfg(feature = "openssl-010")]
         #[test]
-        fn test_cloud_config_dc_validation_domain_special_sign() {
+        fn test_cloud_config_dc_validation_domain_interior_minus_openssl_010() {
             setup_tracing();
+            test_cloud_config_dc_validation_domain_interior_minus(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_dc_validation_domain_interior_minus_rustls_023() {
+            setup_tracing();
+            test_cloud_config_dc_validation_domain_interior_minus(CloudTlsProvider::Rustls023);
+        }
+
+        fn test_cloud_config_dc_validation_domain_special_sign(tls_provider: CloudTlsProvider) {
             let dc_bad_domain_special_sign = super::Datacenter {
                 nodeDomain: "cql.$cylla-cloud.com".into(),
                 ..dc_valid()
             };
-            super::super::Datacenter::try_from(dc_bad_domain_special_sign).unwrap_err();
+            super::super::Datacenter::try_from((dc_bad_domain_special_sign, tls_provider))
+                .unwrap_err();
         }
 
+        #[cfg(feature = "openssl-010")]
         #[test]
-        fn test_cloud_config_dc_validation_bad_server_url() {
+        fn test_cloud_config_dc_validation_domain_special_sign_openssl_010() {
             setup_tracing();
+            test_cloud_config_dc_validation_domain_special_sign(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_dc_validation_domain_special_sign_rustls_023() {
+            setup_tracing();
+            test_cloud_config_dc_validation_domain_special_sign(CloudTlsProvider::Rustls023);
+        }
+
+        fn test_cloud_config_dc_validation_bad_server_url(tls_provider: CloudTlsProvider) {
             let dc_bad_server_not_url = super::Datacenter {
                 server: "NotAUrl".into(),
                 ..dc_valid()
             };
-            super::super::Datacenter::try_from(dc_bad_server_not_url).unwrap_err();
+            super::super::Datacenter::try_from((dc_bad_server_not_url, tls_provider)).unwrap_err();
+        }
+
+        #[cfg(feature = "openssl-010")]
+        #[test]
+        fn test_cloud_config_dc_validation_bad_server_url_openssl_010() {
+            setup_tracing();
+            test_cloud_config_dc_validation_bad_server_url(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_dc_validation_bad_server_url_rustls_023() {
+            setup_tracing();
+            test_cloud_config_dc_validation_bad_server_url(CloudTlsProvider::Rustls023);
         }
 
         static CCM_CONFIG: &str = include_str!("ccm_config.yaml");
@@ -708,13 +1054,25 @@ mod deserialize {
         static TEST_CA: &str = include_str!("test_ca");
         static TEST_KEY: &str = include_str!("test_key");
 
-        #[test]
-        fn test_cloud_config_unsupported_api_version() {
-            setup_tracing();
+        fn test_cloud_config_unsupported_api_version(tls_provider: CloudTlsProvider) {
             let mut config = RawCloudConfig::try_from(CCM_CONFIG).unwrap();
             config.apiVersion = Some("1.0".into());
             // The mere unknown api version should not be considered an erroneous input, but a warning will be logged.
-            super::super::CloudConfig::try_from(config).unwrap();
+            super::super::CloudConfig::try_from((config, tls_provider)).unwrap();
+        }
+
+        #[cfg(feature = "openssl-010")]
+        #[test]
+        fn test_cloud_config_unsupported_api_version_openssl_010() {
+            setup_tracing();
+            test_cloud_config_unsupported_api_version(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_unsupported_api_version_rustls_023() {
+            setup_tracing();
+            test_cloud_config_unsupported_api_version(CloudTlsProvider::Rustls023);
         }
 
         #[test]
@@ -797,13 +1155,12 @@ mod deserialize {
             }
         }
 
-        #[test]
-        fn test_cloud_config_validation() {
-            setup_tracing();
+        fn test_cloud_config_validation(tls_provider: CloudTlsProvider) {
             {
                 // CCM standard config
                 let config = RawCloudConfig::try_from(CCM_CONFIG).unwrap();
-                let validated_config: CloudConfig = config.try_into().unwrap();
+                let validated_config: CloudConfig =
+                    CloudConfig::try_from((config, tls_provider)).unwrap();
                 assert_matches!(validated_config.default_consistency, None);
                 assert_matches!(validated_config.default_serial_consistency, None);
                 assert_eq!(validated_config.current_context, "default");
@@ -819,7 +1176,8 @@ mod deserialize {
             {
                 // crafted fully-fledged config
                 let config = RawCloudConfig::try_from(FULL_CONFIG).unwrap();
-                let validated_config: CloudConfig = config.try_into().unwrap();
+                let validated_config: CloudConfig =
+                    CloudConfig::try_from((config, tls_provider)).unwrap();
                 assert_eq!(
                     validated_config.default_consistency,
                     Some(Consistency::LocalQuorum)
@@ -833,38 +1191,104 @@ mod deserialize {
                 assert_eq!(validated_config.datacenters.len(), 2);
                 assert_eq!(validated_config.auth_infos.len(), 2);
 
-                let auth_info = validated_config.auth_infos.get("one").unwrap();
-
-                assert_eq!(
-                    auth_info.cert,
-                    X509::from_pem(
-                        &general_purpose::STANDARD
-                            .decode(TEST_CA.as_bytes())
-                            .unwrap()
-                    )
-                    .unwrap()
-                );
-                // comparison of PKey<Private> is not possible, so auth_info.key won't be tested here.
-
-                assert_eq!(auth_info.username, Some(String::from("cassandra1")));
-                assert_eq!(auth_info.password, Some(String::from("scylla1")));
-
                 let datacenter = validated_config.datacenters.get("eu-west-1").unwrap();
-                assert_eq!(
-                    datacenter.certificate_authority,
-                    X509::from_pem(
-                        &general_purpose::STANDARD
-                            .decode(TEST_CA.as_bytes())
-                            .unwrap()
-                    )
-                    .unwrap()
-                );
                 assert_eq!(datacenter.server.as_str(), "127.0.1.12:9142");
                 assert_eq!(datacenter.node_domain, "cql.my-cluster-id.scylla.com");
                 assert!(datacenter.insecure_skip_tls_verify);
                 assert_eq!(datacenter.proxy_url, Some("proxy.example.com".into()));
                 assert_eq!(datacenter.tls_server_name, Some("tls_server".into()));
+
+                let auth_info = validated_config.auth_infos.get("one").unwrap();
+                assert_eq!(auth_info.username, Some(String::from("cassandra1")));
+                assert_eq!(auth_info.password, Some(String::from("scylla1")));
+
+                let decoded_raw_ca = general_purpose::STANDARD
+                    .decode(TEST_CA.as_bytes())
+                    .unwrap();
+
+                match auth_info.tls {
+                    #[cfg(feature = "openssl-010")]
+                    TlsInfo::OpenSsl010 { ref cert, .. } => {
+                        let decoded_openssl_ca =
+                            openssl::x509::X509::from_pem(&decoded_raw_ca).unwrap();
+
+                        assert_eq!(*cert, decoded_openssl_ca);
+                        // comparison of PKey<Private> is not possible, so auth_info.key won't be tested here.
+
+                        assert_eq!(
+                            *datacenter.ca_cert.openssl_ca().unwrap(),
+                            decoded_openssl_ca
+                        );
+                    }
+                    #[cfg(feature = "rustls-023")]
+                    TlsInfo::Rustls023 { ref cert_chain, .. } => {
+                        let cert = cert_chain.first().unwrap();
+                        let decoded_rustls_ca = {
+                            use rustls::pki_types::pem::PemObject as _;
+                            rustls::pki_types::CertificateDer::from_pem_slice(&decoded_raw_ca)
+                                .unwrap()
+                        };
+                        assert_eq!(*cert, decoded_rustls_ca);
+                        assert_eq!(*datacenter.ca_cert.rustls_ca().unwrap(), decoded_rustls_ca);
+                    }
+                }
             }
         }
+
+        #[cfg(feature = "openssl-010")]
+        #[test]
+        fn test_cloud_config_validation_openssl_010() {
+            setup_tracing();
+            test_cloud_config_validation(CloudTlsProvider::OpenSsl010);
+        }
+
+        #[cfg(feature = "rustls-023")]
+        #[test]
+        fn test_cloud_config_validation_rustls_023() {
+            setup_tracing();
+            test_cloud_config_validation(CloudTlsProvider::Rustls023);
+        }
+    }
+}
+
+#[cfg(feature = "rustls-023")]
+#[derive(Debug)]
+struct NoCertificateVerification {
+    supported: rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+#[cfg(feature = "rustls-023")]
+impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.supported.supported_schemes()
     }
 }

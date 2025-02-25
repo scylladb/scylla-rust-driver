@@ -7,9 +7,9 @@ use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::AuthenticatorProvider;
 use crate::batch::batch_values;
 use crate::batch::{Batch, BatchStatement};
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 use crate::cloud::CloudConfig;
-#[cfg(feature = "cloud")]
+#[cfg(feature = "unstable-cloud")]
 use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
@@ -18,8 +18,7 @@ use crate::errors::{
     RequestAttemptError, RequestError, SchemaAgreementError, TracingError, UseKeyspaceError,
 };
 use crate::frame::response::result;
-#[cfg(feature = "ssl")]
-use crate::network::SslConfig;
+use crate::network::tls::TlsProvider;
 use crate::network::{Connection, ConnectionConfig, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
@@ -42,8 +41,6 @@ use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
-#[cfg(feature = "ssl")]
-use openssl::ssl::SslContext;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
@@ -54,6 +51,8 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
+#[cfg(feature = "unstable-cloud")]
+use tracing::warn;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
@@ -96,6 +95,29 @@ impl std::fmt::Debug for Session {
     }
 }
 
+#[derive(Clone)] // Cheaply clonable - reference counted.
+#[non_exhaustive]
+pub enum TlsContext {
+    #[cfg(feature = "openssl-010")]
+    OpenSsl010(openssl::ssl::SslContext),
+    #[cfg(feature = "rustls-023")]
+    Rustls023(Arc<rustls::ClientConfig>),
+}
+
+#[cfg(feature = "openssl-010")]
+impl From<openssl::ssl::SslContext> for TlsContext {
+    fn from(value: openssl::ssl::SslContext) -> Self {
+        TlsContext::OpenSsl010(value)
+    }
+}
+
+#[cfg(feature = "rustls-023")]
+impl From<Arc<rustls::ClientConfig>> for TlsContext {
+    fn from(value: Arc<rustls::ClientConfig>) -> Self {
+        TlsContext::Rustls023(value)
+    }
+}
+
 /// Configuration options for [`Session`].
 /// Can be created manually, but usually it's easier to use
 /// [SessionBuilder](super::session_builder::SessionBuilder)
@@ -119,8 +141,7 @@ pub struct SessionConfig {
     pub keyspace_case_sensitive: bool,
 
     /// Provide our Session with TLS
-    #[cfg(feature = "ssl")]
-    pub ssl_context: Option<SslContext>,
+    pub tls_context: Option<TlsContext>,
 
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
 
@@ -180,7 +201,7 @@ pub struct SessionConfig {
     pub host_filter: Option<Arc<dyn HostFilter>>,
 
     /// If the driver is to connect to ScyllaCloud, there is a config for it.
-    #[cfg(feature = "cloud")]
+    #[cfg(feature = "unstable-cloud")]
     pub cloud_config: Option<Arc<CloudConfig>>,
 
     /// If true, the driver will inject a small delay before flushing data
@@ -244,8 +265,7 @@ impl SessionConfig {
                 .into_handle(),
             used_keyspace: None,
             keyspace_case_sensitive: false,
-            #[cfg(feature = "ssl")]
-            ssl_context: None,
+            tls_context: None,
             authenticator: None,
             connect_timeout: Duration::from_secs(5),
             connection_pool_size: Default::default(),
@@ -260,7 +280,7 @@ impl SessionConfig {
             address_translator: None,
             host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
-            #[cfg(feature = "cloud")]
+            #[cfg(feature = "unstable-cloud")]
             cloud_config: None,
             enable_write_coalescing: true,
             tracing_info_fetch_attempts: NonZeroU32::new(10).unwrap(),
@@ -761,7 +781,7 @@ impl Session {
     pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
         let known_nodes = config.known_nodes;
 
-        #[cfg(feature = "cloud")]
+        #[cfg(feature = "unstable-cloud")]
         let cloud_known_nodes: Option<Vec<InternalKnownNode>> =
             if let Some(ref cloud_config) = config.cloud_config {
                 let cloud_servers = cloud_config
@@ -779,7 +799,7 @@ impl Session {
                 None
             };
 
-        #[cfg(not(feature = "cloud"))]
+        #[cfg(not(feature = "unstable-cloud"))]
         let cloud_known_nodes: Option<Vec<InternalKnownNode>> = None;
 
         let known_nodes = cloud_known_nodes
@@ -792,20 +812,62 @@ impl Session {
 
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
 
+        #[allow(unused_labels)] // Triggers when `cloud` feature is disabled.
+        let address_translator = 'translator: {
+            #[cfg(feature = "unstable-cloud")]
+            if let Some(translator) = config.cloud_config.clone() {
+                if config.address_translator.is_some() {
+                    // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom AddressTranslator.
+                    warn!(
+                        "Overriding user-provided AddressTranslator with Scylla Cloud AddressTranslator due \
+                            to CloudConfig being provided. This is certainly an API misuse - Cloud \
+                            may not be combined with user's own AddressTranslator."
+                    )
+                }
+
+                break 'translator Some(translator as Arc<dyn AddressTranslator>);
+            }
+
+            config.address_translator
+        };
+
+        let tls_provider = 'provider: {
+            #[cfg(feature = "unstable-cloud")]
+            if let Some(cloud_config) = config.cloud_config {
+                if config.tls_context.is_some() {
+                    // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom TlsContext.
+                    warn!(
+                        "Overriding user-provided TlsContext with Scylla Cloud TlsContext due \
+                            to CloudConfig being provided. This is certainly an API misuse - Cloud \
+                            may not be combined with user's own TLS config."
+                    )
+                }
+
+                let provider = TlsProvider::new_cloud(cloud_config);
+                break 'provider Some(provider);
+            }
+            if let Some(tls_context) = config.tls_context {
+                // To silence warnings when TlsContext is an empty enum (tls features are disabled).
+                // In such case, TlsProvider is uninhabited.
+                #[allow(unused_variables)]
+                let provider = TlsProvider::new_with_global_context(tls_context);
+                #[allow(unreachable_code)]
+                break 'provider Some(provider);
+            }
+            None
+        };
+
         let connection_config = ConnectionConfig {
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
             tcp_keepalive_interval: config.tcp_keepalive_interval,
             timestamp_generator: config.timestamp_generator,
-            #[cfg(feature = "ssl")]
-            ssl_config: config.ssl_context.map(SslConfig::new_with_global_context),
+            tls_provider,
             authenticator: config.authenticator.clone(),
             connect_timeout: config.connect_timeout,
             event_sender: None,
             default_consistency: Default::default(),
-            address_translator: config.address_translator,
-            #[cfg(feature = "cloud")]
-            cloud_config: config.cloud_config,
+            address_translator,
             enable_write_coalescing: config.enable_write_coalescing,
             keepalive_interval: config.keepalive_interval,
             keepalive_timeout: config.keepalive_timeout,
@@ -817,7 +879,6 @@ impl Session {
             connection_config,
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
-            keepalive_interval: config.keepalive_interval,
         };
 
         let cluster = Cluster::new(

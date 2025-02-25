@@ -91,7 +91,12 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
             use std::path::Path;
 
             std::env::var("CLOUD_CONFIG_PATH")
-                .map(|config_path| CloudSessionBuilder::new(Path::new(&config_path)))
+                .map(|config_path| {
+                    CloudSessionBuilder::new(
+                        Path::new(&config_path),
+                        crate::cloud::CloudTlsProvider::OpenSsl010,
+                    )
+                })
                 .expect("Failed to initialize CloudSessionBuilder")
                 .expect("CLOUD_CONFIG_PATH environment variable is missing")
         }

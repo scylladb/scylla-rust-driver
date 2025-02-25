@@ -41,12 +41,19 @@ jobs:
       run: cargo clippy --verbose --all-targets --all-features
     - name: Cargo check with cpp_rust_unstable cfg
       run: RUSTFLAGS="--cfg cpp_rust_unstable" cargo clippy --verbose --all-targets --all-features
+
+# Features checks.
+    # No features.
     - name: Cargo check without features
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features ""
-    - name: Cargo check with all serialization features
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "full-serialization"
+
+    # All features.
     - name: Cargo check with all features
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --all-features
+
+    # Various (de)serialization features.
+    - name: Cargo check with all serialization features
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "full-serialization"
     - name: Cargo check with secrecy-08 feature
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secrecy-08"
     - name: Cargo check with chrono-04 feature
@@ -59,6 +66,14 @@ jobs:
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "num-bigint-04"
     - name: Cargo check with bigdecimal-04 feature
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "bigdecimal-04"
+
+    # TLS-related feature sets.
+    - name: Cargo check with openssl-x feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "openssl-010"
+    - name: Cargo check with rustls-x feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "rustls-023"
+    # (openssl-x, rustls-x) is checked in tls.yml.
+
     - name: Build scylla-cql
       run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml" --features "full-serialization"
     - name: Build

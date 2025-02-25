@@ -1,12 +1,10 @@
+use std::{env, sync::Arc};
+
 use anyhow::Result;
 use futures::TryStreamExt as _;
-use scylla::client::session::Session;
-use scylla::client::session_builder::SessionBuilder;
-use std::env;
-use std::fs;
-use std::path::PathBuf;
 
-use openssl::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
+use rustls::pki_types::{pem::PemObject, CertificateDer};
+use scylla::client::{session::Session, session_builder::SessionBuilder};
 
 // How to run scylla instance with TLS:
 //
@@ -23,14 +21,10 @@ use openssl::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
 // If python returns permission error 13 use "Z" flag
 // --volume $(pwd)/tls.yaml:/etc/scylla/scylla.yaml:Z
 //
-// In your Rust program connect to port 9142 if it wasn't changed
-// Create new SslContextBuilder with SslMethod that is used in your connection
-// Set verification mode
-// if SslVerifyMode::PEER with self-signed certificate you have to
-// use set_ca_file method with path to your ca.crt file as an argument
-// if SslVerifyMode::NONE you don't need to use any additional methods
-//
-// Build it and add to scylla-rust-driver's SessionBuilder
+// In your Rust program connect to port 9142 if it wasn't changed.
+// Create new rustls ConfigBuilder.
+// Optionally, configure RootCertStore with your ca.crt.
+// Build it and add to scylla-rust-driver's SessionBuilder.
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -39,14 +33,17 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    let ca_dir = fs::canonicalize(PathBuf::from("./test/tls/ca.crt"))?;
-    context_builder.set_ca_file(ca_dir.as_path())?;
-    context_builder.set_verify(SslVerifyMode::PEER);
+    let rustls_ca = CertificateDer::from_pem_file("./test/tls/ca.crt")?;
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.add(rustls_ca)?;
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
-        .ssl_context(Some(context_builder.build()))
+        .tls_context(Some(Arc::new(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth(),
+        )))
         .build()
         .await?;
 
