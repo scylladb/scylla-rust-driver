@@ -26,7 +26,7 @@ Currently, the list of people maintaining the driver include:
 
 ## Static checks
 
-Currently, we require new PRs to compile without warnings, pass `cargo fmt` and `cargo clippy` checks.
+Currently, we require new PRs to compile without warnings, pass `cargo fmt` and a few variations of `cargo clippy` checks. You can run `make static` to execute most of those static checks.
 
 ## Testing
 
