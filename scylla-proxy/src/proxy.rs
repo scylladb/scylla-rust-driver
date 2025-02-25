@@ -1315,7 +1315,7 @@ mod tests {
     fn random_body() -> Bytes {
         let body_len = (rand::random::<u32>() % 1000) as usize;
         let mut body = BytesMut::zeroed(body_len);
-        rand::thread_rng().fill_bytes(body.as_mut());
+        rand::rng().fill_bytes(body.as_mut());
         body.freeze()
     }
 

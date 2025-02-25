@@ -364,7 +364,7 @@ impl<'a> ReplicaSet<'a> {
     {
         let len = self.len();
         if len > 0 {
-            let index = rng.gen_range(0..len);
+            let index = rng.random_range(0..len);
 
             match &self.inner {
                 ReplicaSetInner::Plain(replicas) => replicas

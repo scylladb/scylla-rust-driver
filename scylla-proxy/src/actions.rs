@@ -105,7 +105,7 @@ impl Condition {
                 })
                 .unwrap_or(false),
             Condition::RandomWithProbability(probability) => {
-                rand::thread_rng().gen_bool(*probability)
+                rand::rng().random_bool(*probability)
             }
 
             Condition::TrueForLimitedTimes(times) => {
@@ -592,7 +592,7 @@ impl ResponseForger {
             || example_db_errors::other(2137),
         ];
         RequestReaction::forge_with_error_lazy_delay(
-            Box::new(|| ERRORS[rand::thread_rng().next_u32() as usize % ERRORS.len()]()),
+            Box::new(|| ERRORS[rand::rng().next_u32() as usize % ERRORS.len()]()),
             delay,
         )
     }

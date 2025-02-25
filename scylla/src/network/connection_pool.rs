@@ -284,7 +284,7 @@ impl NodeConnectionPool {
                 sharder,
                 connections,
             } => {
-                let shard: u16 = rand::thread_rng().gen_range(0..sharder.nr_shards.get());
+                let shard: u16 = rand::rng().random_range(0..sharder.nr_shards.get());
                 Self::connection_for_shard_helper(shard, sharder.nr_shards, connections.as_slice())
             }
         })
@@ -308,7 +308,7 @@ impl NodeConnectionPool {
 
         let orig_shard = shard;
         while !shards_to_try.is_empty() {
-            let idx = rand::thread_rng().gen_range(0..shards_to_try.len());
+            let idx = rand::rng().random_range(0..shards_to_try.len());
             let shard = shards_to_try.swap_remove(idx);
 
             if let Some(conn) =
@@ -381,7 +381,7 @@ impl NodeConnectionPool {
         } else if v.len() == 1 {
             Some(v[0].clone())
         } else {
-            let idx = rand::thread_rng().gen_range(0..v.len());
+            let idx = rand::rng().random_range(0..v.len());
             Some(v[idx].clone())
         }
     }
