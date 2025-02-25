@@ -71,12 +71,10 @@ For planned future improvements, see our [Milestones].
 We invite you to discuss any issues and ask questions on the [ScyllaDB Forum] and the `#rust-driver` channel on [ScyllaDB Slack].
 
 ## Supported Rust Versions
-Our driver's minimum supported Rust version (MSRV) is 1.70.0. Any changes:
-- Will be announced in release notes.
-- Before 1.0 will only happen in major releases.
-- After 1.0 will also happen in minor, but not patch releases.
 
-Exact MSRV policy after 1.0 is not yet decided.
+Our driver's minimum supported Rust version (MSRV) is 1.70.0.
+Changes to MSRV can only happen in major and minor relases, but not in patch releases.
+We will not bump MSRV to a Rust version that was released less than 6 months ago.
 
 ## Reference Documentation
 
