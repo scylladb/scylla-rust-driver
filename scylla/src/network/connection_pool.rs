@@ -1,6 +1,5 @@
 #[cfg(feature = "cloud")]
 use crate::cloud::set_ssl_config_for_scylla_cloud_host;
-use crate::utils::pretty::CommaSeparatedDisplayer;
 
 use super::connection::{
     open_connection, open_connection_to_shard_aware_port, Connection, ConnectionConfig,
@@ -23,6 +22,7 @@ use crate::cluster::NodeAddr;
 
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
+use itertools::Itertools;
 use rand::Rng;
 use std::convert::TryInto;
 use std::num::NonZeroUsize;
@@ -371,9 +371,9 @@ impl NodeConnectionPool {
 
     fn choose_random_connection_from_slice(v: &[Arc<Connection>]) -> Option<Arc<Connection>> {
         trace!(
-            connections = tracing::field::display(CommaSeparatedDisplayer(
-                v.iter().map(|conn| conn.get_connect_address())
-            )),
+            connections = tracing::field::display(
+                v.iter().map(|conn| conn.get_connect_address()).format(", ")
+            ),
             "Available"
         );
         if v.is_empty() {

@@ -28,11 +28,11 @@ use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::query::Query;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
-use crate::utils::pretty::{CommaSeparatedDisplayer, DisplayUsingDebug};
 
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
 use futures::Stream;
+use itertools::Itertools;
 use rand::seq::{IndexedRandom, SliceRandom};
 use rand::{rng, Rng};
 use scylla_macros::DeserializeRow;
@@ -470,10 +470,7 @@ impl MetadataReader {
 
         // shuffle known_peers to iterate through them in random order later
         self.known_peers.shuffle(&mut rng());
-        debug!(
-            "Known peers: {}",
-            CommaSeparatedDisplayer(self.known_peers.iter().map(DisplayUsingDebug))
-        );
+        debug!("Known peers: {:?}", self.known_peers.iter().format(", "));
 
         let address_of_failed_control_connection = self.control_connection_endpoint.address();
         let filtered_known_peers = self
@@ -605,9 +602,9 @@ impl MetadataReader {
         // and print an error message about this fact
         if !metadata.peers.is_empty() && self.known_peers.is_empty() {
             error!(
-                node_ips = tracing::field::display(CommaSeparatedDisplayer(
-                    metadata.peers.iter().map(|peer| peer.address)
-                )),
+                node_ips = tracing::field::display(
+                    metadata.peers.iter().map(|peer| peer.address).format(", ")
+                ),
                 "The host filter rejected all nodes in the cluster, \
                 no connections that can serve user queries have been \
                 established. The session cannot serve any queries!"
@@ -623,12 +620,13 @@ impl MetadataReader {
         if let Some(peer) = control_connection_peer {
             if !self.host_filter.as_ref().map_or(true, |f| f.accept(peer)) {
                 warn!(
-                    filtered_node_ips = tracing::field::display(CommaSeparatedDisplayer(metadata
+                    filtered_node_ips = tracing::field::display(metadata
                         .peers
                         .iter()
                         .filter(|peer| self.host_filter.as_ref().map_or(true, |p| p.accept(peer)))
                         .map(|peer| peer.address)
-                    )),
+                        .format(", ")
+                    ),
                     control_connection_address = ?self.control_connection_endpoint.address(),
                     "The node that the control connection is established to \
                     is not accepted by the host filter. Please verify that \

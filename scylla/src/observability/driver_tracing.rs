@@ -2,8 +2,7 @@ use crate::cluster::node::Node;
 use crate::network::Connection;
 use crate::response::query_result::QueryResult;
 use crate::routing::{Shard, Token};
-use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
-use itertools::Either;
+use itertools::{Either, Itertools};
 use scylla_cql::frame::response::result::ColumnSpec;
 use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::value::deser_cql_value;
@@ -135,9 +134,11 @@ impl RequestSpan {
         }
         self.span.record(
             "replicas",
-            tracing::field::display(CommaSeparatedDisplayer(
-                replicas.map(|(node, shard)| Replica(node, shard)),
-            )),
+            tracing::field::display(
+                replicas
+                    .map(|(node, shard)| Replica(node, shard))
+                    .format(", "),
+            ),
         );
     }
 
@@ -166,15 +167,14 @@ impl Drop for RequestSpan {
 fn partition_key_displayer<'ps, 'res, 'spec: 'ps>(
     mut pk_values_iter: impl Iterator<Item = (&'ps [u8], &'ps ColumnSpec<'spec>)> + 'res + Clone,
 ) -> impl Display + 'res {
-    CommaSeparatedDisplayer(
-        std::iter::from_fn(move || {
-            pk_values_iter
-                .next()
-                .map(|(mut cell, spec)| deser_cql_value(spec.typ(), &mut cell))
-        })
-        .map(|c| match c {
-            Ok(c) => Either::Left(CqlValueDisplayer(c)),
-            Err(_) => Either::Right("<decoding error>"),
-        }),
-    )
+    std::iter::from_fn(move || {
+        pk_values_iter
+            .next()
+            .map(|(mut cell, spec)| deser_cql_value(spec.typ(), &mut cell))
+    })
+    .map(|c| match c {
+        Ok(c) => Either::Left(c),
+        Err(_) => Either::Right("<decoding error>"),
+    })
+    .format(", ")
 }

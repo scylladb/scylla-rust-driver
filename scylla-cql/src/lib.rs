@@ -1,3 +1,5 @@
+pub(crate) mod pretty;
+
 pub mod frame;
 #[macro_use]
 pub mod macros {
