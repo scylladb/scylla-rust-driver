@@ -1,7 +1,7 @@
 use anyhow::Result;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

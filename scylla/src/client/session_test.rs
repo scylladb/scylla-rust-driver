@@ -18,7 +18,7 @@ use crate::routing::partitioner::{
 };
 use crate::routing::Token;
 use crate::statement::batch::{Batch, BatchStatement, BatchType};
-use crate::statement::prepared_statement::PreparedStatement;
+use crate::statement::prepared::PreparedStatement;
 use crate::statement::query::Query;
 use crate::statement::Consistency;
 use crate::utils::test_utils::{

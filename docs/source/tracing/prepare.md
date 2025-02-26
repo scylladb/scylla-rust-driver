@@ -9,7 +9,7 @@
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::statement::query::Query;
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 

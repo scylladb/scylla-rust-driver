@@ -34,7 +34,7 @@ use crate::routing::partitioner::PartitionerName;
 use crate::routing::Shard;
 use crate::statement::batch::batch_values;
 use crate::statement::batch::{Batch, BatchStatement};
-use crate::statement::prepared_statement::{PartitionKeyError, PreparedStatement};
+use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 use crate::statement::query::Query;
 use crate::statement::{Consistency, PageSize, StatementConfig};
 use arc_swap::ArcSwapOption;
@@ -565,7 +565,7 @@ impl Session {
     /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-    /// use scylla::statement::prepared_statement::PreparedStatement;
+    /// use scylla::statement::prepared::PreparedStatement;
     ///
     /// // Prepare the query for later execution
     /// let prepared: PreparedStatement = session
@@ -671,7 +671,7 @@ impl Session {
     /// # use futures::StreamExt as _;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-    /// use scylla::statement::prepared_statement::PreparedStatement;
+    /// use scylla::statement::prepared::PreparedStatement;
     ///
     /// // Prepare the query for later execution
     /// let prepared: PreparedStatement = session
@@ -1152,7 +1152,7 @@ impl Session {
     /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-    /// use scylla::statement::prepared_statement::PreparedStatement;
+    /// use scylla::statement::prepared::PreparedStatement;
     ///
     /// // Prepare the query for later execution
     /// let prepared: PreparedStatement = session

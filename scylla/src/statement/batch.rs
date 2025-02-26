@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::observability::history::HistoryListener;
 use crate::policies::retry::RetryPolicy;
-use crate::statement::{prepared_statement::PreparedStatement, query::Query};
+use crate::statement::{prepared::PreparedStatement, query::Query};
 
 use super::StatementConfig;
 use super::{Consistency, SerialConsistency};
@@ -218,7 +218,7 @@ pub(crate) mod batch_values {
 
     use crate::errors::ExecutionError;
     use crate::routing::Token;
-    use crate::statement::prepared_statement::PartitionKeyError;
+    use crate::statement::prepared::PartitionKeyError;
 
     use super::BatchStatement;
 

@@ -28,7 +28,7 @@ use crate::response::{
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardInfo, Sharder, ShardingError};
 use crate::statement::batch::{Batch, BatchStatement};
-use crate::statement::prepared_statement::PreparedStatement;
+use crate::statement::prepared::PreparedStatement;
 use crate::statement::query::Query;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;

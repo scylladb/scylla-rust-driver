@@ -14,7 +14,7 @@ prepares the statement before execution. The reason for this is to provide type 
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 
 // Prepare the query for later execution
 let prepared: PreparedStatement = session
@@ -57,7 +57,7 @@ For example to change the consistency:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::Consistency;
 
 // Prepare the query for later execution
@@ -109,7 +109,7 @@ TABLE ks.prepare_table (
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 
 // WRONG - partition key value is passed in query string
 // Load balancing will compute the wrong partition key

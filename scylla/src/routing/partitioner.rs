@@ -14,7 +14,7 @@ use scylla_cql::serialize::row::SerializedValues;
 use std::num::Wrapping;
 
 use crate::routing::Token;
-use crate::statement::prepared_statement::TokenCalculationError;
+use crate::statement::prepared::TokenCalculationError;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Clone, PartialEq, Eq, Debug, Default)]

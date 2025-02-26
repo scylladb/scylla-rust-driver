@@ -9,7 +9,7 @@ use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla::routing::{Shard, Token};
 use scylla::statement::batch::BatchStatement;
 use scylla::statement::batch::{Batch, BatchType};
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::query::Query;
 use scylla::statement::SerialConsistency;
 use scylla_cql::frame::response::result::TableSpec;

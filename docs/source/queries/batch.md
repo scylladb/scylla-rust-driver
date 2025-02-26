@@ -11,7 +11,7 @@ Only `INSERT`, `UPDATE` and `DELETE` statements are allowed.
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::statement::batch::Batch;
 use scylla::statement::query::Query;
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 
 // Create a batch statement
 let mut batch: Batch = Default::default();

@@ -14,7 +14,7 @@ use crate::observability::history::HistoryListener;
 use crate::policies::retry::RetryPolicy;
 
 pub mod batch;
-pub mod prepared_statement;
+pub mod prepared;
 pub mod query;
 
 pub use crate::frame::types::{Consistency, SerialConsistency};

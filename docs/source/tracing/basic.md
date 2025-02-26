@@ -38,7 +38,7 @@ if let Some(id) = tracing_id {
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 use scylla::response::query_result::QueryResult;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;

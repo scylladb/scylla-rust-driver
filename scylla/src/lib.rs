@@ -46,7 +46,7 @@
 //!
 //! To specify options for a single query create the query object and configure it:
 //! * For simple: [Query](crate::statement::query::Query)
-//! * For prepared: [PreparedStatement](crate::statement::prepared_statement::PreparedStatement)
+//! * For prepared: [PreparedStatement](crate::statement::prepared::PreparedStatement)
 //! * For batch: [Batch](crate::statement::batch::Batch)
 //!
 //! The easiest way to specify bound values in a query is using a tuple:

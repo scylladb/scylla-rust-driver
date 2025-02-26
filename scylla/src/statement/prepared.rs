@@ -608,7 +608,7 @@ mod tests {
     };
     use scylla_cql::serialize::row::SerializedValues;
 
-    use crate::statement::prepared_statement::PartitionKey;
+    use crate::statement::prepared::PartitionKey;
     use crate::test_utils::setup_tracing;
 
     fn make_meta(

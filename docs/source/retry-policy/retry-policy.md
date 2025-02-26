@@ -25,7 +25,7 @@ Idempotence has to be specified manually, the driver is not able to figure it ou
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::statement::query::Query;
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 
 // Specify that a Query is idempotent
 let mut my_query: Query = Query::new("SELECT a FROM ks.tab");

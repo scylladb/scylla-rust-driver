@@ -74,7 +74,7 @@ Use `execute_iter` to perform a [prepared query](prepared.md) with paging:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 use futures::stream::StreamExt;
 
 let prepared: PreparedStatement = session
@@ -121,7 +121,7 @@ On a `PreparedStatement`:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::statement::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 
 let mut prepared: PreparedStatement = session
     .prepare("SELECT a, b FROM ks.t")
