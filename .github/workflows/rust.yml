@@ -16,7 +16,7 @@ env:
   rust_min: 1.70.0 # <- Update this when bumping up MSRV
 
 jobs:
-  build:
+  static_checks:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
