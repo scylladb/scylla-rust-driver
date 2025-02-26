@@ -10,7 +10,7 @@ A lightweight transaction query is not a separate type - it can be expressed jus
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::statement::query::Query;
 use scylla::statement::{Consistency, SerialConsistency};
 
 // Create a Query manually to change the Consistency to ONE

@@ -2,11 +2,11 @@ use assert_matches::assert_matches;
 use scylla::client::session::Session;
 
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
-use scylla::batch::Batch;
-use scylla::batch::BatchType;
 use scylla::errors::{BadQuery, ExecutionError};
-use scylla::query::Query;
 use scylla::response::query_result::QueryResult;
+use scylla::statement::batch::Batch;
+use scylla::statement::batch::BatchType;
+use scylla::statement::query::Query;
 
 #[tokio::test]
 async fn test_large_batch_statements() {

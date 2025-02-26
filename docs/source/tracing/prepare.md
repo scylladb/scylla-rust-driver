@@ -8,8 +8,8 @@
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::query::Query;
+use scylla::statement::prepared_statement::PreparedStatement;
 use scylla::observability::tracing::TracingInfo;
 use uuid::Uuid;
 

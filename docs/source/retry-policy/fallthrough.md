@@ -36,7 +36,7 @@ To use in a [simple query](../queries/simple.md):
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::statement::query::Query;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::policies::retry::FallthroughRetryPolicy;
 
@@ -63,7 +63,7 @@ To use in a [prepared query](../queries/prepared.md):
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::prepared_statement::PreparedStatement;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::policies::retry::FallthroughRetryPolicy;
 

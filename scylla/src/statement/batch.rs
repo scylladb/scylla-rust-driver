@@ -217,8 +217,8 @@ pub(crate) mod batch_values {
     use scylla_cql::serialize::{RowWriter, SerializationError};
 
     use crate::errors::ExecutionError;
-    use crate::prepared_statement::PartitionKeyError;
     use crate::routing::Token;
+    use crate::statement::prepared_statement::PartitionKeyError;
 
     use super::BatchStatement;
 

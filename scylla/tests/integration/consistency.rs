@@ -1,22 +1,18 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::NodeRef;
 use scylla::policies::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::FallthroughRetryPolicy;
-use scylla::prepared_statement::PreparedStatement;
 use scylla::routing::{Shard, Token};
-use scylla_cql::frame::response::result::TableSpec;
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
-
-use scylla::client::execution_profile::ExecutionProfile;
 use scylla::statement::batch::BatchStatement;
+use scylla::statement::batch::{Batch, BatchType};
+use scylla::statement::prepared_statement::PreparedStatement;
 use scylla::statement::query::Query;
-use scylla::{
-    batch::{Batch, BatchType},
-    statement::SerialConsistency,
-};
+use scylla::statement::SerialConsistency;
+use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::Consistency;
 use scylla_proxy::ShardAwareness;
 use scylla_proxy::{
@@ -25,6 +21,7 @@ use scylla_proxy::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 fn consistencies() -> impl Iterator<Item = Consistency> {
     [

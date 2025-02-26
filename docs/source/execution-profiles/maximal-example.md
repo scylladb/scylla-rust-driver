@@ -6,7 +6,7 @@
 # extern crate scylla;
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::statement::query::Query;
 use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::statement::{Consistency, SerialConsistency};
 use scylla::client::execution_profile::ExecutionProfile;

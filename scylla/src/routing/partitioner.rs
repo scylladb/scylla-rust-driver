@@ -13,7 +13,8 @@ use scylla_cql::frame::types::RawValue;
 use scylla_cql::serialize::row::SerializedValues;
 use std::num::Wrapping;
 
-use crate::{prepared_statement::TokenCalculationError, routing::Token};
+use crate::routing::Token;
+use crate::statement::prepared_statement::TokenCalculationError;
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Clone, PartialEq, Eq, Debug, Default)]

@@ -20,7 +20,7 @@ However, setting per-statement timeout to `None` results in falling back to per-
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::query::Query;
+use scylla::statement::query::Query;
 use std::time::Duration;
 
 let uri = std::env::var("SCYLLA_URI")

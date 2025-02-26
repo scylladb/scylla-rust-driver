@@ -1,6 +1,5 @@
 use super::tls::{TlsConfig, TlsProvider};
 use crate::authentication::AuthenticatorProvider;
-use crate::batch::{Batch, BatchStatement};
 use crate::client::pager::{NextRowError, QueryPager};
 use crate::client::Compression;
 use crate::client::SelfIdentity;
@@ -22,14 +21,15 @@ use crate::frame::{
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
-use crate::query::Query;
 use crate::response::query_result::QueryResult;
 use crate::response::{
     NonErrorAuthResponse, NonErrorStartupResponse, PagingState, PagingStateResponse, QueryResponse,
 };
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardInfo, Sharder, ShardingError};
+use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared_statement::PreparedStatement;
+use crate::statement::query::Query;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
@@ -2262,7 +2262,7 @@ mod tests {
     use super::{open_connection, HostConnectionConfig};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
-    use crate::query::Query;
+    use crate::statement::query::Query;
     use crate::test_utils::setup_tracing;
     use crate::utils::test_utils::{unique_keyspace_name, PerformDDL};
     use futures::{StreamExt, TryStreamExt};

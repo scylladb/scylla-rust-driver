@@ -36,7 +36,7 @@ You can create a query manually to set custom options. For example to change que
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::statement::query::Query;
 use scylla::statement::Consistency;
 
 // Create a Query manually to change the Consistency to ONE

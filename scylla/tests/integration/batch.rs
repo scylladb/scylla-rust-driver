@@ -1,9 +1,8 @@
-use scylla::batch::Batch;
-use scylla::batch::BatchType;
 use scylla::errors::{ExecutionError, RequestAttemptError};
 use scylla::frame::frame_errors::BatchSerializationError;
 use scylla::frame::frame_errors::CqlRequestSerializationError;
-use scylla::query::Query;
+use scylla::statement::batch::{Batch, BatchType};
+use scylla::statement::query::Query;
 
 use crate::utils::create_new_session_builder;
 use crate::utils::setup_tracing;

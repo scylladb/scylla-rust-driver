@@ -9,9 +9,9 @@ Only `INSERT`, `UPDATE` and `DELETE` statements are allowed.
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::batch::Batch;
-use scylla::query::Query;
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::batch::Batch;
+use scylla::statement::query::Query;
+use scylla::statement::prepared_statement::PreparedStatement;
 
 // Create a batch statement
 let mut batch: Batch = Default::default();
@@ -55,7 +55,7 @@ Instead of preparing each statement individually, it's possible to prepare a who
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::batch::Batch;
+use scylla::statement::batch::Batch;
 
 // Create a batch statement with unprepared statements
 let mut batch: Batch = Default::default();
@@ -83,7 +83,7 @@ For example to change consistency:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::batch::Batch;
+use scylla::statement::batch::Batch;
 use scylla::statement::Consistency;
 
 // Create a batch
@@ -117,7 +117,7 @@ Example:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::batch::Batch;
+use scylla::statement::batch::Batch;
 
 let mut batch: Batch = Default::default();
 

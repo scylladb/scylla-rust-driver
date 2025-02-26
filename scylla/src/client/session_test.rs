@@ -3,7 +3,6 @@ use super::execution_profile::ExecutionProfile;
 use super::session::Session;
 use super::session_builder::SessionBuilder;
 use crate as scylla;
-use crate::batch::{Batch, BatchStatement, BatchType};
 use crate::cluster::metadata::Strategy::NetworkTopologyStrategy;
 use crate::cluster::metadata::{
     CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType,
@@ -14,12 +13,13 @@ use crate::errors::{
 };
 use crate::observability::tracing::TracingInfo;
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
-use crate::prepared_statement::PreparedStatement;
-use crate::query::Query;
 use crate::routing::partitioner::{
     calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
 };
 use crate::routing::Token;
+use crate::statement::batch::{Batch, BatchStatement, BatchType};
+use crate::statement::prepared_statement::PreparedStatement;
+use crate::statement::query::Query;
 use crate::statement::Consistency;
 use crate::utils::test_utils::{
     create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,
@@ -462,7 +462,7 @@ async fn test_batch() {
 
     // TODO: Add API that supports binding values to statements in batch creation process,
     // to avoid problem of statements/values count mismatch
-    use crate::batch::Batch;
+    use crate::statement::batch::Batch;
     let mut batch: Batch = Default::default();
     batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (?, ?, ?)", ks)[..]);
     batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (7, 11, '')", ks)[..]);
@@ -2282,7 +2282,7 @@ async fn test_unprepared_reprepare_in_batch() {
         .await
         .unwrap();
 
-    use crate::batch::Batch;
+    use crate::statement::batch::Batch;
     let mut batch: Batch = Default::default();
     batch.append_statement(insert_a_b_c);
     batch.append_statement(insert_a_b_6);

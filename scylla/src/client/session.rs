@@ -5,8 +5,6 @@ use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, Executi
 use super::pager::{PreparedIteratorConfig, QueryPager};
 use super::{Compression, PoolSize, SelfIdentity};
 use crate::authentication::AuthenticatorProvider;
-use crate::batch::batch_values;
-use crate::batch::{Batch, BatchStatement};
 #[cfg(feature = "unstable-cloud")]
 use crate::cloud::CloudConfig;
 #[cfg(feature = "unstable-cloud")]
@@ -30,12 +28,14 @@ use crate::policies::load_balancing::{self, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
-use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
-use crate::query::Query;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse};
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::Shard;
+use crate::statement::batch::batch_values;
+use crate::statement::batch::{Batch, BatchStatement};
+use crate::statement::prepared_statement::{PartitionKeyError, PreparedStatement};
+use crate::statement::query::Query;
 use crate::statement::{Consistency, PageSize, StatementConfig};
 use arc_swap::ArcSwapOption;
 use futures::future::join_all;
@@ -565,7 +565,7 @@ impl Session {
     /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-    /// use scylla::prepared_statement::PreparedStatement;
+    /// use scylla::statement::prepared_statement::PreparedStatement;
     ///
     /// // Prepare the query for later execution
     /// let prepared: PreparedStatement = session
@@ -602,7 +602,7 @@ impl Session {
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use std::ops::ControlFlow;
-    /// use scylla::query::Query;
+    /// use scylla::statement::query::Query;
     /// use scylla::response::{PagingState, PagingStateResponse};
     ///
     /// let paged_prepared = session
@@ -671,7 +671,7 @@ impl Session {
     /// # use futures::StreamExt as _;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-    /// use scylla::prepared_statement::PreparedStatement;
+    /// use scylla::statement::prepared_statement::PreparedStatement;
     ///
     /// // Prepare the query for later execution
     /// let prepared: PreparedStatement = session
@@ -721,7 +721,7 @@ impl Session {
     /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-    /// use scylla::batch::Batch;
+    /// use scylla::statement::batch::Batch;
     ///
     /// let mut batch: Batch = Default::default();
     ///
@@ -1152,7 +1152,7 @@ impl Session {
     /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-    /// use scylla::prepared_statement::PreparedStatement;
+    /// use scylla::statement::prepared_statement::PreparedStatement;
     ///
     /// // Prepare the query for later execution
     /// let prepared: PreparedStatement = session
@@ -1488,7 +1488,7 @@ impl Session {
     /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-    /// use scylla::batch::Batch;
+    /// use scylla::statement::batch::Batch;
     ///
     /// // Create a batch statement with unprepared statements
     /// let mut batch: Batch = Default::default();

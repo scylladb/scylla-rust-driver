@@ -45,9 +45,9 @@
 //! * [Batch](crate::client::session::Session::batch)
 //!
 //! To specify options for a single query create the query object and configure it:
-//! * For simple: [Query](crate::query::Query)
-//! * For prepared: [PreparedStatement](crate::prepared_statement::PreparedStatement)
-//! * For batch: [Batch](crate::batch::Batch)
+//! * For simple: [Query](crate::statement::query::Query)
+//! * For prepared: [PreparedStatement](crate::statement::prepared_statement::PreparedStatement)
+//! * For batch: [Batch](crate::statement::batch::Batch)
 //!
 //! The easiest way to specify bound values in a query is using a tuple:
 //! ```rust
@@ -257,7 +257,3 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 pub(crate) use utils::test_utils;
-
-pub use statement::batch;
-pub use statement::prepared_statement;
-pub use statement::query;

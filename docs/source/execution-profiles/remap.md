@@ -25,7 +25,7 @@ Below, the remaps described above are followed in code.
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::query::Query;
+use scylla::statement::query::Query;
 use scylla::statement::Consistency;
 use scylla::client::execution_profile::ExecutionProfile;
 

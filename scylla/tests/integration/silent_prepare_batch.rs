@@ -1,7 +1,7 @@
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
-use scylla::batch::Batch;
 use scylla::client::session::Session;
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::batch::Batch;
+use scylla::statement::prepared_statement::PreparedStatement;
 
 use std::collections::BTreeSet;
 
