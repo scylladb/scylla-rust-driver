@@ -21,10 +21,6 @@ jobs:
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v3
-    - name: Setup 3-node Scylla cluster
-      run: |
-        sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
-        docker compose -f test/cluster/docker-compose.yml up -d --wait
     - name: Update rust toolchain
       run: rustup update
     - name: Print rustc version
@@ -78,6 +74,19 @@ jobs:
       run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml" --features "full-serialization"
     - name: Build
       run: cargo build --verbose --all-targets --features "full-serialization"
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup 3-node Scylla cluster
+      run: |
+        sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
+        docker compose -f test/cluster/docker-compose.yml up -d --wait
+    - name: Update rust toolchain
+      run: rustup update
+    - name: Print rustc version
+      run: rustc --version
     - name: Run tests
       run: |
         cargo clean
