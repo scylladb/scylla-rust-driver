@@ -42,24 +42,29 @@ All examples are available in the [examples](examples) directory
 The driver supports the following:
 
 * Asynchronous API
+* Type-safe serialization and deserialization
+* Zero-copy deserialization
+* Derive macros for user struct serialization and deserialization
 * Token-aware routing
-* Shard-aware routing (specific to ScyllaDB)
-* Prepared statements
-* Query paging
-* Compression (LZ4 and Snappy algorithms)
+* Shard-aware and Tablet-aware routing (specific to ScyllaDB)
+* Prepared, unprepared and batch statements
+* Query paging - both transparent and manual
+* CachingSession that transparently prepares statements
 * CQL binary protocol version 4
-* Batch statements
-* Configurable load balancing policies
-* Driver-side metrics
-* TLS support. Supports either [OpenSSL](https://docs.rs/openssl/0.10.70/openssl/#automatic) or [rustls](https://docs.rs/rustls/latest/rustls/)
-* Configurable retry policies
-* Authentication support
+* Configurable policies:
+    * Load balancing
+    * Retry
+    * Speculative execution
+    * and other (timestamp generation, address translation, host filtering)
+* Execution profiles
+* Driver-side metrics, and query execution history
+* TLS. Both OpenSSL and Rustls are supported
+* Compression (LZ4 and Snappy algorithms)
+* Authentication
+* Cluster metadata access
 * CQL tracing
 
-Ongoing efforts:
-* CQL Events
-* More tests
-* More benchmarks
+For planned future improvements, see our [Milestones].
 
 ## Getting Help
 
@@ -93,6 +98,7 @@ at your option.
 
 [ScyllaDB Slack]: http://slack.scylladb.com/
 [ScyllaDB Forum]: https://forum.scylladb.com/
+[Milestones]: https://github.com/scylladb/scylla-rust-driver/milestones
 [Apache Cassandra®]: https://cassandra.apache.org/
 [cdrs-tokio]: https://github.com/krojew/cdrs-tokio
 [CQL binary protocol]: https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec
