@@ -152,13 +152,12 @@ impl UntranslatedEndpoint {
 /// Data used to issue connections to a node.
 ///
 /// Fetched from the cluster in Metadata.
-#[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 #[derive(Clone, Debug)]
-pub struct PeerEndpoint {
-    pub host_id: Uuid,
-    pub address: NodeAddr,
-    pub datacenter: Option<String>,
-    pub rack: Option<String>,
+pub(crate) struct PeerEndpoint {
+    pub(crate) host_id: Uuid,
+    pub(crate) address: NodeAddr,
+    pub(crate) datacenter: Option<String>,
+    pub(crate) rack: Option<String>,
 }
 
 impl Peer {
