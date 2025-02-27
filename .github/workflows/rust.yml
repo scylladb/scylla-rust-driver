@@ -16,15 +16,11 @@ env:
   rust_min: 1.70.0 # <- Update this when bumping up MSRV
 
 jobs:
-  build:
+  static_checks:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v3
-    - name: Setup 3-node Scylla cluster
-      run: |
-        sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
-        docker compose -f test/cluster/docker-compose.yml up -d --wait
     - name: Update rust toolchain
       run: rustup update
     - name: Print rustc version
@@ -34,13 +30,13 @@ jobs:
     - name: Print clippy version
       run: cargo clippy --version
     - name: Format check
-      run: cargo fmt --verbose --all -- --check
+      run: cargo fmt --all -- --check
     - name: Clippy check
-      run: cargo clippy --verbose --all-targets
+      run: cargo clippy --all-targets
     - name: Clippy check with all features
-      run: cargo clippy --verbose --all-targets --all-features
+      run: cargo clippy --all-targets --all-features
     - name: Cargo check with cpp_rust_unstable cfg
-      run: RUSTFLAGS="--cfg cpp_rust_unstable" cargo clippy --verbose --all-targets --all-features
+      run: RUSTFLAGS="--cfg cpp_rust_unstable" cargo clippy --all-targets --all-features
 
 # Features checks.
     # No features.
@@ -75,13 +71,26 @@ jobs:
     # (openssl-x, rustls-x) is checked in tls.yml.
 
     - name: Build scylla-cql
-      run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml" --features "full-serialization"
+      run: cargo build --all-targets --manifest-path "scylla-cql/Cargo.toml" --features "full-serialization"
     - name: Build
-      run: cargo build --verbose --all-targets --features "full-serialization"
+      run: cargo build --all-targets --features "full-serialization"
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup 3-node Scylla cluster
+      run: |
+        sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
+        docker compose -f test/cluster/docker-compose.yml up -d --wait
+    - name: Update rust toolchain
+      run: rustup update
+    - name: Print rustc version
+      run: rustc --version
     - name: Run tests
       run: |
         cargo clean
-        RUST_LOG=trace SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose --features "full-serialization"
+        RUST_LOG=trace SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --features "full-serialization"
     - name: Stop the cluster
       if: ${{ always() }}
       run: docker compose -f test/cluster/docker-compose.yml stop
@@ -105,11 +114,11 @@ jobs:
     - name: Use MSRV Cargo.lock
       run: mv Cargo.lock.msrv Cargo.lock
     - name: MSRV cargo check with features
-      run: cargo check --verbose --all-targets --all-features --locked
+      run: cargo check --all-targets --all-features --locked
     - name: MSRV cargo check without features
-      run: cargo check --verbose --all-targets --locked --manifest-path "scylla/Cargo.toml"
+      run: cargo check --all-targets --locked --manifest-path "scylla/Cargo.toml"
     - name: MSRV cargo check scylla-cql
-      run: cargo check --verbose --all-targets --locked --manifest-path "scylla-cql/Cargo.toml"
+      run: cargo check --all-targets --locked --manifest-path "scylla-cql/Cargo.toml"
 
   # Tests that docstrings generate docs without warnings
   cargo_docs:

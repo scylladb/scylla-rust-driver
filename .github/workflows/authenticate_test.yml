@@ -29,7 +29,7 @@ jobs:
       run: docker compose -f test/cluster/docker-compose-passauth.yml up -d
 
     - name: Run tests
-      run: SCYLLA_URI=172.43.0.2 RUST_LOG=trace cargo test --verbose authenticate_superuser -- custom_authentication --ignored
+      run: SCYLLA_URI=172.43.0.2 RUST_LOG=trace cargo test authenticate_superuser -- custom_authentication --ignored
 
     - name: Stop the cluster
       if: ${{ always() }}
