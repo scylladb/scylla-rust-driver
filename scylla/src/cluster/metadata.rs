@@ -183,7 +183,9 @@ impl Peer {
     }
 }
 
+/// Describes a keyspace in the cluster.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Keyspace {
     pub strategy: Strategy,
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
@@ -194,7 +196,9 @@ pub struct Keyspace {
     pub user_defined_types: HashMap<String, Arc<UserDefinedType<'static>>>,
 }
 
+/// Describes a table in the cluster.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Table {
     pub columns: HashMap<String, Column>,
     /// Names of the column of partition key.
@@ -207,13 +211,17 @@ pub struct Table {
     pub(crate) pk_column_specs: Vec<ColumnSpec<'static>>,
 }
 
+/// Describes a materialized view in the cluster.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct MaterializedView {
     pub view_metadata: Table,
     pub base_table_name: String,
 }
 
+/// Describes a column of the table.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Column {
     pub typ: ColumnType<'static>,
     pub kind: ColumnKind,
@@ -315,6 +323,7 @@ impl PreCollectionType {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ColumnKind {
     Regular,
     Static,
@@ -341,6 +350,7 @@ impl std::str::FromStr for ColumnKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 #[allow(clippy::enum_variant_names)]
 pub enum Strategy {
     SimpleStrategy {
