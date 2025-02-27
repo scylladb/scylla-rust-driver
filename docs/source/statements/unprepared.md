@@ -1,11 +1,11 @@
-# Simple query
+# Unprepared statement
 
-Simple query takes query text and values and simply executes them on a `Session`:
+Unprepared statement takes CQL statement text and values and simply executes them on a `Session`:
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;
 # use std::error::Error;
-# async fn simple_query_example(session: &Session) -> Result<(), Box<dyn Error>> {
+# async fn unprepared_statement_example(session: &Session) -> Result<(), Box<dyn Error>> {
 // Insert a value into the table
 let to_insert: i32 = 12345;
 session
@@ -16,7 +16,7 @@ session
 ```
 
 > ***Warning***\
-> Don't use simple query to receive large amounts of data.\
+> Don't use unprepared queries to receive large amounts of data.\
 > By default the query is unpaged and might cause heavy load on the cluster.\
 > In such cases use [paged query](paged.md) instead.\
 > 
@@ -28,33 +28,33 @@ session
 > in order to fetch information required to serialize values. This will affect
 > performance because 2 round trips will be required instead of 1.
 
-### First argument - the query
-As the first argument `Session::query_unpaged` takes anything implementing `Into<Query>`.\
-You can create a query manually to set custom options. For example to change query consistency:
+### First argument - the statement
+As the first argument `Session::query_unpaged` takes anything implementing `Into<Statement>`.\
+You can create a statement manually to set custom options. For example to change statement consistency:
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::statement::unprepared::Statement;
 use scylla::statement::Consistency;
 
-// Create a Query manually to change the Consistency to ONE
-let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
-my_query.set_consistency(Consistency::One);
+// Create a Statement manually to change the Consistency to ONE
+let mut my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_statement.set_consistency(Consistency::One);
 
 // Insert a value into the table
 let to_insert: i32 = 12345;
-session.query_unpaged(my_query, (to_insert,)).await?;
+session.query_unpaged(my_statement, (to_insert,)).await?;
 # Ok(())
 # }
 ```
-See [Query API documentation](https://docs.rs/scylla/latest/scylla/statement/query/struct.Query.html) for more options
+See [Statement API documentation](https://docs.rs/scylla/latest/scylla/statement/struct.Statement.html) for more options
 
 ### Second argument - the values
-Query text is constant, but the values might change.
-You can pass changing values to a query by specifying a list of variables as bound values.\
-Each `?` in query text will be filled with the matching value. 
+Statement text is constant, but the values may change.
+You can pass changing values to a statement by specifying a list of variables as bound values.\
+Each `?` in statement text will be filled with the matching value. 
 
 The easiest way is to pass values using a tuple:
 ```rust
@@ -84,7 +84,7 @@ Here, we use the `rows` method to check that the response indeed contains rows w
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 
-// NOTE: using unpaged queries for SELECTs is discouraged in general.
+// NOTE: using unpaged queries (SELECTs) is discouraged in general.
 // Query results may be so big that it is not preferable to fetch them all at once.
 // Even with small results, if there are a lot of tombstones, then there can be similar bad consequences.
 // However, `query_unpaged` will return all results in one, possibly giant, piece
@@ -115,9 +115,9 @@ while let Some(read_row) = iter.next().transpose()? {
 See [Query result](result.md) for more information about handling query results
 
 ### Performance
-Simple queries should not be used in places where performance matters.\
-If performance matters use a [Prepared query](prepared.md) instead.
+Unprepared statements should not be used in places where performance matters.\
+If performance matters use a [Prepared statement](prepared.md) instead.
 
-With simple query the database has to parse query text each time it's executed, which worsens performance.\
+With unprepared statement the database has to parse statement text each time it's executed, which worsens performance.\
 
-Additionally token and shard aware load balancing does not work with simple queries. They are sent to random nodes.
+Additionally token and shard aware load balancing does not work with unprepared statements. They are sent to random nodes.

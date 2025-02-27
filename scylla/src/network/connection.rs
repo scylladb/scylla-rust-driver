@@ -1,6 +1,5 @@
 use super::tls::{TlsConfig, TlsProvider};
 use crate::authentication::AuthenticatorProvider;
-use crate::batch::{Batch, BatchStatement};
 use crate::client::pager::{NextRowError, QueryPager};
 use crate::client::Compression;
 use crate::client::SelfIdentity;
@@ -22,14 +21,15 @@ use crate::frame::{
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
-use crate::query::Query;
 use crate::response::query_result::QueryResult;
 use crate::response::{
     NonErrorAuthResponse, NonErrorStartupResponse, PagingState, PagingStateResponse, QueryResponse,
 };
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardInfo, Sharder, ShardingError};
-use crate::statement::prepared_statement::PreparedStatement;
+use crate::statement::batch::{Batch, BatchStatement};
+use crate::statement::prepared::PreparedStatement;
+use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
@@ -606,7 +606,7 @@ impl Connection {
 
     pub(crate) async fn prepare(
         &self,
-        query: &Query,
+        query: &Statement,
     ) -> Result<PreparedStatement, RequestAttemptError> {
         let query_response = self
             .send_request(
@@ -649,10 +649,10 @@ impl Connection {
 
     async fn reprepare(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
         previous_prepared: &PreparedStatement,
     ) -> Result<(), RequestAttemptError> {
-        let reprepare_query: Query = query.into();
+        let reprepare_query: Statement = query.into();
         let reprepared = self.prepare(&reprepare_query).await?;
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
@@ -776,10 +776,10 @@ impl Connection {
     #[allow(dead_code)]
     pub(crate) async fn query_single_page(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), RequestAttemptError> {
-        let query: Query = query.into();
+        let query: Statement = query.into();
 
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         let consistency = query
@@ -799,12 +799,12 @@ impl Connection {
     #[allow(dead_code)]
     pub(crate) async fn query_single_page_with_consistency(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<Statement>,
         paging_state: PagingState,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<(QueryResult, PagingStateResponse), RequestAttemptError> {
-        let query: Query = query.into();
+        let query: Statement = query.into();
         let page_size = query.get_validated_page_size();
 
         self.query_raw_with_consistency(
@@ -821,27 +821,27 @@ impl Connection {
     #[allow(dead_code)]
     pub(crate) async fn query_unpaged(
         &self,
-        query: impl Into<Query>,
+        statement: impl Into<Statement>,
     ) -> Result<QueryResult, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        let query: Query = query.into();
+        let statement: Statement = statement.into();
 
-        self.query_raw_unpaged(&query)
+        self.query_raw_unpaged(&statement)
             .await
             .and_then(QueryResponse::into_query_result)
     }
 
     pub(crate) async fn query_raw_unpaged(
         &self,
-        query: &Query,
+        statement: &Statement,
     ) -> Result<QueryResponse, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_raw_with_consistency(
-            query,
-            query
+            statement,
+            statement
                 .config
                 .determine_consistency(self.config.default_consistency),
-            query.config.serial_consistency.flatten(),
+            statement.config.serial_consistency.flatten(),
             None,
             PagingState::start(),
         )
@@ -850,7 +850,7 @@ impl Connection {
 
     pub(crate) async fn query_raw_with_consistency(
         &self,
-        query: &Query,
+        statement: &Statement,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
@@ -862,10 +862,10 @@ impl Connection {
                 .as_ref()
                 .map(|gen| gen.next_timestamp())
         };
-        let timestamp = query.get_timestamp().or_else(get_timestamp_from_gen);
+        let timestamp = statement.get_timestamp().or_else(get_timestamp_from_gen);
 
         let query_frame = query::Query {
-            contents: Cow::Borrowed(&query.contents),
+            contents: Cow::Borrowed(&statement.contents),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
@@ -878,7 +878,7 @@ impl Connection {
         };
 
         let response = self
-            .send_request(&query_frame, true, query.config.tracing, None)
+            .send_request(&query_frame, true, statement.config.tracing, None)
             .await?;
 
         Ok(response)
@@ -1007,7 +1007,7 @@ impl Connection {
     /// the asynchronous iterator interface.
     pub(crate) async fn query_iter(
         self: Arc<Self>,
-        query: Query,
+        query: Statement,
     ) -> Result<QueryPager, NextRowError> {
         let consistency = query
             .config
@@ -1155,7 +1155,7 @@ impl Connection {
         let mut prepared_queries = HashMap::<&str, PreparedStatement>::new();
 
         for query in &to_prepare {
-            let prepared = self.prepare(&Query::new(query.to_string())).await?;
+            let prepared = self.prepare(&Statement::new(query.to_string())).await?;
             prepared_queries.insert(query, prepared);
         }
 
@@ -1182,7 +1182,7 @@ impl Connection {
     ) -> Result<(), UseKeyspaceError> {
         // Trying to pass keyspace_name as bound value doesn't work
         // We have to send "USE " + keyspace_name
-        let query: Query = match keyspace_name.is_case_sensitive {
+        let query: Statement = match keyspace_name.is_case_sensitive {
             true => format!("USE \"{}\"", keyspace_name.as_str()).into(),
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
@@ -2262,7 +2262,7 @@ mod tests {
     use super::{open_connection, HostConnectionConfig};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
-    use crate::query::Query;
+    use crate::statement::unprepared::Statement;
     use crate::test_utils::setup_tracing;
     use crate::utils::test_utils::{unique_keyspace_name, PerformDDL};
     use futures::{StreamExt, TryStreamExt};
@@ -2338,7 +2338,8 @@ mod tests {
             .unwrap();
 
         // 1. SELECT from an empty table returns query result where rows are Some(Vec::new())
-        let select_query = Query::new("SELECT p FROM connection_query_iter_tab").with_page_size(7);
+        let select_query =
+            Statement::new("SELECT p FROM connection_query_iter_tab").with_page_size(7);
         let empty_res = connection
             .clone()
             .query_iter(select_query.clone())
@@ -2353,8 +2354,8 @@ mod tests {
 
         // 2. Insert 100 and select using query_iter with page_size 7
         let values: Vec<i32> = (0..100).collect();
-        let insert_query =
-            Query::new("INSERT INTO connection_query_iter_tab (p) VALUES (?)").with_page_size(7);
+        let insert_query = Statement::new("INSERT INTO connection_query_iter_tab (p) VALUES (?)")
+            .with_page_size(7);
         let prepared = connection.prepare(&insert_query).await.unwrap();
         let mut insert_futures = Vec::new();
         for v in &values {
@@ -2380,7 +2381,7 @@ mod tests {
 
         // 3. INSERT query_iter should work and not return any rows.
         let insert_res1 = connection
-            .query_iter(Query::new(
+            .query_iter(Statement::new(
                 "INSERT INTO connection_query_iter_tab (p) VALUES (0)",
             ))
             .await
@@ -2456,7 +2457,7 @@ mod tests {
                 let conn = connection.clone();
                 futs.push(tokio::task::spawn(async move {
                     let futs = (base..base + batch_size).map(|j| {
-                        let q = Query::new("INSERT INTO t (p, v) VALUES (?, ?)");
+                        let q = Statement::new("INSERT INTO t (p, v) VALUES (?, ?)");
                         let conn = conn.clone();
                         async move {
                             let prepared = conn.prepare(&q).await.unwrap();

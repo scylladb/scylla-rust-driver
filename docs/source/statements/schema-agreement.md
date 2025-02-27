@@ -1,13 +1,13 @@
 # Schema agreement
 
-Sometimes after performing queries some nodes have not been updated, so we need a mechanism that checks if every node have agreed on schema version.
+Sometimes after executing CQL statements some nodes have not been updated, so we need a mechanism that checks if every node have agreed on schema version.
 
 ### Automated awaiting schema agreement
 
-The driver automatically awaits schema agreement after a schema-altering query is executed.
+The driver automatically awaits schema agreement after a schema-altering statement is executed.
 Waiting for schema agreement more than necessary is never a bug, but might slow down applications which do a lot of schema changes (e.g. a migration).
 For instance, in case where somebody wishes to create a keyspace and then a lot of tables in it, it makes sense only to wait after creating a keyspace
-and after creating all the tables rather than after every query. Therefore, the said behaviour can be disabled:
+and after creating all the tables rather than after every statement execution. Therefore, the said behaviour can be disabled:
 
 ```rust
 # extern crate scylla;

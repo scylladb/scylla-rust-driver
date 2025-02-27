@@ -14,10 +14,11 @@ use crate::observability::history::HistoryListener;
 use crate::policies::retry::RetryPolicy;
 
 pub mod batch;
-pub mod prepared_statement;
-pub mod query;
+pub mod prepared;
+pub mod unprepared;
 
 pub use crate::frame::types::{Consistency, SerialConsistency};
+pub use unprepared::Statement;
 
 // This is the default common to drivers.
 const DEFAULT_PAGE_SIZE: i32 = 5000;

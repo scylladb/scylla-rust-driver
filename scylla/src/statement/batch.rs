@@ -4,7 +4,8 @@ use std::sync::Arc;
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::observability::history::HistoryListener;
 use crate::policies::retry::RetryPolicy;
-use crate::statement::{prepared_statement::PreparedStatement, query::Query};
+use crate::statement::prepared::PreparedStatement;
+use crate::statement::unprepared::Statement;
 
 use super::StatementConfig;
 use super::{Consistency, SerialConsistency};
@@ -168,18 +169,18 @@ impl Default for Batch {
 /// This enum represents a CQL statement, that can be part of batch.
 #[derive(Clone)]
 pub enum BatchStatement {
-    Query(Query),
+    Query(Statement),
     PreparedStatement(PreparedStatement),
 }
 
 impl From<&str> for BatchStatement {
     fn from(s: &str) -> Self {
-        BatchStatement::Query(Query::from(s))
+        BatchStatement::Query(Statement::from(s))
     }
 }
 
-impl From<Query> for BatchStatement {
-    fn from(q: Query) -> Self {
+impl From<Statement> for BatchStatement {
+    fn from(q: Statement) -> Self {
         BatchStatement::Query(q)
     }
 }
@@ -217,8 +218,8 @@ pub(crate) mod batch_values {
     use scylla_cql::serialize::{RowWriter, SerializationError};
 
     use crate::errors::ExecutionError;
-    use crate::prepared_statement::PartitionKeyError;
     use crate::routing::Token;
+    use crate::statement::prepared::PartitionKeyError;
 
     use super::BatchStatement;
 

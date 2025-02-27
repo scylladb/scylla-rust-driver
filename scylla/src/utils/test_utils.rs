@@ -11,8 +11,8 @@ use crate::errors::{ExecutionError, RequestAttemptError};
 use crate::network::Connection;
 use crate::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
-use crate::query::Query;
 use crate::routing::Shard;
+use crate::statement::unprepared::Statement;
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
 use std::{
@@ -195,7 +195,7 @@ impl RetryPolicy for SchemaQueriesRetryPolicy {
     }
 }
 
-fn apply_ddl_lbp(query: &mut Query) {
+fn apply_ddl_lbp(query: &mut Statement) {
     let policy = query
         .get_execution_profile_handle()
         .map(|profile| profile.pointee_to_builder())
@@ -211,12 +211,12 @@ fn apply_ddl_lbp(query: &mut Query) {
 // or something like that.
 #[async_trait::async_trait]
 pub(crate) trait PerformDDL {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError>;
+    async fn ddl(&self, query: impl Into<Statement> + Send) -> Result<(), ExecutionError>;
 }
 
 #[async_trait::async_trait]
 impl PerformDDL for Session {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError> {
+    async fn ddl(&self, query: impl Into<Statement> + Send) -> Result<(), ExecutionError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
         self.query_unpaged(query, &[]).await.map(|_| ())
@@ -225,7 +225,7 @@ impl PerformDDL for Session {
 
 #[async_trait::async_trait]
 impl PerformDDL for CachingSession {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError> {
+    async fn ddl(&self, query: impl Into<Statement> + Send) -> Result<(), ExecutionError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
         self.execute_unpaged(query, &[]).await.map(|_| ())
@@ -234,7 +234,7 @@ impl PerformDDL for CachingSession {
 
 #[async_trait::async_trait]
 impl PerformDDL for Connection {
-    async fn ddl(&self, query: impl Into<Query> + Send) -> Result<(), ExecutionError> {
+    async fn ddl(&self, query: impl Into<Statement> + Send) -> Result<(), ExecutionError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
         self.query_unpaged(query)

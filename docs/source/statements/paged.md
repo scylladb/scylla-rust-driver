@@ -25,8 +25,8 @@ while prefetching the next one. This limits latency and is a convenient abstract
 > don't use it for statements that do not benefit from paging. In particular, avoid using it
 > for non-SELECTs.
 
-On API level, `Session::query_iter` and `Session::execute_iter` take a [simple query](simple.md)
-or a [prepared query](prepared.md), respectively, and return a `QueryPager`. `QueryPager` needs
+On API level, `Session::query_iter` and `Session::execute_iter` take a [unprepared statement](unprepared.md)
+or a [prepared statement](prepared.md), respectively, and return a `QueryPager`. `QueryPager` needs
 to be converted into typed `Stream` (by calling `QueryPager::rows_stream::<RowT>`) in order to
 deserialize rows.
 
@@ -38,14 +38,14 @@ deserialize rows.
 
 > ***Warning***\
 > In case of unprepared variant (`Session::query_iter`) if the values are not empty
-> driver will first fully prepare a query (which means issuing additional request to each
+> driver will first fully prepare a statement (which means issuing additional request to each
 > node in a cluster). This will have a performance penalty - how big it is depends on
 > the size of your cluster (more nodes - more requests) and the size of returned
 > result (more returned pages - more amortized penalty). In any case, it is preferable to
 > use `Session::execute_iter`.
 
 ### Examples
-Use `query_iter` to perform a [simple query](simple.md) with paging:
+Use `query_iter` to perform an [unprepared query](unprepared.md) with paging:
 ```rust
 # extern crate scylla;
 # extern crate futures;
@@ -74,7 +74,7 @@ Use `execute_iter` to perform a [prepared query](prepared.md) with paging:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 use futures::stream::StreamExt;
 
 let prepared: PreparedStatement = session
@@ -94,20 +94,20 @@ while let Some(next_row_res) = rows_stream.next().await {
 # }
 ```
 
-Query values can be passed to `query_iter` and `execute_iter` just like in a [simple query](simple.md)
+Statement values can be passed to `query_iter` and `execute_iter` just like in an [unprepared statement](unprepared.md)
 
 ### Configuring page size
 It's possible to configure the size of a single page.
 
-On a `Query`:
+On a `Statement`:
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::statement::unprepared::Statement;
 
-let mut query: Query = Query::new("SELECT a, b FROM ks.t");
+let mut query: Statement = Statement::new("SELECT a, b FROM ks.t");
 query.set_page_size(16);
 
 let _ = session.query_iter(query, &[]).await?; // ...
@@ -121,7 +121,7 @@ On a `PreparedStatement`:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 
 let mut prepared: PreparedStatement = session
     .prepare("SELECT a, b FROM ks.t")
@@ -145,11 +145,11 @@ On a `Query`:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::statement::unprepared::Statement;
 use scylla::response::{PagingState, PagingStateResponse};
 use std::ops::ControlFlow;
 
-let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6);
+let paged_query = Statement::new("SELECT a, b, c FROM ks.t").with_page_size(6);
 
 let mut paging_state = PagingState::start();
 loop {
@@ -188,12 +188,12 @@ On a `PreparedStatement`:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::statement::unprepared::Statement;
 use scylla::response::{PagingState, PagingStateResponse};
 use std::ops::ControlFlow;
 
 let paged_prepared = session
-    .prepare(Query::new("SELECT a, b, c FROM ks.t").with_page_size(7))
+    .prepare(Statement::new("SELECT a, b, c FROM ks.t").with_page_size(7))
     .await?;
 
 let mut paging_state = PagingState::start();
@@ -227,8 +227,8 @@ loop {
 ```
 
 ### Performance
-For the best performance use [prepared queries](prepared.md).
-See [query types overview](queries.md).
+For the best performance use [prepared statements](prepared.md).
+See [statement types overview](statements.md).
 
 ## Best practices
 

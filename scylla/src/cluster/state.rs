@@ -1,11 +1,11 @@
 use crate::errors::ConnectionPoolError;
 use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
 use crate::policies::host_filter::HostFilter;
-use crate::prepared_statement::TokenCalculationError;
 use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use crate::routing::locator::ReplicaLocator;
 use crate::routing::partitioner::{calculate_token_for_partition_key, PartitionerName};
 use crate::routing::{Shard, Token};
+use crate::statement::prepared::TokenCalculationError;
 
 use itertools::Itertools;
 use scylla_cql::frame::response::result::TableSpec;

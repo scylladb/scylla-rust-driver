@@ -45,9 +45,9 @@
 //! * [Batch](crate::client::session::Session::batch)
 //!
 //! To specify options for a single query create the query object and configure it:
-//! * For simple: [Query](crate::query::Query)
-//! * For prepared: [PreparedStatement](crate::prepared_statement::PreparedStatement)
-//! * For batch: [Batch](crate::batch::Batch)
+//! * For simple: [`Statement`](crate::statement::unprepared::Statement)
+//! * For prepared: [`PreparedStatement`](crate::statement::prepared::PreparedStatement)
+//! * For batch: [`Batch`](crate::statement::batch::Batch)
 //!
 //! The easiest way to specify bound values in a query is using a tuple:
 //! ```rust
@@ -90,7 +90,7 @@
 //! # Ok(())
 //! # }
 //! ```
-//! See the [book](https://rust-driver.docs.scylladb.com/stable/queries/result.html) for more receiving methods
+//! See the [book](https://rust-driver.docs.scylladb.com/stable/statements/result.html) for more receiving methods
 
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
@@ -257,7 +257,3 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 pub(crate) use utils::test_utils;
-
-pub use statement::batch;
-pub use statement::prepared_statement;
-pub use statement::query;

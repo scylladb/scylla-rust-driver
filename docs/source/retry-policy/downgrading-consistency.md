@@ -71,14 +71,14 @@ let session: Session = SessionBuilder::new()
 # }
 ```
 
-To use in a [simple query](../queries/simple.md):
+To use in an [unprepared statement](../statements/unprepared.md):
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::statement::unprepared::Statement;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::policies::retry::DowngradingConsistencyRetryPolicy;
 
@@ -87,25 +87,25 @@ let handle = ExecutionProfile::builder()
     .build()
     .into_handle();
 
-// Create a Query manually and set the retry policy
-let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
-my_query.set_execution_profile_handle(Some(handle));
+// Create a Statement manually and set the retry policy
+let mut my_statement: Statement = Statement::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_statement.set_execution_profile_handle(Some(handle));
 
-// Run the query using this retry policy
+// Execute the statement using this retry policy
 let to_insert: i32 = 12345;
-session.query_unpaged(my_query, (to_insert,)).await?;
+session.query_unpaged(my_statement, (to_insert,)).await?;
 # Ok(())
 # }
 ```
 
-To use in a [prepared query](../queries/prepared.md):
+To use in a [prepared statement](../statements/prepared.md):
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::policies::retry::DowngradingConsistencyRetryPolicy;
 
@@ -122,7 +122,7 @@ let mut prepared: PreparedStatement = session
 prepared.set_execution_profile_handle(Some(handle));
 
 
-// Run the query using this retry policy
+// Execute the statement using this retry policy
 let to_insert: i32 = 12345;
 session.execute_unpaged(&prepared, (to_insert,)).await?;
 # Ok(())

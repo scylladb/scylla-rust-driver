@@ -12,13 +12,13 @@ If tracing is enabled the row iterator will contain a list of tracing ids for al
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::statement::unprepared::Statement;
 use scylla::observability::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;
 
-// Create a Query manually and enable tracing
-let mut query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(4)");
+// Create a Statement manually and enable tracing
+let mut query: Statement = Statement::new("SELECT * FROM ks.tab");
 query.set_tracing(true);
 
 // Create a paged query iterator and fetch pages
@@ -50,17 +50,17 @@ for id in tracing_ids {
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 use scylla::observability::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;
 
-// Prepare the query
+// Prepare the statement
 let mut prepared: PreparedStatement = session
     .prepare("SELECT a FROM ks.tab")
     .await?;
 
-// Enable tracing for the prepared query
+// Enable tracing for the prepared statement
 prepared.set_tracing(true);
 
 // Create a paged query iterator and fetch pages

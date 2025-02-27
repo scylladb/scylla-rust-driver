@@ -1,12 +1,12 @@
-# Prepared query
+# Prepared statement
 
-Prepared queries provide much better performance than simple queries,
+Prepared statements provide much better performance than unprepared statements,
 but they need to be prepared before use.
 
 Benefits that prepared statements have to offer:
 - Type safety - thanks to metadata provided by the server, the driver can verify bound values' types before serialization. This way, we can be always sure that the Rust type provided by the user is compatible (and if not, the error is returned) with the destined native type. The same applies for deserialization.
-- Performance - when executing a simple query with non-empty values list, the driver
-prepares the statement before execution. The reason for this is to provide type safety for simple queries. However, this implies 2 round trips per simple query execution. On the other hand, the cost of prepared statement's execution is only 1 round trip.
+- Performance - when executing an unprepared statement with non-empty values list, the driver
+prepares the statement before execution. The reason for this is to provide type safety for unprepared statements. However, this implies 2 round trips per unprepared statement execution. On the other hand, the cost of prepared statement's execution is only 1 round trip.
 - Improved load-balancing - using the statement metadata, the driver can compute a set of destined replicas for current statement execution. These replicas will be preferred when choosing the node (and shard) to send the request to. For more insight on this, see [performance section](#performance).
 
 ```rust
@@ -14,14 +14,14 @@ prepares the statement before execution. The reason for this is to provide type 
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 
-// Prepare the query for later execution
+// Prepare the statement for later execution
 let prepared: PreparedStatement = session
     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     .await?;
 
-// Run the prepared query with some values, just like a simple query
+// Execute the prepared statement with some values, just like an unprepared statement.
 let to_insert: i32 = 12345;
 session.execute_unpaged(&prepared, (to_insert,)).await?;
 # Ok(())
@@ -40,14 +40,14 @@ session.execute_unpaged(&prepared, (to_insert,)).await?;
 > When page size is set, `execute` will return only the first page of results.
 
 ### `Session::prepare`
-`Session::prepare` takes query text and prepares the query on all nodes and shards.
+`Session::prepare` takes statement text and prepares the statement on all nodes and shards.
 If at least one succeeds returns success.
 
 ### `Session::execute`
-`Session::execute` takes a prepared query and bound values and runs the query.
-Passing values and the result is the same as in [simple query](simple.md).
+`Session::execute` takes a prepared statement and bound values and executes the statement.
+Passing values and the result is the same as in [unprepared statement](unprepared.md).
 
-### Query options
+### Statement options
 
 To specify custom options, set them on the `PreparedStatement` before execution.
 For example to change the consistency:
@@ -57,19 +57,19 @@ For example to change the consistency:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::Consistency;
 
-// Prepare the query for later execution
+// Prepare the statement for later execution
 let mut prepared: PreparedStatement = session
     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     .await?;
 
-// Set prepared query consistency to One
-// This is the consistency with which this query will be executed
+// Set prepared statement consistency to One
+// This is the consistency with which this statement will be executed
 prepared.set_consistency(Consistency::One);
 
-// Run the prepared query with some values, just like a simple query
+// Execute the prepared statement with some values, just like an unprepared statement.
 let to_insert: i32 = 12345;
 session.execute_unpaged(&prepared, (to_insert,)).await?;
 # Ok(())
@@ -80,13 +80,13 @@ See [PreparedStatement API documentation](https://docs.rs/scylla/latest/scylla/s
 for more options.
 
 > ***Note***
-> Prepared statements can be created from `Query` structs and will inherit from
-> the custom options that the `Query` was created with.
+> Prepared statements can be created from `Statement` structs and will inherit from
+> the custom options that the `Statement` was created with.
 > This is especially useful when using `CachingSession::execute` for example.
 
 ### Performance
 
-Prepared queries have good performance, much better than simple queries.
+Prepared statement have good performance, much better than unprepared statements.
 By default they use shard/token aware load balancing.
 
 > **Always** pass partition key values as bound values.
@@ -109,9 +109,9 @@ TABLE ks.prepare_table (
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::prepared::PreparedStatement;
 
-// WRONG - partition key value is passed in query string
+// WRONG - partition key value is passed in statement string
 // Load balancing will compute the wrong partition key
 let wrong_prepared: PreparedStatement = session
     .prepare("INSERT INTO ks.prepare_table (a, b, c) VALUES(12345, ?, 16)")

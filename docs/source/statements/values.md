@@ -1,11 +1,11 @@
-# Query values
-Query text is constant, but the values might change.
-You can pass changing values to a query by specifying a list of variables as bound values.\
-Each `?` in query text will be filled with the matching value. 
+# Statement values
+Statement text is constant, but the values may change.
+You can pass changing values to a statement by specifying a list of variables as bound values.\
+Each `?` in statement text will be filled with the matching value. 
 
 > **Never** pass values by adding strings, this could lead to [SQL Injection](https://en.wikipedia.org/wiki/SQL_injection)
 
-Each list of values to send in a query must implement the trait `SerializeRow`.\
+Each list of values to send must implement the trait `SerializeRow`.\
 By default this can be a slice `&[]`, a tuple `()` (max 16 elements) of values to send,
 or a custom struct which derives from `SerializeRow`.
 
@@ -57,7 +57,7 @@ session
     .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(?, ?)", int_string)
     .await?;
 
-// You can use named bind markers in query if you want
+// You can use named bind markers in statement if you want
 // your names in struct to be different than column names.
 #[derive(SerializeRow)]
 struct IntStringCustom {

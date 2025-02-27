@@ -2,11 +2,11 @@ use assert_matches::assert_matches;
 use scylla::client::session::Session;
 
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
-use scylla::batch::Batch;
-use scylla::batch::BatchType;
 use scylla::errors::{BadQuery, ExecutionError};
-use scylla::query::Query;
 use scylla::response::query_result::QueryResult;
+use scylla::statement::batch::Batch;
+use scylla::statement::batch::BatchType;
+use scylla::statement::unprepared::Statement;
 
 #[tokio::test]
 async fn test_large_batch_statements() {
@@ -52,9 +52,9 @@ async fn write_batch(
 ) -> Result<QueryResult, ExecutionError> {
     let mut batch_query = Batch::new(BatchType::Unlogged);
     let mut batch_values = Vec::new();
-    let query = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);
-    let query = Query::new(query);
-    let prepared_statement = session.prepare(query).await.unwrap();
+    let statement_str = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);
+    let statement = Statement::new(statement_str);
+    let prepared_statement = session.prepare(statement).await.unwrap();
     for i in 0..n {
         let mut key = vec![0];
         key.extend(i.to_be_bytes().as_slice());

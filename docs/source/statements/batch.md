@@ -1,7 +1,7 @@
 # Batch statement
 
 A batch statement allows to execute many data-modifying statements at once.\
-These statements can be [simple](simple.md) or [prepared](prepared.md).\
+These statements can be [unprepared](unprepared.md) or [prepared](prepared.md).\
 Only `INSERT`, `UPDATE` and `DELETE` statements are allowed.
 
 ```rust
@@ -9,19 +9,19 @@ Only `INSERT`, `UPDATE` and `DELETE` statements are allowed.
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::batch::Batch;
-use scylla::query::Query;
-use scylla::prepared_statement::PreparedStatement;
+use scylla::statement::batch::Batch;
+use scylla::statement::unprepared::Statement;
+use scylla::statement::prepared::PreparedStatement;
 
 // Create a batch statement
 let mut batch: Batch = Default::default();
 
-// Add a simple statement to the batch using its text
+// Add an unprepared statement to the batch using its text
 batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(1, 2)");
 
-// Add a simple statement created manually to the batch
-let simple: Query = Query::new("INSERT INTO ks.tab (a, b) VALUES(3, 4)");
-batch.append_statement(simple);
+// Add an unprepared statement created manually to the batch
+let unprepared: Statement = Statement::new("INSERT INTO ks.tab (a, b) VALUES(3, 4)");
+batch.append_statement(unprepared);
 
 // Add a prepared statement to the batch
 let prepared: PreparedStatement = session
@@ -41,8 +41,8 @@ session.batch(&batch, batch_values).await?;
 ```
 
 > ***Warning***\
-> Using simple statements with bind markers in batches is strongly discouraged.
-> For each simple statement with a non-empty list of values in the batch,
+> Using unprepared statements with bind markers in batches is strongly discouraged.
+> For each unprepared statement with a non-empty list of values in the batch,
 > the driver will send a prepare request, and it will be done **sequentially**.
 > Results of preparation are not cached between `Session::batch` calls.
 > Consider preparing the statements before putting them into the batch.
@@ -55,7 +55,7 @@ Instead of preparing each statement individually, it's possible to prepare a who
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::batch::Batch;
+use scylla::statement::batch::Batch;
 
 // Create a batch statement with unprepared statements
 let mut batch: Batch = Default::default();
@@ -83,7 +83,7 @@ For example to change consistency:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::batch::Batch;
+use scylla::statement::batch::Batch;
 use scylla::statement::Consistency;
 
 // Create a batch
@@ -103,7 +103,7 @@ See [Batch API documentation](https://docs.rs/scylla/latest/scylla/statement/bat
 for more options
 
 ### Batch values
-Batch takes a tuple of values specified just like in [simple](simple.md) or [prepared](prepared.md) queries.
+Batch takes a tuple of values specified just like in [unprepared](unprepared.md) or [prepared](prepared.md) statements.
 
 Length of batch values must be equal to the number of statements in a batch.\
 Each statement must have its values specified, even if they are empty.
@@ -117,7 +117,7 @@ Example:
 # use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::batch::Batch;
+use scylla::statement::batch::Batch;
 
 let mut batch: Batch = Default::default();
 
@@ -142,10 +142,10 @@ session.batch(&batch, batch_values).await?;
 # Ok(())
 # }
 ```
-For more information about sending values in a statement see [Query values](values.md)
+For more information about sending values in a statement see [Statement values](values.md)
 
 
 ### Performance
 Batch statements do not use token/shard aware load balancing, batches are sent to a random node.
 
-Use [prepared queries](prepared.md) for best performance
+Use [prepared statements](prepared.md) for best performance

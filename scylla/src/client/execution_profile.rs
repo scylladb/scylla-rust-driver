@@ -1,4 +1,4 @@
-//! `ExecutionProfile` is a grouping of configurable options regarding query execution.
+//! `ExecutionProfile` is a grouping of configurable options regarding CQL statement execution.
 //!
 //! Profiles can be created to represent different workloads, which thanks to them
 //! can be run conveniently on a single session.
@@ -38,12 +38,12 @@
 //! ```
 //!
 //! ### Example
-//! To create an `ExecutionProfile` and attach it to a `Query`:
+//! To create an [`ExecutionProfile`] and attach it to a [`Statement`](crate::statement::Statement):
 //! ```
 //! # extern crate scylla;
 //! # use std::error::Error;
 //! # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-//! use scylla::query::Query;
+//! use scylla::statement::unprepared::Statement;
 //! use scylla::statement::Consistency;
 //! use scylla::client::execution_profile::ExecutionProfile;
 //! use std::time::Duration;
@@ -55,10 +55,10 @@
 //!
 //! let handle = profile.into_handle();
 //!
-//! let mut query1 = Query::from("SELECT * FROM ks.table");
+//! let mut query1 = Statement::from("SELECT * FROM ks.table");
 //! query1.set_execution_profile_handle(Some(handle.clone()));
 //!
-//! let mut query2 = Query::from("SELECT pk FROM ks.table WHERE pk = ?");
+//! let mut query2 = Statement::from("SELECT pk FROM ks.table WHERE pk = ?");
 //! query2.set_execution_profile_handle(Some(handle));
 //! # Ok(())
 //! # }
@@ -82,7 +82,7 @@
 //! let profile = base_profile.to_builder()
 //!     .consistency(Consistency::All)
 //!     .build();
-//
+//!
 //! # Ok(())
 //! # }
 //! ```
@@ -112,7 +112,7 @@
 //! # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 //! use scylla::client::session::Session;
 //! use scylla::client::session_builder::SessionBuilder;
-//! use scylla::query::Query;
+//! use scylla::statement::unprepared::Statement;
 //! use scylla::statement::Consistency;
 //! use scylla::client::execution_profile::ExecutionProfile;
 //!
@@ -133,8 +133,8 @@
 //!     .build()
 //!     .await?;
 //!
-//! let mut query1 = Query::from("SELECT * FROM ks.table");
-//! let mut query2 = Query::from("SELECT pk FROM ks.table WHERE pk = ?");
+//! let mut query1 = Statement::from("SELECT * FROM ks.table");
+//! let mut query2 = Statement::from("SELECT pk FROM ks.table WHERE pk = ?");
 //!
 //! query1.set_execution_profile_handle(Some(handle1.clone()));
 //! query2.set_execution_profile_handle(Some(handle2.clone()));
@@ -259,16 +259,16 @@ impl ExecutionProfileBuilder {
         self
     }
 
-    /// Specify a default consistency to be used for queries.
+    /// Specify a default consistency to be used for statement executions.
     /// It's possible to override it by explicitly setting a consistency on the chosen query.
     pub fn consistency(mut self, consistency: Consistency) -> Self {
         self.consistency = Some(consistency);
         self
     }
 
-    /// Specify a default serial consistency to be used for queries.
+    /// Specify a default serial consistency to be used for statement executions.
     /// It's possible to override it by explicitly setting a serial consistency
-    /// on the chosen query.
+    /// on the chosen statement.
     pub fn serial_consistency(mut self, serial_consistency: Option<SerialConsistency>) -> Self {
         self.serial_consistency = Some(serial_consistency);
         self
@@ -297,7 +297,7 @@ impl ExecutionProfileBuilder {
         self
     }
 
-    /// Sets the [`RetryPolicy`] to use by default on queries.
+    /// Sets the [`RetryPolicy`] to use by default on statements.
     /// The default is [DefaultRetryPolicy](crate::policies::retry::DefaultRetryPolicy).
     /// It is possible to implement a custom retry policy by implementing the trait [`RetryPolicy`].
     ///
@@ -390,11 +390,11 @@ impl Default for ExecutionProfileBuilder {
     }
 }
 
-/// A profile that groups configurable options regarding query execution.
+/// A profile that groups configurable options regarding statement execution.
 ///
 /// Execution profile is immutable as such, but the driver implements double indirection of form:
-/// query/Session -> ExecutionProfileHandle -> ExecutionProfile
-/// which enables on-fly changing the actual profile associated with all entities (query/Session)
+/// statement/Session -> [`ExecutionProfileHandle`] -> [`ExecutionProfile`]
+/// which enables on-fly changing the actual profile associated with all entities (statements/Session)
 /// by the same handle.
 #[derive(Debug, Clone)]
 pub struct ExecutionProfile(pub(crate) Arc<ExecutionProfileInner>);
@@ -493,7 +493,7 @@ impl ExecutionProfile {
 
 /// A handle that points to an ExecutionProfile.
 ///
-/// Its goal is to enable remapping all associated entities (query/Session)
+/// Its goal is to enable remapping all associated entities (statement/Session)
 /// to another execution profile at once.
 /// Note: Cloned handles initially point to the same Arc'ed execution profile.
 /// However, as the mapping has yet another level of indirection - through
@@ -521,7 +521,7 @@ impl ExecutionProfileHandle {
     }
 
     /// Makes the handle point to a new execution profile.
-    /// All entities (queries/Session) holding this handle will reflect the change.
+    /// All entities (statements/Session) holding this handle will reflect the change.
     pub fn map_to_another_profile(&mut self, profile: ExecutionProfile) {
         self.0 .0.store(profile.0)
     }

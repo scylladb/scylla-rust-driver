@@ -608,7 +608,8 @@ mod tests {
     };
     use scylla_cql::serialize::row::SerializedValues;
 
-    use crate::{prepared_statement::PartitionKey, test_utils::setup_tracing};
+    use crate::statement::prepared::PartitionKey;
+    use crate::test_utils::setup_tracing;
 
     fn make_meta(
         cols: impl IntoIterator<Item = ColumnType<'static>>,

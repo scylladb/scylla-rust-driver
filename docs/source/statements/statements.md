@@ -1,4 +1,4 @@
-# Making queries - best practices
+# Executing CQL statements - best practices
 
 Driver supports all kinds of statements supported by ScyllaDB. The following tables aim to bridge between DB concepts and driver's API.
 They include recommendations on which API to use in what cases.
@@ -8,19 +8,19 @@ They include recommendations on which API to use in what cases.
 | Kind of CQL statement | Single              | Batch                                    |
 |-----------------------|---------------------|------------------------------------------|
 | Prepared              | `PreparedStatement` | `Batch` filled with `PreparedStatement`s |
-| Unprepared            | `Query`             | `Batch` filled with `Query`s             |
+| Unprepared            | `Statement`         | `Batch` filled with `Statement`s        |
 
-This is **NOT** strictly related to content of the CQL query string.
+This is **NOT** strictly related to content of the CQL statement string.
 
 > ***Interesting note***\
-> In fact, any kind of CQL statement could contain any CQL query string.
+> In fact, any kind of CQL statement could contain any CQL statement string.
 > Yet, some of such combinations don't make sense and will be rejected by the DB.
 > For example, SELECTs in a Batch are nonsense.
 
-### [Unprepared](simple.md) vs [Prepared](prepared.md)
+### [Unprepared](unprepared.md) vs [Prepared](prepared.md)
 
 > ***GOOD TO KNOW***\
-> Each time a statement is executed by sending a query string to the DB, it needs to be parsed. Driver does not parse CQL, therefore it sees query strings as opaque.\
+> Each time a statement is executed by sending a statement string to the DB, it needs to be parsed. Driver does not parse CQL, therefore it sees statement strings as opaque.\
 > There is an option to *prepare* a statement, i.e. parse it once by the DB and associate it with an ID. After preparation, it's enough that driver sends the ID
 > and the DB already knows what operation to perform - no more expensive parsing necessary! Moreover, upon preparation driver receives valuable data for load balancing,
 > enabling advanced load balancing (so better performance!) of all further executions of that prepared statement.\
@@ -61,11 +61,11 @@ This is **NOT** strictly related to content of the CQL query string.
 
 ## CQL statements - operations (based on what the CQL string contains)
 
-| CQL data manipulation statement                | Recommended statement kind                                                                                                               | Recommended Session operation                                                                               |
-|------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|
-| SELECT                                         | `PreparedStatement` if repeated, `Query` if once                                                                                         | `{query,execute}_iter` (or `{query,execute}_single_page` in a manual loop for performance / more control)   |
-| INSERT, UPDATE                                 | `PreparedStatement` if repeated, `Query` if once, `Batch` if multiple statements are to be executed atomically (LightWeight Transaction) | `{query,execute}_unpaged` (paging is irrelevant, because the result set of such operation is empty)         |
-| CREATE/DROP {KEYSPACE, TABLE, TYPE, INDEX,...} | `Query`, `Batch` if multiple statements are to be executed atomically (LightWeight Transaction)                                          | `query_unpaged` (paging is irrelevant, because the result set of such operation is empty)                   |
+| CQL data manipulation statement                | Recommended statement kind                                                                                                                   | Recommended Session operation                                                                               |
+|------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|
+| SELECT                                         | `PreparedStatement` if repeated, `Statement` if once                                                                                         | `{query,execute}_iter` (or `{query,execute}_single_page` in a manual loop for performance / more control)   |
+| INSERT, UPDATE                                 | `PreparedStatement` if repeated, `Statement` if once, `Batch` if multiple statements are to be executed atomically (LightWeight Transaction) | `{query,execute}_unpaged` (paging is irrelevant, because the result set of such operation is empty)         |
+| CREATE/DROP {KEYSPACE, TABLE, TYPE, INDEX,...} | `Statement`, `Batch` if multiple statements are to be executed atomically (LightWeight Transaction)                                          | `query_unpaged` (paging is irrelevant, because the result set of such operation is empty)                   |
 
 ### [Paged](paged.md) vs Unpaged query
 
@@ -97,7 +97,7 @@ There is a special functionality to enable [USE keyspace](usekeyspace.md).
    :hidden:
    :glob:
 
-   simple
+   unprepared
    values
    result
    prepared

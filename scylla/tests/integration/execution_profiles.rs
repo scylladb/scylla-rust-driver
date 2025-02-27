@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
 use assert_matches::assert_matches;
-use scylla::batch::{Batch, BatchStatement, BatchType};
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::ClusterState;
@@ -11,8 +10,9 @@ use scylla::cluster::NodeRef;
 use scylla::policies::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::{RetryPolicy, RetrySession};
 use scylla::policies::speculative_execution::SpeculativeExecutionPolicy;
-use scylla::query::Query;
 use scylla::routing::Shard;
+use scylla::statement::batch::{Batch, BatchStatement, BatchType};
+use scylla::statement::unprepared::Statement;
 use scylla::statement::SerialConsistency;
 use scylla_cql::Consistency;
 use tokio::sync::mpsc;
@@ -176,7 +176,7 @@ async fn test_execution_profiles() {
             .await
             .unwrap();
 
-        let mut query = Query::from(format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks));
+        let mut query = Statement::from(format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks));
         let mut prepared = session.prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks)).await.unwrap();
         let mut batch = Batch::new_with_statements(BatchType::Unlogged, vec![BatchStatement::Query(query.clone())]);
 
