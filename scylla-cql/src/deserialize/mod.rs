@@ -297,8 +297,6 @@ impl DeserializationError {
 // - BEFORE an error is cloned (because otherwise the Arc::get_mut fails).
 macro_rules! make_error_replace_rust_name {
     ($privacy: vis, $fn_name: ident, $outer_err: ty, $inner_err: ty) => {
-        // Not part of the public API; used in derive macros.
-        #[doc(hidden)]
         #[allow(clippy::needless_pub_self)]
         $privacy fn $fn_name<RustT>(mut err: $outer_err) -> $outer_err {
             // Safety: the assumed usage of this function guarantees that the Arc has not yet been cloned.

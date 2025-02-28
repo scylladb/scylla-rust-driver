@@ -16,7 +16,6 @@ pub mod value;
 
 pub use crate::frame::types::Consistency;
 
-#[doc(hidden)]
 pub mod _macro_internal {
     pub use crate::frame::response::result::{ColumnSpec, ColumnType};
     pub use crate::macros::*;
