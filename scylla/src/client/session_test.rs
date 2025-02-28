@@ -218,9 +218,6 @@ async fn test_prepared_statement() {
         .unwrap();
 
     let values = (17_i32, 16_i32, "I'm prepared!!!");
-    let serialized_values_complex_pk = prepared_complex_pk_statement
-        .serialize_values(&values)
-        .unwrap();
 
     session
         .execute_unpaged(&prepared_statement, &values)
@@ -245,12 +242,9 @@ async fn test_prepared_statement() {
         let prepared_token = Murmur3Partitioner
             .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
-        let mut pk = SerializedValues::new();
-        pk.add_value(&17_i32, &ColumnType::Native(NativeType::Int))
-            .unwrap();
         let cluster_state_token = session
             .get_cluster_state()
-            .compute_token(&ks, "t2", &pk)
+            .compute_token(&ks, "t2", &(values.0,))
             .unwrap();
         assert_eq!(token, cluster_state_token);
     }
@@ -272,7 +266,7 @@ async fn test_prepared_statement() {
         assert_eq!(token, prepared_token);
         let cluster_state_token = session
             .get_cluster_state()
-            .compute_token(&ks, "complex_pk", &serialized_values_complex_pk)
+            .compute_token(&ks, "complex_pk", &values)
             .unwrap();
         assert_eq!(token, cluster_state_token);
     }
@@ -608,7 +602,6 @@ async fn test_token_calculation() {
             s.push('a');
         }
         let values = (&s,);
-        let serialized_values = prepared_statement.serialize_values(&values).unwrap();
         session
             .execute_unpaged(&prepared_statement, &values)
             .await
@@ -631,7 +624,7 @@ async fn test_token_calculation() {
         assert_eq!(token, prepared_token);
         let cluster_state_token = session
             .get_cluster_state()
-            .compute_token(&ks, "t3", &serialized_values)
+            .compute_token(&ks, "t3", &values)
             .unwrap();
         assert_eq!(token, cluster_state_token);
     }
