@@ -125,12 +125,14 @@ impl<'frame, 'metadata> DeserializeRow<'frame, 'metadata> for ColumnIterator<'fr
 }
 
 make_error_replace_rust_name!(
+    pub(self),
     _typck_error_replace_rust_name,
     TypeCheckError,
     BuiltinTypeCheckError
 );
 
 make_error_replace_rust_name!(
+    pub,
     deser_error_replace_rust_name,
     DeserializationError,
     BuiltinDeserializationError
@@ -265,8 +267,6 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
 pub fn mk_typck_err<T>(
     cql_types: impl IntoIterator<Item = ColumnType<'static>>,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
@@ -419,8 +419,6 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
 pub fn mk_deser_err<T>(kind: impl Into<BuiltinDeserializationErrorKind>) -> DeserializationError {
     mk_deser_err_named(std::any::type_name::<T>(), kind)
 }

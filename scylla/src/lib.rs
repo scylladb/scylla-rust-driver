@@ -94,7 +94,6 @@
 
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
-#[doc(hidden)]
 pub mod _macro_internal {
     pub use scylla_cql::_macro_internal::*;
 }

@@ -675,12 +675,14 @@ where
 // collections
 
 make_error_replace_rust_name!(
+    pub(crate),
     typck_error_replace_rust_name,
     TypeCheckError,
     BuiltinTypeCheckError
 );
 
 make_error_replace_rust_name!(
+    pub,
     deser_error_replace_rust_name,
     DeserializationError,
     BuiltinDeserializationError
@@ -1456,8 +1458,6 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
 pub fn mk_typck_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
@@ -1772,8 +1772,6 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
 pub fn mk_deser_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinDeserializationErrorKind>,

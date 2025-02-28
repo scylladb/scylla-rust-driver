@@ -1275,7 +1275,6 @@ impl ProxyWorker {
 
 // Returns next free IP address for another proxy instance.
 // Useful for concurrent testing.
-#[doc(hidden)]
 pub fn get_exclusive_local_address() -> IpAddr {
     // A big enough number reduces possibility of clashes with user-taken addresses:
     static ADDRESS_LOWER_THREE_OCTETS: AtomicU32 = AtomicU32::new(4242);
