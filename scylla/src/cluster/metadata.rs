@@ -197,7 +197,11 @@ pub struct Keyspace {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Table {
     pub columns: HashMap<String, Column>,
+    /// Names of the column of partition key. 
+    /// All of the names are guaranteed to be present in `columns` field.
     pub partition_key: Vec<String>,
+    /// Names of the column of clustering key. 
+    /// All of the names are guaranteed to be present in `columns` field.
     pub clustering_key: Vec<String>,
     pub partitioner: Option<String>,
 }
