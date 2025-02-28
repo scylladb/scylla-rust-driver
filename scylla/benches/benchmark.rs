@@ -1,7 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
 use bytes::BytesMut;
-use scylla::routing::partitioner::{calculate_token_for_partition_key, PartitionerName};
+use scylla::internal_testing::calculate_token_for_partition_key;
+use scylla::routing::partitioner::PartitionerName;
 use scylla_cql::frame::response::result::{ColumnType, NativeType};
 use scylla_cql::frame::types;
 use scylla_cql::serialize::row::SerializedValues;

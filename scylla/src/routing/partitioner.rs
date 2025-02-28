@@ -349,7 +349,7 @@ impl PartitionerHasher for CDCPartitionerHasher {
 ///
 /// NOTE: the provided values must completely constitute partition key
 /// and be in the order defined in CREATE TABLE statement.
-pub fn calculate_token_for_partition_key(
+pub(crate) fn calculate_token_for_partition_key(
     serialized_partition_key_values: &SerializedValues,
     partitioner: &PartitionerName,
 ) -> Result<Token, TokenCalculationError> {
