@@ -35,6 +35,7 @@ use futures::Stream;
 use itertools::Itertools;
 use rand::seq::{IndexedRandom, SliceRandom};
 use rand::{rng, Rng};
+use scylla_cql::frame::response::result::{ColumnSpec, TableSpec};
 use scylla_macros::DeserializeRow;
 use std::borrow::BorrowMut;
 use std::cell::Cell;
@@ -197,13 +198,14 @@ pub struct Keyspace {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Table {
     pub columns: HashMap<String, Column>,
-    /// Names of the column of partition key. 
+    /// Names of the column of partition key.
     /// All of the names are guaranteed to be present in `columns` field.
     pub partition_key: Vec<String>,
-    /// Names of the column of clustering key. 
+    /// Names of the column of clustering key.
     /// All of the names are guaranteed to be present in `columns` field.
     pub clustering_key: Vec<String>,
     pub partitioner: Option<String>,
+    pub(crate) pk_column_specs: Vec<ColumnSpec<'static>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1410,6 +1412,7 @@ async fn query_tables(
             partition_key: vec![],
             clustering_key: vec![],
             partitioner: None,
+            pk_column_specs: vec![],
         }));
 
         let mut entry = result
@@ -1461,6 +1464,7 @@ async fn query_views(
                 partition_key: vec![],
                 clustering_key: vec![],
                 partitioner: None,
+                pk_column_specs: vec![],
             }))
             .map(|table| MaterializedView {
                 view_metadata: table,
@@ -1679,6 +1683,20 @@ async fn query_tables_schema(
             .remove(&keyspace_and_table_name)
             .unwrap_or_default();
 
+        // unwrap of get() result: all column names in `partition_key` are at this
+        // point guaranteed to be present in `columns`. See the construction of `partition_key`
+        let pk_column_specs = partition_key
+            .iter()
+            .map(|column_name| (column_name, columns.get(column_name).unwrap().clone().typ))
+            .map(|(name, typ)| {
+                let table_spec = TableSpec::owned(
+                    keyspace_and_table_name.0.clone(),
+                    keyspace_and_table_name.1.clone(),
+                );
+                ColumnSpec::owned(name.to_owned(), typ, table_spec)
+            })
+            .collect();
+
         result.insert(
             keyspace_and_table_name,
             Ok(Table {
@@ -1686,6 +1704,7 @@ async fn query_tables_schema(
                 partition_key,
                 clustering_key,
                 partitioner,
+                pk_column_specs,
             }),
         );
     }
