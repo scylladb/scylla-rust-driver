@@ -4,6 +4,8 @@ This policy has access to `Metrics` shared with session, and triggers
 speculative execution when the request to the current host is above a
 given percentile.
 
+This policy requires enabling crate feature `"metrics"` to be available.
+
 
 ### Example
 To use this policy in `Session`:

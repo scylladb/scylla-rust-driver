@@ -50,6 +50,8 @@ jobs:
     # Various (de)serialization features.
     - name: Cargo check with all serialization features
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "full-serialization"
+    - name: Cargo check with metrics feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "metrics"
     - name: Cargo check with secrecy-08 feature
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secrecy-08"
     - name: Cargo check with chrono-04 feature

@@ -19,6 +19,7 @@ scylla = { path = "../scylla", features = [
     "num-bigint-03",
     "num-bigint-04",
     "bigdecimal-04",
+    "metrics",
 ] }
 tokio = { version = "1.34", features = ["full"] }
 tracing = { version = "0.1.25", features = ["log"] }

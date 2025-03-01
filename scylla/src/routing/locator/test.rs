@@ -187,6 +187,7 @@ pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, A
             &pool_config,
             None,
             true,
+            #[cfg(feature = "metrics")]
             Default::default(),
         ));
 
