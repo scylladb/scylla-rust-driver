@@ -214,7 +214,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Metrics::default()
     }
 
