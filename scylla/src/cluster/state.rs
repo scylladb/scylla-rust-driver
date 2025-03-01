@@ -1,5 +1,6 @@
 use crate::errors::ConnectionPoolError;
 use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
+#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
 use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
@@ -67,7 +68,7 @@ impl ClusterState {
         host_filter: Option<&dyn HostFilter>,
         mut tablets: TabletsInfo,
         old_keyspaces: &HashMap<String, Keyspace>,
-        metrics: &Arc<Metrics>,
+        #[cfg(feature = "metrics")] metrics: &Arc<Metrics>,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
@@ -102,6 +103,7 @@ impl ClusterState {
                         pool_config,
                         used_keyspace.clone(),
                         is_enabled,
+                        #[cfg(feature = "metrics")]
                         metrics.clone(),
                     ))
                 }

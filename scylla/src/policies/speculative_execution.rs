@@ -2,14 +2,18 @@ use futures::{
     future::FutureExt,
     stream::{FuturesUnordered, StreamExt},
 };
-use std::{future::Future, sync::Arc, time::Duration};
+#[cfg(feature = "metrics")]
+use std::sync::Arc;
+use std::{future::Future, time::Duration};
 use tracing::{trace_span, warn, Instrument};
 
 use crate::errors::{RequestAttemptError, RequestError};
+#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 
 /// Context is passed as an argument to `SpeculativeExecutionPolicy` methods
 pub struct Context {
+    #[cfg(feature = "metrics")]
     pub metrics: Arc<Metrics>,
 }
 
@@ -64,6 +68,7 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
         self.max_retry_count
     }
 
+    #[cfg(feature = "metrics")]
     fn retry_interval(&self, context: &Context) -> Duration {
         let interval = context.metrics.get_latency_percentile_ms(self.percentile);
         let ms = match interval {
@@ -77,6 +82,12 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
             }
         };
         Duration::from_millis(ms)
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    fn retry_interval(&self, _: &Context) -> Duration {
+        warn!("PercentileSpeculativeExecutionPolicy requires the 'metrics' feature to work as intended, defaulting to 100 ms");
+        Duration::from_millis(100)
     }
 }
 

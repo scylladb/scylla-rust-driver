@@ -2,6 +2,7 @@ use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::network::{PoolConfig, VerifiedKeyspaceName};
+#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
 use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
@@ -81,6 +82,7 @@ struct ClusterWorker {
     // worker will refresh the cluster metadata
     cluster_metadata_refresh_interval: Duration,
 
+    #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
 }
 
@@ -105,7 +107,7 @@ impl Cluster {
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
-        metrics: Arc<Metrics>,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -121,6 +123,7 @@ impl Cluster {
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
+            #[cfg(feature = "metrics")]
             metrics.clone(),
         )
         .await?;
@@ -134,6 +137,7 @@ impl Cluster {
             host_filter.as_deref(),
             TabletsInfo::new(),
             &HashMap::new(),
+            #[cfg(feature = "metrics")]
             &metrics,
         )
         .await;
@@ -158,6 +162,7 @@ impl Cluster {
             host_filter,
             cluster_metadata_refresh_interval,
 
+            #[cfg(feature = "metrics")]
             metrics,
         };
 
@@ -421,6 +426,7 @@ impl ClusterWorker {
                 self.host_filter.as_deref(),
                 cluster_state.locator.tablets.clone(),
                 &cluster_state.keyspaces,
+                #[cfg(feature = "metrics")]
                 &self.metrics,
             )
             .await,

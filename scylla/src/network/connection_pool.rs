@@ -10,6 +10,7 @@ use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
+#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 
 use crate::cluster::NodeAddr;
@@ -195,7 +196,7 @@ impl NodeConnectionPool {
         pool_config: &PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_empty_notifier: broadcast::Sender<()>,
-        metrics: Arc<Metrics>,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
@@ -210,6 +211,7 @@ impl NodeConnectionPool {
             current_keyspace,
             pool_updated_notify.clone(),
             pool_empty_notifier,
+            #[cfg(feature = "metrics")]
             metrics,
         );
 
@@ -489,6 +491,7 @@ struct PoolRefiller {
     // Signaled when the connection pool becomes empty
     pool_empty_notifier: broadcast::Sender<()>,
 
+    #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
 }
 
@@ -505,7 +508,7 @@ impl PoolRefiller {
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
         pool_empty_notifier: broadcast::Sender<()>,
-        metrics: Arc<Metrics>,
+        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
         // and assume that the node is a Cassandra node
@@ -535,6 +538,7 @@ impl PoolRefiller {
             pool_updated_notify,
             pool_empty_notifier,
 
+            #[cfg(feature = "metrics")]
             metrics,
         }
     }
@@ -873,6 +877,7 @@ impl PoolRefiller {
         let cfg = self.pool_config.connection_config.clone();
         let mut endpoint = self.endpoint.read().unwrap().clone();
 
+        #[cfg(feature = "metrics")]
         let count_in_metrics = {
             let metrics = self.metrics.clone();
             move |connect_result: &Result<_, ConnectionError>| {
@@ -898,6 +903,7 @@ impl PoolRefiller {
                 )
                 .await;
 
+                #[cfg(feature = "metrics")]
                 count_in_metrics(&result);
 
                 OpenedConnectionEvent {
@@ -911,6 +917,7 @@ impl PoolRefiller {
                 let non_shard_aware_endpoint = endpoint;
                 let result = open_connection(&non_shard_aware_endpoint, None, &cfg).await;
 
+                #[cfg(feature = "metrics")]
                 count_in_metrics(&result);
 
                 OpenedConnectionEvent {
@@ -989,6 +996,7 @@ impl PoolRefiller {
             match maybe_idx {
                 Some(idx) => {
                     v.swap_remove(idx);
+                    #[cfg(feature = "metrics")]
                     self.metrics.dec_total_connections();
                     true
                 }
