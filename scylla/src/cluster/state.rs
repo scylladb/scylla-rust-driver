@@ -198,6 +198,12 @@ impl ClusterState {
     }
 
     /// Compute token of a table partition key
+    ///
+    /// `partition_key` argument contains the values of all partition key
+    /// columns. You can use both unnamed values like a tuple (e.g. `(1, 5, 5)`)
+    /// or named values (e.g. struct that derives `SerializeRow`), as you would
+    /// when executing a request. No additional values are allowed besides values
+    /// for primary key columns.
     pub fn compute_token(
         &self,
         keyspace: &str,
@@ -257,6 +263,12 @@ impl ClusterState {
     }
 
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
+    ///
+    /// `partition_key` argument contains the values of all partition key
+    /// columns. You can use both unnamed values like a tuple (e.g. `(1, 5, 5)`)
+    /// or named values (e.g. struct that derives `SerializeRow`), as you would
+    /// when executing a request. No additional values are allowed besides values
+    /// for primary key columns.
     pub fn get_endpoints(
         &self,
         keyspace: &str,
