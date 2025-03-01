@@ -1573,8 +1573,8 @@ async fn query_tables_schema(
             .entry((keyspace_name, table_name))
             .or_insert(Ok((
                 HashMap::new(), // columns
-                HashMap::new(), // partition key
-                HashMap::new(), // clustering key
+                Vec::new(),     // partition key
+                Vec::new(),     // clustering key
             )))
         else {
             // This table was previously marked as broken, no way to insert anything.
@@ -1582,12 +1582,12 @@ async fn query_tables_schema(
         };
 
         if kind == ColumnKind::PartitionKey || kind == ColumnKind::Clustering {
-            let key_map = if kind == ColumnKind::PartitionKey {
+            let key_list: &mut Vec<(i32, String)> = if kind == ColumnKind::PartitionKey {
                 entry.1.borrow_mut()
             } else {
                 entry.2.borrow_mut()
             };
-            key_map.insert(position, column_name.clone());
+            key_list.push((position, column_name.clone()));
         }
 
         entry.0.insert(
@@ -1609,7 +1609,12 @@ async fn query_tables_schema(
     for ((keyspace_name, table_name), table_result) in tables_schema {
         let keyspace_and_table_name = (keyspace_name, table_name);
 
-        let (columns, partition_key_columns, clustering_key_columns) = match table_result {
+        #[allow(clippy::type_complexity)]
+        let (columns, partition_key_columns, clustering_key_columns): (
+            HashMap<String, Column>,
+            Vec<(i32, String)>,
+            Vec<(i32, String)>,
+        ) = match table_result {
             Ok(table) => table,
             Err(e) => {
                 let _ = result.insert(keyspace_and_table_name, Err(e));
