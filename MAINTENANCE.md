@@ -1,7 +1,9 @@
 # Maintenance
 
 The following document includes information how to release scylla-rust-driver and
-other information / procedures useful for maintainers.
+other information / procedures useful for maintainers. It is quite long, but it's
+mostly because it describes a lot of details and reasoning, not because it is
+complicated.
 
 ## Crates and versions
 

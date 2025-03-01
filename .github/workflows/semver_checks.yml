@@ -106,7 +106,7 @@ jobs:
           issue-number: ${{ env.PR_ID }}
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
           body: |
-            `cargo semver-checks` found no API-breaking changes in this PR! 🎉🥳
+            `cargo semver-checks` found no API-breaking changes in this PR.
             Checked commit: ${{ env.PR_HEAD }}
           edit-mode: replace
       if: needs.semver-pull-request-check.outputs.exitcode == '0'
