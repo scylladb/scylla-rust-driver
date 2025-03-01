@@ -1,7 +1,6 @@
 pub(crate) mod pretty;
 
 pub mod frame;
-#[macro_use]
 pub mod macros {
     pub use scylla_macros::DeserializeRow;
     pub use scylla_macros::DeserializeValue;
