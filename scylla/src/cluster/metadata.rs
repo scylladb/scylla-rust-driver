@@ -67,6 +67,18 @@ type PerTable<T> = HashMap<String, T>;
 type PerKsTable<T> = HashMap<(String, String), T>;
 type PerKsTableResult<T, E> = PerKsTable<Result<T, E>>;
 
+/// Indicates that reading metadata failed, but in a way
+/// that we can handle, by throwing out data for a keyspace.
+/// It is possible that some of the errors could be handled in even
+/// more granular way (e.g. throwing out a single table), but keyspace
+/// granularity seems like a good choice given how independent keyspaces
+/// are from each other.
+#[derive(Clone, Debug, Error)]
+pub(crate) enum SingleKeyspaceMetadataError {
+    #[error(transparent)]
+    MissingUDT(MissingUserDefinedType),
+}
+
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
     control_connection_pool_config: PoolConfig,
@@ -92,7 +104,7 @@ pub(crate) struct MetadataReader {
 /// Describes all metadata retrieved from the cluster
 pub(crate) struct Metadata {
     pub(crate) peers: Vec<Peer>,
-    pub(crate) keyspaces: HashMap<String, Result<Keyspace, MissingUserDefinedType>>,
+    pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
 }
 
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
@@ -902,7 +914,7 @@ async fn query_keyspaces(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     fetch_schema: bool,
-) -> Result<PerKeyspaceResult<Keyspace, MissingUserDefinedType>, MetadataError> {
+) -> Result<PerKeyspaceResult<Keyspace, SingleKeyspaceMetadataError>, MetadataError> {
     let rows = query_filter_keyspace_name::<(String, HashMap<String, String>)>(
         conn,
         "select keyspace_name, replication from system_schema.keyspaces",
@@ -953,15 +965,20 @@ async fn query_keyspaces(
 
         // As you can notice, in this file we generally operate on two layers of errors:
         // - Outer (MetadataError) if something went wrong with querying the cluster.
-        // - Inner (currently MissingUserDefinedType, possibly other variants in the future) if the fetched metadata
-        // turned out to not be fully consistent.
+        // - Inner (SingleKeyspaceMetadataError) if the fetched metadata turned out to not be fully consistent.
         // If there is an inner error, we want to drop metadata for the whole keyspace.
-        // This logic checks if either tables views or UDTs have such inner error, and returns it if so.
+        // This logic checks if either tables, views, or UDTs have such inner error, and returns it if so.
         // Notice that in the error branch, return value is wrapped in `Ok` - but this is the
         // outer error, so it just means there was no error while querying the cluster.
         let (tables, views, user_defined_types) = match (tables, views, user_defined_types) {
             (Ok(t), Ok(v), Ok(u)) => (t, v, u),
-            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return Ok((keyspace_name, Err(e))),
+            (Err(e), _, _) | (_, Err(e), _) => return Ok((keyspace_name, Err(e))),
+            (_, _, Err(e)) => {
+                return Ok((
+                    keyspace_name,
+                    Err(SingleKeyspaceMetadataError::MissingUDT(e)),
+                ))
+            }
         };
 
         let keyspace = Keyspace {
@@ -1364,8 +1381,8 @@ mod toposort_tests {
 async fn query_tables(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    tables: &mut PerKsTableResult<Table, MissingUserDefinedType>,
-) -> Result<PerKeyspaceResult<PerTable<Table>, MissingUserDefinedType>, MetadataError> {
+    tables: &mut PerKsTableResult<Table, SingleKeyspaceMetadataError>,
+) -> Result<PerKeyspaceResult<PerTable<Table>, SingleKeyspaceMetadataError>, MetadataError> {
     let rows = query_filter_keyspace_name::<(String, String)>(
         conn,
         "SELECT keyspace_name, table_name FROM system_schema.tables",
@@ -1409,8 +1426,9 @@ async fn query_tables(
 async fn query_views(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-    tables: &mut PerKsTableResult<Table, MissingUserDefinedType>,
-) -> Result<PerKeyspaceResult<PerTable<MaterializedView>, MissingUserDefinedType>, MetadataError> {
+    tables: &mut PerKsTableResult<Table, SingleKeyspaceMetadataError>,
+) -> Result<PerKeyspaceResult<PerTable<MaterializedView>, SingleKeyspaceMetadataError>, MetadataError>
+{
     let rows = query_filter_keyspace_name::<(String, String, String)>(
         conn,
         "SELECT keyspace_name, view_name, base_table_name FROM system_schema.views",
@@ -1465,7 +1483,7 @@ async fn query_tables_schema(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     udts: &PerKeyspaceResult<PerTable<Arc<UserDefinedType<'static>>>, MissingUserDefinedType>,
-) -> Result<PerKsTableResult<Table, MissingUserDefinedType>, MetadataError> {
+) -> Result<PerKsTableResult<Table, SingleKeyspaceMetadataError>, MetadataError> {
     // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
     // type EmptyType for dense tables. This resolves into this CQL type name.
     // This column shouldn't be exposed to the user but is currently exposed in system tables.
@@ -1484,7 +1502,7 @@ async fn query_tables_schema(
 
     let empty_ok_map = Ok(HashMap::new());
 
-    let mut tables_schema: HashMap<_, Result<_, MissingUserDefinedType>> = HashMap::new();
+    let mut tables_schema: HashMap<_, Result<_, SingleKeyspaceMetadataError>> = HashMap::new();
 
     rows.map(|row_result| {
         let (keyspace_name, table_name, column_name, kind, position, type_) = row_result?;
@@ -1518,7 +1536,10 @@ async fn query_tables_schema(
                     // is minor enough to ignore. Note that the first issue also applies to
                     // solution 1: but the keyspace won't be present in the result at all,
                     // which is arguably worse.
-                    tables_schema.insert((keyspace_name, table_name), Err(e.clone()));
+                    tables_schema.insert(
+                        (keyspace_name, table_name),
+                        Err(SingleKeyspaceMetadataError::MissingUDT(e.clone())),
+                    );
                     return Ok::<_, MetadataError>(());
                 }
             };
@@ -1532,7 +1553,10 @@ async fn query_tables_schema(
         let cql_type = match pre_cql_type.into_cql_type(&keyspace_name, keyspace_udts) {
             Ok(t) => t,
             Err(e) => {
-                tables_schema.insert((keyspace_name, table_name), Err(e));
+                tables_schema.insert(
+                    (keyspace_name, table_name),
+                    Err(SingleKeyspaceMetadataError::MissingUDT(e)),
+                );
                 return Ok::<_, MetadataError>(());
             }
         };
