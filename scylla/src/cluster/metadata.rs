@@ -77,6 +77,10 @@ type PerKsTableResult<T, E> = PerKsTable<Result<T, E>>;
 pub(crate) enum SingleKeyspaceMetadataError {
     #[error(transparent)]
     MissingUDT(MissingUserDefinedType),
+    #[error("Partition key column with position {0} is missing from metadata")]
+    IncompletePartitionKey(i32),
+    #[error("Clustering key column with position {0} is missing from metadata")]
+    IncompleteClusteringKey(i32),
 }
 
 /// Allows to read current metadata from the cluster
@@ -1606,7 +1610,7 @@ async fn query_tables_schema(
     let mut all_partitioners = query_table_partitioners(conn).await?;
     let mut result = HashMap::new();
 
-    for ((keyspace_name, table_name), table_result) in tables_schema {
+    'tables_loop: for ((keyspace_name, table_name), table_result) in tables_schema {
         let keyspace_and_table_name = (keyspace_name, table_name);
 
         #[allow(clippy::type_complexity)]
@@ -1621,15 +1625,51 @@ async fn query_tables_schema(
                 continue;
             }
         };
-        let mut partition_key = vec!["".to_string(); partition_key_columns.len()];
-        for (position, column_name) in partition_key_columns {
-            partition_key[position as usize] = column_name;
+
+        fn validate_key_columns(mut key_columns: Vec<(i32, String)>) -> Result<Vec<String>, i32> {
+            key_columns.sort_unstable_by_key(|(position, _)| *position);
+
+            key_columns
+                .into_iter()
+                .enumerate()
+                .map(|(idx, (position, column_name))| {
+                    // unwrap: I don't see the point of handling the scenario of fetching over
+                    // 2 * 10^9 columns.
+                    let idx: i32 = idx.try_into().unwrap();
+                    if idx == position {
+                        Ok(column_name)
+                    } else {
+                        Err(idx)
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()
         }
 
-        let mut clustering_key = vec!["".to_string(); clustering_key_columns.len()];
-        for (position, column_name) in clustering_key_columns {
-            clustering_key[position as usize] = column_name;
-        }
+        let partition_key = match validate_key_columns(partition_key_columns) {
+            Ok(partition_key_columns) => partition_key_columns,
+            Err(position) => {
+                result.insert(
+                    keyspace_and_table_name,
+                    Err(SingleKeyspaceMetadataError::IncompletePartitionKey(
+                        position,
+                    )),
+                );
+                continue 'tables_loop;
+            }
+        };
+
+        let clustering_key = match validate_key_columns(clustering_key_columns) {
+            Ok(clustering_key_columns) => clustering_key_columns,
+            Err(position) => {
+                result.insert(
+                    keyspace_and_table_name,
+                    Err(SingleKeyspaceMetadataError::IncompleteClusteringKey(
+                        position,
+                    )),
+                );
+                continue 'tables_loop;
+            }
+        };
 
         let partitioner = all_partitioners
             .remove(&keyspace_and_table_name)
