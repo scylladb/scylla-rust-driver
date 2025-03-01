@@ -215,8 +215,31 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    pub fn new() -> Self {
-        Metrics::default()
+    pub(crate) fn new() -> Self {
+        // Configuration:
+        //  - exponent of max value: n = 16
+        //  - inverse exponent of relative error: p = 12,
+        //  - max value: N = 65535,
+        //  - relative error: e = 0.000244,
+        //  - total number of buckets: (n - p + 1) * 2^p = 20480,
+        //  - histogram size: 1.7 MiB.
+        // Reference for calculating these values:
+        //  - https://observablehq.com/@iopsystems/h2histogram
+        let max_value_power = 16;
+        let grouping_power = 12;
+
+        Self {
+            errors_num: AtomicU64::new(0),
+            queries_num: AtomicU64::new(0),
+            errors_iter_num: AtomicU64::new(0),
+            queries_iter_num: AtomicU64::new(0),
+            retries_num: AtomicU64::new(0),
+            histogram: Arc::new(AtomicHistogram::new(grouping_power, max_value_power).unwrap()),
+            meter: Arc::new(RequestRateMeter::new()),
+            total_connections: AtomicU64::new(0),
+            connection_timeouts: AtomicU64::new(0),
+            request_timeouts: AtomicU64::new(0),
+        }
     }
 
     /// Increments counter for errors that occurred in nonpaged queries.
@@ -484,32 +507,10 @@ impl Metrics {
     }
 }
 
+#[cfg(test)]
 impl Default for Metrics {
     fn default() -> Self {
-        // Configuration:
-        //  - exponent of max value: n = 16
-        //  - inverse exponent of relative error: p = 12,
-        //  - max value: N = 65535,
-        //  - relative error: e = 0.000244,
-        //  - total number of buckets: (n - p + 1) * 2^p = 20480,
-        //  - histogram size: 1.7 MiB.
-        // Reference for calculating these values:
-        //  - https://observablehq.com/@iopsystems/h2histogram
-        let max_value_power = 16;
-        let grouping_power = 12;
-
-        Self {
-            errors_num: AtomicU64::new(0),
-            queries_num: AtomicU64::new(0),
-            errors_iter_num: AtomicU64::new(0),
-            queries_iter_num: AtomicU64::new(0),
-            retries_num: AtomicU64::new(0),
-            histogram: Arc::new(AtomicHistogram::new(grouping_power, max_value_power).unwrap()),
-            meter: Arc::new(RequestRateMeter::new()),
-            total_connections: AtomicU64::new(0),
-            connection_timeouts: AtomicU64::new(0),
-            request_timeouts: AtomicU64::new(0),
-        }
+        Self::new()
     }
 }
 
