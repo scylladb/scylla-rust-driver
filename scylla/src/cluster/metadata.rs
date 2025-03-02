@@ -24,6 +24,7 @@ use crate::errors::{
 };
 use crate::frame::response::event::Event;
 use crate::network::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
+use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::unprepared::Statement;
@@ -104,6 +105,8 @@ pub(crate) struct MetadataReader {
     // When a control connection breaks, the PoolRefiller of its pool uses the requester
     // to signal ClusterWorker that an immediate metadata refresh is advisable.
     control_connection_repair_requester: broadcast::Sender<()>,
+
+    metrics: Arc<Metrics>,
 }
 
 /// Describes all metadata retrieved from the cluster
@@ -422,6 +425,7 @@ impl MetadataReader {
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
+        metrics: Arc<Metrics>,
     ) -> Result<Self, NewSessionError> {
         let (initial_peers, resolved_hostnames) =
             resolve_contact_points(&initial_known_nodes).await;
@@ -459,6 +463,7 @@ impl MetadataReader {
             control_connection_endpoint.clone(),
             &control_connection_pool_config,
             control_connection_repair_requester.clone(),
+            metrics.clone(),
         );
 
         Ok(MetadataReader {
@@ -474,6 +479,7 @@ impl MetadataReader {
             host_filter: host_filter.clone(),
             initial_known_nodes,
             control_connection_repair_requester,
+            metrics,
         })
     }
 
@@ -575,6 +581,7 @@ impl MetadataReader {
                 self.control_connection_endpoint.clone(),
                 &self.control_connection_pool_config,
                 self.control_connection_repair_requester.clone(),
+                Arc::clone(&self.metrics),
             );
 
             debug!(
@@ -673,6 +680,7 @@ impl MetadataReader {
                         self.control_connection_endpoint.clone(),
                         &self.control_connection_pool_config,
                         self.control_connection_repair_requester.clone(),
+                        Arc::clone(&self.metrics),
                     );
                 }
             }
@@ -683,8 +691,9 @@ impl MetadataReader {
         endpoint: UntranslatedEndpoint,
         pool_config: &PoolConfig,
         refresh_requester: broadcast::Sender<()>,
+        metrics: Arc<Metrics>,
     ) -> NodeConnectionPool {
-        NodeConnectionPool::new(endpoint, pool_config, None, refresh_requester)
+        NodeConnectionPool::new(endpoint, pool_config, None, refresh_requester, metrics)
     }
 }
 

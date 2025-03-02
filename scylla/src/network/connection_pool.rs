@@ -10,6 +10,8 @@ use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
+use crate::observability::metrics::Metrics;
+
 use crate::cluster::NodeAddr;
 
 use arc_swap::ArcSwap;
@@ -193,6 +195,7 @@ impl NodeConnectionPool {
         pool_config: &PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_empty_notifier: broadcast::Sender<()>,
+        metrics: Arc<Metrics>,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
@@ -207,6 +210,7 @@ impl NodeConnectionPool {
             current_keyspace,
             pool_updated_notify.clone(),
             pool_empty_notifier,
+            metrics,
         );
 
         let conns = refiller.get_shared_connections();
@@ -484,6 +488,8 @@ struct PoolRefiller {
 
     // Signaled when the connection pool becomes empty
     pool_empty_notifier: broadcast::Sender<()>,
+
+    metrics: Arc<Metrics>,
 }
 
 #[derive(Debug)]
@@ -499,6 +505,7 @@ impl PoolRefiller {
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
         pool_empty_notifier: broadcast::Sender<()>,
+        metrics: Arc<Metrics>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
         // and assume that the node is a Cassandra node
@@ -527,6 +534,8 @@ impl PoolRefiller {
 
             pool_updated_notify,
             pool_empty_notifier,
+
+            metrics,
         }
     }
 
@@ -864,6 +873,17 @@ impl PoolRefiller {
         let cfg = self.pool_config.connection_config.clone();
         let mut endpoint = self.endpoint.read().unwrap().clone();
 
+        let count_in_metrics = {
+            let metrics = Arc::clone(&self.metrics);
+            move |connect_result: &Result<_, ConnectionError>| {
+                if connect_result.is_ok() {
+                    metrics.inc_total_connections();
+                } else if let Err(ConnectionError::ConnectTimeout) = &connect_result {
+                    metrics.inc_connection_timeouts();
+                }
+            }
+        };
+
         let fut = match (self.sharder.clone(), self.shard_aware_port, shard) {
             (Some(sharder), Some(port), Some(shard)) => async move {
                 let shard_aware_endpoint = {
@@ -877,6 +897,9 @@ impl PoolRefiller {
                     &cfg,
                 )
                 .await;
+
+                count_in_metrics(&result);
+
                 OpenedConnectionEvent {
                     result,
                     requested_shard: Some(shard),
@@ -887,6 +910,9 @@ impl PoolRefiller {
             _ => async move {
                 let non_shard_aware_endpoint = endpoint;
                 let result = open_connection(&non_shard_aware_endpoint, None, &cfg).await;
+
+                count_in_metrics(&result);
+
                 OpenedConnectionEvent {
                     result,
                     requested_shard: None,
@@ -963,6 +989,7 @@ impl PoolRefiller {
             match maybe_idx {
                 Some(idx) => {
                     v.swap_remove(idx);
+                    self.metrics.dec_total_connections();
                     true
                 }
                 None => false,

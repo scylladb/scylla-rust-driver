@@ -882,6 +882,8 @@ impl Session {
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
         };
 
+        let metrics = Arc::new(Metrics::new());
+
         let cluster = Cluster::new(
             known_nodes,
             pool_config,
@@ -890,6 +892,7 @@ impl Session {
             config.host_filter,
             config.cluster_metadata_refresh_interval,
             tablet_receiver,
+            Arc::clone(&metrics),
         )
         .await?;
 
@@ -899,7 +902,7 @@ impl Session {
             cluster,
             default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
-            metrics: Arc::new(Metrics::new()),
+            metrics,
             schema_agreement_timeout: config.schema_agreement_timeout,
             schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
             refresh_metadata_on_auto_schema_agreement: config
@@ -1108,7 +1111,7 @@ impl Session {
                 statement,
                 execution_profile,
                 self.cluster.get_state(),
-                self.metrics.clone(),
+                Arc::clone(&self.metrics),
             )
             .await
             .map_err(PagerExecutionError::NextPageError)
@@ -1123,7 +1126,7 @@ impl Session {
                 values,
                 execution_profile,
                 cluster_state: self.cluster.get_state(),
-                metrics: self.metrics.clone(),
+                metrics: Arc::clone(&self.metrics),
             })
             .await
             .map_err(PagerExecutionError::NextPageError)
@@ -1382,7 +1385,7 @@ impl Session {
             values: serialized_values,
             execution_profile,
             cluster_state: self.cluster.get_state(),
-            metrics: self.metrics.clone(),
+            metrics: Arc::clone(&self.metrics),
         })
         .await
         .map_err(PagerExecutionError::NextPageError)
@@ -1597,7 +1600,7 @@ impl Session {
     /// Driver collects various metrics like number of queries or query latencies.
     /// They can be read using this method
     pub fn get_metrics(&self) -> Arc<Metrics> {
-        self.metrics.clone()
+        Arc::clone(&self.metrics)
     }
 
     /// Access cluster state visible by the driver.
@@ -1814,7 +1817,7 @@ impl Session {
                     };
 
                     let context = speculative_execution::Context {
-                        metrics: self.metrics.clone(),
+                        metrics: Arc::clone(&self.metrics),
                     };
 
                     speculative_execution::execute(
@@ -1856,9 +1859,12 @@ impl Session {
             .request_timeout
             .or(execution_profile.request_timeout);
         let result = match effective_timeout {
-            Some(timeout) => tokio::time::timeout(timeout, runner)
-                .await
-                .unwrap_or_else(|_| Err(RequestError::RequestTimeout(timeout))),
+            Some(timeout) => tokio::time::timeout(timeout, runner).await.unwrap_or_else(
+                |_: tokio::time::error::Elapsed| {
+                    self.metrics.inc_request_timeouts();
+                    Err(RequestError::RequestTimeout(timeout))
+                },
+            ),
             None => runner.await,
         };
 
