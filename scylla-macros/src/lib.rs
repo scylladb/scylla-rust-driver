@@ -1,3 +1,22 @@
+// WARNING FOR CONTRIBUTORS
+// Doc comments in this file use a different syntax than normally.
+// Typically you use [some_item](other_crate::path::to::some_item), but this
+// requires `other_crate` to be a dependency of the crate where the
+// doc comment is located.
+// `scylla` and `scylla-cql` can not be dependencies of `scylla-macros`,
+// so we can't use that here. The workaround is to use a relative link
+// to the html files of the item you want to link - see existing doc comments
+// in this file for examples of that. This way the links work in docs for
+// `scylla` and `scylla-cql` crates (but not in `scylla-macros` crate - nothing
+// we can do about that).
+// There are 2 footguns you need to be careful with because of this solutin:
+// - rustdoc can't verify if the links are correct. When you add / modify
+//   a link, you need to open the generated docs, and verify that it works
+//   both in `scylla` and `scylla-cql`.
+// - Such relative links only work at a given depth, so the macros need to
+//   be re-exported at given depth. Currently, the links assume depth 1, in other
+//   words the items must be in the crate root (e.g. `scylla::SerializeRow`).
+
 use darling::{FromMeta, ToTokens};
 use proc_macro::TokenStream;
 
