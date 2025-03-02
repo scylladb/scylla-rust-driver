@@ -182,7 +182,13 @@ pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, A
     let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
 
     for peer in &metadata.peers {
-        let node = Arc::new(Node::new(peer.to_peer_endpoint(), &pool_config, None, true));
+        let node = Arc::new(Node::new(
+            peer.to_peer_endpoint(),
+            &pool_config,
+            None,
+            true,
+            Default::default(),
+        ));
 
         for token in &peer.tokens {
             ring.push((*token, node.clone()));
