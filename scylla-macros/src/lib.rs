@@ -244,8 +244,9 @@ pub fn serialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 
 mod deserialize;
 
-/// Derive macro for the `DeserializeRow` trait that generates an implementation
-/// which deserializes a row with a similar layout to the Rust struct.
+/// Derive macro for the [`DeserializeRow`](../scylla_cql/deserialize/row/trait.DeserializeRow.html)
+/// trait that generates an implementation which deserializes a row with
+/// a similar layout to the Rust struct.
 ///
 /// At the moment, only structs with named fields are supported.
 ///
@@ -365,9 +366,9 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
     }
 }
 
-/// Derive macro for the `DeserializeValue` trait that generates an implementation
-/// which deserializes a User Defined Type with the same layout as the Rust
-/// struct.
+/// Derive macro for the [`DeserializeValue`](../scylla_cql/deserialize/value/trait.DeserializeValue.html)
+/// trait that generates an implementation which deserializes a User Defined Type
+/// with the same layout as the Rust struct.
 ///
 /// At the moment, only structs with named fields are supported.
 ///
