@@ -1723,7 +1723,6 @@ dependencies = [
  "rand_pcg",
  "rustls",
  "scylla-cql",
- "scylla-macros",
  "scylla-proxy",
  "serde",
  "serde_yaml",

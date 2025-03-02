@@ -331,7 +331,7 @@ pub use scylla_cql::macros::SerializeRow;
 /// By default, the generated implementation will try to match the Rust field
 /// to a UDT field with the same name. This attribute instead allows to match
 /// to a UDT field with provided name.
-pub use scylla_macros::DeserializeValue;
+pub use scylla_cql::macros::DeserializeValue;
 
 /// Derive macro for the `DeserializeRow` trait that generates an implementation
 /// which deserializes a row with a similar layout to the Rust struct.
@@ -446,4 +446,4 @@ pub use scylla_macros::DeserializeValue;
 /// By default, the generated implementation will try to match the Rust field
 /// to a column with the same name. This attribute allows to match to a column
 /// with provided name.
-pub use scylla_macros::DeserializeRow;
+pub use scylla_cql::macros::DeserializeRow;
