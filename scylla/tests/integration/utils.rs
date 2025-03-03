@@ -4,7 +4,7 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
-use scylla::deserialize::DeserializeValue;
+use scylla::deserialize::value::DeserializeValue;
 use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
 use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};

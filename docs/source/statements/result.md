@@ -98,7 +98,7 @@ Field names don't need to match column names.
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::macros::DeserializeRow;
-use scylla::deserialize::DeserializeRow;
+use scylla::deserialize::row::DeserializeRow;
 
 #[derive(DeserializeRow)]
 struct MyRow {

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::deserialize::DeserializeValue;
+use scylla::deserialize::value::DeserializeValue;
 use scylla::frame::response::result::ColumnType;
 use std::env;
 

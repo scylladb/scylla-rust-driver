@@ -19,8 +19,8 @@ macro_rules! test_crate {
         }
         #[test]
         fn test_impl_traits() {
-            use _scylla::deserialize::DeserializeRow;
-            use _scylla::deserialize::DeserializeValue;
+            use _scylla::deserialize::row::DeserializeRow;
+            use _scylla::deserialize::value::DeserializeValue;
             use _scylla::serialize::row::SerializeRow;
             use _scylla::serialize::value::SerializeValue;
 
@@ -42,7 +42,7 @@ macro_rules! test_crate {
             use ::std::assert_eq;
             use ::std::vec::Vec;
             use _scylla::deserialize::row::ColumnIterator;
-            use _scylla::deserialize::DeserializeRow;
+            use _scylla::deserialize::row::DeserializeRow;
             use _scylla::deserialize::FrameSlice;
             use _scylla::frame::response::result::ColumnSpec;
             use _scylla::frame::response::result::ColumnType;
@@ -113,7 +113,7 @@ macro_rules! test_crate {
             use ::std::vec;
             use ::std::vec::Vec;
             use ::tracing::info;
-            use _scylla::deserialize::DeserializeValue;
+            use _scylla::deserialize::value::DeserializeValue;
             use _scylla::deserialize::FrameSlice;
             use _scylla::frame::response::result::{ColumnType, NativeType, UserDefinedType};
             use _scylla::serialize::value::SerializeValue;
