@@ -168,6 +168,7 @@ impl Default for Batch {
 
 /// This enum represents a CQL statement, that can be part of batch.
 #[derive(Clone)]
+#[non_exhaustive]
 pub enum BatchStatement {
     Query(Statement),
     PreparedStatement(PreparedStatement),

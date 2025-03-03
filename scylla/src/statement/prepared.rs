@@ -466,12 +466,14 @@ impl PreparedStatement {
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum PartitionKeyExtractionError {
     #[error("No value with given pk_index! pk_index: {0}, values.len(): {1}")]
     NoPkIndexValue(u16, u16),
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum TokenCalculationError {
     #[error("Value bytes too long to create partition key, max 65 535 allowed! value.len(): {0}")]
     ValueTooLong(usize),
