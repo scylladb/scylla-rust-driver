@@ -21,3 +21,12 @@ proc-macro2 = "1.0"
 [lints.rust]
 unnameable_types = "warn"
 unreachable_pub = "warn"
+
+# When bumping major version of scylla / scylla-cql, those dependencies
+# also need to be updated. Fortunately Cargo will yell very loudly if that
+# is not done.
+# When bumping minor versions of scylla / scylla-cql nothing bad will happen
+# if we forget to update versions here.
+[dev-dependencies]
+scylla = { version = "0.15.0", path = "../scylla"}
+scylla-cql = { version = "0.4.0", path = "../scylla-cql"}

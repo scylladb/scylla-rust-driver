@@ -1775,6 +1775,8 @@ dependencies = [
  "darling",
  "proc-macro2",
  "quote",
+ "scylla",
+ "scylla-cql",
  "syn 2.0.90",
 ]
 
