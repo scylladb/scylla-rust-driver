@@ -255,6 +255,7 @@ pub(crate) mod utils;
 pub(crate) use utils::test_utils;
 
 #[cfg(feature = "unstable-testing")]
+#[doc(hidden)]
 pub mod internal_testing {
     use scylla_cql::serialize::row::SerializedValues;
 
