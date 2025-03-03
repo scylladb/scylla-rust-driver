@@ -1,7 +1,7 @@
 use crate::value::CqlTimestamp;
+use crate::DeserializeRow;
 use itertools::Itertools;
 use scylla_cql::value::CqlTimeuuid;
-use scylla_macros::DeserializeRow;
 use std::collections::HashMap;
 use std::net::IpAddr;
 

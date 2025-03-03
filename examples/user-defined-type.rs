@@ -2,8 +2,7 @@ use anyhow::Result;
 use futures::TryStreamExt as _;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::macros::DeserializeValue;
-use scylla::SerializeValue;
+use scylla::{DeserializeValue, SerializeValue};
 use std::env;
 
 #[tokio::main]

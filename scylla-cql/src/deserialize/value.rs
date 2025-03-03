@@ -675,12 +675,14 @@ where
 // collections
 
 make_error_replace_rust_name!(
+    pub(crate),
     typck_error_replace_rust_name,
     TypeCheckError,
     BuiltinTypeCheckError
 );
 
 make_error_replace_rust_name!(
+    pub,
     deser_error_replace_rust_name,
     DeserializationError,
     BuiltinDeserializationError

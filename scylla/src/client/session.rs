@@ -802,6 +802,7 @@ impl Session {
         #[cfg(not(feature = "unstable-cloud"))]
         let cloud_known_nodes: Option<Vec<InternalKnownNode>> = None;
 
+        #[allow(clippy::unnecessary_literal_unwrap)]
         let known_nodes = cloud_known_nodes
             .unwrap_or_else(|| known_nodes.into_iter().map(|node| node.into()).collect());
 

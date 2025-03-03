@@ -125,12 +125,14 @@ impl<'frame, 'metadata> DeserializeRow<'frame, 'metadata> for ColumnIterator<'fr
 }
 
 make_error_replace_rust_name!(
+    pub(self),
     _typck_error_replace_rust_name,
     TypeCheckError,
     BuiltinTypeCheckError
 );
 
 make_error_replace_rust_name!(
+    pub,
     deser_error_replace_rust_name,
     DeserializationError,
     BuiltinDeserializationError

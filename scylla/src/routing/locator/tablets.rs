@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use scylla_cql::deserialize::value::ListlikeIterator;
-use scylla_cql::deserialize::{DeserializationError, DeserializeValue, FrameSlice, TypeCheckError};
+use scylla_cql::deserialize::value::{DeserializeValue, ListlikeIterator};
+use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use scylla_cql::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
 use thiserror::Error;
 use tracing::warn;

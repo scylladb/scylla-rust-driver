@@ -28,6 +28,7 @@ use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::unprepared::Statement;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
+use crate::DeserializeRow;
 
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
@@ -36,7 +37,6 @@ use itertools::Itertools;
 use rand::seq::{IndexedRandom, SliceRandom};
 use rand::{rng, Rng};
 use scylla_cql::frame::response::result::{ColumnSpec, TableSpec};
-use scylla_macros::DeserializeRow;
 use std::borrow::BorrowMut;
 use std::cell::Cell;
 use std::collections::HashMap;

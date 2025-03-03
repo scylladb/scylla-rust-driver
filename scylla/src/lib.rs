@@ -99,9 +99,7 @@ pub mod _macro_internal {
     pub use scylla_cql::_macro_internal::*;
 }
 
-pub mod macros;
-#[doc(inline)]
-pub use macros::*;
+pub use scylla_cql::{DeserializeRow, DeserializeValue, SerializeRow, SerializeValue};
 
 pub mod value {
     // Every `pub` item is re-exported here, apart from `deser_cql_value`.
@@ -190,9 +188,7 @@ pub mod serialize {
 
 /// Deserializing DB response containing CQL query results.
 pub mod deserialize {
-    pub use scylla_cql::deserialize::{
-        DeserializationError, DeserializeRow, DeserializeValue, FrameSlice, TypeCheckError,
-    };
+    pub use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 
     /// Deserializing the whole query result contents.
     pub mod result {
@@ -203,7 +199,7 @@ pub mod deserialize {
     pub mod row {
         pub use scylla_cql::deserialize::row::{
             BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
-            BuiltinTypeCheckErrorKind, ColumnIterator, RawColumn,
+            BuiltinTypeCheckErrorKind, ColumnIterator, DeserializeRow, RawColumn,
         };
     }
 
@@ -211,28 +207,32 @@ pub mod deserialize {
     pub mod value {
         pub use scylla_cql::deserialize::value::{
             BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
-            BuiltinTypeCheckErrorKind, Emptiable, ListlikeIterator, MapDeserializationErrorKind,
-            MapIterator, MapTypeCheckErrorKind, MaybeEmpty, SetOrListDeserializationErrorKind,
-            SetOrListTypeCheckErrorKind, TupleDeserializationErrorKind, TupleTypeCheckErrorKind,
-            UdtIterator, UdtTypeCheckErrorKind,
+            BuiltinTypeCheckErrorKind, DeserializeValue, Emptiable, ListlikeIterator,
+            MapDeserializationErrorKind, MapIterator, MapTypeCheckErrorKind, MaybeEmpty,
+            SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind,
+            TupleDeserializationErrorKind, TupleTypeCheckErrorKind, UdtIterator,
+            UdtTypeCheckErrorKind,
         };
     }
 
     // Shorthands for better readability.
     #[cfg_attr(not(test), allow(unused))]
     pub(crate) trait DeserializeOwnedValue:
-        for<'frame, 'metadata> DeserializeValue<'frame, 'metadata>
+        for<'frame, 'metadata> value::DeserializeValue<'frame, 'metadata>
     {
     }
     impl<T> DeserializeOwnedValue for T where
-        T: for<'frame, 'metadata> DeserializeValue<'frame, 'metadata>
+        T: for<'frame, 'metadata> value::DeserializeValue<'frame, 'metadata>
     {
     }
     pub(crate) trait DeserializeOwnedRow:
-        for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>
+        for<'frame, 'metadata> row::DeserializeRow<'frame, 'metadata>
     {
     }
-    impl<T> DeserializeOwnedRow for T where T: for<'frame, 'metadata> DeserializeRow<'frame, 'metadata> {}
+    impl<T> DeserializeOwnedRow for T where
+        T: for<'frame, 'metadata> row::DeserializeRow<'frame, 'metadata>
+    {
+    }
 }
 
 pub mod authentication;
