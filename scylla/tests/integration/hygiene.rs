@@ -6,10 +6,10 @@ macro_rules! test_crate {
         extern crate $name as _scylla;
 
         #[derive(
-            _scylla::macros::DeserializeRow,
-            _scylla::macros::DeserializeValue,
-            _scylla::macros::SerializeValue,
-            _scylla::macros::SerializeRow,
+            _scylla::DeserializeRow,
+            _scylla::DeserializeValue,
+            _scylla::SerializeValue,
+            _scylla::SerializeRow,
             PartialEq,
             Debug,
         )]
@@ -187,7 +187,7 @@ macro_rules! test_crate {
 
         // Test attributes for value struct with name flavor
         #[derive(
-            _scylla::macros::DeserializeValue, _scylla::macros::SerializeValue, PartialEq, Debug,
+            _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla)]
         struct TestStructByName {
@@ -205,7 +205,7 @@ macro_rules! test_crate {
 
         // Test attributes for value struct with strict name flavor
         #[derive(
-            _scylla::macros::DeserializeValue, _scylla::macros::SerializeValue, PartialEq, Debug,
+            _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, forbid_excess_udt_fields)]
         struct TestStructByNameStrict {
@@ -223,7 +223,7 @@ macro_rules! test_crate {
 
         // Test attributes for value struct with ordered flavor
         #[derive(
-            _scylla::macros::DeserializeValue, _scylla::macros::SerializeValue, PartialEq, Debug,
+            _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order")]
         struct TestStructOrdered {
@@ -241,7 +241,7 @@ macro_rules! test_crate {
 
         // Test attributes for value struct with strict ordered flavor
         #[derive(
-            _scylla::macros::DeserializeValue, _scylla::macros::SerializeValue, PartialEq, Debug,
+            _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order", forbid_excess_udt_fields)]
         struct TestStructOrderedStrict {
@@ -259,7 +259,7 @@ macro_rules! test_crate {
 
         // Test attributes for value struct with ordered flavor and skipped name checks
         #[derive(
-            _scylla::macros::DeserializeValue, _scylla::macros::SerializeValue, PartialEq, Debug,
+            _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order", skip_name_checks)]
         struct TestStructOrderedSkipped {
@@ -276,7 +276,7 @@ macro_rules! test_crate {
 
         // Test attributes for value struct with strict ordered flavor and skipped name checks
         #[derive(
-            _scylla::macros::DeserializeValue, _scylla::macros::SerializeValue, PartialEq, Debug,
+            _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order", skip_name_checks, forbid_excess_udt_fields)]
         struct TestStructOrderedStrictSkipped {
@@ -293,7 +293,7 @@ macro_rules! test_crate {
 
         // Test attributes for row struct with name flavor
         #[derive(
-            _scylla::macros::DeserializeRow, _scylla::macros::SerializeRow, PartialEq, Debug,
+            _scylla::DeserializeRow, _scylla::SerializeRow, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla)]
         struct TestRowByName {
@@ -306,7 +306,7 @@ macro_rules! test_crate {
 
         // Test attributes for row struct with ordered flavor
         #[derive(
-            _scylla::macros::DeserializeRow, _scylla::macros::SerializeRow, PartialEq, Debug,
+            _scylla::DeserializeRow, _scylla::SerializeRow, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order")]
         struct TestRowByOrder {
@@ -319,7 +319,7 @@ macro_rules! test_crate {
 
         // Test attributes for row struct with ordered flavor and skipped name checks
         #[derive(
-            _scylla::macros::DeserializeRow, _scylla::macros::SerializeRow, PartialEq, Debug,
+            _scylla::DeserializeRow, _scylla::SerializeRow, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla, flavor = "enforce_order", skip_name_checks)]
         struct TestRowByOrderSkipped {

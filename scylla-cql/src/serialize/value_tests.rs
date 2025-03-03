@@ -1,5 +1,4 @@
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
-use crate::macros::SerializeValue;
 use crate::serialize::value::{
     BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
     BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind, SerializeValue,
@@ -11,6 +10,7 @@ use crate::value::{
     Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
     MaybeUnset, Unset,
 };
+use crate::SerializeValue;
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};

@@ -99,9 +99,7 @@ pub mod _macro_internal {
     pub use scylla_cql::_macro_internal::*;
 }
 
-pub mod macros;
-#[doc(inline)]
-pub use macros::*;
+pub use scylla_cql::{DeserializeRow, DeserializeValue, SerializeRow, SerializeValue};
 
 pub mod value {
     // Every `pub` item is re-exported here, apart from `deser_cql_value`.

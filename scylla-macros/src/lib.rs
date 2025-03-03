@@ -266,7 +266,7 @@ mod deserialize;
 /// can be deserialized using the following struct:
 ///
 /// ```rust
-/// # use scylla_cql::macros::DeserializeRow;
+/// # use scylla::DeserializeRow;
 /// #[derive(DeserializeRow)]
 /// # #[scylla(crate = "scylla_cql")]
 /// struct MyRow<'a> {
@@ -281,7 +281,7 @@ mod deserialize;
 /// "SELECT a AS b FROM ks.my_table" executed against
 /// the aforementioned table can be deserialized to the struct:
 /// ```rust
-/// # use scylla_cql::macros::DeserializeRow;
+/// # use scylla::DeserializeRow;
 /// #[derive(DeserializeRow)]
 /// # #[scylla(crate = "scylla_cql")]
 /// struct MyRow {
@@ -386,7 +386,7 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 /// ...can be deserialized using the following struct:
 ///
 /// ```rust
-/// # use scylla_cql::macros::DeserializeValue;
+/// # use scylla::DeserializeValue;
 /// #[derive(DeserializeValue)]
 /// # #[scylla(crate = "scylla_cql")]
 /// struct MyUdt<'a> {

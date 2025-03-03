@@ -20,7 +20,7 @@ and `DeserializeValue` macros documentation.
 ```rust
 # extern crate scylla;
 # async fn check_only_compiles() {
-use scylla::macros::{DeserializeValue, SerializeValue};
+use scylla::{DeserializeValue, SerializeValue};
 
 // Define a custom struct that matches the User Defined Type created earlier.
 // Fields don't have to be in the same order as they are in the database.
@@ -48,7 +48,7 @@ Now it can be sent and received just like any other CQL value:
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
-use scylla::macros::{DeserializeValue, SerializeValue};
+use scylla::{DeserializeValue, SerializeValue};
 
 #[derive(Debug, DeserializeValue, SerializeValue)]
 struct MyType {

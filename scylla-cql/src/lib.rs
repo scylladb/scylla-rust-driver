@@ -1,12 +1,11 @@
 pub(crate) mod pretty;
 
 pub mod frame;
-pub mod macros {
-    pub use scylla_macros::DeserializeRow;
-    pub use scylla_macros::DeserializeValue;
-    pub use scylla_macros::SerializeRow;
-    pub use scylla_macros::SerializeValue;
-}
+
+pub use scylla_macros::DeserializeRow;
+pub use scylla_macros::DeserializeValue;
+pub use scylla_macros::SerializeRow;
+pub use scylla_macros::SerializeValue;
 
 pub mod deserialize;
 pub mod serialize;
@@ -18,7 +17,7 @@ pub use crate::frame::types::Consistency;
 #[doc(hidden)]
 pub mod _macro_internal {
     pub use crate::frame::response::result::{ColumnSpec, ColumnType};
-    pub use crate::macros::*;
+    pub use crate::{DeserializeRow, DeserializeValue, SerializeRow, SerializeValue};
 
     pub use crate::deserialize::row::{
         deser_error_replace_rust_name as row_deser_error_replace_rust_name,
