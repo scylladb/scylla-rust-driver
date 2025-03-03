@@ -39,6 +39,7 @@ full-serialization = [
     "num-bigint-04",
     "bigdecimal-04",
 ]
+unstable-testing = []
 
 [dependencies]
 scylla-macros = { version = "0.7.0", path = "../scylla-macros" }
@@ -96,6 +97,7 @@ time = "0.3"
 [[bench]]
 name = "benchmark"
 harness = false
+required-features = ["unstable-testing"]
 
 [lints.rust]
 unnameable_types = "warn"

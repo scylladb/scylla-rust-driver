@@ -12,6 +12,7 @@ use crate::frame::response;
 // Re-export error types from pager module.
 pub use crate::client::pager::{NextPageError, NextRowError};
 
+use crate::statement::prepared::TokenCalculationError;
 // Re-export error types from query_result module.
 pub use crate::response::query_result::{
     FirstRowError, IntoRowsResultError, MaybeFirstRowError, ResultNotRowsError, RowsError,
@@ -932,6 +933,23 @@ pub(crate) enum ResponseParseError {
     BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
     #[error(transparent)]
     CqlResponseParseError(#[from] CqlResponseParseError),
+}
+
+/// Error returned from [ClusterState](crate::cluster::ClusterState) APIs.
+#[derive(Clone, Debug, Error)]
+#[non_exhaustive]
+pub enum ClusterStateTokenError {
+    /// Failed to calculate token.
+    #[error(transparent)]
+    TokenCalculation(#[from] TokenCalculationError),
+
+    /// Failed to serialize values required to compute partition key.
+    #[error(transparent)]
+    Serialization(#[from] SerializationError),
+
+    /// ClusterState doesn't currently have metadata for the requested table.
+    #[error("Can't find metadata for requested table ({keyspace}.{table}).")]
+    UnknownTable { keyspace: String, table: String },
 }
 
 #[cfg(test)]

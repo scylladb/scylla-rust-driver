@@ -163,10 +163,6 @@ pub mod serialize {
             BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
             BuiltinTypeCheckErrorKind,
         };
-
-        // Not part of the old framework, but something that we should
-        // still aim to remove from public API.
-        pub use scylla_cql::serialize::row::{SerializedValues, SerializedValuesIterator};
     }
 
     /// Contains the [SerializeValue][value::SerializeValue] trait and its implementations.
@@ -257,3 +253,22 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 pub(crate) use utils::test_utils;
+
+#[cfg(feature = "unstable-testing")]
+pub mod internal_testing {
+    use scylla_cql::serialize::row::SerializedValues;
+
+    use crate::routing::partitioner::PartitionerName;
+    use crate::routing::Token;
+    use crate::statement::prepared::TokenCalculationError;
+
+    pub fn calculate_token_for_partition_key(
+        serialized_partition_key_values: &SerializedValues,
+        partitioner: &PartitionerName,
+    ) -> Result<Token, TokenCalculationError> {
+        crate::routing::partitioner::calculate_token_for_partition_key(
+            serialized_partition_key_values,
+            partitioner,
+        )
+    }
+}

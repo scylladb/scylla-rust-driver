@@ -1,15 +1,14 @@
-use crate::errors::ConnectionPoolError;
+use crate::errors::{ClusterStateTokenError, ConnectionPoolError};
 use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
 use crate::policies::host_filter::HostFilter;
 use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use crate::routing::locator::ReplicaLocator;
 use crate::routing::partitioner::{calculate_token_for_partition_key, PartitionerName};
 use crate::routing::{Shard, Token};
-use crate::statement::prepared::TokenCalculationError;
 
 use itertools::Itertools;
 use scylla_cql::frame::response::result::TableSpec;
-use scylla_cql::serialize::row::SerializedValues;
+use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, warn};
@@ -199,21 +198,39 @@ impl ClusterState {
     }
 
     /// Compute token of a table partition key
+    ///
+    /// `partition_key` argument contains the values of all partition key
+    /// columns. You can use both unnamed values like a tuple (e.g. `(1, 5, 5)`)
+    /// or named values (e.g. struct that derives `SerializeRow`), as you would
+    /// when executing a request. No additional values are allowed besides values
+    /// for primary key columns.
     pub fn compute_token(
         &self,
         keyspace: &str,
         table: &str,
-        partition_key: &SerializedValues,
-    ) -> Result<Token, TokenCalculationError> {
-        let partitioner = self
+        partition_key: &dyn SerializeRow,
+    ) -> Result<Token, ClusterStateTokenError> {
+        let Some(table) = self
             .keyspaces
             .get(keyspace)
             .and_then(|k| k.tables.get(table))
-            .and_then(|t| t.partitioner.as_deref())
+        else {
+            return Err(ClusterStateTokenError::UnknownTable {
+                keyspace: keyspace.to_owned(),
+                table: table.to_owned(),
+            });
+        };
+        let values = SerializedValues::from_serializable(
+            &RowSerializationContext::from_specs(table.pk_column_specs.as_slice()),
+            partition_key,
+        )?;
+        let partitioner = table
+            .partitioner
+            .as_deref()
             .and_then(PartitionerName::from_str)
             .unwrap_or_default();
-
-        calculate_token_for_partition_key(partition_key, &partitioner)
+        calculate_token_for_partition_key(&values, &partitioner)
+            .map_err(ClusterStateTokenError::TokenCalculation)
     }
 
     /// Access to replicas owning a given token
@@ -246,12 +263,18 @@ impl ClusterState {
     }
 
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
+    ///
+    /// `partition_key` argument contains the values of all partition key
+    /// columns. You can use both unnamed values like a tuple (e.g. `(1, 5, 5)`)
+    /// or named values (e.g. struct that derives `SerializeRow`), as you would
+    /// when executing a request. No additional values are allowed besides values
+    /// for primary key columns.
     pub fn get_endpoints(
         &self,
         keyspace: &str,
         table: &str,
-        partition_key: &SerializedValues,
-    ) -> Result<Vec<(Arc<Node>, Shard)>, TokenCalculationError> {
+        partition_key: &dyn SerializeRow,
+    ) -> Result<Vec<(Arc<Node>, Shard)>, ClusterStateTokenError> {
         let token = self.compute_token(keyspace, table, partition_key)?;
         Ok(self.get_token_endpoints(keyspace, table, token))
     }
