@@ -1420,6 +1420,8 @@ mod tests {
                 None,
                 TabletsInfo::new(),
                 &HashMap::new(),
+                #[cfg(feature = "metrics")]
+                &Default::default(),
             )
             .await
         }
@@ -1451,6 +1453,8 @@ mod tests {
                 None,
                 TabletsInfo::new(),
                 &HashMap::new(),
+                #[cfg(feature = "metrics")]
+                &Default::default(),
             )
             .await
         }
@@ -2501,6 +2505,8 @@ mod tests {
             },
             TabletsInfo::new(),
             &HashMap::new(),
+            #[cfg(feature = "metrics")]
+            &Default::default(),
         )
         .await;
 

@@ -2,14 +2,18 @@ use futures::{
     future::FutureExt,
     stream::{FuturesUnordered, StreamExt},
 };
-use std::{future::Future, sync::Arc, time::Duration};
-use tracing::{trace_span, warn, Instrument};
+#[cfg(feature = "metrics")]
+use std::sync::Arc;
+use std::{future::Future, time::Duration};
+use tracing::{trace_span, Instrument};
 
 use crate::errors::{RequestAttemptError, RequestError};
+#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 
 /// Context is passed as an argument to `SpeculativeExecutionPolicy` methods
 pub struct Context {
+    #[cfg(feature = "metrics")]
     pub metrics: Arc<Metrics>,
 }
 
@@ -38,6 +42,7 @@ pub struct SimpleSpeculativeExecutionPolicy {
 
 /// A policy that triggers speculative executions when the request to the current
 /// target is above a given percentile.
+#[cfg(feature = "metrics")]
 #[derive(Debug, Clone)]
 pub struct PercentileSpeculativeExecutionPolicy {
     /// The maximum number of speculative executions that will be triggered
@@ -59,6 +64,7 @@ impl SpeculativeExecutionPolicy for SimpleSpeculativeExecutionPolicy {
     }
 }
 
+#[cfg(feature = "metrics")]
 impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
     fn max_retry_count(&self, _: &Context) -> usize {
         self.max_retry_count
@@ -69,7 +75,7 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
         let ms = match interval {
             Ok(d) => d,
             Err(e) => {
-                warn!(
+                tracing::warn!(
                     "Failed to get latency percentile ({}), defaulting to 100 ms",
                     e
                 );
