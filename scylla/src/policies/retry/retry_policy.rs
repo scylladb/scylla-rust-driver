@@ -6,6 +6,7 @@ use crate::errors::RequestAttemptError;
 use crate::frame::types::Consistency;
 
 /// Information about a failed request
+#[non_exhaustive]
 pub struct RequestInfo<'a> {
     /// The error with which the request failed
     pub error: &'a RequestAttemptError,
