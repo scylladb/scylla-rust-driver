@@ -192,6 +192,16 @@ impl ClusterState {
         &self.keyspaces
     }
 
+    /// Access keyspace details collected by the driver.
+    pub fn get_keyspace(&self, keyspace: impl AsRef<str>) -> Option<&Keyspace> {
+        self.keyspaces.get(keyspace.as_ref())
+    }
+
+    /// Returns an iterator over keyspaces.
+    pub fn keyspaces_iter(&self) -> impl Iterator<Item = (&str, &Keyspace)> {
+        self.keyspaces.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
     /// Access details about nodes known to the driver
     pub fn get_nodes_info(&self) -> &[Arc<Node>] {
         self.locator.unique_nodes_in_global_ring()
