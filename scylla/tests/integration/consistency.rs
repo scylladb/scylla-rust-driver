@@ -353,6 +353,7 @@ impl OwnedRoutingInfo {
             token,
             table,
             is_confirmed_lwt,
+            ..
         } = info;
         Self {
             consistency,

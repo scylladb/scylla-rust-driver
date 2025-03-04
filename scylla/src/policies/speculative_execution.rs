@@ -12,6 +12,7 @@ use crate::errors::{RequestAttemptError, RequestError};
 use crate::observability::metrics::Metrics;
 
 /// Context is passed as an argument to `SpeculativeExecutionPolicy` methods
+#[non_exhaustive]
 pub struct Context {
     #[cfg(feature = "metrics")]
     pub metrics: Arc<Metrics>,
