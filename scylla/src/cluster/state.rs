@@ -185,13 +185,6 @@ impl ClusterState {
         }
     }
 
-    /// Access keyspaces details collected by the driver
-    /// Driver collects various schema details like tables, partitioners, columns, types.
-    /// They can be read using this method
-    pub fn get_keyspace_info(&self) -> &HashMap<String, Keyspace> {
-        &self.keyspaces
-    }
-
     /// Access keyspace details collected by the driver.
     pub fn get_keyspace(&self, keyspace: impl AsRef<str>) -> Option<&Keyspace> {
         self.keyspaces.get(keyspace.as_ref())
