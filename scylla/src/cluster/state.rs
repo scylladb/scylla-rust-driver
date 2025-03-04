@@ -110,24 +110,30 @@ impl ClusterState {
         }
 
         let keyspaces: HashMap<String, Keyspace> = metadata
-        .keyspaces
-        .into_iter()
-        .filter_map(|(ks_name, ks)| match ks {
-            Ok(ks) => Some((ks_name, ks)),
-            Err(e) => {
-                if let Some(old_ks) = old_keyspaces.get(&ks_name) {
-                    warn!("Encountered an error while processing metadata of keyspace \"{ks_name}\": {e}.\
-                           Re-using older version of this keyspace metadata");
-                    Some((ks_name, old_ks.clone()))
-                } else {
-                    warn!("Encountered an error while processing metadata of keyspace \"{ks_name}\": {e}.\
-                           No previous version of this keyspace metadata found, so it will not be\
-                           present in ClusterData until next refresh.");
-                    None
+            .keyspaces
+            .into_iter()
+            .filter_map(|(ks_name, ks)| match ks {
+                Ok(ks) => Some((ks_name, ks)),
+                Err(e) => {
+                    if let Some(old_ks) = old_keyspaces.get(&ks_name) {
+                        warn!(
+                            "Encountered an error while processing\
+                            metadata of keyspace \"{ks_name}\": {e}.\
+                            Re-using older version of this keyspace metadata"
+                        );
+                        Some((ks_name, old_ks.clone()))
+                    } else {
+                        warn!(
+                            "Encountered an error while processing metadata\
+                            of keyspace \"{ks_name}\": {e}.\
+                            No previous version of this keyspace metadata found, so it will not be\
+                            present in ClusterData until next refresh."
+                        );
+                        None
+                    }
                 }
-            }
-        })
-        .collect();
+            })
+            .collect();
 
         {
             let removed_nodes = {
