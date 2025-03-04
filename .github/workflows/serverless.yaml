@@ -15,9 +15,7 @@ env:
 
 jobs:
   build:
-    # ccm requires Python 2 when creating a serverless cluster.
-    # Python 2 is pre-installed on Ubuntu 20.04.
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v3
@@ -26,7 +24,7 @@ jobs:
 
       - name: Create serverless cluster
         run: |
-          ccm create serverless -i 127.0.1. -n 1 --scylla -v release:5.1.6
+          ccm create serverless -i 127.0.1. -n 1 --scylla -v release:6.2
           ccm start  --sni-proxy --sni-port 7777
       - name: Update rust toolchain
         run: rustup update

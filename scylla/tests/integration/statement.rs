@@ -12,7 +12,7 @@ async fn test_prepared_statement_col_specs() {
     session
         .ddl(format!(
             "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = 
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}",
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
             ks
         ))
         .await
