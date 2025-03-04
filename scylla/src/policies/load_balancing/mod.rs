@@ -18,6 +18,7 @@ pub use plan::Plan;
 
 /// Represents info about statement that can be used by load balancing policies.
 #[derive(Default, Clone, Debug)]
+#[non_exhaustive]
 pub struct RoutingInfo<'a> {
     /// Requested consistency information allows to route requests to the appropriate
     /// datacenters. E.g. requests with a LOCAL_ONE consistency should be routed to the same
