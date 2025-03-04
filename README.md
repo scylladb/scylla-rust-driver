@@ -68,6 +68,22 @@ For planned future improvements, see our [Milestones].
 
 We invite you to discuss any issues and ask questions on the [ScyllaDB Forum] and the `#rust-driver` channel on [ScyllaDB Slack].
 
+## Version support
+
+The driver is considered production ready, hence its version is not 0.x.
+We do however acknowledge that the API will surely need some breaking changes in
+the future, which means it is not our goal to stay on 1.x forever - we will
+release new major version in the future.
+
+The API stability guarantee we provide is that we won't release new major
+versions very often.
+In case of 2.0, it won't be released earlier than 9 months after release 1.0.
+For further major versions this duration may be increased.
+
+After new major version is released, the previous major version will still
+receive bugfixes for some time (exact time is yet to be determined), but new
+features will only be developed for the latest major version.
+
 ## Supported Rust Versions
 
 Our driver's minimum supported Rust version (MSRV) is 1.70.0.
