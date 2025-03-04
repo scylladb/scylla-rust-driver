@@ -11,6 +11,9 @@ categories = ["database"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+# Important: We use precise version of scylla-macros. This enables
+# us to make breaking changes in the doc(hidden) interfaces that are
+# used by macros.
 scylla-macros = { version = "=0.7.0", path = "../scylla-macros" }
 byteorder = "1.3.4"
 bytes = "1.0.1"
