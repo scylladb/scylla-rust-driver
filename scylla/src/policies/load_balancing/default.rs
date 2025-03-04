@@ -1152,7 +1152,7 @@ impl<'a> TokenWithStrategy<'a> {
     fn new(query: &'a RoutingInfo, cluster: &'a ClusterState) -> Option<TokenWithStrategy<'a>> {
         let token = query.token?;
         let keyspace_name = query.table?.ks_name();
-        let keyspace = cluster.get_keyspace_info().get(keyspace_name)?;
+        let keyspace = cluster.get_keyspace(keyspace_name)?;
         let strategy = &keyspace.strategy;
         Some(TokenWithStrategy { strategy, token })
     }

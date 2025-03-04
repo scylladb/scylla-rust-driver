@@ -1632,7 +1632,7 @@ async fn test_schema_types_in_metadata() {
     session.refresh_metadata().await.unwrap();
 
     let cluster_state = session.get_cluster_state();
-    let tables = &cluster_state.get_keyspace_info()[&ks].tables;
+    let tables = &cluster_state.get_keyspace(&ks).unwrap().tables;
 
     assert_eq!(
         tables.keys().sorted().collect::<Vec<_>>(),
@@ -1762,7 +1762,7 @@ async fn test_user_defined_types_in_metadata() {
     session.refresh_metadata().await.unwrap();
 
     let cluster_state = session.get_cluster_state();
-    let user_defined_types = &cluster_state.get_keyspace_info()[&ks].user_defined_types;
+    let user_defined_types = &cluster_state.get_keyspace(&ks).unwrap().user_defined_types;
 
     assert_eq!(
         user_defined_types.keys().sorted().collect::<Vec<_>>(),
@@ -1817,7 +1817,7 @@ async fn test_column_kinds_in_metadata() {
     session.refresh_metadata().await.unwrap();
 
     let cluster_state = session.get_cluster_state();
-    let columns = &cluster_state.get_keyspace_info()[&ks].tables["t"].columns;
+    let columns = &cluster_state.get_keyspace(&ks).unwrap().tables["t"].columns;
 
     assert_eq!(columns["a"].kind, ColumnKind::Clustering);
     assert_eq!(columns["b"].kind, ColumnKind::Clustering);
@@ -1865,7 +1865,7 @@ async fn test_primary_key_ordering_in_metadata() {
     session.refresh_metadata().await.unwrap();
 
     let cluster_state = session.get_cluster_state();
-    let table = &cluster_state.get_keyspace_info()[&ks].tables["t"];
+    let table = &cluster_state.get_keyspace(&ks).unwrap().tables["t"];
 
     assert_eq!(table.partition_key, vec!["c", "e"]);
     assert_eq!(table.clustering_key, vec!["b", "a"]);
@@ -1907,7 +1907,7 @@ async fn test_table_partitioner_in_metadata() {
     session.refresh_metadata().await.unwrap();
 
     let cluster_state = session.get_cluster_state();
-    let tables = &cluster_state.get_keyspace_info()[&ks].tables;
+    let tables = &cluster_state.get_keyspace(&ks).unwrap().tables;
     let table = &tables["t"];
     let cdc_table = &tables["t_scylla_cdc_log"];
 
@@ -1973,7 +1973,7 @@ async fn test_turning_off_schema_fetching() {
 
     session.refresh_metadata().await.unwrap();
     let cluster_state = &session.get_cluster_state();
-    let keyspace = &cluster_state.get_keyspace_info()[&ks];
+    let keyspace = cluster_state.get_keyspace(&ks).unwrap();
 
     let datacenter_repfactors: HashMap<String, usize> = cluster_state
         .replica_locator()
@@ -2398,8 +2398,7 @@ async fn test_views_in_schema_info() {
 
     let keyspace_meta = session
         .get_cluster_state()
-        .get_keyspace_info()
-        .get(&ks)
+        .get_keyspace(&ks)
         .unwrap()
         .clone();
 
@@ -2558,8 +2557,7 @@ async fn test_refresh_metadata_after_schema_agreement() {
         .unwrap();
 
     let cluster_state = session.get_cluster_state();
-    let metadata = cluster_state.get_keyspace_info();
-    let keyspace_metadata = metadata.get(ks.as_str());
+    let keyspace_metadata = cluster_state.get_keyspace(ks.as_str());
     assert_ne!(keyspace_metadata, None);
 
     let udt = keyspace_metadata.unwrap().user_defined_types.get("udt");

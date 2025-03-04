@@ -56,9 +56,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     session.refresh_metadata().await?;
 
     let cluster_state = &session.get_cluster_state();
-    let keyspaces = &cluster_state.get_keyspace_info();
+    let keyspaces_iter = cluster_state.keyspaces_iter();
 
-    for (keyspace_name, keyspace_info) in keyspaces.iter() {
+    for (keyspace_name, keyspace_info) in keyspaces_iter {
         println!("Keyspace {}:", keyspace_name);
         println!("\tTables: {:#?}", keyspace_info.tables);
         println!("\tViews: {:#?}", keyspace_info.views);

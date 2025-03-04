@@ -110,24 +110,30 @@ impl ClusterState {
         }
 
         let keyspaces: HashMap<String, Keyspace> = metadata
-        .keyspaces
-        .into_iter()
-        .filter_map(|(ks_name, ks)| match ks {
-            Ok(ks) => Some((ks_name, ks)),
-            Err(e) => {
-                if let Some(old_ks) = old_keyspaces.get(&ks_name) {
-                    warn!("Encountered an error while processing metadata of keyspace \"{ks_name}\": {e}.\
-                           Re-using older version of this keyspace metadata");
-                    Some((ks_name, old_ks.clone()))
-                } else {
-                    warn!("Encountered an error while processing metadata of keyspace \"{ks_name}\": {e}.\
-                           No previous version of this keyspace metadata found, so it will not be\
-                           present in ClusterData until next refresh.");
-                    None
+            .keyspaces
+            .into_iter()
+            .filter_map(|(ks_name, ks)| match ks {
+                Ok(ks) => Some((ks_name, ks)),
+                Err(e) => {
+                    if let Some(old_ks) = old_keyspaces.get(&ks_name) {
+                        warn!(
+                            "Encountered an error while processing\
+                            metadata of keyspace \"{ks_name}\": {e}.\
+                            Re-using older version of this keyspace metadata"
+                        );
+                        Some((ks_name, old_ks.clone()))
+                    } else {
+                        warn!(
+                            "Encountered an error while processing metadata\
+                            of keyspace \"{ks_name}\": {e}.\
+                            No previous version of this keyspace metadata found, so it will not be\
+                            present in ClusterData until next refresh."
+                        );
+                        None
+                    }
                 }
-            }
-        })
-        .collect();
+            })
+            .collect();
 
         {
             let removed_nodes = {
@@ -185,11 +191,14 @@ impl ClusterState {
         }
     }
 
-    /// Access keyspaces details collected by the driver
-    /// Driver collects various schema details like tables, partitioners, columns, types.
-    /// They can be read using this method
-    pub fn get_keyspace_info(&self) -> &HashMap<String, Keyspace> {
-        &self.keyspaces
+    /// Access keyspace details collected by the driver.
+    pub fn get_keyspace(&self, keyspace: impl AsRef<str>) -> Option<&Keyspace> {
+        self.keyspaces.get(keyspace.as_ref())
+    }
+
+    /// Returns an iterator over keyspaces.
+    pub fn keyspaces_iter(&self) -> impl Iterator<Item = (&str, &Keyspace)> {
+        self.keyspaces.iter().map(|(k, v)| (k.as_str(), v))
     }
 
     /// Access details about nodes known to the driver

@@ -101,8 +101,7 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
 
     let meta = session.get_cluster_state();
     let system_local = meta
-        .get_keyspace_info()
-        .get("system")
+        .get_keyspace("system")
         .unwrap()
         .tables
         .get("local")
