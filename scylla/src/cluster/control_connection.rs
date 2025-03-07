@@ -1,3 +1,6 @@
+//! Special treatment of the single connection used to fetch metadata
+//! and receive events from the cluster.
+
 use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -11,9 +14,11 @@ use crate::network::Connection;
 use crate::statement::prepared::PreparedStatement;
 use crate::statement::Statement;
 
+/// The single connection used to fetch metadata and receive events from the cluster.
 #[derive(Clone)]
 pub(super) struct ControlConnection {
     conn: Arc<Connection>,
+    /// The custom server-side timeout set for requests executed on the control connection.
     overriden_timeout: Option<Duration>,
 }
 
@@ -25,6 +30,7 @@ impl ControlConnection {
         }
     }
 
+    /// Sets the custom server-side timeout set for requests executed on the control connection.
     pub(super) fn override_timeout(self, overriden_timeout: Option<Duration>) -> Self {
         Self {
             overriden_timeout,
@@ -41,6 +47,8 @@ impl ControlConnection {
         self.conn.get_shard_info().is_some()
     }
 
+    /// Appends the custom server-side timeout to the statement string, if such custom timeout
+    /// is provided and we are connected to ScyllaDB (since custom timeouts is ScyllaDB-only feature).
     fn maybe_append_timeout_override(&self, statement: &mut Statement) {
         if let Some(timeout) = self.overriden_timeout {
             if self.is_to_scylladb() {
