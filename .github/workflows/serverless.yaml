@@ -32,11 +32,11 @@ jobs:
         run: cargo check
       # Cloud-related feature sets.   
       - name: Cargo check with unstable-cloud and openssl-x features
-        run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "unstable-cloud" --features "openssl-010"
+        run: cargo check --all-targets -p scylla --features "unstable-cloud" --features "openssl-010"
       - name: Cargo check with unstable-cloud and rustls-x features
-        run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "unstable-cloud" --features "rustls-023"
+        run: cargo check --all-targets -p scylla --features "unstable-cloud" --features "rustls-023"
       - name: Cargo check with unstable-cloud, openssl-x and rustls-x features
-        run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "unstable-cloud" --features "openssl-010" --features "rustls-023"
+        run: cargo check --all-targets -p scylla --features "unstable-cloud" --features "openssl-010" --features "rustls-023"
 
       - name: Run cloud-openssl example
         run: cargo run --example cloud-openssl -- $HOME/.ccm/serverless/config_data.yaml

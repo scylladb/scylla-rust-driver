@@ -26,7 +26,7 @@ check:
 
 .PHONY: check-without-features
 check-without-features:
-	cargo check --manifest-path "scylla/Cargo.toml" --features "" --all-targets
+	cargo check -p scylla --features "" --all-targets
 
 .PHONY: check-all-features
 check-all-features:
