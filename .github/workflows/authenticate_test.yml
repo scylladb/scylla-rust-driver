@@ -22,8 +22,8 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v3
 
-    - name: Update rust toolchain
-      run: rustup update
+    - name: Setup rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
 
     - name: Start the cluster
       run: docker compose -f test/cluster/docker-compose-passauth.yml up -d

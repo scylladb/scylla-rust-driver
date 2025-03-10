@@ -21,61 +21,69 @@ jobs:
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v3
-    - name: Update rust toolchain
-      run: rustup update
+    - name: Setup rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        components: clippy, rustfmt
     - name: Print rustc version
       run: rustc --version
     - name: Print rustfmt version
       run: cargo fmt --version
     - name: Print clippy version
       run: cargo clippy --version
+
+# Formatting
     - name: Format check
       run: cargo fmt --all -- --check
+
+# Basic clippy checks
     - name: Clippy check
       run: cargo clippy --all-targets
     - name: Clippy check with all features
       run: cargo clippy --all-targets --all-features
+
+# Verify scylla-cql separately
+    - name: Clippy scylla-cql
+      run: cargo clippy --all-targets -p scylla-cql --features "full-serialization"
+
+# cpp-rust-driver special cfg
     - name: Cargo check with cpp_rust_unstable cfg
-      run: RUSTFLAGS="--cfg cpp_rust_unstable" cargo clippy --all-targets --all-features
+      run: RUSTFLAGS="--cfg cpp_rust_unstable -Dwarnings" cargo clippy --all-targets --all-features
 
 # Features checks.
     # No features.
     - name: Cargo check without features
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features ""
+      run: cargo check --all-targets -p scylla --features ""
 
     # All features.
     - name: Cargo check with all features
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --all-features
+      run: cargo check --all-targets -p scylla --all-features
 
     # Various (de)serialization features.
     - name: Cargo check with all serialization features
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "full-serialization"
+      run: cargo check --all-targets -p scylla --features "full-serialization"
     - name: Cargo check with metrics feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "metrics"
+      run: cargo check --all-targets -p scylla --features "metrics"
     - name: Cargo check with secrecy-08 feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secrecy-08"
+      run: cargo check --all-targets -p scylla --features "secrecy-08"
     - name: Cargo check with chrono-04 feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "chrono-04"
+      run: cargo check --all-targets -p scylla --features "chrono-04"
     - name: Cargo check with time-03 feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "time-03"
+      run: cargo check --all-targets -p scylla --features "time-03"
     - name: Cargo check with num-bigint-03 feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "num-bigint-03"
+      run: cargo check --all-targets -p scylla --features "num-bigint-03"
     - name: Cargo check with num-bigint-04 feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "num-bigint-04"
+      run: cargo check --all-targets -p scylla --features "num-bigint-04"
     - name: Cargo check with bigdecimal-04 feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "bigdecimal-04"
+      run: cargo check --all-targets -p scylla --features "bigdecimal-04"
 
     # TLS-related feature sets.
     - name: Cargo check with openssl-x feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "openssl-010"
+      run: cargo check --all-targets -p scylla --features "openssl-010"
     - name: Cargo check with rustls-x feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "rustls-023"
+      run: cargo check --all-targets -p scylla --features "rustls-023"
     # (openssl-x, rustls-x) is checked in tls.yml.
 
-    - name: Build scylla-cql
-      run: cargo build --all-targets --manifest-path "scylla-cql/Cargo.toml" --features "full-serialization"
-    - name: Build
-      run: cargo build --all-targets --features "full-serialization"
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -85,13 +93,12 @@ jobs:
       run: |
         sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
         docker compose -f test/cluster/docker-compose.yml up -d --wait
-    - name: Update rust toolchain
-      run: rustup update
+    - name: Setup rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Print rustc version
       run: rustc --version
     - name: Run tests
       run: |
-        cargo clean
         RUST_LOG=trace SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --features "full-serialization"
     - name: Stop the cluster
       if: ${{ always() }}
@@ -108,9 +115,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Install Rust ${{ env.rust_min }}
-      run: |
-        rustup install ${{ env.rust_min }}
-        rustup override set ${{ env.rust_min }}
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: ${{ env.rust_min }}
     - name: Print Rust version
       run: rustc --version
     - name: Use MSRV Cargo.lock
@@ -118,16 +125,16 @@ jobs:
     - name: MSRV cargo check with features
       run: cargo check --all-targets --all-features --locked
     - name: MSRV cargo check without features
-      run: cargo check --all-targets --locked --manifest-path "scylla/Cargo.toml"
+      run: cargo check --all-targets --locked -p scylla
     - name: MSRV cargo check scylla-cql
-      run: cargo check --all-targets --locked --manifest-path "scylla-cql/Cargo.toml"
+      run: cargo check --all-targets --locked -p scylla-cql
 
   # Tests that docstrings generate docs without warnings
   cargo_docs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - name: Update rust toolchain
-      run: rustup update
+    - name: Setup rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Compile docs
       run: RUSTDOCFLAGS=-Dwarnings cargo doc

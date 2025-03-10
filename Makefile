@@ -7,10 +7,10 @@ all: test
 static: fmt-check check check-without-features check-all-features clippy clippy-all-features
 
 .PHONY: ci
-ci: static test build
+ci: static test
 
 .PHONY: dockerized-ci
-dockerized-ci: static dockerized-test build
+dockerized-ci: static dockerized-test
 
 .PHONY: fmt
 fmt:
@@ -26,7 +26,7 @@ check:
 
 .PHONY: check-without-features
 check-without-features:
-	cargo check --manifest-path "scylla/Cargo.toml" --features "" --all-targets
+	cargo check -p scylla --features "" --all-targets
 
 .PHONY: check-all-features
 check-all-features:
