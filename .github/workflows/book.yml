@@ -26,8 +26,11 @@ jobs:
         options: --health-cmd "cqlsh --debug scylladb" --health-interval 5s --health-retries 10
     steps:
     - uses: actions/checkout@v3
-    - name: Update rust toolchain
-      run: rustup update
+    - name: Setup rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        # We can't use cache here, or mdbook will complain about multiple candidates for dependency.
+        cache: false
     - name: Install mdbook
       run: cargo install mdbook --no-default-features
     - name: Build the project

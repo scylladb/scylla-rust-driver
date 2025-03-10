@@ -26,8 +26,8 @@ jobs:
         run: |
           ccm create serverless -i 127.0.1. -n 1 --scylla -v release:6.2
           ccm start  --sni-proxy --sni-port 7777
-      - name: Update rust toolchain
-        run: rustup update
+      - name: Setup rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Check
         run: cargo check
       # Cloud-related feature sets.   

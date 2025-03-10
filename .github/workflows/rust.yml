@@ -21,8 +21,10 @@ jobs:
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v3
-    - name: Update rust toolchain
-      run: rustup update
+    - name: Setup rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        components: clippy, rustfmt
     - name: Print rustc version
       run: rustc --version
     - name: Print rustfmt version
@@ -91,8 +93,8 @@ jobs:
       run: |
         sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
         docker compose -f test/cluster/docker-compose.yml up -d --wait
-    - name: Update rust toolchain
-      run: rustup update
+    - name: Setup rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Print rustc version
       run: rustc --version
     - name: Run tests
@@ -114,9 +116,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Install Rust ${{ env.rust_min }}
-      run: |
-        rustup install ${{ env.rust_min }}
-        rustup override set ${{ env.rust_min }}
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: ${{ env.rust_min }}
     - name: Print Rust version
       run: rustc --version
     - name: Use MSRV Cargo.lock
@@ -133,7 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
-    - name: Update rust toolchain
-      run: rustup update
+    - name: Setup rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Compile docs
       run: RUSTDOCFLAGS=-Dwarnings cargo doc
