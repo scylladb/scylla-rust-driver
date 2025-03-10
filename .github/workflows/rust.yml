@@ -48,7 +48,7 @@ jobs:
 
 # cpp-rust-driver special cfg
     - name: Cargo check with cpp_rust_unstable cfg
-      run: RUSTFLAGS="--cfg cpp_rust_unstable" cargo clippy --all-targets --all-features
+      run: RUSTFLAGS="--cfg cpp_rust_unstable -Dwarnings" cargo clippy --all-targets --all-features
 
 # Features checks.
     # No features.
