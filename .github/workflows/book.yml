@@ -32,7 +32,9 @@ jobs:
         # We can't use cache here, or mdbook will complain about multiple candidates for dependency.
         cache: false
     - name: Install mdbook
-      run: cargo install mdbook --no-default-features
+      uses: taiki-e/install-action@v2
+      with:
+        tool: mdbook
     - name: Build the project
       run: cargo build --examples
     - name: Build the book

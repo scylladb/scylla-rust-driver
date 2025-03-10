@@ -58,9 +58,9 @@ jobs:
     - name: Setup rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Install semver-checks
-      # Official action uses binary releases fetched from GitHub
-      # If this pipeline becomes too slow, we should do this too.
-      run: cargo install cargo-semver-checks --no-default-features --features gix-reqwest
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-semver-checks
     - name: Verify the API compatibilty with PR base
       id: semver-pr-check
       run: |
@@ -146,6 +146,8 @@ jobs:
     - name: Setup rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Install semver-checks
-      run: cargo install cargo-semver-checks --no-default-features --features gix-reqwest
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-semver-checks
     - name: Run semver-checks to see if it agrees with version updates
       run: make semver-version
