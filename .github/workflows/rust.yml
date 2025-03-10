@@ -29,12 +29,18 @@ jobs:
       run: cargo fmt --version
     - name: Print clippy version
       run: cargo clippy --version
+
+# Formatting
     - name: Format check
       run: cargo fmt --all -- --check
+
+# Basic clippy checks
     - name: Clippy check
       run: cargo clippy --all-targets
     - name: Clippy check with all features
       run: cargo clippy --all-targets --all-features
+
+# cpp-rust-driver special cfg
     - name: Cargo check with cpp_rust_unstable cfg
       run: RUSTFLAGS="--cfg cpp_rust_unstable" cargo clippy --all-targets --all-features
 
