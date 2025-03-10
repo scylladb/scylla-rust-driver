@@ -40,6 +40,10 @@ jobs:
     - name: Clippy check with all features
       run: cargo clippy --all-targets --all-features
 
+# Verify scylla-cql separately
+    - name: Clippy scylla-cql
+      run: cargo clippy --all-targets -p scylla-cql --features "full-serialization"
+
 # cpp-rust-driver special cfg
     - name: Cargo check with cpp_rust_unstable cfg
       run: RUSTFLAGS="--cfg cpp_rust_unstable" cargo clippy --all-targets --all-features
@@ -78,8 +82,6 @@ jobs:
       run: cargo check --all-targets -p scylla --features "rustls-023"
     # (openssl-x, rustls-x) is checked in tls.yml.
 
-    - name: Build scylla-cql
-      run: cargo build --all-targets -p scylla-cql --features "full-serialization"
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 60
