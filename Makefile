@@ -7,10 +7,10 @@ all: test
 static: fmt-check check check-without-features check-all-features clippy clippy-all-features
 
 .PHONY: ci
-ci: static test build
+ci: static test
 
 .PHONY: dockerized-ci
-dockerized-ci: static dockerized-test build
+dockerized-ci: static dockerized-test
 
 .PHONY: fmt
 fmt:
