@@ -23,6 +23,7 @@ services:
       - CASSANDRA_BROADCAST_ADDRESS=172.42.0.2
       - HEAP_NEWSIZE=512M
       - MAX_HEAP_SIZE=2048M
+      - JVM_OPTS=-Dcassandra.skip_wait_for_gossip_to_settle=0 -Dcassandra.ring_delay_ms=5000
   cassandra2:
     image: cassandra
     healthcheck:
@@ -38,6 +39,7 @@ services:
       - CASSANDRA_SEEDS=172.42.0.2
       - HEAP_NEWSIZE=512M
       - MAX_HEAP_SIZE=2048M
+      - JVM_OPTS=-Dcassandra.skip_wait_for_gossip_to_settle=0 -Dcassandra.ring_delay_ms=5000
     depends_on:
       cassandra1:
         condition: service_healthy
@@ -56,6 +58,7 @@ services:
       - CASSANDRA_SEEDS=172.42.0.2,172.42.0.3
       - HEAP_NEWSIZE=512M
       - MAX_HEAP_SIZE=2048M
+      - JVM_OPTS=-Dcassandra.skip_wait_for_gossip_to_settle=0 -Dcassandra.ring_delay_ms=5000
     depends_on:
       cassandra2:
         condition: service_healthy
