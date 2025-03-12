@@ -53,7 +53,7 @@ If you need to share `Session` with different threads / Tokio tasks etc. use `Ar
 
 ## Metadata
 
-The driver refreshes the cluster metadata periodically, which contains information about cluster topology as well as the cluster schema. By default, the driver refreshes the cluster metadata every 60 seconds. 
+The driver refreshes the cluster metadata periodically, which contains information about cluster topology as well as the cluster schema. By default, the driver refreshes the cluster metadata every 60 seconds.
 However, you can set the `cluster_metadata_refresh_interval` to a non-negative value to periodically refresh the cluster metadata. This is useful when you do not have unexpected amount of traffic or when you have an extra traffic causing topology to change frequently.
 
 ## Scylla Cloud Serverless
@@ -84,10 +84,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
 # }
 ```
 
+It is also possible to load the secure connection bundle from anything
+which implements read:
+
+```rust
+# extern crate scylla;
+# extern crate tokio;
+# fn check_only_compiles() {
+use std::path::Path;
+use std::error::Error;
+use std::fs::File;
+use scylla::client::session_builder::CloudSessionBuilder;
+use scylla::cloud::{CloudConfig, CloudTlsProvider};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let mut file = File::open("config_data.yaml").unwrap();
+    let config = CloudConfig::from_reader(&mut file, CloudTlsProvider::OpenSsl010).unwrap();
+    let session = CloudSessionBuilder::from_config(config)
+        .build()
+        .await
+        .unwrap();
+
+    Ok(())
+}
+# }
+```
+
 > ***Note***\
-> `CloudSessionBuilder::new()` accepts two parameters. The first is a path to the configuration file.
-> The second parameter is responsible for choosing the underlying TLS provider library.
-> For more information about providers supported currently by the driver, see [TLS](tls.md).
+> `CloudSessionBuilder::new()` and `CloudConfig::from_reader()` accept
+> two parameters. The first is `Read` or path to the configuration
+> file. The second parameter is responsible for choosing the
+> underlying TLS provider library. For more information about
+> providers supported currently by the driver, see [TLS](tls.md).
 
 Note that the bundle file will be provided after the serverless cluster is created. Here is an example of a
 configuration file for a serverless cluster:
