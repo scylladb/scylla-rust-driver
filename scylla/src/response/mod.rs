@@ -9,6 +9,8 @@
 
 pub mod query_result;
 mod request_response;
+#[cfg(feature = "result-displayer")]
+pub mod rows_displayer;
 
 pub(crate) use request_response::{
     NonErrorAuthResponse, NonErrorQueryResponse, NonErrorStartupResponse, QueryResponse,
