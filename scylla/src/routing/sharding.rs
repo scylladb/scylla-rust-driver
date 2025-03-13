@@ -160,6 +160,19 @@ impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
 }
 
 #[cfg(test)]
+impl ShardInfo {
+    pub(crate) fn add_to_options(&self, options: &mut HashMap<String, Vec<String>>) {
+        for (k, v) in [
+            (SHARD_ENTRY, &self.shard as &dyn std::fmt::Display),
+            (NR_SHARDS_ENTRY, &self.nr_shards),
+            (MSB_IGNORE_ENTRY, &self.msb_ignore),
+        ] {
+            options.insert(k.to_owned(), vec![v.to_string()]);
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use crate::test_utils::setup_tracing;
 
