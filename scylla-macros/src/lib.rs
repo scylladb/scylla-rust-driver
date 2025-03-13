@@ -150,6 +150,14 @@ mod serialize;
 /// `#[scylla(skip)]`
 ///
 /// Don't use the field during serialization.
+///
+/// `#[scylla(flatten)]`
+///
+/// Use this field's `SerializeRow` implementation to serialize its columns as part
+/// of this struct. Note that the name of this field is ignored and hence the
+/// `rename` attribute does not make sense here and will cause a compilation
+/// error.
+///
 #[proc_macro_derive(SerializeValue, attributes(scylla))]
 pub fn serialize_value_derive(tokens_input: TokenStream) -> TokenStream {
     match serialize::value::derive_serialize_value(tokens_input) {
