@@ -159,7 +159,7 @@ impl<T: SerializeValue> SerializeRow for Vec<T> {
     impl_serialize_row_for_slice!();
 }
 
-impl<T: SerializeRow> SerializeRow for Box<T> {
+impl<T: SerializeRow + ?Sized> SerializeRow for Box<T> {
     #[inline]
     fn serialize(
         &self,
