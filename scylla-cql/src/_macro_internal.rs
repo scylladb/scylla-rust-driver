@@ -68,9 +68,21 @@ pub trait PartialSerializeRowByName {
     fn check_missing(self) -> Result<(), SerializationError>;
 }
 
+/// Represents a set of values that can be sent along a CQL statement when serializing in order
+///
+/// For now this trait is an implementation detail of `#[derive(SerializeRow)]` when
+/// serializing in order
+pub trait SerializeRowInOrder {
+    fn serialize_in_order(
+        &self,
+        columns: &mut self::ser::row::NextColumnSerializer<'_, '_>,
+        writer: &mut RowWriter<'_>,
+    ) -> Result<(), SerializationError>;
+}
+
 pub mod ser {
     pub mod row {
-        use super::super::{PartialSerializeRowByName, SerializeRowByName};
+        use super::super::{PartialSerializeRowByName, SerializeRowByName, SerializeRowInOrder};
         use crate::{
             frame::response::result::ColumnSpec,
             serialize::{
@@ -157,6 +169,84 @@ pub mod ser {
                 // 4. After all the fields are serialized, check that the partial doesn't have any
                 // fields left to serialize - return an error otherwise as we are missing columns
                 partial.check_missing()
+            }
+        }
+
+        /// An in-order column-by-column serializer
+        pub struct NextColumnSerializer<'i, 'c> {
+            columns: std::slice::Iter<'i, ColumnSpec<'c>>,
+        }
+
+        impl NextColumnSerializer<'_, '_> {
+            /// Serializes the next column in order with the given value
+            ///
+            /// If `ENFORCE_NAME` is `true` then a check is done at runtime to verify that the name
+            /// of the column matches the struct's expectation. Otherwise the name isn't checked.
+            #[inline]
+            pub fn serialize<'b, T, const ENFORCE_NAME: bool>(
+                &mut self,
+                expected: &str,
+                value: &impl SerializeValue,
+                writer: &'b mut RowWriter<'_>,
+            ) -> Result<WrittenCellProof<'b>, SerializationError> {
+                let spec = self.next_spec::<T, ENFORCE_NAME>(expected)?;
+                serialize_column::<T>(value, spec, writer)
+            }
+
+            /// Verifies that there are no remaining columns that have not been serialized
+            #[inline]
+            pub fn finish<T>(mut self) -> Result<(), SerializationError> {
+                match self.columns.next() {
+                    None => Ok(()),
+                    Some(spec) => Err(mk_typck_err::<T>(
+                        BuiltinTypeCheckErrorKind::ValueMissingForColumn {
+                            name: spec.name().to_owned(),
+                        },
+                    )),
+                }
+            }
+
+            #[inline]
+            fn next_spec<T, const ENFORCE_NAME: bool>(
+                &mut self,
+                expected: &str,
+            ) -> Result<&ColumnSpec<'_>, SerializationError> {
+                let spec = self.columns.next().ok_or_else(|| {
+                    mk_typck_err::<T>(BuiltinTypeCheckErrorKind::NoColumnWithName {
+                        name: expected.to_owned(),
+                    })
+                })?;
+
+                if ENFORCE_NAME && spec.name() != expected {
+                    return Err(mk_typck_err::<T>(
+                        BuiltinTypeCheckErrorKind::ColumnNameMismatch {
+                            rust_column_name: expected.to_owned(),
+                            db_column_name: spec.name().to_owned(),
+                        },
+                    ));
+                }
+
+                Ok(spec)
+            }
+        }
+
+        /// Wrapper around a struct that can be serialized in order for a whole row
+        pub struct InOrder<'t, T: SerializeRowInOrder>(pub &'t T);
+
+        impl<T: SerializeRowInOrder> InOrder<'_, T> {
+            /// Serializes all the fields/columns in order
+            #[inline]
+            pub fn serialize(
+                self,
+                ctx: &RowSerializationContext,
+                writer: &mut RowWriter<'_>,
+            ) -> Result<(), SerializationError> {
+                let mut next_serializer = NextColumnSerializer {
+                    columns: ctx.columns().iter(),
+                };
+
+                self.0.serialize_in_order(&mut next_serializer, writer)?;
+                next_serializer.finish::<T>()
             }
         }
     }
