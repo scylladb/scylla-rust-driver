@@ -33,3 +33,36 @@ pub use crate::serialize::value::{
 };
 pub use crate::serialize::writers::WrittenCellProof;
 pub use crate::serialize::{CellValueBuilder, CellWriter, RowWriter, SerializationError};
+
+pub mod ser {
+    pub mod row {
+        use crate::{
+            frame::response::result::ColumnSpec,
+            serialize::{
+                row::BuiltinSerializationErrorKind, value::SerializeValue,
+                writers::WrittenCellProof, RowWriter, SerializationError,
+            },
+        };
+
+        use crate::serialize::row::mk_ser_err;
+
+        /// Serializes a single value coming from type T into the writer
+        ///
+        /// `T` is not used for any sanity nor logical checks; it is only used when creating an
+        /// error message.
+        #[inline]
+        pub fn serialize_column<'b, T>(
+            value: &impl SerializeValue,
+            spec: &ColumnSpec,
+            writer: &'b mut RowWriter<'_>,
+        ) -> Result<WrittenCellProof<'b>, SerializationError> {
+            let sub_writer = writer.make_cell_writer();
+            value.serialize(spec.typ(), sub_writer).map_err(|err| {
+                mk_ser_err::<T>(BuiltinSerializationErrorKind::ColumnSerializationFailed {
+                    name: spec.name().to_owned(),
+                    err,
+                })
+            })
+        }
+    }
+}
