@@ -38,11 +38,11 @@ pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
 pub use scylla_cql::frame::response::CqlResponseKind;
 pub use scylla_cql::serialize::SerializationError;
 
-/// Error that occurred during query execution
+/// Error that occurred during request execution
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ExecutionError {
-    /// Caller passed an invalid query
+    /// Caller passed an invalid statement.
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
 
@@ -417,24 +417,25 @@ pub enum TablesMetadataError {
     },
 }
 
-/// Error caused by caller creating an invalid query
+/// Error caused by caller creating an invalid statement.
 #[derive(Error, Debug, Clone)]
-#[error("Invalid query passed to Session")]
+#[error("Invalid statement passed to Session")]
 #[non_exhaustive]
 pub enum BadQuery {
     /// Unable extract a partition key based on prepared statement's metadata.
     #[error("Unable extract a partition key based on prepared statement's metadata")]
     PartitionKeyExtraction,
 
+    /// "Serializing values failed.
     #[error("Serializing values failed: {0} ")]
     SerializationError(#[from] SerializationError),
 
-    /// Serialized values are too long to compute partition key
+    /// Serialized values are too long to compute partition key.
     #[error("Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}")]
     ValuesTooLongForKey(usize, usize),
 
-    /// Too many queries in the batch statement
-    #[error("Number of Queries in Batch Statement supplied is {0} which has exceeded the max value of 65,535")]
+    /// Too many statements in the batch statement.
+    #[error("Number of statements in Batch Statement supplied is {0} which has exceeded the max value of 65,535")]
     TooManyQueriesInBatchStatement(usize),
 }
 
