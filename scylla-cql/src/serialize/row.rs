@@ -327,7 +327,8 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-fn mk_typck_err<T>(kind: impl Into<BuiltinTypeCheckErrorKind>) -> SerializationError {
+#[doc(hidden)]
+pub fn mk_typck_err<T>(kind: impl Into<BuiltinTypeCheckErrorKind>) -> SerializationError {
     mk_typck_err_named(std::any::type_name::<T>(), kind)
 }
 
