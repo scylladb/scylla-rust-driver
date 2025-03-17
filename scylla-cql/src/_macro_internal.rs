@@ -34,17 +34,57 @@ pub use crate::serialize::value::{
 pub use crate::serialize::writers::WrittenCellProof;
 pub use crate::serialize::{CellValueBuilder, CellWriter, RowWriter, SerializationError};
 
+/// Represents a set of values that can be sent along a CQL statement when serializing by name
+///
+/// For now this trait is an implementation detail of `#[derive(SerializeRow)]` when
+/// serializing by name
+pub trait SerializeRowByName {
+    /// A type that can handle serialization of this struct column-by-column
+    type Partial<'d>: PartialSerializeRowByName
+    where
+        Self: 'd;
+
+    /// Returns a type that can serialize this row "column-by-column"
+    fn partial(&self) -> Self::Partial<'_>;
+}
+
+/// How to serialize a row column-by-column
+///
+/// For now this trait is an implementation detail of `#[derive(SerializeRow)]` when
+/// serializing by name
+pub trait PartialSerializeRowByName {
+    /// Serializes a single column in the row according to the information in the
+    /// given context
+    ///
+    /// It returns whether the column finished the serialization of the struct, did
+    /// it partially, none of at all, or errored
+    fn serialize_field(
+        &mut self,
+        spec: &ColumnSpec,
+        writer: &mut RowWriter<'_>,
+    ) -> Result<self::ser::row::FieldStatus, SerializationError>;
+
+    /// Checks if there are any missing columns to finish the serialization
+    fn check_missing(self) -> Result<(), SerializationError>;
+}
+
 pub mod ser {
     pub mod row {
+        use super::super::{PartialSerializeRowByName, SerializeRowByName};
         use crate::{
             frame::response::result::ColumnSpec,
             serialize::{
-                row::BuiltinSerializationErrorKind, value::SerializeValue,
-                writers::WrittenCellProof, RowWriter, SerializationError,
+                row::{
+                    mk_ser_err, BuiltinSerializationErrorKind, BuiltinTypeCheckErrorKind,
+                    RowSerializationContext,
+                },
+                value::SerializeValue,
+                writers::WrittenCellProof,
+                RowWriter, SerializationError,
             },
         };
 
-        use crate::serialize::row::mk_ser_err;
+        pub use crate::serialize::row::mk_typck_err;
 
         /// Serializes a single value coming from type T into the writer
         ///
@@ -63,6 +103,50 @@ pub mod ser {
                     err,
                 })
             })
+        }
+
+        /// Whether a field used a column to finish its serialization or not
+        ///
+        /// Used when serializing by name as a single column may not have finished a rust
+        /// field in the case of a flattened struct
+        ///
+        /// For now this enum is an implementation detail of `#[derive(SerializeRow)]` when
+        /// serializing by name
+        #[derive(Debug)]
+        pub enum FieldStatus {
+            /// The column finished the serialization for this field
+            Done,
+            /// The column was used but there are other fields not yet serialized
+            NotDone,
+            /// The column did not belong to this field
+            NotUsed,
+        }
+
+        pub struct ByName<'t, T: SerializeRowByName>(pub &'t T);
+
+        impl<T: SerializeRowByName> ByName<'_, T> {
+            /// Serializes all the fields/columns by name
+            pub fn serialize(
+                self,
+                ctx: &RowSerializationContext,
+                writer: &mut RowWriter<'_>,
+            ) -> Result<(), SerializationError> {
+                let mut partial = self.0.partial();
+
+                for spec in ctx.columns() {
+                    let serialized = partial.serialize_field(spec, writer)?;
+
+                    if matches!(serialized, FieldStatus::NotUsed) {
+                        return Err(mk_typck_err::<Self>(
+                            BuiltinTypeCheckErrorKind::NoColumnWithName {
+                                name: spec.name().to_owned(),
+                            },
+                        ));
+                    }
+                }
+
+                partial.check_missing()
+            }
         }
     }
 }
