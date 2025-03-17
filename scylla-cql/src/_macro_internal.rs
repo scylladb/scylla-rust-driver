@@ -68,9 +68,17 @@ pub trait PartialSerializeRowByName {
     fn check_missing(self) -> Result<(), SerializationError>;
 }
 
+pub trait SerializeRowInOrder {
+    fn serialize_in_order(
+        &self,
+        columns: &mut self::ser::row::ByColumn<'_, '_>,
+        writer: &mut RowWriter<'_>,
+    ) -> Result<(), SerializationError>;
+}
+
 pub mod ser {
     pub mod row {
-        use super::super::{PartialSerializeRowByName, SerializeRowByName};
+        use super::super::{PartialSerializeRowByName, SerializeRowByName, SerializeRowInOrder};
         use crate::{
             frame::response::result::ColumnSpec,
             serialize::{
@@ -146,6 +154,74 @@ pub mod ser {
                 }
 
                 partial.check_missing()
+            }
+        }
+
+        pub struct ByColumn<'i, 'c> {
+            columns: std::slice::Iter<'i, ColumnSpec<'c>>,
+        }
+
+        impl ByColumn<'_, '_> {
+            #[inline]
+            pub fn next<'b, T, const ENFORCE_NAME: bool>(
+                &mut self,
+                expected: &str,
+                value: &impl SerializeValue,
+                writer: &'b mut RowWriter<'_>,
+            ) -> Result<WrittenCellProof<'b>, SerializationError> {
+                let spec = self.next_spec::<T, ENFORCE_NAME>(expected)?;
+                serialize_column::<T>(value, spec, writer)
+            }
+
+            pub fn finish<T>(&mut self) -> Result<(), SerializationError> {
+                let Some(spec) = self.columns.next() else {
+                    return Ok(());
+                };
+
+                Err(mk_typck_err::<T>(
+                    BuiltinTypeCheckErrorKind::NoColumnWithName {
+                        name: spec.name().to_owned(),
+                    },
+                ))
+            }
+
+            fn next_spec<T, const ENFORCE_NAME: bool>(
+                &mut self,
+                expected: &str,
+            ) -> Result<&ColumnSpec<'_>, SerializationError> {
+                let spec = self.columns.next().ok_or_else(|| {
+                    mk_typck_err::<T>(BuiltinTypeCheckErrorKind::ValueMissingForColumn {
+                        name: expected.to_owned(),
+                    })
+                })?;
+
+                if ENFORCE_NAME && spec.name() != expected {
+                    return Err(mk_typck_err::<T>(
+                        BuiltinTypeCheckErrorKind::ColumnNameMismatch {
+                            rust_column_name: expected.to_owned(),
+                            db_column_name: spec.name().to_owned(),
+                        },
+                    ));
+                }
+
+                Ok(spec)
+            }
+        }
+
+        pub struct InOrder<'t, T: SerializeRowInOrder>(pub &'t T);
+
+        impl<T: SerializeRowInOrder> InOrder<'_, T> {
+            pub fn serialize(
+                self,
+                ctx: &RowSerializationContext,
+                writer: &mut RowWriter<'_>,
+            ) -> Result<(), SerializationError> {
+                let mut next_serializer = ByColumn {
+                    columns: ctx.columns().iter(),
+                };
+
+                self.0.serialize_in_order(&mut next_serializer, writer)?;
+                next_serializer.finish::<T>()
             }
         }
     }
