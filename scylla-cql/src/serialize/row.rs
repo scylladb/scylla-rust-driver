@@ -131,15 +131,7 @@ macro_rules! impl_serialize_row_for_slice {
                 ));
             }
             for (col, val) in ctx.columns().iter().zip(self.iter()) {
-                <T as SerializeValue>::serialize(val, col.typ(), writer.make_cell_writer())
-                    .map_err(|err| {
-                        mk_ser_err::<Self>(
-                            BuiltinSerializationErrorKind::ColumnSerializationFailed {
-                                name: col.name().to_owned(),
-                                err,
-                            },
-                        )
-                    })?;
+                $crate::_macro_internal::ser::row::serialize_column::<Self>(val, col, writer)?;
             }
             Ok(())
         }
@@ -197,15 +189,9 @@ macro_rules! impl_serialize_row_for_map {
                         ))
                     }
                     Some(v) => {
-                        <T as SerializeValue>::serialize(v, col.typ(), writer.make_cell_writer())
-                            .map_err(|err| {
-                            mk_ser_err::<Self>(
-                                BuiltinSerializationErrorKind::ColumnSerializationFailed {
-                                    name: col.name().to_owned(),
-                                    err,
-                                },
-                            )
-                        })?;
+                        $crate::_macro_internal::ser::row::serialize_column::<Self>(
+                            v, col, writer,
+                        )?;
                         let _ = unused_columns.remove(col.name());
                     }
                 }
@@ -286,12 +272,7 @@ macro_rules! impl_tuple {
                 };
                 let ($($fidents,)*) = self;
                 $(
-                    <$typs as SerializeValue>::serialize($fidents, $tidents.typ(), writer.make_cell_writer()).map_err(|err| {
-                        mk_ser_err::<Self>(BuiltinSerializationErrorKind::ColumnSerializationFailed {
-                            name: $tidents.name().to_owned(),
-                            err,
-                        })
-                    })?;
+                    $crate::_macro_internal::ser::row::serialize_column::<Self>($fidents, $tidents, writer)?;
                 )*
                 Ok(())
             }
@@ -372,7 +353,7 @@ pub struct BuiltinSerializationError {
     pub kind: BuiltinSerializationErrorKind,
 }
 
-fn mk_ser_err<T>(kind: impl Into<BuiltinSerializationErrorKind>) -> SerializationError {
+pub(crate) fn mk_ser_err<T>(kind: impl Into<BuiltinSerializationErrorKind>) -> SerializationError {
     mk_ser_err_named(std::any::type_name::<T>(), kind)
 }
 

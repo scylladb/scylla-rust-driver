@@ -35,7 +35,6 @@ impl Attributes {
 
 struct Field {
     ident: syn::Ident,
-    ty: syn::Type,
     attrs: FieldAttributes,
 }
 
@@ -82,7 +81,6 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
         .map(|f| {
             FieldAttributes::from_attributes(&f.attrs).map(|attrs| Field {
                 ident: f.ident.clone().unwrap(),
-                ty: f.ty.clone(),
                 attrs,
             })
         })
@@ -217,7 +215,6 @@ impl Generator for ColumnSortingGenerator<'_> {
             .map(|f| f.column_name())
             .collect::<Vec<_>>();
         let udt_field_names = rust_field_names.clone(); // For now, it's the same
-        let field_types = self.ctx.fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
 
         // Declare a helper lambda for creating errors
         statements.push(self.ctx.generate_mk_typck_err());
@@ -245,18 +242,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                 match spec.name() {
                     #(
                         #udt_field_names => {
-                            let sub_writer = #crate_path::RowWriter::make_cell_writer(writer);
-                            match <#field_types as #crate_path::SerializeValue>::serialize(&self.#rust_field_idents, spec.typ(), sub_writer) {
-                                ::std::result::Result::Ok(_proof) => {}
-                                ::std::result::Result::Err(err) => {
-                                    return ::std::result::Result::Err(mk_ser_err(
-                                        #crate_path::BuiltinRowSerializationErrorKind::ColumnSerializationFailed {
-                                            name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
-                                            err,
-                                        }
-                                    ));
-                                }
-                            }
+                            #crate_path::ser::row::serialize_column::<Self>(&self.#rust_field_idents, spec, writer)?;
                             if !#visited_flag_names {
                                 #visited_flag_names = true;
                                 remaining_count -= 1;
@@ -337,7 +323,6 @@ impl Generator for ColumnOrderedGenerator<'_> {
         for field in self.ctx.fields.iter() {
             let rust_field_ident = &field.ident;
             let rust_field_name = field.column_name();
-            let typ = &field.ty;
             let name_check_expression: syn::Expr = if !self.ctx.attributes.skip_name_checks {
                 parse_quote! { spec.name() == #rust_field_name }
             } else {
@@ -347,18 +332,7 @@ impl Generator for ColumnOrderedGenerator<'_> {
                 match ::std::iter::Iterator::next(&mut column_iter) {
                     ::std::option::Option::Some(spec) => {
                         if #name_check_expression {
-                            let cell_writer = #crate_path::RowWriter::make_cell_writer(writer);
-                            match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, spec.typ(), cell_writer) {
-                                ::std::result::Result::Ok(_proof) => {},
-                                ::std::result::Result::Err(err) => {
-                                    return ::std::result::Result::Err(mk_ser_err(
-                                        #crate_path::BuiltinRowSerializationErrorKind::ColumnSerializationFailed {
-                                            name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
-                                            err,
-                                        }
-                                    ));
-                                }
-                            }
+                            #crate_path::ser::row::serialize_column::<Self>(&self.#rust_field_ident, spec, writer)?;
                         } else {
                             return ::std::result::Result::Err(mk_typck_err(
                                 #crate_path::BuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
