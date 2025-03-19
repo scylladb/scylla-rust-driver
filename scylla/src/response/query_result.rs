@@ -88,10 +88,6 @@ impl QueryResult {
 
     // Preferred to implementing Default, because users shouldn't be able to create
     // an empty QueryResult.
-    //
-    // For now unused, but it will be used once Session's API is migrated
-    // to the new QueryResult.
-    #[allow(dead_code)]
     pub(crate) fn mock_empty() -> Self {
         Self {
             raw_metadata_and_rows: None,
