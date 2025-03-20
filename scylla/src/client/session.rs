@@ -369,8 +369,11 @@ impl Default for SessionConfig {
     }
 }
 
+// pub(crate) type Coordinator = (Uuid, SocketAddr);
+pub(crate) type Coordinator = SocketAddr;
+
 pub(crate) enum RunRequestResult<ResT> {
-    IgnoredWriteError,
+    IgnoredWriteError(Coordinator),
     Completed(ResT),
 }
 
@@ -1057,7 +1060,8 @@ impl Session {
             .await?;
 
         let response = match run_request_result {
-            RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
+            RunRequestResult::IgnoredWriteError(request_coordinator) => NonErrorQueryResponse {
+                request_coordinator,
                 response: NonErrorResponse::Result(result::Result::Void),
                 tracing_id: None,
                 warnings: Vec::new(),
@@ -1366,7 +1370,8 @@ impl Session {
             .await?;
 
         let response = match run_request_result {
-            RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
+            RunRequestResult::IgnoredWriteError(request_coordinator) => NonErrorQueryResponse {
+                request_coordinator,
                 response: NonErrorResponse::Result(result::Result::Void),
                 tracing_id: None,
                 warnings: Vec::new(),
@@ -1489,7 +1494,9 @@ impl Session {
             .await?;
 
         let result = match run_request_result {
-            RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(),
+            RunRequestResult::IgnoredWriteError(request_coordinator) => {
+                QueryResult::mock_empty(request_coordinator)
+            }
             RunRequestResult::Completed(non_error_query_response) => {
                 let result = non_error_query_response.into_query_result()?;
                 span.record_result_fields(&result);
@@ -1941,13 +1948,14 @@ impl Session {
                 self.metrics.inc_total_nonpaged_queries();
                 let request_start = std::time::Instant::now();
 
+                let connect_address = connection.get_connect_address();
                 trace!(
                     parent: &span,
-                    connection = %connection.get_connect_address(),
+                    connection = %connect_address,
                     "Sending"
                 );
                 let attempt_id: Option<history::AttemptId> =
-                    context.log_attempt_start(connection.get_connect_address());
+                    context.log_attempt_start(connect_address);
                 let request_result: Result<ResT, RequestAttemptError> =
                     run_request_once(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
@@ -2020,7 +2028,7 @@ impl Session {
                     RetryDecision::DontRetry => break 'nodes_in_plan,
 
                     RetryDecision::IgnoreWriteError => {
-                        return Some(Ok(RunRequestResult::IgnoredWriteError))
+                        return Some(Ok(RunRequestResult::IgnoredWriteError(connect_address)))
                     }
                 };
             }

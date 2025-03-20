@@ -6,11 +6,13 @@ use scylla_cql::frame::response::{NonErrorResponse, Response};
 use tracing::error;
 use uuid::Uuid;
 
+use crate::client::session::Coordinator;
 use crate::errors::RequestAttemptError;
 use crate::frame::response::{self, result};
 use crate::response::query_result::QueryResult;
 
 pub(crate) struct QueryResponse {
+    pub(crate) request_coordinator: Coordinator,
     pub(crate) response: Response,
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Vec<String>,
@@ -20,6 +22,7 @@ pub(crate) struct QueryResponse {
 
 // A QueryResponse in which response can not be Response::Error
 pub(crate) struct NonErrorQueryResponse {
+    pub(crate) request_coordinator: Coordinator,
     pub(crate) response: NonErrorResponse,
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Vec<String>,
@@ -30,6 +33,7 @@ impl QueryResponse {
         self,
     ) -> Result<NonErrorQueryResponse, RequestAttemptError> {
         Ok(NonErrorQueryResponse {
+            request_coordinator: self.request_coordinator,
             response: self.response.into_non_error_response()?,
             tracing_id: self.tracing_id,
             warnings: self.warnings,
@@ -79,7 +83,12 @@ impl NonErrorQueryResponse {
         };
 
         Ok((
-            QueryResult::new(raw_rows, self.tracing_id, self.warnings),
+            QueryResult::new(
+                self.request_coordinator,
+                raw_rows,
+                self.tracing_id,
+                self.warnings,
+            ),
             paging_state_response,
         ))
     }

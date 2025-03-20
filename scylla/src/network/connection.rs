@@ -1,6 +1,7 @@
 use super::tls::{TlsConfig, TlsProvider};
 use crate::authentication::AuthenticatorProvider;
 use crate::client::pager::{NextRowError, QueryPager};
+use crate::client::session::Coordinator;
 use crate::client::Compression;
 use crate::client::SelfIdentity;
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
@@ -441,7 +442,7 @@ impl Connection {
             error_sender,
             orphan_notification_receiver,
             router_handle.clone(),
-            addr.ip(),
+            addr,
         )
         .await?;
 
@@ -1297,6 +1298,7 @@ impl Connection {
             self.config.compression,
             &self.features.protocol_features,
             cached_metadata,
+            self.get_connect_address(),
         )?;
 
         Ok(response)
@@ -1307,6 +1309,7 @@ impl Connection {
         compression: Option<Compression>,
         features: &ProtocolFeatures,
         cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+        request_coordinator: Coordinator,
     ) -> Result<QueryResponse, ResponseParseError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
@@ -1329,6 +1332,7 @@ impl Connection {
         )?;
 
         Ok(QueryResponse {
+            request_coordinator,
             response,
             warnings: body_with_ext.warnings,
             tracing_id: body_with_ext.trace_id,
@@ -1343,7 +1347,7 @@ impl Connection {
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
-        node_address: IpAddr,
+        node_address: SocketAddr,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         async fn spawn_router_and_get_handle(
             config: HostConnectionConfig,
@@ -1352,7 +1356,7 @@ impl Connection {
             error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
             orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
             router_handle: Arc<RouterHandle>,
-            node_address: IpAddr,
+            node_address: SocketAddr,
         ) -> RemoteHandle<()> {
             let (task, handle) = Connection::router(
                 config,
@@ -1400,9 +1404,9 @@ impl Connection {
                     use rustls::pki_types::ServerName;
                     #[cfg(feature = "unstable-cloud")]
                     let server_name =
-                        sni.unwrap_or_else(|| ServerName::IpAddress(node_address.into()));
+                        sni.unwrap_or_else(|| ServerName::IpAddress(node_address.ip().into()));
                     #[cfg(not(feature = "unstable-cloud"))]
-                    let server_name = ServerName::IpAddress(node_address.into());
+                    let server_name = ServerName::IpAddress(node_address.ip().into());
                     let stream = connector.connect(server_name, stream).await?;
                     return Ok(spawn_router_and_get_handle(
                         config,
@@ -1437,7 +1441,7 @@ impl Connection {
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
-        node_address: IpAddr,
+        node_address: SocketAddr,
     ) {
         let (read_half, write_half) = split(stream);
         // Why are we using a mutex here?
@@ -1460,13 +1464,14 @@ impl Connection {
             router_handle,
             config.keepalive_interval,
             config.keepalive_timeout,
-            node_address,
+            node_address.ip(),
         );
 
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
             &handler_map,
             config,
+            node_address,
         );
         let w = Self::writer(
             BufWriter::with_capacity(8192, write_half),
@@ -1500,6 +1505,7 @@ impl Connection {
         mut read_half: (impl AsyncRead + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         config: HostConnectionConfig,
+        request_coordinator: Coordinator,
     ) -> Result<(), BrokenConnectionError> {
         loop {
             let (params, opcode, body) = frame::read_response_frame(&mut read_half)
@@ -1520,9 +1526,14 @@ impl Connection {
                 }
                 Ordering::Equal => {
                     if let Some(event_sender) = config.event_sender.as_ref() {
-                        Self::handle_event(response, config.compression, event_sender)
-                            .await
-                            .map_err(BrokenConnectionErrorKind::CqlEventHandlingError)?
+                        Self::handle_event(
+                            response,
+                            config.compression,
+                            event_sender,
+                            request_coordinator,
+                        )
+                        .await
+                        .map_err(BrokenConnectionErrorKind::CqlEventHandlingError)?
                     }
                     continue;
                 }
@@ -1734,6 +1745,7 @@ impl Connection {
         task_response: TaskResponse,
         compression: Option<Compression>,
         event_sender: &mpsc::Sender<Event>,
+        request_coordinator: Coordinator,
     ) -> Result<(), CqlEventHandlingError> {
         // Protocol features are negotiated during connection handshake.
         // However, the router is already created and sent to a different tokio
@@ -1746,7 +1758,13 @@ impl Connection {
         // future implementers.
         let features = ProtocolFeatures::default(); // TODO: Use the right features
 
-        let event = match Self::parse_response(task_response, compression, &features, None) {
+        let event = match Self::parse_response(
+            task_response,
+            compression,
+            &features,
+            None,
+            request_coordinator,
+        ) {
             Ok(r) => match r.response {
                 Response::Event(event) => event,
                 _ => {
