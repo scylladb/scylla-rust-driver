@@ -13,9 +13,7 @@ use crate::errors::{
 };
 use crate::observability::tracing::TracingInfo;
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
-use crate::routing::partitioner::{
-    calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
-};
+use crate::routing::partitioner::PartitionerName;
 use crate::routing::Token;
 use crate::statement::batch::{Batch, BatchStatement, BatchType};
 use crate::statement::prepared::PreparedStatement;
@@ -29,7 +27,7 @@ use assert_matches::assert_matches;
 use futures::{FutureExt, StreamExt as _, TryStreamExt};
 use itertools::Itertools;
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
-use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
+use scylla_cql::serialize::row::SerializeRow;
 use scylla_cql::serialize::value::SerializeValue;
 use scylla_cql::value::{CqlVarint, Row};
 use std::collections::{BTreeMap, HashMap};
@@ -578,41 +576,26 @@ async fn test_token_calculation() {
     let ks = unique_keyspace_name();
 
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
-    session
-        .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t3 (a text primary key)",
-            ks
-        ))
-        .await
-        .unwrap();
+    session.use_keyspace(ks.as_str(), true).await.unwrap();
 
-    // Refresh metadata as `ClusterState::compute_token` use them
-    session.await_schema_agreement().await.unwrap();
-    session.refresh_metadata().await.unwrap();
-
-    let prepared_statement = session
-        .prepare(format!("INSERT INTO {}.t3 (a) VALUES (?)", ks))
-        .await
-        .unwrap();
-
-    // Try calculating tokens for different sizes of the key
-    for i in 1..50usize {
-        eprintln!("Trying key size {}", i);
-        let mut s = String::new();
-        for _ in 0..i {
-            s.push('a');
-        }
-        let values = (&s,);
+    #[allow(clippy::too_many_arguments)]
+    async fn assert_tokens_equal(
+        session: &Session,
+        prepared: &PreparedStatement,
+        all_values_in_query_order: impl SerializeRow,
+        token_select: &PreparedStatement,
+        pk_ck_values: impl SerializeRow,
+        ks_name: &str,
+        table_name: &str,
+        pk_values: impl SerializeRow,
+    ) {
         session
-            .execute_unpaged(&prepared_statement, &values)
+            .execute_unpaged(prepared, &all_values_in_query_order)
             .await
             .unwrap();
 
         let (value,): (i64,) = session
-            .query_unpaged(
-                format!("SELECT token(a) FROM {}.t3 WHERE a = ?", ks),
-                &values,
-            )
+            .execute_unpaged(token_select, &pk_ck_values)
             .await
             .unwrap()
             .into_rows_result()
@@ -620,14 +603,127 @@ async fn test_token_calculation() {
             .single_row::<(i64,)>()
             .unwrap();
         let token = Token::new(value);
-        let prepared_token = Murmur3Partitioner
-            .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
+        let prepared_token = prepared
+            .calculate_token(&all_values_in_query_order)
+            .unwrap()
+            .unwrap();
         assert_eq!(token, prepared_token);
         let cluster_state_token = session
             .get_cluster_state()
-            .compute_token(&ks, "t3", &values)
+            .compute_token(ks_name, table_name, &pk_values)
             .unwrap();
         assert_eq!(token, cluster_state_token);
+    }
+
+    // Different sizes of the key
+    {
+        session
+            .ddl("CREATE TABLE IF NOT EXISTS t1 (a text primary key)")
+            .await
+            .unwrap();
+
+        let prepared_statement = session
+            .prepare("INSERT INTO t1 (a) VALUES (?)")
+            .await
+            .unwrap();
+
+        let token_selection = session
+            .prepare("SELECT token(a) FROM t1 WHERE a = ?")
+            .await
+            .unwrap();
+
+        for i in 1..50usize {
+            eprintln!("Trying key size {}", i);
+            let mut s = String::new();
+            for _ in 0..i {
+                s.push('a');
+            }
+            let values = (&s,);
+            assert_tokens_equal(
+                &session,
+                &prepared_statement,
+                &values,
+                &token_selection,
+                &values,
+                ks.as_str(),
+                "t1",
+                &values,
+            )
+            .await;
+        }
+    }
+
+    // Single column PK and single column CK
+    {
+        session
+            .ddl("CREATE TABLE IF NOT EXISTS t2 (a int, b int, c text, primary key (a, b))")
+            .await
+            .unwrap();
+
+        // Values are given non partition key order,
+        let prepared_simple_pk = session
+            .prepare("INSERT INTO t2 (c, a, b) VALUES (?, ?, ?)")
+            .await
+            .unwrap();
+
+        let all_values_in_query_order = ("I'm prepared!!!", 17_i32, 16_i32);
+
+        let token_select = session
+            .prepare("SELECT token(a) from t2 WHERE a = ? AND b = ?")
+            .await
+            .unwrap();
+        let pk_ck_values = (17_i32, 16_i32);
+        let pk_values = (17_i32,);
+
+        assert_tokens_equal(
+            &session,
+            &prepared_simple_pk,
+            all_values_in_query_order,
+            &token_select,
+            pk_ck_values,
+            ks.as_str(),
+            "t2",
+            pk_values,
+        )
+        .await;
+    }
+
+    // Composite partition key
+    {
+        session
+        .ddl("CREATE TABLE IF NOT EXISTS complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))")
+        .await
+        .unwrap();
+
+        // Values are given in non partition key order, to check that such permutation
+        // still yields consistent hashes.
+        let prepared_complex_pk = session
+            .prepare("INSERT INTO complex_pk (a, d, c, e, b) VALUES (?, ?, ?, ?, ?)")
+            .await
+            .unwrap();
+
+        let all_values_in_query_order = (17_i32, 7_i32, "I'm prepared!!!", 1234_i32, 16_i32);
+
+        let token_select = session
+            .prepare(
+                "SELECT token(a, b, c) FROM complex_pk WHERE a = ? AND b = ? AND c = ? AND d = ?",
+            )
+            .await
+            .unwrap();
+        let pk_ck_values = (17_i32, 16_i32, "I'm prepared!!!", 7_i32);
+        let pk_values = (17_i32, 16_i32, "I'm prepared!!!");
+
+        assert_tokens_equal(
+            &session,
+            &prepared_complex_pk,
+            all_values_in_query_order,
+            &token_select,
+            pk_ck_values,
+            ks.as_str(),
+            "complex_pk",
+            pk_values,
+        )
+        .await;
     }
 }
 
@@ -3009,107 +3105,6 @@ async fn simple_strategy_test() {
     rows.sort();
 
     assert_eq!(rows, vec![(1, 2, 3), (4, 5, 6), (7, 8, 9)]);
-}
-
-#[tokio::test]
-async fn test_manual_primary_key_computation() {
-    // Setup session
-    let ks = unique_keyspace_name();
-    let session = create_new_session_builder().build().await.unwrap();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
-    session.use_keyspace(&ks, true).await.unwrap();
-
-    async fn assert_tokens_equal(
-        session: &Session,
-        prepared: &PreparedStatement,
-        serialized_pk_values_in_pk_order: &SerializedValues,
-        all_values_in_query_order: impl SerializeRow,
-    ) {
-        let token_by_prepared = prepared
-            .calculate_token(&all_values_in_query_order)
-            .unwrap()
-            .unwrap();
-
-        session
-            .execute_unpaged(prepared, all_values_in_query_order)
-            .await
-            .unwrap();
-
-        let token_by_hand = calculate_token_for_partition_key(
-            serialized_pk_values_in_pk_order,
-            &PartitionerName::Murmur3,
-        )
-        .unwrap();
-        println!(
-            "by_prepared: {}, by_hand: {}",
-            token_by_prepared.value(),
-            token_by_hand.value()
-        );
-        assert_eq!(token_by_prepared, token_by_hand);
-    }
-
-    // Single-column partition key
-    {
-        session
-            .ddl("CREATE TABLE IF NOT EXISTS t2 (a int, b int, c text, primary key (a, b))")
-            .await
-            .unwrap();
-
-        // Values are given non partition key order,
-        let prepared_simple_pk = session
-            .prepare("INSERT INTO t2 (a, b, c) VALUES (?, ?, ?)")
-            .await
-            .unwrap();
-
-        let mut pk_values_in_pk_order = SerializedValues::new();
-        pk_values_in_pk_order
-            .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
-            .unwrap();
-        let all_values_in_query_order = (17_i32, 16_i32, "I'm prepared!!!");
-
-        assert_tokens_equal(
-            &session,
-            &prepared_simple_pk,
-            &pk_values_in_pk_order,
-            all_values_in_query_order,
-        )
-        .await;
-    }
-
-    // Composite partition key
-    {
-        session
-            .ddl("CREATE TABLE IF NOT EXISTS complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))")
-            .await
-            .unwrap();
-
-        // Values are given in non partition key order, to check that such permutation
-        // still yields consistent hashes.
-        let prepared_complex_pk = session
-            .prepare("INSERT INTO complex_pk (a, d, c, b) VALUES (?, 7, ?, ?)")
-            .await
-            .unwrap();
-
-        let mut pk_values_in_pk_order = SerializedValues::new();
-        pk_values_in_pk_order
-            .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
-            .unwrap();
-        pk_values_in_pk_order
-            .add_value(&16_i32, &ColumnType::Native(NativeType::Int))
-            .unwrap();
-        pk_values_in_pk_order
-            .add_value(&"I'm prepared!!!", &ColumnType::Native(NativeType::Ascii))
-            .unwrap();
-        let all_values_in_query_order = (17_i32, "I'm prepared!!!", 16_i32);
-
-        assert_tokens_equal(
-            &session,
-            &prepared_complex_pk,
-            &pk_values_in_pk_order,
-            all_values_in_query_order,
-        )
-        .await;
-    }
 }
 
 /// ScyllaDB does not distinguish empty collections from nulls. That is, INSERTing an empty collection
