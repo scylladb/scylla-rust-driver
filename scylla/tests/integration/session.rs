@@ -3163,7 +3163,7 @@ async fn test_deserialize_empty_collections() {
     assert!(map.is_empty());
 }
 
-#[cfg(cassandra_tests)]
+#[cfg_attr(not(cassandra_tests), ignore)]
 #[tokio::test]
 async fn test_vector_type_metadata() {
     setup_tracing();
@@ -3200,7 +3200,7 @@ async fn test_vector_type_metadata() {
     );
 }
 
-#[cfg(cassandra_tests)]
+#[cfg_attr(not(cassandra_tests), ignore)]
 #[tokio::test]
 async fn test_vector_type_unprepared() {
     setup_tracing();
@@ -3232,7 +3232,7 @@ async fn test_vector_type_unprepared() {
     // TODO: Implement and test SELECT statements and bind values (`?`)
 }
 
-#[cfg(cassandra_tests)]
+#[cfg_attr(not(cassandra_tests), ignore)]
 #[tokio::test]
 async fn test_vector_type_prepared() {
     setup_tracing();
