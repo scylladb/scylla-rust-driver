@@ -216,15 +216,6 @@ pub mod deserialize {
     }
 
     // Shorthands for better readability.
-    #[cfg_attr(not(test), allow(unused))]
-    pub(crate) trait DeserializeOwnedValue:
-        for<'frame, 'metadata> value::DeserializeValue<'frame, 'metadata>
-    {
-    }
-    impl<T> DeserializeOwnedValue for T where
-        T: for<'frame, 'metadata> value::DeserializeValue<'frame, 'metadata>
-    {
-    }
     pub(crate) trait DeserializeOwnedRow:
         for<'frame, 'metadata> row::DeserializeRow<'frame, 'metadata>
     {

@@ -1,4 +1,8 @@
-use crate as scylla;
+use crate::utils::{
+    create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,
+    unique_keyspace_name, DeserializeOwnedValue, PerformDDL,
+};
+
 use scylla::client::caching_session::CachingSession;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
@@ -7,7 +11,6 @@ use scylla::cluster::metadata::Strategy::NetworkTopologyStrategy;
 use scylla::cluster::metadata::{
     CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType,
 };
-use scylla::deserialize::DeserializeOwnedValue;
 use scylla::errors::OperationType;
 use scylla::errors::{
     BadKeyspaceName, DbError, ExecutionError, RequestAttemptError, UseKeyspaceError,
@@ -25,10 +28,6 @@ use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 use scylla::statement::Consistency;
-use scylla::utils::test_utils::{
-    create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,
-    unique_keyspace_name, PerformDDL,
-};
 use scylla::value::Counter;
 use scylla::value::{CqlVarint, Row};
 
@@ -337,7 +336,6 @@ async fn test_prepared_statement() {
     // Check that SerializeRow and DeserializeRow macros work
     {
         #[derive(scylla::SerializeRow, scylla::DeserializeRow, PartialEq, Debug, Clone)]
-        #[scylla(crate = crate)]
         struct ComplexPk {
             a: i32,
             b: i32,
