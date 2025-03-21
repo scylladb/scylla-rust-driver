@@ -1,43 +1,48 @@
-use super::caching_session::CachingSession;
-use super::execution_profile::ExecutionProfile;
-use super::session::Session;
-use super::session_builder::SessionBuilder;
 use crate as scylla;
-use crate::cluster::metadata::Strategy::NetworkTopologyStrategy;
-use crate::cluster::metadata::{
+use scylla::client::caching_session::CachingSession;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::cluster::metadata::Strategy::NetworkTopologyStrategy;
+use scylla::cluster::metadata::{
     CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType,
 };
-use crate::deserialize::DeserializeOwnedValue;
-use crate::errors::{
+use scylla::deserialize::DeserializeOwnedValue;
+use scylla::errors::OperationType;
+use scylla::errors::{
     BadKeyspaceName, DbError, ExecutionError, RequestAttemptError, UseKeyspaceError,
 };
-use crate::observability::tracing::TracingInfo;
-use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
-use crate::routing::partitioner::PartitionerName;
-use crate::routing::Token;
-use crate::statement::batch::{Batch, BatchStatement, BatchType};
-use crate::statement::prepared::PreparedStatement;
-use crate::statement::unprepared::Statement;
-use crate::statement::Consistency;
-use crate::utils::test_utils::{
+use scylla::observability::tracing::TracingInfo;
+use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
+use scylla::policies::timestamp_generator::TimestampGenerator;
+use scylla::response::query_result::{QueryResult, QueryRowsResult};
+use scylla::response::{PagingState, PagingStateResponse};
+use scylla::routing::partitioner::PartitionerName;
+use scylla::routing::Token;
+use scylla::serialize::row::SerializeRow;
+use scylla::serialize::value::SerializeValue;
+use scylla::statement::batch::{Batch, BatchStatement, BatchType};
+use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::unprepared::Statement;
+use scylla::statement::Consistency;
+use scylla::utils::test_utils::{
     create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,
     unique_keyspace_name, PerformDDL,
 };
+use scylla::value::Counter;
+use scylla::value::{CqlVarint, Row};
+
 use assert_matches::assert_matches;
 use futures::{FutureExt, StreamExt as _, TryStreamExt};
 use itertools::Itertools;
-use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
-use scylla_cql::serialize::row::SerializeRow;
-use scylla_cql::serialize::value::SerializeValue;
-use scylla_cql::value::{CqlVarint, Row};
+use rand::random;
 use std::collections::{BTreeMap, HashMap};
 use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::net::TcpListener;
 use uuid::Uuid;
-
-use crate::response::query_result::{QueryResult, QueryRowsResult};
 
 #[tokio::test]
 async fn test_connection_failure() {
@@ -377,9 +382,6 @@ async fn test_prepared_statement() {
 
 #[tokio::test]
 async fn test_counter_batch() {
-    use crate::value::Counter;
-    use scylla_cql::frame::request::batch::BatchType;
-
     setup_tracing();
     let session = Arc::new(create_new_session_builder().build().await.unwrap());
     let ks = unique_keyspace_name();
@@ -455,7 +457,6 @@ async fn test_batch() {
 
     // TODO: Add API that supports binding values to statements in batch creation process,
     // to avoid problem of statements/values count mismatch
-    use crate::statement::batch::Batch;
     let mut batch: Batch = Default::default();
     batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (?, ?, ?)", ks)[..]);
     batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (7, 11, '')", ks)[..]);
@@ -1425,9 +1426,6 @@ async fn test_timestamp() {
 
 #[tokio::test]
 async fn test_timestamp_generator() {
-    use crate::policies::timestamp_generator::TimestampGenerator;
-    use rand::random;
-
     setup_tracing();
     struct LocalTimestampGenerator {
         generated_timestamps: Arc<Mutex<HashSet<i64>>>,
@@ -1509,7 +1507,6 @@ async fn test_timestamp_generator() {
 #[tokio::test]
 async fn test_request_timeout() {
     setup_tracing();
-    use std::time::Duration;
 
     let fast_timeouting_profile_handle = ExecutionProfile::builder()
         .request_timeout(Some(Duration::from_millis(1)))
@@ -2373,7 +2370,6 @@ async fn test_unprepared_reprepare_in_batch() {
         .await
         .unwrap();
 
-    use crate::statement::batch::Batch;
     let mut batch: Batch = Default::default();
     batch.append_statement(insert_a_b_c);
     batch.append_statement(insert_a_b_6);
@@ -2710,8 +2706,6 @@ async fn test_rate_limit_exceeded_exception() {
             }
         }
     }
-
-    use crate::errors::OperationType;
 
     match maybe_err.expect("Rate limit error didn't occur") {
         ExecutionError::LastAttemptError(RequestAttemptError::DbError(
