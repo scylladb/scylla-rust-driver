@@ -2769,28 +2769,28 @@ async fn test_keyspaces_to_fetch() {
     session_default.await_schema_agreement().await.unwrap();
     assert!(session_default
         .get_cluster_state()
-        .keyspaces
-        .contains_key(&ks1));
+        .get_keyspace(&ks1)
+        .is_some());
     assert!(session_default
         .get_cluster_state()
-        .keyspaces
-        .contains_key(&ks2));
+        .get_keyspace(&ks2)
+        .is_some());
 
     let session1 = create_new_session_builder()
         .keyspaces_to_fetch([&ks1])
         .build()
         .await
         .unwrap();
-    assert!(session1.get_cluster_state().keyspaces.contains_key(&ks1));
-    assert!(!session1.get_cluster_state().keyspaces.contains_key(&ks2));
+    assert!(session1.get_cluster_state().get_keyspace(&ks1).is_some());
+    assert!(session1.get_cluster_state().get_keyspace(&ks2).is_none());
 
     let session_all = create_new_session_builder()
         .keyspaces_to_fetch([] as [String; 0])
         .build()
         .await
         .unwrap();
-    assert!(session_all.get_cluster_state().keyspaces.contains_key(&ks1));
-    assert!(session_all.get_cluster_state().keyspaces.contains_key(&ks2));
+    assert!(session_all.get_cluster_state().get_keyspace(&ks1).is_some());
+    assert!(session_all.get_cluster_state().get_keyspace(&ks2).is_some());
 }
 
 // Reproduces the problem with execute_iter mentioned in #608.
@@ -3195,7 +3195,7 @@ async fn test_vector_type_metadata() {
 
     session.refresh_metadata().await.unwrap();
     let metadata = session.get_cluster_state();
-    let columns = &metadata.keyspaces[&ks].tables["t"].columns;
+    let columns = &metadata.get_keyspace(&ks).unwrap().tables["t"].columns;
     assert_eq!(
         columns["b"].typ,
         ColumnType::Vector {
