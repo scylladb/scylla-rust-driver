@@ -1026,7 +1026,7 @@ async fn test_tracing_query(session: &Session, ks: String) {
 
     // A query with tracing enabled has a tracing uuid in result
     let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
-    traced_query.config.tracing = true;
+    traced_query.set_tracing(true);
 
     let traced_query_result: QueryResult = session.query_unpaged(traced_query, &[]).await.unwrap();
     assert!(traced_query_result.tracing_id().is_some());
@@ -1055,7 +1055,7 @@ async fn test_tracing_execute(session: &Session, ks: String) {
         .await
         .unwrap();
 
-    traced_prepared.config.tracing = true;
+    traced_prepared.set_tracing(true);
 
     let traced_prepared_result: QueryResult = session
         .execute_unpaged(&traced_prepared, &[])
@@ -1078,7 +1078,7 @@ async fn test_tracing_prepare(session: &Session, ks: String) {
 
     // Preparing a statement with tracing enabled has tracing uuids in result
     let mut to_prepare_traced = Statement::new(format!("SELECT * FROM {}.tab", ks));
-    to_prepare_traced.config.tracing = true;
+    to_prepare_traced.set_tracing(true);
 
     let traced_prepared = session.prepare(to_prepare_traced).await.unwrap();
     assert!(!traced_prepared.prepare_tracing_ids.is_empty());
@@ -1092,7 +1092,7 @@ async fn test_tracing_prepare(session: &Session, ks: String) {
 async fn test_get_tracing_info(session: &Session, ks: String) {
     // A query with tracing enabled has a tracing uuid in result
     let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
-    traced_query.config.tracing = true;
+    traced_query.set_tracing(true);
 
     let traced_query_result: QueryResult = session.query_unpaged(traced_query, &[]).await.unwrap();
     let tracing_id: Uuid = traced_query_result.tracing_id().unwrap();
@@ -1115,7 +1115,7 @@ async fn test_tracing_query_iter(session: &Session, ks: String) {
 
     // A query with tracing enabled has a tracing ids in result
     let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
-    traced_query.config.tracing = true;
+    traced_query.set_tracing(true);
 
     let traced_query_pager = session.query_iter(traced_query, &[]).await.unwrap();
 
@@ -1145,7 +1145,7 @@ async fn test_tracing_execute_iter(session: &Session, ks: String) {
         .prepare(format!("SELECT * FROM {}.tab", ks))
         .await
         .unwrap();
-    traced_prepared.config.tracing = true;
+    traced_prepared.set_tracing(true);
 
     let traced_query_pager = session.execute_iter(traced_prepared, &[]).await.unwrap();
 
@@ -1168,7 +1168,7 @@ async fn test_tracing_batch(session: &Session, ks: String) {
     // Batch with tracing enabled has a tracing uuid in result
     let mut traced_batch: Batch = Default::default();
     traced_batch.append_statement(&format!("INSERT INTO {}.tab (a) VALUES('a')", ks)[..]);
-    traced_batch.config.tracing = true;
+    traced_batch.set_tracing(true);
 
     let traced_batch_result: QueryResult = session.batch(&traced_batch, ((),)).await.unwrap();
     assert!(traced_batch_result.tracing_id().is_some());
@@ -1179,7 +1179,7 @@ async fn test_tracing_batch(session: &Session, ks: String) {
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
     let mut traces_query =
         Statement::new("SELECT * FROM system_traces.sessions WHERE session_id = ?");
-    traces_query.config.consistency = Some(Consistency::One);
+    traces_query.set_consistency(Consistency::One);
 
     // Tracing info might not be immediately available
     // If rows are empty perform 8 retries with a 32ms wait in between
