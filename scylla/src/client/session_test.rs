@@ -239,8 +239,10 @@ async fn test_prepared_statement() {
             .single_row::<(i64,)>()
             .unwrap();
         let token = Token::new(value);
-        let prepared_token = Murmur3Partitioner
-            .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
+        let prepared_token = prepared_statement
+            .calculate_token(&values)
+            .unwrap()
+            .unwrap();
         assert_eq!(token, prepared_token);
         let cluster_state_token = session
             .get_cluster_state()
@@ -258,11 +260,10 @@ async fn test_prepared_statement() {
             .single_row::<(i64,)>()
             .unwrap();
         let token = Token::new(value);
-        let prepared_token = Murmur3Partitioner.hash_one(
-            &prepared_complex_pk_statement
-                .compute_partition_key(&values)
-                .unwrap(),
-        );
+        let prepared_token = prepared_complex_pk_statement
+            .calculate_token(&values)
+            .unwrap()
+            .unwrap();
         assert_eq!(token, prepared_token);
         let cluster_state_token = session
             .get_cluster_state()
