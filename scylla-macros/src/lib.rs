@@ -109,7 +109,7 @@ mod serialize;
 /// For example, it will refer to the [`SerializeValue`](../scylla_cql/serialize/value/trait.SerializeValue.html) trait
 /// using the following path:
 ///
-/// ```rust,ignore
+/// ```rust
 /// use ::scylla::_macro_internal::SerializeValue;
 /// ```
 ///
@@ -216,7 +216,7 @@ pub fn serialize_value_derive(tokens_input: TokenStream) -> TokenStream {
 /// For example, it will refer to the [`SerializeRow`](../scylla_cql/serialize/row/trait.SerializeRow.html) trait
 /// using the following path:
 ///
-/// ```rust,ignore
+/// ```rust
 /// use ::scylla::_macro_internal::SerializeRow;
 /// ```
 ///
@@ -323,7 +323,7 @@ mod deserialize;
 /// For example, it will refer to the [`DeserializeValue`](../scylla_cql/deserialize/value/trait.DeserializeValue.html)
 /// trait using the following path:
 ///
-/// ```rust,ignore
+/// ```rust
 /// use ::scylla::_macro_internal::DeserializeValue;
 /// ```
 ///
@@ -430,7 +430,7 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 /// For example, it will refer to the [`DeserializeValue`](../scylla_cql/deserialize/value/trait.DeserializeValue.html)
 /// trait using the following path:
 ///
-/// ```rust,ignore
+/// ```rust
 /// use ::scylla::_macro_internal::DeserializeValue;
 /// ```
 ///
