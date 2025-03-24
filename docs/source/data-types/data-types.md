@@ -33,6 +33,7 @@ Database types and their Rust equivalents:
 * `Map` <----> `std::collections::HashMap<K, V>`
 * `Tuple` <----> Rust tuples
 * `UDT (User defined type)` <----> Custom user structs with macros
+* `Vector` <----> `Vec<T>`
 
 
 ```{eval-rst}
@@ -56,5 +57,6 @@ Database types and their Rust equivalents:
    collections
    tuple
    udt
+   vector
 
 ```

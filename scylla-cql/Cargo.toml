@@ -33,6 +33,7 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 time-03 = { package = "time", version = "0.3", optional = true }
 yoke = { version = "0.7", features = ["derive"] }
 stable_deref_trait = "1.2"
+either = "1.13.0"
 
 [dev-dependencies]
 assert_matches = "1.5.0"
