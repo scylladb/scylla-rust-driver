@@ -52,6 +52,10 @@ test: up
 	 SCYLLA_URI3=172.42.0.4:9042 \
 	 cargo test
 
+.PHONY: ccm-test
+ccm-test:
+	RUSTFLAGS="${RUSTFLAGS} --cfg ccm_tests" cargo test --test integration ccm
+
 .PHONY: dockerized-test
 dockerized-test: up
 	test/dockerized/run.sh
