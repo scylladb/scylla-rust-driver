@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
             )
             .await?
             .into_rows_result()?
-            .single_row()?;
+            .single_row::<(i64,)>()?;
         assert_eq!(t, qt);
         println!("token for {}: {}", pk, t);
     }
