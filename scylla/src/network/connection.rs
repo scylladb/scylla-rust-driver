@@ -1474,7 +1474,7 @@ impl Connection {
         // across .await points. Therefore, it should not be too expensive.
         let handler_map = StdMutex::new(ResponseHandlerMap::new());
 
-        let write_coalescing_delay = config.write_coalescing_delay.clone();
+        let write_coalescing_delay = config.write_coalescing_delay;
 
         let k = Self::keepaliver(
             router_handle,
@@ -1486,7 +1486,8 @@ impl Connection {
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
             &handler_map,
-            config,
+            config.event_sender,
+            config.compression,
         );
         let w = Self::writer(
             BufWriter::with_capacity(8192, write_half),
@@ -1519,7 +1520,8 @@ impl Connection {
     async fn reader(
         mut read_half: (impl AsyncRead + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
-        config: HostConnectionConfig,
+        event_sender: Option<mpsc::Sender<Event>>,
+        compression: Option<Compression>,
     ) -> Result<(), BrokenConnectionError> {
         loop {
             let (params, opcode, body) = frame::read_response_frame(&mut read_half)
@@ -1539,8 +1541,8 @@ impl Connection {
                     continue;
                 }
                 Ordering::Equal => {
-                    if let Some(event_sender) = config.event_sender.as_ref() {
-                        Self::handle_event(response, config.compression, event_sender)
+                    if let Some(event_sender) = event_sender.as_ref() {
+                        Self::handle_event(response, compression, event_sender)
                             .await
                             .map_err(BrokenConnectionErrorKind::CqlEventHandlingError)?
                     }
