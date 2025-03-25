@@ -1,1 +1,3 @@
 mod lib;
+
+mod example;
