@@ -1,45 +1,47 @@
-use super::caching_session::CachingSession;
-use super::execution_profile::ExecutionProfile;
-use super::session::Session;
-use super::session_builder::SessionBuilder;
-use crate as scylla;
-use crate::cluster::metadata::Strategy::NetworkTopologyStrategy;
-use crate::cluster::metadata::{
+use crate::utils::{
+    create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,
+    unique_keyspace_name, DeserializeOwnedValue, PerformDDL,
+};
+
+use scylla::client::caching_session::CachingSession;
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::cluster::metadata::Strategy::NetworkTopologyStrategy;
+use scylla::cluster::metadata::{
     CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType,
 };
-use crate::deserialize::DeserializeOwnedValue;
-use crate::errors::{
+use scylla::errors::OperationType;
+use scylla::errors::{
     BadKeyspaceName, DbError, ExecutionError, RequestAttemptError, UseKeyspaceError,
 };
-use crate::observability::tracing::TracingInfo;
-use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
-use crate::routing::partitioner::{
-    calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
-};
-use crate::routing::Token;
-use crate::statement::batch::{Batch, BatchStatement, BatchType};
-use crate::statement::prepared::PreparedStatement;
-use crate::statement::unprepared::Statement;
-use crate::statement::Consistency;
-use crate::utils::test_utils::{
-    create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,
-    unique_keyspace_name, PerformDDL,
-};
+use scylla::observability::tracing::TracingInfo;
+use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
+use scylla::policies::timestamp_generator::TimestampGenerator;
+use scylla::response::query_result::{QueryResult, QueryRowsResult};
+use scylla::response::{PagingState, PagingStateResponse};
+use scylla::routing::partitioner::PartitionerName;
+use scylla::routing::Token;
+use scylla::serialize::row::SerializeRow;
+use scylla::serialize::value::SerializeValue;
+use scylla::statement::batch::{Batch, BatchStatement, BatchType};
+use scylla::statement::prepared::PreparedStatement;
+use scylla::statement::unprepared::Statement;
+use scylla::statement::Consistency;
+use scylla::value::Counter;
+use scylla::value::{CqlVarint, Row};
+
 use assert_matches::assert_matches;
 use futures::{FutureExt, StreamExt as _, TryStreamExt};
 use itertools::Itertools;
-use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
-use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
-use scylla_cql::serialize::value::SerializeValue;
-use scylla_cql::value::{CqlVarint, Row};
+use rand::random;
 use std::collections::{BTreeMap, HashMap};
 use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::net::TcpListener;
 use uuid::Uuid;
-
-use crate::response::query_result::{QueryResult, QueryRowsResult};
 
 #[tokio::test]
 async fn test_connection_failure() {
@@ -239,8 +241,10 @@ async fn test_prepared_statement() {
             .single_row::<(i64,)>()
             .unwrap();
         let token = Token::new(value);
-        let prepared_token = Murmur3Partitioner
-            .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
+        let prepared_token = prepared_statement
+            .calculate_token(&values)
+            .unwrap()
+            .unwrap();
         assert_eq!(token, prepared_token);
         let cluster_state_token = session
             .get_cluster_state()
@@ -258,11 +262,10 @@ async fn test_prepared_statement() {
             .single_row::<(i64,)>()
             .unwrap();
         let token = Token::new(value);
-        let prepared_token = Murmur3Partitioner.hash_one(
-            &prepared_complex_pk_statement
-                .compute_partition_key(&values)
-                .unwrap(),
-        );
+        let prepared_token = prepared_complex_pk_statement
+            .calculate_token(&values)
+            .unwrap()
+            .unwrap();
         assert_eq!(token, prepared_token);
         let cluster_state_token = session
             .get_cluster_state()
@@ -333,7 +336,6 @@ async fn test_prepared_statement() {
     // Check that SerializeRow and DeserializeRow macros work
     {
         #[derive(scylla::SerializeRow, scylla::DeserializeRow, PartialEq, Debug, Clone)]
-        #[scylla(crate = crate)]
         struct ComplexPk {
             a: i32,
             b: i32,
@@ -378,9 +380,6 @@ async fn test_prepared_statement() {
 
 #[tokio::test]
 async fn test_counter_batch() {
-    use crate::value::Counter;
-    use scylla_cql::frame::request::batch::BatchType;
-
     setup_tracing();
     let session = Arc::new(create_new_session_builder().build().await.unwrap());
     let ks = unique_keyspace_name();
@@ -456,7 +455,6 @@ async fn test_batch() {
 
     // TODO: Add API that supports binding values to statements in batch creation process,
     // to avoid problem of statements/values count mismatch
-    use crate::statement::batch::Batch;
     let mut batch: Batch = Default::default();
     batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (?, ?, ?)", ks)[..]);
     batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (7, 11, '')", ks)[..]);
@@ -577,41 +575,26 @@ async fn test_token_calculation() {
     let ks = unique_keyspace_name();
 
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
-    session
-        .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t3 (a text primary key)",
-            ks
-        ))
-        .await
-        .unwrap();
+    session.use_keyspace(ks.as_str(), true).await.unwrap();
 
-    // Refresh metadata as `ClusterState::compute_token` use them
-    session.await_schema_agreement().await.unwrap();
-    session.refresh_metadata().await.unwrap();
-
-    let prepared_statement = session
-        .prepare(format!("INSERT INTO {}.t3 (a) VALUES (?)", ks))
-        .await
-        .unwrap();
-
-    // Try calculating tokens for different sizes of the key
-    for i in 1..50usize {
-        eprintln!("Trying key size {}", i);
-        let mut s = String::new();
-        for _ in 0..i {
-            s.push('a');
-        }
-        let values = (&s,);
+    #[allow(clippy::too_many_arguments)]
+    async fn assert_tokens_equal(
+        session: &Session,
+        prepared: &PreparedStatement,
+        all_values_in_query_order: impl SerializeRow,
+        token_select: &PreparedStatement,
+        pk_ck_values: impl SerializeRow,
+        ks_name: &str,
+        table_name: &str,
+        pk_values: impl SerializeRow,
+    ) {
         session
-            .execute_unpaged(&prepared_statement, &values)
+            .execute_unpaged(prepared, &all_values_in_query_order)
             .await
             .unwrap();
 
         let (value,): (i64,) = session
-            .query_unpaged(
-                format!("SELECT token(a) FROM {}.t3 WHERE a = ?", ks),
-                &values,
-            )
+            .execute_unpaged(token_select, &pk_ck_values)
             .await
             .unwrap()
             .into_rows_result()
@@ -619,14 +602,127 @@ async fn test_token_calculation() {
             .single_row::<(i64,)>()
             .unwrap();
         let token = Token::new(value);
-        let prepared_token = Murmur3Partitioner
-            .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
+        let prepared_token = prepared
+            .calculate_token(&all_values_in_query_order)
+            .unwrap()
+            .unwrap();
         assert_eq!(token, prepared_token);
         let cluster_state_token = session
             .get_cluster_state()
-            .compute_token(&ks, "t3", &values)
+            .compute_token(ks_name, table_name, &pk_values)
             .unwrap();
         assert_eq!(token, cluster_state_token);
+    }
+
+    // Different sizes of the key
+    {
+        session
+            .ddl("CREATE TABLE IF NOT EXISTS t1 (a text primary key)")
+            .await
+            .unwrap();
+
+        let prepared_statement = session
+            .prepare("INSERT INTO t1 (a) VALUES (?)")
+            .await
+            .unwrap();
+
+        let token_selection = session
+            .prepare("SELECT token(a) FROM t1 WHERE a = ?")
+            .await
+            .unwrap();
+
+        for i in 1..50usize {
+            eprintln!("Trying key size {}", i);
+            let mut s = String::new();
+            for _ in 0..i {
+                s.push('a');
+            }
+            let values = (&s,);
+            assert_tokens_equal(
+                &session,
+                &prepared_statement,
+                &values,
+                &token_selection,
+                &values,
+                ks.as_str(),
+                "t1",
+                &values,
+            )
+            .await;
+        }
+    }
+
+    // Single column PK and single column CK
+    {
+        session
+            .ddl("CREATE TABLE IF NOT EXISTS t2 (a int, b int, c text, primary key (a, b))")
+            .await
+            .unwrap();
+
+        // Values are given non partition key order,
+        let prepared_simple_pk = session
+            .prepare("INSERT INTO t2 (c, a, b) VALUES (?, ?, ?)")
+            .await
+            .unwrap();
+
+        let all_values_in_query_order = ("I'm prepared!!!", 17_i32, 16_i32);
+
+        let token_select = session
+            .prepare("SELECT token(a) from t2 WHERE a = ? AND b = ?")
+            .await
+            .unwrap();
+        let pk_ck_values = (17_i32, 16_i32);
+        let pk_values = (17_i32,);
+
+        assert_tokens_equal(
+            &session,
+            &prepared_simple_pk,
+            all_values_in_query_order,
+            &token_select,
+            pk_ck_values,
+            ks.as_str(),
+            "t2",
+            pk_values,
+        )
+        .await;
+    }
+
+    // Composite partition key
+    {
+        session
+        .ddl("CREATE TABLE IF NOT EXISTS complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))")
+        .await
+        .unwrap();
+
+        // Values are given in non partition key order, to check that such permutation
+        // still yields consistent hashes.
+        let prepared_complex_pk = session
+            .prepare("INSERT INTO complex_pk (a, d, c, e, b) VALUES (?, ?, ?, ?, ?)")
+            .await
+            .unwrap();
+
+        let all_values_in_query_order = (17_i32, 7_i32, "I'm prepared!!!", 1234_i32, 16_i32);
+
+        let token_select = session
+            .prepare(
+                "SELECT token(a, b, c) FROM complex_pk WHERE a = ? AND b = ? AND c = ? AND d = ?",
+            )
+            .await
+            .unwrap();
+        let pk_ck_values = (17_i32, 16_i32, "I'm prepared!!!", 7_i32);
+        let pk_values = (17_i32, 16_i32, "I'm prepared!!!");
+
+        assert_tokens_equal(
+            &session,
+            &prepared_complex_pk,
+            all_values_in_query_order,
+            &token_select,
+            pk_ck_values,
+            ks.as_str(),
+            "complex_pk",
+            pk_values,
+        )
+        .await;
     }
 }
 
@@ -1026,7 +1122,7 @@ async fn test_tracing_query(session: &Session, ks: String) {
 
     // A query with tracing enabled has a tracing uuid in result
     let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
-    traced_query.config.tracing = true;
+    traced_query.set_tracing(true);
 
     let traced_query_result: QueryResult = session.query_unpaged(traced_query, &[]).await.unwrap();
     assert!(traced_query_result.tracing_id().is_some());
@@ -1055,7 +1151,7 @@ async fn test_tracing_execute(session: &Session, ks: String) {
         .await
         .unwrap();
 
-    traced_prepared.config.tracing = true;
+    traced_prepared.set_tracing(true);
 
     let traced_prepared_result: QueryResult = session
         .execute_unpaged(&traced_prepared, &[])
@@ -1078,7 +1174,7 @@ async fn test_tracing_prepare(session: &Session, ks: String) {
 
     // Preparing a statement with tracing enabled has tracing uuids in result
     let mut to_prepare_traced = Statement::new(format!("SELECT * FROM {}.tab", ks));
-    to_prepare_traced.config.tracing = true;
+    to_prepare_traced.set_tracing(true);
 
     let traced_prepared = session.prepare(to_prepare_traced).await.unwrap();
     assert!(!traced_prepared.prepare_tracing_ids.is_empty());
@@ -1092,7 +1188,7 @@ async fn test_tracing_prepare(session: &Session, ks: String) {
 async fn test_get_tracing_info(session: &Session, ks: String) {
     // A query with tracing enabled has a tracing uuid in result
     let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
-    traced_query.config.tracing = true;
+    traced_query.set_tracing(true);
 
     let traced_query_result: QueryResult = session.query_unpaged(traced_query, &[]).await.unwrap();
     let tracing_id: Uuid = traced_query_result.tracing_id().unwrap();
@@ -1115,7 +1211,7 @@ async fn test_tracing_query_iter(session: &Session, ks: String) {
 
     // A query with tracing enabled has a tracing ids in result
     let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
-    traced_query.config.tracing = true;
+    traced_query.set_tracing(true);
 
     let traced_query_pager = session.query_iter(traced_query, &[]).await.unwrap();
 
@@ -1145,7 +1241,7 @@ async fn test_tracing_execute_iter(session: &Session, ks: String) {
         .prepare(format!("SELECT * FROM {}.tab", ks))
         .await
         .unwrap();
-    traced_prepared.config.tracing = true;
+    traced_prepared.set_tracing(true);
 
     let traced_query_pager = session.execute_iter(traced_prepared, &[]).await.unwrap();
 
@@ -1168,7 +1264,7 @@ async fn test_tracing_batch(session: &Session, ks: String) {
     // Batch with tracing enabled has a tracing uuid in result
     let mut traced_batch: Batch = Default::default();
     traced_batch.append_statement(&format!("INSERT INTO {}.tab (a) VALUES('a')", ks)[..]);
-    traced_batch.config.tracing = true;
+    traced_batch.set_tracing(true);
 
     let traced_batch_result: QueryResult = session.batch(&traced_batch, ((),)).await.unwrap();
     assert!(traced_batch_result.tracing_id().is_some());
@@ -1179,7 +1275,7 @@ async fn test_tracing_batch(session: &Session, ks: String) {
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
     let mut traces_query =
         Statement::new("SELECT * FROM system_traces.sessions WHERE session_id = ?");
-    traces_query.config.consistency = Some(Consistency::One);
+    traces_query.set_consistency(Consistency::One);
 
     // Tracing info might not be immediately available
     // If rows are empty perform 8 retries with a 32ms wait in between
@@ -1328,9 +1424,6 @@ async fn test_timestamp() {
 
 #[tokio::test]
 async fn test_timestamp_generator() {
-    use crate::policies::timestamp_generator::TimestampGenerator;
-    use rand::random;
-
     setup_tracing();
     struct LocalTimestampGenerator {
         generated_timestamps: Arc<Mutex<HashSet<i64>>>,
@@ -1412,7 +1505,6 @@ async fn test_timestamp_generator() {
 #[tokio::test]
 async fn test_request_timeout() {
     setup_tracing();
-    use std::time::Duration;
 
     let fast_timeouting_profile_handle = ExecutionProfile::builder()
         .request_timeout(Some(Duration::from_millis(1)))
@@ -2276,7 +2368,6 @@ async fn test_unprepared_reprepare_in_batch() {
         .await
         .unwrap();
 
-    use crate::statement::batch::Batch;
     let mut batch: Batch = Default::default();
     batch.append_statement(insert_a_b_c);
     batch.append_statement(insert_a_b_6);
@@ -2614,8 +2705,6 @@ async fn test_rate_limit_exceeded_exception() {
         }
     }
 
-    use crate::errors::OperationType;
-
     match maybe_err.expect("Rate limit error didn't occur") {
         ExecutionError::LastAttemptError(RequestAttemptError::DbError(
             DbError::RateLimitReached { op_type, .. },
@@ -2769,28 +2858,28 @@ async fn test_keyspaces_to_fetch() {
     session_default.await_schema_agreement().await.unwrap();
     assert!(session_default
         .get_cluster_state()
-        .keyspaces
-        .contains_key(&ks1));
+        .get_keyspace(&ks1)
+        .is_some());
     assert!(session_default
         .get_cluster_state()
-        .keyspaces
-        .contains_key(&ks2));
+        .get_keyspace(&ks2)
+        .is_some());
 
     let session1 = create_new_session_builder()
         .keyspaces_to_fetch([&ks1])
         .build()
         .await
         .unwrap();
-    assert!(session1.get_cluster_state().keyspaces.contains_key(&ks1));
-    assert!(!session1.get_cluster_state().keyspaces.contains_key(&ks2));
+    assert!(session1.get_cluster_state().get_keyspace(&ks1).is_some());
+    assert!(session1.get_cluster_state().get_keyspace(&ks2).is_none());
 
     let session_all = create_new_session_builder()
         .keyspaces_to_fetch([] as [String; 0])
         .build()
         .await
         .unwrap();
-    assert!(session_all.get_cluster_state().keyspaces.contains_key(&ks1));
-    assert!(session_all.get_cluster_state().keyspaces.contains_key(&ks2));
+    assert!(session_all.get_cluster_state().get_keyspace(&ks1).is_some());
+    assert!(session_all.get_cluster_state().get_keyspace(&ks2).is_some());
 }
 
 // Reproduces the problem with execute_iter mentioned in #608.
@@ -3010,107 +3099,6 @@ async fn simple_strategy_test() {
     assert_eq!(rows, vec![(1, 2, 3), (4, 5, 6), (7, 8, 9)]);
 }
 
-#[tokio::test]
-async fn test_manual_primary_key_computation() {
-    // Setup session
-    let ks = unique_keyspace_name();
-    let session = create_new_session_builder().build().await.unwrap();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
-    session.use_keyspace(&ks, true).await.unwrap();
-
-    async fn assert_tokens_equal(
-        session: &Session,
-        prepared: &PreparedStatement,
-        serialized_pk_values_in_pk_order: &SerializedValues,
-        all_values_in_query_order: impl SerializeRow,
-    ) {
-        let token_by_prepared = prepared
-            .calculate_token(&all_values_in_query_order)
-            .unwrap()
-            .unwrap();
-
-        session
-            .execute_unpaged(prepared, all_values_in_query_order)
-            .await
-            .unwrap();
-
-        let token_by_hand = calculate_token_for_partition_key(
-            serialized_pk_values_in_pk_order,
-            &PartitionerName::Murmur3,
-        )
-        .unwrap();
-        println!(
-            "by_prepared: {}, by_hand: {}",
-            token_by_prepared.value(),
-            token_by_hand.value()
-        );
-        assert_eq!(token_by_prepared, token_by_hand);
-    }
-
-    // Single-column partition key
-    {
-        session
-            .ddl("CREATE TABLE IF NOT EXISTS t2 (a int, b int, c text, primary key (a, b))")
-            .await
-            .unwrap();
-
-        // Values are given non partition key order,
-        let prepared_simple_pk = session
-            .prepare("INSERT INTO t2 (a, b, c) VALUES (?, ?, ?)")
-            .await
-            .unwrap();
-
-        let mut pk_values_in_pk_order = SerializedValues::new();
-        pk_values_in_pk_order
-            .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
-            .unwrap();
-        let all_values_in_query_order = (17_i32, 16_i32, "I'm prepared!!!");
-
-        assert_tokens_equal(
-            &session,
-            &prepared_simple_pk,
-            &pk_values_in_pk_order,
-            all_values_in_query_order,
-        )
-        .await;
-    }
-
-    // Composite partition key
-    {
-        session
-            .ddl("CREATE TABLE IF NOT EXISTS complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))")
-            .await
-            .unwrap();
-
-        // Values are given in non partition key order, to check that such permutation
-        // still yields consistent hashes.
-        let prepared_complex_pk = session
-            .prepare("INSERT INTO complex_pk (a, d, c, b) VALUES (?, 7, ?, ?)")
-            .await
-            .unwrap();
-
-        let mut pk_values_in_pk_order = SerializedValues::new();
-        pk_values_in_pk_order
-            .add_value(&17_i32, &ColumnType::Native(NativeType::Int))
-            .unwrap();
-        pk_values_in_pk_order
-            .add_value(&16_i32, &ColumnType::Native(NativeType::Int))
-            .unwrap();
-        pk_values_in_pk_order
-            .add_value(&"I'm prepared!!!", &ColumnType::Native(NativeType::Ascii))
-            .unwrap();
-        let all_values_in_query_order = (17_i32, "I'm prepared!!!", 16_i32);
-
-        assert_tokens_equal(
-            &session,
-            &prepared_complex_pk,
-            &pk_values_in_pk_order,
-            all_values_in_query_order,
-        )
-        .await;
-    }
-}
-
 /// ScyllaDB does not distinguish empty collections from nulls. That is, INSERTing an empty collection
 /// is equivalent to nullifying the corresponding column.
 /// As pointed out in [#1001](https://github.com/scylladb/scylla-rust-driver/issues/1001), it's a nice
@@ -3175,7 +3163,7 @@ async fn test_deserialize_empty_collections() {
     assert!(map.is_empty());
 }
 
-#[cfg(cassandra_tests)]
+#[cfg_attr(not(cassandra_tests), ignore)]
 #[tokio::test]
 async fn test_vector_type_metadata() {
     setup_tracing();
@@ -3195,7 +3183,7 @@ async fn test_vector_type_metadata() {
 
     session.refresh_metadata().await.unwrap();
     let metadata = session.get_cluster_state();
-    let columns = &metadata.keyspaces[&ks].tables["t"].columns;
+    let columns = &metadata.get_keyspace(&ks).unwrap().tables["t"].columns;
     assert_eq!(
         columns["b"].typ,
         ColumnType::Vector {
@@ -3212,7 +3200,7 @@ async fn test_vector_type_metadata() {
     );
 }
 
-#[cfg(cassandra_tests)]
+#[cfg_attr(not(cassandra_tests), ignore)]
 #[tokio::test]
 async fn test_vector_type_unprepared() {
     setup_tracing();
@@ -3244,7 +3232,7 @@ async fn test_vector_type_unprepared() {
     // TODO: Implement and test SELECT statements and bind values (`?`)
 }
 
-#[cfg(cassandra_tests)]
+#[cfg_attr(not(cassandra_tests), ignore)]
 #[tokio::test]
 async fn test_vector_type_prepared() {
     setup_tracing();
