@@ -2412,6 +2412,8 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn test_coalescing() {
+        use std::num::NonZeroU64;
+
         use super::WriteCoalescingDelay;
         use crate::client::session_builder::SessionBuilder;
 
@@ -2440,7 +2442,7 @@ mod tests {
                 .unwrap();
         }
 
-        let subtest = |enable_coalescing: bool, ks: String| async move {
+        let subtest = |write_coalescing_delay: Option<WriteCoalescingDelay>, ks: String| async move {
             let (connection, _) = super::open_connection(
                 &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address: addr,
@@ -2448,9 +2450,7 @@ mod tests {
                 }),
                 None,
                 &HostConnectionConfig {
-                    // TODO: adjust the test case to WriteCoalescingDelay (done later in this PR).
-                    write_coalescing_delay: enable_coalescing
-                        .then_some(WriteCoalescingDelay::SmallNondeterministic),
+                    write_coalescing_delay,
                     ..HostConnectionConfig::default()
                 },
             )
@@ -2518,8 +2518,22 @@ mod tests {
             assert_eq!(results, expected);
         };
 
-        subtest(true, ks.clone()).await;
-        subtest(false, ks.clone()).await;
+        // Non-deterministic sub-millisecond delay
+        subtest(
+            Some(WriteCoalescingDelay::SmallNondeterministic),
+            ks.clone(),
+        )
+        .await;
+        // 1ms delay
+        subtest(
+            Some(WriteCoalescingDelay::Milliseconds(
+                NonZeroU64::new(1).unwrap(),
+            )),
+            ks.clone(),
+        )
+        .await;
+        // No delay - coalescing disabled
+        subtest(None, ks.clone()).await;
     }
 
     // Returns the sum of integral numbers in the range [0..n)
