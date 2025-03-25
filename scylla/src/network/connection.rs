@@ -1624,18 +1624,26 @@ impl Connection {
                     .map_err(BrokenConnectionErrorKind::WriteError)?;
                 task = match task_receiver.try_recv() {
                     Ok(t) => t,
-                    // TODO: handle it properly (done later in this PR)
-                    Err(_) if write_coalescing_delay.is_some() => {
-                        // Yielding was empirically tested to inject a 1-300µs delay,
-                        // much better than tokio::time::sleep's 1ms granularity.
-                        // Also, yielding in a busy system let's the queue catch up with new items.
-                        tokio::task::yield_now().await;
-                        match task_receiver.try_recv() {
-                            Ok(t) => t,
-                            Err(_) => break,
+                    Err(_) => match write_coalescing_delay {
+                        Some(WriteCoalescingDelay::SmallNondeterministic) => {
+                            // Yielding was empirically tested to inject a 1-300µs delay,
+                            // much better than tokio::time::sleep's 1ms granularity.
+                            // Also, yielding in a busy system let's the queue catch up with new items.
+                            tokio::task::yield_now().await;
+                            match task_receiver.try_recv() {
+                                Ok(t) => t,
+                                Err(_) => break,
+                            }
                         }
-                    }
-                    Err(_) => break,
+                        Some(WriteCoalescingDelay::Milliseconds(ms)) => {
+                            tokio::time::sleep(Duration::from_millis(ms.get())).await;
+                            match task_receiver.try_recv() {
+                                Ok(t) => t,
+                                Err(_) => break,
+                            }
+                        }
+                        None => break,
+                    },
                 }
             }
             trace!("Sending {} requests; {} bytes", num_requests, total_sent);
