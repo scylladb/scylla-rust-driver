@@ -284,7 +284,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) default_consistency: Consistency,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
-    pub(crate) enable_write_coalescing: bool,
+    pub(crate) write_coalescing_delay: Option<WriteCoalescingDelay>,
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
@@ -317,7 +317,7 @@ impl ConnectionConfig {
             default_consistency: self.default_consistency,
             authenticator: self.authenticator.clone(),
             address_translator: self.address_translator.clone(),
-            enable_write_coalescing: self.enable_write_coalescing,
+            write_coalescing_delay: self.write_coalescing_delay.clone(),
             keepalive_interval: self.keepalive_interval,
             keepalive_timeout: self.keepalive_timeout,
             tablet_sender: self.tablet_sender.clone(),
@@ -342,7 +342,7 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) default_consistency: Consistency,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
-    pub(crate) enable_write_coalescing: bool,
+    pub(crate) write_coalescing_delay: Option<WriteCoalescingDelay>,
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
@@ -365,7 +365,7 @@ impl Default for HostConnectionConfig {
             default_consistency: Default::default(),
             authenticator: None,
             address_translator: None,
-            enable_write_coalescing: true,
+            write_coalescing_delay: Some(WriteCoalescingDelay::SmallNondeterministic),
 
             // Note: this is different than SessionConfig default values.
             keepalive_interval: None,
@@ -392,7 +392,7 @@ impl Default for ConnectionConfig {
             default_consistency: Default::default(),
             authenticator: None,
             address_translator: None,
-            enable_write_coalescing: true,
+            write_coalescing_delay: Some(WriteCoalescingDelay::SmallNondeterministic),
 
             // Note: this is different than SessionConfig default values.
             keepalive_interval: None,
@@ -1474,7 +1474,7 @@ impl Connection {
         // across .await points. Therefore, it should not be too expensive.
         let handler_map = StdMutex::new(ResponseHandlerMap::new());
 
-        let enable_write_coalescing = config.enable_write_coalescing;
+        let write_coalescing_delay = config.write_coalescing_delay.clone();
 
         let k = Self::keepaliver(
             router_handle,
@@ -1492,7 +1492,7 @@ impl Connection {
             BufWriter::with_capacity(8192, write_half),
             &handler_map,
             receiver,
-            enable_write_coalescing,
+            write_coalescing_delay,
         );
         let o = Self::orphaner(&handler_map, orphan_notification_receiver);
 
@@ -1604,7 +1604,7 @@ impl Connection {
         mut write_half: (impl AsyncWrite + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
-        enable_write_coalescing: bool,
+        write_coalescing_delay: Option<WriteCoalescingDelay>,
     ) -> Result<(), BrokenConnectionError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
@@ -1624,7 +1624,8 @@ impl Connection {
                     .map_err(BrokenConnectionErrorKind::WriteError)?;
                 task = match task_receiver.try_recv() {
                     Ok(t) => t,
-                    Err(_) if enable_write_coalescing => {
+                    // TODO: handle it properly (done later in this PR)
+                    Err(_) if write_coalescing_delay.is_some() => {
                         // Yielding was empirically tested to inject a 1-300µs delay,
                         // much better than tokio::time::sleep's 1ms granularity.
                         // Also, yielding in a busy system let's the queue catch up with new items.
@@ -2403,6 +2404,7 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn test_coalescing() {
+        use super::WriteCoalescingDelay;
         use crate::client::session_builder::SessionBuilder;
 
         setup_tracing();
@@ -2438,7 +2440,9 @@ mod tests {
                 }),
                 None,
                 &HostConnectionConfig {
-                    enable_write_coalescing: enable_coalescing,
+                    // TODO: adjust the test case to WriteCoalescingDelay (done later in this PR).
+                    write_coalescing_delay: enable_coalescing
+                        .then_some(WriteCoalescingDelay::SmallNondeterministic),
                     ..HostConnectionConfig::default()
                 },
             )

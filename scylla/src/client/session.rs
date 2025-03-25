@@ -886,7 +886,9 @@ impl Session {
             event_sender: None,
             default_consistency: Default::default(),
             address_translator,
-            enable_write_coalescing: config.enable_write_coalescing,
+            write_coalescing_delay: config
+                .enable_write_coalescing
+                .then_some(config.write_coalescing_delay),
             keepalive_interval: config.keepalive_interval,
             keepalive_timeout: config.keepalive_timeout,
             tablet_sender: Some(tablet_sender),
