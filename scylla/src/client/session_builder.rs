@@ -4,7 +4,7 @@
 use super::execution_profile::ExecutionProfile;
 use super::execution_profile::ExecutionProfileHandle;
 use super::session::{Session, SessionConfig};
-use super::{Compression, PoolSize, SelfIdentity};
+use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 use crate::client::session::TlsContext;
 #[cfg(feature = "unstable-cloud")]
@@ -989,9 +989,9 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
-    /// If true, the driver will inject a small delay before flushing data
-    /// to the socket - by rescheduling the task that writes data to the socket.
-    /// This gives the task an opportunity to collect more write requests
+    /// If true, the driver will inject a delay controlled by [SessionBuilder::write_coalescing_delay()]
+    /// before flushing data to the socket.
+    /// This gives the driver an opportunity to collect more write requests
     /// and write them in a single syscall, increasing the efficiency.
     ///
     /// However, this optimization may worsen latency if the rate of requests
@@ -1018,6 +1018,31 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn write_coalescing(mut self, enable: bool) -> Self {
         self.config.enable_write_coalescing = enable;
+        self
+    }
+
+    /// Controls the write coalescing delay (if enabled).
+    ///
+    /// This option has no effect if [`SessionBuilder::write_coalescing()`] is set to false.
+    ///
+    /// This option is [`WriteCoalescingDelay::SmallNondeterministic`] by default.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::client::WriteCoalescingDelay;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .write_coalescing_delay(WriteCoalescingDelay::SmallNondeterministic)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_coalescing_delay(mut self, delay: WriteCoalescingDelay) -> Self {
+        self.config.write_coalescing_delay = delay;
         self
     }
 

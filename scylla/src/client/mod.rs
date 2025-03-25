@@ -30,4 +30,4 @@ pub mod session_builder;
 
 pub use scylla_cql::frame::Compression;
 
-pub use crate::network::PoolSize;
+pub use crate::network::{PoolSize, WriteCoalescingDelay};

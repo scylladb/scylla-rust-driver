@@ -3,7 +3,7 @@
 
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::pager::{PreparedIteratorConfig, QueryPager};
-use super::{Compression, PoolSize, SelfIdentity};
+use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "unstable-cloud")]
 use crate::cloud::CloudConfig;
@@ -212,9 +212,9 @@ pub struct SessionConfig {
     #[cfg(feature = "unstable-cloud")]
     pub cloud_config: Option<Arc<CloudConfig>>,
 
-    /// If true, the driver will inject a small delay before flushing data
-    /// to the socket - by rescheduling the task that writes data to the socket.
-    /// This gives the task an opportunity to collect more write requests
+    /// If true, the driver will inject a delay controlled by [`SessionConfig::write_coalescing_delay`]
+    /// before flushing data to the socket.
+    /// This gives the driver an opportunity to collect more write requests
     /// and write them in a single syscall, increasing the efficiency.
     ///
     /// However, this optimization may worsen latency if the rate of requests
@@ -223,6 +223,13 @@ pub struct SessionConfig {
     /// Please do performance measurements before committing to disabling
     /// this option.
     pub enable_write_coalescing: bool,
+
+    /// Controls the write coalescing delay (if enabled).
+    ///
+    /// This option has no effect if [`SessionConfig::enable_write_coalescing`] is false.
+    ///
+    /// This option is [`WriteCoalescingDelay::SmallNondeterministic`] by default.
+    pub write_coalescing_delay: WriteCoalescingDelay,
 
     /// Number of attempts to fetch [`TracingInfo`]
     /// in [`Session::get_tracing_info`]. Tracing info
@@ -292,6 +299,7 @@ impl SessionConfig {
             #[cfg(feature = "unstable-cloud")]
             cloud_config: None,
             enable_write_coalescing: true,
+            write_coalescing_delay: WriteCoalescingDelay::SmallNondeterministic,
             tracing_info_fetch_attempts: NonZeroU32::new(10).unwrap(),
             tracing_info_fetch_interval: Duration::from_millis(3),
             tracing_info_fetch_consistency: Consistency::One,

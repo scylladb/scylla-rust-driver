@@ -49,6 +49,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroU64;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -75,6 +76,25 @@ const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='
 // of old orphans is shut down (and created again by a connection management layer).
 const OLD_ORPHAN_COUNT_THRESHOLD: usize = 1024;
 const OLD_AGE_ORPHAN_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Represents a write coalescing delay configuration option.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum WriteCoalescingDelay {
+    /// A delay implemented by yielding a tokio task.
+    /// This should be used for sub-millisecond delays.
+    ///
+    /// Tokio sleeps have a millisecond granularity, so there is no reliable
+    /// way to implement deterministic delays shorter than one millisecond.
+    SmallNondeterministic,
+
+    /// A delay with millisecond granularity.
+    ///
+    /// This should be used with caution, and used only for throughput-bound applications
+    /// that send a lot of requests. We suggest benchmarking the application before
+    /// committing to this option.
+    Milliseconds(NonZeroU64),
+}
 
 pub(crate) struct Connection {
     _worker_handle: RemoteHandle<()>,
