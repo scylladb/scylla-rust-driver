@@ -1,4 +1,3 @@
-mod authenticate;
 mod batch;
 mod ccm;
 mod consistency;
