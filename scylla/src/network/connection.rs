@@ -49,6 +49,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroU64;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -75,6 +76,25 @@ const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='
 // of old orphans is shut down (and created again by a connection management layer).
 const OLD_ORPHAN_COUNT_THRESHOLD: usize = 1024;
 const OLD_AGE_ORPHAN_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Represents a write coalescing delay configuration option.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum WriteCoalescingDelay {
+    /// A delay implemented by yielding a tokio task.
+    /// This should be used for sub-millisecond delays.
+    ///
+    /// Tokio sleeps have a millisecond granularity, so there is no reliable
+    /// way to implement deterministic delays shorter than one millisecond.
+    SmallNondeterministic,
+
+    /// A delay with millisecond granularity.
+    ///
+    /// This should be used with caution, and used only for throughput-bound applications
+    /// that send a lot of requests. We suggest benchmarking the application before
+    /// committing to this option.
+    Milliseconds(NonZeroU64),
+}
 
 pub(crate) struct Connection {
     _worker_handle: RemoteHandle<()>,
@@ -264,7 +284,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) default_consistency: Consistency,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
-    pub(crate) enable_write_coalescing: bool,
+    pub(crate) write_coalescing_delay: Option<WriteCoalescingDelay>,
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
@@ -297,7 +317,7 @@ impl ConnectionConfig {
             default_consistency: self.default_consistency,
             authenticator: self.authenticator.clone(),
             address_translator: self.address_translator.clone(),
-            enable_write_coalescing: self.enable_write_coalescing,
+            write_coalescing_delay: self.write_coalescing_delay.clone(),
             keepalive_interval: self.keepalive_interval,
             keepalive_timeout: self.keepalive_timeout,
             tablet_sender: self.tablet_sender.clone(),
@@ -322,7 +342,7 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) default_consistency: Consistency,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
-    pub(crate) enable_write_coalescing: bool,
+    pub(crate) write_coalescing_delay: Option<WriteCoalescingDelay>,
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
@@ -345,7 +365,7 @@ impl Default for HostConnectionConfig {
             default_consistency: Default::default(),
             authenticator: None,
             address_translator: None,
-            enable_write_coalescing: true,
+            write_coalescing_delay: Some(WriteCoalescingDelay::SmallNondeterministic),
 
             // Note: this is different than SessionConfig default values.
             keepalive_interval: None,
@@ -372,7 +392,7 @@ impl Default for ConnectionConfig {
             default_consistency: Default::default(),
             authenticator: None,
             address_translator: None,
-            enable_write_coalescing: true,
+            write_coalescing_delay: Some(WriteCoalescingDelay::SmallNondeterministic),
 
             // Note: this is different than SessionConfig default values.
             keepalive_interval: None,
@@ -1454,7 +1474,7 @@ impl Connection {
         // across .await points. Therefore, it should not be too expensive.
         let handler_map = StdMutex::new(ResponseHandlerMap::new());
 
-        let enable_write_coalescing = config.enable_write_coalescing;
+        let write_coalescing_delay = config.write_coalescing_delay;
 
         let k = Self::keepaliver(
             router_handle,
@@ -1466,13 +1486,14 @@ impl Connection {
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
             &handler_map,
-            config,
+            config.event_sender,
+            config.compression,
         );
         let w = Self::writer(
             BufWriter::with_capacity(8192, write_half),
             &handler_map,
             receiver,
-            enable_write_coalescing,
+            write_coalescing_delay,
         );
         let o = Self::orphaner(&handler_map, orphan_notification_receiver);
 
@@ -1499,7 +1520,8 @@ impl Connection {
     async fn reader(
         mut read_half: (impl AsyncRead + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
-        config: HostConnectionConfig,
+        event_sender: Option<mpsc::Sender<Event>>,
+        compression: Option<Compression>,
     ) -> Result<(), BrokenConnectionError> {
         loop {
             let (params, opcode, body) = frame::read_response_frame(&mut read_half)
@@ -1519,8 +1541,8 @@ impl Connection {
                     continue;
                 }
                 Ordering::Equal => {
-                    if let Some(event_sender) = config.event_sender.as_ref() {
-                        Self::handle_event(response, config.compression, event_sender)
+                    if let Some(event_sender) = event_sender.as_ref() {
+                        Self::handle_event(response, compression, event_sender)
                             .await
                             .map_err(BrokenConnectionErrorKind::CqlEventHandlingError)?
                     }
@@ -1584,7 +1606,7 @@ impl Connection {
         mut write_half: (impl AsyncWrite + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
-        enable_write_coalescing: bool,
+        write_coalescing_delay: Option<WriteCoalescingDelay>,
     ) -> Result<(), BrokenConnectionError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
@@ -1604,17 +1626,26 @@ impl Connection {
                     .map_err(BrokenConnectionErrorKind::WriteError)?;
                 task = match task_receiver.try_recv() {
                     Ok(t) => t,
-                    Err(_) if enable_write_coalescing => {
-                        // Yielding was empirically tested to inject a 1-300µs delay,
-                        // much better than tokio::time::sleep's 1ms granularity.
-                        // Also, yielding in a busy system let's the queue catch up with new items.
-                        tokio::task::yield_now().await;
-                        match task_receiver.try_recv() {
-                            Ok(t) => t,
-                            Err(_) => break,
+                    Err(_) => match write_coalescing_delay {
+                        Some(WriteCoalescingDelay::SmallNondeterministic) => {
+                            // Yielding was empirically tested to inject a 1-300µs delay,
+                            // much better than tokio::time::sleep's 1ms granularity.
+                            // Also, yielding in a busy system let's the queue catch up with new items.
+                            tokio::task::yield_now().await;
+                            match task_receiver.try_recv() {
+                                Ok(t) => t,
+                                Err(_) => break,
+                            }
                         }
-                    }
-                    Err(_) => break,
+                        Some(WriteCoalescingDelay::Milliseconds(ms)) => {
+                            tokio::time::sleep(Duration::from_millis(ms.get())).await;
+                            match task_receiver.try_recv() {
+                                Ok(t) => t,
+                                Err(_) => break,
+                            }
+                        }
+                        None => break,
+                    },
                 }
             }
             trace!("Sending {} requests; {} bytes", num_requests, total_sent);
@@ -2383,6 +2414,9 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn test_coalescing() {
+        use std::num::NonZeroU64;
+
+        use super::WriteCoalescingDelay;
         use crate::client::session_builder::SessionBuilder;
 
         setup_tracing();
@@ -2410,7 +2444,7 @@ mod tests {
                 .unwrap();
         }
 
-        let subtest = |enable_coalescing: bool, ks: String| async move {
+        let subtest = |write_coalescing_delay: Option<WriteCoalescingDelay>, ks: String| async move {
             let (connection, _) = super::open_connection(
                 &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address: addr,
@@ -2418,7 +2452,7 @@ mod tests {
                 }),
                 None,
                 &HostConnectionConfig {
-                    enable_write_coalescing: enable_coalescing,
+                    write_coalescing_delay,
                     ..HostConnectionConfig::default()
                 },
             )
@@ -2486,8 +2520,22 @@ mod tests {
             assert_eq!(results, expected);
         };
 
-        subtest(true, ks.clone()).await;
-        subtest(false, ks.clone()).await;
+        // Non-deterministic sub-millisecond delay
+        subtest(
+            Some(WriteCoalescingDelay::SmallNondeterministic),
+            ks.clone(),
+        )
+        .await;
+        // 1ms delay
+        subtest(
+            Some(WriteCoalescingDelay::Milliseconds(
+                NonZeroU64::new(1).unwrap(),
+            )),
+            ks.clone(),
+        )
+        .await;
+        // No delay - coalescing disabled
+        subtest(None, ks.clone()).await;
     }
 
     // Returns the sum of integral numbers in the range [0..n)
