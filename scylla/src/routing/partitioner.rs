@@ -37,6 +37,7 @@ impl PartitionerName {
     }
 }
 
+impl sealed::Sealed for PartitionerName {}
 impl Partitioner for PartitionerName {
     type Hasher = PartitionerHasherAny;
 
@@ -56,6 +57,7 @@ pub(crate) enum PartitionerHasherAny {
     CDC(CDCPartitionerHasher),
 }
 
+impl sealed::Sealed for PartitionerHasherAny {}
 impl PartitionerHasher for PartitionerHasherAny {
     fn write(&mut self, pk_part: &[u8]) {
         match self {
@@ -72,12 +74,16 @@ impl PartitionerHasher for PartitionerHasherAny {
     }
 }
 
+mod sealed {
+    pub(crate) trait Sealed {}
+}
+
 /// A trait for creating instances of `PartitionHasher`, which ultimately compute the token.
 ///
 /// The Partitioners' design is based on std::hash design: `Partitioner`
 /// corresponds to `HasherBuilder`, and `PartitionerHasher` to `Hasher`.
 /// See their documentation for more details.
-pub(crate) trait Partitioner {
+pub(crate) trait Partitioner: sealed::Sealed {
     type Hasher: PartitionerHasher;
 
     fn build_hasher(&self) -> Self::Hasher;
@@ -95,13 +101,14 @@ pub(crate) trait Partitioner {
 /// Instances of this trait are created by a `Partitioner` and are stateful.
 /// At any point, one can call `finish()` and a `Token` will be computed
 /// based on values that has been fed so far.
-pub(crate) trait PartitionerHasher {
+pub(crate) trait PartitionerHasher: sealed::Sealed {
     fn write(&mut self, pk_part: &[u8]);
     fn finish(&self) -> Token;
 }
 
 pub(crate) struct Murmur3Partitioner;
 
+impl sealed::Sealed for Murmur3Partitioner {}
 impl Partitioner for Murmur3Partitioner {
     type Hasher = Murmur3PartitionerHasher;
 
@@ -170,6 +177,8 @@ impl Murmur3PartitionerHasher {
         k
     }
 }
+
+impl sealed::Sealed for Murmur3PartitionerHasher {}
 
 // The implemented Murmur3 algorithm is roughly as follows:
 // 1. while there are at least 16 bytes given:
@@ -287,6 +296,7 @@ pub(crate) struct CDCPartitionerHasher {
     state: CDCPartitionerHasherState,
 }
 
+impl sealed::Sealed for CDCPartitioner {}
 impl Partitioner for CDCPartitioner {
     type Hasher = CDCPartitionerHasher;
 
@@ -304,6 +314,7 @@ impl CDCPartitionerHasher {
     const BUF_CAPACITY: usize = 8;
 }
 
+impl sealed::Sealed for CDCPartitionerHasher {}
 impl PartitionerHasher for CDCPartitionerHasher {
     fn write(&mut self, pk_part: &[u8]) {
         match &mut self.state {
