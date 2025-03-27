@@ -16,7 +16,7 @@ use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::statement::Consistency;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 #[cfg(feature = "unstable-cloud")]
 use std::path::Path;
@@ -395,6 +395,31 @@ impl CloudSessionBuilder {
 // This block contains configuration options that make sense both for Cloud and non-Cloud
 // `Session`s. If an option fit only one of them, it should be put in a specialised block.
 impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
+    /// Sets the local ip address all TCP sockets are bound to.
+    ///
+    /// By default, this option is set to `None`, which is equivalent to:
+    /// - `INADDR_ANY` for IPv4 ([`Ipv4Addr::UNSPECIFIED`][std::net::Ipv4Addr::UNSPECIFIED])
+    /// - `in6addr_any` for IPv6 ([`Ipv6Addr::UNSPECIFIED`][std::net::Ipv6Addr::UNSPECIFIED])
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use std::net::Ipv4Addr;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .local_ip_address(Some(Ipv4Addr::new(192, 168, 0, 1)))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn local_ip_address(mut self, local_ip_address: Option<impl Into<IpAddr>>) -> Self {
+        self.config.local_ip_address = local_ip_address.map(Into::into);
+        self
+    }
+
     /// Set preferred Compression algorithm.
     /// The default is no compression.
     /// If it is not supported by database server Session will fall back to no encryption.

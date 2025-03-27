@@ -47,7 +47,7 @@ use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
 use std::borrow::Borrow;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -154,6 +154,13 @@ pub struct SessionConfig {
     /// Session will connect to these nodes to retrieve information about other nodes in the cluster.
     /// Each node can be represented as a hostname or an IP address.
     pub known_nodes: Vec<KnownNode>,
+
+    /// A local ip address to bind all driver's TCP sockets to.
+    ///
+    /// By default set to None, which is equivalent to:
+    /// - `INADDR_ANY` for IPv4 ([`Ipv4Addr::UNSPECIFIED`][std::net::Ipv4Addr::UNSPECIFIED])
+    /// - `in6addr_any` for IPv6 ([`Ipv6Addr::UNSPECIFIED`][std::net::Ipv6Addr::UNSPECIFIED])
+    pub local_ip_address: Option<IpAddr>,
 
     /// Preferred compression algorithm to use on connections.
     /// If it's not supported by database server Session will fall back to no compression.
@@ -293,6 +300,7 @@ impl SessionConfig {
     pub fn new() -> Self {
         SessionConfig {
             known_nodes: Vec::new(),
+            local_ip_address: None,
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
