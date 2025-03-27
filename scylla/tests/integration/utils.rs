@@ -13,8 +13,9 @@ use scylla::routing::Shard;
 use scylla::statement::unprepared::Statement;
 use std::collections::HashMap;
 use std::env;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
+use std::process::Command;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -28,6 +29,31 @@ pub(crate) fn setup_tracing() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(tracing_subscriber::fmt::TestWriter::new())
         .try_init();
+}
+
+/// Finds the local IP address for a given destination IP address.
+///
+/// This function uses the `ip route get` command to get the routing information for the destination IP.
+pub(crate) fn find_local_ip_for_destination(dest: IpAddr) -> Option<IpAddr> {
+    let output = Command::new("ip")
+        .arg("route")
+        .arg("get")
+        .arg(dest.to_string())
+        .output()
+        .ok()?;
+
+    let output_str = std::str::from_utf8(&output.stdout).ok()?;
+
+    // Example output for `ip route get 172.42.0.2`:
+    //
+    // 172.42.0.2 dev br-1e395ce79670 src 172.42.0.1 uid 1000
+    //     cache
+    let local_ip_str = output_str
+        .split_whitespace()
+        .skip_while(|s| *s != "src")
+        .nth(1)?;
+
+    IpAddr::from_str(local_ip_str).ok()
 }
 
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
