@@ -273,6 +273,7 @@ impl<'id: 'map, 'map> SelfIdentity<'id> {
 /// using [ConnectionConfig::to_host_connection_config].
 #[derive(Clone)]
 pub(crate) struct ConnectionConfig {
+    pub(crate) local_ip_address: Option<IpAddr>,
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
@@ -307,6 +308,7 @@ impl ConnectionConfig {
             .and_then(|provider| provider.make_tls_config(endpoint));
 
         HostConnectionConfig {
+            local_ip_address: self.local_ip_address,
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
             tcp_keepalive_interval: self.tcp_keepalive_interval,
@@ -331,6 +333,7 @@ impl ConnectionConfig {
 /// Created from [ConnectionConfig] using [ConnectionConfig::to_host_connection_config].
 #[derive(Clone)]
 pub(crate) struct HostConnectionConfig {
+    pub(crate) local_ip_address: Option<IpAddr>,
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
@@ -355,6 +358,7 @@ pub(crate) struct HostConnectionConfig {
 impl Default for HostConnectionConfig {
     fn default() -> Self {
         Self {
+            local_ip_address: None,
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
@@ -382,6 +386,7 @@ impl Default for HostConnectionConfig {
 impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
+            local_ip_address: None,
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
@@ -425,8 +430,7 @@ impl Connection {
     ) -> Result<(Self, ErrorReceiver), ConnectionError> {
         let stream_connector = tokio::time::timeout(
             config.connect_timeout,
-            // TODO: provide source ip instead of None (done later in this PR).
-            connect_with_source_ip_and_port(connect_address, None, source_port),
+            connect_with_source_ip_and_port(connect_address, config.local_ip_address, source_port),
         )
         .await;
         let stream = match stream_connector {

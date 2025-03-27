@@ -905,6 +905,7 @@ impl Session {
         };
 
         let connection_config = ConnectionConfig {
+            local_ip_address: config.local_ip_address,
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
             tcp_keepalive_interval: config.tcp_keepalive_interval,
