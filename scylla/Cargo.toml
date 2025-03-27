@@ -105,5 +105,6 @@ unreachable_pub = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(scylla_cloud_tests)',
     'cfg(cassandra_tests)',
+    'cfg(docker_cluster_tests)',
     'cfg(cpp_rust_unstable)',
 ] }
