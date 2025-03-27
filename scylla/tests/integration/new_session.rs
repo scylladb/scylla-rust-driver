@@ -1,8 +1,10 @@
-use crate::utils::setup_tracing;
+use std::net::Ipv4Addr;
+
+use crate::utils::{create_new_session_builder, setup_tracing};
 
 use assert_matches::assert_matches;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::errors::NewSessionError;
+use scylla::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
 
 #[cfg(not(scylla_cloud_tests))]
 #[tokio::test]
@@ -35,4 +37,61 @@ async fn all_hostnames_invalid() {
         SessionBuilder::new().known_node(uri).build().await,
         Err(NewSessionError::FailedToResolveAnyHostname(_))
     );
+}
+
+/// This test assumes that there is no interface configured on 1.1.1.1 address.
+/// This should be true for most standard setups.
+/// It is based on https://github.com/scylladb/cpp-rust-driver/blob/v0.3.0/tests/src/integration/tests/test_control_connection.cpp#L203-L216.
+#[tokio::test]
+async fn invalid_local_ip_address() {
+    setup_tracing();
+
+    let session_builder =
+        create_new_session_builder().local_ip_address(Some(Ipv4Addr::new(1, 1, 1, 1)));
+    let session_result = session_builder.build().await;
+
+    match session_result {
+        Err(NewSessionError::MetadataError(MetadataError::ConnectionPoolError(
+            ConnectionPoolError::Broken {
+                last_connection_error: ConnectionError::IoError(err),
+            },
+        ))) => {
+            assert_matches!(err.kind(), std::io::ErrorKind::AddrNotAvailable)
+        }
+        _ => panic!("Expected EADDRNOTAVAIL error"),
+    }
+}
+
+/// This test assumes that scylla cluster resides in `172.42.0.0/16` subnet.
+/// This is true for docker-compose Scylla and Cassandra clusters.
+#[cfg_attr(not(docker_cluster_tests), ignore)]
+#[tokio::test]
+async fn valid_local_ip_address() {
+    setup_tracing();
+
+    let session_builder = create_new_session_builder()
+        // Bind the address of docker subnet interface.
+        .local_ip_address(Some(Ipv4Addr::new(172, 42, 0, 1)));
+    let session = session_builder.build().await.unwrap();
+
+    session
+        .query_unpaged("SELECT host_id FROM system.local WHERE key='local'", &[])
+        .await
+        .unwrap();
+}
+
+#[cfg_attr(not(scylla_cloud_tests), ignore)]
+#[tokio::test]
+async fn cloud_valid_local_ip_address() {
+    setup_tracing();
+
+    let session_builder = create_new_session_builder()
+        // Bind the address to local host - it is used by serverless cluster.
+        .local_ip_address(Some(Ipv4Addr::new(127, 0, 0, 1)));
+    let session = session_builder.build().await.unwrap();
+
+    session
+        .query_unpaged("SELECT host_id FROM system.local WHERE key='local'", &[])
+        .await
+        .unwrap();
 }
