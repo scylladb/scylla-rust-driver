@@ -1,3 +1,4 @@
+mod ccm_cmd;
 pub(crate) mod cluster;
 mod ip_allocator;
 mod logged_cmd;

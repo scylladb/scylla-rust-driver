@@ -7,7 +7,7 @@ use std::str::FromStr;
 use anyhow::{Context, Error};
 
 /// A subnet prefix for local network (127.x.x.x/24).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct NetPrefix(IpAddr);
 
 impl NetPrefix {
@@ -23,7 +23,7 @@ impl NetPrefix {
         Ok(IpAddr::from_str(&value)?.into())
     }
 
-    pub(super) fn to_str(&self) -> String {
+    pub(super) fn to_str(self) -> String {
         match self.0 {
             IpAddr::V4(v4) => {
                 let octets = v4.octets();
@@ -39,7 +39,7 @@ impl NetPrefix {
         }
     }
 
-    pub(super) fn to_ipaddress(&self, id: u16) -> IpAddr {
+    pub(super) fn to_ipaddress(self, id: u16) -> IpAddr {
         match self.0 {
             IpAddr::V4(v4) => {
                 let mut octets = v4.octets();

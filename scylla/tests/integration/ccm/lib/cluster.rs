@@ -1,3 +1,5 @@
+use super::ccm_cmd::Ccm;
+use super::ccm_cmd::DBType;
 use super::ip_allocator::NetPrefix;
 use super::logged_cmd::{LoggedCmd, RunOptions};
 use super::{IP_ALLOCATOR, ROOT_CCM_DIR};
@@ -14,13 +16,6 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum DBType {
-    Scylla,
-    #[allow(dead_code)]
-    Cassandra,
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClusterOptions {
@@ -93,9 +88,9 @@ impl NodeOptions {
         NodeOptions {
             id: 0,
             datacenter_id: 1,
-            db_type: value.db_type.clone(),
+            db_type: value.db_type,
             version: value.version.clone(),
-            ip_prefix: value.ip_prefix.clone(),
+            ip_prefix: value.ip_prefix,
             smp: value.smp,
             memory: value.memory,
         }
@@ -445,6 +440,7 @@ impl NodeList {
 }
 
 pub(crate) struct Cluster {
+    ccm_cmd: Ccm,
     nodes: NodeList,
     destroyed: bool,
     logged_cmd: Arc<LoggedCmd>,
@@ -566,12 +562,13 @@ impl Cluster {
             }
         }
 
-        let lcmd = LoggedCmd::new().await;
+        let lcmd = Arc::new(LoggedCmd::new().await);
 
         let mut cluster = Cluster {
+            ccm_cmd: Ccm::new(config_dir.path(), Arc::clone(&lcmd)),
             destroyed: false,
             nodes: NodeList::new(),
-            logged_cmd: Arc::new(lcmd),
+            logged_cmd: Arc::clone(&lcmd),
             opts: opts.clone(),
             config_dir,
         };
@@ -588,43 +585,21 @@ impl Cluster {
     pub(crate) async fn init(&mut self) -> Result<(), Error> {
         let config_dir = self.config_dir();
         debug!("Init cluster, config_dir: {:?}", config_dir);
-        let mut args: Vec<String> = vec![
-            "create".to_string(),
-            self.opts.name.clone(),
-            "-v".to_string(),
-            self.opts.version.clone(),
-            "-i".to_string(),
-            self.opts.ip_prefix.to_string(),
-            "--config-dir".to_string(),
-            config_dir.to_string_lossy().into_owned(),
-        ];
-        if self.opts.db_type == DBType::Scylla {
-            args.push("--scylla".to_string());
-        }
-        self.logged_cmd
-            .run_command("ccm", &args, RunOptions::new())
+        self.ccm_cmd
+            .cluster_create(
+                self.opts.name.clone(),
+                self.opts.version.clone(),
+                self.opts.ip_prefix,
+                self.opts.db_type,
+            )
+            .run()
             .await?;
-        let nodes_str = self
-            .opts
-            .nodes
-            .iter()
-            .map(|node| node.to_string())
-            .collect::<Vec<String>>()
-            .join(":");
 
-        let args = vec![
-            "populate".to_string(),
-            "-i".to_string(),
-            self.opts.ip_prefix.to_string(),
-            "-n".to_string(),
-            nodes_str,
-            "--config-dir".to_string(),
-            config_dir.to_string_lossy().into_owned(),
-        ];
-        self.logged_cmd
-            .run_command("ccm", &args, RunOptions::new())
-            .await?;
-        Ok(())
+        self.ccm_cmd
+            .cluster_populate(&self.opts.nodes, self.opts.ip_prefix)
+            .run()
+            .await
+            .map(|_| ())
     }
 
     /// Executes `ccm updateconf` and applies it for all nodes in the cluster.
