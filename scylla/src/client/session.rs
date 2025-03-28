@@ -96,6 +96,27 @@ impl std::fmt::Debug for Session {
             "auto_await_schema_agreement_timeout",
             &self.schema_agreement_timeout,
         )
+        .field(
+            "schema_agreement_automatic_waiting",
+            &self.schema_agreement_automatic_waiting,
+        )
+        .field(
+            "refresh_metadata_on_auto_schema_agreement",
+            &self.refresh_metadata_on_auto_schema_agreement,
+        )
+        .field("keyspace_name", &self.keyspace_name)
+        .field(
+            "tracing_info_fetch_attempts",
+            &self.tracing_info_fetch_attempts,
+        )
+        .field(
+            "tracing_info_fetch_interval",
+            &self.tracing_info_fetch_interval,
+        )
+        .field(
+            "tracing_info_fetch_consistency",
+            &self.tracing_info_fetch_consistency,
+        )
         .finish()
     }
 }
