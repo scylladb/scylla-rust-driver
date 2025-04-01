@@ -12,7 +12,6 @@ use super::Token;
 /// The range is inclusive and has to be a sub-range of [1024, 65535].
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
-#[allow(dead_code)] // TODO: remove later in this PR.
 pub struct ShardAwarePortRange(RangeInclusive<u16>);
 
 impl ShardAwarePortRange {
@@ -104,11 +103,28 @@ impl Sharder {
     }
 
     /// Randomly choose a source port `p` such that `shard == shard_of_source_port(p)`.
+    ///
+    /// The port is chosen from ephemeral port range [49152, 65535].
     pub fn draw_source_port_for_shard(&self, shard: Shard) -> u16 {
+        self.draw_source_port_for_shard_from_range(
+            shard,
+            &ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
+        )
+    }
+
+    /// Randomly choose a source port `p` such that `shard == shard_of_source_port(p)`.
+    ///
+    /// The port is chosen from the provided port range.
+    pub(crate) fn draw_source_port_for_shard_from_range(
+        &self,
+        shard: Shard,
+        port_range: &ShardAwarePortRange,
+    ) -> u16 {
         assert!(shard < self.nr_shards.get() as u32);
-        rand::rng()
-            .random_range((49152 + self.nr_shards.get() - 1)..(65535 - self.nr_shards.get() + 1))
-            / self.nr_shards.get()
+        let (range_start, range_end) = (port_range.0.start(), port_range.0.end());
+        rand::rng().random_range(
+            (range_start + self.nr_shards.get() - 1)..(range_end - self.nr_shards.get() + 1),
+        ) / self.nr_shards.get()
             * self.nr_shards.get()
             + shard as u16
     }
@@ -116,19 +132,39 @@ impl Sharder {
     /// Returns iterator over source ports `p` such that `shard == shard_of_source_port(p)`.
     /// Starts at a random port and goes forward by `nr_shards`. After reaching maximum wraps back around.
     /// Stops once all possible ports have been returned
+    ///
+    /// The ports are chosen from ephemeral port range [49152, 65535].
     pub fn iter_source_ports_for_shard(&self, shard: Shard) -> impl Iterator<Item = u16> {
+        self.iter_source_ports_for_shard_from_range(
+            shard,
+            &ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
+        )
+    }
+
+    /// Returns iterator over source ports `p` such that `shard == shard_of_source_port(p)`.
+    /// Starts at a random port and goes forward by `nr_shards`. After reaching maximum wraps back around.
+    /// Stops once all possible ports have been returned
+    ///
+    /// The ports are chosen from the provided port range.
+    pub(crate) fn iter_source_ports_for_shard_from_range(
+        &self,
+        shard: Shard,
+        port_range: &ShardAwarePortRange,
+    ) -> impl Iterator<Item = u16> {
         assert!(shard < self.nr_shards.get() as u32);
 
+        let (range_start, range_end) = (port_range.0.start(), port_range.0.end());
+
         // Randomly choose a port to start at
-        let starting_port = self.draw_source_port_for_shard(shard);
+        let starting_port = self.draw_source_port_for_shard_from_range(shard, port_range);
 
         // Choose smallest available port number to begin at after wrapping
         // apply the formula from draw_source_port_for_shard for lowest possible gen_range result
-        let first_valid_port = (49152 + self.nr_shards.get() - 1) / self.nr_shards.get()
+        let first_valid_port = (range_start + self.nr_shards.get() - 1) / self.nr_shards.get()
             * self.nr_shards.get()
             + shard as u16;
 
-        let before_wrap = (starting_port..=65535).step_by(self.nr_shards.get().into());
+        let before_wrap = (starting_port..=*range_end).step_by(self.nr_shards.get().into());
         let after_wrap = (first_valid_port..starting_port).step_by(self.nr_shards.get().into());
 
         before_wrap.chain(after_wrap)
@@ -214,7 +250,7 @@ impl ShardInfo {
 
 #[cfg(test)]
 mod tests {
-    use crate::routing::ShardAwarePortRange;
+    use crate::routing::{Shard, ShardAwarePortRange};
     use crate::test_utils::setup_tracing;
 
     use super::Token;
@@ -260,36 +296,59 @@ mod tests {
     #[test]
     fn test_iter_source_ports_for_shard() {
         setup_tracing();
-        let nr_shards = 4;
-        let max_port_num = 65535;
-        let min_port_num = (49152 + nr_shards - 1) / nr_shards * nr_shards;
 
-        let sharder = Sharder::new(ShardCount::new(nr_shards).unwrap(), 12);
+        fn test_helper<F, I>(nr_shards: u16, port_range: ShardAwarePortRange, get_iter: F)
+        where
+            F: Fn(&Sharder, Shard) -> I,
+            I: Iterator<Item = u16>,
+        {
+            let max_port_num = port_range.0.end();
+            let min_port_num = (port_range.0.start() + nr_shards - 1) / nr_shards * nr_shards;
 
-        // Test for each shard
-        for shard in 0..nr_shards {
-            // Find lowest port for this shard
-            let mut lowest_port = min_port_num;
-            while lowest_port % nr_shards != shard {
-                lowest_port += 1;
+            let sharder = Sharder::new(ShardCount::new(nr_shards).unwrap(), 12);
+
+            // Test for each shard
+            for shard in 0..nr_shards {
+                // Find lowest port for this shard
+                let mut lowest_port = min_port_num;
+                while lowest_port % nr_shards != shard {
+                    lowest_port += 1;
+                }
+
+                // Find total number of ports the iterator should return
+                let possible_ports_number: usize =
+                    ((max_port_num - lowest_port) / nr_shards + 1).into();
+
+                let port_iter = get_iter(&sharder, shard.into());
+
+                let mut returned_ports: HashSet<u16> = HashSet::new();
+                for port in port_iter {
+                    assert!(!returned_ports.contains(&port)); // No port occurs two times
+                    assert!(port % nr_shards == shard); // Each port maps to this shard
+
+                    returned_ports.insert(port);
+                }
+
+                // Numbers of ports returned matches the expected value
+                assert_eq!(returned_ports.len(), possible_ports_number);
             }
+        }
 
-            // Find total number of ports the iterator should return
-            let possible_ports_number: usize =
-                ((max_port_num - lowest_port) / nr_shards + 1).into();
+        // Test of public method (with default range)
+        {
+            test_helper(
+                4,
+                ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
+                |sharder, shard| sharder.iter_source_ports_for_shard(shard),
+            );
+        }
 
-            let port_iter = sharder.iter_source_ports_for_shard(shard.into());
-
-            let mut returned_ports: HashSet<u16> = HashSet::new();
-            for port in port_iter {
-                assert!(!returned_ports.contains(&port)); // No port occurs two times
-                assert!(port % nr_shards == shard); // Each port maps to this shard
-
-                returned_ports.insert(port);
-            }
-
-            // Numbers of ports returned matches the expected value
-            assert_eq!(returned_ports.len(), possible_ports_number);
+        // Test of private method with some custom port range.
+        {
+            let port_range = ShardAwarePortRange::new(21371..=42424).unwrap();
+            test_helper(4, port_range.clone(), |sharder, shard| {
+                sharder.iter_source_ports_for_shard_from_range(shard, &port_range)
+            });
         }
     }
 }
