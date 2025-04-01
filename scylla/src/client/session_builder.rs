@@ -13,6 +13,7 @@ use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::timestamp_generator::TimestampGenerator;
+use crate::routing::ShardAwarePortRange;
 use crate::statement::Consistency;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
@@ -417,6 +418,35 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn local_ip_address(mut self, local_ip_address: Option<impl Into<IpAddr>>) -> Self {
         self.config.local_ip_address = local_ip_address.map(Into::into);
+        self
+    }
+
+    /// Specifies the local port range used for shard-aware connections.
+    ///
+    /// A possible use case is when you want to have multiple [`Session`] objects and do not want
+    /// them to compete for the ports within the same range. It is then advised to assign
+    /// mutually non-overlapping port ranges to each session object.
+    ///
+    /// By default this option is set to [`ShardAwarePortRange::EPHEMERAL_PORT_RANGE`].
+    ///
+    /// For details, see [`ShardAwarePortRange`] documentation.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::routing::ShardAwarePortRange;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .shard_aware_local_port_range(ShardAwarePortRange::new(49200..=50000)?)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn shard_aware_local_port_range(mut self, port_range: ShardAwarePortRange) -> Self {
+        self.config.shard_aware_local_port_range = port_range;
         self
     }
 

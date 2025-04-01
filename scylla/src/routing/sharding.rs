@@ -1,10 +1,50 @@
 use std::collections::HashMap;
 use std::num::NonZeroU16;
+use std::ops::RangeInclusive;
 
 use rand::Rng as _;
 use thiserror::Error;
 
 use super::Token;
+
+/// A range of ports that can be used for shard-aware connections.
+///
+/// The range is inclusive and has to be a sub-range of [1024, 65535].
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
+#[allow(dead_code)] // TODO: remove later in this PR.
+pub struct ShardAwarePortRange(RangeInclusive<u16>);
+
+impl ShardAwarePortRange {
+    /// The default shard-aware local port range - [49152, 65535].
+    pub const EPHEMERAL_PORT_RANGE: Self = Self(49152..=65535);
+
+    /// Creates a new `ShardAwarePortRange` with the given range.
+    ///
+    /// The error is returned in two cases:
+    /// 1. Provided range is empty (`end` < `start`).
+    /// 2. Provided range starts at a port lower than 1024. Ports 0-1023 are reserved and
+    ///    should not be used by application.
+    #[inline]
+    pub fn new(range: impl Into<RangeInclusive<u16>>) -> Result<Self, InvalidShardAwarePortRange> {
+        let range = range.into();
+        if range.is_empty() || range.start() < &1024 {
+            return Err(InvalidShardAwarePortRange);
+        }
+        Ok(Self(range))
+    }
+}
+
+impl Default for ShardAwarePortRange {
+    fn default() -> Self {
+        Self::EPHEMERAL_PORT_RANGE
+    }
+}
+
+/// An error returned by [`ShardAwarePortRange::new()`].
+#[derive(Debug, Error)]
+#[error("Invalid shard-aware local port range")]
+pub struct InvalidShardAwarePortRange;
 
 pub type Shard = u32;
 pub type ShardCount = NonZeroU16;
@@ -174,11 +214,29 @@ impl ShardInfo {
 
 #[cfg(test)]
 mod tests {
+    use crate::routing::ShardAwarePortRange;
     use crate::test_utils::setup_tracing;
 
     use super::Token;
     use super::{ShardCount, Sharder};
     use std::collections::HashSet;
+
+    #[test]
+    fn test_shard_aware_port_range_constructor() {
+        setup_tracing();
+
+        // Test valid range
+        let range = ShardAwarePortRange::new(49152..=65535).unwrap();
+        assert_eq!(range, ShardAwarePortRange::EPHEMERAL_PORT_RANGE);
+
+        // Test invalid range (empty)
+        #[allow(clippy::reversed_empty_ranges)]
+        {
+            assert!(ShardAwarePortRange::new(49152..=49151).is_err());
+        }
+        // Test invalid range (too low)
+        assert!(ShardAwarePortRange::new(0..=65535).is_err());
+    }
 
     #[test]
     fn test_shard_of() {

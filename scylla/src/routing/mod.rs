@@ -13,7 +13,7 @@ pub mod locator;
 pub mod partitioner;
 mod sharding;
 
-pub use sharding::{Shard, ShardCount, Sharder};
+pub use sharding::{InvalidShardAwarePortRange, Shard, ShardAwarePortRange, ShardCount, Sharder};
 pub(crate) use sharding::{ShardInfo, ShardingError};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
