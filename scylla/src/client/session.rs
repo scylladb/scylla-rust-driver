@@ -912,6 +912,7 @@ impl Session {
 
         let connection_config = ConnectionConfig {
             local_ip_address: config.local_ip_address,
+            shard_aware_local_port_range: config.shard_aware_local_port_range,
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
             tcp_keepalive_interval: config.tcp_keepalive_interval,
