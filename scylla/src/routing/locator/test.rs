@@ -64,6 +64,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             address: id_to_invalid_addr(1),
             tokens: vec![Token::new(50), Token::new(250), Token::new(400)],
             host_id: Uuid::new_v4(),
+            server_version: None,
         },
         Peer {
             // B
@@ -72,6 +73,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             address: id_to_invalid_addr(2),
             tokens: vec![Token::new(100), Token::new(600), Token::new(900)],
             host_id: Uuid::new_v4(),
+            server_version: None,
         },
         Peer {
             // C
@@ -80,6 +82,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             address: id_to_invalid_addr(3),
             tokens: vec![Token::new(300), Token::new(650), Token::new(700)],
             host_id: Uuid::new_v4(),
+            server_version: None,
         },
         Peer {
             // D
@@ -88,6 +91,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             address: id_to_invalid_addr(4),
             tokens: vec![Token::new(350), Token::new(550)],
             host_id: Uuid::new_v4(),
+            server_version: None,
         },
         Peer {
             // E
@@ -96,6 +100,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             address: id_to_invalid_addr(5),
             tokens: vec![Token::new(150), Token::new(750)],
             host_id: Uuid::new_v4(),
+            server_version: None,
         },
         Peer {
             // F
@@ -104,6 +109,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             address: id_to_invalid_addr(6),
             tokens: vec![Token::new(200), Token::new(450)],
             host_id: Uuid::new_v4(),
+            server_version: None,
         },
         Peer {
             // G
@@ -112,6 +118,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             address: id_to_invalid_addr(7),
             tokens: vec![Token::new(500), Token::new(800)],
             host_id: Uuid::new_v4(),
+            server_version: None,
         },
     ];
 

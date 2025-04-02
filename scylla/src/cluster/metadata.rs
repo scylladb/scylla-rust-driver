@@ -123,6 +123,7 @@ pub(crate) struct Metadata {
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct Peer {
     pub host_id: Uuid,
+    pub server_version: Option<String>,
     pub address: NodeAddr,
     pub tokens: Vec<Token>,
     pub datacenter: Option<String>,
@@ -408,6 +409,7 @@ impl Metadata {
                     datacenter: None,
                     rack: None,
                     host_id: Uuid::new_v4(),
+                    server_version: None,
                 }
             })
             .collect();
@@ -746,7 +748,6 @@ impl ControlConnection {
 #[scylla(crate = "scylla_cql")]
 struct NodeInfoRow {
     host_id: Option<Uuid>,
-    #[allow(dead_code)] // TODO: remove later
     #[scylla(rename = "release_version")]
     server_version: Option<String>,
     #[scylla(rename = "rpc_address")]
@@ -850,7 +851,7 @@ impl ControlConnection {
     ) -> Option<Peer> {
         let NodeInfoRow {
             host_id,
-            server_version: _,
+            server_version,
             untranslated_ip_addr,
             datacenter,
             rack,
@@ -903,6 +904,7 @@ impl ControlConnection {
 
         Some(Peer {
             host_id,
+            server_version,
             address: node_addr,
             tokens,
             datacenter,
