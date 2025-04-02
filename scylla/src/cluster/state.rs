@@ -24,6 +24,7 @@ pub struct ClusterState {
     pub(crate) known_peers: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub(crate) keyspaces: HashMap<String, Keyspace>,
     pub(crate) locator: ReplicaLocator,
+    pub(crate) cluster_version: Option<String>,
 }
 
 /// Enables printing [ClusterState] struct in a neat way, skipping the clutter involved by
@@ -201,6 +202,7 @@ impl ClusterState {
             known_peers: new_known_peers,
             keyspaces,
             locator,
+            cluster_version: metadata.cluster_version,
         }
     }
 
@@ -217,6 +219,16 @@ impl ClusterState {
     /// Access details about nodes known to the driver
     pub fn get_nodes_info(&self) -> &[Arc<Node>] {
         self.locator.unique_nodes_in_global_ring()
+    }
+
+    /// Returns the cluster version.
+    ///
+    /// Cluster version is the server application version used by
+    /// the current control connection node (if such information is provided by the server).
+    ///
+    /// To check version of each node, we suggest using [`ClusterState::get_nodes_info()`].
+    pub fn cluster_version(&self) -> Option<&str> {
+        self.cluster_version.as_deref()
     }
 
     /// Compute token of a table partition key

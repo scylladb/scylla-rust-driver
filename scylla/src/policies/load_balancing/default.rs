@@ -1444,6 +1444,7 @@ mod tests {
             let info = Metadata {
                 peers,
                 keyspaces: HashMap::new(),
+                cluster_version: None,
             };
 
             ClusterState::new(

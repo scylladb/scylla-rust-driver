@@ -118,6 +118,8 @@ pub(crate) struct MetadataReader {
 pub(crate) struct Metadata {
     pub(crate) peers: Vec<Peer>,
     pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
+    /// The release_version obtained from `system.local` on control connection.
+    pub(crate) cluster_version: Option<String>,
 }
 
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
@@ -420,6 +422,7 @@ impl Metadata {
         Metadata {
             peers,
             keyspaces: HashMap::new(),
+            cluster_version: None,
         }
     }
 }
@@ -728,10 +731,10 @@ impl ControlConnection {
         keyspace_to_fetch: &[String],
         fetch_schema: bool,
     ) -> Result<Metadata, MetadataError> {
-        let peers_query = self.query_peers(connect_port);
+        let peers_query = self.query_peers_and_cluster_version(connect_port);
         let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, fetch_schema);
 
-        let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
+        let ((peers, cluster_version), keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
 
         // There must be at least one peer
         if peers.is_empty() {
@@ -743,7 +746,11 @@ impl ControlConnection {
             return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists));
         }
 
-        Ok(Metadata { peers, keyspaces })
+        Ok(Metadata {
+            peers,
+            keyspaces,
+            cluster_version,
+        })
     }
 }
 
@@ -779,7 +786,13 @@ impl NodeInfoSource {
 const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
 impl ControlConnection {
-    async fn query_peers(&self, connect_port: u16) -> Result<Vec<Peer>, MetadataError> {
+    /// Returns the vector of peers and the cluster version.
+    /// Cluster version is the `release_version` column from `system.local` query
+    /// executed on control connection.
+    async fn query_peers_and_cluster_version(
+        &self,
+        connect_port: u16,
+    ) -> Result<(Vec<Peer>, Option<String>), MetadataError> {
         let mut peers_query = Statement::new(
             "select host_id, release_version, rpc_address, data_center, rack, tokens from system.peers",
         );
@@ -828,7 +841,9 @@ impl ControlConnection {
 
         let translated_peers_futures = untranslated_rows.map(|row_result| async {
             match row_result {
-                Ok((source, row)) => Self::create_peer_from_row(source, row, local_address).await,
+                Ok((source, row)) => Self::create_peer_from_row(source, row, local_address)
+                    .await
+                    .map(|peer| (source, peer)),
                 Err(err) => {
                     warn!(
                         "system.peers or system.local has an invalid row, skipping it: {}",
@@ -839,12 +854,24 @@ impl ControlConnection {
             }
         });
 
-        let peers = translated_peers_futures
+        let vec_capacity = translated_peers_futures.size_hint().0;
+        let (peers, cluster_version) = translated_peers_futures
             .buffer_unordered(256)
             .filter_map(std::future::ready)
-            .collect::<Vec<_>>()
+            .fold(
+                (Vec::with_capacity(vec_capacity), None),
+                |(mut peers, cluster_version), (source, peer)| async move {
+                    let new_cluster_version = match (&cluster_version, source) {
+                        (None, NodeInfoSource::Local) => peer.server_version.clone(),
+                        _ => cluster_version,
+                    };
+
+                    peers.push(peer);
+                    (peers, new_cluster_version)
+                },
+            )
             .await;
-        Ok(peers)
+        Ok((peers, cluster_version))
     }
 
     async fn create_peer_from_row(
