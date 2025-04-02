@@ -2473,7 +2473,12 @@ async fn test_views_in_schema_info() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks);
+    // Materialized views + tablets are not supported in Scylla 2025.1.
+    if scylla_supports_tablets(&session).await {
+        create_ks += " and TABLETS = { 'enabled': false}";
+    }
+    session.ddl(create_ks).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
