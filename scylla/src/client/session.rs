@@ -32,7 +32,7 @@ use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse};
 use crate::routing::partitioner::PartitionerName;
-use crate::routing::Shard;
+use crate::routing::{Shard, ShardAwarePortRange};
 use crate::statement::batch::batch_values;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
@@ -161,6 +161,11 @@ pub struct SessionConfig {
     /// - `INADDR_ANY` for IPv4 ([`Ipv4Addr::UNSPECIFIED`][std::net::Ipv4Addr::UNSPECIFIED])
     /// - `in6addr_any` for IPv6 ([`Ipv6Addr::UNSPECIFIED`][std::net::Ipv6Addr::UNSPECIFIED])
     pub local_ip_address: Option<IpAddr>,
+
+    /// Specifies the local port range used for shard-aware connections.
+    ///
+    /// By default set to [`ShardAwarePortRange::EPHEMERAL_PORT_RANGE`].
+    pub shard_aware_local_port_range: ShardAwarePortRange,
 
     /// Preferred compression algorithm to use on connections.
     /// If it's not supported by database server Session will fall back to no compression.
@@ -301,6 +306,7 @@ impl SessionConfig {
         SessionConfig {
             known_nodes: Vec::new(),
             local_ip_address: None,
+            shard_aware_local_port_range: ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
@@ -906,6 +912,7 @@ impl Session {
 
         let connection_config = ConnectionConfig {
             local_ip_address: config.local_ip_address,
+            shard_aware_local_port_range: config.shard_aware_local_port_range,
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
             tcp_keepalive_interval: config.tcp_keepalive_interval,

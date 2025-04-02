@@ -26,7 +26,7 @@ use crate::response::{
     NonErrorAuthResponse, NonErrorStartupResponse, PagingState, PagingStateResponse, QueryResponse,
 };
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
-use crate::routing::{Shard, ShardInfo, Sharder, ShardingError};
+use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::PreparedStatement;
 use crate::statement::unprepared::Statement;
@@ -274,6 +274,7 @@ impl<'id: 'map, 'map> SelfIdentity<'id> {
 #[derive(Clone)]
 pub(crate) struct ConnectionConfig {
     pub(crate) local_ip_address: Option<IpAddr>,
+    pub(crate) shard_aware_local_port_range: ShardAwarePortRange,
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
@@ -309,6 +310,7 @@ impl ConnectionConfig {
 
         HostConnectionConfig {
             local_ip_address: self.local_ip_address,
+            shard_aware_local_port_range: self.shard_aware_local_port_range.clone(),
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
             tcp_keepalive_interval: self.tcp_keepalive_interval,
@@ -334,6 +336,7 @@ impl ConnectionConfig {
 #[derive(Clone)]
 pub(crate) struct HostConnectionConfig {
     pub(crate) local_ip_address: Option<IpAddr>,
+    pub(crate) shard_aware_local_port_range: ShardAwarePortRange,
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
@@ -359,6 +362,7 @@ impl Default for HostConnectionConfig {
     fn default() -> Self {
         Self {
             local_ip_address: None,
+            shard_aware_local_port_range: ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
@@ -387,6 +391,7 @@ impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
             local_ip_address: None,
+            shard_aware_local_port_range: ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
@@ -2022,7 +2027,8 @@ pub(super) async fn open_connection_to_shard_aware_port(
     config: &HostConnectionConfig,
 ) -> Result<(Connection, ErrorReceiver), ConnectionError> {
     // Create iterator over all possible source ports for this shard
-    let source_port_iter = sharder.iter_source_ports_for_shard(shard);
+    let source_port_iter =
+        sharder.iter_source_ports_for_shard_from_range(shard, &config.shard_aware_local_port_range);
 
     for port in source_port_iter {
         let connect_result = open_connection(endpoint, Some(port), config).await;
