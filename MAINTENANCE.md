@@ -10,7 +10,7 @@ complicated.
 This workspace consists of 4 crates:
 - `scylla`: main driver crate to be used by users;
   the only one expected to be added as a dependency and have items imported from (i.e. the only "public" crate).
-  Depends on `scylla-cql` and `scylla-macros`.
+  Depends on `scylla-cql`.
 - `scylla-macros`: provides derive macros for users to be able to use their structs as UDTs / query parameters.
 - `scylla-cql`: low-level implementation of CQL binary protocol. Depends on `scylla-macros`.
 - `scylla-proxy`: mostly internal crate that aids testing. Depends on `scylla-cql`.
@@ -25,23 +25,21 @@ For sources on semver and semver in rust see:
 - https://rust-lang.github.io/api-guidelines/necessities.html#public-dependencies-of-a-stable-crate-are-stable-c-stable (and some other parts of this book).
 
 What needs to be considered for releasing:
-- You mustn't change major version of scylla-cql / scylla-macros dependency in a minor update of scylla crate.
-For example, if scylla 0.13.0 depends on scylla-cql 0.4, then scylla 0.13.1 mustn't depend on scylla-cql 0.5.
-- We typically bump major versions of all 3 main crates (`scylla`, `scylla-cql`, `scylla-macros`) together. I'm not sure if it's necessary - I remember there were
-arguments for that, but I can't remember them.
+- Versions of `scylla-cql` and `scylla-macros` MUST always be the same. `scylla-cql` MUST depend on EXACT version of `scylla-macros` (e.g. `version = "=1.0.0"` in `Cargo.toml`). This ensures that we can change the `_macro_internal` module in minor releases, and generally simplifies reasoning about those 2 crates. If Rust allowed it, they would be one crate.
+- For simplicity of maintenance, and to avoid potential problems with mixed versioning, we decided to always release all 3 crates together, with the same version numbers. Important: it does not allow us to make breaking changes in `scylla-cql`! Older versions of `scylla` will pick up newer versions of `scylla-cql`, e.g. after we release `scylla-cql 1.2`, `scylla 1.0` may start using it.
 
 
 ## Documentation
 
 There are 2 places where documentation is published:
 - [docs.rs](https://docs.rs/scylla/latest/scylla/): API docs, generated automatically when publishing a crate to [crates.io](https://crates.io/crates/scylla).
-- [Documentation book](https://rust-driver.docs.scylladb.com/stable/): generated and published by our CI (see [docs-pages.yaml](https://github.com/scylladb/scylla-rust-driver/blob/main/.github/workflows/docs-pages.yaml)) when there is a push to either `main` or to some `v0.*` tag.
+- [Documentation book](https://rust-driver.docs.scylladb.com/stable/): generated and published by our CI (see [docs-pages.yaml](https://github.com/scylladb/scylla-rust-driver/blob/main/.github/workflows/docs-pages.yaml)) when there is a push to either `main` or to some `v*.*.*` tag.
 
 Parameters relevant to releasing documentation book are configured in `docs/source/conf.py` and `docs/pyproject.toml` files.
 In `pyproject.toml` there is the `version` field - we do update it but I don't think it affects anything.
 In `docs/conf.py` there are `TAGS`, `BRANCHES`, `LATEST_VERSION`, `UNSTABLE_VERSIONS` and `DEPRECATED_VERSIONS` fields.
 
-`TAGS` and `BRANCHES` are lists of tags and branches for which documentation book will be built - those 2 lists add up to a list of versions you see when you click "expand" a version list in the left upper corner of [documentation book](https://rust-driver.docs.scylladb.com/stable/).
+`TAGS` and `BRANCHES` are lists of tags and branches for which documentation book will be built - those 2 lists add up to a list of versions you see when you click (expand) a version list in the left upper corner of [documentation book](https://rust-driver.docs.scylladb.com/stable/).
 
 `LATEST_VERSION` selects the element from the above list that will be the default ("stable") version shown when visiting https://rust-driver.docs.scylladb.com/stable/index.html.
 
@@ -60,13 +58,19 @@ It however means that **any release requires updating `conf.py` on `main` branch
 
 ## Branches and tags
 
-We maintain a branch per major release (after releasing 1.0 we may change to a branch per minor release - this is yet to be decided). This is done so that we are able to release an update for older major release (e.g. release 0.13.3 after 0.14.0 is released).
-Major version branches are named `branch-0.A.x`, where `A` is a number of the version. Example: branch for `0.14` will be `branch-0.14.x`.
+Historically (before 1.0) we created a branch per major release, called e.g. `branch-0.14.x`. Those branches were used when we wanted to make a bugfix release (e.g. 0.14.1) after a new major (e.g. 0.15) was already released.
+In this case we backported all necessary PRs onto such branch, and we made the release there.
+
+After 1.x this became mostly unnecessary, and we won't create any branches unless a situation happens that requires as to. Why?
+- Minor updates of the driver can be applied fearlessly, so we do not expect to have to make patches for older minor releases. If for some reason we have to release such a bugfix for older minor, we can then create a branch at its tag (e.g. create `branch-1.1.x` at tag `v.1.1.2`).
+- Such branches are an additional burden.
+
+We may create a branch for a major version when we start to really work on the next one. For example, we may create `branch-1.x` so that we can keep releasing `1.x` versions while making breaking changes related to 2.0 on `main`. This is still to be decided in the future.
 
 All new development lands on `main` branch, and may be backported by maintainers to version branches.
 
-Each release of `scylla` crate has a corresponding git tag. Tags are named `vA.B.C`, so release `0.14.1` will have tag `v0.14.1`.
-Each such tag has a message of the form `Release 0.X.Y` (e.g. `Release 0.14.0`).
+Each release of `scylla` crate has a corresponding git tag. Tags are named `vX.Y.Z`, so release `1.2.3` will have tag `v1.2.3`.
+Each such tag has a message of the form `Release X.Y.Z` (e.g. `Release 1.2.3`).
 
 Below is a simplified view of how this looks.
 Diagrams created using [mermaid.js](https://mermaid.js.org/). If you view this file on GitHub it should be rendered correctly.
@@ -78,24 +82,19 @@ title: Rust Driver git branches
 ---
 gitGraph
    commit id: "Feature A"
-   commit id: "Release 0.13" tag: "v0.13.0"
-   branch branch-0.13.x
-   checkout branch-0.13.x
+   commit id: "Release 1.13" tag: "v1.13.0"
+   branch branch-1.x
+   checkout branch-1.x
    commit id: "Backport fix C"
-   commit id: "Release 0.13.1" tag: "v0.13.1"
+   commit id: "Release 1.13.1" tag: "v1.13.1"
    commit id: "Backport fix D"
-   commit id: "Release 0.13.2" tag: "v0.13.2"
+   commit id: "Release 1.13.2" tag: "v1.13.2"
    checkout main
    commit id: "Feature B"
    commit id: "Fix C"
-   commit id: "Release 0.14" tag: "v0.14.0"
-   branch branch-0.14.x
-   checkout branch-0.14.x
-   commit id: "Backport fix D " %% Space at the end because mermaid doesn't 
-   %% allow duplicate labels and totally breaks the graph without this space
-   commit id: "Release 0.14.1" tag: "v0.14.1"
-   checkout main
+   commit id: "Release 2.0.0" tag: "v2.0.0"
    commit id: "Fix D"
+   commit id: "Release 2.0.1" tag: "v2.0.1"
 ```
 
 ## Version bump commits
@@ -139,52 +138,43 @@ IMPORTANT: Read this whole document before attempting to do a release.
 Prerequisites:
 - Have write access to GitHub repo (so that you are able to push to main and create a new branch).
 - Have access to our crates on [crates.io](https://crates.io).
-- For each of our 3 crates in this workspace (`scylla-macros`, `scylla-cql`, `scylla`) decide if it needs a new version, and if so, what is the correct version number. See "Crates and versions" section.
+- Decide what the new version should be. Take into consideration that we want to keep versions of all 3 main crates (`scylla-macros`, `scylla-cql`, `scylla`) in sync.
 
-### Releasing a major version
 
-1. Check out current `main`, e.g. `git fetch; git checkout origin/main`.
-2. Create a new version branch, e.g. `git checkout -b "branch-0.14.x"`.
-3. Create commits that bump version numbers of the crates (see `Version bump commits` section in this document).
-4. Push the new branch to our repo (e.g. `git push origin branch-0.14.x`).
-5. Prepare release notes (see the template at the bottom of this document).
-6. (Optional, but recommended) Create a PR from the new branch to `main` so that another maintainer can review your work.
-Description of this PR should consist of just release notes. **NOTE: Don't merge this PR using GitHub interface - just wait for approval.** The reason is that we want `main` and `branch-XX` to point to the same commit after merge, but Github doesn't have fast-forward merges in GUI - it will however detect such merge done in Git CLI and mark the PR as merged.
-7. Checkout `main` and fast-forward merge the new branch (e.g. `git checkout main; git merge --ff-only branch-0.14.x`).
-6. Create a new tag (e.g. `git tag -a v0.14.0 -m "Release 0.14.0"`).
-9. Push `main` and new tag, preferably using atomic push (e.g. `git push --atomic origin main v0.14.0`). This should build book documentation and publish it on [Documentation book](https://rust-driver.docs.scylladb.com/stable/).
-10. Go to the "Common steps" section below.
+### Releasing a new version
 
-### Releasing a minor version
-
-1. Checkout the correct version branch (e.g. `git checkout "branch-0.14.x"`).
+1. Checkout `main`.
 2. Create some new branch (which you'll later push to your fork).
-3. Perform any backports that are missing from the release.
 3. Create commits that bump version numbers of the crates (see `Version bump commits` section in this document).
-4. (Optional, but recommended) Push the branch to your fork and create the PR to the version branch so that another maintainer can review your work.
+4. Prepare release notes (see the template at the bottom of this document).
+5. (Optional, but recommended) Push the branch to your fork and create the PR to `main` so that another maintainer can review your work.
 Description of this PR should consist of just release notes. **NOTE: Preferably merge this PR with CLI as described in next step. If you really want to use GitHub UI only use REBASE merge.** This is to make all commits appear on the version branch, without any merge commits / squash commits.
-5. Checkout version branch (e.g. `git checkout "branch-0.14.x"`) and fast-forward merge your changes (`git merge --ff-only your_branch`).
-6. Create a new tag (e.g. `git tag -a v0.14.1 -m "Release 0.14.1"`).
-7. Push version branch and new tag, preferably using atomic push (e.g. `git push --atomic origin branch-0.14.x v0.14.1`).
-8. Create a new commit on `main` that updates documentation version - see "Documentation" section in this document. This should build book documentation and publish it on [Documentation book](https://rust-driver.docs.scylladb.com/stable/).
-9. Go to the "Common steps" section below.
-
-### Common steps
-
-1. Verify that documentation book was published at [Documentation book](https://rust-driver.docs.scylladb.com/stable/).
-2. Publish all updated crates to crates.io. Make sure you are using newest stable version of Rust. In the main folder of the repository run `cargo publish -p <crate>` for each crate that is being updated, in correct order (`scylla-macros`, `scylla-cql`, `scylla-proxy`, `scylla`).
-3. Verify that new versions are visible on crates.io and their docs on docs.rs.
-4. Go to https://github.com/scylladb/scylla-rust-driver/releases , click the `Draft new release` button and follow the procedure to create a new release on GitHub. Use the release notes as its description.
-5. (Mandatory for major release, optional for minor release) Publish a post on the forum:
+6. Checkout `main` and fast-forward merge your changes (`git merge --ff-only your_branch`).
+7. Create a new tag (e.g. `git tag -a v1.2.0 -m "Release 1.2.0"`).
+8. Push `main` and the new tag, preferably using atomic push (e.g. `git push --atomic origin main v1.2.0`).
+9. Create a new commit on `main` that updates documentation version - see "Documentation" section in this document. This should build book documentation and publish it on [Documentation book](https://rust-driver.docs.scylladb.com/stable/).
+10. Verify that documentation book was published at [Documentation book](https://rust-driver.docs.scylladb.com/stable/).
+11. Publish all updated crates to crates.io. Make sure you are using newest stable version of Rust. In the main folder of the repository run `cargo publish -p <crate>` for each crate that is being updated, in correct order (`scylla-macros`, `scylla-cql`, `scylla-proxy`, `scylla`).
+12. Verify that new versions are visible on crates.io and their docs on docs.rs.
+13. Go to https://github.com/scylladb/scylla-rust-driver/releases , click the `Draft new release` button and follow the procedure to create a new release on GitHub. Use the release notes as its description.
+14. (Mandatory for major / minor release, optional for patch release) Publish a post on the forum:
     - Go to [Release notes](https://forum.scylladb.com/c/scylladb-release-notes/18) section.
     - Click "New Topic".
-    - Title should be `[RELEASE] ScyllaDB Rust Driver <version>`, e.g. `[RELEASE] ScyllaDB Rust Driver 0.14.0`
-    - Tags: `release`, `drivers`, `rust-driver`, `rust`.
+    - Title should be `[RELEASE] ScyllaDB Rust Driver <version>`, e.g. `[RELEASE] ScyllaDB Rust Driver 1.2.0`
+    - Tags: `release`, `drivers`, `rust-driver`, `rust`, `driver-release`.
     - Content of the post should just be release notes.
     - Click "Create Topic"
-    - Posts in "Release notes" section need additional confirmation. You can write to current forum admin to expedite this.
+    - Posts in "Release notes" section often need additional confirmation. You can write to current forum admin to expedite this.
 
 You're done!
+
+### Releasing a minor / patch version for an old major
+
+This is for releasing e.g. 1.13.2 after 2.0 is released.
+Steps are the same as for releasing a normal version.
+The difference is that instead of `main` you need to use a version branch, which you may need to create (e.g. `branch-1.x`).
+Backport the necessary changes to this branch before making version bump commits.
+Please note that in step 9 you still need to use `main`, as described in the section about documentation.
 
 
 ## Writing release notes
@@ -196,6 +186,7 @@ not good as either PR titles or release notes entries.
 For that reason we hand-write our release notes, and link to relevant PRs in the entries.
 
 Some old release notes that you can take inspiration from when writing new ones:
+- https://github.com/scylladb/scylla-rust-driver/releases/tag/v1.0.0
 - https://github.com/scylladb/scylla-rust-driver/releases/tag/v0.10.0
 - https://github.com/scylladb/scylla-rust-driver/releases/tag/v0.14.0
 - https://github.com/scylladb/scylla-rust-driver/releases/tag/v0.11.0
@@ -207,25 +198,24 @@ Guidelines on how to write release notes:
 
 - Go over all the PRs / commits since previous release. Usually: `git log --first-parent` to see
   merge commits and commits that are directly on a branch. You can also try filtering
-  merged PRs on Github by merge date, but it's cumbersome.
+  merged PRs on GitHub by merge date, but it's cumbersome. Since 1.0 we try to assign each merged PR to a milestone,
+  which should make this process much easier - you can just go over e.g. https://github.com/scylladb/scylla-rust-driver/milestone/18?closed=1
 
-- Items in release notes will usually correspond 1:1 to PRs / comits - but not always. It is possible that
+- Items in release notes will usually correspond 1:1 to PRs / commits - but not always. It is possible that
   some functionality that should be a single item on the list is split over multiple PRs.
   It is also possible that single PR will be mentioned in two items.
 
-- Release notes for a a major version should contain all changes since the previous major version. Release notes for a minor version should contain all changes since previous version.
+- Release notes should contain all items since previous (in terms of semver) version released at the time. Items that were backported will be
+  duplicated between release notes for at least 2 different versions that way. This is fine, the backport should just be marked as such in release notes.
 
-- Release notes for **major** version should contain a table with number of commits per contributor.
-  You can generate this data with a command 
-  `git shortlog $(git merge-base main previous_version_tag)..HEAD -s -n`
-  (or `git shortlog previous_major_version_tag..HEAD -s -n`, assuming that a major
-  version tag is on a commit present in `main` branch, as it should be).
+- Release notes should contain a table with the number of non-backported commits per contributor.
+  Depending on the situation you may generate it with `git shortlog $(git merge-base main previous_version_tag)..HEAD -s -n` and manually subtracting
+  backported commits, or just `git shortlog previous_version_tag..HEAD -s -n` .
+  If it is too much work, or you can't figure out how to calculate it in particular situation, you can skip it.
   This table should not count version bump commits - subtract them from your
   row if you already created them.
 
-- Release notes for **minor** version should NOT contain the aforementioned list.
-
-- Remember to update the amount of crate downloads and Gtihub stars!
+- Remember to update the amount of crate downloads and GitHub stars!
 
 
 ## Release notes template
@@ -234,7 +224,7 @@ PR numbers in the list are random, they are just here to emphasize that entries
 should contain links to relevant PR / PRs.
 
 ```
-The ScyllaDB team is pleased to announce ScyllaDB Rust Driver 0.X.0,
+The ScyllaDB team is pleased to announce ScyllaDB Rust Driver X.Y.Z,
 an asynchronous CQL driver for Rust, optimized for Scylla, but also compatible with Apache Cassandra!
 
 Some interesting statistics:
@@ -244,13 +234,13 @@ Some interesting statistics:
 
 ## Changes
 
-**API cleanups / breaking changes:**
-- Some breaking change 1 ([123](https://github.com/scylladb/scylla-rust-driver/pull/123))
-- Some breaking change 2 ([123](https://github.com/scylladb/scylla-rust-driver/pull/123))
-
 **New features / enhancements:**
 - Some new feature 1 ([123](https://github.com/scylladb/scylla-rust-driver/pull/123))
 - Some new feature 2 ([123](https://github.com/scylladb/scylla-rust-driver/pull/123))
+
+**Bug fixes:**
+- Some bugfix 1 ([123](https://github.com/scylladb/scylla-rust-driver/pull/123))
+- Some bugfix 2 ([123](https://github.com/scylladb/scylla-rust-driver/pull/123))
 
 **Documentation:**
 - Doc update 1 ([123](https://github.com/scylladb/scylla-rust-driver/pull/123))
