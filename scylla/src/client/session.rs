@@ -911,7 +911,7 @@ impl Session {
             tcp_keepalive_interval: config.tcp_keepalive_interval,
             timestamp_generator: config.timestamp_generator,
             tls_provider,
-            authenticator: config.authenticator.clone(),
+            authenticator: config.authenticator,
             connect_timeout: config.connect_timeout,
             event_sender: None,
             default_consistency: Default::default(),
