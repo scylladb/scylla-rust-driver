@@ -179,7 +179,9 @@ impl Peer {
         }
     }
 
-    pub(crate) fn into_peer_endpoint_and_tokens(self) -> (PeerEndpoint, Vec<Token>) {
+    pub(crate) fn into_peer_endpoint_tokens_and_server_version(
+        self,
+    ) -> (PeerEndpoint, Vec<Token>, Option<String>) {
         (
             PeerEndpoint {
                 host_id: self.host_id,
@@ -188,6 +190,7 @@ impl Peer {
                 rack: self.rack,
             },
             self.tokens,
+            self.server_version,
         )
     }
 }

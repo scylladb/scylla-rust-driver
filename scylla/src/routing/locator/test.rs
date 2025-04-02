@@ -191,6 +191,7 @@ pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, A
     for peer in &metadata.peers {
         let node = Arc::new(Node::new(
             peer.to_peer_endpoint(),
+            None,
             &pool_config,
             None,
             true,

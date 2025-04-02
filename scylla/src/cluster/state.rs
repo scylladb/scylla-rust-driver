@@ -84,21 +84,28 @@ impl ClusterState {
 
             let node: Arc<Node> = match known_peers.get(&peer_host_id) {
                 Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
-                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
+                    let (peer_endpoint, tokens, server_version) =
+                        peer.into_peer_endpoint_tokens_and_server_version();
                     peer_tokens = tokens;
                     if node.address == peer_address {
                         node.clone()
                     } else {
                         // If IP changes, the Node struct is recreated, but the underlying pool is preserved and notified about the IP change.
-                        Arc::new(Node::inherit_with_ip_changed(node, peer_endpoint))
+                        Arc::new(Node::inherit_with_ip_changed(
+                            node,
+                            peer_endpoint,
+                            server_version,
+                        ))
                     }
                 }
                 _ => {
                     let is_enabled = host_filter.map_or(true, |f| f.accept(&peer));
-                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
+                    let (peer_endpoint, tokens, server_version) =
+                        peer.into_peer_endpoint_tokens_and_server_version();
                     peer_tokens = tokens;
                     Arc::new(Node::new(
                         peer_endpoint,
+                        server_version,
                         pool_config,
                         used_keyspace.clone(),
                         is_enabled,
