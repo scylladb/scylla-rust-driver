@@ -746,6 +746,9 @@ impl ControlConnection {
 #[scylla(crate = "scylla_cql")]
 struct NodeInfoRow {
     host_id: Option<Uuid>,
+    #[allow(dead_code)] // TODO: remove later
+    #[scylla(rename = "release_version")]
+    server_version: Option<String>,
     #[scylla(rename = "rpc_address")]
     untranslated_ip_addr: IpAddr,
     #[scylla(rename = "data_center")]
@@ -774,7 +777,7 @@ const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 impl ControlConnection {
     async fn query_peers(&self, connect_port: u16) -> Result<Vec<Peer>, MetadataError> {
         let mut peers_query = Statement::new(
-            "select host_id, rpc_address, data_center, rack, tokens from system.peers",
+            "select host_id, release_version, rpc_address, data_center, rack, tokens from system.peers",
         );
         peers_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
         let peers_query_stream = self
@@ -795,7 +798,7 @@ impl ControlConnection {
             .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
         let mut local_query =
-        Statement::new("select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'");
+        Statement::new("select host_id, release_version, rpc_address, data_center, rack, tokens from system.local WHERE key='local'");
         local_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
         let local_query_stream = self
             .query_iter(local_query)
@@ -847,6 +850,7 @@ impl ControlConnection {
     ) -> Option<Peer> {
         let NodeInfoRow {
             host_id,
+            server_version: _,
             untranslated_ip_addr,
             datacenter,
             rack,
