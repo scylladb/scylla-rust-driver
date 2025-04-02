@@ -273,6 +273,7 @@ impl<'id: 'map, 'map> SelfIdentity<'id> {
 /// using [ConnectionConfig::to_host_connection_config].
 #[derive(Clone)]
 pub(crate) struct ConnectionConfig {
+    pub(crate) local_ip_address: Option<IpAddr>,
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
@@ -307,6 +308,7 @@ impl ConnectionConfig {
             .and_then(|provider| provider.make_tls_config(endpoint));
 
         HostConnectionConfig {
+            local_ip_address: self.local_ip_address,
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
             tcp_keepalive_interval: self.tcp_keepalive_interval,
@@ -331,6 +333,7 @@ impl ConnectionConfig {
 /// Created from [ConnectionConfig] using [ConnectionConfig::to_host_connection_config].
 #[derive(Clone)]
 pub(crate) struct HostConnectionConfig {
+    pub(crate) local_ip_address: Option<IpAddr>,
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
@@ -355,6 +358,7 @@ pub(crate) struct HostConnectionConfig {
 impl Default for HostConnectionConfig {
     fn default() -> Self {
         Self {
+            local_ip_address: None,
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
@@ -382,6 +386,7 @@ impl Default for HostConnectionConfig {
 impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
+            local_ip_address: None,
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
@@ -419,17 +424,15 @@ impl Connection {
     /// Opens a connection and makes it ready to send/receive CQL frames on it,
     /// but does not yet send any frames (no OPTIONS/STARTUP handshake nor REGISTER requests).
     async fn new(
-        addr: SocketAddr,
+        connect_address: SocketAddr,
         source_port: Option<u16>,
         config: HostConnectionConfig,
     ) -> Result<(Self, ErrorReceiver), ConnectionError> {
-        let stream_connector = match source_port {
-            Some(p) => {
-                tokio::time::timeout(config.connect_timeout, connect_with_source_port(addr, p))
-                    .await
-            }
-            None => tokio::time::timeout(config.connect_timeout, TcpStream::connect(addr)).await,
-        };
+        let stream_connector = tokio::time::timeout(
+            config.connect_timeout,
+            connect_with_source_ip_and_port(connect_address, config.local_ip_address, source_port),
+        )
+        .await;
         let stream = match stream_connector {
             Ok(stream) => stream?,
             Err(_) => {
@@ -461,7 +464,7 @@ impl Connection {
             error_sender,
             orphan_notification_receiver,
             router_handle.clone(),
-            addr.ip(),
+            connect_address.ip(),
         )
         .await?;
 
@@ -469,7 +472,7 @@ impl Connection {
             _worker_handle,
             config,
             features: Default::default(),
-            connect_address: addr,
+            connect_address,
             router_handle,
         };
 
@@ -2034,26 +2037,28 @@ pub(super) async fn open_connection_to_shard_aware_port(
     Err(ConnectionError::NoSourcePortForShard(shard))
 }
 
-async fn connect_with_source_port(
-    addr: SocketAddr,
-    source_port: u16,
+async fn connect_with_source_ip_and_port(
+    connect_address: SocketAddr,
+    source_ip: Option<IpAddr>,
+    source_port: Option<u16>,
 ) -> Result<TcpStream, std::io::Error> {
-    match addr {
+    // Binding to port 0 is equivalent to choosing random ephemeral port.
+    let source_port = source_port.unwrap_or(0);
+
+    match connect_address {
         SocketAddr::V4(_) => {
+            // If source_ip not provided, bind to INADDR_ANY.
+            let source_ipv4 = source_ip.unwrap_or(Ipv4Addr::UNSPECIFIED.into());
             let socket = TcpSocket::new_v4()?;
-            socket.bind(SocketAddr::new(
-                Ipv4Addr::new(0, 0, 0, 0).into(),
-                source_port,
-            ))?;
-            Ok(socket.connect(addr).await?)
+            socket.bind(SocketAddr::new(source_ipv4, source_port))?;
+            Ok(socket.connect(connect_address).await?)
         }
         SocketAddr::V6(_) => {
+            // If source_ip not provided, bind to in6addr_any.
+            let source_ipv6 = source_ip.unwrap_or(Ipv6Addr::UNSPECIFIED.into());
             let socket = TcpSocket::new_v6()?;
-            socket.bind(SocketAddr::new(
-                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0).into(),
-                source_port,
-            ))?;
-            Ok(socket.connect(addr).await?)
+            socket.bind(SocketAddr::new(source_ipv6, source_port))?;
+            Ok(socket.connect(connect_address).await?)
         }
     }
 }
