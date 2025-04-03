@@ -108,14 +108,12 @@ impl ControlConnection {
                     NextRowError::NextPageError(NextPageError::RequestFailure(attempt_err.into()))
                 })?;
 
-        let serialized_values = prepared.serialize_values(&values).map_err(|ser_err| {
+        let bound = prepared.into_bind(&values).map_err(|ser_err| {
             NextRowError::NextPageError(NextPageError::RequestFailure(
                 RequestError::LastAttemptError(RequestAttemptError::SerializationError(ser_err)),
             ))
         })?;
-        Arc::clone(&self.conn)
-            .execute_iter(prepared, serialized_values)
-            .await
+        Arc::clone(&self.conn).execute_iter(bound).await
     }
 }
 
