@@ -28,6 +28,7 @@ use crate::response::{
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
 use crate::statement::batch::{Batch, BatchStatement};
+use crate::statement::bound::BoundStatement;
 use crate::statement::prepared::PreparedStatement;
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
@@ -915,11 +916,10 @@ impl Connection {
     #[allow(dead_code)]
     pub(crate) async fn execute_unpaged(
         &self,
-        prepared: &PreparedStatement,
-        values: SerializedValues,
+        statement: &BoundStatement,
     ) -> Result<QueryResult, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.execute_raw_unpaged(prepared, values)
+        self.execute_raw_unpaged(statement)
             .await
             .and_then(QueryResponse::into_query_result)
     }
@@ -927,17 +927,16 @@ impl Connection {
     #[allow(dead_code)]
     pub(crate) async fn execute_raw_unpaged(
         &self,
-        prepared: &PreparedStatement,
-        values: SerializedValues,
+        statement: &BoundStatement,
     ) -> Result<QueryResponse, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
-            prepared,
-            &values,
-            prepared
+            statement,
+            statement
+                .prepared
                 .config
                 .determine_consistency(self.config.default_consistency),
-            prepared.config.serial_consistency.flatten(),
+            statement.prepared.config.serial_consistency.flatten(),
             None,
             PagingState::start(),
         )
@@ -946,8 +945,7 @@ impl Connection {
 
     pub(crate) async fn execute_raw_with_consistency(
         &self,
-        prepared_statement: &PreparedStatement,
-        values: &SerializedValues,
+        statement: &BoundStatement,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
@@ -959,37 +957,39 @@ impl Connection {
                 .as_ref()
                 .map(|gen| gen.next_timestamp())
         };
-        let timestamp = prepared_statement
+        let timestamp = statement
+            .prepared
             .get_timestamp()
             .or_else(get_timestamp_from_gen);
 
         let execute_frame = execute::Execute {
-            id: prepared_statement.get_id().to_owned(),
+            id: statement.prepared.get_id().to_owned(),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: Cow::Borrowed(values),
+                values: Cow::Borrowed(&statement.values),
                 page_size: page_size.map(Into::into),
                 timestamp,
-                skip_metadata: prepared_statement.get_use_cached_result_metadata(),
+                skip_metadata: statement.prepared.get_use_cached_result_metadata(),
                 paging_state,
             },
         };
 
-        let cached_metadata = prepared_statement
+        let cached_metadata = statement
+            .prepared
             .get_use_cached_result_metadata()
-            .then(|| prepared_statement.get_result_metadata());
+            .then(|| statement.prepared.get_result_metadata());
 
         let query_response = self
             .send_request(
                 &execute_frame,
                 true,
-                prepared_statement.config.tracing,
+                statement.prepared.config.tracing,
                 cached_metadata,
             )
             .await?;
 
-        if let Some(spec) = prepared_statement.get_table_spec() {
+        if let Some(spec) = statement.prepared.get_table_spec() {
             if let Err(e) = self
                 .update_tablets_from_response(spec, &query_response)
                 .await
@@ -1005,18 +1005,18 @@ impl Connection {
             }) => {
                 debug!("Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
                 // Repreparation of a statement is needed
-                self.reprepare(prepared_statement.get_statement(), prepared_statement)
+                self.reprepare(statement.prepared.get_statement(), &statement.prepared)
                     .await?;
                 let new_response = self
                     .send_request(
                         &execute_frame,
                         true,
-                        prepared_statement.config.tracing,
+                        statement.prepared.config.tracing,
                         cached_metadata,
                     )
                     .await?;
 
-                if let Some(spec) = prepared_statement.get_table_spec() {
+                if let Some(spec) = statement.prepared.get_table_spec() {
                     if let Err(e) = self.update_tablets_from_response(spec, &new_response).await {
                         tracing::warn!(
                             "Error while parsing tablet info from custom payload: {}",
@@ -1051,17 +1051,16 @@ impl Connection {
     /// the asynchronous iterator interface.
     pub(crate) async fn execute_iter(
         self: Arc<Self>,
-        prepared_statement: PreparedStatement,
-        values: SerializedValues,
+        statement: BoundStatement,
     ) -> Result<QueryPager, NextRowError> {
-        let consistency = prepared_statement
+        let consistency = statement
+            .prepared
             .config
             .determine_consistency(self.config.default_consistency);
-        let serial_consistency = prepared_statement.config.serial_consistency.flatten();
+        let serial_consistency = statement.prepared.config.serial_consistency.flatten();
 
         QueryPager::new_for_connection_execute_iter(
-            prepared_statement,
-            values,
+            statement,
             self,
             consistency,
             serial_consistency,
@@ -2387,8 +2386,9 @@ mod tests {
         let prepared = connection.prepare(&insert_query).await.unwrap();
         let mut insert_futures = Vec::new();
         for v in &values {
-            let values = prepared.serialize_values(&(*v,)).unwrap();
-            let fut = async { connection.execute_raw_unpaged(&prepared, values).await };
+            let statement = prepared.clone().bind(&(*v,)).unwrap();
+            let connection = &connection;
+            let fut = async move { connection.execute_raw_unpaged(&statement).await };
             insert_futures.push(fut);
         }
 
@@ -2492,11 +2492,8 @@ mod tests {
                         let conn = conn.clone();
                         async move {
                             let prepared = conn.prepare(&q).await.unwrap();
-                            let values = prepared
-                                .serialize_values(&(j, vec![j as u8; j as usize]))
-                                .unwrap();
-                            let response =
-                                conn.execute_raw_unpaged(&prepared, values).await.unwrap();
+                            let statement = prepared.bind(&(j, vec![j as u8; j as usize])).unwrap();
+                            let response = conn.execute_raw_unpaged(&statement).await.unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
                             let _nonerror_response =
                                 response.into_non_error_query_response().unwrap();
