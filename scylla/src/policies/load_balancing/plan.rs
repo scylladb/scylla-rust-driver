@@ -227,6 +227,7 @@ mod tests {
         let locator = create_locator(&mock_metadata_for_token_aware_tests());
         let cluster_state = ClusterState {
             known_peers: Default::default(),
+            all_nodes: Default::default(),
             keyspaces: Default::default(),
             locator,
         };

@@ -21,8 +21,26 @@ use super::node::{Node, NodeRef};
 
 #[derive(Clone)]
 pub struct ClusterState {
+    /// All nodes known to be part of the cluster, accessible by their host ID.
+    /// Often refered to as "topology metadata".
     pub(crate) known_peers: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+
+    /// Contains the same set of nodes as `known_peers`.
+    ///
+    /// Introduced to fix the bug that zero-token nodes were missing from
+    /// `ClusterState::get_nodes_info()` slice, because the slice was borrowed
+    /// from `ReplicaLocator`, which only contains nodes with some tokens assigned.
+    // TODO: in 2.0, make `get_nodes_info()` return `Iterator` instead of a slice.
+    // Then, remove this field.
+    pub(crate) all_nodes: Vec<Arc<Node>>,
+
+    /// All keyspaces in the cluster, accessible by their name.
+    /// Often refered to as "schema metadata".
     pub(crate) keyspaces: HashMap<String, Keyspace>,
+
+    /// The entity which provides a way to find the set of owning nodes (+shards, in case of ScyllaDB)
+    /// for a given (token, replication strategy, table) tuple.
+    /// It relies on both topology and schema metadata.
     pub(crate) locator: ReplicaLocator,
 }
 
@@ -191,6 +209,7 @@ impl ClusterState {
         .unwrap();
 
         ClusterState {
+            all_nodes: new_known_peers.values().cloned().collect(),
             known_peers: new_known_peers,
             keyspaces,
             locator,
@@ -209,7 +228,7 @@ impl ClusterState {
 
     /// Access details about nodes known to the driver
     pub fn get_nodes_info(&self) -> &[Arc<Node>] {
-        self.locator.unique_nodes_in_global_ring()
+        &self.all_nodes
     }
 
     /// Compute token of a table partition key

@@ -313,7 +313,7 @@ impl ClusterWorker {
                             _ => continue, // Don't go to refreshing
                         }
                     } else {
-                        // If server_events_channel was closed, than TopologyReader was dropped,
+                        // If server_events_channel was closed, than MetadataReader was dropped,
                         // so we can probably stop working too
                         return;
                     }
@@ -355,7 +355,7 @@ impl ClusterWorker {
             }
 
             // Perform the refresh
-            debug!("Requesting topology refresh");
+            debug!("Requesting metadata refresh");
             last_refresh_time = Instant::now();
             let refresh_res = self.perform_refresh().await;
 
