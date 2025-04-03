@@ -1,8 +1,10 @@
 pub mod authenticate;
 pub mod error;
 pub mod event;
+pub mod new_type_parser;
 pub mod result;
 pub mod supported;
+pub mod type_parser;
 
 use std::sync::Arc;
 
