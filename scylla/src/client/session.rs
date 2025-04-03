@@ -37,6 +37,7 @@ use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, ShardAwarePortRange};
 use crate::statement::batch::batch_values;
 use crate::statement::batch::{Batch, BatchStatement};
+use crate::statement::bound::BoundStatement;
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize, StatementConfig};
@@ -46,7 +47,7 @@ use futures::future::try_join_all;
 use itertools::Itertools;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::serialize::batch::BatchValues;
-use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
+use scylla_cql::serialize::row::SerializeRow;
 use std::borrow::Borrow;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
@@ -637,7 +638,8 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
-        self.do_execute_unpaged(prepared, values).await
+        let bound = prepared.bind(&values)?;
+        self.do_execute_unpaged(&bound).await
     }
 
     /// Executes a prepared statement, restricting results to single page.
@@ -702,8 +704,8 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.do_execute_single_page(prepared, values, paging_state)
-            .await
+        let bound = prepared.bind(&values)?;
+        self.do_execute_single_page(&bound, paging_state).await
     }
 
     /// Execute a prepared statement with paging.\
@@ -750,7 +752,8 @@ impl Session {
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
-        self.do_execute_iter(prepared.into(), values).await
+        let bound = prepared.into().into_bind(&values)?;
+        self.do_execute_iter(bound).await
     }
 
     /// Execute a batch statement\
@@ -1083,12 +1086,11 @@ impl Session {
                                 .and_then(QueryResponse::into_non_error_query_response)
                         } else {
                             let prepared = connection.prepare(statement).await?;
-                            let serialized = prepared.serialize_values(values_ref)?;
-                            span_ref.record_request_size(serialized.buffer_size());
+                            let bound = prepared.bind(values_ref)?;
+                            span_ref.record_request_size(bound.values.buffer_size());
                             connection
                                 .execute_raw_with_consistency(
-                                    &prepared,
-                                    &serialized,
+                                    &bound,
                                     consistency,
                                     serial_consistency,
                                     page_size,
@@ -1181,11 +1183,9 @@ impl Session {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
             // we fully prepare a statement beforehand.
-            let prepared = self.prepare(statement).await?;
-            let values = prepared.serialize_values(&values)?;
+            let bound = self.prepare(statement).await?.into_bind(&values)?;
             QueryPager::new_for_prepared_statement(PreparedPagerConfig {
-                prepared,
-                values,
+                bound,
                 execution_profile,
                 cluster_state: self.cluster.get_state(),
                 #[cfg(feature = "metrics")]
@@ -1293,13 +1293,9 @@ impl Session {
 
     async fn do_execute_unpaged(
         &self,
-        prepared: &PreparedStatement,
-        values: impl SerializeRow,
+        bound: &BoundStatement<'_>,
     ) -> Result<QueryResult, ExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-        let (result, paging_state) = self
-            .execute(prepared, &serialized_values, None, PagingState::start())
-            .await?;
+        let (result, paging_state) = self.execute(bound, None, PagingState::start()).await?;
         if !paging_state.finished() {
             error!("Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
             return Err(ExecutionError::LastAttemptError(
@@ -1311,14 +1307,11 @@ impl Session {
 
     async fn do_execute_single_page(
         &self,
-        prepared: &PreparedStatement,
-        values: impl SerializeRow,
+        bound: &BoundStatement<'_>,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-        let page_size = prepared.get_validated_page_size();
-        self.execute(prepared, &serialized_values, Some(page_size), paging_state)
-            .await
+        let page_size = bound.prepared.get_validated_page_size();
+        self.execute(bound, Some(page_size), paging_state).await
     }
 
     /// Sends a prepared request to the database, optionally continuing from a saved point.
@@ -1333,44 +1326,45 @@ impl Session {
     /// should be made.
     async fn execute(
         &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
+        bound: &BoundStatement<'_>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
-        let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)
+        let (partition_key, token) = bound
+            .pk_and_token()
             .map_err(PartitionKeyError::into_execution_error)?
             .unzip();
 
-        let execution_profile = prepared
+        let execution_profile = bound
+            .prepared
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let table_spec = prepared.get_table_spec();
+        let table_spec = bound.prepared.get_table_spec();
 
         let statement_info = RoutingInfo {
-            consistency: prepared
+            consistency: bound
+                .prepared
                 .config
                 .consistency
                 .unwrap_or(execution_profile.consistency),
-            serial_consistency: prepared
+            serial_consistency: bound
+                .prepared
                 .config
                 .serial_consistency
                 .unwrap_or(execution_profile.serial_consistency),
             token,
             table: table_spec,
-            is_confirmed_lwt: prepared.is_confirmed_lwt(),
+            is_confirmed_lwt: bound.prepared.is_confirmed_lwt(),
         };
 
         let span = RequestSpan::new_prepared(
             partition_key.as_ref().map(|pk| pk.iter()),
             token,
-            serialized_values.buffer_size(),
+            bound.values.buffer_size(),
         );
 
         if !span.span().is_disabled() {
@@ -1384,20 +1378,20 @@ impl Session {
         let run_request_result: RunRequestResult<NonErrorQueryResponse> = self
             .run_request(
                 statement_info,
-                &prepared.config,
+                &bound.prepared.config,
                 execution_profile,
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = prepared
+                    let serial_consistency = bound
+                        .prepared
                         .config
                         .serial_consistency
                         .unwrap_or(execution_profile.serial_consistency);
                     async move {
                         connection
                             .execute_raw_with_consistency(
-                                prepared,
-                                values_ref,
+                                bound,
                                 consistency,
                                 serial_consistency,
                                 page_size,
@@ -1432,19 +1426,16 @@ impl Session {
 
     async fn do_execute_iter(
         &self,
-        prepared: PreparedStatement,
-        values: impl SerializeRow,
+        bound: BoundStatement<'static>,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-
-        let execution_profile = prepared
+        let execution_profile = bound
+            .prepared
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
         QueryPager::new_for_prepared_statement(PreparedPagerConfig {
-            prepared,
-            values: serialized_values,
+            bound,
             execution_profile,
             cluster_state: self.cluster.get_state(),
             #[cfg(feature = "metrics")]

@@ -15,6 +15,7 @@ use crate::policies::load_balancing::LoadBalancingPolicy;
 use crate::policies::retry::RetryPolicy;
 
 pub mod batch;
+pub mod bound;
 pub mod prepared;
 pub mod unprepared;
 
