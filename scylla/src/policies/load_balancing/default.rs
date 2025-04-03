@@ -1420,12 +1420,14 @@ mod tests {
                     address: id_to_invalid_addr(*id),
                     tokens: vec![Token::new(*id as i64 * 100)],
                     host_id: Uuid::new_v4(),
+                    server_version: None,
                 })
                 .collect::<Vec<_>>();
 
             let info = Metadata {
                 peers,
                 keyspaces: HashMap::new(),
+                cluster_version: None,
             };
 
             ClusterState::new(
