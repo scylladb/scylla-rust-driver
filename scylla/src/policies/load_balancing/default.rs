@@ -2862,7 +2862,7 @@ mod latency_awareness {
                 | RequestAttemptError::DbError(DbError::IsBootstrapping, _)
                 | RequestAttemptError::DbError(DbError::Unavailable { .. }, _)
                 | RequestAttemptError::DbError(DbError::Unprepared { .. }, _)
-                | RequestAttemptError::DbError(DbError::Overloaded { .. }, _)
+                | RequestAttemptError::DbError(DbError::Overloaded, _)
                 | RequestAttemptError::DbError(DbError::RateLimitReached { .. }, _)
                 | RequestAttemptError::SerializationError(_) => false,
 
