@@ -21,8 +21,17 @@ use super::node::{Node, NodeRef};
 
 #[derive(Clone)]
 pub struct ClusterState {
+    /// All nodes known to be part of the cluster, accessible by their host ID.
+    /// Often refered to as "topology metadata".
     pub(crate) known_peers: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+
+    /// All keyspaces in the cluster, accessible by their name.
+    /// Often refered to as "schema metadata".
     pub(crate) keyspaces: HashMap<String, Keyspace>,
+
+    /// The entity which provides a way to find the set of owning nodes (+shards, in case of ScyllaDB)
+    /// for a given (token, replication strategy, table) tuple.
+    /// It relies on both topology and schema metadata.
     pub(crate) locator: ReplicaLocator,
 }
 
