@@ -25,6 +25,7 @@ use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, PagingState
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
 use crate::statement::batch::{Batch, BatchStatement};
+use crate::statement::bound::BoundStatement;
 use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
@@ -890,19 +891,18 @@ impl Connection {
     }
 
     #[cfg(test)]
-    async fn execute_raw_unpaged(
+    pub(crate) async fn execute_raw_unpaged(
         &self,
-        prepared: &PreparedStatement,
-        values: SerializedValues,
+        bound: &BoundStatement<'_>,
     ) -> Result<QueryResponse, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
-            prepared,
-            &values,
-            prepared
+            bound,
+            bound
+                .prepared
                 .config
                 .determine_consistency(self.config.default_consistency),
-            prepared.config.serial_consistency.flatten(),
+            bound.prepared.config.serial_consistency.flatten(),
             None,
             PagingState::start(),
         )
@@ -956,8 +956,7 @@ impl Connection {
 
     pub(crate) async fn execute_raw_with_consistency(
         &self,
-        prepared_statement: &PreparedStatement,
-        values: &SerializedValues,
+        bound: &BoundStatement<'_>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
@@ -969,7 +968,8 @@ impl Connection {
                 .as_ref()
                 .map(|generator| generator.next_timestamp())
         };
-        let timestamp = prepared_statement
+        let timestamp = bound
+            .prepared
             .get_timestamp()
             .or_else(get_timestamp_from_gen);
 
@@ -978,20 +978,19 @@ impl Connection {
         // If the metadata id extension is supported, there is no point in not caching metadata,
         // so we ignore the setting on prepared statement.
         let skip_metadata =
-            prepared_statement.get_use_cached_result_metadata() || has_metadata_extension;
+            bound.prepared.get_use_cached_result_metadata() || has_metadata_extension;
 
-        let cached_metadata =
-            skip_metadata.then(|| prepared_statement.get_current_result_metadata());
+        let cached_metadata = skip_metadata.then(|| bound.prepared.get_current_result_metadata());
 
         let result_id = Self::get_result_id(&cached_metadata, has_metadata_extension);
 
         let execute_frame = execute::ExecuteV2 {
-            id: prepared_statement.get_id().as_ref().into(),
+            id: bound.prepared.get_id().as_ref().into(),
             result_metadata_id: result_id.map(Into::into),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: Cow::Borrowed(values),
+                values: Cow::Borrowed(&bound.values),
                 page_size: page_size.map(Into::into),
                 timestamp,
                 skip_metadata,
@@ -1003,12 +1002,12 @@ impl Connection {
             .send_request(
                 &execute_frame,
                 true,
-                prepared_statement.config.tracing,
+                bound.prepared.config.tracing,
                 cached_metadata.as_ref(),
             )
             .await?;
 
-        if let Some(spec) = prepared_statement.get_table_spec() {
+        if let Some(spec) = bound.prepared.get_table_spec() {
             if let Err(e) = self
                 .update_tablets_from_response(spec, &query_response)
                 .await
@@ -1017,7 +1016,7 @@ impl Connection {
             }
         }
 
-        Self::handle_result_metadata_new_id(prepared_statement, &query_response);
+        Self::handle_result_metadata_new_id(&bound.prepared, &query_response);
 
         match &query_response.response {
             ResponseWithDeserializedMetadata::Error(frame::response::Error {
@@ -1029,11 +1028,11 @@ impl Connection {
                     statement_id
                 );
                 // Repreparation of a statement is needed
-                self.reprepare(prepared_statement.get_statement(), prepared_statement)
+                self.reprepare(bound.prepared.get_statement(), &bound.prepared)
                     .await?;
                 // Metadata may have changed in reprepare, or in some concurrent execution
                 let cached_metadata =
-                    skip_metadata.then(|| prepared_statement.get_current_result_metadata());
+                    skip_metadata.then(|| bound.prepared.get_current_result_metadata());
                 let result_id = Self::get_result_id(&cached_metadata, has_metadata_extension);
                 let new_response = self
                     .send_request(
@@ -1042,12 +1041,12 @@ impl Connection {
                             ..execute_frame
                         },
                         true,
-                        prepared_statement.config.tracing,
+                        bound.prepared.config.tracing,
                         cached_metadata.as_ref(),
                     )
                     .await?;
 
-                if let Some(spec) = prepared_statement.get_table_spec() {
+                if let Some(spec) = bound.prepared.get_table_spec() {
                     if let Err(e) = self.update_tablets_from_response(spec, &new_response).await {
                         tracing::warn!(
                             "Error while parsing tablet info from custom payload: {}",
@@ -1056,7 +1055,7 @@ impl Connection {
                     }
                 }
 
-                Self::handle_result_metadata_new_id(prepared_statement, &new_response);
+                Self::handle_result_metadata_new_id(&bound.prepared, &new_response);
 
                 Ok(new_response)
             }
@@ -1084,23 +1083,17 @@ impl Connection {
     /// the asynchronous iterator interface.
     pub(crate) async fn execute_iter(
         self: Arc<Self>,
-        prepared_statement: PreparedStatement,
-        values: SerializedValues,
+        bound: BoundStatement<'static>,
     ) -> Result<QueryPager, NextRowError> {
-        let consistency = prepared_statement
+        let consistency = bound
+            .prepared
             .config
             .determine_consistency(self.config.default_consistency);
-        let serial_consistency = prepared_statement.config.serial_consistency.flatten();
+        let serial_consistency = bound.prepared.config.serial_consistency.flatten();
 
-        QueryPager::new_for_connection_execute_iter(
-            prepared_statement,
-            values,
-            self,
-            consistency,
-            serial_consistency,
-        )
-        .await
-        .map_err(NextRowError::NextPageError)
+        QueryPager::new_for_connection_execute_iter(bound, self, consistency, serial_consistency)
+            .await
+            .map_err(NextRowError::NextPageError)
     }
 
     pub(crate) async fn batch_with_consistency(
@@ -2405,8 +2398,9 @@ mod tests {
         let prepared = connection.prepare(&insert_query).await.unwrap();
         let mut insert_futures = Vec::new();
         for v in &values {
-            let values = prepared.serialize_values(&(*v,)).unwrap();
-            let fut = async { connection.execute_raw_unpaged(&prepared, values).await };
+            let bound = prepared.bind(&(*v,)).unwrap();
+            let connection = &connection;
+            let fut = async move { connection.execute_raw_unpaged(&bound).await };
             insert_futures.push(fut);
         }
 
@@ -2512,11 +2506,8 @@ mod tests {
                         let conn = conn.clone();
                         async move {
                             let prepared = conn.prepare(&q).await.unwrap();
-                            let values = prepared
-                                .serialize_values(&(j, vec![j as u8; j as usize]))
-                                .unwrap();
-                            let response =
-                                conn.execute_raw_unpaged(&prepared, values).await.unwrap();
+                            let bound = prepared.bind(&(j, vec![j as u8; j as usize])).unwrap();
+                            let response = conn.execute_raw_unpaged(&bound).await.unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
                             let _nonerror_response =
                                 response.into_non_error_query_response().unwrap();
