@@ -209,8 +209,8 @@ Guidelines on how to write release notes:
   duplicated between release notes for at least 2 different versions that way. This is fine, the backport should just be marked as such in release notes.
 
 - Release notes should contain a table with the number of non-backported commits per contributor.
-  Depending on the situation you may generate it with `git shortlog $(git merge-base main previous_version_tag)..HEAD -s -n` and manually subtracting
-  backported commits, or just `git shortlog previous_version_tag..HEAD -s -n` .
+  Depending on the situation you may generate it with `git shortlog --no-merges $(git merge-base main previous_version_tag)..HEAD -s -n` and manually subtracting
+  backported commits, or just `git shortlog --no-merges previous_version_tag..HEAD -s -n` .
   If it is too much work, or you can't figure out how to calculate it in particular situation, you can skip it.
   This table should not count version bump commits - subtract them from your
   row if you already created them.
