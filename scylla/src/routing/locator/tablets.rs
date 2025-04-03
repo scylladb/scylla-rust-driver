@@ -524,6 +524,7 @@ impl TabletsInfo {
             .add_tablet(tablet)
     }
 
+    #[allow(clippy::doc_overindented_list_items)]
     /// This method is supposed to be called when topology is updated.
     /// It goes through tablet info and adjusts it to topology changes, to prevent
     /// a situation where local tablet info and a real one are permanently different.
@@ -569,15 +570,15 @@ impl TabletsInfo {
     /// still result in permanent difference between local and real tablet info:
     ///
     /// * Extending replica list for a tablet: If a new replica is added to replica list,
-    ///     then we won't learn about it, because we'll keep querying current replicas, which are
-    ///     still replicas. I'm not sure if this can happen. The only scenario where this seems
-    ///     possible is increasing RF - I'm not sure if this would only add replicas or make more changes.
-    ///     We could probably discover it by comparing replication strategy pre and post topology referesh
-    ///     and if it changed then remove tablet info for this keyspace.
+    ///   then we won't learn about it, because we'll keep querying current replicas, which are
+    ///   still replicas. I'm not sure if this can happen. The only scenario where this seems
+    ///   possible is increasing RF - I'm not sure if this would only add replicas or make more changes.
+    ///   We could probably discover it by comparing replication strategy pre and post topology referesh
+    ///   and if it changed then remove tablet info for this keyspace.
     ///
     /// * Removing the keyspace and recreating it immediately without tablets. This seems so absurd
-    ///     that we most likely don't need to worry about it, but I'm putting it here as a potential problem
-    ///     for completeness.
+    ///   that we most likely don't need to worry about it, but I'm putting it here as a potential problem
+    ///   for completeness.
     pub(crate) fn perform_maintenance(
         &mut self,
         table_predicate: &impl Fn(&TableSpec) -> bool,
