@@ -1,6 +1,6 @@
 [package]
 name = "scylla-macros"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.70"
 description = "proc macros for scylla async CQL driver"
@@ -23,5 +23,5 @@ unnameable_types = "warn"
 unreachable_pub = "warn"
 
 [dev-dependencies]
-scylla = { path = "../scylla"}
-scylla-cql = { path = "../scylla-cql"}
+scylla = { path = "../scylla" }
+scylla-cql = { path = "../scylla-cql" }
