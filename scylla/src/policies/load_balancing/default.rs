@@ -14,8 +14,6 @@ use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, rng, Rng};
 use rand_pcg::Pcg32;
 use scylla_cql::frame::response::result::TableSpec;
-use scylla_cql::frame::types::SerialConsistency;
-use scylla_cql::Consistency;
 use std::hash::{Hash, Hasher};
 use std::{fmt, sync::Arc, time::Duration};
 use tracing::{debug, warn};
@@ -243,9 +241,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             }
 
             // If preferred datacenter is not specified, or if datacenter failover is possible, loosen restriction about locality.
-            if self.preferences.datacenter().is_none()
-                || self.is_datacenter_failover_possible(&routing_info)
-            {
+            if self.preferences.datacenter().is_none() || self.is_datacenter_failover_possible() {
                 // Try to pick some alive random replica.
                 let picked = self.pick_replica(
                     ts,
@@ -300,7 +296,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
         // If a datacenter failover is possible, loosen restriction about locality.
-        if self.is_datacenter_failover_possible(&routing_info) {
+        if self.is_datacenter_failover_possible() {
             let maybe_remote_node_picked =
                 self.pick_node(all_nodes, |node| (self.pick_predicate)(node, None));
             if let Some(alive_maybe_remote_node) = maybe_remote_node_picked {
@@ -318,7 +314,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         }
 
         // If a datacenter failover is possible, loosen restriction about locality.
-        if self.is_datacenter_failover_possible(&routing_info) {
+        if self.is_datacenter_failover_possible() {
             let maybe_down_maybe_remote_node_picked =
                 self.pick_node(all_nodes, |node| node.is_enabled());
             if let Some(down_but_enabled_maybe_remote_node) = maybe_down_maybe_remote_node_picked {
@@ -394,7 +390,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
             // If no datacenter is preferred, or datacenter failover is possible, loosen restriction about locality.
             let maybe_remote_replicas = if self.preferences.datacenter().is_none()
-                || self.is_datacenter_failover_possible(&routing_info)
+                || self.is_datacenter_failover_possible()
             {
                 // Iterator over alive replicas (shuffled or deterministically ordered,
                 // depending on the statement being LWT or not).
@@ -454,7 +450,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
 
         // If a datacenter failover is possible, loosen restriction about locality.
-        let maybe_remote_nodes = if self.is_datacenter_failover_possible(&routing_info) {
+        let maybe_remote_nodes = if self.is_datacenter_failover_possible() {
             let robinned_all_nodes =
                 self.round_robin_nodes(all_nodes, |node| Self::is_alive(node, None));
 
@@ -470,7 +466,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             .map(|node| (node, None));
 
         // If a datacenter failover is possible, loosen restriction about locality.
-        let maybe_down_nodes = if self.is_datacenter_failover_possible(&routing_info) {
+        let maybe_down_nodes = if self.is_datacenter_failover_possible() {
             Either::Left(
                 all_nodes
                     .iter()
@@ -910,10 +906,8 @@ impl DefaultPolicy {
     }
 
     /// Returns true iff the datacenter failover is permitted for the statement being executed.
-    fn is_datacenter_failover_possible(&self, routing_info: &ProcessedRoutingInfo) -> bool {
-        self.preferences.datacenter().is_some()
-            && self.permit_dc_failover
-            && !routing_info.local_consistency
+    fn is_datacenter_failover_possible(&self) -> bool {
+        self.preferences.datacenter().is_some() && self.permit_dc_failover
     }
 }
 
@@ -1122,23 +1116,12 @@ impl Default for DefaultPolicyBuilder {
 
 struct ProcessedRoutingInfo<'a> {
     token_with_strategy: Option<TokenWithStrategy<'a>>,
-
-    // True if one of LOCAL_ONE, LOCAL_QUORUM, LOCAL_SERIAL was requested
-    local_consistency: bool,
 }
 
 impl<'a> ProcessedRoutingInfo<'a> {
     fn new(query: &'a RoutingInfo, cluster: &'a ClusterState) -> ProcessedRoutingInfo<'a> {
-        let local_consistency = matches!(
-            (query.consistency, query.serial_consistency),
-            (Consistency::LocalQuorum, _)
-                | (Consistency::LocalOne, _)
-                | (_, Some(SerialConsistency::LocalSerial))
-        );
-
         Self {
             token_with_strategy: TokenWithStrategy::new(query, cluster),
-            local_consistency,
         }
     }
 }
@@ -1618,27 +1601,30 @@ mod tests {
                     .group([E]) // remote nodes
                     .build(),
             },
-            // Keyspace NTS with RF=2 with DC failover forbidden by local Consistency
+            // Keyspace NTS with RF=2 with DC with local Consistency. DC failover should still work.
             Test {
                 policy: DefaultPolicy {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
                     table: Some(TABLE_NTS_RF_2),
-                    consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
+                    consistency: Consistency::LocalOne,
                     ..Default::default()
                 },
                 // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
-                    .group([A, G]) // pick + fallback local replicas
+                    .deterministic([A, G]) // pick + fallback local replicas
+                    .deterministic([F, D]) // remote replicas
                     .group([C, B]) // local nodes
-                    .build(), // failover is forbidden by local Consistency
+                    .group([E]) // remote nodes
+                    .build(),
             },
             // Keyspace NTS with RF=2 with explicitly disabled DC failover
             Test {
@@ -1757,7 +1743,7 @@ mod tests {
                     .group([D, E]) // remote nodes
                     .build(),
             },
-            // Keyspace SS with RF=2 with DC failover forbidden by local Consistency
+            // Keyspace SS with RF=2 with DC failover and local Consistency. DC failover should still work.
             Test {
                 policy: DefaultPolicy {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
@@ -1768,16 +1754,21 @@ mod tests {
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
                     table: Some(TABLE_SS_RF_2),
-                    consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
+                    consistency: Consistency::LocalOne,
                     ..Default::default()
                 },
                 // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
                     .group([A]) // pick + fallback local replicas
+                    .group([F]) // remote replicas
                     .group([C, G, B]) // local nodes
-                    .build(), // failover is forbidden by local Consistency
+                    .group([D, E]) // remote nodes
+                    .build(),
             },
             // No token implies no token awareness
             Test {
@@ -2092,7 +2083,7 @@ mod tests {
                     .group([E]) // remote nodes
                     .build(),
             },
-            // Keyspace NTS with RF=2 with DC failover forbidden by local Consistency
+            // Keyspace NTS with RF=2 with DC failover and local Consistency. DC failover should still work.
             Test {
                 policy: DefaultPolicy {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
@@ -2103,7 +2094,7 @@ mod tests {
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
                     table: Some(TABLE_NTS_RF_2),
-                    consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
+                    consistency: Consistency::LocalOne,
                     is_confirmed_lwt: true,
                     ..Default::default()
                 },
@@ -2112,8 +2103,10 @@ mod tests {
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
                     .ordered([A, G]) // pick + fallback local replicas
+                    .ordered([F, D]) // remote replicas
                     .group([C, B]) // local nodes
-                    .build(), // failover is forbidden by local Consistency
+                    .group([E]) // remote nodes
+                    .build(),
             },
             // Keyspace NTS with RF=2 with explicitly disabled DC failover
             Test {
@@ -2237,7 +2230,7 @@ mod tests {
                     .group([D, E]) // remote nodes
                     .build(),
             },
-            // Keyspace SS with RF=2 with DC failover forbidden by local Consistency
+            // Keyspace SS with RF=2 with DC failover and local Consistency. DC failover should still work.
             Test {
                 policy: DefaultPolicy {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
@@ -2248,7 +2241,7 @@ mod tests {
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
                     table: Some(TABLE_SS_RF_2),
-                    consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
+                    consistency: Consistency::LocalOne,
                     is_confirmed_lwt: true,
                     ..Default::default()
                 },
@@ -2257,8 +2250,10 @@ mod tests {
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
                     .ordered([A]) // pick + fallback local replicas
+                    .ordered([F]) // remote replicas
                     .group([C, G, B]) // local nodes
-                    .build(), // failover is forbidden by local Consistency
+                    .group([D, E]) // remote nodes
+                    .build(),
             },
             // No token implies no token awareness
             Test {
