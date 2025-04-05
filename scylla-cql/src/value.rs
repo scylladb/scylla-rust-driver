@@ -42,6 +42,10 @@ pub struct CqlTimeuuid(Uuid);
 
 /// [`Uuid`] delegate methods
 impl CqlTimeuuid {
+    pub fn nil() -> Self {
+        Self(Uuid::nil())
+    }
+
     pub fn as_bytes(&self) -> &[u8; 16] {
         self.0.as_bytes()
     }
@@ -1404,6 +1408,14 @@ mod tests {
         let uuid = CqlTimeuuid::from_str("ffffffff-ffff-ffff-ffff-ffffffffffff").unwrap();
 
         assert_eq!(0xffffffffffffffff, uuid.lsb());
+    }
+
+    #[test]
+    fn timeuuid_nil() {
+        let uuid = CqlTimeuuid::nil();
+
+        assert_eq!(0x0000000000000000, uuid.msb());
+        assert_eq!(0x0000000000000000, uuid.lsb());
     }
 
     #[test]
