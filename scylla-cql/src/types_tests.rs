@@ -154,6 +154,47 @@ mod derive_macros_integration {
                 assert_eq!(deserialized_udt, expected_udt);
             }
         }
+
+        #[test]
+        fn derive_ser_de_with_metadata_present_but_value_missing_during_deser() {
+            #[derive(scylla_macros::SerializeValue, Debug)]
+            #[scylla(crate = "crate")]
+            struct SerUdt<'a> {
+                a: &'a str,
+            }
+
+            #[derive(scylla_macros::DeserializeValue, Debug, PartialEq, Eq)]
+            #[scylla(crate = "crate")]
+            struct DeserUdt<'a> {
+                a: &'a str,
+                b: Option<i32>,
+            }
+
+            let ser_udt = SerUdt {
+                a: "The quick brown fox",
+            };
+            // Do not serialize `b` field.
+            let serialization_type =
+                udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
+
+            let expected_deserialized_udt = DeserUdt {
+                a: "The quick brown fox",
+                b: None,
+            };
+            // Deserialize `b` field. The metadata is present, but value is missing (i.e. `UdtIterator::next()` returns Ok(None)).
+            // This is possible, as specified by https://github.com/apache/cassandra/blob/4a80daf32eb4226d9870b914779a1fc007479da6/doc/native_protocol_v4.spec#L1003.
+            // It should fallback to null (b: None).
+            let deserialization_type = udt_def_with_fields([
+                ("a", ColumnType::Native(NativeType::Text)),
+                ("b", ColumnType::Native(NativeType::Int)),
+            ]);
+
+            let serialized_udt = Bytes::from(do_serialize(&ser_udt, &serialization_type));
+
+            let deserialized_udt =
+                deserialize::<DeserUdt<'_>>(&deserialization_type, &serialized_udt).unwrap();
+            assert_eq!(deserialized_udt, expected_deserialized_udt);
+        }
     }
 
     mod row {
