@@ -280,7 +280,7 @@ async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: 
 /// The test first sends 100 queries per tablet and expects to receive tablet info.
 /// After that we know we have all the info. The test sends the statements again
 /// and expects to not receive any tablet info.
-#[cfg(not(scylla_cloud_tests))]
+#[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
 #[ntest::timeout(30000)]
 async fn test_default_policy_is_tablet_aware() {
@@ -411,7 +411,7 @@ async fn test_default_policy_is_tablet_aware() {
 ///
 /// The test sends a query to each shard of every node and verifies that no
 /// tablet info was sent in response.
-#[cfg(not(scylla_cloud_tests))]
+#[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
 #[ntest::timeout(30000)]
 async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
@@ -482,7 +482,11 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
 /// recevied requests for a given tablet.
 ///
 /// TODO: Remove #[ignore] once LWTs are supported with tablets.
-#[cfg(not(scylla_cloud_tests))]
+/// Below cfg_attr is commented out because:
+/// - This test should be always ignored for now
+/// - Having both attrs results in warning about `#[ignore]` being unused
+/// - I don't want to fully remove cfg_attr because it will be needed after we remove `#[ignore]`
+// #[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
 #[ntest::timeout(30000)]
 #[ignore]

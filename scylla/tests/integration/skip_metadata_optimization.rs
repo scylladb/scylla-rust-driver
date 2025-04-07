@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 #[ntest::timeout(20000)]
-#[cfg(not(scylla_cloud_tests))]
+#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_skip_result_metadata() {
     use scylla::client::session::Session;
     use scylla::client::session_builder::SessionBuilder;

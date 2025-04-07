@@ -176,7 +176,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
 
         #[cfg(scylla_cloud_tests)]
         {
-            use scylla::client::session_builder::{CloudMode, CloudSessionBuilder};
+            use scylla::client::session_builder::CloudSessionBuilder;
             use std::path::Path;
 
             std::env::var("CLOUD_CONFIG_PATH")
