@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 #[tokio::test]
 #[ntest::timeout(20000)]
-#[cfg(not(scylla_cloud_tests))]
+#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn self_identity_is_set_properly_in_startup_message() {
     setup_tracing();
 

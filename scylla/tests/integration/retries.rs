@@ -16,7 +16,7 @@ use scylla_proxy::{
 
 #[tokio::test]
 #[ntest::timeout(30000)]
-#[cfg(not(scylla_cloud_tests))]
+#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn speculative_execution_is_fired() {
     setup_tracing();
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
@@ -98,7 +98,7 @@ async fn speculative_execution_is_fired() {
 
 #[tokio::test]
 #[ntest::timeout(30000)]
-#[cfg(not(scylla_cloud_tests))]
+#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn retries_occur() {
     setup_tracing();
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
@@ -168,7 +168,7 @@ async fn retries_occur() {
 // See https://github.com/scylladb/scylla-rust-driver/issues/1085
 #[tokio::test]
 #[ntest::timeout(30000)]
-#[cfg(not(scylla_cloud_tests))]
+#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn speculative_execution_panic_regression_test() {
     use scylla_proxy::RunningProxy;
 

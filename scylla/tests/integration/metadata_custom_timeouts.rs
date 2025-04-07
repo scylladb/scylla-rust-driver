@@ -21,7 +21,7 @@ use tracing::info;
 // By default, custom metadata request timeout is set to 2 seconds.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 
-#[cfg(not(scylla_cloud_tests))]
+#[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
 #[ntest::timeout(20000)]
 async fn test_custom_metadata_timeouts() {

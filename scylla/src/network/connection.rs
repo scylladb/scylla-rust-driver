@@ -2319,7 +2319,7 @@ mod tests {
     ///    Then use query_iter with page_size set to 7 to select all 100 rows.
     /// 3. INSERT query_iter should work and not return any rows.
     #[tokio::test]
-    #[cfg(not(scylla_cloud_tests))]
+    #[cfg_attr(scylla_cloud_tests, ignore)]
     async fn connection_query_iter_test() {
         use crate::client::session_builder::SessionBuilder;
 
@@ -2423,7 +2423,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(not(scylla_cloud_tests))]
+    #[cfg_attr(scylla_cloud_tests, ignore)]
     async fn test_coalescing() {
         use std::num::NonZeroU64;
 
@@ -2639,7 +2639,7 @@ mod tests {
 
     #[tokio::test]
     #[ntest::timeout(20000)]
-    #[cfg(not(scylla_cloud_tests))]
+    #[cfg_attr(scylla_cloud_tests, ignore)]
     async fn connection_is_closed_on_no_response_to_keepalives() {
         use crate::errors::BrokenConnectionErrorKind;
 
