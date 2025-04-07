@@ -41,6 +41,7 @@ full-serialization = [
 ]
 metrics = ["dep:histogram"]
 unstable-testing = []
+result-displayer = ["dep:tabled", "dep:inline_colorization", "dep:num-bigint-04", "dep:bigdecimal-04"]
 
 [dependencies]
 scylla-cql = { version = "1.1.0", path = "../scylla-cql" }
@@ -80,6 +81,10 @@ base64 = { version = "0.22.1", optional = true }
 rand_pcg = "0.9.0"
 socket2 = { version = "0.5.3", features = ["all"] }
 lazy_static = "1"
+tabled =  { version = "0.17.0", features = ["std", "ansi"], optional = true }
+inline_colorization = { version = "0.1.6", optional = true }
+num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
+bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
 
 [dev-dependencies]
 num-bigint-03 = { package = "num-bigint", version = "0.3" }
