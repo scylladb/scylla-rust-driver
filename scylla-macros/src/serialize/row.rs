@@ -250,7 +250,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                         }
                     )*
                     _ => return ::std::result::Result::Err(mk_typck_err(
-                        #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
+                        #crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
                             name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
                         }
                     )),
@@ -265,7 +265,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                 #(
                     if !#visited_flag_names {
                         return ::std::result::Result::Err(mk_typck_err(
-                            #crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
+                            #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
                                 name: <_ as ::std::string::ToString>::to_string(#rust_field_names),
                             }
                         ));
@@ -344,7 +344,7 @@ impl Generator for ColumnOrderedGenerator<'_> {
                     }
                     ::std::option::Option::None => {
                         return ::std::result::Result::Err(mk_typck_err(
-                            #crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
+                            #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
                                 name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
                             }
                         ));
@@ -357,7 +357,7 @@ impl Generator for ColumnOrderedGenerator<'_> {
         statements.push(parse_quote! {
             if let ::std::option::Option::Some(spec) = ::std::iter::Iterator::next(&mut column_iter) {
                 return ::std::result::Result::Err(mk_typck_err(
-                    #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
+                    #crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
                         name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
                     }
                 ));

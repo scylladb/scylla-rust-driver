@@ -309,10 +309,7 @@ fn test_row_serialization_failing_type_check() {
     };
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
     let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-    assert_matches!(
-        err.kind,
-        BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
-    );
+    assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
 
     let spec_duplicate_column = [
         col("a", ColumnType::Native(NativeType::Text)),
@@ -333,7 +330,10 @@ fn test_row_serialization_failing_type_check() {
     };
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
     let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-    assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
+    assert_matches!(
+        err.kind,
+        BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
+    );
 
     let spec_wrong_type = [
         col("a", ColumnType::Native(NativeType::Text)),
@@ -454,10 +454,7 @@ fn test_row_serialization_with_enforced_order_failing_type_check() {
     };
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
     let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-    assert_matches!(
-        err.kind,
-        BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
-    );
+    assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
 
     let spec_duplicate_column = [
         col("a", ColumnType::Native(NativeType::Text)),
@@ -478,7 +475,10 @@ fn test_row_serialization_with_enforced_order_failing_type_check() {
     };
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
     let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-    assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
+    assert_matches!(
+        err.kind,
+        BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
+    );
 
     let spec_wrong_type = [
         col("a", ColumnType::Native(NativeType::Text)),
