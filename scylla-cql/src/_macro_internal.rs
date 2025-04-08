@@ -38,6 +38,13 @@ pub use crate::serialize::{CellValueBuilder, CellWriter, RowWriter, Serializatio
 ///
 /// For now this trait is an implementation detail of `#[derive(SerializeRow)]` when
 /// serializing by name
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be flattened here",
+    label = "`{Self}` is not a struct that derives `SerializeRow` with `match_by_name` flavor",
+    note = "There are two common reasons for that:
+- `{Self}` does not use `#[derive(SerializeRow)]`
+- `{Self}` uses `#[scylla(flavor = \"enforce_order\")]`"
+)]
 pub trait SerializeRowByName {
     /// A type that can handle serialization of this struct column-by-column
     type Partial<'d>: PartialSerializeRowByName
@@ -83,6 +90,13 @@ pub trait PartialSerializeRowByName {
 ///
 /// For now this trait is an implementation detail of `#[derive(SerializeRow)]` when
 /// serializing in order
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be flattened here",
+    label = "`{Self}` is not a struct that derives `SerializeRow` with `enforce_order` flavor",
+    note = "There are two common reasons for that:
+- `{Self}` does not use `#[derive(SerializeRow)]`
+- `{Self}` uses `#[scylla(flavor = \"match_by_name\")]` (which is the default)"
+)]
 pub trait SerializeRowInOrder {
     fn serialize_in_order(
         &self,
