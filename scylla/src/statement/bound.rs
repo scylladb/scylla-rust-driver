@@ -27,16 +27,20 @@ impl<'p> BoundStatement<'p> {
         values: &impl SerializeRow,
     ) -> Result<Self, SerializationError> {
         let values = prepared.serialize_values(values)?;
-        Ok(Self { prepared, values })
+        Ok(Self::new_untyped(prepared, values))
+    }
+
+    pub(crate) fn new_untyped(
+        prepared: Cow<'p, PreparedStatement>,
+        values: SerializedValues,
+    ) -> Self {
+        Self { prepared, values }
     }
 
     #[cfg(test)]
     /// Create a new bound statement with no values to serialize
     pub fn empty(prepared: Cow<'p, PreparedStatement>) -> Self {
-        Self {
-            prepared,
-            values: SerializedValues::new(),
-        }
+        Self::new_untyped(prepared, SerializedValues::new())
     }
 
     /// Determines which values constitute the partition key and puts them in order.

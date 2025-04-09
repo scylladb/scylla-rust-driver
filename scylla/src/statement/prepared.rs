@@ -363,22 +363,6 @@ impl PreparedStatement {
         bound.token()
     }
 
-    // A version of calculate_token which skips serialization and uses SerializedValues directly.
-    // Not type-safe, so not exposed to users.
-    pub(crate) fn calculate_token_untyped(
-        &self,
-        values: &SerializedValues,
-    ) -> Result<Option<Token>, PartitionKeyError> {
-        if !self.is_token_aware() {
-            return Ok(None);
-        }
-
-        let partition_key = PartitionKey::new(self.get_prepared_metadata(), values)?;
-        let token = partition_key.calculate_token(&self.partitioner_name)?;
-
-        Ok(Some(token))
-    }
-
     /// Return keyspace name and table name this statement is operating on.
     pub fn get_table_spec(&self) -> Option<&TableSpec<'_>> {
         self.get_prepared_metadata()
