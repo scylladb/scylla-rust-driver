@@ -12,9 +12,9 @@ use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
-    BadQuery, BrokenConnectionError, ExecutionError, MetadataError, NewSessionError,
-    PagerExecutionError, PrepareError, RequestAttemptError, RequestError, SchemaAgreementError,
-    TracingError, UseKeyspaceError,
+    BrokenConnectionError, ExecutionError, MetadataError, NewSessionError, PagerExecutionError,
+    PrepareError, RequestAttemptError, RequestError, SchemaAgreementError, TracingError,
+    UseKeyspaceError,
 };
 use crate::frame::response::result;
 use crate::network::tls::TlsProvider;
@@ -36,7 +36,7 @@ use crate::response::{
 };
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, ShardAwarePortRange};
-use crate::statement::batch::batch_values;
+use crate::statement::batch::BoundBatch;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::bound::BoundStatement;
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
@@ -47,9 +47,10 @@ use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
 use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
-use scylla_cql::serialize::batch::BatchValues;
+use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
 use scylla_cql::serialize::row::SerializeRow;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
@@ -835,7 +836,10 @@ impl Session {
         batch: &Batch,
         values: impl BatchValues,
     ) -> Result<QueryResult, ExecutionError> {
-        self.do_batch(batch, values).await
+        let batch = self.last_minute_prepare_batch(batch, &values).await?;
+        let batch = BoundBatch::from_batch(batch.as_ref(), values)?;
+
+        self.do_batch(&batch).await
     }
 
     /// Estabilishes a CQL session with the database
@@ -1546,22 +1550,9 @@ impl Session {
         .map_err(PagerExecutionError::NextPageError)
     }
 
-    async fn do_batch(
-        &self,
-        batch: &Batch,
-        values: impl BatchValues,
-    ) -> Result<QueryResult, ExecutionError> {
+    async fn do_batch(&self, batch: &BoundBatch) -> Result<QueryResult, ExecutionError> {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
-
-        // check to ensure that we don't send a batch statement with more than u16::MAX queries
-        let batch_statements_length = batch.statements.len();
-        if batch_statements_length > u16::MAX as usize {
-            return Err(ExecutionError::BadQuery(
-                BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
-            ));
-        }
-
         let execution_profile = batch
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -1577,22 +1568,17 @@ impl Session {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let (first_value_token, values) =
-            batch_values::peek_first_token(values, batch.statements.first())?;
-        let values_ref = &values;
-
-        let table_spec =
-            if let Some(BatchStatement::PreparedStatement(ps)) = batch.statements.first() {
-                ps.get_table_spec()
-            } else {
-                None
-            };
+        let (table, token) = batch
+            .first_prepared
+            .as_ref()
+            .and_then(|(ps, token)| ps.get_table_spec().map(|table| (table, *token)))
+            .unzip();
 
         let statement_info = RoutingInfo {
             consistency,
             serial_consistency,
-            token: first_value_token,
-            table: table_spec,
+            token,
+            table,
             is_confirmed_lwt: false,
         };
 
@@ -1615,12 +1601,7 @@ impl Session {
                         .unwrap_or(execution_profile.serial_consistency);
                     async move {
                         connection
-                            .batch_with_consistency(
-                                batch,
-                                values_ref,
-                                consistency,
-                                serial_consistency,
-                            )
+                            .batch_with_consistency(batch, consistency, serial_consistency)
                             .await
                             .and_then(QueryResponse::into_non_error_query_response)
                     }
@@ -1687,6 +1668,54 @@ impl Session {
         .await?;
 
         Ok(prepared_batch)
+    }
+
+    async fn last_minute_prepare_batch<'b>(
+        &self,
+        init_batch: &'b Batch,
+        values: impl BatchValues,
+    ) -> Result<Cow<'b, Batch>, PrepareError> {
+        let mut to_prepare = HashSet::<&str>::new();
+
+        {
+            let mut values_iter = values.batch_values_iter();
+            for stmt in &init_batch.statements {
+                if let BatchStatement::Query(query) = stmt {
+                    if let Some(false) = values_iter.is_empty_next() {
+                        to_prepare.insert(&query.contents);
+                    }
+                } else {
+                    values_iter.skip_next();
+                }
+            }
+        }
+
+        if to_prepare.is_empty() {
+            return Ok(Cow::Borrowed(init_batch));
+        }
+
+        let mut prepared_queries = HashMap::<&str, PreparedStatement>::new();
+
+        for query in to_prepare {
+            let prepared = self.prepare(query).await?;
+            prepared_queries.insert(query, prepared);
+        }
+
+        let mut batch: Cow<Batch> = Cow::Owned(Batch::new_from(init_batch));
+        for stmt in &init_batch.statements {
+            match stmt {
+                BatchStatement::Query(query) => match prepared_queries.get(query.contents.as_str())
+                {
+                    Some(prepared) => batch.to_mut().append_statement(prepared.clone()),
+                    None => batch.to_mut().append_statement(query.clone()),
+                },
+                BatchStatement::PreparedStatement(prepared) => {
+                    batch.to_mut().append_statement(prepared.clone());
+                }
+            }
+        }
+
+        Ok(batch)
     }
 
     /// Sends `USE <keyspace_name>` request on all connections\
