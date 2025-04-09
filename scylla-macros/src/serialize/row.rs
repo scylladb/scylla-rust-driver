@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use darling::FromAttributes;
 use proc_macro::TokenStream;
-use proc_macro2::Span;
+use quote::format_ident;
 use syn::parse_quote;
 
 use crate::Flavor;
@@ -35,7 +35,7 @@ impl Attributes {
 
 struct Field {
     ident: syn::Ident,
-    ty: syn::Type,
+    typ: syn::Type,
     attrs: FieldAttributes,
 }
 
@@ -55,6 +55,12 @@ struct FieldAttributes {
     // instead of the Rust field name.
     rename: Option<String>,
 
+    // If set, then the field is inlined into the struct, that is, it is
+    // serialized using `SerializeRow`, with the serialized fields flattened
+    // into (possibly multiple) columns as if they were in the parent struct.
+    #[darling(default)]
+    flatten: bool,
+
     // If true, then the field is not serialized at all, but simply ignored.
     // All other attributes are ignored.
     #[darling(default)]
@@ -64,6 +70,8 @@ struct FieldAttributes {
 struct Context {
     attributes: Attributes,
     fields: Vec<Field>,
+    struct_name: syn::Ident,
+    generics: syn::Generics,
 }
 
 pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::ItemImpl, syn::Error> {
@@ -82,7 +90,7 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
         .map(|f| {
             FieldAttributes::from_attributes(&f.attrs).map(|attrs| Field {
                 ident: f.ident.clone().unwrap(),
-                ty: f.ty.clone(),
+                typ: f.ty.clone(),
                 attrs,
             })
         })
@@ -90,7 +98,12 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
         // as it's less error prone - we just filter in one place instead of N places.
         .filter(|f| f.as_ref().map(|f| !f.attrs.skip).unwrap_or(true))
         .collect::<Result<_, _>>()?;
-    let ctx = Context { attributes, fields };
+    let ctx = Context {
+        attributes,
+        fields,
+        struct_name: struct_name.clone(),
+        generics: input.generics.clone(),
+    };
     ctx.validate(&input.ident)?;
 
     let gen: Box<dyn Generator> = match ctx.attributes.flavor {
@@ -137,6 +150,19 @@ impl Context {
             }
         }
 
+        // Check that no renames are attempted on flattened fields
+        let rename_flatten_errors = self
+            .fields
+            .iter()
+            .filter(|f| f.attrs.flatten && f.attrs.rename.is_some())
+            .map(|f| {
+                darling::Error::custom(
+                    "`rename` and `flatten` annotations do not make sense together",
+                )
+                .with_span(&f.ident)
+            });
+        errors.extend(rename_flatten_errors);
+
         // Check for name collisions
         let mut used_names = HashMap::<String, &Field>::new();
         for field in self.fields.iter() {
@@ -154,34 +180,6 @@ impl Context {
         errors.finish()?;
         Ok(())
     }
-
-    fn generate_mk_typck_err(&self) -> syn::Stmt {
-        let crate_path = self.attributes.crate_path();
-        parse_quote! {
-            let mk_typck_err = |kind: #crate_path::BuiltinRowTypeCheckErrorKind| -> #crate_path::SerializationError {
-                #crate_path::SerializationError::new(
-                    #crate_path::BuiltinRowTypeCheckError {
-                        rust_name: ::std::any::type_name::<Self>(),
-                        kind,
-                    }
-                )
-            };
-        }
-    }
-
-    fn generate_mk_ser_err(&self) -> syn::Stmt {
-        let crate_path = self.attributes.crate_path();
-        parse_quote! {
-            let mk_ser_err = |kind: #crate_path::BuiltinRowSerializationErrorKind| -> #crate_path::SerializationError {
-                #crate_path::SerializationError::new(
-                    #crate_path::BuiltinRowSerializationError {
-                        rust_name: ::std::any::type_name::<Self>(),
-                        kind,
-                    }
-                )
-            };
-        }
-    }
 }
 
 trait Generator {
@@ -197,106 +195,211 @@ struct ColumnSortingGenerator<'a> {
 
 impl Generator for ColumnSortingGenerator<'_> {
     fn generate_serialize(&self) -> syn::TraitItemFn {
-        // Need to:
-        // - Check that all required columns are there and no more
-        // - Check that the column types match
-        let mut statements: Vec<syn::Stmt> = Vec::new();
+        // Serializing by name requires:
+        //
+        // 1. Defining a partial struct: a struct that keeps references to each serializable field and
+        // tracks completion of these fields
+        //
+        // 2. Implement serialization for the partial struct: When serializing a column check if this
+        // column is one of our nonflattened fields, a nested field inside a flattened struct, or
+        // not relevant to this struct. If relevant to this struct, typecheck it.
+        //
+        // 3. Implement SerializeRowByName: Creates an instance of the partial struct.
+        //
+        // 4. Implement SerializeRow: simply forwards to ser::row::ByName which will be in charge of
+        // asking for a partial view of our struct and one by one sending columns to serialize to it
+        // until it is done or an error occurs
 
         let crate_path = self.ctx.attributes.crate_path();
+        let struct_name = &self.ctx.struct_name;
+        // 1. Defining a partial struct
+        let partial_struct_name = syn::Ident::new(
+            &format!("_{}ScyllaSerPartial", struct_name),
+            struct_name.span(),
+        );
+        let mut partial_generics = self.ctx.generics.clone();
+        let partial_lt: syn::Lifetime = syn::parse_quote!('scylla_ser_partial);
 
-        let rust_field_idents = self
+        if !self.ctx.fields.is_empty() {
+            // all fields have to outlive the partial struct lifetime
+            partial_generics
+                .params
+                .iter_mut()
+                .filter_map(|p| match p {
+                    syn::GenericParam::Lifetime(lt) => Some(lt),
+                    _ => None,
+                })
+                .for_each(|lt| {
+                    lt.bounds.push(partial_lt.clone());
+                });
+
+            // now add the partial struct lifetime
+            partial_generics
+                .params
+                .push(syn::GenericParam::Lifetime(syn::LifetimeParam {
+                    attrs: vec![],
+                    lifetime: partial_lt.clone(),
+                    colon_token: None,
+                    bounds: syn::punctuated::Punctuated::new(),
+                }));
+        }
+
+        let flattened: Vec<_> = self.ctx.fields.iter().filter(|f| f.attrs.flatten).collect();
+        let flattened_fields: Vec<_> = flattened.iter().map(|f| &f.ident).collect();
+        let flattened_types: Vec<_> = flattened.iter().map(|f| &f.typ).collect();
+        let flattened_visited_flag_names: Vec<_> = flattened_fields
+            .iter()
+            .map(|ident| format_ident!("__visited_flag_{}", ident))
+            .collect();
+
+        let nonflattened: Vec<_> = self
             .ctx
             .fields
             .iter()
-            .map(|f| f.ident.clone())
-            .collect::<Vec<_>>();
-        let rust_field_names = self
-            .ctx
-            .fields
+            .filter(|f| !f.attrs.flatten)
+            .collect();
+        let nonflattened_fields: Vec<_> = nonflattened.iter().map(|f| &f.ident).collect();
+        let nonflattened_visited_flag_names: Vec<_> = nonflattened_fields
             .iter()
-            .map(|f| f.column_name())
-            .collect::<Vec<_>>();
-        let udt_field_names = rust_field_names.clone(); // For now, it's the same
-        let field_types = self.ctx.fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
+            .map(|ident| format_ident!("__visited_flag_{}", ident))
+            .collect();
+        let nonflattened_types: Vec<_> = nonflattened.iter().map(|f| &f.typ).collect();
 
-        // Declare a helper lambda for creating errors
-        statements.push(self.ctx.generate_mk_typck_err());
-        statements.push(self.ctx.generate_mk_ser_err());
+        let partial_struct: syn::ItemStruct = parse_quote! {
+            pub struct #partial_struct_name #partial_generics {
+                #(#nonflattened_fields: &#partial_lt #nonflattened_types,)*
+                #(#flattened_fields: <#flattened_types as #crate_path::SerializeRowByName>::Partial<#partial_lt>,)*
+                #(#flattened_visited_flag_names: bool,)*
+                #(#nonflattened_visited_flag_names: bool,)*
+                remaining_count: usize,
+            }
+        };
 
-        // Generate a "visited" flag for each field
-        let visited_flag_names = rust_field_idents
-            .iter()
-            .map(|s| syn::Ident::new(&format!("visited_flag_{}", s), Span::call_site()))
-            .collect::<Vec<_>>();
-        statements.extend::<Vec<_>>(parse_quote! {
-            #(let mut #visited_flag_names = false;)*
-        });
-
-        // Generate a variable that counts down visited fields.
-        let field_count = self.ctx.fields.len();
-        statements.push(parse_quote! {
-            let mut remaining_count = #field_count;
-        });
-
-        // Generate a loop over the fields and a `match` block to match on
-        // the field name.
-        statements.push(parse_quote! {
-            for spec in ctx.columns() {
+        // 2. Implement serialization for the partial struct
+        let nonflattened_columns: Vec<_> = nonflattened.iter().map(|f| f.column_name()).collect();
+        let (impl_generics, ty_generics, where_clause) = self.ctx.generics.split_for_impl();
+        let serialize_field_block: syn::Block = if self.ctx.fields.is_empty() {
+            parse_quote! {{
+                ::std::result::Result::Ok(#crate_path::ser::row::FieldStatus::NotUsed)
+            }}
+        } else {
+            parse_quote! {{
                 match spec.name() {
-                    #(
-                        #udt_field_names => {
-                            let sub_writer = #crate_path::RowWriter::make_cell_writer(writer);
-                            match <#field_types as #crate_path::SerializeValue>::serialize(&self.#rust_field_idents, spec.typ(), sub_writer) {
-                                ::std::result::Result::Ok(_proof) => {}
-                                ::std::result::Result::Err(err) => {
-                                    return ::std::result::Result::Err(mk_ser_err(
-                                        #crate_path::BuiltinRowSerializationErrorKind::ColumnSerializationFailed {
-                                            name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
-                                            err,
-                                        }
-                                    ));
+                    // first check if the spec name matches a non-flattened column
+                    #(#nonflattened_columns => {
+                        #crate_path::ser::row::serialize_column::<#struct_name #ty_generics>(
+                            &self.#nonflattened_fields, spec, writer,
+                        )?;
+                        if !self.#nonflattened_visited_flag_names {
+                            self.#nonflattened_visited_flag_names = true;
+                            self.remaining_count -= 1;
+                        }
+                    })*
+                    // if not, then check if any flattened field has a column for it
+                    _ => 'flatten_try: {
+                        #({
+                            match <<#flattened_types as #crate_path::SerializeRowByName>::Partial<#partial_lt> as #crate_path::PartialSerializeRowByName>::serialize_field(&mut self.#flattened_fields, spec, writer)? {
+                                // there is a column and the field is done
+                                #crate_path::ser::row::FieldStatus::Done => {
+                                    if !self.#flattened_visited_flag_names {
+                                        self.#flattened_visited_flag_names = true;
+                                        self.remaining_count -= 1;
+                                    }
+                                    break 'flatten_try;
                                 }
-                            }
-                            if !#visited_flag_names {
-                                #visited_flag_names = true;
-                                remaining_count -= 1;
-                            }
-                        }
-                    )*
-                    _ => return ::std::result::Result::Err(mk_typck_err(
-                        #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
-                            name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
-                        }
-                    )),
+                                // there is a column in this flattened field but we need more
+                                // columns for this field
+                                #crate_path::ser::row::FieldStatus::NotDone => {
+                                    return ::std::result::Result::Ok(#crate_path::ser::row::FieldStatus::NotDone);
+                                }
+                                // there wasn't any column on this field -- try the next one
+                                #crate_path::ser::row::FieldStatus::NotUsed => {}
+                            };
+                        })*
+
+                        // we didn't break out of 'flatten_try so the column didn't match any
+                        // flattened field
+                        return ::std::result::Result::Ok(#crate_path::ser::row::FieldStatus::NotUsed);
+                    }
+                }
+
+                // report if we are done; so that any parent struct knows if this field is done in
+                // case this field is flattened
+                ::std::result::Result::Ok(if self.remaining_count == 0 {
+                    #crate_path::ser::row::FieldStatus::Done
+                } else {
+                    #crate_path::ser::row::FieldStatus::NotDone
+                })
+            }}
+        };
+
+        let (partial_impl_generics, partial_ty_generics, partial_where_clause) =
+            partial_generics.split_for_impl();
+        let partial_serialize: syn::ItemImpl = parse_quote! {
+            impl #partial_impl_generics #crate_path::PartialSerializeRowByName for #partial_struct_name #partial_ty_generics #partial_where_clause {
+                fn serialize_field(
+                    &mut self,
+                    spec: &#crate_path::ColumnSpec,
+                    writer: &mut #crate_path::RowWriter<'_>,
+                ) -> ::std::result::Result<#crate_path::ser::row::FieldStatus, #crate_path::SerializationError> {
+                    #serialize_field_block
+                }
+
+                fn check_missing(self) -> ::std::result::Result<(), #crate_path::SerializationError> {
+                    if self.remaining_count == 0 {
+                        return ::std::result::Result::Ok(());
+                    }
+
+                    #(if !self.#nonflattened_visited_flag_names {
+                        return ::std::result::Result::Err(#crate_path::ser::row::mk_typck_err::<#struct_name #ty_generics>(#crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
+                            name: <_ as ::std::borrow::ToOwned>::to_owned(#nonflattened_columns),
+                        }))
+                    })*
+
+                    // if what is missing is a flattened field then report that error
+                    #(if !self.#flattened_visited_flag_names {
+                        return <<#flattened_types as #crate_path::SerializeRowByName>::Partial<#partial_lt> as #crate_path::PartialSerializeRowByName>::check_missing(self.#flattened_fields)
+                    })*
+
+                    ::std::unreachable!()
                 }
             }
-        });
+        };
 
-        // Finally, check that all fields were consumed.
-        // If there are some missing fields, return an error
-        statements.push(parse_quote! {
-            if remaining_count > 0 {
-                #(
-                    if !#visited_flag_names {
-                        return ::std::result::Result::Err(mk_typck_err(
-                            #crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
-                                name: <_ as ::std::string::ToString>::to_string(#rust_field_names),
-                            }
-                        ));
+        // 3. Implement SerializeRowByName
+        let num_fields = flattened_visited_flag_names.len() + nonflattened_visited_flag_names.len();
+        let serialize_by_name: syn::ItemImpl = parse_quote! {
+            impl #impl_generics #crate_path::SerializeRowByName for #struct_name #ty_generics #where_clause {
+                type Partial<#partial_lt> = #partial_struct_name #partial_ty_generics where Self: #partial_lt;
+
+                fn partial(&self) -> Self::Partial<'_> {
+                    use ::std::iter::FromIterator as _;
+
+                    #partial_struct_name {
+                        #(#nonflattened_fields: &self.#nonflattened_fields,)*
+                        #(#flattened_fields: <_ as #crate_path::SerializeRowByName>::partial(&self.#flattened_fields),)*
+                        #(#nonflattened_visited_flag_names: false,)*
+                        #(#flattened_visited_flag_names: false,)*
+                        remaining_count: #num_fields,
                     }
-                )*
-                ::std::unreachable!()
+                }
             }
-        });
+        };
 
+        // 4. Implement SerializeRow
         parse_quote! {
-            fn serialize<'b>(
+            fn serialize<'_scylla_ser_row_writer_buffer>(
                 &self,
                 ctx: &#crate_path::RowSerializationContext,
-                writer: &mut #crate_path::RowWriter<'b>,
+                writer: &mut #crate_path::RowWriter<'_scylla_ser_row_writer_buffer>,
             ) -> ::std::result::Result<(), #crate_path::SerializationError> {
-                #(#statements)*
-                ::std::result::Result::Ok(())
+                #partial_struct
+                #partial_serialize
+
+                #[allow(non_local_definitions)]
+                #serialize_by_name
+
+                #crate_path::ser::row::ByName::<Self>::serialize(#crate_path::ser::row::ByName(self), ctx, writer)
             }
         }
     }
@@ -320,84 +423,43 @@ struct ColumnOrderedGenerator<'a> {
 
 impl Generator for ColumnOrderedGenerator<'_> {
     fn generate_serialize(&self) -> syn::TraitItemFn {
-        let mut statements: Vec<syn::Stmt> = Vec::new();
-
         let crate_path = self.ctx.attributes.crate_path();
-
-        // Declare a helper lambda for creating errors
-        statements.push(self.ctx.generate_mk_typck_err());
-        statements.push(self.ctx.generate_mk_ser_err());
-
-        // Create an iterator over fields
-        statements.push(parse_quote! {
-            let mut column_iter = ctx.columns().iter();
-        });
-
-        // Serialize each field
-        for field in self.ctx.fields.iter() {
-            let rust_field_ident = &field.ident;
-            let rust_field_name = field.column_name();
-            let typ = &field.ty;
-            let name_check_expression: syn::Expr = if !self.ctx.attributes.skip_name_checks {
-                parse_quote! { spec.name() == #rust_field_name }
-            } else {
-                parse_quote! { true }
-            };
-            statements.push(parse_quote! {
-                match ::std::iter::Iterator::next(&mut column_iter) {
-                    ::std::option::Option::Some(spec) => {
-                        if #name_check_expression {
-                            let cell_writer = #crate_path::RowWriter::make_cell_writer(writer);
-                            match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, spec.typ(), cell_writer) {
-                                ::std::result::Result::Ok(_proof) => {},
-                                ::std::result::Result::Err(err) => {
-                                    return ::std::result::Result::Err(mk_ser_err(
-                                        #crate_path::BuiltinRowSerializationErrorKind::ColumnSerializationFailed {
-                                            name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
-                                            err,
-                                        }
-                                    ));
-                                }
-                            }
-                        } else {
-                            return ::std::result::Result::Err(mk_typck_err(
-                                #crate_path::BuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
-                                    rust_column_name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
-                                    db_column_name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
-                                }
-                            ));
-                        }
-                    }
-                    ::std::option::Option::None => {
-                        return ::std::result::Result::Err(mk_typck_err(
-                            #crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
-                                name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
-                            }
-                        ));
-                    }
+        let struct_name = &self.ctx.struct_name;
+        let (impl_generics, ty_generics, where_clause) = self.ctx.generics.split_for_impl();
+        let column_serializers = self.ctx.fields.iter().map(|f| -> syn::Stmt {
+            let field = &f.ident;
+            if f.attrs.flatten {
+                syn::parse_quote! {
+                    <_ as #crate_path::SerializeRowInOrder>::serialize_in_order(&self.#field, columns, writer)?;
                 }
-            });
-        }
-
-        // Check whether there are some columns remaining
-        statements.push(parse_quote! {
-            if let ::std::option::Option::Some(spec) = ::std::iter::Iterator::next(&mut column_iter) {
-                return ::std::result::Result::Err(mk_typck_err(
-                    #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
-                        name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
-                    }
-                ));
+            } else {
+                let column = f.column_name();
+                let enforce_name = !self.ctx.attributes.skip_name_checks;
+                syn::parse_quote! {
+                    #crate_path::ser::row::NextColumnSerializer::serialize::<Self, #enforce_name>(columns, #column, &self.#field, writer)?;
+                }
             }
         });
 
         parse_quote! {
-            fn serialize<'b>(
+            fn serialize<'_scylla_ser_row_writer_buffer>(
                 &self,
                 ctx: &#crate_path::RowSerializationContext,
-                writer: &mut #crate_path::RowWriter<'b>,
+                writer: &mut #crate_path::RowWriter<'_scylla_ser_row_writer_buffer>,
             ) -> ::std::result::Result<(), #crate_path::SerializationError> {
-                #(#statements)*
-                ::std::result::Result::Ok(())
+                #[allow(non_local_definitions)]
+                impl #impl_generics #crate_path::SerializeRowInOrder for #struct_name #ty_generics #where_clause {
+                    fn serialize_in_order(
+                        &self,
+                        columns: &mut #crate_path::ser::row::NextColumnSerializer<'_, '_>,
+                        writer: &mut #crate_path::RowWriter<'_>,
+                    ) -> ::std::result::Result<(), #crate_path::SerializationError> {
+                        #(#column_serializers)*
+                        ::std::result::Result::Ok(())
+                    }
+                }
+
+                #crate_path::ser::row::InOrder::<Self>::serialize(#crate_path::ser::row::InOrder(self), ctx, writer)
             }
         }
     }

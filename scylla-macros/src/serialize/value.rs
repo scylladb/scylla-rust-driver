@@ -43,7 +43,7 @@ impl Attributes {
 
 struct Field {
     ident: syn::Ident,
-    ty: syn::Type,
+    typ: syn::Type,
     attrs: FieldAttributes,
 }
 
@@ -109,7 +109,7 @@ pub(crate) fn derive_serialize_value(
         .map(|f| {
             FieldAttributes::from_attributes(&f.attrs).map(|attrs| Field {
                 ident: f.ident.clone().unwrap(),
-                ty: f.ty.clone(),
+                typ: f.ty.clone(),
                 attrs,
             })
         })
@@ -280,7 +280,7 @@ impl Generator for FieldSortingGenerator<'_> {
         let rust_field_ignore_missing_flags =
             self.ctx.fields.iter().map(|f| f.attrs.ignore_missing);
         let udt_field_names = rust_field_names.clone(); // For now, it's the same
-        let field_types = self.ctx.fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
+        let field_types = self.ctx.fields.iter().map(|f| &f.typ).collect::<Vec<_>>();
 
         let missing_rust_field_expression: syn::Expr =
             if self.ctx.attributes.forbid_excess_udt_fields {
@@ -480,7 +480,7 @@ impl Generator for FieldOrderedGenerator<'_> {
             let rust_field_ident = &field.ident;
             let rust_field_name = field.field_name();
             let field_can_be_ignored = field.attrs.ignore_missing;
-            let typ = &field.ty;
+            let typ = &field.typ;
             let name_check_expression: syn::Expr = if !self.ctx.attributes.skip_name_checks {
                 parse_quote! { field_name == #rust_field_name }
             } else {

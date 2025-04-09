@@ -2255,7 +2255,7 @@ mod tests {
             /// Choose a source port `p` such that `shard == shard_of_source_port(p)`.
             fn draw_source_port_for_shard(shards_count: u16, shard: u16) -> u16 {
                 assert!(shard < shards_count);
-                (49152 + shards_count - 1) / shards_count * shards_count + shard
+                49152u16.div_ceil(shards_count) * shards_count + shard
             }
 
             async fn bind_socket_for_shard(shards_count: u16, shard: u16) -> TcpSocket {
