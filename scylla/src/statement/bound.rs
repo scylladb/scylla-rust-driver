@@ -25,6 +25,13 @@ impl BoundStatement {
         Ok(Self { prepared, values })
     }
 
+    pub(crate) fn new_untyped(
+        prepared: PreparedStatement,
+        values: SerializedValues,
+    ) -> BoundStatement {
+        Self { prepared, values }
+    }
+
     /// Determines which values constitute the partition key and puts them in order.
     ///
     /// This is a preparation step necessary for calculating token based on a prepared statement.
