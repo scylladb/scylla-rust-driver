@@ -230,6 +230,7 @@ mod tests {
             all_nodes: Default::default(),
             keyspaces: Default::default(),
             locator,
+            cluster_version: None,
         };
         let routing_info = RoutingInfo::default();
         let plan = Plan::new(&policy, &routing_info, &cluster_state);

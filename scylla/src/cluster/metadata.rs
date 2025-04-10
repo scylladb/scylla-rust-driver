@@ -118,11 +118,14 @@ pub(crate) struct MetadataReader {
 pub(crate) struct Metadata {
     pub(crate) peers: Vec<Peer>,
     pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
+    /// The release_version obtained from `system.local` on control connection.
+    pub(crate) cluster_version: Option<String>,
 }
 
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct Peer {
     pub host_id: Uuid,
+    pub server_version: Option<String>,
     pub address: NodeAddr,
     pub tokens: Vec<Token>,
     pub datacenter: Option<String>,
@@ -178,7 +181,9 @@ impl Peer {
         }
     }
 
-    pub(crate) fn into_peer_endpoint_and_tokens(self) -> (PeerEndpoint, Vec<Token>) {
+    pub(crate) fn into_peer_endpoint_tokens_and_server_version(
+        self,
+    ) -> (PeerEndpoint, Vec<Token>, Option<String>) {
         (
             PeerEndpoint {
                 host_id: self.host_id,
@@ -187,6 +192,7 @@ impl Peer {
                 rack: self.rack,
             },
             self.tokens,
+            self.server_version,
         )
     }
 }
@@ -408,6 +414,7 @@ impl Metadata {
                     datacenter: None,
                     rack: None,
                     host_id: Uuid::new_v4(),
+                    server_version: None,
                 }
             })
             .collect();
@@ -415,6 +422,7 @@ impl Metadata {
         Metadata {
             peers,
             keyspaces: HashMap::new(),
+            cluster_version: None,
         }
     }
 }
@@ -723,10 +731,10 @@ impl ControlConnection {
         keyspace_to_fetch: &[String],
         fetch_schema: bool,
     ) -> Result<Metadata, MetadataError> {
-        let peers_query = self.query_peers(connect_port);
+        let peers_query = self.query_peers_and_cluster_version(connect_port);
         let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, fetch_schema);
 
-        let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
+        let ((peers, cluster_version), keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
 
         // There must be at least one peer
         if peers.is_empty() {
@@ -738,7 +746,11 @@ impl ControlConnection {
             return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists));
         }
 
-        Ok(Metadata { peers, keyspaces })
+        Ok(Metadata {
+            peers,
+            keyspaces,
+            cluster_version,
+        })
     }
 }
 
@@ -746,6 +758,8 @@ impl ControlConnection {
 #[scylla(crate = "scylla_cql")]
 struct NodeInfoRow {
     host_id: Option<Uuid>,
+    #[scylla(rename = "release_version")]
+    server_version: Option<String>,
     #[scylla(rename = "rpc_address")]
     untranslated_ip_addr: IpAddr,
     #[scylla(rename = "data_center")]
@@ -772,9 +786,15 @@ impl NodeInfoSource {
 const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
 impl ControlConnection {
-    async fn query_peers(&self, connect_port: u16) -> Result<Vec<Peer>, MetadataError> {
+    /// Returns the vector of peers and the cluster version.
+    /// Cluster version is the `release_version` column from `system.local` query
+    /// executed on control connection.
+    async fn query_peers_and_cluster_version(
+        &self,
+        connect_port: u16,
+    ) -> Result<(Vec<Peer>, Option<String>), MetadataError> {
         let mut peers_query = Statement::new(
-            "select host_id, rpc_address, data_center, rack, tokens from system.peers",
+            "select host_id, release_version, rpc_address, data_center, rack, tokens from system.peers",
         );
         peers_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
         let peers_query_stream = self
@@ -795,7 +815,7 @@ impl ControlConnection {
             .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
         let mut local_query =
-        Statement::new("select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'");
+        Statement::new("select host_id, release_version, rpc_address, data_center, rack, tokens from system.local WHERE key='local'");
         local_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
         let local_query_stream = self
             .query_iter(local_query)
@@ -821,7 +841,9 @@ impl ControlConnection {
 
         let translated_peers_futures = untranslated_rows.map(|row_result| async {
             match row_result {
-                Ok((source, row)) => Self::create_peer_from_row(source, row, local_address).await,
+                Ok((source, row)) => Self::create_peer_from_row(source, row, local_address)
+                    .await
+                    .map(|peer| (source, peer)),
                 Err(err) => {
                     warn!(
                         "system.peers or system.local has an invalid row, skipping it: {}",
@@ -832,12 +854,24 @@ impl ControlConnection {
             }
         });
 
-        let peers = translated_peers_futures
+        let vec_capacity = translated_peers_futures.size_hint().0;
+        let (peers, cluster_version) = translated_peers_futures
             .buffer_unordered(256)
             .filter_map(std::future::ready)
-            .collect::<Vec<_>>()
+            .fold(
+                (Vec::with_capacity(vec_capacity), None),
+                |(mut peers, cluster_version), (source, peer)| async move {
+                    let new_cluster_version = match (&cluster_version, source) {
+                        (None, NodeInfoSource::Local) => peer.server_version.clone(),
+                        _ => cluster_version,
+                    };
+
+                    peers.push(peer);
+                    (peers, new_cluster_version)
+                },
+            )
             .await;
-        Ok(peers)
+        Ok((peers, cluster_version))
     }
 
     async fn create_peer_from_row(
@@ -847,6 +881,7 @@ impl ControlConnection {
     ) -> Option<Peer> {
         let NodeInfoRow {
             host_id,
+            server_version,
             untranslated_ip_addr,
             datacenter,
             rack,
@@ -899,6 +934,7 @@ impl ControlConnection {
 
         Some(Peer {
             host_id,
+            server_version,
             address: node_addr,
             tokens,
             datacenter,
