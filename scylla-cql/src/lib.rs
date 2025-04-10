@@ -12,6 +12,8 @@ pub mod serialize;
 
 pub mod value;
 
+pub mod utils;
+
 pub use crate::frame::types::Consistency;
 
 #[doc(hidden)]
