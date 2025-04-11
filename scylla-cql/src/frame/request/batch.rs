@@ -96,6 +96,65 @@ impl SerializableRequest for BatchV2<'_> {
     }
 }
 
+impl DeserializableRequest for BatchV2<'static> {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
+        let batch_type = buf.get_u8().try_into()?;
+        let statements_len = types::read_short(buf)?;
+
+        let statements_and_values = (0..statements_len).try_fold(
+            // technically allocating 3-13 bytes too many but that's OK
+            Vec::with_capacity(buf.len()),
+            |mut statements_and_values, _| {
+                BatchStatement::deserialize_to_buffer(buf, &mut statements_and_values)?;
+                // As stated in CQL protocol v4 specification, values names in Batch are broken and should be never used.
+                let values = SerializedValues::new_from_frame(buf)?;
+                statements_and_values.extend_from_slice(&values.element_count().to_be_bytes());
+                statements_and_values.extend_from_slice(values.get_contents());
+
+                Result::<_, RequestDeserializationError>::Ok(statements_and_values)
+            },
+        )?;
+
+        let consistency = types::read_consistency(buf)?;
+
+        let flags = buf.get_u8();
+        let unknown_flags = flags & (!ALL_FLAGS);
+        if unknown_flags != 0 {
+            return Err(RequestDeserializationError::UnknownFlags {
+                flags: unknown_flags,
+            });
+        }
+        let serial_consistency_flag = (flags & FLAG_WITH_SERIAL_CONSISTENCY) != 0;
+        let default_timestamp_flag = (flags & FLAG_WITH_DEFAULT_TIMESTAMP) != 0;
+
+        let serial_consistency = serial_consistency_flag
+            .then(|| types::read_consistency(buf))
+            .transpose()?
+            .map(
+                |consistency| match SerialConsistency::try_from(consistency) {
+                    Ok(serial_consistency) => Ok(serial_consistency),
+                    Err(_) => Err(RequestDeserializationError::ExpectedSerialConsistency(
+                        consistency,
+                    )),
+                },
+            )
+            .transpose()?;
+
+        let timestamp = default_timestamp_flag
+            .then(|| types::read_long(buf))
+            .transpose()?;
+
+        Ok(Self {
+            batch_type,
+            consistency,
+            serial_consistency,
+            timestamp,
+            statements_len,
+            statements_and_values: Cow::Owned(statements_and_values),
+        })
+    }
+}
+
 /// The type of a batch.
 #[derive(Clone, Copy)]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
@@ -284,6 +343,29 @@ impl BatchStatement<'_> {
                 Ok(BatchStatement::Prepared { id })
             }
             _ => Err(RequestDeserializationError::UnexpectedBatchStatementKind(
+                kind,
+            )),
+        }
+    }
+
+    fn deserialize_to_buffer(
+        input: &mut &[u8],
+        out: &mut Vec<u8>,
+    ) -> Result<(), RequestDeserializationError> {
+        match input.get_u8() {
+            0 => {
+                out.put_u8(0);
+                types::read_long_string_to_buff(input, out)?;
+
+                Ok(())
+            }
+            1 => {
+                out.put_u8(1);
+                types::read_short_bytes_to_buffer(input, out)?;
+
+                Ok(())
+            }
+            kind => Err(RequestDeserializationError::UnexpectedBatchStatementKind(
                 kind,
             )),
         }
