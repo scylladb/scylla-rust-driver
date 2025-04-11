@@ -423,10 +423,10 @@ impl PreparedStatement {
         self.config.execution_profile_handle.as_ref()
     }
 
-    pub(crate) fn bind(
-        self,
-        values: &impl SerializeRow,
-    ) -> Result<BoundStatement, SerializationError> {
+    /// Binds values with a prepared statement
+    ///
+    /// This method will serialize the values and thus type erase them on return
+    pub fn bind(self, values: &impl SerializeRow) -> Result<BoundStatement, SerializationError> {
         BoundStatement::new(self, values)
     }
 
