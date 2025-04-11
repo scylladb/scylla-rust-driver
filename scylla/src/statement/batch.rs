@@ -11,16 +11,24 @@ use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
 use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use scylla_cql::serialize::{RowWriter, SerializationError};
 use thiserror::Error;
+use tracing::Instrument;
 
-use crate::client::execution_profile::ExecutionProfileHandle;
+use crate::client::execution_profile::{ExecutionProfileHandle, ExecutionProfileInner};
+use crate::client::session::{RunRequestResult, Session};
 use crate::errors::{BadQuery, ExecutionError, RequestAttemptError};
+use crate::network::Connection;
+use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::HistoryListener;
+use crate::policies::load_balancing::RoutingInfo;
 use crate::policies::retry::RetryPolicy;
+use crate::response::query_result::QueryResult;
+use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::routing::Token;
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 
 use super::bound::BoundStatement;
+use super::execute::Execute;
 use super::StatementConfig;
 use super::{Consistency, SerialConsistency};
 pub use crate::frame::request::batch::BatchType;
@@ -231,8 +239,8 @@ pub struct BoundBatch {
     batch_type: BatchType,
     pub(crate) buffer: Vec<u8>,
     pub(crate) prepared: HashMap<Bytes, PreparedStatement>,
-    pub(crate) first_prepared: Option<(PreparedStatement, Token)>,
-    pub(crate) statements_len: u16,
+    first_prepared: Option<(PreparedStatement, Token)>,
+    statements_len: u16,
 }
 
 impl BoundBatch {
@@ -361,6 +369,10 @@ impl BoundBatch {
     /// Gets type of batch.
     pub fn get_type(&self) -> BatchType {
         self.batch_type
+    }
+
+    pub fn statements_len(&self) -> u16 {
+        self.statements_len
     }
 
     // **IMPORTANT NOTE**: It is OK for this function to append to the buffer even if it errors
@@ -570,4 +582,76 @@ pub enum BoundBatchStatementError {
     /// Too many statements in the batch statement.
     #[error("Added statement goes over exceeded max value of 65,535")]
     TooManyQueriesInBatchStatement,
+}
+
+impl Execute for BoundBatch {
+    async fn execute(&self, session: &Session) -> Result<QueryResult, ExecutionError> {
+        // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
+        // If users batch statements by shard, they will be rewarded with full shard awareness
+        let execution_profile = self
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| session.get_default_execution_profile_handle())
+            .access();
+
+        let consistency = self
+            .config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+
+        let serial_consistency = self
+            .config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+
+        let (table, token) = self
+            .first_prepared
+            .as_ref()
+            .and_then(|(ps, token)| ps.get_table_spec().map(|table| (table, *token)))
+            .unzip();
+
+        let statement_info = RoutingInfo {
+            consistency,
+            serial_consistency,
+            token,
+            table,
+            is_confirmed_lwt: false,
+        };
+
+        let span = RequestSpan::new_batch();
+
+        let run_request_result: RunRequestResult<NonErrorQueryResponse> = session
+            .run_request(
+                statement_info,
+                &self.config,
+                execution_profile,
+                |connection: Arc<Connection>,
+                 consistency: Consistency,
+                 execution_profile: &ExecutionProfileInner| {
+                    let serial_consistency = self
+                        .config
+                        .serial_consistency
+                        .unwrap_or(execution_profile.serial_consistency);
+                    async move {
+                        connection
+                            .batch_with_consistency(self, consistency, serial_consistency)
+                            .await
+                            .and_then(QueryResponse::into_non_error_query_response)
+                    }
+                },
+                &span,
+            )
+            .instrument(span.span().clone())
+            .await?;
+
+        let result = match run_request_result {
+            RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(),
+            RunRequestResult::Completed(non_error_query_response) => {
+                let result = non_error_query_response.into_query_result()?;
+                span.record_result_fields(&result);
+                result
+            }
+        };
+
+        Ok(result)
+    }
 }

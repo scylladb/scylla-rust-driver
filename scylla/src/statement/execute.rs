@@ -1,7 +1,4 @@
-use scylla_cql::{
-    frame::request::query::{PagingState, PagingStateResponse},
-    serialize::row::SerializeRow,
-};
+use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 use tracing::error;
 
 use crate::{
@@ -10,12 +7,18 @@ use crate::{
     response::query_result::QueryResult,
 };
 
-use super::{batch::BoundBatch, bound::BoundStatement, Statement};
-
 // seals the trait to foreign implementations
 mod private {
+    use scylla_cql::serialize::row::SerializeRow;
+
+    use crate::statement::{batch::BoundBatch, bound::BoundStatement, Statement};
+
     #[allow(unnameable_types)]
     pub trait Sealed {}
+
+    impl Sealed for BoundBatch {}
+    impl Sealed for BoundStatement {}
+    impl<V: SerializeRow> Sealed for (&Statement, V) {}
 }
 
 /// A type that can be executed on a [`Session`] without any additional values
@@ -29,9 +32,17 @@ pub trait Execute: private::Sealed {
     ) -> impl std::future::Future<Output = Result<QueryResult, ExecutionError>>;
 }
 
-/// A type that can be executed on a [`Session`] and is aware of pagination
+/// A type that can be executed on a [`Session`], optionally conitnuing froma saved point
+///
+/// We believe that paging is such an important concept that we require users to make a conscious
+/// decision to use paging or not. For that, we expose three different ways to execute pageable
+/// requests:
+///
+/// * `Execute::execute`: unpaged and from the start
+/// * `ExecutePageable::execute_pageable::<true>`: paginating from a saved point
+/// * `ExecutePageable::execute_pageable::<false>`: no pagination from a saved point
 pub trait ExecutePageable {
-    /// Executes a command with the `paging_state` determining where the results should start
+    /// Sends a request to the database, optionally continuing from a saved point.
     ///
     /// If SINGLE_PAGE is set to true then a single page is returned. If SINGLE_PAGE is set to
     /// false, then all pages (starting at `paging_state`) are returned
@@ -57,52 +68,5 @@ impl<T: ExecutePageable + private::Sealed> Execute for T {
         }
 
         Ok(result)
-    }
-}
-
-impl private::Sealed for BoundBatch {}
-
-impl Execute for BoundBatch {
-    async fn execute(&self, session: &Session) -> Result<QueryResult, ExecutionError> {
-        session.do_batch(self).await
-    }
-}
-
-impl private::Sealed for BoundStatement {}
-
-impl ExecutePageable for BoundStatement {
-    async fn execute_pageable<const SINGLE_PAGE: bool>(
-        &self,
-        session: &Session,
-        paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let page_size = if SINGLE_PAGE {
-            Some(self.prepared.get_validated_page_size())
-        } else {
-            None
-        };
-        session
-            .execute_bound_statement(self, page_size, paging_state)
-            .await
-    }
-}
-
-impl<V: SerializeRow> private::Sealed for (&Statement, V) {}
-
-impl<V: SerializeRow> ExecutePageable for (&Statement, V) {
-    async fn execute_pageable<const SINGLE_PAGE: bool>(
-        &self,
-        session: &Session,
-        paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let page_size = if SINGLE_PAGE {
-            Some(self.0.get_validated_page_size())
-        } else {
-            None
-        };
-
-        session
-            .query(self.0, &self.1, page_size, paging_state)
-            .await
     }
 }
