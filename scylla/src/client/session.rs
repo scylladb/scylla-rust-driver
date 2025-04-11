@@ -36,6 +36,7 @@ use crate::routing::{Shard, ShardAwarePortRange};
 use crate::statement::batch::BoundBatch;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::bound::BoundStatement;
+use crate::statement::execute::{Execute, ExecutePageable};
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize, StatementConfig};
@@ -56,7 +57,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 #[cfg(feature = "unstable-cloud")]
 use tracing::warn;
-use tracing::{debug, error, trace, trace_span, Instrument};
+use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
@@ -481,7 +482,8 @@ impl Session {
         statement: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
-        self.do_query_unpaged(&statement.into(), values).await
+        let statement = statement.into();
+        (&statement, values).execute(self).await
     }
 
     /// Queries a single page from the database, optionally continuing from a saved point.
@@ -541,7 +543,9 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.do_query_single_page(&statement.into(), values, paging_state)
+        let statement = statement.into();
+        (&statement, values)
+            .execute_pageable::<true>(self, paging_state)
             .await
     }
 
@@ -806,9 +810,9 @@ impl Session {
         values: impl BatchValues,
     ) -> Result<QueryResult, ExecutionError> {
         let batch = self.last_minute_prepare_batch(batch, &values).await?;
-        let batch = BoundBatch::from_batch(batch.as_ref(), values)?;
-
-        self.do_batch(&batch).await
+        BoundBatch::from_batch(batch.as_ref(), values)?
+            .execute(self)
+            .await
     }
 }
 
@@ -989,38 +993,6 @@ impl Session {
         Ok(session)
     }
 
-    async fn do_query_unpaged(
-        &self,
-        statement: &Statement,
-        values: impl SerializeRow,
-    ) -> Result<QueryResult, ExecutionError> {
-        let (result, paging_state_response) = self
-            .query(statement, values, None, PagingState::start())
-            .await?;
-        if !paging_state_response.finished() {
-            error!("Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
-            return Err(ExecutionError::LastAttemptError(
-                RequestAttemptError::NonfinishedPagingState,
-            ));
-        }
-        Ok(result)
-    }
-
-    async fn do_query_single_page(
-        &self,
-        statement: &Statement,
-        values: impl SerializeRow,
-        paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.query(
-            statement,
-            values,
-            Some(statement.get_validated_page_size()),
-            paging_state,
-        )
-        .await
-    }
-
     /// Sends a request to the database.
     /// Optionally continues fetching results from a saved point.
     ///
@@ -1032,7 +1004,7 @@ impl Session {
     /// that we need to require users to make a conscious decision to use paging or not. For that, we expose
     /// the aforementioned 3 methods clearly differing in naming and API, so that no unconscious choices about paging
     /// should be made.
-    async fn query(
+    pub(crate) async fn query(
         &self,
         statement: &Statement,
         values: impl SerializeRow,
@@ -1299,14 +1271,7 @@ impl Session {
         &self,
         statement: &BoundStatement,
     ) -> Result<QueryResult, ExecutionError> {
-        let (result, paging_state) = self.execute(statement, None, PagingState::start()).await?;
-        if !paging_state.finished() {
-            error!("Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
-            return Err(ExecutionError::LastAttemptError(
-                RequestAttemptError::NonfinishedPagingState,
-            ));
-        }
-        Ok(result)
+        statement.execute(self).await
     }
 
     async fn do_execute_single_page(
@@ -1314,8 +1279,7 @@ impl Session {
         statement: &BoundStatement,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let page_size = statement.prepared.get_validated_page_size();
-        self.execute(statement, Some(page_size), paging_state).await
+        statement.execute_pageable::<true>(self, paging_state).await
     }
 
     /// Sends a prepared request to the database, optionally continuing from a saved point.
@@ -1328,7 +1292,7 @@ impl Session {
     /// that we need to require users to make a conscious decision to use paging or not. For that, we expose
     /// the aforementioned 3 methods clearly differing in naming and API, so that no unconscious choices about paging
     /// should be made.
-    async fn execute(
+    pub(crate) async fn execute_bound_statement(
         &self,
         statement: &BoundStatement,
         page_size: Option<PageSize>,
@@ -1449,7 +1413,7 @@ impl Session {
         .map_err(PagerExecutionError::NextPageError)
     }
 
-    async fn do_batch(&self, batch: &BoundBatch) -> Result<QueryResult, ExecutionError> {
+    pub(crate) async fn do_batch(&self, batch: &BoundBatch) -> Result<QueryResult, ExecutionError> {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
         let execution_profile = batch
@@ -1750,10 +1714,10 @@ impl Session {
         traces_events_query.config.consistency = consistency;
         traces_events_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
 
-        let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.do_query_unpaged(&traces_session_query, (tracing_id,)),
-            self.do_query_unpaged(&traces_events_query, (tracing_id,))
-        )?;
+        let session_query = (&traces_session_query, (tracing_id,));
+        let events_query = (&traces_events_query, (tracing_id,));
+        let (traces_session_res, traces_events_res) =
+            tokio::try_join!(session_query.execute(self), events_query.execute(self))?;
 
         // Get tracing info
         let maybe_tracing_info: Option<TracingInfo> = traces_session_res

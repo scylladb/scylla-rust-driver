@@ -15,6 +15,7 @@ use crate::policies::retry::RetryPolicy;
 
 pub mod batch;
 pub mod bound;
+pub mod execute;
 pub mod prepared;
 pub mod unprepared;
 
