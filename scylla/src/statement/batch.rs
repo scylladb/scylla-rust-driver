@@ -297,7 +297,7 @@ impl<'a: 'b, 'b> From<&'a BatchStatement>
 }
 
 /// A batch with all of its statements bound to values
-pub(crate) struct BoundBatch {
+pub struct BoundBatch {
     pub(crate) config: StatementConfig,
     batch_type: BatchType,
     pub(crate) buffer: Vec<u8>,
@@ -307,6 +307,14 @@ pub(crate) struct BoundBatch {
 }
 
 impl BoundBatch {
+    /// Creates a new, empty `BoundBatch` of `batch_type` type.
+    pub fn new(batch_type: BatchType) -> Self {
+        Self {
+            batch_type,
+            ..Default::default()
+        }
+    }
+
     #[allow(clippy::result_large_err)]
     pub(crate) fn from_batch(
         batch: &Batch,
@@ -315,14 +323,12 @@ impl BoundBatch {
         let mut bound_batch = BoundBatch {
             config: batch.config.clone(),
             batch_type: batch.batch_type,
-            prepared: HashMap::new(),
-            buffer: vec![],
-            first_prepared: None,
             statements_len: batch.statements.len().try_into().map_err(|_| {
                 ExecutionError::BadQuery(BadQuery::TooManyQueriesInBatchStatement(
                     batch.statements.len(),
                 ))
             })?,
+            ..Default::default()
         };
 
         let mut values = values.batch_values_iter();
@@ -404,17 +410,17 @@ impl BoundBatch {
     }
 
     /// Borrows the execution profile handle associated with this batch.
-    pub(crate) fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
+    pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
         self.config.execution_profile_handle.as_ref()
     }
 
     /// Gets the default timestamp for this batch in microseconds.
-    pub(crate) fn get_timestamp(&self) -> Option<i64> {
+    pub fn get_timestamp(&self) -> Option<i64> {
         self.config.timestamp
     }
 
     /// Gets type of batch.
-    pub(crate) fn get_type(&self) -> BatchType {
+    pub fn get_type(&self) -> BatchType {
         self.batch_type
     }
 
@@ -472,6 +478,19 @@ fn serialize_statement<T>(
     buffer[length_pos..length_pos + 2].copy_from_slice(&count.to_be_bytes());
 
     Ok(Some(res))
+}
+
+impl Default for BoundBatch {
+    fn default() -> Self {
+        Self {
+            config: StatementConfig::default(),
+            batch_type: BatchType::Logged,
+            buffer: Vec::new(),
+            prepared: HashMap::new(),
+            first_prepared: None,
+            statements_len: 0,
+        }
+    }
 }
 
 fn counts_mismatch_err(n_value_lists: usize, n_statements: u16) -> BatchSerializationError {
