@@ -616,14 +616,20 @@ impl PreparedStatement {
         self.config.execution_profile_handle.as_ref()
     }
 
-    pub(crate) fn bind(
+    /// Binds values with a reference to a prepared statement
+    ///
+    /// This method will serialize the values and thus type erase them on return
+    pub fn bind(
         &self,
         values: &impl SerializeRow,
     ) -> Result<BoundStatement<'_>, SerializationError> {
         BoundStatement::new(Cow::Borrowed(self), values)
     }
 
-    pub(crate) fn into_bind(
+    /// Binds values with an owned prepared statement
+    ///
+    /// This method will serialize the values and thus type erase them on return
+    pub fn into_bind(
         self,
         values: &impl SerializeRow,
     ) -> Result<BoundStatement<'static>, SerializationError> {
