@@ -1110,7 +1110,7 @@ impl Connection {
             consistency,
             serial_consistency,
             timestamp,
-            statements_len: batch.statements_len,
+            statements_len: batch.statements_len(),
         };
 
         loop {
