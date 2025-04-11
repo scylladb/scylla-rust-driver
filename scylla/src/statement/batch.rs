@@ -8,8 +8,9 @@ use scylla_cql::frame::frame_errors::{
 };
 use scylla_cql::frame::request;
 use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
-use scylla_cql::serialize::row::{RowSerializationContext, SerializedValues};
+use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use scylla_cql::serialize::{RowWriter, SerializationError};
+use thiserror::Error;
 
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::errors::{BadQuery, ExecutionError, RequestAttemptError};
@@ -242,6 +243,20 @@ impl BoundBatch {
         }
     }
 
+    /// Appends a new statement to the batch.
+    pub fn append_statement<V: SerializeRow>(
+        &mut self,
+        statement: impl Into<BoundBatchStatement<V>>,
+    ) -> Result<(), BoundBatchStatementError> {
+        let initial_len = self.buffer.len();
+        self.raw_append_statement(statement).inspect_err(|_| {
+            // if we error'd at any point we should put the buffer back to its old length to not
+            // corrupt the buffer in case the user doesn't drop the boundbatch but instead skips and
+            // tries with a successful statement later
+            self.buffer.truncate(initial_len);
+        })
+    }
+
     pub(crate) fn from_batch(
         batch: &Batch,
         values: impl BatchValues,
@@ -348,6 +363,89 @@ impl BoundBatch {
         self.batch_type
     }
 
+    // **IMPORTANT NOTE**: It is OK for this function to append to the buffer even if it errors
+    // because the caller will fix the buffer, HOWEVER, it is *NOT OK* for *ANY* other field in
+    // `self` to be modified if an error occured because the caller will not reset them.
+    fn raw_append_statement<V: SerializeRow>(
+        &mut self,
+        statement: impl Into<BoundBatchStatement<V>>,
+    ) -> Result<(), BoundBatchStatementError> {
+        let mut statement = statement.into();
+        let mut first_prepared = None;
+
+        if self.statements_len == 0 {
+            // save it into a local variable for now in case a latter steps fails
+            first_prepared = match statement {
+                BoundBatchStatement::Bound(ref b) => {
+                    b.token()?.map(|token| (b.prepared.clone(), token))
+                }
+                BoundBatchStatement::Prepared(ps, values) => {
+                    let bound = ps
+                        .bind(&values)
+                        .map_err(BatchStatementSerializationError::ValuesSerialiation)?;
+                    let first_prepared =
+                        bound.token()?.map(|token| (bound.prepared.clone(), token));
+                    // we already serialized it so to avoid re-serializing it, modify the statement to a
+                    // BoundStatement
+                    statement = BoundBatchStatement::Bound(bound);
+                    first_prepared
+                }
+                BoundBatchStatement::Query(_) => None,
+            };
+        }
+
+        let stmnt = match &statement {
+            BoundBatchStatement::Prepared(ps, _) => request::batch::BatchStatement::Prepared {
+                id: Cow::Borrowed(ps.get_id()),
+            },
+            BoundBatchStatement::Bound(b) => request::batch::BatchStatement::Prepared {
+                id: Cow::Borrowed(b.prepared.get_id()),
+            },
+            BoundBatchStatement::Query(q) => request::batch::BatchStatement::Query {
+                text: Cow::Borrowed(&q.contents),
+            },
+        };
+
+        serialize_statement(stmnt, &mut self.buffer, |writer| match &statement {
+            BoundBatchStatement::Prepared(ps, values) => {
+                let ctx = RowSerializationContext::from_prepared(ps.get_prepared_metadata());
+                values.serialize(&ctx, writer).map(Some)
+            }
+            BoundBatchStatement::Bound(b) => {
+                writer.append_serialize_row(&b.values);
+                Ok(Some(()))
+            }
+            // query has no values
+            BoundBatchStatement::Query(_) => Ok(Some(())),
+        })?;
+
+        let new_statements_len = self
+            .statements_len
+            .checked_add(1)
+            .ok_or(BoundBatchStatementError::TooManyQueriesInBatchStatement)?;
+
+        /*** at this point nothing else should be fallible as we are going to be modifying
+         * fields that do not get reset ***/
+
+        self.statements_len = new_statements_len;
+
+        if let Some(first_prepared) = first_prepared {
+            self.first_prepared = Some(first_prepared);
+        }
+
+        let prepared = match statement {
+            BoundBatchStatement::Prepared(ps, _) => ps,
+            BoundBatchStatement::Bound(b) => b.prepared,
+            BoundBatchStatement::Query(_) => return Ok(()),
+        };
+
+        if !self.prepared.contains_key(prepared.get_id()) {
+            self.prepared.insert(prepared.get_id().to_owned(), prepared);
+        }
+
+        Ok(())
+    }
+
     fn serialize_from_batch_statement<T>(
         &mut self,
         statement: &BatchStatement,
@@ -421,4 +519,55 @@ fn counts_mismatch_err(n_value_lists: usize, n_statements: u16) -> BatchSerializ
         n_value_lists,
         n_statements: n_statements as usize,
     }
+}
+
+/// This enum represents a CQL statement, that can be part of batch and its values
+#[derive(Clone)]
+#[non_exhaustive]
+pub enum BoundBatchStatement<V: SerializeRow> {
+    /// A prepared statement and its not-yet serialized values
+    Prepared(PreparedStatement, V),
+    /// A statement whose values have already been bound (and thus serialized)
+    Bound(BoundStatement),
+    /// An unprepared statement with no values
+    Query(Statement),
+}
+
+impl From<BoundStatement> for BoundBatchStatement<()> {
+    fn from(b: BoundStatement) -> Self {
+        BoundBatchStatement::Bound(b)
+    }
+}
+
+impl<V: SerializeRow> From<(PreparedStatement, V)> for BoundBatchStatement<V> {
+    fn from((p, v): (PreparedStatement, V)) -> Self {
+        BoundBatchStatement::Prepared(p, v)
+    }
+}
+
+impl From<Statement> for BoundBatchStatement<()> {
+    fn from(s: Statement) -> Self {
+        BoundBatchStatement::Query(s)
+    }
+}
+
+impl From<&str> for BoundBatchStatement<()> {
+    fn from(s: &str) -> Self {
+        BoundBatchStatement::Query(Statement::from(s))
+    }
+}
+
+/// An error type returned when adding a statement to a bounded batch fails
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum BoundBatchStatementError {
+    /// Failed to serialize the batch statement
+    #[error(transparent)]
+    Statement(#[from] BatchStatementSerializationError),
+    /// Failed to serialize statement's bound values.
+    #[error("Failed to calculate partition key")]
+    PartitionKey(#[from] PartitionKeyError),
+    /// Too many statements in the batch statement.
+    #[error("Added statement goes over exceeded max value of 65,535")]
+    TooManyQueriesInBatchStatement,
 }
