@@ -2349,6 +2349,24 @@ fn unset_value() {
         do_serialize(set_i32, &ColumnType::Native(NativeType::Int)),
         vec![0, 0, 0, 4, 0, 0, 0, 32]
     );
+
+    let unset_option_i32: Option<i32> = None;
+    assert_eq!(
+        do_serialize(
+            MaybeUnset::from_option(unset_option_i32),
+            &ColumnType::Native(NativeType::Int)
+        ),
+        &(-2_i32).to_be_bytes()[..]
+    );
+
+    let set_option_i32: Option<i32> = Some(44);
+    assert_eq!(
+        do_serialize(
+            MaybeUnset::from_option(set_option_i32),
+            &ColumnType::Native(NativeType::Int)
+        ),
+        vec![0, 0, 0, 4, 0, 0, 0, 44]
+    );
 }
 
 #[test]
