@@ -1246,7 +1246,7 @@ impl Session {
         statement: &Statement,
     ) -> Result<PreparedStatement, PrepareError> {
         let cluster_state = self.get_cluster_state();
-        let connections_iter = cluster_state.iter_working_connections_to_shards()?;
+        let connections_iter = cluster_state.iter_working_connections_to_nodes()?;
 
         // Prepare statements on all connections concurrently
         let handles = connections_iter.map(|c| async move { c.prepare_raw(statement).await });
@@ -1255,7 +1255,7 @@ impl Session {
         // If at least one prepare was successful, `prepare()` returns Ok.
         // Find the first result that is Ok, or Err if all failed.
 
-        // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
+        // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections_to_nodes()`
         // returns either an error or an iterator with at least one connection, so there will be at least one result.
         let first_ok: Result<RawPreparedStatement, RequestAttemptError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
