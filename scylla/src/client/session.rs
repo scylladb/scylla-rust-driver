@@ -1248,8 +1248,27 @@ impl Session {
     ) -> Result<PreparedStatement, PrepareError> {
         let cluster_state = self.get_cluster_state();
 
-        let mut connections_to_nodes = cluster_state.iter_working_connections_to_nodes()?;
-        Self::prepare_on_all(statement, &cluster_state, &mut connections_to_nodes).await
+        // Start by attempting preparation on a single (random) connection to every node.
+        {
+            let mut connections_to_nodes = cluster_state.iter_working_connections_to_nodes()?;
+            let on_all_nodes_result =
+                Self::prepare_on_all(statement, &cluster_state, &mut connections_to_nodes).await;
+            if let Ok(prepared) = on_all_nodes_result {
+                // We succeeded in preparing the statement on at least one node. We're done.
+                // Other nodes could have failed to prepare the statement, but this will be handled
+                // as `DbError::Unprepared` upon execution, followed by a repreparation attempt.
+                return Ok(prepared);
+            }
+        }
+
+        // We could have been just unlucky: we could have possibly chosen random connections all of which were defunct
+        // (one possibility is that we targeted overloaded shards).
+        // Let's try again, this time on connections to every shard. This is a "last call" fallback.
+        {
+            let mut connections_to_shards = cluster_state.iter_working_connections_to_shards()?;
+
+            Self::prepare_on_all(statement, &cluster_state, &mut connections_to_shards).await
+        }
     }
 
     /// Prepares the statement on all given connections.
