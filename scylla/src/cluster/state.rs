@@ -217,16 +217,19 @@ impl ClusterState {
     }
 
     /// Access keyspace details collected by the driver.
+    #[inline]
     pub fn get_keyspace(&self, keyspace: impl AsRef<str>) -> Option<&Keyspace> {
         self.keyspaces.get(keyspace.as_ref())
     }
 
     /// Returns an iterator over keyspaces.
+    #[inline]
     pub fn keyspaces_iter(&self) -> impl Iterator<Item = (&str, &Keyspace)> {
         self.keyspaces.iter().map(|(k, v)| (k.as_str(), v))
     }
 
     /// Access details about nodes known to the driver
+    #[inline]
     pub fn get_nodes_info(&self) -> &[Arc<Node>] {
         &self.all_nodes
     }
@@ -268,6 +271,7 @@ impl ClusterState {
     }
 
     /// Access to replicas owning a given token
+    #[inline]
     pub fn get_token_endpoints(
         &self,
         keyspace: &str,
@@ -303,6 +307,7 @@ impl ClusterState {
     /// or named values (e.g. struct that derives `SerializeRow`), as you would
     /// when executing a request. No additional values are allowed besides values
     /// for primary key columns.
+    #[inline]
     pub fn get_endpoints(
         &self,
         keyspace: &str,
@@ -314,6 +319,7 @@ impl ClusterState {
     }
 
     /// Access replica location info
+    #[inline]
     pub fn replica_locator(&self) -> &ReplicaLocator {
         &self.locator
     }
