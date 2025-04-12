@@ -344,6 +344,28 @@ impl ClusterState {
         // is nonempty, too.
     }
 
+    /// Returns nonempty iterator of working connections to all nodes.
+    pub(crate) fn iter_working_connections_to_nodes(
+        &self,
+    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, ConnectionPoolError> {
+        // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
+        assert!(!self.known_peers.is_empty());
+        let mut peers_iter = self.known_peers.values();
+
+        // First we try to find the first working pool of connections.
+        // If none is found, return error.
+        let first_working_pool = peers_iter
+            .by_ref()
+            .map(|node| node.get_random_connection())
+            .find_or_first(Result::is_ok)
+            .expect("impossible: known_peers was asserted to be nonempty")?;
+
+        let remaining_pools_iter = peers_iter.flat_map(|node| node.get_random_connection());
+
+        Ok(std::iter::once(first_working_pool).chain(remaining_pools_iter))
+        // The returned iterator is nonempty, because it returns at least `first_working_pool`.
+    }
+
     pub(super) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
         let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
 
