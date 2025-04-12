@@ -77,6 +77,7 @@ impl<'r> RawBatchValuesIterator<'r> for std::slice::Iter<'r, SerializedValues> {
         })
     }
 
+    #[inline]
     fn is_empty_next(&mut self) -> Option<bool> {
         self.next().map(|sv| sv.is_empty())
     }
@@ -152,6 +153,7 @@ where
         self.batch_values_iterator.serialize_next(&ctx, writer)
     }
 
+    #[inline]
     fn is_empty_next(&mut self) -> Option<bool> {
         let _ = self.contexts.next();
         let ret = self.batch_values_iterator.is_empty_next()?;
