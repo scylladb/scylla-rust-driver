@@ -1265,7 +1265,7 @@ impl Session {
             Result<tokio::sync::mpsc::Receiver<PreparationResult>, ConnectionPoolError>,
         >();
 
-        /// Prepares statement on all nodes concurrently.
+        /// Prepares statement on all nodes/shards concurrently.
         ///
         /// Sends result of each preparation attempt through a channel, whose receiving end is first sent
         /// though the oneshot channel accepted as an argument.
@@ -1277,13 +1277,23 @@ impl Session {
             oneshot_tx: tokio::sync::oneshot::Sender<
                 Result<tokio::sync::mpsc::Receiver<PreparationResult>, ConnectionPoolError>,
             >,
+            prepare_on_all_shards: bool,
         ) {
             // `iter_working_connection_to_nodes()` returns no more than one connection per node, so the number of all nodes
             // is a reasonable capacity for the channel.
             let (tx, rx) =
                 tokio::sync::mpsc::channel::<PreparationResult>(cluster_state.all_nodes.len());
 
-            let connections_iter = match cluster_state.iter_working_connections_to_nodes() {
+            let working_connections = if prepare_on_all_shards {
+                cluster_state
+                    .iter_working_connections_to_shards()
+                    .map(itertools::Either::Left)
+            } else {
+                cluster_state
+                    .iter_working_connections_to_nodes()
+                    .map(itertools::Either::Right)
+            };
+            let connections_iter = match working_connections {
                 Ok(iter) => {
                     // We have at least one working connection to some node.
                     // Let's provide our listener with the receiving end of the preparation results channel.
@@ -1334,6 +1344,7 @@ impl Session {
             Arc::clone(&cluster_state),
             statement,
             oneshot_tx,
+            false,
         ));
 
         // If at least one prepare was successful, `prepare()` returns Ok.
