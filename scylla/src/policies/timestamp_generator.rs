@@ -20,12 +20,14 @@ pub trait TimestampGenerator: Send + Sync {
 pub struct SimpleTimestampGenerator {}
 
 impl SimpleTimestampGenerator {
+    #[inline]
     pub fn new() -> Self {
         SimpleTimestampGenerator {}
     }
 }
 
 impl TimestampGenerator for SimpleTimestampGenerator {
+    #[inline]
     fn next_timestamp(&self) -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -55,6 +57,7 @@ pub struct MonotonicTimestampGenerator {
 
 impl MonotonicTimestampGenerator {
     /// Creates a new monotonic timestamp generator with default settings
+    #[inline]
     pub fn new() -> Self {
         MonotonicTimestampGenerator {
             last: AtomicI64::new(0),
@@ -66,6 +69,7 @@ impl MonotonicTimestampGenerator {
         }
     }
 
+    #[inline]
     pub fn with_warning_times(
         mut self,
         warning_threshold: Duration,
@@ -78,6 +82,7 @@ impl MonotonicTimestampGenerator {
         self
     }
 
+    #[inline]
     pub fn without_warnings(mut self) -> Self {
         self.config = None;
         self
@@ -125,6 +130,7 @@ impl MonotonicTimestampGenerator {
 }
 
 impl Default for MonotonicTimestampGenerator {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
