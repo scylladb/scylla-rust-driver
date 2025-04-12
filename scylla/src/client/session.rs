@@ -1396,9 +1396,25 @@ impl Session {
             )))
         }
 
-        let on_all_nodes_result = prepare_on_all(statement, cluster_state, false).await?;
+        // Start by attempting preparation on a single (random) connection to every node.
+        {
+            let on_all_nodes_result =
+                prepare_on_all(statement.clone(), Arc::clone(&cluster_state), false).await?;
+            if let Ok(prepared) = on_all_nodes_result {
+                // We succeeded in preparing the statement on at least one node. We're done; at the same time,
+                // the background tokio task attempts preparation on remaining nodes.
+                return Ok(prepared);
+            }
+        }
 
-        on_all_nodes_result.map_err(|err| PrepareError::AllAttemptsFailed { first_attempt: err })
+        // We could have been just unlucky: we could have possibly chosen random connections all of which were defunct
+        // (one possibility is that we targeted overloaded shards).
+        // Let's try again, this time on connections to every shard. This is a "last call" fallback.
+        {
+            let on_all_shards_result = prepare_on_all(statement, cluster_state, true).await?;
+            on_all_shards_result
+                .map_err(|err| PrepareError::AllAttemptsFailed { first_attempt: err })
+        }
     }
 
     fn extract_partitioner_name<'a>(
