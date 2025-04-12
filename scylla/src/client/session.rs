@@ -1247,7 +1247,7 @@ impl Session {
         let statement_ref = &statement;
 
         let cluster_state = self.get_cluster_state();
-        let connections_iter = cluster_state.iter_working_connections()?;
+        let connections_iter = cluster_state.iter_working_connections_to_shards()?;
 
         // Prepare statements on all connections concurrently
         let handles = connections_iter.map(|c| async move { c.prepare(statement_ref).await });
@@ -2105,7 +2105,7 @@ impl Session {
 
     pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, SchemaAgreementError> {
         let cluster_state = self.get_cluster_state();
-        let connections_iter = cluster_state.iter_working_connections()?;
+        let connections_iter = cluster_state.iter_working_connections_to_shards()?;
 
         let handles = connections_iter.map(|c| async move { c.fetch_schema_version().await });
         let versions = try_join_all(handles).await?;
