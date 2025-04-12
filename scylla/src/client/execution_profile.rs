@@ -200,6 +200,7 @@ pub(crate) mod defaults {
     }
 
     impl Default for ExecutionProfileInner {
+        #[inline]
         fn default() -> Self {
             Self {
                 request_timeout: request_timeout(),
@@ -254,6 +255,7 @@ impl ExecutionProfileBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn request_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.request_timeout = Some(timeout);
         self
@@ -261,6 +263,7 @@ impl ExecutionProfileBuilder {
 
     /// Specify a default consistency to be used for statement executions.
     /// It's possible to override it by explicitly setting a consistency on the chosen query.
+    #[inline]
     pub fn consistency(mut self, consistency: Consistency) -> Self {
         self.consistency = Some(consistency);
         self
@@ -269,6 +272,7 @@ impl ExecutionProfileBuilder {
     /// Specify a default serial consistency to be used for statement executions.
     /// It's possible to override it by explicitly setting a serial consistency
     /// on the chosen statement.
+    #[inline]
     pub fn serial_consistency(mut self, serial_consistency: Option<SerialConsistency>) -> Self {
         self.serial_consistency = Some(serial_consistency);
         self
@@ -289,6 +293,7 @@ impl ExecutionProfileBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn load_balancing_policy(
         mut self,
         load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
@@ -313,6 +318,7 @@ impl ExecutionProfileBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn retry_policy(mut self, retry_policy: Arc<dyn RetryPolicy>) -> Self {
         self.retry_policy = Some(retry_policy);
         self
@@ -342,6 +348,7 @@ impl ExecutionProfileBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn speculative_execution_policy(
         mut self,
         speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
@@ -385,6 +392,7 @@ impl ExecutionProfileBuilder {
 }
 
 impl Default for ExecutionProfileBuilder {
+    #[inline]
     fn default() -> Self {
         ExecutionProfile::builder()
     }
@@ -431,6 +439,7 @@ impl ExecutionProfile {
     }
 
     /// Creates a blank builder that can be used to construct new ExecutionProfile.
+    #[inline]
     pub fn builder() -> ExecutionProfileBuilder {
         ExecutionProfileBuilder {
             request_timeout: None,
@@ -443,11 +452,13 @@ impl ExecutionProfile {
     }
 
     /// Creates a builder having all options set to the same as set in this ExecutionProfile.
+    #[inline]
     pub fn to_builder(&self) -> ExecutionProfileBuilder {
         self.0.to_builder()
     }
 
     /// Returns a new handle to this ExecutionProfile.
+    #[inline]
     pub fn into_handle(self) -> ExecutionProfileHandle {
         ExecutionProfileHandle(Arc::new((ArcSwap::new(self.0), None)))
     }
@@ -456,36 +467,43 @@ impl ExecutionProfile {
     /// The tag, as its name suggests, is only useful for debugging purposes, while being confused
     /// about which statement/session is assigned which handle. Identifying handles with tags
     /// could then help.
+    #[inline]
     pub fn into_handle_with_label(self, label: String) -> ExecutionProfileHandle {
         ExecutionProfileHandle(Arc::new((ArcSwap::new(self.0), Some(label))))
     }
 
     /// Gets client timeout associated with this profile.
+    #[inline]
     pub fn get_request_timeout(&self) -> Option<Duration> {
         self.0.request_timeout
     }
 
     /// Gets consistency associated with this profile.
+    #[inline]
     pub fn get_consistency(&self) -> Consistency {
         self.0.consistency
     }
 
     /// Gets serial consistency (if set) associated with this profile.
+    #[inline]
     pub fn get_serial_consistency(&self) -> Option<SerialConsistency> {
         self.0.serial_consistency
     }
 
     /// Gets load balancing policy associated with this profile.
+    #[inline]
     pub fn get_load_balancing_policy(&self) -> &Arc<dyn LoadBalancingPolicy> {
         &self.0.load_balancing_policy
     }
 
     /// Gets retry policy associated with this profile.
+    #[inline]
     pub fn get_retry_policy(&self) -> &Arc<dyn RetryPolicy> {
         &self.0.retry_policy
     }
 
     /// Gets speculative execution policy associated with this profile.
+    #[inline]
     pub fn get_speculative_execution_policy(&self) -> Option<&Arc<dyn SpeculativeExecutionPolicy>> {
         self.0.speculative_execution_policy.as_ref()
     }
@@ -511,17 +529,20 @@ impl ExecutionProfileHandle {
     }
 
     /// Creates a builder having all options set to the same as set in the ExecutionProfile pointed by this handle.
+    #[inline]
     pub fn pointee_to_builder(&self) -> ExecutionProfileBuilder {
         self.0 .0.load().to_builder()
     }
 
     /// Returns execution profile pointed by this handle.
+    #[inline]
     pub fn to_profile(&self) -> ExecutionProfile {
         ExecutionProfile(self.access())
     }
 
     /// Makes the handle point to a new execution profile.
     /// All entities (statements/Session) holding this handle will reflect the change.
+    #[inline]
     pub fn map_to_another_profile(&mut self, profile: ExecutionProfile) {
         self.0 .0.store(profile.0)
     }
