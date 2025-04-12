@@ -1198,6 +1198,14 @@ impl Session {
     /// Prepares a statement on the server side and returns a prepared statement,
     /// which can later be used to perform more efficient requests.
     ///
+    /// The statement is prepared on all nodes. This function finishes once all nodes respond
+    /// with either success or an error.
+    // TODO: There are no timeouts here. So, just one stuck node freezes the driver here, potentially indefinitely long.
+    // Also, what the driver requires to get from the cluster is the prepared statement metadata.
+    // It suffices that it gets only one copy of it, just from one success response. Therefore, it's a possible
+    // optimisation that the function only waits for one preparation to finish successfully, and then it returns.
+    // For it to be done, other preparations must continue in the background, on a separate tokio task.
+    ///
     /// Prepared statements are much faster than unprepared statements:
     /// * Database doesn't need to parse the statement string upon each execution (only once)
     /// * They are properly load balanced using token aware routing
