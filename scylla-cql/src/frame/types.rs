@@ -41,6 +41,7 @@ pub enum Consistency {
 impl TryFrom<u16> for Consistency {
     type Error = TryFromPrimitiveError<u16>;
 
+    #[inline]
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             0x0000 => Ok(Consistency::Any),
@@ -74,6 +75,7 @@ pub enum SerialConsistency {
 impl TryFrom<i16> for SerialConsistency {
     type Error = TryFromPrimitiveError<i16>;
 
+    #[inline]
     fn try_from(value: i16) -> Result<Self, Self::Error> {
         match value {
             0x0008 => Ok(Self::Serial),
@@ -87,6 +89,7 @@ impl TryFrom<i16> for SerialConsistency {
 }
 
 impl Consistency {
+    #[inline]
     pub fn is_serial(&self) -> bool {
         matches!(self, Consistency::Serial | Consistency::LocalSerial)
     }
@@ -117,14 +120,16 @@ impl TryFrom<Consistency> for SerialConsistency {
 }
 
 impl std::fmt::Display for Consistency {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        <Self as std::fmt::Debug>::fmt(self, f)
     }
 }
 
 impl std::fmt::Display for SerialConsistency {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        <Self as std::fmt::Debug>::fmt(self, f)
     }
 }
 
@@ -160,15 +165,18 @@ fn read_raw_bytes<'a>(
     Ok(ret)
 }
 
+#[inline]
 pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
     let v = buf.read_i32::<BigEndian>()?;
     Ok(v)
 }
 
+#[inline]
 pub fn write_int(v: i32, buf: &mut impl BufMut) {
     buf.put_i32(v);
 }
 
+#[inline]
 pub fn read_int_length(buf: &mut &[u8]) -> Result<usize, LowLevelDeserializationError> {
     let v = read_int(buf)?;
     let v: usize = v.try_into()?;
@@ -196,11 +204,13 @@ fn type_int() {
     }
 }
 
+#[inline]
 pub fn read_long(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
     let v = buf.read_i64::<BigEndian>()?;
     Ok(v)
 }
 
+#[inline]
 pub fn write_long(v: i64, buf: &mut impl BufMut) {
     buf.put_i64(v);
 }
@@ -215,11 +225,13 @@ fn type_long() {
     }
 }
 
+#[inline]
 pub fn read_short(buf: &mut &[u8]) -> Result<u16, std::io::Error> {
     let v = buf.read_u16::<BigEndian>()?;
     Ok(v)
 }
 
+#[inline]
 pub fn write_short(v: u16, buf: &mut impl BufMut) {
     buf.put_u16(v);
 }
@@ -250,6 +262,7 @@ fn type_short() {
 }
 
 // https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec#L208
+#[inline]
 pub fn read_bytes_opt<'a>(
     buf: &mut &'a [u8],
 ) -> Result<Option<&'a [u8]>, LowLevelDeserializationError> {
@@ -263,12 +276,14 @@ pub fn read_bytes_opt<'a>(
 }
 
 // Same as read_bytes, but we assume the value won't be `null`
+#[inline]
 pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], LowLevelDeserializationError> {
     let len = read_int_length(buf)?;
     let v = read_raw_bytes(len, buf)?;
     Ok(v)
 }
 
+#[inline]
 pub fn read_value<'a>(buf: &mut &'a [u8]) -> Result<RawValue<'a>, LowLevelDeserializationError> {
     let len = read_int(buf)?;
     match len {
@@ -282,18 +297,21 @@ pub fn read_value<'a>(buf: &mut &'a [u8]) -> Result<RawValue<'a>, LowLevelDeseri
     }
 }
 
+#[inline]
 pub fn read_short_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], LowLevelDeserializationError> {
     let len = read_short_length(buf)?;
     let v = read_raw_bytes(len, buf)?;
     Ok(v)
 }
 
+#[inline]
 pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     write_int_length(v.len(), buf)?;
     buf.put_slice(v);
     Ok(())
 }
 
+#[inline]
 pub fn write_bytes_opt(
     v: Option<impl AsRef<[u8]>>,
     buf: &mut impl BufMut,
@@ -309,12 +327,14 @@ pub fn write_bytes_opt(
     Ok(())
 }
 
+#[inline]
 pub fn write_short_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     write_short_length(v.len(), buf)?;
     buf.put_slice(v);
     Ok(())
 }
 
+#[inline]
 pub fn read_bytes_map(
     buf: &mut &[u8],
 ) -> Result<HashMap<String, Bytes>, LowLevelDeserializationError> {
@@ -328,6 +348,7 @@ pub fn read_bytes_map(
     Ok(v)
 }
 
+#[inline]
 pub fn write_bytes_map<B>(
     v: &HashMap<String, B>,
     buf: &mut impl BufMut,
@@ -355,6 +376,7 @@ fn type_bytes_map() {
     assert_eq!(read_bytes_map(&mut &*buf).unwrap(), val);
 }
 
+#[inline]
 pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, LowLevelDeserializationError> {
     let len = read_short_length(buf)?;
     let raw = read_raw_bytes(len, buf)?;
@@ -362,6 +384,7 @@ pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, LowLevelDeserializ
     Ok(v)
 }
 
+#[inline]
 pub fn write_string(v: &str, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     let raw = v.as_bytes();
     write_short_length(v.len(), buf)?;
@@ -379,6 +402,7 @@ fn type_string() {
     }
 }
 
+#[inline]
 pub fn read_long_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, LowLevelDeserializationError> {
     let len = read_int_length(buf)?;
     let raw = read_raw_bytes(len, buf)?;
@@ -386,6 +410,7 @@ pub fn read_long_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, LowLevelDeser
     Ok(v)
 }
 
+#[inline]
 pub fn write_long_string(v: &str, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     let raw = v.as_bytes();
     let len = raw.len();
@@ -404,6 +429,7 @@ fn type_long_string() {
     }
 }
 
+#[inline]
 pub fn read_string_map(
     buf: &mut &[u8],
 ) -> Result<HashMap<String, String>, LowLevelDeserializationError> {
@@ -417,6 +443,7 @@ pub fn read_string_map(
     Ok(v)
 }
 
+#[inline]
 pub fn write_string_map(
     v: &HashMap<impl AsRef<str>, impl AsRef<str>>,
     buf: &mut impl BufMut,
@@ -441,6 +468,7 @@ fn type_string_map() {
     assert_eq!(read_string_map(&mut &buf[..]).unwrap(), val);
 }
 
+#[inline]
 pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>, LowLevelDeserializationError> {
     let len = read_short_length(buf)?;
     let mut v = Vec::with_capacity(len);
@@ -450,6 +478,7 @@ pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>, LowLevelDeserial
     Ok(v)
 }
 
+#[inline]
 pub fn write_string_list(
     v: &[String],
     buf: &mut impl BufMut,
@@ -475,6 +504,7 @@ fn type_string_list() {
     assert_eq!(read_string_list(&mut &buf[..]).unwrap(), val);
 }
 
+#[inline]
 pub fn read_string_multimap(
     buf: &mut &[u8],
 ) -> Result<HashMap<String, Vec<String>>, LowLevelDeserializationError> {
@@ -488,6 +518,7 @@ pub fn read_string_multimap(
     Ok(v)
 }
 
+#[inline]
 pub fn write_string_multimap(
     v: &HashMap<String, Vec<String>>,
     buf: &mut impl BufMut,
@@ -515,6 +546,7 @@ fn type_string_multimap() {
     assert_eq!(read_string_multimap(&mut &buf[..]).unwrap(), val);
 }
 
+#[inline]
 pub fn read_uuid(buf: &mut &[u8]) -> Result<Uuid, LowLevelDeserializationError> {
     let raw = read_raw_bytes(16, buf)?;
 
@@ -526,6 +558,7 @@ pub fn read_uuid(buf: &mut &[u8]) -> Result<Uuid, LowLevelDeserializationError> 
     Ok(Uuid::from_bytes(*raw_array))
 }
 
+#[inline]
 pub fn write_uuid(uuid: &Uuid, buf: &mut impl BufMut) {
     buf.put_slice(&uuid.as_bytes()[..]);
 }
@@ -539,15 +572,18 @@ fn type_uuid() {
     assert_eq!(u, u2);
 }
 
+#[inline]
 pub fn read_consistency(buf: &mut &[u8]) -> Result<Consistency, LowLevelDeserializationError> {
     let raw = read_short(buf)?;
     Consistency::try_from(raw).map_err(LowLevelDeserializationError::UnknownConsistency)
 }
 
+#[inline]
 pub fn write_consistency(c: Consistency, buf: &mut impl BufMut) {
     write_short(c as u16, buf);
 }
 
+#[inline]
 pub fn write_serial_consistency(c: SerialConsistency, buf: &mut impl BufMut) {
     write_short(c as u16, buf);
 }
@@ -571,6 +607,7 @@ fn type_consistency() {
     assert!(err_str.contains(&format!("{}", c)));
 }
 
+#[inline]
 pub fn read_inet(buf: &mut &[u8]) -> Result<SocketAddr, LowLevelDeserializationError> {
     let len = buf.read_u8()?;
     let ip_addr = match len {
@@ -591,6 +628,7 @@ pub fn read_inet(buf: &mut &[u8]) -> Result<SocketAddr, LowLevelDeserializationE
     Ok(SocketAddr::new(ip_addr, port as u16))
 }
 
+#[inline]
 pub fn write_inet(addr: SocketAddr, buf: &mut impl BufMut) {
     match addr.ip() {
         IpAddr::V4(v4) => {

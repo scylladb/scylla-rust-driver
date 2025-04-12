@@ -68,6 +68,7 @@ impl ProtocolFeatures {
         }
     }
 
+    #[inline]
     pub fn prepared_flags_contain_lwt_mark(&self, flags: u32) -> bool {
         self.lwt_optimization_meta_bit_mask
             .map(|mask| (flags & mask) == mask)
