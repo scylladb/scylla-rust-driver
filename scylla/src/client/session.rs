@@ -476,6 +476,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn query_unpaged(
         &self,
         statement: impl Into<Statement>,
@@ -535,6 +536,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn query_single_page(
         &self,
         statement: impl Into<Statement>,
@@ -581,6 +583,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn query_iter(
         &self,
         statement: impl Into<Statement>,
@@ -632,6 +635,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn execute_unpaged(
         &self,
         prepared: &PreparedStatement,
@@ -696,6 +700,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn execute_single_page(
         &self,
         prepared: &PreparedStatement,
@@ -745,6 +750,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn execute_iter(
         &self,
         prepared: impl Into<PreparedStatement>,
@@ -798,6 +804,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn batch(
         &self,
         batch: &Batch,
@@ -1662,6 +1669,7 @@ impl Session {
     /// Driver collects various metrics like number of queries or query latencies.
     /// They can be read using this method
     #[cfg(feature = "metrics")]
+    #[inline]
     pub fn get_metrics(&self) -> Arc<Metrics> {
         Arc::clone(&self.metrics)
     }
@@ -1670,6 +1678,7 @@ impl Session {
     ///
     /// Driver collects various information about network topology or schema.
     /// It can be read using this method.
+    #[inline]
     pub fn get_cluster_state(&self) -> Arc<ClusterState> {
         self.cluster.get_state()
     }
@@ -2109,6 +2118,7 @@ impl Session {
 
     /// Retrieves the handle to execution profile that is used by this session
     /// by default, i.e. when an executed statement does not define its own handle.
+    #[inline]
     pub fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
         &self.default_execution_profile_handle
     }
