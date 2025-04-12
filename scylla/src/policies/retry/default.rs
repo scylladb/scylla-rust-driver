@@ -10,18 +10,21 @@ use super::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 pub struct DefaultRetryPolicy;
 
 impl DefaultRetryPolicy {
+    #[inline]
     pub fn new() -> DefaultRetryPolicy {
         DefaultRetryPolicy
     }
 }
 
 impl Default for DefaultRetryPolicy {
+    #[inline]
     fn default() -> DefaultRetryPolicy {
         DefaultRetryPolicy::new()
     }
 }
 
 impl RetryPolicy for DefaultRetryPolicy {
+    #[inline]
     fn new_session(&self) -> Box<dyn RetrySession> {
         Box::new(DefaultRetrySession::new())
     }
@@ -34,6 +37,7 @@ pub struct DefaultRetrySession {
 }
 
 impl DefaultRetrySession {
+    #[inline]
     pub fn new() -> DefaultRetrySession {
         DefaultRetrySession {
             was_unavailable_retry: false,
@@ -44,6 +48,7 @@ impl DefaultRetrySession {
 }
 
 impl Default for DefaultRetrySession {
+    #[inline]
     fn default() -> DefaultRetrySession {
         DefaultRetrySession::new()
     }
@@ -128,6 +133,7 @@ impl RetrySession for DefaultRetrySession {
         }
     }
 
+    #[inline]
     fn reset(&mut self) {
         *self = DefaultRetrySession::new();
     }

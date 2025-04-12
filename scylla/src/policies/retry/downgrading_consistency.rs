@@ -13,18 +13,21 @@ use crate::errors::{DbError, RequestAttemptError, WriteType};
 pub struct DowngradingConsistencyRetryPolicy;
 
 impl DowngradingConsistencyRetryPolicy {
+    #[inline]
     pub fn new() -> DowngradingConsistencyRetryPolicy {
         DowngradingConsistencyRetryPolicy
     }
 }
 
 impl Default for DowngradingConsistencyRetryPolicy {
+    #[inline]
     fn default() -> DowngradingConsistencyRetryPolicy {
         DowngradingConsistencyRetryPolicy::new()
     }
 }
 
 impl RetryPolicy for DowngradingConsistencyRetryPolicy {
+    #[inline]
     fn new_session(&self) -> Box<dyn RetrySession> {
         Box::new(DowngradingConsistencyRetrySession::new())
     }
@@ -35,12 +38,14 @@ pub struct DowngradingConsistencyRetrySession {
 }
 
 impl DowngradingConsistencyRetrySession {
+    #[inline]
     pub fn new() -> DowngradingConsistencyRetrySession {
         DowngradingConsistencyRetrySession { was_retry: false }
     }
 }
 
 impl Default for DowngradingConsistencyRetrySession {
+    #[inline]
     fn default() -> DowngradingConsistencyRetrySession {
         DowngradingConsistencyRetrySession::new()
     }
@@ -170,6 +175,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
         }
     }
 
+    #[inline]
     fn reset(&mut self) {
         *self = DowngradingConsistencyRetrySession::new();
     }
