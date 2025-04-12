@@ -307,6 +307,7 @@ impl Metrics {
     }
 
     /// Returns average latency in milliseconds
+    #[inline]
     pub fn get_latency_avg_ms(&self) -> Result<u64, MetricsError> {
         Self::mean(&self.histogram.load())
     }
@@ -363,61 +364,73 @@ impl Metrics {
     }
 
     /// Returns counter for errors occurred in nonpaged queries
+    #[inline]
     pub fn get_errors_num(&self) -> u64 {
         self.errors_num.load(ORDER_TYPE)
     }
 
     /// Returns counter for nonpaged queries
+    #[inline]
     pub fn get_queries_num(&self) -> u64 {
         self.queries_num.load(ORDER_TYPE)
     }
 
     /// Returns counter for errors occurred in paged queries
+    #[inline]
     pub fn get_errors_iter_num(&self) -> u64 {
         self.errors_iter_num.load(ORDER_TYPE)
     }
 
     /// Returns counter for pages requested in paged queries
+    #[inline]
     pub fn get_queries_iter_num(&self) -> u64 {
         self.queries_iter_num.load(ORDER_TYPE)
     }
 
     /// Returns counter measuring how many times a retry policy has decided to retry a query
+    #[inline]
     pub fn get_retries_num(&self) -> u64 {
         self.retries_num.load(ORDER_TYPE)
     }
 
     /// Returns mean rate of queries per second
+    #[inline]
     pub fn get_mean_rate(&self) -> f64 {
         self.meter.mean_rate()
     }
 
     /// Returns one-minute rate of queries per second
+    #[inline]
     pub fn get_one_minute_rate(&self) -> f64 {
         self.meter.one_minute_rate()
     }
 
     /// Returns five-minute rate of queries per second
+    #[inline]
     pub fn get_five_minute_rate(&self) -> f64 {
         self.meter.five_minute_rate()
     }
 
     /// Returns fifteen-minute rate of queries per second
+    #[inline]
     pub fn get_fifteen_minute_rate(&self) -> f64 {
         self.meter.fifteen_minute_rate()
     }
 
     /// Returns total number of active connections
+    #[inline]
     pub fn get_total_connections(&self) -> u64 {
         self.total_connections.load(ORDER_TYPE)
     }
 
     /// Returns counter for connection timeouts
+    #[inline]
     pub fn get_connection_timeouts(&self) -> u64 {
         self.connection_timeouts.load(ORDER_TYPE)
     }
 
     /// Returns counter for request timeouts
+    #[inline]
     pub fn get_request_timeouts(&self) -> u64 {
         self.request_timeouts.load(ORDER_TYPE)
     }
@@ -509,6 +522,7 @@ impl Metrics {
 
 #[cfg(test)]
 impl Default for Metrics {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
