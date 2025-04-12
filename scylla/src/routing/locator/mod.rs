@@ -179,22 +179,26 @@ impl ReplicaLocator {
     }
 
     /// Gives access to the token ring, based on which all token ranges/replica sets are computed.
+    #[inline]
     pub fn ring(&self) -> &TokenRing<Arc<Node>> {
         self.replication_data.get_global_ring()
     }
 
     /// Gives a list of all nodes in the token ring.
+    #[inline]
     pub fn unique_nodes_in_global_ring(&self) -> &[Arc<Node>] {
         self.replication_data.unique_nodes_in_global_ring()
     }
 
     /// Gives a list of all known datacenters.
+    #[inline]
     pub fn datacenter_names(&self) -> &[String] {
         self.datacenters.as_slice()
     }
 
     /// Gives a list of all nodes in a specified datacenter ring (which is created by filtering the
     /// original ring to only contain nodes living in the specified datacenter).
+    #[inline]
     pub fn unique_nodes_in_datacenter_ring<'a>(
         &'a self,
         datacenter_name: &str,
@@ -354,6 +358,7 @@ impl<'a> ReplicaSet<'a> {
     /// Returns `true` if the replica set contains no elements.
     ///
     /// Complexity same as of `ReplicaSet::len`.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -630,6 +635,7 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
 }
 
 impl<'a> ReplicaSet<'a> {
+    #[inline]
     pub fn into_replicas_ordered(self) -> ReplicasOrdered<'a> {
         ReplicasOrdered { replica_set: self }
     }
