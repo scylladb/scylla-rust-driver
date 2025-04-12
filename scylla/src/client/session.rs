@@ -1252,19 +1252,6 @@ impl Session {
 
         let cluster_state = self.get_cluster_state();
 
-        // This is required for the following reason:
-        // 1. The iterator returned from `ClusterState::iter_working_connections_to_nodes()` borrows `ClusterState`.
-        // 2. Only after we call `ClusterState::iter_working_connections_to_nodes()` do we know if there is at least
-        //    one working connection. It would be thus perfect to call it here (not in the worker task) and return
-        //    the error early if no connection is working. However, we cannot send the resulting iterator to the task,
-        //    because the iterator is not 'static.
-        // 3. Thus, it must be the worker task that calls `ClusterState::iter_working_connections_to_nodes()`. If it fails,
-        //    it signals `ConnectionPoolError` to the listening task (us). Else, it provides the listening task (us)
-        //    with an mpsc channel that will be used to send subsequent results of preparation attempts on connections.
-        let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<
-            Result<tokio::sync::mpsc::Receiver<PreparationResult>, ConnectionPoolError>,
-        >();
-
         /// Prepares statement on all nodes/shards concurrently.
         ///
         /// Sends result of each preparation attempt through a channel, whose receiving end is first sent
@@ -1339,6 +1326,19 @@ impl Session {
                 }
             }
         }
+
+        // This is required for the following reason:
+        // 1. The iterator returned from `ClusterState::iter_working_connections_to_nodes()` borrows `ClusterState`.
+        // 2. Only after we call `ClusterState::iter_working_connections_to_nodes()` do we know if there is at least
+        //    one working connection. It would be thus perfect to call it here (not in the worker task) and return
+        //    the error early if no connection is working. However, we cannot send the resulting iterator to the task,
+        //    because the iterator is not 'static.
+        // 3. Thus, it must be the worker task that calls `ClusterState::iter_working_connections_to_nodes()`. If it fails,
+        //    it signals `ConnectionPoolError` to the listening task (us). Else, it provides the listening task (us)
+        //    with an mpsc channel that will be used to send subsequent results of preparation attempts on connections.
+        let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<
+            Result<tokio::sync::mpsc::Receiver<PreparationResult>, ConnectionPoolError>,
+        >();
 
         tokio::task::spawn(preparation_worker(
             Arc::clone(&cluster_state),
