@@ -33,6 +33,16 @@ pub enum MaybeUnset<V> {
     Set(V),
 }
 
+impl<V> MaybeUnset<V> {
+    #[inline]
+    pub fn from_option(opt: Option<V>) -> Self {
+        match opt {
+            Some(v) => Self::Set(v),
+            None => Self::Unset,
+        }
+    }
+}
+
 /// Represents timeuuid (uuid V1) value
 ///
 /// This type has custom comparison logic which follows Scylla/Cassandra semantics.
