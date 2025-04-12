@@ -15,6 +15,7 @@ pub struct AuthResponse {
 impl SerializableRequest for AuthResponse {
     const OPCODE: RequestOpcode = RequestOpcode::AuthResponse;
 
+    #[inline]
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         Ok(write_bytes_opt(self.response.as_ref(), buf)
             .map_err(AuthResponseSerializationError::ResponseSerialization)?)

@@ -53,6 +53,7 @@ pub struct BatchTypeParseError {
 impl TryFrom<u8> for BatchType {
     type Error = BatchTypeParseError;
 
+    #[inline]
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(Self::Logged),
@@ -182,6 +183,7 @@ where
 {
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 
+    #[inline]
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         self.do_serialize(buf)?;
         Ok(())
@@ -230,6 +232,7 @@ impl BatchStatement<'_> {
 // Can be removed once https://github.com/rust-lang/rust-clippy/issues/12495 is fixed.
 #[allow(clippy::needless_lifetimes)]
 impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
+    #[inline]
     fn from(value: &'s BatchStatement) -> Self {
         match value {
             BatchStatement::Query { text } => BatchStatement::Query { text: text.clone() },

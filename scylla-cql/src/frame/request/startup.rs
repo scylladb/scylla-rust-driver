@@ -16,6 +16,7 @@ pub struct Startup<'a> {
 impl SerializableRequest for Startup<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Startup;
 
+    #[inline]
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         types::write_string_map(&self.options, buf)
             .map_err(StartupSerializationError::OptionsSerialization)?;

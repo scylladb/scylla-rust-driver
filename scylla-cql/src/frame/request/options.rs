@@ -7,6 +7,7 @@ pub struct Options;
 impl SerializableRequest for Options {
     const OPCODE: RequestOpcode = RequestOpcode::Options;
 
+    #[inline]
     fn serialize(&self, _buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         Ok(())
     }
