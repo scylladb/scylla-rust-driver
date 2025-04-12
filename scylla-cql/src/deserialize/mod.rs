@@ -252,6 +252,7 @@ impl TypeCheckError {
     }
 
     /// Retrieve an error reason by downcasting to specific type.
+    #[inline]
     pub fn downcast_ref<T: std::error::Error + 'static>(&self) -> Option<&T> {
         self.0.downcast_ref()
     }
@@ -284,6 +285,7 @@ impl DeserializationError {
     }
 
     /// Retrieve an error reason by downcasting to specific type.
+    #[inline]
     pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
         self.0.downcast_ref()
     }

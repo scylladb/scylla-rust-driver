@@ -1050,6 +1050,7 @@ where
         Some(do_next())
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.raw_iter.size_hint()
     }
@@ -1310,6 +1311,7 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
         Some((head, raw_res))
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.raw_iter.size_hint()
     }
@@ -1403,6 +1405,7 @@ impl<'frame> FixedLengthBytesSequenceIterator<'frame> {
 impl<'frame> Iterator for FixedLengthBytesSequenceIterator<'frame> {
     type Item = Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.remaining = self.remaining.checked_sub(1)?;
         Some(self.slice.read_cql_bytes())
@@ -1433,6 +1436,7 @@ impl<'frame> From<FrameSlice<'frame>> for BytesSequenceIterator<'frame> {
 impl<'frame> Iterator for BytesSequenceIterator<'frame> {
     type Item = Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.slice.as_slice().is_empty() {
             None
@@ -1946,6 +1950,7 @@ impl Display for MapDeserializationErrorKind {
 }
 
 impl From<MapDeserializationErrorKind> for BuiltinDeserializationErrorKind {
+    #[inline]
     fn from(err: MapDeserializationErrorKind) -> Self {
         Self::MapError(err)
     }
@@ -1979,6 +1984,7 @@ impl Display for TupleDeserializationErrorKind {
 }
 
 impl From<TupleDeserializationErrorKind> for BuiltinDeserializationErrorKind {
+    #[inline]
     fn from(err: TupleDeserializationErrorKind) -> Self {
         Self::TupleError(err)
     }
@@ -2009,6 +2015,7 @@ impl Display for UdtDeserializationErrorKind {
 }
 
 impl From<UdtDeserializationErrorKind> for BuiltinDeserializationErrorKind {
+    #[inline]
     fn from(err: UdtDeserializationErrorKind) -> Self {
         Self::UdtError(err)
     }
