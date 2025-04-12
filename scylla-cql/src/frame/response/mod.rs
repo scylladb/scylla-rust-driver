@@ -62,6 +62,7 @@ pub enum ResponseOpcode {
 impl TryFrom<u8> for ResponseOpcode {
     type Error = TryFromPrimitiveError<u8>;
 
+    #[inline]
     fn try_from(value: u8) -> Result<Self, TryFromPrimitiveError<u8>> {
         match value {
             0x00 => Ok(Self::Error),
@@ -93,6 +94,7 @@ pub enum Response {
 }
 
 impl Response {
+    #[inline]
     pub fn to_response_kind(&self) -> CqlResponseKind {
         match self {
             Response::Error(_) => CqlResponseKind::Error,
@@ -135,6 +137,7 @@ impl Response {
         Ok(response)
     }
 
+    #[inline]
     pub fn into_non_error_response(self) -> Result<NonErrorResponse, error::Error> {
         let non_error_response = match self {
             Response::Error(e) => return Err(e),
@@ -164,6 +167,7 @@ pub enum NonErrorResponse {
 }
 
 impl NonErrorResponse {
+    #[inline]
     pub fn to_response_kind(&self) -> CqlResponseKind {
         match self {
             NonErrorResponse::Ready => CqlResponseKind::Ready,

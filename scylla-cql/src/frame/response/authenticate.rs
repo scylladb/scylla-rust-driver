@@ -10,6 +10,7 @@ pub struct Authenticate {
 }
 
 impl Authenticate {
+    #[inline]
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlAuthenticateParseError> {
         let authenticator_name = types::read_string(buf)
             .map_err(CqlAuthenticateParseError::AuthNameParseError)?
@@ -25,6 +26,7 @@ pub struct AuthSuccess {
 }
 
 impl AuthSuccess {
+    #[inline]
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlAuthSuccessParseError> {
         let success_message = types::read_bytes_opt(buf)
             .map_err(CqlAuthSuccessParseError::SuccessMessageParseError)?
@@ -40,6 +42,7 @@ pub struct AuthChallenge {
 }
 
 impl AuthChallenge {
+    #[inline]
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlAuthChallengeParseError> {
         let authenticate_message = types::read_bytes_opt(buf)
             .map_err(CqlAuthChallengeParseError::AuthMessageParseError)?

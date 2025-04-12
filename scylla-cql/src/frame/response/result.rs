@@ -184,6 +184,7 @@ impl CollectionType<'_> {
 }
 
 impl<'a> TableSpec<'a> {
+    #[inline]
     pub const fn borrowed(ks: &'a str, table: &'a str) -> Self {
         Self {
             ks_name: Cow::Borrowed(ks),
@@ -191,24 +192,29 @@ impl<'a> TableSpec<'a> {
         }
     }
 
+    #[inline]
     pub fn ks_name(&'a self) -> &'a str {
         self.ks_name.as_ref()
     }
 
+    #[inline]
     pub fn table_name(&'a self) -> &'a str {
         self.table_name.as_ref()
     }
 
+    #[inline]
     pub fn into_owned(self) -> TableSpec<'static> {
         TableSpec::owned(self.ks_name.into_owned(), self.table_name.into_owned())
     }
 
+    #[inline]
     pub fn to_owned(&self) -> TableSpec<'static> {
         TableSpec::owned(self.ks_name().to_owned(), self.table_name().to_owned())
     }
 }
 
 impl TableSpec<'static> {
+    #[inline]
     pub fn owned(ks_name: String, table_name: String) -> Self {
         Self {
             ks_name: Cow::Owned(ks_name),
@@ -428,6 +434,7 @@ mod self_borrowed_metadata {
     impl Deref for BytesWrapper {
         type Target = [u8];
 
+        #[inline]
         fn deref(&self) -> &Self::Target {
             &self.inner
         }
@@ -464,6 +471,7 @@ mod self_borrowed_metadata {
 
     impl SelfBorrowedMetadataContainer {
         /// Creates an empty [SelfBorrowedMetadataContainer].
+        #[inline]
         pub fn mock_empty() -> Self {
             Self {
                 metadata_and_raw_rows: Yoke::attach_to_cart(
@@ -476,6 +484,7 @@ mod self_borrowed_metadata {
         }
 
         /// Returns a reference to the contained [ResultMetadata].
+        #[inline]
         pub fn metadata(&self) -> &ResultMetadata<'_> {
             &self.metadata_and_raw_rows.get().0
         }
@@ -1283,7 +1292,6 @@ mod test_utils {
     }
 
     impl DeserializedMetadataAndRawRows {
-        #[inline]
         #[cfg(test)]
         pub(crate) fn new_for_test(
             metadata: ResultMetadata<'static>,
