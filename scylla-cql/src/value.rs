@@ -42,58 +42,72 @@ pub struct CqlTimeuuid(Uuid);
 
 /// [`Uuid`] delegate methods
 impl CqlTimeuuid {
+    #[inline]
     pub fn nil() -> Self {
         Self(Uuid::nil())
     }
 
+    #[inline]
     pub fn as_bytes(&self) -> &[u8; 16] {
         self.0.as_bytes()
     }
 
+    #[inline]
     pub fn as_u128(&self) -> u128 {
         self.0.as_u128()
     }
 
+    #[inline]
     pub fn as_fields(&self) -> (u32, u16, u16, &[u8; 8]) {
         self.0.as_fields()
     }
 
+    #[inline]
     pub fn as_u64_pair(&self) -> (u64, u64) {
         self.0.as_u64_pair()
     }
 
+    #[inline]
     pub fn from_slice(b: &[u8]) -> Result<Self, uuid::Error> {
         Ok(Self(Uuid::from_slice(b)?))
     }
 
+    #[inline]
     pub fn from_slice_le(b: &[u8]) -> Result<Self, uuid::Error> {
         Ok(Self(Uuid::from_slice_le(b)?))
     }
 
+    #[inline]
     pub fn from_bytes(bytes: [u8; 16]) -> Self {
         Self(Uuid::from_bytes(bytes))
     }
 
+    #[inline]
     pub fn from_bytes_le(bytes: [u8; 16]) -> Self {
         Self(Uuid::from_bytes_le(bytes))
     }
 
+    #[inline]
     pub fn from_fields(d1: u32, d2: u16, d3: u16, d4: &[u8; 8]) -> Self {
         Self(Uuid::from_fields(d1, d2, d3, d4))
     }
 
+    #[inline]
     pub fn from_fields_le(d1: u32, d2: u16, d3: u16, d4: &[u8; 8]) -> Self {
         Self(Uuid::from_fields_le(d1, d2, d3, d4))
     }
 
+    #[inline]
     pub fn from_u128(v: u128) -> Self {
         Self(Uuid::from_u128(v))
     }
 
+    #[inline]
     pub fn from_u128_le(v: u128) -> Self {
         Self(Uuid::from_u128_le(v))
     }
 
+    #[inline]
     pub fn from_u64_pair(high_bits: u64, low_bits: u64) -> Self {
         Self(Uuid::from_u64_pair(high_bits, low_bits))
     }
@@ -133,30 +147,35 @@ impl CqlTimeuuid {
 impl std::str::FromStr for CqlTimeuuid {
     type Err = uuid::Error;
 
+    #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self(Uuid::from_str(s)?))
     }
 }
 
 impl std::fmt::Display for CqlTimeuuid {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        <_ as std::fmt::Display>::fmt(&self.0, f)
     }
 }
 
 impl AsRef<Uuid> for CqlTimeuuid {
+    #[inline]
     fn as_ref(&self) -> &Uuid {
         &self.0
     }
 }
 
 impl From<CqlTimeuuid> for Uuid {
+    #[inline]
     fn from(value: CqlTimeuuid) -> Self {
         value.0
     }
 }
 
 impl From<Uuid> for CqlTimeuuid {
+    #[inline]
     fn from(value: Uuid) -> Self {
         Self(value)
     }
@@ -170,6 +189,7 @@ impl From<Uuid> for CqlTimeuuid {
 ///   treat possible non-version-1 UUID the same way as UUID.
 /// - using signed compare for least significant bits.
 impl Ord for CqlTimeuuid {
+    #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         let mut res = self.msb().cmp(&other.msb());
         if let std::cmp::Ordering::Equal = res {
@@ -180,18 +200,21 @@ impl Ord for CqlTimeuuid {
 }
 
 impl PartialOrd for CqlTimeuuid {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl PartialEq for CqlTimeuuid {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == std::cmp::Ordering::Equal
     }
 }
 
 impl std::hash::Hash for CqlTimeuuid {
+    #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.lsb_signed().hash(state);
         self.msb().hash(state);
@@ -241,6 +264,7 @@ impl CqlVarint {
     /// two's complement big-endian binary representation.
     ///
     /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    #[inline]
     pub fn from_signed_bytes_be(digits: Vec<u8>) -> Self {
         Self(digits)
     }
@@ -249,6 +273,7 @@ impl CqlVarint {
     /// two's complement binary big-endian representation.
     ///
     /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    #[inline]
     pub fn from_signed_bytes_be_slice(digits: &[u8]) -> Self {
         Self::from_signed_bytes_be(digits.to_vec())
     }
@@ -260,6 +285,7 @@ impl<'b> CqlVarintBorrowed<'b> {
     /// two's complement binary big-endian representation.
     ///
     /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    #[inline]
     pub fn from_signed_bytes_be_slice(digits: &'b [u8]) -> Self {
         Self(digits)
     }
@@ -269,12 +295,14 @@ impl<'b> CqlVarintBorrowed<'b> {
 impl CqlVarint {
     /// Converts [`CqlVarint`] to an array of bytes in two's
     /// complement binary big-endian representation.
+    #[inline]
     pub fn into_signed_bytes_be(self) -> Vec<u8> {
         self.0
     }
 
     /// Returns a slice of bytes in two's complement
     /// binary big-endian representation.
+    #[inline]
     pub fn as_signed_bytes_be_slice(&self) -> &[u8] {
         &self.0
     }
@@ -284,6 +312,7 @@ impl CqlVarint {
 impl CqlVarintBorrowed<'_> {
     /// Returns a slice of bytes in two's complement
     /// binary big-endian representation.
+    #[inline]
     pub fn as_signed_bytes_be_slice(&self) -> &[u8] {
         self.0
     }
@@ -360,6 +389,7 @@ impl<V: AsVarintSlice> AsNormalizedVarintSlice for V {
 /// );
 /// ```
 impl PartialEq for CqlVarint {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.as_normalized_slice() == other.as_normalized_slice()
     }
@@ -367,6 +397,7 @@ impl PartialEq for CqlVarint {
 
 /// Computes the hash of normalized [`CqlVarint`].
 impl std::hash::Hash for CqlVarint {
+    #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.as_normalized_slice().hash(state)
     }
@@ -386,6 +417,7 @@ impl std::hash::Hash for CqlVarint {
 /// );
 /// ```
 impl PartialEq for CqlVarintBorrowed<'_> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.as_normalized_slice() == other.as_normalized_slice()
     }
@@ -393,6 +425,7 @@ impl PartialEq for CqlVarintBorrowed<'_> {
 
 /// Computes the hash of normalized [`CqlVarintBorrowed`].
 impl std::hash::Hash for CqlVarintBorrowed<'_> {
+    #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.as_normalized_slice().hash(state)
     }
@@ -400,6 +433,7 @@ impl std::hash::Hash for CqlVarintBorrowed<'_> {
 
 #[cfg(feature = "num-bigint-03")]
 impl From<num_bigint_03::BigInt> for CqlVarint {
+    #[inline]
     fn from(value: num_bigint_03::BigInt) -> Self {
         Self(value.to_signed_bytes_be())
     }
@@ -407,6 +441,7 @@ impl From<num_bigint_03::BigInt> for CqlVarint {
 
 #[cfg(feature = "num-bigint-03")]
 impl From<CqlVarint> for num_bigint_03::BigInt {
+    #[inline]
     fn from(val: CqlVarint) -> Self {
         num_bigint_03::BigInt::from_signed_bytes_be(&val.0)
     }
@@ -414,6 +449,7 @@ impl From<CqlVarint> for num_bigint_03::BigInt {
 
 #[cfg(feature = "num-bigint-03")]
 impl From<CqlVarintBorrowed<'_>> for num_bigint_03::BigInt {
+    #[inline]
     fn from(val: CqlVarintBorrowed<'_>) -> Self {
         num_bigint_03::BigInt::from_signed_bytes_be(val.0)
     }
@@ -421,6 +457,7 @@ impl From<CqlVarintBorrowed<'_>> for num_bigint_03::BigInt {
 
 #[cfg(feature = "num-bigint-04")]
 impl From<num_bigint_04::BigInt> for CqlVarint {
+    #[inline]
     fn from(value: num_bigint_04::BigInt) -> Self {
         Self(value.to_signed_bytes_be())
     }
@@ -428,6 +465,7 @@ impl From<num_bigint_04::BigInt> for CqlVarint {
 
 #[cfg(feature = "num-bigint-04")]
 impl From<CqlVarint> for num_bigint_04::BigInt {
+    #[inline]
     fn from(val: CqlVarint) -> Self {
         num_bigint_04::BigInt::from_signed_bytes_be(&val.0)
     }
@@ -435,6 +473,7 @@ impl From<CqlVarint> for num_bigint_04::BigInt {
 
 #[cfg(feature = "num-bigint-04")]
 impl From<CqlVarintBorrowed<'_>> for num_bigint_04::BigInt {
+    #[inline]
     fn from(val: CqlVarintBorrowed<'_>) -> Self {
         num_bigint_04::BigInt::from_signed_bytes_be(val.0)
     }
@@ -485,6 +524,7 @@ impl CqlDecimal {
     /// representing [`CqlVarint`] and a 32-bit scale.
     ///
     /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    #[inline]
     pub fn from_signed_be_bytes_and_exponent(bytes: Vec<u8>, scale: i32) -> Self {
         Self {
             int_val: CqlVarint::from_signed_bytes_be(bytes),
@@ -496,6 +536,7 @@ impl CqlDecimal {
     /// representing [`CqlVarint`] and a 32-bit scale.
     ///
     /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    #[inline]
     pub fn from_signed_be_bytes_slice_and_exponent(bytes: &[u8], scale: i32) -> Self {
         Self::from_signed_be_bytes_and_exponent(bytes.to_vec(), scale)
     }
@@ -507,6 +548,7 @@ impl<'b> CqlDecimalBorrowed<'b> {
     /// representing [`CqlVarintBorrowed`] and a 32-bit scale.
     ///
     /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    #[inline]
     pub fn from_signed_be_bytes_slice_and_exponent(bytes: &'b [u8], scale: i32) -> Self {
         Self {
             int_val: CqlVarintBorrowed::from_signed_bytes_be_slice(bytes),
@@ -519,12 +561,14 @@ impl<'b> CqlDecimalBorrowed<'b> {
 impl CqlDecimal {
     /// Returns a slice of bytes in two's complement
     /// binary big-endian representation and a scale.
+    #[inline]
     pub fn as_signed_be_bytes_slice_and_exponent(&self) -> (&[u8], i32) {
         (self.int_val.as_signed_bytes_be_slice(), self.scale)
     }
 
     /// Converts [`CqlDecimal`] to an array of bytes in two's
     /// complement binary big-endian representation and a scale.
+    #[inline]
     pub fn into_signed_be_bytes_and_exponent(self) -> (Vec<u8>, i32) {
         (self.int_val.into_signed_bytes_be(), self.scale)
     }
@@ -534,6 +578,7 @@ impl CqlDecimal {
 impl CqlDecimalBorrowed<'_> {
     /// Returns a slice of bytes in two's complement
     /// binary big-endian representation and a scale.
+    #[inline]
     pub fn as_signed_be_bytes_slice_and_exponent(&self) -> (&[u8], i32) {
         (self.int_val.as_signed_bytes_be_slice(), self.scale)
     }
@@ -541,6 +586,7 @@ impl CqlDecimalBorrowed<'_> {
 
 #[cfg(feature = "bigdecimal-04")]
 impl From<CqlDecimal> for bigdecimal_04::BigDecimal {
+    #[inline]
     fn from(value: CqlDecimal) -> Self {
         Self::from((
             bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(
@@ -553,6 +599,7 @@ impl From<CqlDecimal> for bigdecimal_04::BigDecimal {
 
 #[cfg(feature = "bigdecimal-04")]
 impl From<CqlDecimalBorrowed<'_>> for bigdecimal_04::BigDecimal {
+    #[inline]
     fn from(value: CqlDecimalBorrowed) -> Self {
         Self::from((
             bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(
@@ -567,6 +614,7 @@ impl From<CqlDecimalBorrowed<'_>> for bigdecimal_04::BigDecimal {
 impl TryFrom<bigdecimal_04::BigDecimal> for CqlDecimal {
     type Error = <i64 as TryInto<i32>>::Error;
 
+    #[inline]
     fn try_from(value: bigdecimal_04::BigDecimal) -> Result<Self, Self::Error> {
         let (bigint, scale) = value.into_bigint_and_exponent();
         let bytes = bigint.to_signed_bytes_be();
@@ -613,6 +661,7 @@ impl CqlDate {
 
 #[cfg(feature = "chrono-04")]
 impl From<chrono_04::NaiveDate> for CqlDate {
+    #[inline]
     fn from(value: chrono_04::NaiveDate) -> Self {
         let unix_epoch = chrono_04::NaiveDate::from_yo_opt(1970, 1).unwrap();
 
@@ -628,6 +677,7 @@ impl From<chrono_04::NaiveDate> for CqlDate {
 impl TryInto<chrono_04::NaiveDate> for CqlDate {
     type Error = ValueOverflow;
 
+    #[inline]
     fn try_into(self) -> Result<chrono_04::NaiveDate, Self::Error> {
         self.try_to_chrono_04_naive_date()
     }
@@ -647,6 +697,7 @@ impl CqlTimestamp {
 
 #[cfg(feature = "chrono-04")]
 impl From<chrono_04::DateTime<chrono_04::Utc>> for CqlTimestamp {
+    #[inline]
     fn from(value: chrono_04::DateTime<chrono_04::Utc>) -> Self {
         Self(value.timestamp_millis())
     }
@@ -656,6 +707,7 @@ impl From<chrono_04::DateTime<chrono_04::Utc>> for CqlTimestamp {
 impl TryInto<chrono_04::DateTime<chrono_04::Utc>> for CqlTimestamp {
     type Error = ValueOverflow;
 
+    #[inline]
     fn try_into(self) -> Result<chrono_04::DateTime<chrono_04::Utc>, Self::Error> {
         self.try_to_chrono_04_datetime_utc()
     }
@@ -665,6 +717,7 @@ impl TryInto<chrono_04::DateTime<chrono_04::Utc>> for CqlTimestamp {
 impl TryFrom<chrono_04::NaiveTime> for CqlTime {
     type Error = ValueOverflow;
 
+    #[inline]
     fn try_from(value: chrono_04::NaiveTime) -> Result<Self, Self::Error> {
         let nanos = value
             .signed_duration_since(chrono_04::NaiveTime::MIN)
@@ -684,6 +737,7 @@ impl TryFrom<chrono_04::NaiveTime> for CqlTime {
 impl TryInto<chrono_04::NaiveTime> for CqlTime {
     type Error = ValueOverflow;
 
+    #[inline]
     fn try_into(self) -> Result<chrono_04::NaiveTime, Self::Error> {
         let secs = (self.0 / 1_000_000_000)
             .try_into()
@@ -697,6 +751,7 @@ impl TryInto<chrono_04::NaiveTime> for CqlTime {
 
 #[cfg(feature = "time-03")]
 impl From<time_03::Date> for CqlDate {
+    #[inline]
     fn from(value: time_03::Date) -> Self {
         const JULIAN_DAY_OFFSET: i64 =
             (1 << 31) - time_03::OffsetDateTime::UNIX_EPOCH.date().to_julian_day() as i64;
@@ -719,6 +774,7 @@ impl From<time_03::Date> for CqlDate {
 impl TryInto<time_03::Date> for CqlDate {
     type Error = ValueOverflow;
 
+    #[inline]
     fn try_into(self) -> Result<time_03::Date, Self::Error> {
         const JULIAN_DAY_OFFSET: i64 =
             (1 << 31) - time_03::OffsetDateTime::UNIX_EPOCH.date().to_julian_day() as i64;
@@ -733,6 +789,7 @@ impl TryInto<time_03::Date> for CqlDate {
 
 #[cfg(feature = "time-03")]
 impl From<time_03::OffsetDateTime> for CqlTimestamp {
+    #[inline]
     fn from(value: time_03::OffsetDateTime) -> Self {
         // Statically assert that no possible value will ever overflow. OffsetDateTime doesn't allow offset to overflow
         // the UTC PrimitiveDateTime value value
@@ -761,6 +818,7 @@ impl From<time_03::OffsetDateTime> for CqlTimestamp {
 impl TryInto<time_03::OffsetDateTime> for CqlTimestamp {
     type Error = ValueOverflow;
 
+    #[inline]
     fn try_into(self) -> Result<time_03::OffsetDateTime, Self::Error> {
         time_03::OffsetDateTime::from_unix_timestamp_nanos(self.0 as i128 * 1_000_000)
             .map_err(|_| ValueOverflow)
@@ -769,6 +827,7 @@ impl TryInto<time_03::OffsetDateTime> for CqlTimestamp {
 
 #[cfg(feature = "time-03")]
 impl From<time_03::Time> for CqlTime {
+    #[inline]
     fn from(value: time_03::Time) -> Self {
         let (h, m, s, n) = value.as_hms_nano();
 
@@ -783,6 +842,7 @@ impl From<time_03::Time> for CqlTime {
 impl TryInto<time_03::Time> for CqlTime {
     type Error = ValueOverflow;
 
+    #[inline]
     fn try_into(self) -> Result<time_03::Time, Self::Error> {
         let h = self.0 / 3_600_000_000_000;
         let m = self.0 / 60_000_000_000 % 60;
@@ -850,6 +910,7 @@ pub enum CqlValue {
 }
 
 impl CqlValue {
+    #[inline]
     pub fn as_ascii(&self) -> Option<&String> {
         match self {
             Self::Ascii(s) => Some(s),
@@ -857,6 +918,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_cql_date(&self) -> Option<CqlDate> {
         match self {
             Self::Date(d) => Some(*d),
@@ -876,6 +938,7 @@ impl CqlValue {
         self.as_cql_date().and_then(|date| date.try_into().ok())
     }
 
+    #[inline]
     pub fn as_cql_timestamp(&self) -> Option<CqlTimestamp> {
         match self {
             Self::Timestamp(i) => Some(*i),
@@ -895,6 +958,7 @@ impl CqlValue {
         self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
     }
 
+    #[inline]
     pub fn as_cql_time(&self) -> Option<CqlTime> {
         match self {
             Self::Time(i) => Some(*i),
@@ -914,6 +978,7 @@ impl CqlValue {
         self.as_cql_time().and_then(|ts| ts.try_into().ok())
     }
 
+    #[inline]
     pub fn as_cql_duration(&self) -> Option<CqlDuration> {
         match self {
             Self::Duration(i) => Some(*i),
@@ -921,6 +986,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_counter(&self) -> Option<Counter> {
         match self {
             Self::Counter(i) => Some(*i),
@@ -928,6 +994,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_boolean(&self) -> Option<bool> {
         match self {
             Self::Boolean(i) => Some(*i),
@@ -935,6 +1002,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_double(&self) -> Option<f64> {
         match self {
             Self::Double(d) => Some(*d),
@@ -942,6 +1010,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_uuid(&self) -> Option<Uuid> {
         match self {
             Self::Uuid(u) => Some(*u),
@@ -949,6 +1018,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_float(&self) -> Option<f32> {
         match self {
             Self::Float(f) => Some(*f),
@@ -956,6 +1026,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_int(&self) -> Option<i32> {
         match self {
             Self::Int(i) => Some(*i),
@@ -963,6 +1034,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_bigint(&self) -> Option<i64> {
         match self {
             Self::BigInt(i) => Some(*i),
@@ -970,6 +1042,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_tinyint(&self) -> Option<i8> {
         match self {
             Self::TinyInt(i) => Some(*i),
@@ -977,6 +1050,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_smallint(&self) -> Option<i16> {
         match self {
             Self::SmallInt(i) => Some(*i),
@@ -984,6 +1058,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_blob(&self) -> Option<&Vec<u8>> {
         match self {
             Self::Blob(v) => Some(v),
@@ -991,6 +1066,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_text(&self) -> Option<&String> {
         match self {
             Self::Text(s) => Some(s),
@@ -998,6 +1074,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_timeuuid(&self) -> Option<CqlTimeuuid> {
         match self {
             Self::Timeuuid(u) => Some(*u),
@@ -1005,6 +1082,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn into_string(self) -> Option<String> {
         match self {
             Self::Ascii(s) => Some(s),
@@ -1013,6 +1091,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn into_blob(self) -> Option<Vec<u8>> {
         match self {
             Self::Blob(b) => Some(b),
@@ -1020,6 +1099,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_inet(&self) -> Option<IpAddr> {
         match self {
             Self::Inet(a) => Some(*a),
@@ -1027,6 +1107,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_list(&self) -> Option<&Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
@@ -1034,6 +1115,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_set(&self) -> Option<&Vec<CqlValue>> {
         match self {
             Self::Set(s) => Some(s),
@@ -1041,6 +1123,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_map(&self) -> Option<&Vec<(CqlValue, CqlValue)>> {
         match self {
             Self::Map(s) => Some(s),
@@ -1048,6 +1131,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn as_udt(&self) -> Option<&Vec<(String, Option<CqlValue>)>> {
         match self {
             Self::UserDefinedType { fields, .. } => Some(fields),
@@ -1055,6 +1139,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn into_vec(self) -> Option<Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
@@ -1063,6 +1148,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn into_pair_vec(self) -> Option<Vec<(CqlValue, CqlValue)>> {
         match self {
             Self::Map(s) => Some(s),
@@ -1070,6 +1156,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn into_udt_pair_vec(self) -> Option<Vec<(String, Option<CqlValue>)>> {
         match self {
             Self::UserDefinedType { fields, .. } => Some(fields),
@@ -1077,6 +1164,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn into_cql_varint(self) -> Option<CqlVarint> {
         match self {
             Self::Varint(i) => Some(i),
@@ -1084,6 +1172,7 @@ impl CqlValue {
         }
     }
 
+    #[inline]
     pub fn into_cql_decimal(self) -> Option<CqlDecimal> {
         match self {
             Self::Decimal(i) => Some(i),
