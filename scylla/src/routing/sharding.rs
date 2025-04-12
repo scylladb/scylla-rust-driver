@@ -35,6 +35,7 @@ impl ShardAwarePortRange {
 }
 
 impl Default for ShardAwarePortRange {
+    #[inline]
     fn default() -> Self {
         Self::EPHEMERAL_PORT_RANGE
     }
@@ -63,6 +64,7 @@ pub struct Sharder {
 
 impl std::str::FromStr for Token {
     type Err = std::num::ParseIntError;
+    #[inline]
     fn from_str(s: &str) -> Result<Token, std::num::ParseIntError> {
         Ok(Token { value: s.parse()? })
     }
@@ -83,6 +85,7 @@ impl ShardInfo {
 }
 
 impl Sharder {
+    #[inline]
     pub fn new(nr_shards: ShardCount, msb_ignore: u8) -> Self {
         Sharder {
             nr_shards,
@@ -90,6 +93,7 @@ impl Sharder {
         }
     }
 
+    #[inline]
     pub fn shard_of(&self, token: Token) -> Shard {
         let mut biased_token = (token.value as u64).wrapping_add(1u64 << 63);
         biased_token <<= self.msb_ignore;
@@ -98,6 +102,7 @@ impl Sharder {
 
     /// If we connect to Scylla using Scylla's shard aware port, then Scylla assigns a shard to the
     /// connection based on the source port. This calculates the assigned shard.
+    #[inline]
     pub fn shard_of_source_port(&self, source_port: u16) -> Shard {
         (source_port % self.nr_shards.get()) as Shard
     }
@@ -105,6 +110,7 @@ impl Sharder {
     /// Randomly choose a source port `p` such that `shard == shard_of_source_port(p)`.
     ///
     /// The port is chosen from ephemeral port range [49152, 65535].
+    #[inline]
     pub fn draw_source_port_for_shard(&self, shard: Shard) -> u16 {
         self.draw_source_port_for_shard_from_range(
             shard,
@@ -134,6 +140,7 @@ impl Sharder {
     /// Stops once all possible ports have been returned
     ///
     /// The ports are chosen from ephemeral port range [49152, 65535].
+    #[inline]
     pub fn iter_source_ports_for_shard(&self, shard: Shard) -> impl Iterator<Item = u16> {
         self.iter_source_ports_for_shard_from_range(
             shard,
