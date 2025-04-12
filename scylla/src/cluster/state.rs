@@ -357,6 +357,39 @@ impl ClusterState {
         // is nonempty, too.
     }
 
+    /// Returns nonempty iterator of working connections to all nodes.
+    pub(crate) fn iter_working_connections_to_nodes(
+        &self,
+    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, ConnectionPoolError> {
+        // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
+        assert!(!self.known_peers.is_empty());
+        let nodes_iter = self.known_peers.values();
+        let mut single_connection_per_node_iter =
+            nodes_iter.map(|node| node.get_random_connection());
+
+        // First we try to find the first working connection.
+        // If none is found, return error.
+        let first_working_connection_or_error: Result<Arc<Connection>, ConnectionPoolError> =
+            single_connection_per_node_iter
+                .by_ref()
+                .find_or_first(Result::is_ok)
+                .expect("impossible: known_peers was asserted to be nonempty");
+
+        // We have:
+        // 1. either consumed the whole iterator without success and got the first error,
+        //    in which case we propagate it;
+        // 2. or found the first working connection.
+        let first_working_connection: Arc<Connection> = first_working_connection_or_error?;
+
+        // We retrieve single random connections for remaining nodes (those that are left in the iterator
+        // once the first working connection has been found). Errors (non-working connections) are filtered out.
+        let remaining_connection_iter = single_connection_per_node_iter.filter_map(Result::ok);
+
+        // Connections to the remaining nodes are chained to the first working connection.
+        Ok(std::iter::once(first_working_connection).chain(remaining_connection_iter))
+        // The returned iterator is nonempty, because it returns at least `first_working_pool`.
+    }
+
     pub(super) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
         let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
 

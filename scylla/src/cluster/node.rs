@@ -207,6 +207,10 @@ impl Node {
         self.get_pool()?.get_working_connections()
     }
 
+    pub(crate) fn get_random_connection(&self) -> Result<Arc<Connection>, ConnectionPoolError> {
+        self.get_pool()?.random_connection()
+    }
+
     pub(crate) async fn wait_until_pool_initialized(&self) {
         if let Some(pool) = &self.pool {
             pool.wait_until_initialized().await;
