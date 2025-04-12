@@ -1327,62 +1327,78 @@ impl Session {
             }
         }
 
-        // This is required for the following reason:
-        // 1. The iterator returned from `ClusterState::iter_working_connections_to_nodes()` borrows `ClusterState`.
-        // 2. Only after we call `ClusterState::iter_working_connections_to_nodes()` do we know if there is at least
-        //    one working connection. It would be thus perfect to call it here (not in the worker task) and return
-        //    the error early if no connection is working. However, we cannot send the resulting iterator to the task,
-        //    because the iterator is not 'static.
-        // 3. Thus, it must be the worker task that calls `ClusterState::iter_working_connections_to_nodes()`. If it fails,
-        //    it signals `ConnectionPoolError` to the listening task (us). Else, it provides the listening task (us)
-        //    with an mpsc channel that will be used to send subsequent results of preparation attempts on connections.
-        let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<
-            Result<tokio::sync::mpsc::Receiver<PreparationResult>, ConnectionPoolError>,
-        >();
+        /// Prepares the statement on either all nodes or all shards.
+        ///
+        /// Sets up the worker task that attempts preparation on (all nodes) or (all shards), depending on the flag value.
+        /// Finishes once any preparation succeeds or when all attempts fail. If this functions return happily,
+        /// the worker task keeps preparing on other connections in the background.
+        ///
+        /// Returns:
+        /// - `Err(ConnectionPoolError)`, if no connection is working;
+        /// - `Ok(Ok(PreparedStatement))`, if preparation succeeded on at least one connection,
+        /// - `Ok(Err(RequestAttemptError))`, if preparation failed on all attempted connections.
+        async fn prepare_on_all(
+            statement: Statement,
+            cluster_state: Arc<ClusterState>,
+            on_all_shards: bool,
+        ) -> Result<PreparationResult, ConnectionPoolError> {
+            // This is required for the following reason:
+            // 1. The iterator returned from `ClusterState::iter_working_connections_to_nodes()` borrows `ClusterState`.
+            // 2. Only after we call `ClusterState::iter_working_connections_to_nodes()` do we know if there is at least
+            //    one working connection. It would be thus perfect to call it here (not in the worker task) and return
+            //    the error early if no connection is working. However, we cannot send the resulting iterator to the task,
+            //    because the iterator is not 'static.
+            // 3. Thus, it must be the worker task that calls `ClusterState::iter_working_connections_to_nodes()`. If it fails,
+            //    it signals `ConnectionPoolError` to the listening task (us). Else, it provides the listening task (us)
+            //    with an mpsc channel that will be used to send subsequent results of preparation attempts on connections.
+            let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<
+                Result<tokio::sync::mpsc::Receiver<PreparationResult>, ConnectionPoolError>,
+            >();
 
-        tokio::task::spawn(preparation_worker(
-            Arc::clone(&cluster_state),
-            statement,
-            oneshot_tx,
-            false,
-        ));
+            tokio::task::spawn(preparation_worker(
+                Arc::clone(&cluster_state),
+                statement,
+                oneshot_tx,
+                on_all_shards,
+            ));
 
-        // If at least one prepare was successful, `prepare()` returns Ok.
-        // Find the first result that is Ok, or Err if all failed.
-        let mut rx = oneshot_rx
-            .await
-            .expect("statement preparation tokio task terminated prematurely")?;
+            // If at least one prepare was successful, `prepare()` returns Ok.
+            // Find the first result that is Ok, or Err if all failed.
+            let mut rx = oneshot_rx
+                .await
+                .expect("statement preparation tokio task terminated prematurely")?;
 
-        let mut first_error = None;
-        while let Some(prepare_result) = rx.recv().await {
-            match prepare_result {
-                Ok(mut prepared) => {
-                    // This is the first preparation that succeeded.
-                    // Let's return the PreparedStatement.
-                    // Preparation on other nodes will continue in the background tokio task.
-                    prepared.set_partitioner_name(
-                        Self::extract_partitioner_name(&prepared, &cluster_state)
-                            .and_then(PartitionerName::from_str)
-                            .unwrap_or_default(),
-                    );
-                    return Ok(prepared);
-                }
-                Err(attempt_error) => {
-                    if first_error.is_none() {
-                        first_error = Some(attempt_error);
+            let mut first_error = None;
+            while let Some(prepare_result) = rx.recv().await {
+                match prepare_result {
+                    Ok(mut prepared) => {
+                        // This is the first preparation that succeeded.
+                        // Let's return the PreparedStatement.
+                        // Preparation on other nodes will continue in the background tokio task.
+                        prepared.set_partitioner_name(
+                            Session::extract_partitioner_name(&prepared, &cluster_state)
+                                .and_then(PartitionerName::from_str)
+                                .unwrap_or_default(),
+                        );
+                        return Ok(Ok(prepared));
+                    }
+                    Err(attempt_error) => {
+                        if first_error.is_none() {
+                            first_error = Some(attempt_error);
+                        }
                     }
                 }
             }
+            // Safety: there is at least one node in the cluster, and `ClusterState::iter_working_connections_to_nodes()`
+            // returns either an error or an iterator with at least one connection, so there will be at least one result.
+            Ok(Err(first_error.expect(
+                "ClusterState::iter_working_connections_to_nodes() returns at least one connection or errors out",
+            )))
         }
-        // Safety: there is at least one node in the cluster, and `ClusterState::iter_working_connections_to_nodes()`
-        // returns either an error or an iterator with at least one connection, so there will be at least one result.
-        let first_error = first_error.expect(
-            "ClusterState::iter_working_connections_to_nodes() returns at least one connection or errors out",
-        );
 
-        Err(PrepareError::AllAttemptsFailed {
-            first_attempt: first_error,
-        })
+        let on_all_nodes_result = prepare_on_all(statement, cluster_state, false).await?;
+
+        on_all_nodes_result.map_err(|err| PrepareError::AllAttemptsFailed { first_attempt: err })
     }
 
     fn extract_partitioner_name<'a>(
