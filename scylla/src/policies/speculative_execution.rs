@@ -56,10 +56,12 @@ pub struct PercentileSpeculativeExecutionPolicy {
 }
 
 impl SpeculativeExecutionPolicy for SimpleSpeculativeExecutionPolicy {
+    #[inline]
     fn max_retry_count(&self, _: &Context) -> usize {
         self.max_retry_count
     }
 
+    #[inline]
     fn retry_interval(&self, _: &Context) -> Duration {
         self.retry_interval
     }
@@ -67,6 +69,7 @@ impl SpeculativeExecutionPolicy for SimpleSpeculativeExecutionPolicy {
 
 #[cfg(feature = "metrics")]
 impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
+    #[inline]
     fn max_retry_count(&self, _: &Context) -> usize {
         self.max_retry_count
     }
