@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use itertools::Itertools;
-use lazy_static::lazy_static;
 use scylla_cql::deserialize::value::{DeserializeValue, ListlikeIterator};
 use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use scylla_cql::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
@@ -13,7 +12,7 @@ use crate::routing::{Shard, Token};
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 #[derive(Error, Debug)]
 pub(crate) enum TabletParsingError {
@@ -42,8 +41,8 @@ pub(crate) struct RawTablet {
 type RawTabletPayload<'frame, 'metadata> =
     (i64, i64, ListlikeIterator<'frame, 'metadata, (Uuid, i32)>);
 
-lazy_static! {
-    static ref RAW_TABLETS_CQL_TYPE: ColumnType<'static> = ColumnType::Tuple(vec![
+static RAW_TABLETS_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
+    ColumnType::Tuple(vec![
         ColumnType::Native(NativeType::BigInt),
         ColumnType::Native(NativeType::BigInt),
         ColumnType::Collection {
@@ -51,10 +50,10 @@ lazy_static! {
             typ: CollectionType::List(Box::new(ColumnType::Tuple(vec![
                 ColumnType::Native(NativeType::Uuid),
                 ColumnType::Native(NativeType::Int),
-            ])))
+            ]))),
         },
-    ]);
-}
+    ])
+});
 
 const CUSTOM_PAYLOAD_TABLETS_V1_KEY: &str = "tablets-routing-v1";
 

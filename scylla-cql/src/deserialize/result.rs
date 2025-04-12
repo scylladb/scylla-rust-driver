@@ -237,6 +237,7 @@ mod tests {
 
     use bytes::Bytes;
     use std::ops::Deref;
+    use std::sync::LazyLock;
 
     use crate::frame::response::result::{
         ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, NativeType, ResultMetadata,
@@ -285,19 +286,15 @@ mod tests {
         //
         // I: for<'item> LendingIterator<Item<'item> = ColumnIterator<'item>>,
         //
-        // The bug is said to be a lot of effort to fix, so in tests let's just use `lazy_static`
+        // The bug is said to be a lot of effort to fix, so in tests let's just use `LazyLock`
         // to obtain 'static references.
-        //
-        // `std::sync::LazyLock` is stable since 1.80, so once we bump MSRV enough,
-        // we will be able to replace `lazy_static` with `LazyLock`.
 
         static SPECS: &[ColumnSpec<'static>] = &[
             spec("b1", ColumnType::Native(NativeType::Blob)),
             spec("b2", ColumnType::Native(NativeType::Blob)),
         ];
-        lazy_static::lazy_static! {
-            static ref RAW_DATA: Bytes = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
-        }
+        static RAW_DATA: LazyLock<Bytes> =
+            LazyLock::new(|| serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]));
         let raw_data = RAW_DATA.deref();
         let specs = SPECS;
 
@@ -339,9 +336,9 @@ mod tests {
             spec("b1", ColumnType::Native(NativeType::Blob)),
             spec("b2", ColumnType::Native(NativeType::Blob)),
         ];
-        lazy_static::lazy_static! {
-            static ref RAW_DATA: Bytes = serialize_cells([Some(CELL1), Some(CELL2)]);
-        }
+        static RAW_DATA: LazyLock<Bytes> =
+            LazyLock::new(|| serialize_cells([Some(CELL1), Some(CELL2)]));
+
         let raw_data = RAW_DATA.deref();
         let specs = SPECS;
 
