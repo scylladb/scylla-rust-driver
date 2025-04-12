@@ -1343,12 +1343,12 @@ impl Session {
             on_all_shards: bool,
         ) -> Result<PreparationResult, ConnectionPoolError> {
             // This is required for the following reason:
-            // 1. The iterator returned from `ClusterState::iter_working_connections_to_nodes()` borrows `ClusterState`.
-            // 2. Only after we call `ClusterState::iter_working_connections_to_nodes()` do we know if there is at least
+            // 1. The iterator returned from `ClusterState::iter_working_connections_to_{nodes,shards}()` borrows `ClusterState`.
+            // 2. Only after we call `ClusterState::iter_working_connections_to_{nodes,shards}()` do we know if there is at least
             //    one working connection. It would be thus perfect to call it here (not in the worker task) and return
             //    the error early if no connection is working. However, we cannot send the resulting iterator to the task,
             //    because the iterator is not 'static.
-            // 3. Thus, it must be the worker task that calls `ClusterState::iter_working_connections_to_nodes()`. If it fails,
+            // 3. Thus, it must be the worker task that calls `ClusterState::iter_working_connections_to_{nodes,shards}()`. If it fails,
             //    it signals `ConnectionPoolError` to the listening task (us). Else, it provides the listening task (us)
             //    with an mpsc channel that will be used to send subsequent results of preparation attempts on connections.
             let (oneshot_tx, oneshot_rx) = tokio::sync::oneshot::channel::<
@@ -1389,10 +1389,10 @@ impl Session {
                     }
                 }
             }
-            // Safety: there is at least one node in the cluster, and `ClusterState::iter_working_connections_to_nodes()`
+            // Safety: there is at least one node in the cluster, and `ClusterState::iter_working_connections_to_{nodes,shards}()`
             // returns either an error or an iterator with at least one connection, so there will be at least one result.
             Ok(Err(first_error.expect(
-                "ClusterState::iter_working_connections_to_nodes() returns at least one connection or errors out",
+                "ClusterState::iter_working_connections_to_{nodes,shards}() returns at least one connection or errors out",
             )))
         }
 
