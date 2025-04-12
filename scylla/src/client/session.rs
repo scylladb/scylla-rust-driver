@@ -1199,6 +1199,9 @@ impl Session {
     /// Prepares a statement on the server side and returns a prepared statement,
     /// which can later be used to perform more efficient requests.
     ///
+    /// The statement is prepared on all nodes. This function finishes once all nodes respond
+    /// with either success or an error.
+    ///
     /// Prepared statements are much faster than unprepared statements:
     /// * Database doesn't need to parse the statement string upon each execution (only once)
     /// * They are properly load balanced using token aware routing
