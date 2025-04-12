@@ -146,11 +146,16 @@ impl PreparedStatement {
         }
     }
 
+    /// Returns the prepared ID of the statement.
+    ///
+    /// In the current implementation of the CQL protocol (CQLv4), this is a hash
+    /// of the statement string. This may change in newer versions of the protocol.
     #[inline]
     pub fn get_id(&self) -> &Bytes {
         &self.id
     }
 
+    /// Returns the CQL statement string, i.e., the one that was prepared.
     #[inline]
     pub fn get_statement(&self) -> &str {
         &self.shared.statement
