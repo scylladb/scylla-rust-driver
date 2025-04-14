@@ -83,9 +83,7 @@ impl TlsProvider {
                 };
 
                 cloud_config.make_tls_config_for_scylla_cloud_host(host_id, dc, address)
-                    // inspect_err() is stable since 1.76.
-                    // TODO: use inspect_err once we bump MSRV to at least 1.76.
-                    .map_err(|err| {
+                    .inspect_err(|err| {
                         warn!(
                             "TlsProvider for SNI connection to Scylla Cloud node {{ host_id={:?}, dc={:?} at {} }} could not be set up: {}\n Proceeding with attempting probably nonworking connection",
                             host_id,

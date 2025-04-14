@@ -1718,7 +1718,6 @@ dependencies = [
  "hashbrown 0.14.5",
  "histogram",
  "itertools 0.14.0",
- "lazy_static",
  "lz4_flex",
  "ntest",
  "num-bigint 0.3.3",

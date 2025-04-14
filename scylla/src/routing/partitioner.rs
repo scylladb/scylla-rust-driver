@@ -78,7 +78,6 @@ impl PartitionerHasher for PartitionerHasherAny {
 mod sealed {
     // This is a sealed trait - its whole purpose is to be unnameable.
     // This means we need to disable the check.
-    #[allow(unknown_lints)] // Rust 1.70 doesn't know this lint
     #[allow(unnameable_types)]
     pub trait Sealed {}
 }
