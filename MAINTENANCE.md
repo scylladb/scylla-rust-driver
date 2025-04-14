@@ -28,6 +28,30 @@ What needs to be considered for releasing:
 - Versions of `scylla-cql` and `scylla-macros` MUST always be the same. `scylla-cql` MUST depend on EXACT version of `scylla-macros` (e.g. `version = "=1.0.0"` in `Cargo.toml`). This ensures that we can change the `_macro_internal` module in minor releases, and generally simplifies reasoning about those 2 crates. If Rust allowed it, they would be one crate.
 - For simplicity of maintenance, and to avoid potential problems with mixed versioning, we decided to always release all 3 crates together, with the same version numbers. Important: it does not allow us to make breaking changes in `scylla-cql`! Older versions of `scylla` will pick up newer versions of `scylla-cql`, e.g. after we release `scylla-cql 1.2`, `scylla 1.0` may start using it.
 
+### `scylla-cql` API considerations
+
+`scylla-cql` is purposefully available on [crates.io](https://crates.io/). This is mainly because some other crates, including ours (e.g., https://github.com/scylladb/scylla-rust-udf), use `scylla-cql` only and we don't want force them to pay in needless overhead introduced by depending on the whole `scylla` crate.
+As `scylla-cql` is publicly available, it must comply to semver.
+
+`scylla-cql` has some `pub` APIs that are not `pub`-re-exported in `scylla`. One might think this allows us bumping `scylla-cql` major number while  bumping only minor number of `scylla` **if only** the breaking changes introduced in `scylla-cql` aren't visible in `scylla` API. **This is, unfortunately, not true!** The following bad scenario is a possible result of such action:
+
+Imagine if some crate `X` has both `scylla = "1.x"` and `scylla-cql = "1.x"` in dependencies, which is legal. It's even more likely if we take into account dependency transitivity, so the whole dependency tree must be considered. `X` can then use `scylla_cql` paths to operate on items that come from it, instead of using `scylla` re-exports. This is also legal.
+If we now update `scylla` to `1.(x+1)`, and use `scylla-cql = 2.0` there (in `scylla 1.(x+1)`), then the user will suddenly get errors about incompatible types (because they come from different major versions of the crate).
+
+To illustrate on a specific case, consider the following definition present in `X`:
+`impl scylla_cql::serialize::row::SerializeRow for SomeStructDefinedInX { ... }`
+Now, even if we introduced no breaking changes to `SerializeRow` between `scylla-cql` 1.0 and 2.0, we end up with two different trait named `SerializeRow`, so the compiler refuses to accept (pseudonotation) `scylla-cql<1.x>::SerializeRow` as `scylla-cql<2.0>::SerializeRow`.
+
+Does this mean that we are stuck with the current (sadly, still far from perfect) `scylla-cql` API for the whole `scylla = 1.x`? **Fortunately, no!** Imagine we are dissatisfied with the API of a struct `A` defined in `scylla-cql`:
+```rust
+pub struct A {
+  pub field: Typ,
+}
+```
+Assuming `A` is **not** part of `scylla`'s public API (it does not matter if it's re-exported there or not), we can:
+1. introduce `A2` in `scylla-cql`, which has a better new API compared to `A` - this is a non-breaking change, because it's adding something new to the API;
+2. alter `scylla` code to use `A2` instead of `A` - this is non-breaking, because we've assumed `A` is not present in any `scylla` public API;
+3. keep `A` in `scylla-cql`, as well as possible `A` re-exports in `scylla`. Even though it's now legacy, it doesn't hurt. If suitable, we can mark `A` as `#[deprecated]` and remove it in the next major release.
 
 ## Documentation
 
