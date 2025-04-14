@@ -318,10 +318,14 @@ impl ClusterState {
         &self.locator
     }
 
-    /// Returns nonempty iterator of working connections to all shards.
-    pub(crate) fn iter_working_connections_to_shards(
+    /// Returns nonempty iterator (over nodes) of iterators (over shards).
+    ///
+    /// External iterator iterates over nodes.
+    /// Internal iterator iterates over working connections to all shards of given node.
+    pub(crate) fn iter_working_connections_per_node(
         &self,
-    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, ConnectionPoolError> {
+    ) -> Result<impl Iterator<Item = impl Iterator<Item = Arc<Connection>>> + '_, ConnectionPoolError>
+    {
         // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
         assert!(!self.known_peers.is_empty());
         let mut peers_iter = self.known_peers.values();
@@ -334,14 +338,23 @@ impl ClusterState {
             .find_or_first(Result::is_ok)
             .expect("impossible: known_peers was asserted to be nonempty")?;
 
-        let remaining_pools_iter = peers_iter
-            .map(|node| node.get_working_connections())
-            .flatten_ok()
-            .flatten();
+        let remaining_pools_iter = peers_iter.filter_map(|node| {
+            node.get_working_connections()
+                .map(IntoIterator::into_iter)
+                .ok()
+        });
 
-        Ok(first_working_pool.into_iter().chain(remaining_pools_iter))
+        Ok(std::iter::once(first_working_pool.into_iter()).chain(remaining_pools_iter))
         // By an invariant `self.known_peers` is nonempty, so the returned iterator
         // is nonempty, too.
+    }
+
+    /// Returns nonempty iterator of working connections to all shards.
+    pub(crate) fn iter_working_connections_to_shards(
+        &self,
+    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, ConnectionPoolError> {
+        self.iter_working_connections_per_node()
+            .map(|iter| iter.flatten())
     }
 
     /// Returns nonempty iterator of working connections to all nodes.
