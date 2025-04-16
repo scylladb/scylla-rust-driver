@@ -632,17 +632,18 @@ impl Connection {
         Ok(supported)
     }
 
+    /// Prepares the given statement and returns [PreparedStatement].
     pub(crate) async fn prepare(
         &self,
-        query: &Statement,
+        statement: &Statement,
     ) -> Result<PreparedStatement, RequestAttemptError> {
         let query_response = self
             .send_request(
                 &request::Prepare {
-                    query: &query.contents,
+                    query: &statement.contents,
                 },
                 true,
-                query.config.tracing,
+                statement.config.tracing,
                 None,
             )
             .await?;
@@ -658,9 +659,9 @@ impl Connection {
                     .prepared_flags_contain_lwt_mark(p.prepared_metadata.flags as u32),
                 p.prepared_metadata,
                 Arc::new(p.result_metadata),
-                query.contents.clone(),
-                query.get_validated_page_size(),
-                query.config.clone(),
+                statement.contents.clone(),
+                statement.get_validated_page_size(),
+                statement.config.clone(),
             ),
             _ => {
                 return Err(RequestAttemptError::UnexpectedResponse(
