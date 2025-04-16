@@ -22,11 +22,13 @@ use response::ResponseOpcode;
 
 const HEADER_SIZE: usize = 9;
 
-// Frame flags
-const FLAG_COMPRESSION: u8 = 0x01;
-const FLAG_TRACING: u8 = 0x02;
-const FLAG_CUSTOM_PAYLOAD: u8 = 0x04;
-const FLAG_WARNING: u8 = 0x08;
+mod flag {
+    //! Frame flags
+    pub(crate) const COMPRESSION: u8 = 0x01;
+    pub(crate) const TRACING: u8 = 0x02;
+    pub(crate) const CUSTOM_PAYLOAD: u8 = 0x04;
+    pub(crate) const WARNING: u8 = 0x08;
+}
 
 // All of the Authenticators supported by Scylla
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -76,7 +78,7 @@ impl SerializedRequest {
         let mut data = vec![0; HEADER_SIZE];
 
         if let Some(compression) = compression {
-            flags |= FLAG_COMPRESSION;
+            flags |= flag::COMPRESSION;
             let body = req.to_bytes()?;
             compress_append(&body, compression, &mut data)?;
         } else {
@@ -84,7 +86,7 @@ impl SerializedRequest {
         }
 
         if tracing {
-            flags |= FLAG_TRACING;
+            flags |= flag::TRACING;
         }
 
         data[0] = 4; // We only support version 4 for now
@@ -188,7 +190,7 @@ pub fn parse_response_body_extensions(
     compression: Option<Compression>,
     mut body: Bytes,
 ) -> Result<ResponseBodyWithExtensions, FrameBodyExtensionsParseError> {
-    if flags & FLAG_COMPRESSION != 0 {
+    if flags & flag::COMPRESSION != 0 {
         if let Some(compression) = compression {
             body = decompress(&body, compression)?.into();
         } else {
@@ -196,7 +198,7 @@ pub fn parse_response_body_extensions(
         }
     }
 
-    let trace_id = if flags & FLAG_TRACING != 0 {
+    let trace_id = if flags & flag::TRACING != 0 {
         let buf = &mut &*body;
         let trace_id =
             types::read_uuid(buf).map_err(FrameBodyExtensionsParseError::TraceIdParse)?;
@@ -206,7 +208,7 @@ pub fn parse_response_body_extensions(
         None
     };
 
-    let warnings = if flags & FLAG_WARNING != 0 {
+    let warnings = if flags & flag::WARNING != 0 {
         let body_len = body.len();
         let buf = &mut &*body;
         let warnings = types::read_string_list(buf)
@@ -218,7 +220,7 @@ pub fn parse_response_body_extensions(
         Vec::new()
     };
 
-    let custom_payload = if flags & FLAG_CUSTOM_PAYLOAD != 0 {
+    let custom_payload = if flags & flag::CUSTOM_PAYLOAD != 0 {
         let body_len = body.len();
         let buf = &mut &*body;
         let payload_map = types::read_bytes_map(buf)
