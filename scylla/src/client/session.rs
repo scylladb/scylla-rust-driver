@@ -30,7 +30,9 @@ use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
-use crate::response::{NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse};
+use crate::response::{
+    NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse, RawPreparedStatement,
+};
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, ShardAwarePortRange};
 use crate::statement::batch::batch_values;
@@ -1242,7 +1244,7 @@ impl Session {
         let connections_iter = cluster_state.iter_working_connections()?;
 
         // Prepare statements on all connections concurrently
-        let handles = connections_iter.map(|c| async move { c.prepare(statement_ref).await });
+        let handles = connections_iter.map(|c| async move { c.prepare_raw(statement_ref).await });
         let mut results = join_all(handles).await.into_iter();
 
         // If at least one prepare was successful, `prepare()` returns Ok.
@@ -1250,21 +1252,20 @@ impl Session {
 
         // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
         // returns either an error or an iterator with at least one connection, so there will be at least one result.
-        let first_ok: Result<PreparedStatement, RequestAttemptError> =
+        let first_ok: Result<RawPreparedStatement, RequestAttemptError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
-        let mut prepared: PreparedStatement =
-            first_ok.map_err(|first_attempt| PrepareError::AllAttemptsFailed { first_attempt })?;
+        let mut prepared: PreparedStatement = first_ok
+            .map_err(|first_attempt| PrepareError::AllAttemptsFailed { first_attempt })?
+            .into_prepared_statement();
 
         // Validate prepared ids equality
         for statement in results.flatten() {
-            if prepared.get_id() != statement.get_id() {
+            if prepared.get_id() != &statement.prepared_response.id {
                 return Err(PrepareError::PreparedStatementIdsMismatch);
             }
 
             // Collect all tracing ids from prepare() queries in the final result
-            prepared
-                .prepare_tracing_ids
-                .extend(statement.prepare_tracing_ids);
+            prepared.prepare_tracing_ids.extend(statement.tracing_id);
         }
 
         prepared.set_partitioner_name(
