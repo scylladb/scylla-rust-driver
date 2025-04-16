@@ -22,12 +22,12 @@ use response::ResponseOpcode;
 
 const HEADER_SIZE: usize = 9;
 
-mod flag {
+pub mod flag {
     //! Frame flags
-    pub(crate) const COMPRESSION: u8 = 0x01;
-    pub(crate) const TRACING: u8 = 0x02;
-    pub(crate) const CUSTOM_PAYLOAD: u8 = 0x04;
-    pub(crate) const WARNING: u8 = 0x08;
+    pub const COMPRESSION: u8 = 0x01;
+    pub const TRACING: u8 = 0x02;
+    pub const CUSTOM_PAYLOAD: u8 = 0x04;
+    pub const WARNING: u8 = 0x08;
 }
 
 // All of the Authenticators supported by Scylla
@@ -240,7 +240,7 @@ pub fn parse_response_body_extensions(
     })
 }
 
-fn compress_append(
+pub fn compress_append(
     uncomp_body: &[u8],
     compression: Compression,
     out: &mut Vec<u8>,
@@ -266,7 +266,7 @@ fn compress_append(
     }
 }
 
-fn decompress(
+pub fn decompress(
     mut comp_body: &[u8],
     compression: Compression,
 ) -> Result<Vec<u8>, FrameBodyExtensionsParseError> {
