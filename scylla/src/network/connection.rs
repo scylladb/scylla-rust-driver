@@ -692,14 +692,15 @@ impl Connection {
         previous_prepared: &PreparedStatement,
     ) -> Result<(), RequestAttemptError> {
         let reprepare_query: Statement = query.into();
-        let reprepared = self.prepare(&reprepare_query).await?;
+        let prepared_response = self.prepare_raw(&reprepare_query).await?.prepared_response;
+
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
-        if reprepared.get_id() != previous_prepared.get_id() {
+        if prepared_response.id != previous_prepared.get_id() {
             Err(RequestAttemptError::RepreparedIdChanged {
+                reprepared_id: prepared_response.id.into(),
                 statement: reprepare_query.contents,
                 expected_id: previous_prepared.get_id().clone().into(),
-                reprepared_id: reprepared.get_id().clone().into(),
             })
         } else {
             Ok(())
