@@ -1276,7 +1276,7 @@ impl Session {
         }
 
         prepared.set_partitioner_name(
-            self.extract_partitioner_name(&prepared, &self.cluster.get_state())
+            Self::extract_partitioner_name(&prepared, &self.cluster.get_state())
                 .and_then(PartitionerName::from_str)
                 .unwrap_or_default(),
         );
@@ -1285,7 +1285,6 @@ impl Session {
     }
 
     fn extract_partitioner_name<'a>(
-        &self,
         prepared: &PreparedStatement,
         cluster_state: &'a ClusterState,
     ) -> Option<&'a str> {
