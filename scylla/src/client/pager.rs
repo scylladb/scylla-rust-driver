@@ -34,7 +34,7 @@ use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
-use crate::policies::load_balancing::{self, RoutingInfo};
+use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{NonErrorQueryResponse, QueryResponse};
@@ -136,6 +136,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     // AsyncFn(Arc<Connection>, Option<Arc<[u8]>>) -> Result<QueryResponse, RequestAttemptError>
     page_query: QueryFunc,
 
+    load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
     statement_info: RoutingInfo<'a>,
     query_is_idempotent: bool,
     query_consistency: Consistency,
@@ -162,7 +163,7 @@ where
 {
     // Contract: this function MUST send at least one item through self.sender
     async fn work(mut self, cluster_state: Arc<ClusterState>) -> PageSendAttemptedProof {
-        let load_balancer = self.execution_profile.load_balancing_policy.clone();
+        let load_balancer = Arc::clone(&self.load_balancing_policy);
         let statement_info = self.statement_info.clone();
         let query_plan =
             load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_state);
@@ -336,8 +337,7 @@ where
                 let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                 self.log_attempt_success();
                 self.log_request_success();
-                self.execution_profile
-                    .load_balancing_policy
+                self.load_balancing_policy
                     .on_request_success(&self.statement_info, elapsed, node);
 
                 request_span.record_raw_rows_fields(&rows);
@@ -370,9 +370,12 @@ where
             Err(err) => {
                 #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
-                self.execution_profile
-                    .load_balancing_policy
-                    .on_request_failure(&self.statement_info, elapsed, node, &err);
+                self.load_balancing_policy.on_request_failure(
+                    &self.statement_info,
+                    elapsed,
+                    node,
+                    &err,
+                );
                 Err(err)
             }
             Ok(NonErrorQueryResponse {
@@ -392,9 +395,12 @@ where
                 self.metrics.inc_failed_paged_queries();
                 let err =
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
-                self.execution_profile
-                    .load_balancing_policy
-                    .on_request_failure(&self.statement_info, elapsed, node, &err);
+                self.load_balancing_policy.on_request_failure(
+                    &self.statement_info,
+                    elapsed,
+                    node,
+                    &err,
+                );
                 Err(err)
             }
         }
@@ -694,6 +700,8 @@ impl QueryPager {
             ..Default::default()
         };
 
+        let load_balancing_policy = Arc::clone(&execution_profile.load_balancing_policy);
+
         let retry_session = statement
             .get_retry_policy()
             .map(|rp| &**rp)
@@ -734,6 +742,7 @@ impl QueryPager {
                 statement_info: routing_info,
                 query_is_idempotent: statement.config.is_idempotent,
                 query_consistency: consistency,
+                load_balancing_policy,
                 retry_session,
                 execution_profile,
                 #[cfg(feature = "metrics")]
@@ -769,6 +778,8 @@ impl QueryPager {
             .unwrap_or(config.execution_profile.serial_consistency);
 
         let page_size = config.prepared.get_validated_page_size();
+
+        let load_balancing_policy = Arc::clone(&config.execution_profile.load_balancing_policy);
 
         let retry_session = config
             .prepared
@@ -855,6 +866,7 @@ impl QueryPager {
                 statement_info,
                 query_is_idempotent: config.prepared.config.is_idempotent,
                 query_consistency: consistency,
+                load_balancing_policy,
                 retry_session,
                 execution_profile: config.execution_profile,
                 #[cfg(feature = "metrics")]
