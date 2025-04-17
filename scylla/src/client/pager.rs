@@ -141,7 +141,6 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     query_is_idempotent: bool,
     query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,
-    execution_profile: Arc<ExecutionProfileInner>,
     #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
 
@@ -744,7 +743,6 @@ impl QueryPager {
                 query_consistency: consistency,
                 load_balancing_policy,
                 retry_session,
-                execution_profile,
                 #[cfg(feature = "metrics")]
                 metrics,
                 paging_state: PagingState::start(),
@@ -868,7 +866,6 @@ impl QueryPager {
                 query_consistency: consistency,
                 load_balancing_policy,
                 retry_session,
-                execution_profile: config.execution_profile,
                 #[cfg(feature = "metrics")]
                 metrics: config.metrics,
                 paging_state: PagingState::start(),
