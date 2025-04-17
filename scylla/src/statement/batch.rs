@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::observability::history::HistoryListener;
+use crate::policies::load_balancing::LoadBalancingPolicy;
 use crate::policies::retry::RetryPolicy;
 use crate::statement::prepared::PreparedStatement;
 use crate::statement::unprepared::Statement;
@@ -132,6 +133,25 @@ impl Batch {
     #[inline]
     pub fn get_retry_policy(&self) -> Option<&Arc<dyn RetryPolicy>> {
         self.config.retry_policy.as_ref()
+    }
+
+    /// Set the load balancing policy for this batch, overriding the one from execution profile if not None.
+    #[inline]
+    pub fn set_load_balancing_policy(
+        &mut self,
+        load_balancing_policy: Option<Arc<dyn LoadBalancingPolicy>>,
+    ) {
+        self.config.load_balancing_policy = load_balancing_policy;
+    }
+
+    /// Get the load balancing policy set for the batch.
+    ///
+    /// This method returns the load balancing policy that is **overriden** on this statement.
+    /// In other words, it returns the load balancing policy set using [`Batch::set_load_balancing_policy`].
+    /// This does not take the load balancing policy from the set execution profile into account.
+    #[inline]
+    pub fn get_load_balancing_policy(&self) -> Option<&Arc<dyn LoadBalancingPolicy>> {
+        self.config.load_balancing_policy.as_ref()
     }
 
     /// Sets the listener capable of listening what happens during query execution.

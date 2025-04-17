@@ -11,6 +11,7 @@ use thiserror::Error;
 
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::observability::history::HistoryListener;
+use crate::policies::load_balancing::LoadBalancingPolicy;
 use crate::policies::retry::RetryPolicy;
 
 pub mod batch;
@@ -38,6 +39,7 @@ pub(crate) struct StatementConfig {
     pub(crate) history_listener: Option<Arc<dyn HistoryListener>>,
 
     pub(crate) execution_profile_handle: Option<ExecutionProfileHandle>,
+    pub(crate) load_balancing_policy: Option<Arc<dyn LoadBalancingPolicy>>,
     pub(crate) retry_policy: Option<Arc<dyn RetryPolicy>>,
 }
 
