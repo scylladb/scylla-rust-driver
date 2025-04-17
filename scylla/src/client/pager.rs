@@ -699,7 +699,11 @@ impl QueryPager {
             ..Default::default()
         };
 
-        let load_balancing_policy = Arc::clone(&execution_profile.load_balancing_policy);
+        let load_balancing_policy = Arc::clone(
+            statement
+                .get_load_balancing_policy()
+                .unwrap_or(&execution_profile.load_balancing_policy),
+        );
 
         let retry_session = statement
             .get_retry_policy()
@@ -777,7 +781,12 @@ impl QueryPager {
 
         let page_size = config.prepared.get_validated_page_size();
 
-        let load_balancing_policy = Arc::clone(&config.execution_profile.load_balancing_policy);
+        let load_balancing_policy = Arc::clone(
+            config
+                .prepared
+                .get_load_balancing_policy()
+                .unwrap_or(&config.execution_profile.load_balancing_policy),
+        );
 
         let retry_session = config
             .prepared
