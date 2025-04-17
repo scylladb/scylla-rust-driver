@@ -8,14 +8,10 @@ use crate::utils::{
 use futures::future::try_join_all;
 use futures::TryStreamExt;
 use itertools::Itertools;
-use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::cluster::ClusterState;
 use scylla::cluster::Node;
-use scylla::cluster::NodeRef;
-use scylla::policies::load_balancing::FallbackPlan;
-use scylla::policies::load_balancing::LoadBalancingPolicy;
-use scylla::policies::load_balancing::RoutingInfo;
+use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 use scylla::response::query_result::QueryResult;
 use scylla::serialize::row::SerializeRow;
 use scylla::statement::prepared::PreparedStatement;
@@ -156,33 +152,6 @@ fn calculate_key_per_tablet(tablets: &[Tablet], prepared: &PreparedStatement) ->
     value_lists
 }
 
-#[derive(Debug)]
-struct SingleTargetLBP {
-    target: (Arc<Node>, Option<u32>),
-}
-
-impl LoadBalancingPolicy for SingleTargetLBP {
-    fn pick<'a>(
-        &'a self,
-        _query: &'a RoutingInfo,
-        _cluster: &'a ClusterState,
-    ) -> Option<(NodeRef<'a>, Option<u32>)> {
-        Some((&self.target.0, self.target.1))
-    }
-
-    fn fallback<'a>(
-        &'a self,
-        _query: &'a RoutingInfo,
-        _cluster: &'a ClusterState,
-    ) -> FallbackPlan<'a> {
-        Box::new(std::iter::empty())
-    }
-
-    fn name(&self) -> String {
-        "SingleTargetLBP".to_owned()
-    }
-}
-
 async fn send_statement_everywhere(
     session: &Session,
     cluster: &ClusterState,
@@ -194,13 +163,10 @@ async fn send_statement_everywhere(
         (0..shard_count).map(|shard| {
             let mut stmt = statement.clone();
             let values_ref = &values;
-            let policy = SingleTargetLBP {
-                target: (node.clone(), Some(shard as u32)),
-            };
-            let execution_profile = ExecutionProfile::builder()
-                .load_balancing_policy(Arc::new(policy))
-                .build();
-            stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
+            stmt.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
+                NodeIdentifier::Node(Arc::clone(node)),
+                Some(shard as u32),
+            )));
 
             async move { session.execute_unpaged(&stmt, values_ref).await }
         })
@@ -218,13 +184,10 @@ async fn send_unprepared_query_everywhere(
         let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
         (0..shard_count).map(|shard| {
             let mut stmt = query.clone();
-            let policy = SingleTargetLBP {
-                target: (node.clone(), Some(shard as u32)),
-            };
-            let execution_profile = ExecutionProfile::builder()
-                .load_balancing_policy(Arc::new(policy))
-                .build();
-            stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
+            stmt.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
+                NodeIdentifier::Node(Arc::clone(node)),
+                Some(shard as u32),
+            )));
 
             async move { session.query_unpaged(stmt, &()).await }
         })
