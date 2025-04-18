@@ -36,8 +36,12 @@ awareness enabled and latency-awareness disabled.
 
 ## Configuration
 
-Load balancing policies can be configured via execution profiles. In the code
-sample provided, a new execution profile is created using
+Load balancing policies can be configured in three different ways (sorted by descending precedence):
+1. directly on the `Statement`, `PreparedStatement` or `Batch` (`Statement::set_load_balancing_policy()`)
+2. execution profile set on the statement (`Statement::set_execution_profile_handle()`)
+3. default execution profile set on the session (`SessionBuilder::default_execution_profile_handle()`)
+
+ In the code sample provided, a new execution profile is created using
 `ExecutionProfile::builder()`, and the load balancing policy is set to the
 `DefaultPolicy` using `.load_balancing_policy(policy)`.
 
