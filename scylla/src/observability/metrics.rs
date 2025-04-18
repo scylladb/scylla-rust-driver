@@ -462,7 +462,10 @@ impl Metrics {
 
             Ok(None) => Err(MetricsError::Empty),
 
-            Ok(Some(ps)) => Ok(ps.into_iter().map(|(_, bucket)| bucket.count())),
+            Ok(Some(ps)) => Ok(ps
+                .into_iter()
+                // Get the mean value from the bucket.
+                .map(|(_, bucket)| (bucket.start() + bucket.end()) / 2)),
         }
     }
 
@@ -529,5 +532,89 @@ impl std::fmt::Debug for Metrics {
             .field("connection_timeouts", &self.connection_timeouts)
             .field("request_timeouts", &self.request_timeouts)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::{Rng, SeedableRng};
+
+    use crate::observability::metrics::Snapshot;
+
+    use super::Metrics;
+
+    // A regression test for a bug where we would return
+    // the number of observations in the bucket for the given percentile.
+    #[test]
+    fn regression_test_snapshot_one_bucket() {
+        let metrics = Metrics::new();
+
+        // Histogram will have one non-empty bucket [0, 0] with 32 observations.
+        for _ in 0..32 {
+            metrics.log_query_latency(0).unwrap();
+        }
+
+        let Snapshot {
+            min,
+            max,
+            mean,
+            stddev,
+            median,
+            percentile_75,
+            percentile_95,
+            percentile_98,
+            percentile_99,
+            percentile_99_9,
+        } = metrics.get_snapshot().unwrap();
+
+        assert_eq!(min, 0);
+        assert_eq!(max, 0);
+        assert_eq!(mean, 0);
+        assert_eq!(stddev, 0);
+
+        // Before the fix, these would return 32.
+        assert_eq!(median, 0);
+        assert_eq!(percentile_75, 0);
+        assert_eq!(percentile_95, 0);
+        assert_eq!(percentile_98, 0);
+        assert_eq!(percentile_99, 0);
+        assert_eq!(percentile_99_9, 0);
+    }
+
+    #[test]
+    fn test_snapshot_ordering() {
+        fn test_with_seed(seed: u64) {
+            let rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+            let metrics = Metrics::new();
+
+            for v in rng.random_iter::<u16>().take(100) {
+                metrics.log_query_latency(v as u64).unwrap();
+            }
+
+            let Snapshot {
+                min,
+                max,
+                median,
+                percentile_75,
+                percentile_95,
+                percentile_98,
+                percentile_99,
+                percentile_99_9,
+                ..
+            } = metrics.get_snapshot().unwrap();
+
+            assert!(min <= median);
+            assert!(median <= percentile_75);
+            assert!(percentile_75 <= percentile_95);
+            assert!(percentile_95 <= percentile_98);
+            assert!(percentile_98 <= percentile_99);
+            assert!(percentile_99 <= percentile_99_9);
+            assert!(percentile_99_9 <= max);
+        }
+
+        test_with_seed(u64::MIN);
+        test_with_seed(u64::MAX);
+        test_with_seed(42);
+        test_with_seed(0xDEADCAFE);
     }
 }
