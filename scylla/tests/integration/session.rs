@@ -1013,6 +1013,45 @@ async fn test_raw_use_keyspace() {
         .is_ok());
 }
 
+/// This test will work only for Scylla, as currently `release_version`
+/// column always contains '3.0.8' value.
+/// See: https://github.com/scylladb/scylladb/issues/8740
+#[cfg_attr(cassandra_tests, ignore)]
+#[tokio::test]
+async fn test_metadata_scylla_release_version() {
+    setup_tracing();
+
+    let session = create_new_session_builder().build().await.unwrap();
+    let hardcoded_scylla_version = "3.0.8";
+
+    // Get release_version manually.
+    let release_version = session
+        .query_unpaged(
+            "SELECT release_version FROM system.local WHERE key='local'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .single_row::<(String,)>()
+        .unwrap()
+        .0;
+    assert_eq!(&release_version, hardcoded_scylla_version);
+
+    let cluster_state = session.get_cluster_state();
+
+    let cluster_version = cluster_state.cluster_version().unwrap();
+    assert_eq!(cluster_version, hardcoded_scylla_version);
+
+    for node in cluster_state.get_nodes_info() {
+        assert_eq!(
+            node.server_version.as_deref(),
+            Some(hardcoded_scylla_version)
+        );
+    }
+}
+
 #[tokio::test]
 async fn test_fetch_system_keyspace() {
     setup_tracing();
