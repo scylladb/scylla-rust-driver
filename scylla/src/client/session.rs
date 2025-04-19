@@ -1302,9 +1302,32 @@ impl Session {
             let statement_ref = &statement;
             let preparations = connections_iter.map(|c| async move {
                 let res = c.prepare(statement_ref).await;
+                let id = res
+                    .as_ref()
+                    .map(|prepared| bytes::Bytes::clone(prepared.get_id()))
+                    .ok();
                 let _ = tx_ref.send(res).await;
+                id
             });
-            join_all(preparations).await;
+            let ids = join_all(preparations).await;
+
+            // Verify id equality.
+            let first_id = ids
+                .iter()
+                .map(Option::as_ref)
+                .find(|id| id.is_some())
+                .flatten();
+
+            if let Some(id) = first_id {
+                if let Some(different_id) = ids.iter().flatten().find(|other_id| id != other_id) {
+                    tracing::error!(
+                        "Got differing ids upon statement preparation: statement \"{}\", id1: {:?}, id2: {:?}",
+                        statement_ref.contents,
+                        id,
+                        different_id
+                    );
+                }
+            }
         }
 
         tokio::task::spawn(preparation_worker(
