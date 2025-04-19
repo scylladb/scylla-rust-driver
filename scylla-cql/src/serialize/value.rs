@@ -344,6 +344,7 @@ impl SerializeValue for String {
     });
 }
 impl<T: SerializeValue> SerializeValue for Option<T> {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -376,6 +377,7 @@ impl SerializeValue for CqlDuration {
     });
 }
 impl<V: SerializeValue> SerializeValue for MaybeUnset<V> {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -388,6 +390,7 @@ impl<V: SerializeValue> SerializeValue for MaybeUnset<V> {
     }
 }
 impl<T: SerializeValue + ?Sized> SerializeValue for &T {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -397,6 +400,7 @@ impl<T: SerializeValue + ?Sized> SerializeValue for &T {
     }
 }
 impl<T: SerializeValue + ?Sized> SerializeValue for Box<T> {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -406,6 +410,7 @@ impl<T: SerializeValue + ?Sized> SerializeValue for Box<T> {
     }
 }
 impl<V: SerializeValue, S: BuildHasher + Default> SerializeValue for HashSet<V, S> {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -421,6 +426,7 @@ impl<V: SerializeValue, S: BuildHasher + Default> SerializeValue for HashSet<V, 
     }
 }
 impl<K: SerializeValue, V: SerializeValue, S: BuildHasher> SerializeValue for HashMap<K, V, S> {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -436,6 +442,7 @@ impl<K: SerializeValue, V: SerializeValue, S: BuildHasher> SerializeValue for Ha
     }
 }
 impl<V: SerializeValue> SerializeValue for BTreeSet<V> {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -451,6 +458,7 @@ impl<V: SerializeValue> SerializeValue for BTreeSet<V> {
     }
 }
 impl<K: SerializeValue, V: SerializeValue> SerializeValue for BTreeMap<K, V> {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -466,6 +474,7 @@ impl<K: SerializeValue, V: SerializeValue> SerializeValue for BTreeMap<K, V> {
     }
 }
 impl<T: SerializeValue> SerializeValue for Vec<T> {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -481,6 +490,7 @@ impl<T: SerializeValue> SerializeValue for Vec<T> {
     }
 }
 impl<'a, T: SerializeValue + 'a> SerializeValue for &'a [T] {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -496,6 +506,7 @@ impl<'a, T: SerializeValue + 'a> SerializeValue for &'a [T] {
     }
 }
 impl SerializeValue for CqlValue {
+    #[inline]
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -997,24 +1008,28 @@ pub enum BuiltinTypeCheckErrorKind {
 }
 
 impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    #[inline]
     fn from(value: SetOrListTypeCheckErrorKind) -> Self {
         BuiltinTypeCheckErrorKind::SetOrListError(value)
     }
 }
 
 impl From<MapTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    #[inline]
     fn from(value: MapTypeCheckErrorKind) -> Self {
         BuiltinTypeCheckErrorKind::MapError(value)
     }
 }
 
 impl From<TupleTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    #[inline]
     fn from(value: TupleTypeCheckErrorKind) -> Self {
         BuiltinTypeCheckErrorKind::TupleError(value)
     }
 }
 
 impl From<UdtTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    #[inline]
     fn from(value: UdtTypeCheckErrorKind) -> Self {
         BuiltinTypeCheckErrorKind::UdtError(value)
     }
@@ -1062,24 +1077,28 @@ pub enum BuiltinSerializationErrorKind {
 }
 
 impl From<SetOrListSerializationErrorKind> for BuiltinSerializationErrorKind {
+    #[inline]
     fn from(value: SetOrListSerializationErrorKind) -> Self {
         BuiltinSerializationErrorKind::SetOrListError(value)
     }
 }
 
 impl From<MapSerializationErrorKind> for BuiltinSerializationErrorKind {
+    #[inline]
     fn from(value: MapSerializationErrorKind) -> Self {
         BuiltinSerializationErrorKind::MapError(value)
     }
 }
 
 impl From<TupleSerializationErrorKind> for BuiltinSerializationErrorKind {
+    #[inline]
     fn from(value: TupleSerializationErrorKind) -> Self {
         BuiltinSerializationErrorKind::TupleError(value)
     }
 }
 
 impl From<UdtSerializationErrorKind> for BuiltinSerializationErrorKind {
+    #[inline]
     fn from(value: UdtSerializationErrorKind) -> Self {
         BuiltinSerializationErrorKind::UdtError(value)
     }

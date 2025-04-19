@@ -48,6 +48,7 @@ pub enum Compression {
 }
 
 impl Compression {
+    #[inline]
     pub fn as_str(&self) -> &'static str {
         match self {
             Compression::Lz4 => "lz4",
@@ -57,6 +58,7 @@ impl Compression {
 }
 
 impl Display for Compression {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
@@ -98,10 +100,12 @@ impl SerializedRequest {
         Ok(Self { data })
     }
 
+    #[inline]
     pub fn set_stream(&mut self, stream: i16) {
         self.data[2..4].copy_from_slice(&stream.to_be_bytes());
     }
 
+    #[inline]
     pub fn get_data(&self) -> &[u8] {
         &self.data[..]
     }
@@ -116,6 +120,7 @@ pub struct FrameParams {
 }
 
 impl Default for FrameParams {
+    #[inline]
     fn default() -> Self {
         Self {
             version: 0x04,

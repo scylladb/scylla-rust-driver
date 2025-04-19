@@ -62,6 +62,7 @@ impl<S> CachingSession<S>
 where
     S: Default + BuildHasher + Clone,
 {
+    #[inline]
     pub fn from(session: Session, cache_size: usize) -> Self {
         Self {
             session,
@@ -77,6 +78,7 @@ where
 {
     /// Builds a [`CachingSession`] from a [`Session`], a cache size,
     /// and a [`BuildHasher`], using a customer hasher.
+    #[inline]
     pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
         Self {
             session,
@@ -181,6 +183,7 @@ where
     }
 
     /// Adds a prepared statement to the cache
+    #[inline]
     pub async fn add_prepared_statement(
         &self,
         query: impl Into<&Statement>,
@@ -238,10 +241,12 @@ where
         }
     }
 
+    #[inline]
     pub fn get_max_capacity(&self) -> usize {
         self.max_capacity
     }
 
+    #[inline]
     pub fn get_session(&self) -> &Session {
         &self.session
     }

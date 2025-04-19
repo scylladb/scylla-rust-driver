@@ -269,6 +269,7 @@ pub struct BuiltinTypeCheckError {
 
 // Not part of the public API; used in derive macros.
 #[doc(hidden)]
+#[inline]
 pub fn mk_typck_err<T>(
     cql_types: impl IntoIterator<Item = ColumnType<'static>>,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
@@ -423,6 +424,7 @@ pub struct BuiltinDeserializationError {
 
 // Not part of the public API; used in derive macros.
 #[doc(hidden)]
+#[inline]
 pub fn mk_deser_err<T>(kind: impl Into<BuiltinDeserializationErrorKind>) -> DeserializationError {
     mk_deser_err_named(std::any::type_name::<T>(), kind)
 }

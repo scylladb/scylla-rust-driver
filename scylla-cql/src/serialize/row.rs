@@ -478,6 +478,7 @@ pub struct SerializedValues {
 
 impl SerializedValues {
     /// Constructs a new, empty `SerializedValues`.
+    #[inline]
     pub const fn new() -> Self {
         SerializedValues {
             serialized_values: Vec::new(),
@@ -489,6 +490,7 @@ impl SerializedValues {
     pub const EMPTY: &'static SerializedValues = &SerializedValues::new();
 
     /// Constructs `SerializedValues` from given [`SerializeRow`] object.
+    #[inline]
     pub fn from_serializable<T: SerializeRow + ?Sized>(
         ctx: &RowSerializationContext,
         row: &T,
@@ -601,6 +603,7 @@ impl SerializedValues {
 }
 
 impl Default for SerializedValues {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -615,6 +618,7 @@ pub struct SerializedValuesIterator<'a> {
 impl<'a> Iterator for SerializedValuesIterator<'a> {
     type Item = RawValue<'a>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.serialized_values.is_empty() {
             return None;

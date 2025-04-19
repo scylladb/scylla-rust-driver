@@ -16,6 +16,7 @@ pub struct Prepare<'a> {
 impl SerializableRequest for Prepare<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Prepare;
 
+    #[inline]
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         types::write_long_string(self.query, buf)
             .map_err(PrepareSerializationError::StatementStringSerialization)?;

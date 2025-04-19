@@ -463,12 +463,14 @@ pub enum WriteType {
 }
 
 impl std::fmt::Display for WriteType {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        <Self as std::fmt::Debug>::fmt(self, f)
     }
 }
 
 impl From<u8> for OperationType {
+    #[inline]
     fn from(operation_type: u8) -> OperationType {
         match operation_type {
             0 => OperationType::Read,
@@ -479,6 +481,7 @@ impl From<u8> for OperationType {
 }
 
 impl From<&str> for WriteType {
+    #[inline]
     fn from(write_type_str: &str) -> WriteType {
         match write_type_str {
             "SIMPLE" => WriteType::Simple,
@@ -495,6 +498,7 @@ impl From<&str> for WriteType {
 }
 
 impl WriteType {
+    #[inline]
     pub fn as_str(&self) -> &str {
         match self {
             WriteType::Simple => "SIMPLE",

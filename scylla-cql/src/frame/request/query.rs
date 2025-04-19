@@ -37,6 +37,7 @@ pub struct Query<'q> {
 impl SerializableRequest for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
+    #[inline]
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         types::write_long_string(&self.contents, buf)
             .map_err(QuerySerializationError::StatementStringSerialization)?;
@@ -48,6 +49,7 @@ impl SerializableRequest for Query<'_> {
 }
 
 impl DeserializableRequest for Query<'_> {
+    #[inline]
     fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let contents = Cow::Owned(types::read_long_string(buf)?.to_owned());
         let parameters = QueryParameters::deserialize(buf)?;
@@ -71,6 +73,7 @@ pub struct QueryParameters<'a> {
 }
 
 impl Default for QueryParameters<'_> {
+    #[inline]
     fn default() -> Self {
         Self {
             consistency: Default::default(),
@@ -279,6 +282,7 @@ impl PagingState {
 }
 
 impl Default for PagingState {
+    #[inline]
     fn default() -> Self {
         Self::start()
     }

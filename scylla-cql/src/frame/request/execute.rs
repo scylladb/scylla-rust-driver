@@ -23,6 +23,7 @@ pub struct Execute<'a> {
 impl SerializableRequest for Execute<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Execute;
 
+    #[inline]
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         // Serializing statement id
         types::write_short_bytes(&self.id[..], buf)
@@ -37,6 +38,7 @@ impl SerializableRequest for Execute<'_> {
 }
 
 impl DeserializableRequest for Execute<'_> {
+    #[inline]
     fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let id = types::read_short_bytes(buf)?.to_vec().into();
         let parameters = QueryParameters::deserialize(buf)?;

@@ -19,6 +19,7 @@ pub struct Statement {
 
 impl Statement {
     /// Creates a new [`Statement`] from a CQL statement string.
+    #[inline]
     pub fn new(query_text: impl Into<String>) -> Self {
         Self {
             contents: query_text.into(),
@@ -30,6 +31,7 @@ impl Statement {
     /// Returns self with page size set to the given value.
     ///
     /// Panics if given number is nonpositive.
+    #[inline]
     pub fn with_page_size(mut self, page_size: i32) -> Self {
         self.set_page_size(page_size);
         self
@@ -38,6 +40,7 @@ impl Statement {
     /// Sets the page size for this CQL statement.
     ///
     /// Panics if given number is nonpositive.
+    #[inline]
     pub fn set_page_size(&mut self, page_size: i32) {
         self.page_size = page_size
             .try_into()
@@ -50,29 +53,34 @@ impl Statement {
     }
 
     /// Returns the page size for this CQL statement.
+    #[inline]
     pub fn get_page_size(&self) -> i32 {
         self.page_size.inner()
     }
 
     /// Sets the consistency to be used when executing this statement.
+    #[inline]
     pub fn set_consistency(&mut self, c: Consistency) {
         self.config.consistency = Some(c);
     }
 
     /// Gets the consistency to be used when executing this statement if it is filled.
     /// If this is empty, the default_consistency of the session will be used.
+    #[inline]
     pub fn get_consistency(&self) -> Option<Consistency> {
         self.config.consistency
     }
 
     /// Sets the serial consistency to be used when executing this statement.
     /// (Ignored unless the statement is an LWT)
+    #[inline]
     pub fn set_serial_consistency(&mut self, sc: Option<SerialConsistency>) {
         self.config.serial_consistency = Some(sc);
     }
 
     /// Gets the serial consistency to be used when executing this statement.
     /// (Ignored unless the statement is an LWT)
+    #[inline]
     pub fn get_serial_consistency(&self) -> Option<SerialConsistency> {
         self.config.serial_consistency.flatten()
     }
@@ -82,11 +90,13 @@ impl Statement {
     /// If set to `true` we can be sure that it is idempotent
     /// If set to `false` it is unknown whether it is idempotent
     /// This is used in [`RetryPolicy`] to decide if retrying a statement execution is safe
+    #[inline]
     pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
         self.config.is_idempotent = is_idempotent;
     }
 
     /// Gets the idempotence of this statement
+    #[inline]
     pub fn get_is_idempotent(&self) -> bool {
         self.config.is_idempotent
     }
@@ -94,11 +104,13 @@ impl Statement {
     /// Enable or disable CQL Tracing for this statement
     /// If enabled session.query() will return a QueryResult containing tracing_id
     /// which can be used to query tracing information about the execution of this query
+    #[inline]
     pub fn set_tracing(&mut self, should_trace: bool) {
         self.config.tracing = should_trace;
     }
 
     /// Gets whether tracing is enabled for this statement
+    #[inline]
     pub fn get_tracing(&self) -> bool {
         self.config.tracing
     }
@@ -107,11 +119,13 @@ impl Statement {
     /// If not None, it will replace the server side assigned timestamp as default timestamp
     /// If a statement contains a `USING TIMESTAMP` clause, calling this method won't change
     /// anything
+    #[inline]
     pub fn set_timestamp(&mut self, timestamp: Option<i64>) {
         self.config.timestamp = timestamp
     }
 
     /// Gets the default timestamp for this statement in microseconds.
+    #[inline]
     pub fn get_timestamp(&self) -> Option<i64> {
         self.config.timestamp
     }
@@ -120,11 +134,13 @@ impl Statement {
     /// If not None, the driver will stop waiting for the request
     /// to finish after `timeout` passed.
     /// Otherwise, default session client timeout will be applied.
+    #[inline]
     pub fn set_request_timeout(&mut self, timeout: Option<Duration>) {
         self.config.request_timeout = timeout
     }
 
     /// Gets client timeout associated with this statement.
+    #[inline]
     pub fn get_request_timeout(&self) -> Option<Duration> {
         self.config.request_timeout
     }
@@ -142,34 +158,40 @@ impl Statement {
     }
 
     /// Sets the listener capable of listening what happens during statement execution.
+    #[inline]
     pub fn set_history_listener(&mut self, history_listener: Arc<dyn HistoryListener>) {
         self.config.history_listener = Some(history_listener);
     }
 
     /// Removes the listener set by `set_history_listener`.
+    #[inline]
     pub fn remove_history_listener(&mut self) -> Option<Arc<dyn HistoryListener>> {
         self.config.history_listener.take()
     }
 
     /// Associates the query with execution profile referred by the provided handle.
     /// Handle may be later remapped to another profile, and query will reflect those changes.
+    #[inline]
     pub fn set_execution_profile_handle(&mut self, profile_handle: Option<ExecutionProfileHandle>) {
         self.config.execution_profile_handle = profile_handle;
     }
 
     /// Borrows the execution profile handle associated with this statement.
+    #[inline]
     pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
         self.config.execution_profile_handle.as_ref()
     }
 }
 
 impl From<String> for Statement {
+    #[inline]
     fn from(s: String) -> Statement {
         Statement::new(s)
     }
 }
 
 impl<'a> From<&'a str> for Statement {
+    #[inline]
     fn from(s: &'a str) -> Statement {
         Statement::new(s.to_owned())
     }

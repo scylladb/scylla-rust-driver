@@ -417,6 +417,8 @@ pub(crate) enum RunRequestResult<ResT> {
     Completed(ResT),
 }
 
+/// Represents a CQL session, which can be used to communicate
+/// with the database.
 impl Session {
     /// Sends a request to the database and receives a response.\
     /// Executes an unprepared CQL statement without paging, i.e. all results are received in a single response.
@@ -474,6 +476,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn query_unpaged(
         &self,
         statement: impl Into<Statement>,
@@ -533,6 +536,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn query_single_page(
         &self,
         statement: impl Into<Statement>,
@@ -579,6 +583,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn query_iter(
         &self,
         statement: impl Into<Statement>,
@@ -630,6 +635,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn execute_unpaged(
         &self,
         prepared: &PreparedStatement,
@@ -694,6 +700,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn execute_single_page(
         &self,
         prepared: &PreparedStatement,
@@ -743,6 +750,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn execute_iter(
         &self,
         prepared: impl Into<PreparedStatement>,
@@ -796,6 +804,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn batch(
         &self,
         batch: &Batch,
@@ -803,11 +812,7 @@ impl Session {
     ) -> Result<QueryResult, ExecutionError> {
         self.do_batch(batch, values).await
     }
-}
 
-/// Represents a CQL session, which can be used to communicate
-/// with the database
-impl Session {
     /// Estabilishes a CQL session with the database
     ///
     /// Usually it's easier to use [SessionBuilder](crate::client::session_builder::SessionBuilder)
@@ -1231,6 +1236,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn prepare(
         &self,
         statement: impl Into<Statement>,
@@ -1663,6 +1669,7 @@ impl Session {
     /// Driver collects various metrics like number of queries or query latencies.
     /// They can be read using this method
     #[cfg(feature = "metrics")]
+    #[inline]
     pub fn get_metrics(&self) -> Arc<Metrics> {
         Arc::clone(&self.metrics)
     }
@@ -1671,6 +1678,7 @@ impl Session {
     ///
     /// Driver collects various information about network topology or schema.
     /// It can be read using this method.
+    #[inline]
     pub fn get_cluster_state(&self) -> Arc<ClusterState> {
         self.cluster.get_state()
     }
@@ -2110,6 +2118,7 @@ impl Session {
 
     /// Retrieves the handle to execution profile that is used by this session
     /// by default, i.e. when an executed statement does not define its own handle.
+    #[inline]
     pub fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
         &self.default_execution_profile_handle
     }
