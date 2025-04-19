@@ -173,8 +173,7 @@ where
         self.log_request_start();
 
         'nodes_in_plan: for (node, shard) in query_plan {
-            let span =
-                trace_span!(parent: &self.parent_span, "Executing query", node = %node.address);
+            let span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
             let connection: Arc<Connection> = match node

@@ -299,7 +299,18 @@ impl NodeConnectionPool {
         shard_conns: &[Vec<Arc<Connection>>],
     ) -> Arc<Connection> {
         // Try getting the desired connection
-        if let Some(conn) = Self::choose_random_connection_from_slice(&shard_conns[shard as usize])
+        if let Some(conn) = shard_conns
+            .get(shard as usize)
+            .or_else(|| {
+                warn!(
+                    shard = shard,
+                    "Requested shard is out of bounds.\
+                    This is most probably a bug in custom LoadBalancingPolicy implementation!\
+                    Targeting a random/arbitrary shard."
+                );
+                None
+            })
+            .and_then(|shard_conns| Self::choose_random_connection_from_slice(shard_conns))
         {
             trace!(shard = shard, "Found connection for the target shard");
             return conn;

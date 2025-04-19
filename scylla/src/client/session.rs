@@ -1966,7 +1966,7 @@ impl Session {
             .unwrap_or(execution_profile.consistency);
 
         'nodes_in_plan: for (node, shard) in request_plan {
-            let span = trace_span!("Executing request", node = %node.address);
+            let span = trace_span!("Executing request", node = %node.address, shard = %shard);
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
                 let connection = match node.connection_for_shard(shard).await {

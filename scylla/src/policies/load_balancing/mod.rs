@@ -56,6 +56,11 @@ pub type FallbackPlan<'a> =
 /// the driver will try to send the request. The first elements of the plan are the targets which are
 /// the best to contact (e.g. they might have the lowest latency).
 ///
+/// Note: The chosen shard serves as a hint for the driver. The driver may ignore the chosen
+/// shard and fallback to some random shard for the node in two cases:
+/// 1. Picked shard is out of bounds (i.e. greater or equal to `nr_shards` specified by the node).
+/// 2. The connection pool to the picked shard is empty.
+///
 /// Most requests are sent on the first try, so the request execution layer rarely needs to know more
 /// than one target from plan. To better optimize that case, `LoadBalancingPolicy` has two methods:
 /// `pick` and `fallback`. `pick` returns the first target to contact for a given request, `fallback`
