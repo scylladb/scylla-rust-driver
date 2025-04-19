@@ -6,11 +6,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use scylla_cql::serialize::row::SerializedValues;
-
 use crate::client::pager::QueryPager;
 use crate::errors::{NextRowError, RequestAttemptError};
 use crate::network::Connection;
+use crate::statement::bound::BoundStatement;
 use crate::statement::prepared::PreparedStatement;
 use crate::statement::Statement;
 
@@ -84,12 +83,9 @@ impl ControlConnection {
     /// the asynchronous iterator interface.
     pub(crate) async fn execute_iter(
         &self,
-        prepared_statement: PreparedStatement,
-        values: SerializedValues,
+        statement: BoundStatement,
     ) -> Result<QueryPager, NextRowError> {
-        Arc::clone(&self.conn)
-            .execute_iter(prepared_statement, values)
-            .await
+        Arc::clone(&self.conn).execute_iter(statement).await
     }
 }
 

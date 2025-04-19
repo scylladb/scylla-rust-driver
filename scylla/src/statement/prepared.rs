@@ -12,6 +12,7 @@ use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
+use super::bound::BoundStatement;
 use super::{PageSize, StatementConfig};
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::errors::{BadQuery, ExecutionError};
@@ -209,39 +210,14 @@ impl PreparedStatement {
         &self,
         bound_values: &impl SerializeRow,
     ) -> Result<Bytes, PartitionKeyError> {
-        let serialized = self.serialize_values(bound_values)?;
-        let partition_key = self.extract_partition_key(&serialized)?;
+        let statement = self.clone().bind(bound_values)?;
+        let partition_key = statement.pk()?;
         let mut buf = BytesMut::new();
         let mut writer = |chunk: &[u8]| buf.extend_from_slice(chunk);
 
         partition_key.write_encoded_partition_key(&mut writer)?;
 
         Ok(buf.freeze())
-    }
-
-    /// Determines which values constitute the partition key and puts them in order.
-    ///
-    /// This is a preparation step necessary for calculating token based on a prepared statement.
-    pub(crate) fn extract_partition_key<'ps>(
-        &'ps self,
-        bound_values: &'ps SerializedValues,
-    ) -> Result<PartitionKey<'ps>, PartitionKeyExtractionError> {
-        PartitionKey::new(self.get_prepared_metadata(), bound_values)
-    }
-
-    pub(crate) fn extract_partition_key_and_calculate_token<'ps>(
-        &'ps self,
-        partitioner_name: &'ps PartitionerName,
-        serialized_values: &'ps SerializedValues,
-    ) -> Result<Option<(PartitionKey<'ps>, Token)>, PartitionKeyError> {
-        if !self.is_token_aware() {
-            return Ok(None);
-        }
-
-        let partition_key = self.extract_partition_key(serialized_values)?;
-        let token = partition_key.calculate_token(partitioner_name)?;
-
-        Ok(Some((partition_key, token)))
     }
 
     /// Calculates the token for given prepared statement and values.
@@ -255,17 +231,8 @@ impl PreparedStatement {
         &self,
         values: &impl SerializeRow,
     ) -> Result<Option<Token>, PartitionKeyError> {
-        self.calculate_token_untyped(&self.serialize_values(values)?)
-    }
-
-    // A version of calculate_token which skips serialization and uses SerializedValues directly.
-    // Not type-safe, so not exposed to users.
-    pub(crate) fn calculate_token_untyped(
-        &self,
-        values: &SerializedValues,
-    ) -> Result<Option<Token>, PartitionKeyError> {
-        self.extract_partition_key_and_calculate_token(&self.partitioner_name, values)
-            .map(|opt| opt.map(|(_pk, token)| token))
+        let statement = self.clone().bind(values)?;
+        statement.token()
     }
 
     /// Return keyspace name and table name this statement is operating on.
@@ -456,6 +423,13 @@ impl PreparedStatement {
         self.config.execution_profile_handle.as_ref()
     }
 
+    /// Binds values with a prepared statement
+    ///
+    /// This method will serialize the values and thus type erase them on return
+    pub fn bind(self, values: &impl SerializeRow) -> Result<BoundStatement, SerializationError> {
+        BoundStatement::new(self, values)
+    }
+
     pub(crate) fn serialize_values(
         &self,
         values: &impl SerializeRow,
@@ -524,7 +498,7 @@ pub(crate) struct PartitionKey<'ps> {
 impl<'ps> PartitionKey<'ps> {
     const SMALLVEC_ON_STACK_SIZE: usize = 8;
 
-    fn new(
+    pub(crate) fn new(
         prepared_metadata: &'ps PreparedMetadata,
         bound_values: &'ps SerializedValues,
     ) -> Result<Self, PartitionKeyExtractionError> {

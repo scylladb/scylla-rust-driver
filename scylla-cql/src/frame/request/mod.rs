@@ -16,6 +16,7 @@ use bytes::Bytes;
 
 pub use auth_response::AuthResponse;
 pub use batch::Batch;
+pub use batch::BatchV2;
 pub use execute::Execute;
 pub use options::Options;
 pub use prepare::Prepare;
@@ -138,6 +139,7 @@ pub enum Request<'r> {
     Query(Query<'r>),
     Execute(Execute<'r>),
     Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
+    BatchV2(BatchV2<'r>),
 }
 
 impl Request<'_> {
@@ -148,7 +150,7 @@ impl Request<'_> {
         match opcode {
             RequestOpcode::Query => Query::deserialize(buf).map(Self::Query),
             RequestOpcode::Execute => Execute::deserialize(buf).map(Self::Execute),
-            RequestOpcode::Batch => Batch::deserialize(buf).map(Self::Batch),
+            RequestOpcode::Batch => BatchV2::deserialize(buf).map(Self::BatchV2),
             _ => unimplemented!(
                 "Deserialization of opcode {:?} is not yet supported",
                 opcode
@@ -162,6 +164,7 @@ impl Request<'_> {
             Request::Query(q) => Some(q.parameters.consistency),
             Request::Execute(e) => Some(e.parameters.consistency),
             Request::Batch(b) => Some(b.consistency),
+            Request::BatchV2(b) => Some(b.consistency),
             #[allow(unreachable_patterns)] // until other opcodes are supported
             _ => None,
         }
@@ -173,6 +176,7 @@ impl Request<'_> {
             Request::Query(q) => Some(q.parameters.serial_consistency),
             Request::Execute(e) => Some(e.parameters.serial_consistency),
             Request::Batch(b) => Some(b.serial_consistency),
+            Request::BatchV2(b) => Some(b.serial_consistency),
             #[allow(unreachable_patterns)] // until other opcodes are supported
             _ => None,
         }
@@ -181,7 +185,7 @@ impl Request<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, ops::Deref};
+    use std::borrow::Cow;
 
     use bytes::Bytes;
 
@@ -189,7 +193,7 @@ mod tests {
     use crate::{
         frame::{
             request::{
-                batch::{Batch, BatchStatement, BatchType},
+                batch::{BatchStatement, BatchType, BatchV2},
                 execute::Execute,
                 query::{Query, QueryParameters},
                 DeserializableRequest, SerializableRequest,
@@ -261,32 +265,39 @@ mod tests {
         }
 
         // Batch
-        let statements = vec![
-            BatchStatement::Query {
-                text: query.contents,
-            },
-            BatchStatement::Prepared {
-                id: Cow::Borrowed(&execute.id),
-            },
-        ];
-        let batch = Batch {
-            statements: Cow::Owned(statements),
+        // Not execute's values, because named values are not supported in batches.
+        let mut statements_and_values = vec![];
+        BatchStatement::Query {
+            text: query.contents,
+        }
+        .serialize(&mut statements_and_values)
+        .unwrap();
+        statements_and_values
+            .extend_from_slice(&query.parameters.values.element_count().to_be_bytes());
+        statements_and_values.extend_from_slice(query.parameters.values.get_contents());
+
+        BatchStatement::Prepared {
+            id: Cow::Borrowed(&execute.id),
+        }
+        .serialize(&mut statements_and_values)
+        .unwrap();
+        statements_and_values
+            .extend_from_slice(&query.parameters.values.element_count().to_be_bytes());
+        statements_and_values.extend_from_slice(query.parameters.values.get_contents());
+
+        let batch = BatchV2 {
+            statements_and_values: Cow::Owned(statements_and_values),
             batch_type: BatchType::Logged,
             consistency: Consistency::EachQuorum,
             serial_consistency: Some(SerialConsistency::LocalSerial),
             timestamp: Some(32432),
-
-            // Not execute's values, because named values are not supported in batches.
-            values: vec![
-                query.parameters.values.deref().clone(),
-                query.parameters.values.deref().clone(),
-            ],
+            statements_len: 2,
         };
         {
             let mut buf = Vec::new();
             batch.serialize(&mut buf).unwrap();
 
-            let batch_deserialized = Batch::deserialize(&mut &buf[..]).unwrap();
+            let batch_deserialized = BatchV2::deserialize(&mut &buf[..]).unwrap();
             assert_eq!(&batch_deserialized, &batch);
         }
     }
@@ -341,24 +352,30 @@ mod tests {
         }
 
         // Batch
-        let statements = vec![BatchStatement::Query {
+        let mut statements_and_values = vec![];
+        BatchStatement::Query {
             text: query.contents,
-        }];
-        let batch = Batch {
-            statements: Cow::Owned(statements),
+        }
+        .serialize(&mut statements_and_values)
+        .unwrap();
+        statements_and_values
+            .extend_from_slice(&query.parameters.values.element_count().to_be_bytes());
+        statements_and_values.extend_from_slice(query.parameters.values.get_contents());
+
+        let batch = BatchV2 {
             batch_type: BatchType::Logged,
             consistency: Consistency::EachQuorum,
             serial_consistency: None,
             timestamp: None,
-
-            values: vec![query.parameters.values.deref().clone()],
+            statements_and_values: Cow::Owned(statements_and_values),
+            statements_len: 1,
         };
         {
             let mut buf = Vec::new();
             batch.serialize(&mut buf).unwrap();
 
             // Sanity check: batch deserializes to the equivalent.
-            let batch_deserialized = Batch::deserialize(&mut &buf[..]).unwrap();
+            let batch_deserialized = BatchV2::deserialize(&mut &buf[..]).unwrap();
             assert_eq!(batch, batch_deserialized);
 
             // Now modify flags by adding an unknown one.
@@ -370,7 +387,7 @@ mod tests {
 
             // Unknown flag should lead to frame rejection, as unknown flags can be new protocol extensions
             // leading to different semantics.
-            let _parse_error = Batch::deserialize(&mut &buf[..]).unwrap_err();
+            let _parse_error = BatchV2::deserialize(&mut &buf[..]).unwrap_err();
         }
     }
 }
