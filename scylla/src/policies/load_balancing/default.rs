@@ -2786,10 +2786,7 @@ mod latency_awareness {
             let average_latencies = self.node_avgs.read().unwrap();
             let targets = fallback;
 
-            let mut fast_targets = vec![];
-            let mut penalised_targets = vec![];
-
-            for node_and_shard @ (node, _shard) in targets {
+            let (fast_targets, penalised_targets): (Vec<_>, Vec<_>) = targets.partition(|(node, _shard)|{
                 match fast_enough(
                     average_latencies.deref(),
                     node.host_id,
@@ -2798,17 +2795,14 @@ mod latency_awareness {
                     self.minimum_measurements,
                     min_avg_latency,
                 ) {
-                    FastEnough::Yes => fast_targets.push(node_and_shard),
+                    FastEnough::Yes => true,
                     FastEnough::No { average } => {
                         trace!("Latency awareness: Penalising node {{address={}, datacenter={:?}, rack={:?}}} for being on average at least {} times slower (latency: {}ms) than the fastest ({}ms).",
                                 node.address, node.datacenter, node.rack, self.exclusion_threshold, average.as_millis(), min_avg_latency.as_millis());
-                        penalised_targets.push(node_and_shard);
+                        false
                     }
                 }
-            }
-
-            let fast_targets = fast_targets.into_iter();
-            let penalised_targets = penalised_targets.into_iter();
+            });
 
             let skipping_penalised_targets_iterator =
                 fast_targets.into_iter().chain(penalised_targets);
