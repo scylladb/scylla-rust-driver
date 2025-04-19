@@ -24,6 +24,7 @@ use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::QueryResult;
 use crate::response::{
     NonErrorAuthResponse, NonErrorStartupResponse, PagingState, PagingStateResponse, QueryResponse,
+    RawPreparedStatement,
 };
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
@@ -632,46 +633,56 @@ impl Connection {
         Ok(supported)
     }
 
-    pub(crate) async fn prepare(
+    /// Prepares the given statement and returns raw parts that can be used to construct
+    /// a prepared statement.
+    ///
+    /// Extracted in order to avoid needless allocations upon [PreparedStatement] construction
+    /// in cases when the [PreparedStatement] is not used anyway.
+    pub(crate) async fn prepare_raw<'statement>(
         &self,
-        query: &Statement,
-    ) -> Result<PreparedStatement, RequestAttemptError> {
+        statement: &'statement Statement,
+    ) -> Result<RawPreparedStatement<'statement>, RequestAttemptError> {
         let query_response = self
             .send_request(
                 &request::Prepare {
-                    query: &query.contents,
+                    query: &statement.contents,
                 },
                 true,
-                query.config.tracing,
+                statement.config.tracing,
                 None,
             )
             .await?;
 
-        let mut prepared_statement = match query_response.response {
+        match query_response.response {
             Response::Error(error::Error { error, reason }) => {
-                return Err(RequestAttemptError::DbError(error, reason))
+                Err(RequestAttemptError::DbError(error, reason))
             }
-            Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
-                p.id,
-                self.features
+            Response::Result(result::Result::Prepared(p)) => {
+                let is_lwt = self
+                    .features
                     .protocol_features
-                    .prepared_flags_contain_lwt_mark(p.prepared_metadata.flags as u32),
-                p.prepared_metadata,
-                Arc::new(p.result_metadata),
-                query.contents.clone(),
-                query.get_validated_page_size(),
-                query.config.clone(),
-            ),
-            _ => {
-                return Err(RequestAttemptError::UnexpectedResponse(
-                    query_response.response.to_response_kind(),
+                    .prepared_flags_contain_lwt_mark(p.prepared_metadata.flags as u32);
+                Ok(RawPreparedStatement::new(
+                    statement,
+                    p,
+                    is_lwt,
+                    query_response.tracing_id,
                 ))
             }
-        };
-
-        if let Some(tracing_id) = query_response.tracing_id {
-            prepared_statement.prepare_tracing_ids.push(tracing_id);
+            _ => Err(RequestAttemptError::UnexpectedResponse(
+                query_response.response.to_response_kind(),
+            )),
         }
+    }
+
+    /// Prepares the given statement and returns [PreparedStatement].
+    pub(crate) async fn prepare(
+        &self,
+        statement: &Statement,
+    ) -> Result<PreparedStatement, RequestAttemptError> {
+        let raw_prepared_statement = self.prepare_raw(statement).await?;
+        let prepared_statement = raw_prepared_statement.into_prepared_statement();
+
         Ok(prepared_statement)
     }
 
@@ -681,14 +692,15 @@ impl Connection {
         previous_prepared: &PreparedStatement,
     ) -> Result<(), RequestAttemptError> {
         let reprepare_query: Statement = query.into();
-        let reprepared = self.prepare(&reprepare_query).await?;
+        let prepared_response = self.prepare_raw(&reprepare_query).await?.prepared_response;
+
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
-        if reprepared.get_id() != previous_prepared.get_id() {
+        if prepared_response.id != previous_prepared.get_id() {
             Err(RequestAttemptError::RepreparedIdChanged {
+                reprepared_id: prepared_response.id.into(),
                 statement: reprepare_query.contents,
                 expected_id: previous_prepared.get_id().clone().into(),
-                reprepared_id: reprepared.get_id().clone().into(),
             })
         } else {
             Ok(())

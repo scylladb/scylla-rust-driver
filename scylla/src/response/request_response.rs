@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use scylla_cql::frame::request::query::PagingStateResponse;
@@ -9,6 +10,8 @@ use uuid::Uuid;
 use crate::errors::RequestAttemptError;
 use crate::frame::response::{self, result};
 use crate::response::query_result::QueryResult;
+use crate::statement::prepared::PreparedStatement;
+use crate::statement::Statement;
 
 pub(crate) struct QueryResponse {
     pub(crate) response: Response,
@@ -107,4 +110,60 @@ pub(crate) enum NonErrorStartupResponse {
 pub(crate) enum NonErrorAuthResponse {
     AuthChallenge(response::authenticate::AuthChallenge),
     AuthSuccess(response::authenticate::AuthSuccess),
+}
+
+/// Parts which are needed to construct [PreparedStatement].
+///
+/// Kept separate for performance reasons, because constructing
+/// [PreparedStatement] involves allocations.
+pub(crate) struct RawPreparedStatement<'statement> {
+    pub(crate) statement: &'statement Statement,
+    pub(crate) prepared_response: result::Prepared,
+    pub(crate) is_lwt: bool,
+    pub(crate) tracing_id: Option<Uuid>,
+}
+
+impl<'statement> RawPreparedStatement<'statement> {
+    pub(crate) fn new(
+        statement: &'statement Statement,
+        prepared_response: result::Prepared,
+        is_lwt: bool,
+        tracing_id: Option<Uuid>,
+    ) -> Self {
+        Self {
+            statement,
+            prepared_response,
+            is_lwt,
+            tracing_id,
+        }
+    }
+}
+
+/// Constructs the fully-fledged [PreparedStatement].
+///
+/// This involves allocations.
+impl RawPreparedStatement<'_> {
+    pub(crate) fn into_prepared_statement(self) -> PreparedStatement {
+        let Self {
+            statement,
+            prepared_response,
+            is_lwt,
+            tracing_id,
+        } = self;
+        let mut prepared_statement = PreparedStatement::new(
+            prepared_response.id,
+            is_lwt,
+            prepared_response.prepared_metadata,
+            Arc::new(prepared_response.result_metadata),
+            statement.contents.clone(),
+            statement.get_validated_page_size(),
+            statement.config.clone(),
+        );
+
+        if let Some(tracing_id) = tracing_id {
+            prepared_statement.prepare_tracing_ids.push(tracing_id);
+        }
+
+        prepared_statement
+    }
 }
