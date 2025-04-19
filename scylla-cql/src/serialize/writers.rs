@@ -74,6 +74,7 @@ impl<'buf> RowWriter<'buf> {
 /// in nothing being written.
 pub struct CellWriter<'buf> {
     buf: &'buf mut Vec<u8>,
+    write_size: bool,
 }
 
 impl<'buf> CellWriter<'buf> {
@@ -82,7 +83,21 @@ impl<'buf> CellWriter<'buf> {
     /// The newly created row writer will append data to the end of the vec.
     #[inline]
     pub fn new(buf: &'buf mut Vec<u8>) -> Self {
-        Self { buf }
+        Self {
+            buf,
+            write_size: true,
+        }
+    }
+
+    // Creates a new cell writer based on an existing Vec, without writing size.
+    ///
+    /// The newly created row writer will append data to the end of the vec.
+    #[inline]
+    pub fn new_without_size(buf: &'buf mut Vec<u8>) -> Self {
+        Self {
+            buf,
+            write_size: false,
+        }
     }
 
     /// Sets this value to be null, consuming this object.
@@ -110,7 +125,9 @@ impl<'buf> CellWriter<'buf> {
     #[inline]
     pub fn set_value(self, contents: &[u8]) -> Result<WrittenCellProof<'buf>, CellOverflowError> {
         let value_len: i32 = contents.len().try_into().map_err(|_| CellOverflowError)?;
-        self.buf.extend_from_slice(&value_len.to_be_bytes());
+        if self.write_size {
+            self.buf.extend_from_slice(&value_len.to_be_bytes());
+        }
         self.buf.extend_from_slice(contents);
         Ok(WrittenCellProof::new())
     }
@@ -123,7 +140,7 @@ impl<'buf> CellWriter<'buf> {
     /// or UDTs.
     #[inline]
     pub fn into_value_builder(self) -> CellValueBuilder<'buf> {
-        CellValueBuilder::new(self.buf)
+        CellValueBuilder::new(self.buf, self.write_size)
     }
 }
 
@@ -139,11 +156,14 @@ pub struct CellValueBuilder<'buf> {
 
     // Starting position of the value in the buffer.
     starting_pos: usize,
+
+    // Should we write the size of the value?
+    write_size: bool,
 }
 
 impl<'buf> CellValueBuilder<'buf> {
     #[inline]
-    fn new(buf: &'buf mut Vec<u8>) -> Self {
+    fn new(buf: &'buf mut Vec<u8>, write_size: bool) -> Self {
         // "Length" of a [bytes] frame can either be a non-negative i32,
         // -1 (null) or -1 (not set). Push an invalid value here. It will be
         // overwritten eventually either by set_null, set_unset or Drop.
@@ -151,8 +171,14 @@ impl<'buf> CellValueBuilder<'buf> {
         // an error on the DB side and the serialized data
         // won't be misinterpreted.
         let starting_pos = buf.len();
-        buf.extend_from_slice(&(-3i32).to_be_bytes());
-        Self { buf, starting_pos }
+        if write_size {
+            buf.extend_from_slice(&(-3i32).to_be_bytes());
+        }
+        Self {
+            buf,
+            starting_pos,
+            write_size,
+        }
     }
 
     /// Appends raw bytes to this cell.
@@ -168,17 +194,26 @@ impl<'buf> CellValueBuilder<'buf> {
         CellWriter::new(self.buf)
     }
 
+    // Appends a sub-value to the end of the current contents of the cell
+    /// and returns an object that allows to fill it in, without writing size.
+    #[inline]
+    pub fn make_sub_writer_without_size(&mut self) -> CellWriter<'_> {
+        CellWriter::new_without_size(self.buf)
+    }
+
     /// Finishes serializing the value.
     ///
     /// Fails if the constructed cell size overflows the maximum allowed
     /// CQL cell size (which is i32::MAX).
     #[inline]
     pub fn finish(self) -> Result<WrittenCellProof<'buf>, CellOverflowError> {
-        let value_len: i32 = (self.buf.len() - self.starting_pos - 4)
-            .try_into()
-            .map_err(|_| CellOverflowError)?;
-        self.buf[self.starting_pos..self.starting_pos + 4]
-            .copy_from_slice(&value_len.to_be_bytes());
+        if self.write_size {
+            let value_len: i32 = (self.buf.len() - self.starting_pos - 4)
+                .try_into()
+                .map_err(|_| CellOverflowError)?;
+            self.buf[self.starting_pos..self.starting_pos + 4]
+                .copy_from_slice(&value_len.to_be_bytes());
+        }
         Ok(WrittenCellProof::new())
     }
 }

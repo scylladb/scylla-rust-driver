@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::deserialize::value::{TupleDeserializationErrorKind, TupleTypeCheckErrorKind};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+use crate::frame::response::custom_type_parser::CustomTypeParser;
 use crate::frame::response::result::NativeType::*;
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
 use crate::serialize::value::SerializeValue;
@@ -28,6 +29,84 @@ use super::{
     SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind, UdtDeserializationErrorKind,
     UdtTypeCheckErrorKind,
 };
+
+#[test]
+fn test_cassandra_type_parser() {
+    let tests = vec![
+    (
+        "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, 5)",
+        ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
+            dimensions: 5,
+        },
+    ),
+    (  "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)", 
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+        }
+    ),
+    (
+        "org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)",
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+        },
+    ),
+    (
+        "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)",
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Native(NativeType::Int)),
+            ),
+        },
+    ),
+    (
+        "org.apache.cassandra.db.marshal.DurationType",
+        ColumnType::Native(NativeType::Duration)
+    ),
+    (
+        "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)",
+        ColumnType::Tuple(vec![
+            ColumnType::Native(NativeType::Int),
+            ColumnType::Native(NativeType::Int)
+        ]),
+    ),
+    (
+        "org.apache.cassandra.db.marshal.UserType(keyspace1,61646472657373,737472656574:org.apache.cassandra.db.marshal.UTF8Type,63697479:org.apache.cassandra.db.marshal.UTF8Type,7a6970:org.apache.cassandra.db.marshal.Int32Type)",
+        ColumnType::UserDefinedType {
+            frozen: false,
+            definition: Arc::new(UserDefinedType {
+                name: "address".into(),
+                keyspace: "keyspace1".into(),
+                field_types: vec![
+                    ("street".into(), ColumnType::Native(NativeType::Text)),
+                    ("city".into(), ColumnType::Native(NativeType::Text)),
+                    ("zip".into(), ColumnType::Native(NativeType::Int))
+                ]
+            }),
+        }
+    ),
+    ( "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type, org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type))",
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Tuple(vec![
+                    ColumnType::Native(NativeType::Int),
+                    ColumnType::Native(NativeType::Int)
+                ]))
+            )
+        }
+    )
+    ];
+
+    for (input, expected) in tests {
+        assert_eq!(CustomTypeParser::parse(input).unwrap(), expected);
+    }
+}
 
 #[test]
 fn test_deserialize_bytes() {
@@ -59,6 +138,48 @@ fn test_deserialize_bytes() {
     assert_ser_de_identity(
         &ColumnType::Native(NativeType::Blob),
         &(&[] as &[u8]),
+        &mut Bytes::new(),
+    );
+}
+
+#[test]
+fn test_deserialize_vector() {
+    // ser/de identity
+
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
+            dimensions: 2,
+        },
+        &vec![1, 2],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Ascii)),
+            dimensions: 3,
+        },
+        &vec!["ala", "ma", "kota"],
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Vector {
+                typ: Box::new(ColumnType::Native(NativeType::Int)),
+                dimensions: 2,
+            }),
+            dimensions: 2,
+        },
+        &vec![vec![1, 2], vec![3, 4]],
+        &mut Bytes::new(),
+    );
+    let vec: Vec<bool> = vec![];
+    assert_ser_de_identity(
+        &ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Boolean)),
+            dimensions: 0,
+        },
+        &vec,
         &mut Bytes::new(),
     );
 }
@@ -1418,7 +1539,7 @@ fn test_set_or_list_errors() {
             &Bytes::new(),
             Vec<i64>,
             ColumnType::Native(NativeType::Float),
-            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSetOrList)
+            BuiltinTypeCheckErrorKind::NotDeserializableToVector
         );
 
         // Type check of Rust set against CQL list must fail, because it would be lossy.

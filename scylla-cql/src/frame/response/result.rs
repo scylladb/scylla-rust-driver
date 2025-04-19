@@ -9,6 +9,7 @@ use crate::frame::frame_errors::{
     TableSpecParseError,
 };
 use crate::frame::request::query::PagingStateResponse;
+use crate::frame::response::custom_type_parser;
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types;
 use bytes::{Buf, Bytes};
@@ -105,6 +106,35 @@ pub enum NativeType {
     Timeuuid,
     Uuid,
     Varint,
+}
+
+impl NativeType {
+    pub(crate) fn type_size(&self) -> Option<usize> {
+        match self {
+            NativeType::Ascii => None,
+            NativeType::Boolean => Some(1),
+            NativeType::Blob => None,
+            NativeType::Counter => None,
+            NativeType::Date => Some(8),
+            NativeType::Decimal => None,
+            NativeType::Double => Some(8),
+            NativeType::Duration => None,
+            NativeType::Float => Some(4),
+            NativeType::Int => Some(4),
+            NativeType::BigInt => Some(8),
+            NativeType::Text => None,
+            NativeType::Timestamp => Some(8),
+            NativeType::Inet => None,
+            // Note that although SmallInt and TinyInt is of a fixed size,
+            // Cassandra (erroneously) treats it as a variable-size
+            NativeType::SmallInt => None,
+            NativeType::TinyInt => None,
+            NativeType::Time => Some(8),
+            NativeType::Timeuuid => Some(16),
+            NativeType::Uuid => Some(16),
+            NativeType::Varint => None,
+        }
+    }
 }
 
 /// Collection variants of [ColumnType]. A collection is a composite type that
@@ -611,21 +641,19 @@ fn deser_type_generic<'frame, 'result, StrT: Into<Cow<'result, str>>>(
         types::read_short(buf).map_err(|err| CqlTypeParseError::TypeIdParseError(err.into()))?;
     Ok(match id {
         0x0000 => {
-            // We use types::read_string instead of read_string argument here on purpose.
-            // Chances are the underlying string is `...DurationType`, in which case
-            // we don't need to allocate it at all. Only for Custom types
-            // (which we don't support anyway) do we need to allocate.
-            // OTOH, the provided `read_string` function deserializes borrowed OR owned string;
-            // here we want to always deserialize borrowed string.
-            let type_str =
-                types::read_string(buf).map_err(CqlTypeParseError::CustomTypeNameParseError)?;
-            match type_str {
-                "org.apache.cassandra.db.marshal.DurationType" => Native(Duration),
-                _ => {
-                    return Err(CqlTypeParseError::CustomTypeUnsupported(
-                        type_str.to_owned(),
-                    ))
-                }
+            let type_str = read_string(buf).map_err(CqlTypeParseError::CustomTypeNameParseError)?;
+            let type_cow: Cow<'result, str> = type_str.into();
+            let result = match type_cow {
+                Cow::Borrowed(type_name) => custom_type_parser::CustomTypeParser::parse(type_name),
+                Cow::Owned(type_name) => Ok(custom_type_parser::CustomTypeParser::parse(
+                    type_name.as_str(),
+                )?
+                .into_owned()),
+            };
+            if let Ok(typ) = result {
+                typ
+            } else {
+                return Err(CqlTypeParseError::TypeNotImplemented(id));
             }
         }
         0x0001 => Native(Ascii),
@@ -1140,6 +1168,17 @@ mod test_utils {
                 }
                 Self::UserDefinedType { .. } => 0x0030,
                 Self::Tuple(_) => 0x0031,
+            }
+        }
+
+        /// Returns the size of the type in bytes, as it is seen by the vector type if it is treated as fixed size.
+        pub(crate) fn type_size(&self) -> Option<usize> {
+            match self {
+                ColumnType::Native(n) => n.type_size(),
+                ColumnType::Tuple(_) => None,
+                ColumnType::Collection { .. } => None,
+                ColumnType::Vector { .. } => None,
+                ColumnType::UserDefinedType { .. } => None,
             }
         }
 
