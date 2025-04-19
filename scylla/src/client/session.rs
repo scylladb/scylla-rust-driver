@@ -1066,7 +1066,6 @@ impl Session {
                         .serial_consistency
                         .unwrap_or(execution_profile.serial_consistency);
                     // Needed to avoid moving query and values into async move block
-                    let statement_ref = &statement;
                     let values_ref = &values;
                     let paging_state_ref = &paging_state;
                     async move {
@@ -1074,7 +1073,7 @@ impl Session {
                             span_ref.record_request_size(0);
                             connection
                                 .query_raw_with_consistency(
-                                    statement_ref,
+                                    statement,
                                     consistency,
                                     serial_consistency,
                                     page_size,
@@ -1083,7 +1082,7 @@ impl Session {
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
                         } else {
-                            let prepared = connection.prepare(statement_ref).await?;
+                            let prepared = connection.prepare(statement).await?;
                             let serialized = prepared.serialize_values(values_ref)?;
                             span_ref.record_request_size(serialized.buffer_size());
                             connection
