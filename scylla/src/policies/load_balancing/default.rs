@@ -2807,12 +2807,11 @@ mod latency_awareness {
                 }
             }
 
-            let mut fast_targets = fast_targets.into_iter();
-            let mut penalised_targets = penalised_targets.into_iter();
+            let fast_targets = fast_targets.into_iter();
+            let penalised_targets = penalised_targets.into_iter();
 
-            let skipping_penalised_targets_iterator = std::iter::from_fn(move || {
-                fast_targets.next().or_else(|| penalised_targets.next())
-            });
+            let skipping_penalised_targets_iterator =
+                fast_targets.into_iter().chain(penalised_targets);
 
             Either::Right(skipping_penalised_targets_iterator)
         }
