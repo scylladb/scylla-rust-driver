@@ -60,6 +60,7 @@ macro_rules! ready_some_ok {
 struct ReceivedPage {
     rows: RawMetadataAndRawRows,
     tracing_id: Option<Uuid>,
+    request_coordinator: Option<Coordinator>,
 }
 
 pub(crate) struct PreparedPagerConfig {
@@ -78,6 +79,8 @@ mod checked_channel_sender {
     use std::marker::PhantomData;
     use tokio::sync::mpsc;
     use uuid::Uuid;
+
+    use crate::response::Coordinator;
 
     use super::{NextPageError, ReceivedPage};
 
@@ -110,6 +113,7 @@ mod checked_channel_sender {
         pub(crate) async fn send_empty_page(
             &self,
             tracing_id: Option<Uuid>,
+            request_coordinator: Option<Coordinator>,
         ) -> (
             SendAttemptedProof<ResultPage>,
             Result<(), mpsc::error::SendError<ResultPage>>,
@@ -117,6 +121,7 @@ mod checked_channel_sender {
             let empty_page = ReceivedPage {
                 rows: RawMetadataAndRawRows::mock_empty(),
                 tracing_id,
+                request_coordinator,
             };
             self.send(Ok(empty_page)).await
         }
@@ -124,6 +129,8 @@ mod checked_channel_sender {
 }
 
 use checked_channel_sender::{ProvingSender, SendAttemptedProof};
+
+use crate::response::Coordinator;
 
 type PageSendAttemptedProof = SendAttemptedProof<Result<ReceivedPage, NextPageError>>;
 
@@ -196,9 +203,13 @@ where
 
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
+
+                let coordinator =
+                    Coordinator::new(node, node.sharder().is_some().then_some(shard), &connection);
+
                 // Query pages until an error occurs
                 let queries_result: Result<PageSendAttemptedProof, RequestAttemptError> = self
-                    .query_pages(&connection, current_consistency, node)
+                    .query_pages(&connection, current_consistency, node, coordinator.clone())
                     .instrument(span.clone())
                     .await;
 
@@ -259,7 +270,10 @@ where
                         // interface isn't meant for sending writes),
                         // we must attempt to send something because
                         // the iterator expects it.
-                        let (proof, _) = self.sender.send_empty_page(None).await;
+                        let (proof, _) = self
+                            .sender
+                            .send_empty_page(None, Some(coordinator.clone()))
+                            .await;
                         return proof;
                     }
                 };
@@ -284,11 +298,18 @@ where
         connection: &Arc<Connection>,
         consistency: Consistency,
         node: NodeRef<'_>,
+        coordinator: Coordinator,
     ) -> Result<PageSendAttemptedProof, RequestAttemptError> {
         loop {
             let request_span = (self.span_creator)();
             match self
-                .query_one_page(connection, consistency, node, &request_span)
+                .query_one_page(
+                    connection,
+                    consistency,
+                    node,
+                    coordinator.clone(),
+                    &request_span,
+                )
                 .instrument(request_span.span().clone())
                 .await?
             {
@@ -303,6 +324,7 @@ where
         connection: &Arc<Connection>,
         consistency: Consistency,
         node: NodeRef<'_>,
+        coordinator: Coordinator,
         request_span: &RequestSpan,
     ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, RequestAttemptError> {
         #[cfg(feature = "metrics")]
@@ -341,7 +363,11 @@ where
 
                 request_span.record_raw_rows_fields(&rows);
 
-                let received_page = ReceivedPage { rows, tracing_id };
+                let received_page = ReceivedPage {
+                    rows,
+                    tracing_id,
+                    request_coordinator: Some(coordinator),
+                };
 
                 // Send next page to QueryPager
                 let (proof, res) = self.sender.send(Ok(received_page)).await;
@@ -386,7 +412,10 @@ where
                 // so let's return an empty iterator as suggested in #631.
 
                 // We must attempt to send something because the iterator expects it.
-                let (proof, _) = self.sender.send_empty_page(tracing_id).await;
+                let (proof, _) = self
+                    .sender
+                    .send_empty_page(tracing_id, Some(coordinator))
+                    .await;
                 Ok(ControlFlow::Break(proof))
             }
             Ok(response) => {
@@ -526,6 +555,7 @@ where
                         .send(Ok(ReceivedPage {
                             rows,
                             tracing_id: response.tracing_id,
+                            request_coordinator: None,
                         }))
                         .await;
 
@@ -549,7 +579,7 @@ where
                     // so let's return an empty iterator as suggested in #631.
 
                     // We must attempt to send something because the iterator expects it.
-                    let (proof, _) = self.sender.send_empty_page(response.tracing_id).await;
+                    let (proof, _) = self.sender.send_empty_page(response.tracing_id, None).await;
                     return Ok(proof);
                 }
                 _ => {
@@ -574,6 +604,7 @@ pub struct QueryPager {
     current_page: RawRowLendingIterator,
     page_receiver: mpsc::Receiver<Result<ReceivedPage, NextPageError>>,
     tracing_ids: Vec<Uuid>,
+    request_coordinators: Vec<Coordinator>,
 }
 
 // QueryPager is not an iterator or a stream! However, it implements
@@ -648,6 +679,9 @@ impl QueryPager {
         if let Some(tracing_id) = received_page.tracing_id {
             s.tracing_ids.push(tracing_id);
         }
+
+        s.request_coordinators
+            .extend(received_page.request_coordinator);
 
         Poll::Ready(Some(Ok(())))
     }
@@ -973,13 +1007,20 @@ impl QueryPager {
             } else {
                 Vec::new()
             },
+            request_coordinators: Vec::from_iter(page_received.request_coordinator),
         })
     }
 
-    /// If tracing was enabled returns tracing ids of all finished page queries
+    /// If tracing was enabled, returns tracing ids of all finished page queries.
     #[inline]
     pub fn tracing_ids(&self) -> &[Uuid] {
         &self.tracing_ids
+    }
+
+    /// Returns the targets that served finished page queries, in query order.
+    #[inline]
+    pub fn request_coordinators(&self) -> impl Iterator<Item = &Coordinator> {
+        self.request_coordinators.iter()
     }
 
     /// Returns specification of row columns
@@ -1034,6 +1075,12 @@ impl<RowT> TypedRowStream<RowT> {
     #[inline]
     pub fn tracing_ids(&self) -> &[Uuid] {
         self.raw_row_lending_stream.tracing_ids()
+    }
+
+    /// Returns the targets that served finished page queries, in query order.
+    #[inline]
+    pub fn request_coordinators(&self) -> impl Iterator<Item = &Coordinator> {
+        self.raw_row_lending_stream.request_coordinators()
     }
 
     /// Returns specification of row columns
