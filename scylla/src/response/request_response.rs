@@ -38,10 +38,6 @@ impl QueryResponse {
             warnings: self.warnings,
         })
     }
-
-    pub(crate) fn into_query_result(self) -> Result<QueryResult, RequestAttemptError> {
-        self.into_non_error_query_response()?.into_query_result()
-    }
 }
 
 impl NonErrorQueryResponse {
