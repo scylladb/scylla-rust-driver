@@ -309,11 +309,12 @@ where
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
 
+        let connect_address = connection.get_connect_address();
         trace!(
-            connection = %connection.get_connect_address(),
+            connection = %connect_address,
             "Sending"
         );
-        self.log_attempt_start(connection.get_connect_address());
+        self.log_attempt_start(connect_address);
 
         let query_response =
             (self.page_query)(connection.clone(), consistency, self.paging_state.clone())

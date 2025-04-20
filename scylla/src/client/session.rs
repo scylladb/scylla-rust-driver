@@ -2052,13 +2052,14 @@ impl Session {
                 self.metrics.inc_total_nonpaged_queries();
                 let request_start = std::time::Instant::now();
 
+                let connect_address = connection.get_connect_address();
                 trace!(
                     parent: &span,
-                    connection = %connection.get_connect_address(),
+                    connection = %connect_address,
                     "Sending"
                 );
                 let attempt_id: Option<history::AttemptId> =
-                    context.log_attempt_start(connection.get_connect_address());
+                    context.log_attempt_start(connect_address);
                 let request_result: Result<ResT, RequestAttemptError> =
                     run_request_once(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
