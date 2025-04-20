@@ -11,6 +11,8 @@ use scylla_cql::frame::response::result::{
     ColumnSpec, DeserializedMetadataAndRawRows, RawMetadataAndRawRows,
 };
 
+use crate::response::Coordinator;
+
 /// A view over specification of columns returned by the database.
 #[derive(Debug, Clone, Copy)]
 pub struct ColumnSpecs<'slice, 'spec> {
@@ -68,6 +70,10 @@ impl<'slice, 'spec> ColumnSpecs<'slice, 'spec> {
 /// this will contain exactly one page.
 #[derive(Debug, Clone)]
 pub struct QueryResult {
+    /// May be `None` only for results of driver's internal requests.
+    /// If user gets a `QueryResult` with `request_coordinator` set to `None`,
+    /// this is a bug.
+    request_coordinator: Option<Coordinator>,
     raw_metadata_and_rows: Option<RawMetadataAndRawRows>,
     tracing_id: Option<Uuid>,
     warnings: Vec<String>,
@@ -75,11 +81,34 @@ pub struct QueryResult {
 
 impl QueryResult {
     pub(crate) fn new(
+        request_coordinator: Coordinator,
         raw_rows: Option<RawMetadataAndRawRows>,
         tracing_id: Option<Uuid>,
         warnings: Vec<String>,
     ) -> Self {
         Self {
+            request_coordinator: Some(request_coordinator),
+            raw_metadata_and_rows: raw_rows,
+            tracing_id,
+            warnings,
+        }
+    }
+
+    /// HACK: This is the only way to create a [QueryResult] with `request_coordinator` set to [None].
+    ///
+    /// Rationale: driver uses [QueryResult] internally even if it does not have a [Node](crate::cluster::Node)
+    /// corresponding to the connection that it executes requests on. This happens in
+    /// non-[Session](crate::client::session::Session) APIs (`MetadataReader::query_metadata()`,
+    /// `Connection::query_iter()`, etc.), most notably for a control connection upon initial metadata fetch.
+    /// However, [QueryResult::request_coordinator] panics if [Coordinator] stored is [None].
+    /// Therefore, extra care must be taken not to leak such [QueryResult] to the user.
+    pub(crate) fn new_with_unknown_coordinator(
+        raw_rows: Option<RawMetadataAndRawRows>,
+        tracing_id: Option<Uuid>,
+        warnings: Vec<String>,
+    ) -> Self {
+        Self {
+            request_coordinator: None,
             raw_metadata_and_rows: raw_rows,
             tracing_id,
             warnings,
@@ -88,8 +117,9 @@ impl QueryResult {
 
     // Preferred to implementing Default, because users shouldn't be able to create
     // an empty QueryResult.
-    pub(crate) fn mock_empty() -> Self {
+    pub(crate) fn mock_empty(request_coordinator: Coordinator) -> Self {
         Self {
+            request_coordinator: Some(request_coordinator),
             raw_metadata_and_rows: None,
             tracing_id: None,
             warnings: Vec::new(),
@@ -98,6 +128,14 @@ impl QueryResult {
 
     pub(crate) fn raw_metadata_and_rows(&self) -> Option<&RawMetadataAndRawRows> {
         self.raw_metadata_and_rows.as_ref()
+    }
+
+    /// The node+shard that served the request.
+    #[inline]
+    pub fn request_coordinator(&self) -> &Coordinator {
+        self.request_coordinator
+            .as_ref()
+            .expect("BUG: Driver leaked a QueryResult with an unknown Coordinator, even though such results are driver-internal.")
     }
 
     /// Warnings emitted by the database.
@@ -175,9 +213,11 @@ impl QueryResult {
         };
         let tracing_id = self.tracing_id;
         let warnings = self.warnings;
+        let request_coordinator = self.request_coordinator;
 
         let raw_rows_with_metadata = raw_metadata_and_rows.deserialize_metadata()?;
         Ok(QueryRowsResult {
+            request_coordinator,
             raw_rows_with_metadata,
             warnings,
             tracing_id,
@@ -215,6 +255,10 @@ impl QueryResult {
 /// ```
 #[derive(Debug)]
 pub struct QueryRowsResult {
+    /// May be `None` only for results of driver's internal requests.
+    /// If user gets a `QueryResult` with `request_coordinator` set to `None`,
+    /// this is a bug.
+    request_coordinator: Option<Coordinator>,
     raw_rows_with_metadata: DeserializedMetadataAndRawRows,
     tracing_id: Option<Uuid>,
     warnings: Vec<String>,
@@ -231,6 +275,14 @@ impl QueryRowsResult {
     #[inline]
     pub fn tracing_id(&self) -> Option<Uuid> {
         self.tracing_id
+    }
+
+    /// The node+shard that served the request.
+    #[inline]
+    pub fn request_coordinator(&self) -> &Coordinator {
+        self.request_coordinator
+            .as_ref()
+            .expect("BUG: Driver leaked a QueryResult with an unknown Coordinator, even though such results are driver-internal.")
     }
 
     /// Returns the number of received rows.
@@ -327,14 +379,27 @@ impl QueryRowsResult {
     }
 
     #[cfg(cpp_rust_unstable)]
-    pub fn into_inner(self) -> (DeserializedMetadataAndRawRows, Option<Uuid>, Vec<String>) {
+    pub fn into_inner(
+        self,
+    ) -> (
+        DeserializedMetadataAndRawRows,
+        Option<Uuid>,
+        Vec<String>,
+        Option<Coordinator>,
+    ) {
         let Self {
             raw_rows_with_metadata,
             tracing_id,
             warnings,
+            request_coordinator,
         } = self;
 
-        (raw_rows_with_metadata, tracing_id, warnings)
+        (
+            raw_rows_with_metadata,
+            tracing_id,
+            warnings,
+            request_coordinator,
+        )
     }
 }
 
@@ -418,8 +483,7 @@ mod tests {
     use assert_matches::assert_matches;
     use bytes::{Bytes, BytesMut};
     use itertools::Itertools as _;
-    use scylla_cql::frame::response::result::{ColumnType, ResultMetadata};
-    use scylla_cql::frame::response::result::{NativeType, TableSpec};
+    use scylla_cql::frame::response::result::{ColumnType, NativeType, ResultMetadata, TableSpec};
     use scylla_cql::frame::types;
 
     use super::*;
@@ -481,7 +545,7 @@ mod tests {
         // Check tracing ID
         for tracing_id in [None, Some(Uuid::from_u128(0x_feed_dead))] {
             for raw_rows in [None, Some(sample_raw_rows(7, 6))] {
-                let qr = QueryResult::new(raw_rows, tracing_id, vec![]);
+                let qr = QueryResult::new_with_unknown_coordinator(raw_rows, tracing_id, vec![]);
                 assert_eq!(qr.tracing_id(), tracing_id);
             }
         }
@@ -489,7 +553,7 @@ mod tests {
         // Check warnings
         for raw_rows in [None, Some(sample_raw_rows(7, 6))] {
             let warnings = &["Ooops", "Meltdown..."];
-            let qr = QueryResult::new(
+            let qr = QueryResult::new_with_unknown_coordinator(
                 raw_rows,
                 None,
                 warnings.iter().copied().map(String::from).collect(),
@@ -501,7 +565,7 @@ mod tests {
         {
             // Not RESULT::Rows response -> no column specs
             {
-                let rqr = QueryResult::new(None, None, Vec::new());
+                let rqr = QueryResult::new_with_unknown_coordinator(None, None, Vec::new());
                 let qr = rqr.into_rows_result();
                 assert_matches!(qr, Err(IntoRowsResultError::ResultNotRows(_)));
             }
@@ -512,7 +576,7 @@ mod tests {
                 let metadata = sample_result_metadata(n);
                 let rr = RawMetadataAndRawRows::new_for_test(None, Some(metadata), false, 0, &[])
                     .unwrap();
-                let rqr = QueryResult::new(Some(rr), None, Vec::new());
+                let rqr = QueryResult::new_with_unknown_coordinator(Some(rr), None, Vec::new());
                 let qr = rqr.into_rows_result().unwrap();
                 let column_specs = qr.column_specs();
                 assert_eq!(column_specs.len(), n);
@@ -556,7 +620,7 @@ mod tests {
         {
             // Not RESULT::Rows
             {
-                let rqr = QueryResult::new(None, None, Vec::new());
+                let rqr = QueryResult::new_with_unknown_coordinator(None, None, Vec::new());
                 let qr = rqr.into_rows_result();
                 assert_matches!(qr, Err(IntoRowsResultError::ResultNotRows(_)));
             }
@@ -564,7 +628,7 @@ mod tests {
             // RESULT::Rows with 0 rows
             {
                 let rr = sample_raw_rows(1, 0);
-                let rqr = QueryResult::new(Some(rr), None, Vec::new());
+                let rqr = QueryResult::new_with_unknown_coordinator(Some(rr), None, Vec::new());
                 assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
 
                 let qr = rqr.into_rows_result().unwrap();
@@ -606,8 +670,10 @@ mod tests {
             {
                 let rr_good_data = sample_raw_rows(2, 1);
                 let rr_bad_data = sample_raw_rows_invalid_bytes(2, 1);
-                let rqr_good_data = QueryResult::new(Some(rr_good_data), None, Vec::new());
-                let rqr_bad_data = QueryResult::new(Some(rr_bad_data), None, Vec::new());
+                let rqr_good_data =
+                    QueryResult::new_with_unknown_coordinator(Some(rr_good_data), None, Vec::new());
+                let rqr_bad_data =
+                    QueryResult::new_with_unknown_coordinator(Some(rr_bad_data), None, Vec::new());
 
                 for rqr in [&rqr_good_data, &rqr_bad_data] {
                     assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
@@ -667,7 +733,7 @@ mod tests {
             // RESULT::Rows with 2 rows
             {
                 let rr = sample_raw_rows(2, 2);
-                let rqr = QueryResult::new(Some(rr), None, Vec::new());
+                let rqr = QueryResult::new_with_unknown_coordinator(Some(rr), None, Vec::new());
                 assert_matches!(rqr.result_not_rows(), Err(ResultNotRowsError));
 
                 let qr = rqr.into_rows_result().unwrap();
@@ -711,7 +777,7 @@ mod tests {
     fn test_query_result_returns_self_if_not_rows() {
         // Check tracing ID
         for tracing_id in [None, Some(Uuid::from_u128(0x_feed_dead))] {
-            let qr = QueryResult::new(None, tracing_id, vec![]);
+            let qr = QueryResult::new_with_unknown_coordinator(None, tracing_id, vec![]);
             let err = qr.into_rows_result().unwrap_err();
             match err {
                 IntoRowsResultError::ResultNotRows(query_result) => {
@@ -726,7 +792,7 @@ mod tests {
         // Check warnings
         {
             let warnings = &["Ooops", "Meltdown..."];
-            let qr = QueryResult::new(
+            let qr = QueryResult::new_with_unknown_coordinator(
                 None,
                 None,
                 warnings.iter().copied().map(String::from).collect(),

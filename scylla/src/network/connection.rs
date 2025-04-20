@@ -23,8 +23,7 @@ use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::QueryResult;
 use crate::response::{
-    NonErrorAuthResponse, NonErrorQueryResponse, NonErrorStartupResponse, PagingState,
-    QueryResponse, RawPreparedStatement,
+    NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse, RawPreparedStatement,
 };
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
@@ -822,8 +821,11 @@ impl Connection {
 
         self.query_raw_unpaged(&statement)
             .await
-            .and_then(QueryResponse::into_non_error_query_response)
-            .and_then(NonErrorQueryResponse::into_query_result)
+            .and_then(|response| {
+                response
+                    .into_non_error_query_response()?
+                    .into_query_result_with_unknown_coordinator()
+            })
     }
 
     async fn query_raw_unpaged(

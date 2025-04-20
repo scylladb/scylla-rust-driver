@@ -30,7 +30,9 @@ use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
-use crate::response::{NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse};
+use crate::response::{
+    Coordinator, NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse,
+};
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, ShardAwarePortRange};
 use crate::statement::batch::batch_values;
@@ -1049,7 +1051,10 @@ impl Session {
 
         let span = RequestSpan::new_query(&statement.contents);
         let span_ref = &span;
-        let run_request_result = self
+        let (run_request_result, coordinator): (
+            RunRequestResult<NonErrorQueryResponse>,
+            Coordinator,
+        ) = self
             .run_request(
                 statement_info,
                 &statement.config,
@@ -1112,7 +1117,8 @@ impl Session {
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
+        let (result, paging_state_response) =
+            response.into_query_result_and_paging_state(coordinator)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1438,7 +1444,10 @@ impl Session {
             }
         }
 
-        let run_request_result: RunRequestResult<NonErrorQueryResponse> = self
+        let (run_request_result, coordinator): (
+            RunRequestResult<NonErrorQueryResponse>,
+            Coordinator,
+        ) = self
             .run_request(
                 statement_info,
                 &prepared.config,
@@ -1481,7 +1490,8 @@ impl Session {
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let (result, paging_state_response) = response.into_query_result_and_paging_state()?;
+        let (result, paging_state_response) =
+            response.into_query_result_and_paging_state(coordinator)?;
         span.record_result_fields(&result);
 
         Ok((result, paging_state_response))
@@ -1563,7 +1573,10 @@ impl Session {
 
         let span = RequestSpan::new_batch();
 
-        let run_request_result: RunRequestResult<NonErrorQueryResponse> = self
+        let (run_request_result, coordinator): (
+            RunRequestResult<NonErrorQueryResponse>,
+            Coordinator,
+        ) = self
             .run_request(
                 statement_info,
                 &batch.config,
@@ -1593,9 +1606,9 @@ impl Session {
             .await?;
 
         let result = match run_request_result {
-            RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(),
+            RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(coordinator),
             RunRequestResult::Completed(non_error_query_response) => {
-                let result = non_error_query_response.into_query_result()?;
+                let result = non_error_query_response.into_query_result(coordinator)?;
                 span.record_result_fields(&result);
                 result
             }
@@ -1847,7 +1860,7 @@ impl Session {
         execution_profile: Arc<ExecutionProfileInner>,
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
-    ) -> Result<RunRequestResult<ResT>, ExecutionError>
+    ) -> Result<(RunRequestResult<ResT>, Coordinator), ExecutionError>
     where
         QueryFut: Future<Output = Result<ResT, RequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
@@ -2017,7 +2030,7 @@ impl Session {
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
-    ) -> Option<Result<RunRequestResult<ResT>, RequestError>>
+    ) -> Option<Result<(RunRequestResult<ResT>, Coordinator), RequestError>>
     where
         QueryFut: Future<Output = Result<ResT, RequestAttemptError>>,
         ResT: AllowedRunRequestResTType,
@@ -2056,6 +2069,9 @@ impl Session {
                     connection = %connect_address,
                     "Sending"
                 );
+                let coordinator =
+                    Coordinator::new(node, node.sharder().is_some().then_some(shard), &connection);
+
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connect_address);
                 let request_result: Result<ResT, RequestAttemptError> =
@@ -2075,7 +2091,7 @@ impl Session {
                             elapsed,
                             node,
                         );
-                        return Some(Ok(RunRequestResult::Completed(response)));
+                        return Some(Ok((RunRequestResult::Completed(response), coordinator)));
                     }
                     Err(e) => {
                         trace!(
@@ -2130,7 +2146,7 @@ impl Session {
                     RetryDecision::DontRetry => break 'nodes_in_plan,
 
                     RetryDecision::IgnoreWriteError => {
-                        return Some(Ok(RunRequestResult::IgnoredWriteError))
+                        return Some(Ok((RunRequestResult::IgnoredWriteError, coordinator)))
                     }
                 };
             }
