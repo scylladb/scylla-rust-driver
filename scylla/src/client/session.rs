@@ -417,6 +417,8 @@ pub(crate) enum RunRequestResult<ResT> {
     Completed(ResT),
 }
 
+/// Represents a CQL session, which can be used to communicate
+/// with the database
 impl Session {
     /// Sends a request to the database and receives a response.\
     /// Executes an unprepared CQL statement without paging, i.e. all results are received in a single response.
@@ -803,11 +805,7 @@ impl Session {
     ) -> Result<QueryResult, ExecutionError> {
         self.do_batch(batch, values).await
     }
-}
 
-/// Represents a CQL session, which can be used to communicate
-/// with the database
-impl Session {
     /// Estabilishes a CQL session with the database
     ///
     /// Usually it's easier to use [SessionBuilder](crate::client::session_builder::SessionBuilder)
