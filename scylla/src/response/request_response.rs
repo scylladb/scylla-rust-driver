@@ -39,13 +39,6 @@ impl QueryResponse {
         })
     }
 
-    pub(crate) fn into_query_result_and_paging_state(
-        self,
-    ) -> Result<(QueryResult, PagingStateResponse), RequestAttemptError> {
-        self.into_non_error_query_response()?
-            .into_query_result_and_paging_state()
-    }
-
     pub(crate) fn into_query_result(self) -> Result<QueryResult, RequestAttemptError> {
         self.into_non_error_query_response()?.into_query_result()
     }

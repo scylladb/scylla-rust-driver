@@ -23,8 +23,7 @@ use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::QueryResult;
 use crate::response::{
-    NonErrorAuthResponse, NonErrorStartupResponse, PagingState, PagingStateResponse, QueryResponse,
-    RawPreparedStatement,
+    NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse, RawPreparedStatement,
 };
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
@@ -813,52 +812,6 @@ impl Connection {
         Ok(response)
     }
 
-    #[allow(dead_code)]
-    pub(crate) async fn query_single_page(
-        &self,
-        query: impl Into<Statement>,
-        paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), RequestAttemptError> {
-        let query: Statement = query.into();
-
-        // This method is used only for driver internal queries, so no need to consult execution profile here.
-        let consistency = query
-            .config
-            .determine_consistency(self.config.default_consistency);
-        let serial_consistency = query.config.serial_consistency;
-
-        self.query_single_page_with_consistency(
-            query,
-            paging_state,
-            consistency,
-            serial_consistency.flatten(),
-        )
-        .await
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn query_single_page_with_consistency(
-        &self,
-        query: impl Into<Statement>,
-        paging_state: PagingState,
-        consistency: Consistency,
-        serial_consistency: Option<SerialConsistency>,
-    ) -> Result<(QueryResult, PagingStateResponse), RequestAttemptError> {
-        let query: Statement = query.into();
-        let page_size = query.get_validated_page_size();
-
-        self.query_raw_with_consistency(
-            &query,
-            consistency,
-            serial_consistency,
-            Some(page_size),
-            paging_state,
-        )
-        .await?
-        .into_query_result_and_paging_state()
-    }
-
-    #[allow(dead_code)]
     pub(crate) async fn query_unpaged(
         &self,
         statement: impl Into<Statement>,
@@ -871,7 +824,7 @@ impl Connection {
             .and_then(QueryResponse::into_query_result)
     }
 
-    pub(crate) async fn query_raw_unpaged(
+    async fn query_raw_unpaged(
         &self,
         statement: &Statement,
     ) -> Result<QueryResponse, RequestAttemptError> {
@@ -924,20 +877,8 @@ impl Connection {
         Ok(response)
     }
 
-    #[allow(dead_code)]
-    pub(crate) async fn execute_unpaged(
-        &self,
-        prepared: &PreparedStatement,
-        values: SerializedValues,
-    ) -> Result<QueryResult, RequestAttemptError> {
-        // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.execute_raw_unpaged(prepared, values)
-            .await
-            .and_then(QueryResponse::into_query_result)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn execute_raw_unpaged(
+    #[cfg(test)]
+    async fn execute_raw_unpaged(
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
@@ -1080,24 +1021,6 @@ impl Connection {
         )
         .await
         .map_err(NextRowError::NextPageError)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn batch(
-        &self,
-        batch: &Batch,
-        values: impl BatchValues,
-    ) -> Result<QueryResult, RequestAttemptError> {
-        self.batch_with_consistency(
-            batch,
-            values,
-            batch
-                .config
-                .determine_consistency(self.config.default_consistency),
-            batch.config.serial_consistency.flatten(),
-        )
-        .await
-        .and_then(QueryResponse::into_query_result)
     }
 
     pub(crate) async fn batch_with_consistency(
