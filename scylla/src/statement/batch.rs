@@ -130,6 +130,10 @@ impl Batch {
     }
 
     /// Get the retry policy set for the batch.
+    ///
+    /// This method returns the retry policy that is **overriden** on this statement.
+    /// In other words, it returns the retry policy set using [`Batch::set_retry_policy`].
+    /// This does not take the retry policy from the set execution profile into account.
     #[inline]
     pub fn get_retry_policy(&self) -> Option<&Arc<dyn RetryPolicy>> {
         self.config.retry_policy.as_ref()
