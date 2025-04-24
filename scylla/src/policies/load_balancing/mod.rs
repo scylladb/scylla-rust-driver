@@ -13,8 +13,10 @@ use std::time::Duration;
 
 mod default;
 mod plan;
+mod single_target;
 pub use default::{DefaultPolicy, DefaultPolicyBuilder, LatencyAwarenessBuilder};
 pub use plan::Plan;
+pub use single_target::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 
 /// Represents info about statement that can be used by load balancing policies.
 #[derive(Default, Clone, Debug)]

@@ -99,6 +99,10 @@ name = "value_list"
 path = "value_list.rs"
 
 [[example]]
+name = "enforce_coordinator"
+path = "enforce_coordinator.rs"
+
+[[example]]
 name = "custom_load_balancing_policy"
 path = "custom_load_balancing_policy.rs"
 

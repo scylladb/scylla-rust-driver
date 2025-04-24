@@ -1801,12 +1801,15 @@ impl Session {
                 .as_ref()
                 .map(|hl| (&**hl, hl.log_request_start()));
 
-        let load_balancer = &execution_profile.load_balancing_policy;
+        let load_balancer = statement_config
+            .load_balancing_policy
+            .as_deref()
+            .unwrap_or(execution_profile.load_balancing_policy.as_ref());
 
         let runner = async {
             let cluster_state = self.cluster.get_state();
             let request_plan =
-                load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_state);
+                load_balancing::Plan::new(load_balancer, &statement_info, &cluster_state);
 
             // If a speculative execution policy is used to run request, request_plan has to be shared
             // between different async functions. This struct helps to wrap request_plan in mutex so it
@@ -1874,6 +1877,7 @@ impl Session {
                                 consistency_set_on_statement: statement_config.consistency,
                                 retry_session: retry_policy.new_session(),
                                 history_data,
+                                load_balancing_policy: load_balancer,
                                 query_info: &statement_info,
                                 request_span,
                             },
@@ -1910,6 +1914,7 @@ impl Session {
                             consistency_set_on_statement: statement_config.consistency,
                             retry_session: retry_policy.new_session(),
                             history_data,
+                            load_balancing_policy: load_balancer,
                             query_info: &statement_info,
                             request_span,
                         },
@@ -2007,7 +2012,7 @@ impl Session {
                         #[cfg(feature = "metrics")]
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
-                        execution_profile.load_balancing_policy.on_request_success(
+                        context.load_balancing_policy.on_request_success(
                             context.query_info,
                             elapsed,
                             node,
@@ -2022,7 +2027,7 @@ impl Session {
                         );
                         #[cfg(feature = "metrics")]
                         self.metrics.inc_failed_nonpaged_queries();
-                        execution_profile.load_balancing_policy.on_request_failure(
+                        context.load_balancing_policy.on_request_failure(
                             context.query_info,
                             elapsed,
                             node,
@@ -2135,6 +2140,7 @@ struct ExecuteRequestContext<'a> {
     consistency_set_on_statement: Option<Consistency>,
     retry_session: Box<dyn RetrySession>,
     history_data: Option<HistoryData<'a>>,
+    load_balancing_policy: &'a dyn load_balancing::LoadBalancingPolicy,
     query_info: &'a load_balancing::RoutingInfo<'a>,
     request_span: &'a RequestSpan,
 }
