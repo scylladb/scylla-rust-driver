@@ -1181,7 +1181,7 @@ impl Session {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
             // we fully prepare a statement beforehand.
-            let prepared = self.prepare_nongeneric(statement).await?;
+            let prepared = self.prepare_nongeneric(&statement).await?;
             let values = prepared.serialize_values(&values)?;
             QueryPager::new_for_prepared_statement(PreparedPagerConfig {
                 prepared,
@@ -1237,21 +1237,19 @@ impl Session {
         statement: impl Into<Statement>,
     ) -> Result<PreparedStatement, PrepareError> {
         let statement = statement.into();
-        self.prepare_nongeneric(statement).await
+        self.prepare_nongeneric(&statement).await
     }
 
     // Introduced to avoid monomorphisation of this large function.
     async fn prepare_nongeneric(
         &self,
-        statement: Statement,
+        statement: &Statement,
     ) -> Result<PreparedStatement, PrepareError> {
-        let statement_ref = &statement;
-
         let cluster_state = self.get_cluster_state();
         let connections_iter = cluster_state.iter_working_connections()?;
 
         // Prepare statements on all connections concurrently
-        let handles = connections_iter.map(|c| async move { c.prepare_raw(statement_ref).await });
+        let handles = connections_iter.map(|c| async move { c.prepare_raw(statement).await });
         let mut results = join_all(handles).await.into_iter();
 
         // If at least one prepare was successful, `prepare()` returns Ok.
@@ -1591,7 +1589,7 @@ impl Session {
                 .iter_mut()
                 .map(|statement| async move {
                     if let BatchStatement::Query(query) = statement {
-                        let prepared = self.prepare_nongeneric(query.clone()).await?;
+                        let prepared = self.prepare_nongeneric(query).await?;
                         *statement = BatchStatement::PreparedStatement(prepared);
                     }
                     Ok::<(), PrepareError>(())
