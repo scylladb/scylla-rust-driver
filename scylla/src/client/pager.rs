@@ -62,7 +62,7 @@ struct ReceivedPage {
     tracing_id: Option<Uuid>,
 }
 
-pub(crate) struct PreparedIteratorConfig {
+pub(crate) struct PreparedPagerConfig {
     pub(crate) prepared: PreparedStatement,
     pub(crate) values: SerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
@@ -763,7 +763,7 @@ impl QueryPager {
     }
 
     pub(crate) async fn new_for_prepared_statement(
-        config: PreparedIteratorConfig,
+        config: PreparedPagerConfig,
     ) -> Result<Self, NextPageError> {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
 
