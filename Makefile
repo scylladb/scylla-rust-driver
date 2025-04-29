@@ -4,7 +4,7 @@ COMPOSE := docker compose -f test/cluster/docker-compose.yml
 all: test
 
 .PHONY: static
-static: fmt-check check check-without-features check-all-features clippy clippy-all-features
+static: fmt-check check check-without-features check-all-features clippy clippy-all-features clippy-cpp-rust
 
 .PHONY: ci
 ci: static test
@@ -39,6 +39,11 @@ clippy:
 .PHONY: clippy-all-features
 clippy-all-features:
 	RUSTFLAGS=-Dwarnings cargo clippy --all-targets --all-features
+
+.PHONY: clippy-cpp-rust
+clippy-cpp-rust:
+	RUSTFLAGS="--cfg cpp_rust_unstable -Dwarnings" cargo clippy --all-targets --all-features
+
 
 .PHONY: test
 test: up
