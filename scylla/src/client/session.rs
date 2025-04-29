@@ -2,7 +2,7 @@
 //! It manages all connections to the cluster and allows to execute CQL requests.
 
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-use super::pager::{PreparedIteratorConfig, QueryPager};
+use super::pager::{PreparedPagerConfig, QueryPager};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "unstable-cloud")]
@@ -1183,7 +1183,7 @@ impl Session {
             // we fully prepare a statement beforehand.
             let prepared = self.prepare(statement).await?;
             let values = prepared.serialize_values(&values)?;
-            QueryPager::new_for_prepared_statement(PreparedIteratorConfig {
+            QueryPager::new_for_prepared_statement(PreparedPagerConfig {
                 prepared,
                 values,
                 execution_profile,
@@ -1442,7 +1442,7 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        QueryPager::new_for_prepared_statement(PreparedIteratorConfig {
+        QueryPager::new_for_prepared_statement(PreparedPagerConfig {
             prepared,
             values: serialized_values,
             execution_profile,
