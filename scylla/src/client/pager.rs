@@ -946,16 +946,15 @@ If you are using this API, you are probably doing something wrong."
             span
         }
 
-        let (partition_key, token) = match prepared
-            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), &values)
-        {
-            Ok(res) => res.unzip(),
-            Err(err) => {
-                return Err(PagerExecutionError::NextPageError(
-                    NextPageError::PartitionKeyError(err),
-                ));
-            }
-        };
+        let (partition_key, token) =
+            match prepared.extract_partition_key_and_calculate_token(&values) {
+                Ok(res) => res.unzip(),
+                Err(err) => {
+                    return Err(PagerExecutionError::NextPageError(
+                        NextPageError::PartitionKeyError(err),
+                    ));
+                }
+            };
 
         let table_spec = prepared.get_table_spec();
         let routing_info = RoutingInfo {
@@ -1101,9 +1100,7 @@ If you are using this API, you are probably doing something wrong."
                 .request_timeout
         });
 
-        let (_, token) = match prepared
-            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), &values)
-        {
+        let (_, token) = match prepared.extract_partition_key_and_calculate_token(&values) {
             Ok(res) => res.unzip(),
             Err(err) => {
                 return Err(NextPageError::PartitionKeyError(err));
