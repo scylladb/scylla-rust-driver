@@ -82,6 +82,14 @@ impl<'p> BoundStatement<'p> {
         Ok(Some((partition_key, token)))
     }
 
+    /// Consumes this bound statement to return one with no borrowed data
+    pub fn into_owned(self) -> BoundStatement<'static> {
+        BoundStatement {
+            prepared: Cow::Owned(self.prepared.into_owned()),
+            values: self.values,
+        }
+    }
+
     /// Calculates the token for the prepared statement and its bound values
     ///
     /// Returns the token that would be computed for executing the provided prepared statement with
