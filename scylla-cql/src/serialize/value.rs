@@ -343,6 +343,22 @@ impl SerializeValue for String {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
+impl SerializeValue for Box<str> {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Ascii, Text);
+        writer
+            .set_value(me.as_bytes())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
+}
+impl SerializeValue for Arc<str> {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Ascii, Text);
+        writer
+            .set_value(me.as_bytes())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
+}
 impl<T: SerializeValue> SerializeValue for Option<T> {
     fn serialize<'b>(
         &self,

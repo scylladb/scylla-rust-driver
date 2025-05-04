@@ -1636,6 +1636,24 @@ fn text_serialization() {
 }
 
 #[test]
+fn box_str_serialization() {
+    let val: Box<str> = "abc".into();
+    assert_eq!(
+        do_serialize(val, &ColumnType::Native(NativeType::Text)),
+        vec![0, 0, 0, 3, 97, 98, 99]
+    );
+}
+
+#[test]
+fn arc_str_serialization() {
+    let val: Arc<str> = "abc".into();
+    assert_eq!(
+        do_serialize(val, &ColumnType::Native(NativeType::Text)),
+        vec![0, 0, 0, 3, 97, 98, 99]
+    );
+}
+
+#[test]
 fn u8_array_serialization() {
     let val = [1u8; 4];
     assert_eq!(
