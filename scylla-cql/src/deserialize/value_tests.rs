@@ -77,19 +77,31 @@ fn test_deserialize_ascii() {
     {
         let decoded_str = deserialize::<&str>(typ, &ascii).unwrap();
         let decoded_string = deserialize::<String>(typ, &ascii).unwrap();
+        let decoded_boxed_str = deserialize::<Box<str>>(typ, &ascii).unwrap();
+        let decoded_arc_str = deserialize::<Arc<str>>(typ, &ascii).unwrap();
 
         assert_eq!(decoded_str, ASCII_TEXT);
         assert_eq!(decoded_string, ASCII_TEXT);
+        assert_eq!(decoded_boxed_str.as_ref(), ASCII_TEXT);
+        assert_eq!(decoded_arc_str.as_ref(), ASCII_TEXT);
 
         // ser/de identity
 
         // Empty string
         assert_ser_de_identity(typ, &"", &mut Bytes::new());
         assert_ser_de_identity(typ, &"".to_owned(), &mut Bytes::new());
+        assert_ser_de_identity(typ, &"".to_owned().into_boxed_str(), &mut Bytes::new());
+        assert_ser_de_identity(typ, &Arc::from(""), &mut Bytes::new());
 
         // Nonempty string
         assert_ser_de_identity(typ, &ASCII_TEXT, &mut Bytes::new());
         assert_ser_de_identity(typ, &ASCII_TEXT.to_owned(), &mut Bytes::new());
+        assert_ser_de_identity(
+            typ,
+            &ASCII_TEXT.to_owned().into_boxed_str(),
+            &mut Bytes::new(),
+        );
+        assert_ser_de_identity(typ, &Arc::from(ASCII_TEXT), &mut Bytes::new());
     }
 }
 
@@ -107,8 +119,11 @@ fn test_deserialize_text() {
         deserialize::<&str>(&ColumnType::Native(NativeType::Text), &unicode).unwrap();
     let decoded_text_string =
         deserialize::<String>(&ColumnType::Native(NativeType::Text), &unicode).unwrap();
+    let decoded_text_boxed_str =
+        deserialize::<Box<str>>(&ColumnType::Native(NativeType::Text), &unicode).unwrap();
     assert_eq!(decoded_text_str, UNICODE_TEXT);
     assert_eq!(decoded_text_string, UNICODE_TEXT);
+    assert_eq!(decoded_text_boxed_str.as_ref(), UNICODE_TEXT);
 
     // ser/de identity
 
@@ -120,6 +135,11 @@ fn test_deserialize_text() {
     assert_ser_de_identity(
         &ColumnType::Native(NativeType::Text),
         &UNICODE_TEXT.to_owned(),
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Text),
+        &UNICODE_TEXT.to_owned().into_boxed_str(),
         &mut Bytes::new(),
     );
 }
