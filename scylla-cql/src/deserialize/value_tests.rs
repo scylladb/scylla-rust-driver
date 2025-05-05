@@ -96,11 +96,7 @@ fn test_deserialize_ascii() {
         // Nonempty string
         assert_ser_de_identity(typ, &ASCII_TEXT, &mut Bytes::new());
         assert_ser_de_identity(typ, &ASCII_TEXT.to_owned(), &mut Bytes::new());
-        assert_ser_de_identity(
-            typ,
-            &ASCII_TEXT.to_owned().into_boxed_str(),
-            &mut Bytes::new(),
-        );
+        assert_ser_de_identity(typ, &Box::from(ASCII_TEXT), &mut Bytes::new());
         assert_ser_de_identity(typ, &Arc::from(ASCII_TEXT), &mut Bytes::new());
     }
 }
@@ -121,9 +117,12 @@ fn test_deserialize_text() {
         deserialize::<String>(&ColumnType::Native(NativeType::Text), &unicode).unwrap();
     let decoded_text_boxed_str =
         deserialize::<Box<str>>(&ColumnType::Native(NativeType::Text), &unicode).unwrap();
+    let decoded_text_arc_str =
+        deserialize::<Arc<str>>(&ColumnType::Native(NativeType::Text), &unicode).unwrap();
     assert_eq!(decoded_text_str, UNICODE_TEXT);
     assert_eq!(decoded_text_string, UNICODE_TEXT);
     assert_eq!(decoded_text_boxed_str.as_ref(), UNICODE_TEXT);
+    assert_eq!(decoded_text_arc_str.as_ref(), UNICODE_TEXT);
 
     // ser/de identity
 
@@ -139,7 +138,12 @@ fn test_deserialize_text() {
     );
     assert_ser_de_identity(
         &ColumnType::Native(NativeType::Text),
-        &UNICODE_TEXT.to_owned().into_boxed_str(),
+        &Box::from(UNICODE_TEXT),
+        &mut Bytes::new(),
+    );
+    assert_ser_de_identity(
+        &ColumnType::Native(NativeType::Text),
+        &Arc::from(UNICODE_TEXT),
         &mut Bytes::new(),
     );
 }

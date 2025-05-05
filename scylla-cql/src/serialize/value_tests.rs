@@ -1633,19 +1633,11 @@ fn text_serialization() {
         do_serialize("abc".to_string(), &ColumnType::Native(NativeType::Ascii)),
         vec![0, 0, 0, 3, 97, 98, 99]
     );
-}
-
-#[test]
-fn box_str_serialization() {
     let val: Box<str> = "abc".into();
     assert_eq!(
         do_serialize(val, &ColumnType::Native(NativeType::Text)),
         vec![0, 0, 0, 3, 97, 98, 99]
     );
-}
-
-#[test]
-fn arc_str_serialization() {
     let val: Arc<str> = "abc".into();
     assert_eq!(
         do_serialize(val, &ColumnType::Native(NativeType::Text)),
