@@ -194,6 +194,14 @@ fn test_box_errors() {
     ));
 }
 
+#[test]
+fn test_arc_errors() {
+    verify_typeck_error_in_wrapper::<Arc<i32>>(Arc::new(123));
+    verify_custom_error_in_wrapper::<Arc<SerializeWithCustomError>>(Arc::new(
+        SerializeWithCustomError,
+    ));
+}
+
 #[cfg(feature = "bigdecimal-04")]
 #[test]
 fn test_native_errors_bigdecimal_04() {
@@ -2219,6 +2227,15 @@ fn cqlduration_serialization() {
 #[test]
 fn box_serialization() {
     let x: Box<i32> = Box::new(123);
+    assert_eq!(
+        do_serialize(x, &ColumnType::Native(NativeType::Int)),
+        vec![0, 0, 0, 4, 0, 0, 0, 123]
+    );
+}
+
+#[test]
+fn arc_serialization() {
+    let x: Arc<i32> = Arc::new(123);
     assert_eq!(
         do_serialize(x, &ColumnType::Native(NativeType::Int)),
         vec![0, 0, 0, 4, 0, 0, 0, 123]

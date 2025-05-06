@@ -409,6 +409,15 @@ impl<T: SerializeValue + ?Sized> SerializeValue for Box<T> {
         T::serialize(&**self, typ, writer).map_err(fix_rust_name_in_err::<Self>)
     }
 }
+impl<T: SerializeValue + ?Sized> SerializeValue for Arc<T> {
+    fn serialize<'b>(
+        &self,
+        typ: &ColumnType,
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        T::serialize(&**self, typ, writer).map_err(fix_rust_name_in_err::<Self>)
+    }
+}
 impl<V: SerializeValue, S: BuildHasher + Default> SerializeValue for HashSet<V, S> {
     fn serialize<'b>(
         &self,
