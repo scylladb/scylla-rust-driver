@@ -1524,6 +1524,42 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
     }
 }
 
+// Container implementations
+
+impl<'frame, 'metadata, T: DeserializeValue<'frame, 'metadata>> DeserializeValue<'frame, 'metadata>
+    for Box<T>
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        T::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        T::deserialize(typ, v)
+            .map(Box::new)
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
+impl<'frame, 'metadata, T: DeserializeValue<'frame, 'metadata>> DeserializeValue<'frame, 'metadata>
+    for Arc<T>
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        T::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        T::deserialize(typ, v)
+            .map(Arc::new)
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(

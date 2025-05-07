@@ -1157,6 +1157,22 @@ fn test_tuples() {
     );
 }
 
+#[test]
+fn test_box() {
+    let int = make_bytes(&[0x01, 0x02, 0x03, 0x04]);
+    let decoded_int: Box<i32> =
+        deserialize::<Box<i32>>(&ColumnType::Native(NativeType::Int), &int).unwrap();
+    assert_eq!(*decoded_int, 0x01020304);
+}
+
+#[test]
+fn test_arc() {
+    let int = make_bytes(&[0x01, 0x02, 0x03, 0x04]);
+    let decoded_int: Arc<i32> =
+        deserialize::<Arc<i32>>(&ColumnType::Native(NativeType::Int), &int).unwrap();
+    assert_eq!(*decoded_int, 0x01020304);
+}
+
 pub(crate) fn udt_def_with_fields(
     fields: impl IntoIterator<Item = (impl Into<Cow<'static, str>>, ColumnType<'static>)>,
 ) -> ColumnType<'static> {
@@ -2446,6 +2462,60 @@ fn test_null_errors() {
     let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
 
     deserialize::<MaybeEmpty<i32>>(&ser_typ, &bytes).unwrap_err();
+}
+
+#[test]
+fn test_box_errors() {
+    let v = 123_i32;
+    let bytes = serialize(&ColumnType::Native(NativeType::Int), &v);
+
+    // Incompatible types render type check error.
+    assert_type_check_error!(
+        &bytes,
+        Box<f64>,
+        ColumnType::Native(NativeType::Int),
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[ColumnType::Native(NativeType::Double)],
+        }
+    );
+
+    // ColumnType is said to be Double (8 bytes expected), but in reality the serialized form has 4 bytes only.
+    assert_deser_error!(
+        &bytes,
+        Box<f64>,
+        ColumnType::Native(NativeType::Double),
+        BuiltinDeserializationErrorKind::ByteLengthMismatch {
+            expected: 8,
+            got: 4,
+        }
+    );
+}
+
+#[test]
+fn test_arc_errors() {
+    let v = 123_i32;
+    let bytes = serialize(&ColumnType::Native(NativeType::Int), &v);
+
+    // Incompatible types render type check error.
+    assert_type_check_error!(
+        &bytes,
+        Arc<f64>,
+        ColumnType::Native(NativeType::Int),
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[ColumnType::Native(NativeType::Double)],
+        }
+    );
+
+    // ColumnType is said to be Double (8 bytes expected), but in reality the serialized form has 4 bytes only.
+    assert_deser_error!(
+        &bytes,
+        Arc<f64>,
+        ColumnType::Native(NativeType::Double),
+        BuiltinDeserializationErrorKind::ByteLengthMismatch {
+            expected: 8,
+            got: 4,
+        }
+    );
 }
 
 #[test]
