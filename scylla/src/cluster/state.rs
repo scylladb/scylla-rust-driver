@@ -318,10 +318,14 @@ impl ClusterState {
         &self.locator
     }
 
-    /// Returns nonempty iterator of working connections to all shards.
-    pub(crate) fn iter_working_connections_to_shards(
+    /// Returns nonempty iterator (over nodes) of iterators (over shards).
+    ///
+    /// External iterator iterates over nodes.
+    /// Internal iterator iterates over working connections to all shards of given node.
+    pub(crate) fn iter_working_connections_per_node(
         &self,
-    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, ConnectionPoolError> {
+    ) -> Result<impl Iterator<Item = impl Iterator<Item = Arc<Connection>>> + '_, ConnectionPoolError>
+    {
         // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
         assert!(!self.known_peers.is_empty());
         let nodes_iter = self.known_peers.values();
@@ -345,16 +349,24 @@ impl ClusterState {
         // We retrieve connection pools for remaining nodes (those that are left in the iterator
         // once the first working pool has been found).
         let remaining_pools_iter = connection_pool_per_node_iter;
-        // Pools are flattened, so now we have `impl Iterator<Item = Result<Arc<Connection>, ConnectionPoolError>>`.
-        let remaining_connections_iter = remaining_pools_iter.flatten_ok();
         // Errors (non-working pools) are filtered out.
-        let remaining_working_connections_iter = remaining_connections_iter.filter_map(Result::ok);
+        let remaining_working_pools_iter = remaining_pools_iter.filter_map(Result::ok);
+        // Pools are made iterators, so now we have `impl Iterator<Item = impl Iterator<Item = Arc<Connection>>>`.
+        let remaining_working_per_node_connections_iter =
+            remaining_working_pools_iter.map(IntoIterator::into_iter);
 
-        Ok(first_working_pool
-            .into_iter()
-            .chain(remaining_working_connections_iter))
+        Ok(std::iter::once(first_working_pool.into_iter())
+            .chain(remaining_working_per_node_connections_iter))
         // By an invariant `self.known_peers` is nonempty, so the returned iterator
         // is nonempty, too.
+    }
+
+    /// Returns nonempty iterator of working connections to all shards.
+    pub(crate) fn iter_working_connections_to_shards(
+        &self,
+    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, ConnectionPoolError> {
+        self.iter_working_connections_per_node()
+            .map(|iter| iter.flatten())
     }
 
     /// Returns nonempty iterator of working connections to all nodes.

@@ -2140,6 +2140,10 @@ impl Session {
         last_error.map(Result::Err)
     }
 
+    /// Awaits schema agreement among all reachable nodes.
+    ///
+    /// Issues an agreement check each `Session::schema_agreement_interval`.
+    /// Loops indefinitely until the agreement is reached.
     async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, SchemaAgreementError> {
         loop {
             tokio::time::sleep(self.schema_agreement_interval).await;
@@ -2149,6 +2153,11 @@ impl Session {
         }
     }
 
+    /// Awaits schema agreement among all reachable nodes.
+    ///
+    /// Issues an agreement check each `Session::schema_agreement_interval`.
+    /// If agreement is not reached in `Session::schema_agreement_timeout`,
+    /// `SchemaAgreementError::Timeout` is returned.
     pub async fn await_schema_agreement(&self) -> Result<Uuid, SchemaAgreementError> {
         timeout(
             self.schema_agreement_timeout,
@@ -2160,13 +2169,36 @@ impl Session {
         )))
     }
 
+    /// Checks if all reachable nodes have the same schema version.
+    ///
+    /// If so, returns that agreed upon version.
     pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, SchemaAgreementError> {
         let cluster_state = self.get_cluster_state();
-        let connections_iter = cluster_state.iter_working_connections_to_shards()?;
+        // The iterator is guaranteed to be nonempty.
+        let per_node_connections = cluster_state.iter_working_connections_per_node()?;
 
-        let handles = connections_iter.map(|c| async move { c.fetch_schema_version().await });
+        // Therefore, this iterator is guaranteed to be nonempty, too.
+        let handles = per_node_connections.map(|connections_to_node| async move {
+            // Iterate over connections to the node. Fail if fetching schema version failed on all connections.
+            // Else, return the first fetched schema version, because all shards have the same schema version.
+            let mut first_err = None;
+            for connection in connections_to_node {
+                match connection.fetch_schema_version().await {
+                    Ok(schema_version) => return Ok(schema_version),
+                    Err(err) => {
+                        if first_err.is_none() {
+                            first_err = Some(err);
+                        }
+                    }
+                }
+            }
+            // The iterator was guaranteed to be nonempty, so there must have been at least one error.
+            Err(first_err.unwrap())
+        });
+        // Hence, this is nonempty, too.
         let versions = try_join_all(handles).await?;
 
+        // Therefore, taking the first element is safe.
         let local_version: Uuid = versions[0];
         let in_agreement = versions.into_iter().all(|v| v == local_version);
         Ok(in_agreement.then_some(local_version))
