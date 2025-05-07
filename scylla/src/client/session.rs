@@ -30,9 +30,7 @@ use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
-use crate::response::{
-    NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse, RawPreparedStatement,
-};
+use crate::response::{NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse};
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, ShardAwarePortRange};
 use crate::statement::batch::batch_values;
@@ -1249,35 +1247,57 @@ impl Session {
         statement: &Statement,
     ) -> Result<PreparedStatement, PrepareError> {
         let cluster_state = self.get_cluster_state();
-        let connections_iter = cluster_state.iter_working_connections_to_nodes()?;
 
-        // Prepare statements on all connections concurrently
-        let handles = connections_iter.map(|c| async move { c.prepare_raw(statement).await });
-        let mut results = join_all(handles).await.into_iter();
+        let mut connections_to_nodes = cluster_state.iter_working_connections_to_nodes()?;
+        Self::prepare_on_all(statement, &cluster_state, &mut connections_to_nodes).await
+    }
 
-        // If at least one prepare was successful, `prepare()` returns Ok.
+    /// Prepares the statement on all given connections.
+    /// These are intended to be connections to either all nodes or all shards.
+    ///
+    /// ASSUMPTION: the `working_connections` Iterator is nonempty.
+    ///
+    /// Returns:
+    /// - `Ok(PreparedStatement)`, if preparation succeeded on at least one connection;
+    /// - `Err(PrepareError)`, if no connection is working or preparation failed on all attempted connections.
+    async fn prepare_on_all(
+        statement: &Statement,
+        cluster_state: &ClusterState,
+        working_connections: &mut (dyn Iterator<Item = Arc<Connection>> + Send),
+    ) -> Result<PreparedStatement, PrepareError> {
         // Find the first result that is Ok, or Err if all failed.
+        let preparations =
+            working_connections.map(|c| async move { c.prepare_raw(statement).await });
+        let raw_prepared_statements_results = join_all(preparations).await;
 
-        // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections_to_nodes()`
-        // returns either an error or an iterator with at least one connection, so there will be at least one result.
-        let first_ok: Result<RawPreparedStatement, RequestAttemptError> =
-            results.by_ref().find_or_first(Result::is_ok).unwrap();
-        let mut prepared: PreparedStatement = first_ok
+        let mut raw_prepared_statements_results_iter = raw_prepared_statements_results.into_iter();
+
+        // Safety: We pass a nonempty iterator, so there will be at least one result.
+        let first_ok_or_error = raw_prepared_statements_results_iter
+            .by_ref()
+            .find_or_first(|res| res.is_ok())
+            .unwrap(); // Safety: there is at least one connection.
+
+        let mut prepared: PreparedStatement = first_ok_or_error
             .map_err(|first_attempt| PrepareError::AllAttemptsFailed { first_attempt })?
             .into_prepared_statement();
 
-        // Validate prepared ids equality
-        for statement in results.flatten() {
-            if prepared.get_id() != &statement.prepared_response.id {
+        // Validate prepared ids equality.
+        for another_raw_prepared in raw_prepared_statements_results_iter.flatten() {
+            if prepared.get_id() != &another_raw_prepared.prepared_response.id {
                 return Err(PrepareError::PreparedStatementIdsMismatch);
             }
 
             // Collect all tracing ids from prepare() queries in the final result
-            prepared.prepare_tracing_ids.extend(statement.tracing_id);
+            prepared
+                .prepare_tracing_ids
+                .extend(another_raw_prepared.tracing_id);
         }
 
+        // This is the first preparation that succeeded.
+        // Let's return the PreparedStatement.
         prepared.set_partitioner_name(
-            Self::extract_partitioner_name(&prepared, &self.cluster.get_state())
+            Self::extract_partitioner_name(&prepared, cluster_state)
                 .and_then(PartitionerName::from_str)
                 .unwrap_or_default(),
         );
