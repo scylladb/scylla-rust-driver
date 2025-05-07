@@ -1,4 +1,3 @@
-mod authenticate;
 mod history;
 mod new_session;
 mod retries;
