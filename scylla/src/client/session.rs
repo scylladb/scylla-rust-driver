@@ -30,9 +30,7 @@ use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
-use crate::response::{
-    NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse, RawPreparedStatement,
-};
+use crate::response::{NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse};
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, ShardAwarePortRange};
 use crate::statement::batch::batch_values;
@@ -1181,7 +1179,7 @@ impl Session {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
             // we fully prepare a statement beforehand.
-            let prepared = self.prepare(statement).await?;
+            let prepared = self.prepare_nongeneric(&statement).await?;
             let values = prepared.serialize_values(&values)?;
             QueryPager::new_for_prepared_statement(PreparedPagerConfig {
                 prepared,
@@ -1198,6 +1196,9 @@ impl Session {
 
     /// Prepares a statement on the server side and returns a prepared statement,
     /// which can later be used to perform more efficient requests.
+    ///
+    /// The statement is prepared on all nodes. This function finishes once all nodes respond
+    /// with either success or an error.
     ///
     /// Prepared statements are much faster than unprepared statements:
     /// * Database doesn't need to parse the statement string upon each execution (only once)
@@ -1237,38 +1238,97 @@ impl Session {
         statement: impl Into<Statement>,
     ) -> Result<PreparedStatement, PrepareError> {
         let statement = statement.into();
-        let statement_ref = &statement;
+        self.prepare_nongeneric(&statement).await
+    }
 
+    // Introduced to avoid monomorphisation of this large function.
+    async fn prepare_nongeneric(
+        &self,
+        statement: &Statement,
+    ) -> Result<PreparedStatement, PrepareError> {
         let cluster_state = self.get_cluster_state();
-        let connections_iter = cluster_state.iter_working_connections()?;
 
-        // Prepare statements on all connections concurrently
-        let handles = connections_iter.map(|c| async move { c.prepare_raw(statement_ref).await });
-        let mut results = join_all(handles).await.into_iter();
+        // Start by attempting preparation on a single (random) connection to every node.
+        {
+            let mut connections_to_nodes = cluster_state.iter_working_connections_to_nodes()?;
+            let on_all_nodes_result =
+                Self::prepare_on_all(statement, &cluster_state, &mut connections_to_nodes).await;
+            if let Ok(prepared) = on_all_nodes_result {
+                // We succeeded in preparing the statement on at least one node. We're done.
+                // Other nodes could have failed to prepare the statement, but this will be handled
+                // as `DbError::Unprepared` upon execution, followed by a repreparation attempt.
+                return Ok(prepared);
+            }
+        }
 
-        // If at least one prepare was successful, `prepare()` returns Ok.
+        // We could have been just unlucky: we could have possibly chosen random connections all of which were defunct
+        // (one possibility is that we targeted overloaded shards).
+        // Let's try again, this time on connections to every shard. This is a "last call" fallback.
+        {
+            let mut connections_to_shards = cluster_state.iter_working_connections_to_shards()?;
+
+            Self::prepare_on_all(statement, &cluster_state, &mut connections_to_shards).await
+        }
+    }
+
+    /// Prepares the statement on all given connections.
+    /// These are intended to be connections to either all nodes or all shards.
+    ///
+    /// ASSUMPTION: the `working_connections` Iterator is nonempty.
+    ///
+    /// Returns:
+    /// - `Ok(PreparedStatement)`, if preparation succeeded on at least one connection;
+    /// - `Err(PrepareError)`, if no connection is working or preparation failed on all attempted connections.
+    // TODO: There are no timeouts here. So, just one stuck node freezes the driver here, potentially indefinitely long.
+    // Also, what the driver requires to get from the cluster is the prepared statement metadata.
+    // It suffices that it gets only one copy of it, just from one success response. Therefore, it's a possible
+    // optimisation that the function only waits for one preparation to finish successfully, and then it returns.
+    // For it to be done, other preparations must continue in the background, on a separate tokio task.
+    // Describing issue: #1332.
+    async fn prepare_on_all(
+        statement: &Statement,
+        cluster_state: &ClusterState,
+        working_connections: &mut (dyn Iterator<Item = Arc<Connection>> + Send),
+    ) -> Result<PreparedStatement, PrepareError> {
         // Find the first result that is Ok, or Err if all failed.
+        let preparations =
+            working_connections.map(|c| async move { c.prepare_raw(statement).await });
+        let raw_prepared_statements_results = join_all(preparations).await;
 
-        // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
-        // returns either an error or an iterator with at least one connection, so there will be at least one result.
-        let first_ok: Result<RawPreparedStatement, RequestAttemptError> =
-            results.by_ref().find_or_first(Result::is_ok).unwrap();
-        let mut prepared: PreparedStatement = first_ok
+        let mut raw_prepared_statements_results_iter = raw_prepared_statements_results.into_iter();
+
+        // Safety: We pass a nonempty iterator, so there will be at least one result.
+        let first_ok_or_error = raw_prepared_statements_results_iter
+            .by_ref()
+            .find_or_first(|res| res.is_ok())
+            .unwrap(); // Safety: there is at least one connection.
+
+        let mut prepared: PreparedStatement = first_ok_or_error
             .map_err(|first_attempt| PrepareError::AllAttemptsFailed { first_attempt })?
             .into_prepared_statement();
 
-        // Validate prepared ids equality
-        for statement in results.flatten() {
-            if prepared.get_id() != &statement.prepared_response.id {
+        // Validate prepared ids equality.
+        for another_raw_prepared in raw_prepared_statements_results_iter.flatten() {
+            if prepared.get_id() != &another_raw_prepared.prepared_response.id {
+                tracing::error!(
+                    "Got differing ids upon statement preparation: statement \"{}\", id1: {:?}, id2: {:?}",
+                    prepared.get_statement(),
+                    prepared.get_id(),
+                    another_raw_prepared.prepared_response.id
+                );
                 return Err(PrepareError::PreparedStatementIdsMismatch);
             }
 
             // Collect all tracing ids from prepare() queries in the final result
-            prepared.prepare_tracing_ids.extend(statement.tracing_id);
+            prepared
+                .prepare_tracing_ids
+                .extend(another_raw_prepared.tracing_id);
         }
 
+        // This is the first preparation that succeeded.
+        // Let's return the PreparedStatement.
         prepared.set_partitioner_name(
-            self.extract_partitioner_name(&prepared, &self.cluster.get_state())
+            Self::extract_partitioner_name(&prepared, cluster_state)
                 .and_then(PartitionerName::from_str)
                 .unwrap_or_default(),
         );
@@ -1277,7 +1337,6 @@ impl Session {
     }
 
     fn extract_partitioner_name<'a>(
-        &self,
         prepared: &PreparedStatement,
         cluster_state: &'a ClusterState,
     ) -> Option<&'a str> {
@@ -1583,7 +1642,7 @@ impl Session {
                 .iter_mut()
                 .map(|statement| async move {
                     if let BatchStatement::Query(query) = statement {
-                        let prepared = self.prepare(query.clone()).await?;
+                        let prepared = self.prepare_nongeneric(query).await?;
                         *statement = BatchStatement::PreparedStatement(prepared);
                     }
                     Ok::<(), PrepareError>(())
@@ -2103,7 +2162,7 @@ impl Session {
 
     pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, SchemaAgreementError> {
         let cluster_state = self.get_cluster_state();
-        let connections_iter = cluster_state.iter_working_connections()?;
+        let connections_iter = cluster_state.iter_working_connections_to_shards()?;
 
         let handles = connections_iter.map(|c| async move { c.fetch_schema_version().await });
         let versions = try_join_all(handles).await?;
