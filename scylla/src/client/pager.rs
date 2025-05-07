@@ -18,7 +18,6 @@ use scylla_cql::frame::request::query::PagingState;
 use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::frame::types::SerialConsistency;
-use scylla_cql::serialize::row::SerializedValues;
 use scylla_cql::Consistency;
 use std::result::Result;
 use thiserror::Error;
@@ -38,7 +37,8 @@ use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{NonErrorQueryResponse, QueryResponse};
-use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
+use crate::statement::bound::BoundStatement;
+use crate::statement::prepared::PartitionKeyError;
 use crate::statement::unprepared::Statement;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
@@ -63,8 +63,7 @@ struct ReceivedPage {
 }
 
 pub(crate) struct PreparedPagerConfig {
-    pub(crate) prepared: PreparedStatement,
-    pub(crate) values: SerializedValues,
+    pub(crate) bound: BoundStatement<'static>,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_state: Arc<ClusterState>,
     #[cfg(feature = "metrics")]
@@ -768,26 +767,30 @@ impl QueryPager {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
 
         let consistency = config
+            .bound
             .prepared
             .config
             .consistency
             .unwrap_or(config.execution_profile.consistency);
         let serial_consistency = config
+            .bound
             .prepared
             .config
             .serial_consistency
             .unwrap_or(config.execution_profile.serial_consistency);
 
-        let page_size = config.prepared.get_validated_page_size();
+        let page_size = config.bound.prepared.get_validated_page_size();
 
         let load_balancing_policy = Arc::clone(
             config
+                .bound
                 .prepared
                 .get_load_balancing_policy()
                 .unwrap_or(&config.execution_profile.load_balancing_policy),
         );
 
         let retry_session = config
+            .bound
             .prepared
             .get_retry_policy()
             .map(|rp| &**rp)
@@ -796,14 +799,7 @@ impl QueryPager {
 
         let parent_span = tracing::Span::current();
         let worker_task = async move {
-            let prepared_ref = &config.prepared;
-            let values_ref = &config.values;
-
-            let (partition_key, token) = match prepared_ref
-                .extract_partition_key_and_calculate_token(
-                    prepared_ref.get_partitioner_name(),
-                    values_ref,
-                ) {
+            let (partition_key, token) = match config.bound.pk_and_token() {
                 Ok(res) => res.unzip(),
                 Err(err) => {
                     let (proof, _res) = ProvingSender::from(sender)
@@ -813,22 +809,22 @@ impl QueryPager {
                 }
             };
 
-            let table_spec = config.prepared.get_table_spec();
+            let table_spec = config.bound.prepared.get_table_spec();
             let statement_info = RoutingInfo {
                 consistency,
                 serial_consistency,
                 token,
                 table: table_spec,
-                is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
+                is_confirmed_lwt: config.bound.prepared.is_confirmed_lwt(),
             };
 
+            let statement = &config.bound;
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
                               paging_state: PagingState| async move {
                 connection
                     .execute_raw_with_consistency(
-                        prepared_ref,
-                        values_ref,
+                        statement,
                         consistency,
                         serial_consistency,
                         Some(page_size),
@@ -837,7 +833,7 @@ impl QueryPager {
                     .await
             };
 
-            let serialized_values_size = config.values.buffer_size();
+            let serialized_values_size = config.bound.values.buffer_size();
 
             let replicas: Option<smallvec::SmallVec<[_; 8]>> =
                 if let (Some(table_spec), Some(token)) =
@@ -870,14 +866,14 @@ impl QueryPager {
                 sender: sender.into(),
                 page_query,
                 statement_info,
-                query_is_idempotent: config.prepared.config.is_idempotent,
+                query_is_idempotent: config.bound.prepared.config.is_idempotent,
                 query_consistency: consistency,
                 load_balancing_policy,
                 retry_session,
                 #[cfg(feature = "metrics")]
                 metrics: config.metrics,
                 paging_state: PagingState::start(),
-                history_listener: config.prepared.config.history_listener.clone(),
+                history_listener: config.bound.prepared.config.history_listener.clone(),
                 current_request_id: None,
                 current_attempt_id: None,
                 parent_span,
@@ -920,23 +916,21 @@ impl QueryPager {
     }
 
     pub(crate) async fn new_for_connection_execute_iter(
-        prepared: PreparedStatement,
-        values: SerializedValues,
+        bound: BoundStatement<'static>,
         connection: Arc<Connection>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<Self, NextPageError> {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
 
-        let page_size = prepared.get_validated_page_size();
+        let page_size = bound.prepared.get_validated_page_size();
 
         let worker_task = async move {
             let worker = SingleConnectionPagerWorker {
                 sender: sender.into(),
                 fetcher: |paging_state| {
                     connection.execute_raw_with_consistency(
-                        &prepared,
-                        &values,
+                        &bound,
                         consistency,
                         serial_consistency,
                         Some(page_size),
