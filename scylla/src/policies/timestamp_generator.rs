@@ -16,7 +16,7 @@ pub trait TimestampGenerator: Send + Sync {
 
 /// Basic timestamp generator. Provides no guarantees, if system clock returns
 /// time before UNIX epoch it panics.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct SimpleTimestampGenerator {}
 
 impl SimpleTimestampGenerator {
@@ -35,6 +35,7 @@ impl TimestampGenerator for SimpleTimestampGenerator {
 }
 
 /// Warning configuration for MonotonicTimestampGenerator
+#[derive(Debug)]
 struct MonotonicTimestampGeneratorWarningsCfg {
     warning_threshold: Duration,
     warning_interval: Duration,
@@ -47,6 +48,7 @@ struct MonotonicTimestampGeneratorWarningsCfg {
 /// the skew repeatedly, with warning_interval provided in the settings (by default 1 second).
 /// Remember that this generator only guarantees monotonicity within one instance of this struct!
 /// If you create multiple instances the monotonicity guarantee becomes void.
+#[derive(Debug)]
 pub struct MonotonicTimestampGenerator {
     last: AtomicI64,
     last_warning: Mutex<Instant>,
