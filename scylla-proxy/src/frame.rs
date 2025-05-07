@@ -11,6 +11,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use tracing::warn;
 
+use crate::errors::ReadFrameError;
+use crate::proxy::CompressionReader;
+
 const HEADER_SIZE: usize = 9;
 
 // Parts of the frame header which are not determined by the request/response type.
@@ -22,13 +25,13 @@ pub struct FrameParams {
 }
 
 impl FrameParams {
-    pub fn for_request(&self) -> FrameParams {
+    pub const fn for_request(&self) -> FrameParams {
         Self {
             version: self.version & 0x7F,
             ..*self
         }
     }
-    pub fn for_response(&self) -> FrameParams {
+    pub const fn for_response(&self) -> FrameParams {
         Self {
             version: 0x80 | (self.version & 0x7F),
             ..*self
@@ -48,7 +51,7 @@ pub(crate) enum FrameOpcode {
     Response(ResponseOpcode),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestFrame {
     pub params: FrameParams,
     pub opcode: RequestOpcode,
@@ -56,15 +59,17 @@ pub struct RequestFrame {
 }
 
 impl RequestFrame {
-    pub async fn write(
+    pub(crate) async fn write(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
+        compression: &CompressionReader,
     ) -> Result<(), tokio::io::Error> {
         write_frame(
             self.params,
             FrameOpcode::Request(self.opcode),
             &self.body,
             writer,
+            compression,
         )
         .await
     }
@@ -73,7 +78,7 @@ impl RequestFrame {
         Request::deserialize(&mut &self.body[..], self.opcode)
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResponseFrame {
     pub params: FrameParams,
     pub opcode: ResponseOpcode,
@@ -133,12 +138,14 @@ impl ResponseFrame {
     pub(crate) async fn write(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
+        compression: &CompressionReader,
     ) -> Result<(), tokio::io::Error> {
         write_frame(
             self.params,
             FrameOpcode::Response(self.opcode),
             &self.body,
             writer,
+            compression,
         )
         .await
     }
@@ -230,9 +237,16 @@ fn serialize_error_specific_fields(
 pub(crate) async fn write_frame(
     params: FrameParams,
     opcode: FrameOpcode,
-    body: &Bytes,
+    body: &[u8],
     writer: &mut (impl AsyncWrite + Unpin),
+    compression: &CompressionReader,
 ) -> Result<(), tokio::io::Error> {
+    let compressed_body = compression
+        .maybe_compress_body(params.flags, body)
+        .map_err(|e| tokio::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+    let body = compressed_body.as_deref().unwrap_or(body);
+
     let mut header = [0; HEADER_SIZE];
 
     header[0] = params.version;
@@ -253,7 +267,8 @@ pub(crate) async fn write_frame(
 pub(crate) async fn read_frame(
     reader: &mut (impl AsyncRead + Unpin),
     frame_type: FrameType,
-) -> Result<(FrameParams, FrameOpcode, Bytes), FrameHeaderParseError> {
+    compression: &CompressionReader,
+) -> Result<(FrameParams, FrameOpcode, Bytes), ReadFrameError> {
     let mut raw_header = [0u8; HEADER_SIZE];
     reader
         .read_exact(&mut raw_header[..])
@@ -269,7 +284,7 @@ pub(crate) async fn read_frame(
             FrameType::Response => (FrameHeaderParseError::FrameFromClient, 0x80, "response"),
         };
         if version & 0x80 != valid_direction {
-            return Err(err);
+            return Err(err.into());
         }
         let protocol_version = version & 0x7F;
         if protocol_version != 0x04 {
@@ -311,20 +326,22 @@ pub(crate) async fn read_frame(
             .map_err(|err| FrameHeaderParseError::BodyChunkIoError(body.remaining_mut(), err))?;
         if n == 0 {
             // EOF, too early
-            return Err(FrameHeaderParseError::ConnectionClosed(
-                body.remaining_mut(),
-                length,
-            ));
+            return Err(
+                FrameHeaderParseError::ConnectionClosed(body.remaining_mut(), length).into(),
+            );
         }
     }
 
-    Ok((frame_params, opcode, body.into_inner().into()))
+    let body = compression.maybe_decompress_body(flags, body.into_inner().into())?;
+
+    Ok((frame_params, opcode, body))
 }
 
 pub(crate) async fn read_request_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<RequestFrame, FrameHeaderParseError> {
-    read_frame(reader, FrameType::Request)
+    compression: &CompressionReader,
+) -> Result<RequestFrame, ReadFrameError> {
+    read_frame(reader, FrameType::Request, compression)
         .await
         .map(|(params, opcode, body)| RequestFrame {
             params,
@@ -338,8 +355,9 @@ pub(crate) async fn read_request_frame(
 
 pub(crate) async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<ResponseFrame, FrameHeaderParseError> {
-    read_frame(reader, FrameType::Response)
+    compression: &CompressionReader,
+) -> Result<ResponseFrame, ReadFrameError> {
+    read_frame(reader, FrameType::Response, compression)
         .await
         .map(|(params, opcode, body)| ResponseFrame {
             params,

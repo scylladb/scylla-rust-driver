@@ -5,6 +5,7 @@ use crate::frame::{
 };
 use crate::{RequestOpcode, TargetShard};
 use bytes::Bytes;
+use compression::no_compression;
 use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -633,12 +634,25 @@ impl Doorkeeper {
         let (tx_driver, rx_driver) = mpsc::unbounded_channel::<ResponseFrame>();
         let event_register_flag = Arc::new(AtomicBool::new(false));
 
-        tokio::task::spawn(new_worker().receiver_from_driver(driver_read, tx_request));
+        let (
+            compression_writer_request_processor,
+            compression_reader_receiver_from_driver,
+            compression_reader_receiver_from_cluster,
+            compression_reader_sender_to_driver,
+            compression_reader_sender_to_cluster,
+        ) = compression::make_compression_infra();
+
+        tokio::task::spawn(new_worker().receiver_from_driver(
+            driver_read,
+            tx_request,
+            compression_reader_receiver_from_driver,
+        ));
         tokio::task::spawn(new_worker().sender_to_driver(
             driver_write,
             rx_driver,
             connection_close_tx.subscribe(),
             self.terminate_signaler.subscribe(),
+            compression_reader_sender_to_driver,
         ));
         tokio::task::spawn(new_worker().request_processor(
             rx_request,
@@ -648,6 +662,7 @@ impl Doorkeeper {
             self.node.request_rules().clone(),
             connection_close_tx.clone(),
             event_register_flag.clone(),
+            compression_writer_request_processor,
         ));
         if let InternalNode::Real {
             ref response_rules, ..
@@ -659,8 +674,13 @@ impl Doorkeeper {
                 rx_cluster,
                 connection_close_tx.subscribe(),
                 self.terminate_signaler.subscribe(),
+                compression_reader_sender_to_cluster,
             ));
-            tokio::task::spawn(new_worker().receiver_from_cluster(cluster_read, tx_response));
+            tokio::task::spawn(new_worker().receiver_from_cluster(
+                cluster_read,
+                tx_response,
+                compression_reader_receiver_from_cluster,
+            ));
             tokio::task::spawn(new_worker().response_processor(
                 rx_response,
                 tx_driver,
@@ -796,11 +816,12 @@ impl Doorkeeper {
             FrameOpcode::Request(RequestOpcode::Options),
             &Bytes::new(),
             connection,
+            &no_compression(),
         )
         .await
         .map_err(DoorkeeperError::ObtainingShardNumber)?;
 
-        let supported_frame = read_response_frame(connection)
+        let supported_frame = read_response_frame(connection, &compression::no_compression())
             .await
             .map_err(DoorkeeperError::ObtainingShardNumberFrame)?;
 
@@ -847,6 +868,153 @@ impl Doorkeeper {
         Ok(shard)
     }
 }
+
+mod compression {
+    use std::error::Error;
+    use std::sync::{Arc, OnceLock};
+
+    use bytes::Bytes;
+    use scylla_cql::frame::frame_errors::{
+        CqlRequestSerializationError, FrameBodyExtensionsParseError,
+    };
+    use scylla_cql::frame::request::{
+        options, DeserializableRequest as _, RequestDeserializationError, Startup,
+    };
+    use scylla_cql::frame::{compress_append, decompress, flag, Compression};
+    use tracing::{error, warn};
+
+    #[derive(Debug, thiserror::Error)]
+    pub(crate) enum CompressionError {
+        /// Body Snap compression failed.
+        #[error("Snap compression error: {0}")]
+        SnapCompressError(Arc<dyn Error + Sync + Send>),
+
+        /// Frame is to be compressed, but no compression was negotiated for the connection.
+        #[error("Frame is to be compressed, but no compression negotiated for connection.")]
+        NoCompressionNegotiated,
+    }
+
+    type CompressionInfo = Arc<OnceLock<Option<Compression>>>;
+
+    /// The write end of compression config for a connection.
+    ///
+    /// Used by the request processor upon STARTUP frame captured
+    /// and compression setting retrieved from it.
+    #[derive(Debug, Clone)]
+    pub(crate) struct CompressionWriter(CompressionInfo);
+    impl CompressionWriter {
+        pub(crate) fn set(
+            &self,
+            compression: Option<Compression>,
+        ) -> Result<(), Option<Compression>> {
+            self.0.set(compression)
+        }
+
+        pub(crate) fn set_from_startup(
+            &self,
+            mut body: &[u8],
+        ) -> Result<Option<Compression>, RequestDeserializationError> {
+            let startup = Startup::deserialize(&mut body)?;
+            let maybe_compression = startup.options.get(options::COMPRESSION);
+            let maybe_compression = maybe_compression.and_then(|compression| {
+                compression
+                    .parse::<Compression>()
+                    .inspect_err(|err| error!("STARTUP compression error: {}", err))
+                    .ok()
+            });
+            let _ = self.set(maybe_compression).inspect_err(|_| {
+                warn!("Captured second or further STARTUP frame on the same connection")
+            });
+
+            Ok(maybe_compression)
+        }
+    }
+
+    /// The read end of compression config for a connection.
+    ///
+    /// Used by frame (de)serializers.
+    #[derive(Debug, Clone)]
+    pub(crate) struct CompressionReader(CompressionInfo);
+    impl CompressionReader {
+        /// Return the compression negotiated for the connection.
+        ///
+        /// Outer Option signifies whether the negotiation took place,
+        /// inner Option is the compression (or lack of it) negotiated.
+        pub(crate) fn get(&self) -> Option<Option<Compression>> {
+            self.0.get().copied()
+        }
+
+        pub(crate) fn maybe_compress_body(
+            &self,
+            flags: u8,
+            body: &[u8],
+        ) -> Result<Option<Bytes>, CompressionError> {
+            match (flags & flag::COMPRESSION != 0, self.get().flatten()) {
+                (true, Some(compression)) => {
+                    let mut buf = Vec::new();
+                    compress_append(body, compression, &mut buf).map_err(|err| {
+                        let CqlRequestSerializationError::SnapCompressError(err) = err else {
+                            unreachable!("BUG: compress_append returned variant different than SnapCompressError")
+                        };
+                        CompressionError::SnapCompressError(err)
+                    })?;
+                    Ok(Some(Bytes::from(buf)))
+                }
+                (true, None) => Err(CompressionError::NoCompressionNegotiated),
+                (false, _) => Ok(None),
+            }
+        }
+
+        pub(crate) fn maybe_decompress_body(
+            &self,
+            flags: u8,
+            body: Bytes,
+        ) -> Result<Bytes, FrameBodyExtensionsParseError> {
+            match (flags & flag::COMPRESSION != 0, self.get().flatten()) {
+                (true, Some(compression)) => decompress(&body, compression).map(Into::into),
+                (true, None) => Err(FrameBodyExtensionsParseError::NoCompressionNegotiated),
+                (false, _) => Ok(body),
+            }
+        }
+    }
+
+    pub(crate) fn make_compression_infra() -> (
+        CompressionWriter,
+        CompressionReader,
+        CompressionReader,
+        CompressionReader,
+        CompressionReader,
+    ) {
+        let info = Arc::new(OnceLock::new());
+        (
+            CompressionWriter(info.clone()),
+            CompressionReader(info.clone()),
+            CompressionReader(info.clone()),
+            CompressionReader(info.clone()),
+            CompressionReader(info),
+        )
+    }
+
+    fn mock_compression_reader(compression: Option<Compression>) -> CompressionReader {
+        CompressionReader(Arc::new({
+            let once = OnceLock::new();
+            once.set(compression).unwrap();
+            once
+        }))
+    }
+
+    // Compression explicitly turned off.
+    pub(crate) fn no_compression() -> CompressionReader {
+        mock_compression_reader(None)
+    }
+
+    // Compression explicitly turned on.
+    #[cfg(test)] // Currently only used for tests.
+    pub(crate) fn with_compression(compression: Compression) -> CompressionReader {
+        mock_compression_reader(Some(compression))
+    }
+}
+pub(crate) use compression::{CompressionReader, CompressionWriter};
 
 struct ProxyWorker {
     terminate_notifier: TerminateNotifier,
@@ -896,13 +1064,14 @@ impl ProxyWorker {
         self,
         mut read_half: (impl AsyncRead + Unpin),
         request_processor_tx: mpsc::UnboundedSender<RequestFrame>,
+        compression: CompressionReader,
     ) {
         let shard = self.shard;
         self.run_until_interrupted(
             "receiver_from_driver",
             |driver_addr, proxy_addr, _real_addr| async move {
                 loop {
-                    let frame = frame::read_request_frame(&mut read_half)
+                    let frame = frame::read_request_frame(&mut read_half, &compression)
                         .await
                         .map_err(|err| {
                             warn!("Request reception from {} error: {}", driver_addr, err);
@@ -930,6 +1099,7 @@ impl ProxyWorker {
         self,
         mut read_half: (impl AsyncRead + Unpin),
         response_processor_tx: mpsc::UnboundedSender<ResponseFrame>,
+        compression: CompressionReader,
     ) {
         let shard = self.shard;
         self.run_until_interrupted(
@@ -937,19 +1107,18 @@ impl ProxyWorker {
             |driver_addr, _proxy_addr, real_addr| async move {
                 let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
-                    let frame =
-                        frame::read_response_frame(&mut read_half)
-                            .await
-                            .map_err(|err| {
-                                warn!("Response reception from {} error: {}", real_addr, err);
-                                WorkerError::NodeDisconnected(real_addr)
-                            })?;
+                    let frame = frame::read_response_frame(&mut read_half, &compression)
+                        .await
+                        .map_err(|err| {
+                            warn!("Response reception from {} error: {}", real_addr, err);
+                            WorkerError::NodeDisconnected(real_addr)
+                        })?;
 
                     debug!(
-                        "Intercepted Cluster ({}) -> Driver ({}) ({}) frame. opcode: {:?}.",
+                        "Intercepted Cluster ({}) ({}) -> Driver ({}) frame. opcode: {:?}.",
                         real_addr,
-                        driver_addr,
                         DisplayableShard(shard),
+                        driver_addr,
                         &frame.opcode
                     );
 
@@ -969,6 +1138,7 @@ impl ProxyWorker {
         mut responses_rx: mpsc::UnboundedReceiver<ResponseFrame>,
         mut connection_close_notifier: ConnectionCloseNotifier,
         mut terminate_notifier: TerminateNotifier,
+        compression: CompressionReader,
     ) {
         let shard = self.shard;
         self.run_until_interrupted(
@@ -988,13 +1158,13 @@ impl ProxyWorker {
                     };
 
                     debug!(
-                        "Sending Proxy ({}) -> Driver ({}) ({}) frame. opcode: {:?}.",
+                        "Sending Proxy ({}) ({}) -> Driver ({}) frame. opcode: {:?}.",
                         proxy_addr,
-                        driver_addr,
                         DisplayableShard(shard),
+                        driver_addr,
                         &response.opcode
                     );
-                    if response.write(&mut write_half).await.is_err() {
+                    if response.write(&mut write_half, &compression).await.is_err() {
                         if terminate_notifier.try_recv().is_err()
                             && connection_close_notifier.try_recv().is_err()
                         {
@@ -1015,6 +1185,7 @@ impl ProxyWorker {
         mut requests_rx: mpsc::UnboundedReceiver<RequestFrame>,
         mut connection_close_notifier: ConnectionCloseNotifier,
         mut terminate_notifier: TerminateNotifier,
+        compression: CompressionReader,
     ) {
         let shard = self.shard;
         self.run_until_interrupted(
@@ -1042,7 +1213,7 @@ impl ProxyWorker {
                         &request.opcode
                     );
 
-                    if request.write(&mut write_half).await.is_err() {
+                    if request.write(&mut write_half, &compression).await.is_err() {
                         if terminate_notifier.try_recv().is_err()
                             && connection_close_notifier.try_recv().is_err()
                         {
@@ -1067,6 +1238,7 @@ impl ProxyWorker {
         request_rules: Arc<Mutex<Vec<RequestRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
         event_registered_flag: Arc<AtomicBool>,
+        compression: CompressionWriter,
     ) {
         let shard = self.shard;
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
@@ -1075,7 +1247,19 @@ impl ProxyWorker {
                     Some(request) => {
                         if request.opcode == RequestOpcode::Register {
                             event_registered_flag.store(true, Ordering::Relaxed);
+                        } else if request.opcode == RequestOpcode::Startup {
+                            match compression.set_from_startup(&request.body) {
+                                Err(err) => error!("Failed to deserialize STARTUP frame: {}", err),
+                                Ok(read_compression) => info!(
+                                    "Intercepted STARTUP frame ({} -> {} ({})), so set compression accordingly to {:?}.",
+                                    driver_addr,
+                                    DisplayableRealAddrOption(real_addr),
+                                    DisplayableShard(shard),
+                                    read_compression
+                                )
+                            };
                         }
+
                         let ctx = EvaluationContext {
                             connection_seq_no: connection_no,
                             opcode: FrameOpcode::Request(request.opcode),
@@ -1293,8 +1477,11 @@ pub fn get_exclusive_local_address() -> IpAddr {
 
 #[cfg(test)]
 mod tests {
+    use super::compression::no_compression;
     use super::*;
+    use crate::errors::ReadFrameError;
     use crate::frame::{read_frame, read_request_frame, FrameType};
+    use crate::proxy::compression::with_compression;
     use crate::{
         setup_tracing, Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction,
     };
@@ -1302,8 +1489,10 @@ mod tests {
     use bytes::{BufMut, BytesMut};
     use futures::future::{join, join3};
     use rand::RngCore;
-    use scylla_cql::frame::frame_errors::FrameHeaderParseError;
+    use scylla_cql::frame::request::options;
+    use scylla_cql::frame::request::{SerializableRequest as _, Startup};
     use scylla_cql::frame::types::write_string_multimap;
+    use scylla_cql::frame::{flag, Compression};
     use std::collections::HashMap;
     use std::mem;
     use std::str::FromStr;
@@ -1321,12 +1510,13 @@ mod tests {
     async fn respond_with_supported(
         conn: &mut TcpStream,
         supported_options: &HashMap<String, Vec<String>>,
+        compression: &CompressionReader,
     ) {
         let RequestFrame {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
-        } = read_request_frame(conn).await.unwrap();
+        } = read_request_frame(conn, compression).await.unwrap();
         assert_eq!(recvd_params, HARDCODED_OPTIONS_PARAMS);
         assert_eq!(recvd_opcode, RequestOpcode::Options);
         assert_eq!(recvd_body, Bytes::new()); // body should be empty
@@ -1341,6 +1531,7 @@ mod tests {
             FrameOpcode::Response(ResponseOpcode::Supported),
             &body,
             conn,
+            &no_compression(),
         )
         .await
         .unwrap();
@@ -1361,12 +1552,20 @@ mod tests {
         sharded_info
     }
 
-    async fn respond_with_shards_count(conn: &mut TcpStream, shards_count: u16) {
-        respond_with_supported(conn, &supported_shards_count(shards_count)).await;
+    async fn respond_with_shards_count(
+        conn: &mut TcpStream,
+        shards_count: u16,
+        compression: &CompressionReader,
+    ) {
+        respond_with_supported(conn, &supported_shards_count(shards_count), compression).await;
     }
 
-    async fn respond_with_shard_num(conn: &mut TcpStream, shard_num: TargetShard) {
-        respond_with_supported(conn, &supported_shard_number(shard_num)).await;
+    async fn respond_with_shard_num(
+        conn: &mut TcpStream,
+        shard_num: TargetShard,
+        compression: &CompressionReader,
+    ) {
+        respond_with_supported(conn, &supported_shard_number(shard_num), compression).await;
     }
 
     fn next_local_address_with_port(port: u16) -> SocketAddr {
@@ -1399,24 +1598,32 @@ mod tests {
         let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-            write_frame(params, opcode, &body, &mut conn).await.unwrap();
+            write_frame(params, opcode, &body, &mut conn, &no_compression())
+                .await
+                .unwrap();
             conn
         };
 
         let mock_node_action = async {
             if let ShardAwareness::QueryNode = shard_awareness {
-                respond_with_shards_count(&mut mock_node_listener.accept().await.unwrap().0, 1)
-                    .await;
+                respond_with_shards_count(
+                    &mut mock_node_listener.accept().await.unwrap().0,
+                    1,
+                    &no_compression(),
+                )
+                .await;
             }
             let (mut conn, _) = mock_node_listener.accept().await.unwrap();
             if shard_awareness.is_aware() {
-                respond_with_shard_num(&mut conn, 1).await;
+                respond_with_shard_num(&mut conn, 1, &no_compression()).await;
             }
             let RequestFrame {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
-            } = read_request_frame(&mut conn).await.unwrap();
+            } = read_request_frame(&mut conn, &no_compression())
+                .await
+                .unwrap();
             assert_eq!(recvd_params, params);
             assert_eq!(FrameOpcode::Request(recvd_opcode), opcode);
             assert_eq!(recvd_body, body);
@@ -1527,6 +1734,7 @@ mod tests {
                     respond_with_shards_count(
                         &mut mock_node_listener.accept().await.unwrap().0,
                         shards_num,
+                        &no_compression(),
                     )
                     .await;
                     let (conn, remote_addr) = mock_node_listener.accept().await.unwrap();
@@ -1595,7 +1803,7 @@ mod tests {
         let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
 
         let params1 = FrameParams {
-            flags: 3,
+            flags: 2,
             version: 0x42,
             stream: 42,
         };
@@ -1627,13 +1835,13 @@ mod tests {
         let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-            write_frame(params1, opcode1, &body1, &mut conn)
+            write_frame(params1, opcode1, &body1, &mut conn, &no_compression())
                 .await
                 .unwrap();
-            write_frame(params2, opcode2, &body2, &mut conn)
+            write_frame(params2, opcode2, &body2, &mut conn, &no_compression())
                 .await
                 .unwrap();
-            write_frame(params3, opcode3, &body3, &mut conn)
+            write_frame(params3, opcode3, &body3, &mut conn, &no_compression())
                 .await
                 .unwrap();
 
@@ -1641,7 +1849,9 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
-            } = read_response_frame(&mut conn).await.unwrap();
+            } = read_response_frame(&mut conn, &no_compression())
+                .await
+                .unwrap();
             assert_eq!(recvd_params, params1.for_response());
             assert_eq!(recvd_opcode, ResponseOpcode::Ready);
             assert_eq!(recvd_body, Bytes::new());
@@ -1650,7 +1860,9 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
-            } = read_response_frame(&mut conn).await.unwrap();
+            } = read_response_frame(&mut conn, &no_compression())
+                .await
+                .unwrap();
             assert_eq!(recvd_params, params2.for_response());
             assert_eq!(recvd_opcode, ResponseOpcode::Event);
             assert_eq!(recvd_body, Bytes::from_static(test_msg));
@@ -1664,7 +1876,9 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
-            } = read_request_frame(&mut conn).await.unwrap();
+            } = read_request_frame(&mut conn, &no_compression())
+                .await
+                .unwrap();
             assert_eq!(recvd_params, params3);
             assert_eq!(FrameOpcode::Request(recvd_opcode), opcode3);
             assert_eq!(recvd_body, body3);
@@ -1721,10 +1935,10 @@ mod tests {
             params: FrameParams,
             opcode: FrameOpcode,
             body: &Bytes,
-        ) -> Result<RequestFrame, FrameHeaderParseError> {
+        ) -> Result<RequestFrame, ReadFrameError> {
             let (send_res, recv_res) = join(
-                write_frame(params, opcode, &body.clone(), driver),
-                read_request_frame(node),
+                write_frame(params, opcode, &body.clone(), driver, &no_compression()),
+                read_request_frame(node, &no_compression()),
             )
             .await;
             send_res.unwrap();
@@ -1836,10 +2050,10 @@ mod tests {
             params: FrameParams,
             opcode: FrameOpcode,
             body: &Bytes,
-        ) -> Result<RequestFrame, FrameHeaderParseError> {
+        ) -> Result<RequestFrame, ReadFrameError> {
             let (send_res, recv_res) = join(
-                write_frame(params, opcode, &body.clone(), driver),
-                read_request_frame(node),
+                write_frame(params, opcode, &body.clone(), driver, &no_compression()),
+                read_request_frame(node, &no_compression()),
             )
             .await;
             send_res.unwrap();
@@ -1915,7 +2129,7 @@ mod tests {
 
         let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
-            write_frame(params, request_opcode, &body, &mut conn)
+            write_frame(params, request_opcode, &body, &mut conn, &no_compression())
                 .await
                 .unwrap();
             conn
@@ -1923,9 +2137,15 @@ mod tests {
 
         let mock_node_action = async {
             let (mut conn, _) = mock_node_listener.accept().await.unwrap();
-            write_frame(params.for_response(), response_opcode, &body, &mut conn)
-                .await
-                .unwrap();
+            write_frame(
+                params.for_response(),
+                response_opcode,
+                &body,
+                &mut conn,
+                &no_compression(),
+            )
+            .await
+            .unwrap();
             conn
         };
 
@@ -2008,7 +2228,7 @@ mod tests {
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
 
-        let delay = Duration::from_millis(30);
+        let delay = Duration::from_millis(60);
 
         let proxy = Proxy::new([Node::new(
             node1_real_addr,
@@ -2045,10 +2265,10 @@ mod tests {
         let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-            write_frame(params1, opcode1, &body1, &mut conn)
+            write_frame(params1, opcode1, &body1, &mut conn, &no_compression())
                 .await
                 .unwrap();
-            write_frame(params2, opcode2, &body2, &mut conn)
+            write_frame(params2, opcode2, &body2, &mut conn, &no_compression())
                 .await
                 .unwrap();
             conn
@@ -2060,7 +2280,9 @@ mod tests {
                 params: recvd_params,
                 opcode: recvd_opcode,
                 body: recvd_body,
-            } = read_request_frame(&mut conn).await.unwrap();
+            } = read_request_frame(&mut conn, &no_compression())
+                .await
+                .unwrap();
             assert_eq!(recvd_params, params2);
             assert_eq!(FrameOpcode::Request(recvd_opcode), opcode2);
             assert_eq!(recvd_body, body2);
@@ -2094,7 +2316,9 @@ mod tests {
 
         let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-        write_frame(params, opcode, &body, &mut conn).await.unwrap();
+        write_frame(params, opcode, &body, &mut conn, &no_compression())
+            .await
+            .unwrap();
         // We assert that after sufficiently long time, no error happens inside proxy.
         tokio::time::sleep(Duration::from_millis(3)).await;
         running_proxy.finish().await.unwrap();
@@ -2141,7 +2365,7 @@ mod tests {
         let running_proxy = proxy.run().await.unwrap();
 
         let params1 = FrameParams {
-            flags: 3,
+            flags: 2,
             version: 0x42,
             stream: 42,
         };
@@ -2172,13 +2396,13 @@ mod tests {
 
         let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
-        write_frame(params1, opcode1, &body1, &mut conn)
+        write_frame(params1, opcode1, &body1, &mut conn, &no_compression())
             .await
             .unwrap();
-        write_frame(params2, opcode2, &body2, &mut conn)
+        write_frame(params2, opcode2, &body2, &mut conn, &no_compression())
             .await
             .unwrap();
-        write_frame(params3, opcode3, &body3, &mut conn)
+        write_frame(params3, opcode3, &body3, &mut conn, &no_compression())
             .await
             .unwrap();
 
@@ -2186,7 +2410,9 @@ mod tests {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
-        } = read_response_frame(&mut conn).await.unwrap();
+        } = read_response_frame(&mut conn, &no_compression())
+            .await
+            .unwrap();
         assert_eq!(recvd_params, params1.for_response());
         assert_eq!(recvd_opcode, ResponseOpcode::Ready);
         assert_eq!(recvd_body, Bytes::new());
@@ -2195,7 +2421,9 @@ mod tests {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
-        } = read_response_frame(&mut conn).await.unwrap();
+        } = read_response_frame(&mut conn, &no_compression())
+            .await
+            .unwrap();
         assert_eq!(recvd_params, params2.for_response());
         assert_eq!(recvd_opcode, ResponseOpcode::Event);
         assert_eq!(recvd_body, Bytes::from_static(test_msg));
@@ -2281,9 +2509,15 @@ mod tests {
                 let socket = bind_socket_for_shard(shards_count, driver_shard).await;
                 let mut conn = socket.connect(node_proxy_addr).await.unwrap();
 
-                write_frame(params, request_opcode, body_ref, &mut conn)
-                    .await
-                    .unwrap();
+                write_frame(
+                    params,
+                    request_opcode,
+                    body_ref,
+                    &mut conn,
+                    &no_compression(),
+                )
+                .await
+                .unwrap();
                 conn
             };
 
@@ -2295,10 +2529,21 @@ mod tests {
                 let mut conns_futs = (0..2)
                     .map(|_| async {
                         let (mut conn, driver_addr) = mock_node_listener.accept().await.unwrap();
-                        respond_with_shard_num(&mut conn, driver_addr.port() % shards_count).await;
-                        write_frame(params.for_response(), response_opcode, body_ref, &mut conn)
-                            .await
-                            .unwrap();
+                        respond_with_shard_num(
+                            &mut conn,
+                            driver_addr.port() % shards_count,
+                            &no_compression(),
+                        )
+                        .await;
+                        write_frame(
+                            params.for_response(),
+                            response_opcode,
+                            body_ref,
+                            &mut conn,
+                            &no_compression(),
+                        )
+                        .await
+                        .unwrap();
                         conn
                     })
                     .collect::<Vec<_>>();
@@ -2404,29 +2649,33 @@ mod tests {
             write_frame(
                 params,
                 FrameOpcode::Request(req_opcode),
-                &(body_base.to_string() + "|request|").into(),
+                (body_base.to_string() + "|request|").as_bytes(),
                 client_socket_ref,
+                &no_compression(),
             )
             .await
             .unwrap();
 
-            let received_request = read_frame(server_socket_ref, FrameType::Request)
-                .await
-                .unwrap();
+            let received_request =
+                read_frame(server_socket_ref, FrameType::Request, &no_compression())
+                    .await
+                    .unwrap();
             assert_eq!(received_request.1, FrameOpcode::Request(req_opcode));
 
             write_frame(
                 params.for_response(),
                 FrameOpcode::Response(resp_opcode),
-                &(body_base.to_string() + "|response|").into(),
+                (body_base.to_string() + "|response|").as_bytes(),
                 server_socket_ref,
+                &no_compression(),
             )
             .await
             .unwrap();
 
-            let received_response = read_frame(client_socket_ref, FrameType::Response)
-                .await
-                .unwrap();
+            let received_response =
+                read_frame(client_socket_ref, FrameType::Response, &no_compression())
+                    .await
+                    .unwrap();
             assert_eq!(received_response.1, FrameOpcode::Response(resp_opcode));
         }
 
@@ -2475,5 +2724,201 @@ mod tests {
         // Response to REGISTER and further requests / responses should be ignored
         let _ = request_feedback_rx.try_recv().unwrap_err();
         let _ = response_feedback_rx.try_recv().unwrap_err();
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn proxy_compresses_and_decompresses_frames_iff_compression_negotiated() {
+        setup_tracing();
+        let node1_real_addr = next_local_address_with_port(9876);
+        let node1_proxy_addr = next_local_address_with_port(9876);
+
+        let (request_feedback_tx, mut request_feedback_rx) = mpsc::unbounded_channel();
+        let (response_feedback_tx, mut response_feedback_rx) = mpsc::unbounded_channel();
+        let proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .real_address(node1_real_addr)
+                    .proxy_address(node1_proxy_addr)
+                    .shard_awareness(ShardAwareness::Unaware)
+                    .request_rules(vec![RequestRule(
+                        Condition::True,
+                        RequestReaction::noop().with_feedback_when_performed(request_feedback_tx),
+                    )])
+                    .response_rules(vec![ResponseRule(
+                        Condition::True,
+                        ResponseReaction::noop().with_feedback_when_performed(response_feedback_tx),
+                    )])
+                    .build(),
+            )
+            .build();
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+        const PARAMS_REQUEST_NO_COMPRESSION: FrameParams = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        const PARAMS_REQUEST_COMPRESSION: FrameParams = FrameParams {
+            flags: flag::COMPRESSION,
+            ..PARAMS_REQUEST_NO_COMPRESSION
+        };
+        const PARAMS_RESPONSE_NO_COMPRESSION: FrameParams =
+            PARAMS_REQUEST_NO_COMPRESSION.for_response();
+        const PARAMS_RESPONSE_COMPRESSION: FrameParams =
+            PARAMS_REQUEST_NO_COMPRESSION.for_response();
+
+        let make_driver_conn = async { TcpStream::connect(node1_proxy_addr).await.unwrap() };
+        let make_node_conn = async { mock_node_listener.accept().await.unwrap() };
+
+        let (mut driver_conn, (mut node_conn, _)) = join(make_driver_conn, make_node_conn).await;
+
+        /* Outline of the test:
+         * 1. "driver" sends an uncompressed, e.g., QUERY frame, feedback returns its uncompressed body,
+         *    and "node" receives the uncompressed frame.
+         * 2. "node" responds with an uncompressed RESULT frame, feedback returns its uncompressed body,
+         *    and "driver" receives the uncompressed frame.
+         * 3. "driver" sends an uncompressed STARTUP frame, feedback returns its uncompressed body,
+         *    and "node" receives the uncompressed frame. This step also triggers `CompressionWriter::set()`
+         *    in the proxy, so the associated `CompressionReader`s are notified about it (and can use
+         *    the negotiated compression algorithm to (de)compress the frames sent in steps 4. and 5.).
+         * 4. "driver" sends a compressed, e.g., QUERY frame, feedback returns its uncompressed body,
+         *    and "node" receives the compressed frame.
+         * 5. "node" responds with a compressed RESULT frame, feedback returns its uncompressed body,
+         *    and "driver" receives the compressed frame.
+         */
+
+        // 1. "driver" sends an uncompressed, e.g., QUERY frame, feedback returns its uncompressed body,
+        //    and "node" receives the uncompressed frame.
+        {
+            let sent_frame = RequestFrame {
+                params: PARAMS_REQUEST_NO_COMPRESSION,
+                opcode: RequestOpcode::Query,
+                body: random_body(),
+            };
+
+            sent_frame
+                .write(&mut driver_conn, &no_compression())
+                .await
+                .unwrap();
+
+            let (captured_frame, _) = request_feedback_rx.recv().await.unwrap();
+            assert_eq!(captured_frame, sent_frame);
+
+            let received_frame = read_request_frame(&mut node_conn, &no_compression())
+                .await
+                .unwrap();
+            assert_eq!(received_frame, sent_frame);
+        }
+
+        // 2. "node" responds with an uncompressed RESULT frame, feedback returns its uncompressed body,
+        //    and "driver" receives the uncompressed frame.
+        {
+            let sent_frame = ResponseFrame {
+                params: PARAMS_RESPONSE_NO_COMPRESSION,
+                opcode: ResponseOpcode::Result,
+                body: random_body(),
+            };
+
+            sent_frame
+                .write(&mut node_conn, &no_compression())
+                .await
+                .unwrap();
+
+            let (captured_frame, _) = response_feedback_rx.recv().await.unwrap();
+            assert_eq!(captured_frame, sent_frame);
+
+            let received_frame = read_response_frame(&mut driver_conn, &no_compression())
+                .await
+                .unwrap();
+            assert_eq!(received_frame, sent_frame);
+        }
+
+        // 3. "driver" sends an uncompressed STARTUP frame, feedback returns its uncompressed body,
+        //    and "node" receives the uncompressed frame. This step also triggers `CompressionWriter::set()`
+        //    in the proxy, so the associated `CompressionReader`s are notified about it (and can use
+        //    the negotiated compression algorithm to (de)compress the frames sent in steps 4. and 5.).
+        {
+            let startup_body = Startup {
+                options: std::iter::once((
+                    options::COMPRESSION.into(),
+                    Compression::Lz4.as_str().into(),
+                ))
+                .collect(),
+            }
+            .to_bytes()
+            .unwrap();
+
+            let sent_frame = RequestFrame {
+                params: PARAMS_REQUEST_NO_COMPRESSION,
+                opcode: RequestOpcode::Startup,
+                body: startup_body,
+            };
+
+            sent_frame
+                .write(&mut driver_conn, &no_compression())
+                .await
+                .unwrap();
+
+            let (captured_frame, _) = request_feedback_rx.recv().await.unwrap();
+            assert_eq!(captured_frame, sent_frame);
+
+            let received_frame = read_request_frame(&mut node_conn, &no_compression())
+                .await
+                .unwrap();
+            assert_eq!(received_frame, sent_frame);
+        }
+
+        // 4. "driver" sends a compressed, e.g., QUERY frame, feedback returns its uncompressed body,
+        //    and "node" receives the compressed frame.
+        {
+            let sent_frame = RequestFrame {
+                params: PARAMS_REQUEST_COMPRESSION,
+                opcode: RequestOpcode::Query,
+                body: random_body(),
+            };
+
+            sent_frame
+                .write(&mut driver_conn, &with_compression(Compression::Lz4))
+                .await
+                .unwrap();
+
+            let (captured_frame, _) = request_feedback_rx.recv().await.unwrap();
+            assert_eq!(captured_frame, sent_frame);
+
+            let received_frame =
+                read_request_frame(&mut node_conn, &with_compression(Compression::Lz4))
+                    .await
+                    .unwrap();
+            assert_eq!(received_frame, sent_frame);
+        }
+
+        // 5. "node" responds with a compressed RESULT frame, feedback returns its uncompressed body,
+        //    and "driver" receives the compressed frame.
+        {
+            let sent_frame = ResponseFrame {
+                params: PARAMS_RESPONSE_COMPRESSION,
+                opcode: ResponseOpcode::Result,
+                body: random_body(),
+            };
+
+            sent_frame
+                .write(&mut node_conn, &with_compression(Compression::Lz4))
+                .await
+                .unwrap();
+
+            let (captured_frame, _) = response_feedback_rx.recv().await.unwrap();
+            assert_eq!(captured_frame, sent_frame);
+
+            let received_frame =
+                read_response_frame(&mut driver_conn, &with_compression(Compression::Lz4))
+                    .await
+                    .unwrap();
+            assert_eq!(received_frame, sent_frame);
+        }
+
+        running_proxy.finish().await.unwrap();
     }
 }
