@@ -1279,6 +1279,12 @@ impl Session {
     /// Returns:
     /// - `Ok(PreparedStatement)`, if preparation succeeded on at least one connection;
     /// - `Err(PrepareError)`, if no connection is working or preparation failed on all attempted connections.
+    // TODO: There are no timeouts here. So, just one stuck node freezes the driver here, potentially indefinitely long.
+    // Also, what the driver requires to get from the cluster is the prepared statement metadata.
+    // It suffices that it gets only one copy of it, just from one success response. Therefore, it's a possible
+    // optimisation that the function only waits for one preparation to finish successfully, and then it returns.
+    // For it to be done, other preparations must continue in the background, on a separate tokio task.
+    // Describing issue: #1332.
     async fn prepare_on_all(
         statement: &Statement,
         cluster_state: &ClusterState,
