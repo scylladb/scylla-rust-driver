@@ -21,6 +21,7 @@ pub trait HostFilter: Send + Sync {
 pub struct AcceptAllHostFilter;
 
 impl HostFilter for AcceptAllHostFilter {
+    #[inline]
     fn accept(&self, _peer: &Peer) -> bool {
         true
     }
@@ -53,6 +54,7 @@ impl AllowListHostFilter {
 }
 
 impl HostFilter for AllowListHostFilter {
+    #[inline]
     fn accept(&self, peer: &Peer) -> bool {
         match peer.address {
             crate::cluster::NodeAddr::Translatable(addr) => self.allowed.contains(&addr),
@@ -72,12 +74,14 @@ pub struct DcHostFilter {
 impl DcHostFilter {
     /// Creates a new `DcHostFilter` that accepts nodes only from the
     /// `local_dc`.
+    #[inline]
     pub fn new(local_dc: String) -> Self {
         Self { local_dc }
     }
 }
 
 impl HostFilter for DcHostFilter {
+    #[inline]
     fn accept(&self, peer: &Peer) -> bool {
         peer.datacenter.as_ref() == Some(&self.local_dc)
     }

@@ -44,6 +44,7 @@ pub struct SelfIdentity<'id> {
 }
 
 impl<'id> SelfIdentity<'id> {
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
@@ -51,27 +52,32 @@ impl<'id> SelfIdentity<'id> {
     /// Advertises a custom driver name, which can be used if a custom driver build is running,
     /// or an entirely different driver is operating on top of Rust driver
     /// (e.g. cpp-rust-driver).
+    #[inline]
     pub fn set_custom_driver_name(&mut self, custom_driver_name: impl Into<Cow<'id, str>>) {
         self.custom_driver_name = Some(custom_driver_name.into());
     }
 
     /// Advertises a custom driver name. See [Self::set_custom_driver_name] for use cases.
+    #[inline]
     pub fn with_custom_driver_name(mut self, custom_driver_name: impl Into<Cow<'id, str>>) -> Self {
         self.custom_driver_name = Some(custom_driver_name.into());
         self
     }
 
     /// Custom driver name to be advertised. See [Self::set_custom_driver_name] for use cases.
+    #[inline]
     pub fn get_custom_driver_name(&self) -> Option<&str> {
         self.custom_driver_name.as_deref()
     }
 
     /// Advertises a custom driver version. See [Self::set_custom_driver_name] for use cases.
+    #[inline]
     pub fn set_custom_driver_version(&mut self, custom_driver_version: impl Into<Cow<'id, str>>) {
         self.custom_driver_version = Some(custom_driver_version.into());
     }
 
     /// Advertises a custom driver version. See [Self::set_custom_driver_name] for use cases.
+    #[inline]
     pub fn with_custom_driver_version(
         mut self,
         custom_driver_version: impl Into<Cow<'id, str>>,
@@ -81,33 +87,39 @@ impl<'id> SelfIdentity<'id> {
     }
 
     /// Custom driver version to be advertised. See [Self::set_custom_driver_version] for use cases.
+    #[inline]
     pub fn get_custom_driver_version(&self) -> Option<&str> {
         self.custom_driver_version.as_deref()
     }
 
     /// Advertises an application name, which can be used to distinguish different applications
     /// connected to the same cluster.
+    #[inline]
     pub fn set_application_name(&mut self, application_name: impl Into<Cow<'id, str>>) {
         self.application_name = Some(application_name.into());
     }
 
     /// Advertises an application name. See [Self::set_application_name] for use cases.
+    #[inline]
     pub fn with_application_name(mut self, application_name: impl Into<Cow<'id, str>>) -> Self {
         self.application_name = Some(application_name.into());
         self
     }
 
     /// Application name to be advertised. See [Self::set_application_name] for use cases.
+    #[inline]
     pub fn get_application_name(&self) -> Option<&str> {
         self.application_name.as_deref()
     }
 
     /// Advertises an application version. See [Self::set_application_name] for use cases.
+    #[inline]
     pub fn set_application_version(&mut self, application_version: impl Into<Cow<'id, str>>) {
         self.application_version = Some(application_version.into());
     }
 
     /// Advertises an application version. See [Self::set_application_name] for use cases.
+    #[inline]
     pub fn with_application_version(
         mut self,
         application_version: impl Into<Cow<'id, str>>,
@@ -117,23 +129,27 @@ impl<'id> SelfIdentity<'id> {
     }
 
     /// Application version to be advertised. See [Self::set_application_version] for use cases.
+    #[inline]
     pub fn get_application_version(&self) -> Option<&str> {
         self.application_version.as_deref()
     }
 
     /// Advertises a client ID, which can be set to distinguish different instances
     /// of the same application connected to the same cluster.
+    #[inline]
     pub fn set_client_id(&mut self, client_id: impl Into<Cow<'id, str>>) {
         self.client_id = Some(client_id.into());
     }
 
     /// Advertises a client ID. See [Self::set_client_id] for use cases.
+    #[inline]
     pub fn with_client_id(mut self, client_id: impl Into<Cow<'id, str>>) -> Self {
         self.client_id = Some(client_id.into());
         self
     }
 
     /// Client ID to be advertised. See [Self::set_client_id] for use cases.
+    #[inline]
     pub fn get_client_id(&self) -> Option<&str> {
         self.client_id.as_deref()
     }

@@ -53,15 +53,18 @@ impl NodeAddr {
             NodeAddr::Translatable(addr) | NodeAddr::Untranslatable(addr) => addr,
         }
     }
+    #[inline]
     pub fn ip(&self) -> IpAddr {
         self.into_inner().ip()
     }
+    #[inline]
     pub fn port(&self) -> u16 {
         self.into_inner().port()
     }
 }
 
 impl Display for NodeAddr {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.into_inner())
     }
@@ -148,6 +151,7 @@ impl Node {
         }
     }
 
+    #[inline]
     pub fn sharder(&self) -> Option<Sharder> {
         self.pool.as_ref()?.sharder()
     }
@@ -173,6 +177,7 @@ impl Node {
 
     /// Returns true if the driver has any open connections in the pool for this
     /// node.
+    #[inline]
     pub fn is_connected(&self) -> bool {
         let Ok(pool) = self.get_pool() else {
             return false;
@@ -183,6 +188,7 @@ impl Node {
     /// Returns a boolean which indicates whether this node was is enabled.
     /// Only enabled nodes will have connections open. For disabled nodes,
     /// no connections will be opened.
+    #[inline]
     pub fn is_enabled(&self) -> bool {
         self.pool.is_some()
     }

@@ -24,6 +24,7 @@ impl<ElemT> TokenRing<ElemT> {
     }
 
     /// Iterates over all members of the ring starting at the lowest token.
+    #[inline]
     pub fn iter(&self) -> impl Iterator<Item = &(Token, ElemT)> {
         self.ring.iter()
     }
@@ -49,21 +50,25 @@ impl<ElemT> TokenRing<ElemT> {
     /// After reaching the maximum token it wraps around and continues from the lowest one.
     /// The iterator visits each member once, it doesn't have an infinite length.
     /// To access the token along with the element you can use `ring_range_full`.
+    #[inline]
     pub fn ring_range(&self, token: Token) -> impl Iterator<Item = &ElemT> {
         self.ring_range_full(token).map(|(_t, e)| e)
     }
 
     /// Traverses the ring starting at the given token and returns the first ring member encountered.
+    #[inline]
     pub fn get_elem_for_token(&self, token: Token) -> Option<&ElemT> {
         self.ring_range(token).next()
     }
 
     /// Get the total number of members in the ring.
+    #[inline]
     pub fn len(&self) -> usize {
         self.ring.len()
     }
 
     /// Returns `true` if the token ring contains no elements.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.ring.is_empty()
     }

@@ -24,6 +24,7 @@ impl fmt::Display for EventType {
 impl FromStr for EventType {
     type Err = CqlEventParseError;
 
+    #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "TOPOLOGY_CHANGE" => Ok(Self::TopologyChange),

@@ -147,10 +147,17 @@ impl PreparedStatement {
         }
     }
 
+    /// Returns the prepared ID of the statement.
+    ///
+    /// In the current implementation of the CQL protocol (CQLv4), this is a hash
+    /// of the statement string. This may change in newer versions of the protocol.
+    #[inline]
     pub fn get_id(&self) -> &Bytes {
         &self.id
     }
 
+    /// Returns the CQL statement string, i.e., the one that was prepared.
+    #[inline]
     pub fn get_statement(&self) -> &str {
         &self.shared.statement
     }
@@ -158,6 +165,7 @@ impl PreparedStatement {
     /// Sets the page size for this CQL query.
     ///
     /// Panics if given number is nonpositive.
+    #[inline]
     pub fn set_page_size(&mut self, page_size: i32) {
         self.page_size = page_size
             .try_into()
@@ -170,11 +178,13 @@ impl PreparedStatement {
     }
 
     /// Returns the page size for this CQL query.
+    #[inline]
     pub fn get_page_size(&self) -> i32 {
         self.page_size.inner()
     }
 
     /// Gets tracing ids of queries used to prepare this statement
+    #[inline]
     pub fn get_prepare_tracing_ids(&self) -> &[Uuid] {
         &self.prepare_tracing_ids
     }
@@ -182,6 +192,7 @@ impl PreparedStatement {
     /// Returns true if the prepared statement has necessary information
     /// to be routed in a token-aware manner. If false, the query
     /// will always be sent to a random node/shard.
+    #[inline]
     pub fn is_token_aware(&self) -> bool {
         !self.get_prepared_metadata().pk_indexes.is_empty()
     }
@@ -193,6 +204,7 @@ impl PreparedStatement {
     /// then C, etc.). If false, the query should be routed normally.
     /// Note: this a Scylla-specific optimisation. Therefore, the result
     /// will be always false for Cassandra.
+    #[inline]
     pub fn is_confirmed_lwt(&self) -> bool {
         self.is_confirmed_lwt
     }
@@ -252,6 +264,7 @@ impl PreparedStatement {
     // As this function creates a `PartitionKey`, it is intended rather for external usage (by users).
     // For internal purposes, `PartitionKey::calculate_token()` is preferred, as `PartitionKey`
     // is either way used internally, among others for display in traces.
+    #[inline]
     pub fn calculate_token(
         &self,
         values: &impl SerializeRow,
@@ -270,6 +283,7 @@ impl PreparedStatement {
     }
 
     /// Return keyspace name and table name this statement is operating on.
+    #[inline]
     pub fn get_table_spec(&self) -> Option<&TableSpec> {
         self.get_prepared_metadata()
             .col_specs
@@ -278,6 +292,7 @@ impl PreparedStatement {
     }
 
     /// Returns the name of the keyspace this statement is operating on.
+    #[inline]
     pub fn get_keyspace_name(&self) -> Option<&str> {
         self.get_prepared_metadata()
             .col_specs
@@ -286,6 +301,7 @@ impl PreparedStatement {
     }
 
     /// Returns the name of the table this statement is operating on.
+    #[inline]
     pub fn get_table_name(&self) -> Option<&str> {
         self.get_prepared_metadata()
             .col_specs
@@ -294,24 +310,28 @@ impl PreparedStatement {
     }
 
     /// Sets the consistency to be used when executing this statement.
+    #[inline]
     pub fn set_consistency(&mut self, c: Consistency) {
         self.config.consistency = Some(c);
     }
 
     /// Gets the consistency to be used when executing this prepared statement if it is filled.
     /// If this is empty, the default_consistency of the session will be used.
+    #[inline]
     pub fn get_consistency(&self) -> Option<Consistency> {
         self.config.consistency
     }
 
     /// Sets the serial consistency to be used when executing this statement.
     /// (Ignored unless the statement is an LWT)
+    #[inline]
     pub fn set_serial_consistency(&mut self, sc: Option<SerialConsistency>) {
         self.config.serial_consistency = Some(sc);
     }
 
     /// Gets the serial consistency to be used when executing this statement.
     /// (Ignored unless the statement is an LWT)
+    #[inline]
     pub fn get_serial_consistency(&self) -> Option<SerialConsistency> {
         self.config.serial_consistency.flatten()
     }
@@ -321,11 +341,13 @@ impl PreparedStatement {
     /// If set to `true` we can be sure that it is idempotent
     /// If set to `false` it is unknown whether it is idempotent
     /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
+    #[inline]
     pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
         self.config.is_idempotent = is_idempotent;
     }
 
     /// Gets the idempotence of this statement
+    #[inline]
     pub fn get_is_idempotent(&self) -> bool {
         self.config.is_idempotent
     }
@@ -333,11 +355,13 @@ impl PreparedStatement {
     /// Enable or disable CQL Tracing for this statement
     /// If enabled session.execute() will return a QueryResult containing tracing_id
     /// which can be used to query tracing information about the execution of this query
+    #[inline]
     pub fn set_tracing(&mut self, should_trace: bool) {
         self.config.tracing = should_trace;
     }
 
     /// Gets whether tracing is enabled for this statement
+    #[inline]
     pub fn get_tracing(&self) -> bool {
         self.config.tracing
     }
@@ -353,12 +377,14 @@ impl PreparedStatement {
     /// to deserialize the results of statement execution.
     ///
     /// This option is false by default.
+    #[inline]
     pub fn set_use_cached_result_metadata(&mut self, use_cached_metadata: bool) {
         self.config.skip_result_metadata = use_cached_metadata;
     }
 
     /// Gets the information whether the driver uses cached metadata
     /// to decode the results of the statement's execution.
+    #[inline]
     pub fn get_use_cached_result_metadata(&self) -> bool {
         self.config.skip_result_metadata
     }
@@ -367,11 +393,13 @@ impl PreparedStatement {
     /// If not None, it will replace the server side assigned timestamp as default timestamp
     /// If a statement contains a `USING TIMESTAMP` clause, calling this method won't change
     /// anything
+    #[inline]
     pub fn set_timestamp(&mut self, timestamp: Option<i64>) {
         self.config.timestamp = timestamp
     }
 
     /// Gets the default timestamp for this statement in microseconds.
+    #[inline]
     pub fn get_timestamp(&self) -> Option<i64> {
         self.config.timestamp
     }
@@ -380,11 +408,13 @@ impl PreparedStatement {
     /// If not None, the driver will stop waiting for the request
     /// to finish after `timeout` passed.
     /// Otherwise, default session client timeout will be applied.
+    #[inline]
     pub fn set_request_timeout(&mut self, timeout: Option<Duration>) {
         self.config.request_timeout = timeout
     }
 
     /// Gets client timeout associated with this query
+    #[inline]
     pub fn get_request_timeout(&self) -> Option<Duration> {
         self.config.request_timeout
     }
@@ -400,11 +430,13 @@ impl PreparedStatement {
     }
 
     /// Access column specifications of the bind variables of this statement
+    #[inline]
     pub fn get_variable_col_specs(&self) -> ColumnSpecs<'_, 'static> {
         ColumnSpecs::new(&self.shared.metadata.col_specs)
     }
 
     /// Access info about partition key indexes of the bind variables of this statement
+    #[inline]
     pub fn get_variable_pk_indexes(&self) -> &[PartitionKeyIndex] {
         &self.shared.metadata.pk_indexes
     }
@@ -415,11 +447,13 @@ impl PreparedStatement {
     }
 
     /// Access column specifications of the result set returned after the execution of this statement
+    #[inline]
     pub fn get_result_set_col_specs(&self) -> ColumnSpecs<'_, 'static> {
         ColumnSpecs::new(self.shared.result_metadata.col_specs())
     }
 
     /// Get the name of the partitioner used for this statement.
+    #[inline]
     pub fn get_partitioner_name(&self) -> &PartitionerName {
         &self.partitioner_name
     }
@@ -460,22 +494,26 @@ impl PreparedStatement {
     }
 
     /// Sets the listener capable of listening what happens during query execution.
+    #[inline]
     pub fn set_history_listener(&mut self, history_listener: Arc<dyn HistoryListener>) {
         self.config.history_listener = Some(history_listener);
     }
 
     /// Removes the listener set by `set_history_listener`.
+    #[inline]
     pub fn remove_history_listener(&mut self) -> Option<Arc<dyn HistoryListener>> {
         self.config.history_listener.take()
     }
 
     /// Associates the query with execution profile referred by the provided handle.
     /// Handle may be later remapped to another profile, and query will reflect those changes.
+    #[inline]
     pub fn set_execution_profile_handle(&mut self, profile_handle: Option<ExecutionProfileHandle>) {
         self.config.execution_profile_handle = profile_handle;
     }
 
     /// Borrows the execution profile handle associated with this query.
+    #[inline]
     pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
         self.config.execution_profile_handle.as_ref()
     }

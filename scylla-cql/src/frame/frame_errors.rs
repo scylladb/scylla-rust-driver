@@ -147,6 +147,7 @@ pub enum CqlResponseParseError {
 }
 
 impl CqlResponseParseError {
+    #[inline]
     pub fn to_response_kind(&self) -> CqlResponseKind {
         match self {
             CqlResponseParseError::CqlErrorParseError(_) => CqlResponseKind::Error,
@@ -486,6 +487,7 @@ pub enum LowLevelDeserializationError {
 }
 
 impl From<std::io::Error> for LowLevelDeserializationError {
+    #[inline]
     fn from(value: std::io::Error) -> Self {
         Self::IoError(Arc::new(value))
     }

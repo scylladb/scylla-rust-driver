@@ -75,6 +75,7 @@ pub enum RequestOpcode {
 impl TryFrom<u8> for RequestOpcode {
     type Error = TryFromPrimitiveError<u8>;
 
+    #[inline]
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0x01 => Ok(Self::Startup),
@@ -98,6 +99,7 @@ pub trait SerializableRequest {
 
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError>;
 
+    #[inline]
     fn to_bytes(&self) -> Result<Bytes, CqlRequestSerializationError> {
         let mut v = Vec::new();
         self.serialize(&mut v)?;
@@ -157,6 +159,7 @@ impl Request<'_> {
     }
 
     /// Retrieves consistency from request frame, if present.
+    #[inline]
     pub fn get_consistency(&self) -> Option<Consistency> {
         match self {
             Request::Query(q) => Some(q.parameters.consistency),
@@ -168,6 +171,7 @@ impl Request<'_> {
     }
 
     /// Retrieves serial consistency from request frame.
+    #[inline]
     pub fn get_serial_consistency(&self) -> Option<Option<SerialConsistency>> {
         match self {
             Request::Query(q) => Some(q.parameters.serial_consistency),

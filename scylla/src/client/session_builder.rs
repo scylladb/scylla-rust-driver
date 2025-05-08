@@ -81,6 +81,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Default configuration
     /// * Compression: None
     ///
+    #[inline]
     pub fn new() -> Self {
         SessionBuilder {
             config: SessionConfig::new(),
@@ -113,6 +114,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn known_node(mut self, hostname: impl AsRef<str>) -> Self {
         self.config.add_known_node(hostname);
         self
@@ -132,6 +134,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn known_node_addr(mut self, node_addr: SocketAddr) -> Self {
         self.config.add_known_node_addr(node_addr);
         self
@@ -150,6 +153,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn known_nodes(mut self, hostnames: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
         self.config.add_known_nodes(hostnames);
         self
@@ -172,6 +176,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn known_nodes_addr(
         mut self,
         node_addrs: impl IntoIterator<Item = impl Borrow<SocketAddr>>,
@@ -198,6 +203,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn user(mut self, username: impl Into<String>, passwd: impl Into<String>) -> Self {
         self.config.authenticator = Some(Arc::new(PlainTextAuthenticator::new(
             username.into(),
@@ -251,6 +257,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn authenticator_provider(
         mut self,
         authenticator_provider: Arc<dyn AuthenticatorProvider>,
@@ -316,6 +323,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// #    Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn address_translator(mut self, translator: Arc<dyn AddressTranslator>) -> Self {
         self.config.address_translator = Some(translator);
         self
@@ -350,6 +358,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn tls_context(mut self, tls_context: Option<impl Into<TlsContext>>) -> Self {
         self.config.tls_context = tls_context.map(|t| t.into());
         self
@@ -383,6 +392,7 @@ impl CloudSessionBuilder {
 
     /// Creates a new SessionBuilder with default configuration,
     /// based on provided path to Scylla Cloud Config yaml.
+    #[inline]
     pub fn new(
         cloud_config: impl AsRef<Path>,
         tls_provider: CloudTlsProvider,
@@ -415,6 +425,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn local_ip_address(mut self, local_ip_address: Option<impl Into<IpAddr>>) -> Self {
         self.config.local_ip_address = local_ip_address.map(Into::into);
         self
@@ -444,6 +455,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn shard_aware_local_port_range(mut self, port_range: ShardAwarePortRange) -> Self {
         self.config.shard_aware_local_port_range = port_range;
         self
@@ -467,6 +479,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn compression(mut self, compression: Option<Compression>) -> Self {
         self.config.compression = compression;
         self
@@ -489,6 +502,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn schema_agreement_interval(mut self, timeout: Duration) -> Self {
         self.config.schema_agreement_interval = timeout;
         self
@@ -516,6 +530,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn default_execution_profile_handle(
         mut self,
         profile_handle: ExecutionProfileHandle,
@@ -540,6 +555,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn tcp_nodelay(mut self, nodelay: bool) -> Self {
         self.config.tcp_nodelay = nodelay;
         self
@@ -564,6 +580,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn tcp_keepalive_interval(mut self, interval: Duration) -> Self {
         if interval <= Duration::from_secs(1) {
             warn!(
@@ -594,6 +611,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn use_keyspace(mut self, keyspace_name: impl Into<String>, case_sensitive: bool) -> Self {
         self.config.used_keyspace = Some(keyspace_name.into());
         self.config.keyspace_case_sensitive = case_sensitive;
@@ -616,6 +634,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub async fn build(&self) -> Result<Session, NewSessionError> {
         Session::connect(self.config.clone()).await
     }
@@ -638,6 +657,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn connection_timeout(mut self, duration: Duration) -> Self {
         self.config.connect_timeout = duration;
         self
@@ -664,6 +684,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn pool_size(mut self, size: PoolSize) -> Self {
         self.config.connection_pool_size = size;
         self
@@ -704,6 +725,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn disallow_shard_aware_port(mut self, disallow: bool) -> Self {
         self.config.disallow_shard_aware_port = disallow;
         self
@@ -726,6 +748,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn timestamp_generator(mut self, timestamp_generator: Arc<dyn TimestampGenerator>) -> Self {
         self.config.timestamp_generator = Some(timestamp_generator);
         self
@@ -747,6 +770,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn keyspaces_to_fetch(
         mut self,
         keyspaces: impl IntoIterator<Item = impl Into<String>>,
@@ -771,6 +795,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn fetch_schema_metadata(mut self, fetch: bool) -> Self {
         self.config.fetch_schema_metadata = fetch;
         self
@@ -796,6 +821,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn metadata_request_serverside_timeout(mut self, timeout: Duration) -> Self {
         self.config.metadata_request_serverside_timeout = Some(timeout);
         self
@@ -820,6 +846,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn keepalive_interval(mut self, interval: Duration) -> Self {
         if interval <= Duration::from_secs(1) {
             warn!(
@@ -851,6 +878,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn keepalive_timeout(mut self, timeout: Duration) -> Self {
         if timeout <= Duration::from_secs(1) {
             warn!(
@@ -879,6 +907,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn schema_agreement_timeout(mut self, timeout: Duration) -> Self {
         self.config.schema_agreement_timeout = timeout;
         self
@@ -900,6 +929,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn auto_await_schema_agreement(mut self, enabled: bool) -> Self {
         self.config.schema_agreement_automatic_waiting = enabled;
         self
@@ -934,6 +964,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn host_filter(mut self, filter: Arc<dyn HostFilter>) -> Self {
         self.config.host_filter = Some(filter);
         self
@@ -955,6 +986,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn refresh_metadata_on_auto_schema_agreement(mut self, refresh_metadata: bool) -> Self {
         self.config.refresh_metadata_on_auto_schema_agreement = refresh_metadata;
         self
@@ -985,6 +1017,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn tracing_info_fetch_attempts(mut self, attempts: NonZeroU32) -> Self {
         self.config.tracing_info_fetch_attempts = attempts;
         self
@@ -1015,6 +1048,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn tracing_info_fetch_interval(mut self, interval: Duration) -> Self {
         self.config.tracing_info_fetch_interval = interval;
         self
@@ -1038,6 +1072,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn tracing_info_fetch_consistency(mut self, consistency: Consistency) -> Self {
         self.config.tracing_info_fetch_consistency = consistency;
         self
@@ -1070,6 +1105,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn write_coalescing(mut self, enable: bool) -> Self {
         self.config.enable_write_coalescing = enable;
         self
@@ -1095,6 +1131,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn write_coalescing_delay(mut self, delay: WriteCoalescingDelay) -> Self {
         self.config.write_coalescing_delay = delay;
         self
@@ -1120,6 +1157,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// #   Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn cluster_metadata_refresh_interval(mut self, interval: Duration) -> Self {
         self.config.cluster_metadata_refresh_interval = interval;
         self
@@ -1153,6 +1191,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// #   Ok(())
     /// # }
     /// ```
+    #[inline]
     pub fn custom_identity(mut self, identity: SelfIdentity<'static>) -> Self {
         self.config.identity = identity;
         self
@@ -1161,6 +1200,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
 
 /// Creates a [`SessionBuilder`] with default configuration, same as [`SessionBuilder::new`]
 impl Default for SessionBuilder {
+    #[inline]
     fn default() -> Self {
         SessionBuilder::new()
     }

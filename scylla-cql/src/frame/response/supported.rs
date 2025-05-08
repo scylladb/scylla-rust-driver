@@ -8,6 +8,7 @@ pub struct Supported {
 }
 
 impl Supported {
+    #[inline]
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlSupportedParseError> {
         let options = types::read_string_multimap(buf)
             .map_err(CqlSupportedParseError::OptionsMapDeserialization)?;
