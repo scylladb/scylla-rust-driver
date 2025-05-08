@@ -8,6 +8,7 @@
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
+use std::sync::Arc;
 
 // Insert some text into the table as a &str
 let to_insert_str: &str = "abcdef";
