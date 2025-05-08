@@ -42,6 +42,7 @@ pub struct ClusterState {
     /// for a given (token, replication strategy, table) tuple.
     /// It relies on both topology and schema metadata.
     pub(crate) locator: ReplicaLocator,
+    pub(crate) cluster_version: Option<String>,
 }
 
 /// Enables printing [ClusterState] struct in a neat way, skipping the clutter involved by
@@ -102,21 +103,28 @@ impl ClusterState {
 
             let node: Arc<Node> = match known_peers.get(&peer_host_id) {
                 Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
-                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
+                    let (peer_endpoint, tokens, server_version) =
+                        peer.into_peer_endpoint_tokens_and_server_version();
                     peer_tokens = tokens;
                     if node.address == peer_address {
                         node.clone()
                     } else {
                         // If IP changes, the Node struct is recreated, but the underlying pool is preserved and notified about the IP change.
-                        Arc::new(Node::inherit_with_ip_changed(node, peer_endpoint))
+                        Arc::new(Node::inherit_with_ip_changed(
+                            node,
+                            peer_endpoint,
+                            server_version,
+                        ))
                     }
                 }
                 _ => {
                     let is_enabled = host_filter.map_or(true, |f| f.accept(&peer));
-                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
+                    let (peer_endpoint, tokens, server_version) =
+                        peer.into_peer_endpoint_tokens_and_server_version();
                     peer_tokens = tokens;
                     Arc::new(Node::new(
                         peer_endpoint,
+                        server_version,
                         pool_config,
                         used_keyspace.clone(),
                         is_enabled,
@@ -213,6 +221,7 @@ impl ClusterState {
             known_peers: new_known_peers,
             keyspaces,
             locator,
+            cluster_version: metadata.cluster_version,
         }
     }
 
@@ -229,6 +238,16 @@ impl ClusterState {
     /// Access details about nodes known to the driver
     pub fn get_nodes_info(&self) -> &[Arc<Node>] {
         &self.all_nodes
+    }
+
+    /// Returns the cluster version.
+    ///
+    /// Cluster version is the server application version used by
+    /// the current control connection node (if such information is provided by the server).
+    ///
+    /// To check version of each node, we suggest using [`ClusterState::get_nodes_info()`].
+    pub fn cluster_version(&self) -> Option<&str> {
+        self.cluster_version.as_deref()
     }
 
     /// Compute token of a table partition key

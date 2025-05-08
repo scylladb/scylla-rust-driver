@@ -75,6 +75,7 @@ impl Display for NodeAddr {
 #[derive(Debug)]
 pub struct Node {
     pub host_id: Uuid,
+    pub server_version: Option<String>,
     pub address: NodeAddr,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
@@ -92,6 +93,7 @@ impl Node {
     /// Creates a new node which starts connecting in the background.
     pub(crate) fn new(
         peer: PeerEndpoint,
+        server_version: Option<String>,
         pool_config: &PoolConfig,
         keyspace_name: Option<VerifiedKeyspaceName>,
         enabled: bool,
@@ -117,6 +119,7 @@ impl Node {
 
         Node {
             host_id,
+            server_version,
             address,
             datacenter,
             rack,
@@ -133,13 +136,18 @@ impl Node {
     ///
     /// - `node` - previous definition of that node
     /// - `address` - new address to connect to
-    pub(crate) fn inherit_with_ip_changed(node: &Node, endpoint: PeerEndpoint) -> Self {
+    pub(crate) fn inherit_with_ip_changed(
+        node: &Node,
+        endpoint: PeerEndpoint,
+        server_version: Option<String>,
+    ) -> Self {
         let address = endpoint.address;
         if let Some(ref pool) = node.pool {
             pool.update_endpoint(endpoint);
         }
         Self {
             address,
+            server_version,
             down_marker: false.into(),
             datacenter: node.datacenter.clone(),
             rack: node.rack.clone(),
@@ -371,6 +379,7 @@ mod tests {
         ) -> Self {
             Self {
                 host_id: id.unwrap_or(Uuid::new_v4()),
+                server_version: None,
                 address: address.unwrap_or(NodeAddr::Translatable(SocketAddr::from((
                     [255, 255, 255, 255],
                     0,
