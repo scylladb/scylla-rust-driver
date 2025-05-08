@@ -145,7 +145,7 @@ impl<'a> RawValue<'a> {
     }
 }
 
-fn read_raw_bytes<'a>(
+pub(crate) fn read_raw_bytes<'a>(
     count: usize,
     buf: &mut &'a [u8],
 ) -> Result<&'a [u8], LowLevelDeserializationError> {
@@ -632,7 +632,7 @@ fn zig_zag_decode(v: u64) -> i64 {
     ((v >> 1) as i64) ^ -((v & 1) as i64)
 }
 
-fn unsigned_vint_encode(v: u64, buf: &mut Vec<u8>) {
+pub(crate) fn unsigned_vint_encode(v: u64, buf: &mut Vec<u8>) {
     let mut v = v;
     let mut number_of_bytes = (639 - 9 * v.leading_zeros()) >> 6;
     if number_of_bytes <= 1 {
@@ -650,7 +650,7 @@ fn unsigned_vint_encode(v: u64, buf: &mut Vec<u8>) {
     buf.put_uint(v, number_of_bytes as usize)
 }
 
-fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Error> {
+pub(crate) fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Error> {
     let first_byte = buf.read_u8()?;
     let extra_bytes = first_byte.leading_ones() as usize;
 

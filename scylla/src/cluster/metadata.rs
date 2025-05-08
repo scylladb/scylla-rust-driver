@@ -29,8 +29,8 @@ use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::unprepared::Statement;
-use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 use crate::DeserializeRow;
+use scylla_cql::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};

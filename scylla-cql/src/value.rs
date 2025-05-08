@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::deserialize::value::DeserializeValue;
 use crate::deserialize::value::{
-    mk_deser_err, BuiltinDeserializationErrorKind, MapIterator, UdtIterator,
+    mk_deser_err, BuiltinDeserializationErrorKind, MapIterator, UdtIterator, VectorIterator,
 };
 use crate::deserialize::DeserializationError;
 use crate::deserialize::FrameSlice;
@@ -857,6 +857,7 @@ pub enum CqlValue {
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
     Varint(CqlVarint),
+    Vector(Vec<CqlValue>),
 }
 
 impl CqlValue {
@@ -1176,7 +1177,7 @@ impl std::fmt::Display for CqlValue {
                     .fmt(f)?;
                 f.write_str(")")?;
             }
-            CqlValue::List(v) => {
+            CqlValue::List(v) | CqlValue::Vector(v) => {
                 f.write_str("[")?;
                 v.iter().format(",").fmt(f)?;
                 f.write_str("]")?;
@@ -1337,10 +1338,9 @@ pub fn deser_cql_value(
             CqlValue::Set(s)
         }
         Vector { .. } => {
-            return Err(mk_deser_err::<CqlValue>(
-                typ,
-                BuiltinDeserializationErrorKind::Unsupported,
-            ))
+            let iter = VectorIterator::deserialize(typ, v)?;
+            let v: Vec<CqlValue> = iter.collect::<StdResult<_, _>>()?;
+            CqlValue::Vector(v)
         }
         UserDefinedType {
             definition: udt, ..
