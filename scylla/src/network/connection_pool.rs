@@ -186,6 +186,7 @@ impl std::fmt::Debug for NodeConnectionPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NodeConnectionPool")
             .field("conns", &self.conns)
+            .field("endpoint", &self.endpoint)
             .finish_non_exhaustive()
     }
 }
