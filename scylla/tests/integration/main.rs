@@ -1,9 +1,6 @@
 mod authenticate;
 mod batch;
 mod consistency;
-mod cql_collections;
-mod cql_types;
-mod cql_value;
 mod execution_profiles;
 mod history;
 mod hygiene;
@@ -21,4 +18,5 @@ mod silent_prepare_query;
 mod skip_metadata_optimization;
 mod statement;
 mod tablets;
+mod types;
 pub(crate) mod utils;
