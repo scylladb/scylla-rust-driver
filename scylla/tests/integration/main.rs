@@ -2,7 +2,7 @@ mod authenticate;
 mod history;
 mod hygiene;
 mod load_balancing;
-mod metadata_custom_timeouts;
+mod metadata;
 mod new_session;
 mod retries;
 mod self_identity;
