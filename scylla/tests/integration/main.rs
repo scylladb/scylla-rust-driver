@@ -1,7 +1,7 @@
 mod authenticate;
 mod history;
-mod hygiene;
 mod load_balancing;
+mod macros;
 mod metadata;
 mod new_session;
 mod retries;
