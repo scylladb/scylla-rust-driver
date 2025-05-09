@@ -253,6 +253,12 @@ pub const DEFAULT_MAX_CAPACITY: usize = 128;
 
 /// [CachingSessionBuilder] is used to create new [CachingSession] instances.
 ///
+/// **NOTE:** The builder specifies a default capacity of the prepared statement cache
+/// that may be too low for use cases running lots of different prepared statements.
+/// If you expect to run a large number of different prepared statements (more than
+/// [DEFAULT_MAX_CAPACITY]), consider increasing the capacity with
+/// [CachingSessionBuilder::max_capacity].
+///
 /// # Example
 ///
 /// ```
