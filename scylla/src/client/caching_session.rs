@@ -247,9 +247,131 @@ where
     }
 }
 
+/// The default cache capacity set on the [CachingSessionBuilder].
+/// Can be changed using [CachingSessionBuilder::max_capacity].
+pub const DEFAULT_MAX_CAPACITY: usize = 128;
+
+/// [CachingSessionBuilder] is used to create new [CachingSession] instances.
+///
+/// # Example
+///
+/// ```
+/// # use scylla::client::session::Session;
+/// # use scylla::client::session_builder::SessionBuilder;
+/// # use scylla::client::caching_session::{CachingSession, CachingSessionBuilder};
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let session: Session = SessionBuilder::new()
+///     .known_node("127.0.0.1:9042")
+///     .build()
+///     .await?;
+/// let caching_session: CachingSession = CachingSessionBuilder::new(session)
+///     .max_capacity(2137)
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
+pub struct CachingSessionBuilder<S = RandomState>
+where
+    S: Clone + BuildHasher,
+{
+    session: Session,
+    max_capacity: usize,
+    hasher: S,
+}
+
+impl CachingSessionBuilder<RandomState> {
+    /// Wraps a [Session] and creates a new [CachingSessionBuilder] instance,
+    /// which can be used to create a new [CachingSession].
+    ///
+    pub fn new(session: Session) -> Self {
+        Self {
+            session,
+            max_capacity: DEFAULT_MAX_CAPACITY,
+            hasher: RandomState::default(),
+        }
+    }
+}
+
+impl<S> CachingSessionBuilder<S>
+where
+    S: Clone + BuildHasher,
+{
+    /// Configures maximum capacity of the prepared statements cache.
+    pub fn max_capacity(mut self, max_capacity: usize) -> Self {
+        self.max_capacity = max_capacity;
+        self
+    }
+
+    /// Finishes configuration of [CachingSession].
+    pub fn build(self) -> CachingSession<S> {
+        CachingSession::with_hasher(self.session, self.max_capacity, self.hasher)
+    }
+}
+
+impl<S> CachingSessionBuilder<S>
+where
+    S: Clone + BuildHasher,
+{
+    /// Provides a custom hasher for the prepared statement cache.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::client::caching_session::{CachingSession, CachingSessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// #[derive(Default, Clone)]
+    /// struct CustomBuildHasher;
+    /// impl std::hash::BuildHasher for CustomBuildHasher {
+    ///     // Custom hasher implementation goes here
+    /// #    type Hasher = CustomHasher;
+    /// #    fn build_hasher(&self) -> Self::Hasher {
+    /// #        CustomHasher(0)
+    /// #    }
+    /// }
+    ///
+    /// # struct CustomHasher(u8);
+    /// # impl std::hash::Hasher for CustomHasher {
+    /// #     fn write(&mut self, bytes: &[u8]) {
+    /// #         for b in bytes {
+    /// #             self.0 ^= *b;
+    /// #         }
+    /// #     }
+    /// #     fn finish(&self) -> u64 {
+    /// #         self.0 as u64
+    /// #     }
+    /// # }
+    ///
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .build()
+    ///     .await?;
+    /// let caching_session: CachingSession<CustomBuildHasher> = CachingSessionBuilder::new(session)
+    ///     .hasher(CustomBuildHasher::default())
+    ///     .build();
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn hasher<S2: Clone + BuildHasher>(self, hasher: S2) -> CachingSessionBuilder<S2> {
+        let Self {
+            session,
+            max_capacity,
+            hasher: _,
+        } = self;
+        CachingSessionBuilder {
+            session,
+            max_capacity,
+            hasher,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::client::caching_session::{CachingSessionBuilder, DEFAULT_MAX_CAPACITY};
     use crate::client::session::Session;
+    use crate::client::session_builder::SessionBuilder;
     use crate::response::PagingState;
     use crate::routing::partitioner::PartitionerName;
     use crate::statement::batch::{Batch, BatchStatement};
@@ -261,7 +383,14 @@ mod tests {
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::value::Row;
     use futures::TryStreamExt;
-    use std::collections::BTreeSet;
+    use scylla_proxy::{
+        Condition, Proxy, Reaction as _, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
+        ResponseFrame,
+    };
+    use std::collections::{BTreeSet, HashMap};
+    use std::hash::{BuildHasher, RandomState};
+    use std::net::SocketAddr;
+    use std::sync::Arc;
 
     use super::CachingSession;
 
@@ -447,30 +576,31 @@ mod tests {
         }
     }
 
+    #[derive(Default, Clone)]
+    struct CustomBuildHasher;
+    impl std::hash::BuildHasher for CustomBuildHasher {
+        type Hasher = CustomHasher;
+        fn build_hasher(&self) -> Self::Hasher {
+            CustomHasher(0)
+        }
+    }
+
+    struct CustomHasher(u8);
+    impl std::hash::Hasher for CustomHasher {
+        fn write(&mut self, bytes: &[u8]) {
+            for b in bytes {
+                self.0 ^= *b;
+            }
+        }
+        fn finish(&self) -> u64 {
+            self.0 as u64
+        }
+    }
+
     /// This test checks that we can construct a CachingSession with custom HashBuilder implementations
     #[tokio::test]
     async fn test_custom_hasher() {
         setup_tracing();
-        #[derive(Default, Clone)]
-        struct CustomBuildHasher;
-        impl std::hash::BuildHasher for CustomBuildHasher {
-            type Hasher = CustomHasher;
-            fn build_hasher(&self) -> Self::Hasher {
-                CustomHasher(0)
-            }
-        }
-
-        struct CustomHasher(u8);
-        impl std::hash::Hasher for CustomHasher {
-            fn write(&mut self, bytes: &[u8]) {
-                for b in bytes {
-                    self.0 ^= *b;
-                }
-            }
-            fn finish(&self) -> u64 {
-                self.0 as u64
-            }
-        }
 
         let _session: CachingSession<std::collections::hash_map::RandomState> =
             CachingSession::from(new_for_test(true).await, 2);
@@ -693,5 +823,111 @@ mod tests {
     fn _caching_session_impls_debug() {
         fn assert_debug<T: std::fmt::Debug>() {}
         assert_debug::<CachingSession>();
+    }
+
+    fn assert_hashers_equal(h1: &impl BuildHasher, h2: &impl BuildHasher) {
+        const TO_BE_HASHED: &[u8] = "Rzułty".as_bytes();
+        assert_eq!(h1.hash_one(TO_BE_HASHED), h2.hash_one(TO_BE_HASHED));
+    }
+
+    /// Tests that [CachingSessionBuilder] passes its config options to the built [CachingSession].
+    #[tokio::test]
+    async fn test_builder() {
+        setup_tracing();
+
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+
+        // A proxy that allows finishing creation of a Session.
+        // It performs the whole handshake on all connections, but responds to all
+        // QUERY, PREPARE and EXECUTE requests with an error.
+        let proxy_rules = vec![
+            // OPTIONS -> SUPPORTED rule
+            RequestRule(
+                Condition::RequestOpcode(RequestOpcode::Options),
+                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                    ResponseFrame::forged_supported(frame.params, &HashMap::default()).unwrap()
+                })),
+            ),
+            // STARTUP -> READY rule
+            // REGISTER -> READY rule
+            RequestRule(
+                Condition::or(
+                    Condition::RequestOpcode(RequestOpcode::Startup),
+                    Condition::RequestOpcode(RequestOpcode::Register),
+                ),
+                RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                    ResponseFrame::forged_ready(frame.params)
+                })),
+            ),
+            // QUERY, PREPARE, EXECUTE -> ERROR rule
+            RequestRule(
+                Condition::or(
+                    Condition::RequestOpcode(RequestOpcode::Query),
+                    Condition::or(
+                        Condition::RequestOpcode(RequestOpcode::Prepare),
+                        Condition::RequestOpcode(RequestOpcode::Execute),
+                    ),
+                ),
+                RequestReaction::forge().server_error(),
+            ),
+        ];
+
+        let proxy = Proxy::builder()
+            .with_node(
+                scylla_proxy::Node::builder()
+                    .proxy_address(proxy_addr)
+                    .request_rules(proxy_rules)
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        let create_session = || async {
+            SessionBuilder::new()
+                .known_node_addr(proxy_addr)
+                .build()
+                .await
+                .unwrap()
+        };
+
+        // Default hasher and max_capacity.
+        {
+            const MAX_CAPACITY: usize = 42;
+            let session = create_session().await;
+            let mut builder = CachingSessionBuilder::new(session);
+            builder = builder.max_capacity(MAX_CAPACITY);
+            let caching_session: CachingSession = builder.build();
+
+            assert_eq!(caching_session.max_capacity, MAX_CAPACITY);
+            // We cannot compare hashers, because we have no access to the default-constructed RandomState.
+            // Each RandomState::new() seeds it with another thread-local seed, so this is not feasible.
+        }
+
+        // Default hasher type with custom construction of it.
+        {
+            let session = create_session().await;
+            let hasher = RandomState::new();
+            let caching_session = CachingSessionBuilder::new(session)
+                .hasher(hasher.clone())
+                .build();
+
+            assert_eq!(caching_session.max_capacity, DEFAULT_MAX_CAPACITY);
+            assert_hashers_equal(caching_session.cache.hasher(), &hasher);
+        }
+
+        // Custom hasher.
+        {
+            let session = create_session().await;
+            let caching_session = CachingSessionBuilder::new(session)
+                .hasher(CustomBuildHasher)
+                .build();
+
+            assert_eq!(caching_session.max_capacity, DEFAULT_MAX_CAPACITY);
+            assert_hashers_equal(caching_session.cache.hasher(), &CustomBuildHasher);
+        }
+
+        let _ = proxy.finish().await;
     }
 }
