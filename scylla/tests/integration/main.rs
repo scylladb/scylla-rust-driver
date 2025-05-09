@@ -1,11 +1,6 @@
-mod authenticate;
-mod history;
 mod load_balancing;
 mod macros;
 mod metadata;
-mod new_session;
-mod retries;
-mod self_identity;
 mod session;
 mod statements;
 mod types;
