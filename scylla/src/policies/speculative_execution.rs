@@ -10,6 +10,7 @@ use tracing::{trace_span, Instrument};
 use crate::errors::{RequestAttemptError, RequestError};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
+use crate::response::Coordinator;
 
 /// Context is passed as an argument to `SpeculativeExecutionPolicy` methods
 #[non_exhaustive]
@@ -144,9 +145,9 @@ pub(crate) async fn execute<QueryFut, ResT>(
     policy: &dyn SpeculativeExecutionPolicy,
     context: &Context,
     query_runner_generator: impl Fn(bool) -> QueryFut,
-) -> Result<ResT, RequestError>
+) -> Result<(ResT, Coordinator), RequestError>
 where
-    QueryFut: Future<Output = Option<Result<ResT, RequestError>>>,
+    QueryFut: Future<Output = Option<Result<(ResT, Coordinator), RequestError>>>,
 {
     let mut retries_remaining = policy.max_retry_count(context);
     let retry_interval = policy.retry_interval(context);

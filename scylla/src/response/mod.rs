@@ -7,9 +7,11 @@
 //! - [QueryRowsResult](query_result::QueryRowsResult) - a result of CQL QUERY/EXECUTE/BATCH
 //!   request that contains some rows, which can be deserialized by the user.
 
+mod coordinator;
 pub mod query_result;
 mod request_response;
 
+pub use coordinator::Coordinator;
 pub(crate) use request_response::{
     NonErrorAuthResponse, NonErrorQueryResponse, NonErrorStartupResponse, QueryResponse,
     RawPreparedStatement,

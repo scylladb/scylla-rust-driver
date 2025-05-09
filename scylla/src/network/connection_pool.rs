@@ -21,6 +21,7 @@ use itertools::Itertools;
 use rand::Rng;
 use std::convert::TryInto;
 use std::num::NonZeroUsize;
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
@@ -186,9 +187,20 @@ impl std::fmt::Debug for NodeConnectionPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NodeConnectionPool")
             .field("conns", &self.conns)
+            .field("endpoint", &self.endpoint)
             .finish_non_exhaustive()
     }
 }
+
+// These implementations are a temporary solution to the following problem:
+// `QueryResult` used to implement `(Ref)UnwindSafe`, but then we wanted it to store a reference to `Node`.
+// This, transitively, made it store `NodeConnectionPool`, which did not implement those traits.
+// Thus, they would no longer be auto-implemented for `QueryResult`, breaking the public API.
+// Not to introduce an API breakage in a minor release, we decided to manually hint that `NodeConnectionPool`
+// is indeed unwind-safe. Even if our we are wrong and the hint is misleading, the documentation of those
+// traits, not being `unsafe` traits, considers them merely guidelines, not strong guarantees.
+impl UnwindSafe for NodeConnectionPool {}
+impl RefUnwindSafe for NodeConnectionPool {}
 
 impl NodeConnectionPool {
     pub(crate) fn new(
