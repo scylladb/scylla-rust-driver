@@ -37,7 +37,7 @@ pub struct CachingSession<S = RandomState>
 where
     S: Clone + BuildHasher,
 {
-    session: Session,
+    session: Arc<Session>,
     /// The prepared statement cache size
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
@@ -65,7 +65,7 @@ where
 {
     pub fn from(session: Session, cache_size: usize) -> Self {
         Self {
-            session,
+            session: Arc::new(session),
             max_capacity: cache_size,
             cache: Default::default(),
             use_cached_metadata: false,
@@ -81,7 +81,7 @@ where
     /// and a [`BuildHasher`], using a customer hasher.
     pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
         Self {
-            session,
+            session: Arc::new(session),
             max_capacity: cache_size,
             cache: DashMap::with_hasher(hasher),
             use_cached_metadata: false,
@@ -288,7 +288,7 @@ pub struct CachingSessionBuilder<S = RandomState>
 where
     S: Clone + BuildHasher,
 {
-    session: Session,
+    session: Arc<Session>,
     max_capacity: usize,
     hasher: S,
     use_cached_metadata: bool,
@@ -300,7 +300,7 @@ impl CachingSessionBuilder<RandomState> {
     ///
     pub fn new(session: Session) -> Self {
         Self {
-            session,
+            session: Arc::new(session),
             max_capacity: DEFAULT_MAX_CAPACITY,
             hasher: RandomState::default(),
             use_cached_metadata: false,
