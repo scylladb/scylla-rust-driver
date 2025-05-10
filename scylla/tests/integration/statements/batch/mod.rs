@@ -1,4 +1,3 @@
-#[allow(clippy::module_inception)]
-mod batch;
 mod large_batch_statements;
 mod silent_prepare_batch;
+mod statements_values_count_mismatch;
