@@ -1,4 +1,5 @@
 mod authenticate;
+mod caching_session;
 mod history;
 mod new_session;
 mod retries;
