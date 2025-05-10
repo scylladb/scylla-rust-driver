@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use itertools::Itertools as _;
-use scylla::cluster::metadata::{
-    CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType,
+use scylla::{
+    cluster::metadata::{CollectionType, ColumnKind, ColumnType, NativeType, UserDefinedType},
+    value::Row,
 };
 
 use crate::utils::{
@@ -495,6 +496,7 @@ async fn test_views_in_schema_info() {
     )
 }
 
+/// This test case indicates that we support enough CQL types to parse schema keyspace information.
 #[tokio::test]
 async fn test_fetch_system_keyspace() {
     setup_tracing();
@@ -505,8 +507,14 @@ async fn test_fetch_system_keyspace() {
         .await
         .unwrap();
 
+    // We materialize all rows as Row, one by one, to assert that we are able of deserializing them.
     session
         .execute_unpaged(&prepared_statement, &[])
         .await
-        .unwrap();
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .rows::<Row>()
+        .unwrap()
+        .for_each(|_| ());
 }
