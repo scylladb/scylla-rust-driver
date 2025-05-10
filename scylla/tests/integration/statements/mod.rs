@@ -6,3 +6,4 @@ mod skip_metadata_optimization;
 mod statement;
 mod timestamps;
 mod transparent_reprepare;
+mod unprepared;
