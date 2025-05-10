@@ -7,3 +7,4 @@ mod self_identity;
 #[expect(clippy::module_inception)]
 mod session;
 mod tracing;
+mod use_keyspace;
