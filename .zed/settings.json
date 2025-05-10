@@ -1,0 +1,17 @@
+{
+    "lsp": {
+        "rust-analyzer": {
+            "initialization_options": {
+                "imports": {
+                    "granularity": {
+                        "group": "module",
+                        "enforce": true
+                    }
+                },
+                "group": {
+                    "enable": true
+                }
+            }
+        }
+    }
+}
