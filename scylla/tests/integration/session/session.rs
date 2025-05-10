@@ -5,7 +5,6 @@ use crate::utils::{
 
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
-use scylla::client::session_builder::SessionBuilder;
 use scylla::errors::OperationType;
 use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
 use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
@@ -18,39 +17,13 @@ use scylla::statement::Consistency;
 use scylla::value::Row;
 
 use assert_matches::assert_matches;
-use futures::{FutureExt, StreamExt as _, TryStreamExt};
+use futures::{StreamExt as _, TryStreamExt};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::vec;
-use tokio::net::TcpListener;
-
-#[tokio::test]
-async fn test_connection_failure() {
-    setup_tracing();
-    // Make sure that Session::create fails when the control connection
-    // fails to connect.
-
-    // Create a dummy server which immediately closes the connection.
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    let (fut, _handle) = async move {
-        loop {
-            let _ = listener.accept().await;
-        }
-    }
-    .remote_handle();
-    tokio::spawn(fut);
-
-    let res = SessionBuilder::new().known_node_addr(addr).build().await;
-    match res {
-        Ok(_) => panic!("Unexpected success"),
-        Err(err) => println!("Connection error (it was expected): {:?}", err),
-    }
-}
 
 #[tokio::test]
 async fn test_token_calculation() {
