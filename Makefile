@@ -52,6 +52,10 @@ test: up
 	 SCYLLA_URI3=172.42.0.4:9042 \
 	 cargo test
 
+.PHONY: ccm-test
+ccm-test:
+	RUSTFLAGS="${RUSTFLAGS} --cfg ccm_tests" cargo test --test integration ccm
+
 .PHONY: dockerized-test
 dockerized-test: up
 	test/dockerized/run.sh
@@ -99,3 +103,16 @@ shell:
 clean: down
 	cargo clean
 	rm -rf docs/book
+
+.PHONY: use_cargo_lock_msrv
+use_cargo_lock_msrv:
+	mv Cargo.lock Cargo.lock.bak
+	mv Cargo.lock.msrv Cargo.lock
+
+.PHONY: restore_cargo_lock
+restore_cargo_lock:
+	mv Cargo.lock Cargo.lock.msrv
+	mv Cargo.lock.bak Cargo.lock
+
+.PHONY: test_cargo_lock_msrv
+test_cargo_lock_msrv: use_cargo_lock_msrv check restore_cargo_lock
