@@ -1,6 +1,7 @@
 mod batch;
 mod consistency;
 mod execution_profiles;
+mod named_bind_markers;
 mod prepared;
 mod request_timeout;
 mod silent_prepare_query;
