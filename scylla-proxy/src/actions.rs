@@ -49,7 +49,7 @@ pub enum Condition {
     /// True for predefined number of evaluations, then always false.
     TrueForLimitedTimes(usize),
 
-    // True if any REGISTER was sent on this connection. Useful to filter out control connection messages.
+    /// True if any REGISTER was sent on this connection. Useful to filter out control connection messages.
     ConnectionRegisteredAnyEvent,
 }
 
@@ -134,6 +134,34 @@ impl Condition {
     /// A convenience function for creating [Condition::Or] variant.
     pub fn or(self, c2: Self) -> Self {
         Self::Or(Box::new(self), Box::new(c2))
+    }
+
+    /// A convenience function for creating a tree with [Condition::And] variant in nodes.
+    pub fn all(cs: impl IntoIterator<Item = Self>) -> Self {
+        let mut cs = cs.into_iter();
+        match cs.next() {
+            None => Self::True, // The trivial case for the \forall quantifier.
+            Some(mut c) => {
+                for head in cs {
+                    c = head.and(c);
+                }
+                c
+            }
+        }
+    }
+
+    /// A convenience function for creating a tree with [Condition::Or] variant in nodes.
+    pub fn any(cs: impl IntoIterator<Item = Self>) -> Self {
+        let mut cs = cs.into_iter();
+        match cs.next() {
+            None => Self::False, // The trivial case for the \exists quantifier.
+            Some(mut c) => {
+                for head in cs {
+                    c = head.or(c);
+                }
+                c
+            }
+        }
     }
 }
 
