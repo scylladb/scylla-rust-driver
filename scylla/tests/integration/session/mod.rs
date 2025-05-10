@@ -3,6 +3,7 @@ mod db_errors;
 mod history;
 mod new_session;
 mod pager;
+mod preparation;
 mod retries;
 mod self_identity;
 mod tracing;
