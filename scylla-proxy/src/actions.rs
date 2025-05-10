@@ -135,6 +135,34 @@ impl Condition {
     pub fn or(self, c2: Self) -> Self {
         Self::Or(Box::new(self), Box::new(c2))
     }
+
+    /// A convenience function for creating a tree with [Condition::And] variant in nodes.
+    pub fn all(cs: impl IntoIterator<Item = Self>) -> Self {
+        let mut cs = cs.into_iter();
+        match cs.next() {
+            None => Self::True, // The trivial case for the \forall quantifier.
+            Some(mut c) => {
+                for head in cs {
+                    c = head.and(c);
+                }
+                c
+            }
+        }
+    }
+
+    /// A convenience function for creating a tree with [Condition::Or] variant in nodes.
+    pub fn any(cs: impl IntoIterator<Item = Self>) -> Self {
+        let mut cs = cs.into_iter();
+        match cs.next() {
+            None => Self::False, // The trivial case for the \exists quantifier.
+            Some(mut c) => {
+                for head in cs {
+                    c = head.or(c);
+                }
+                c
+            }
+        }
+    }
 }
 
 /// Just a trait to unify API of both [RequestReaction] and [ResponseReaction].
