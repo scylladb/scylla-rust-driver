@@ -1,3 +1,4 @@
+mod basic;
 mod batch_lwts;
 mod large_batch_statements;
 mod prepare_batch;
