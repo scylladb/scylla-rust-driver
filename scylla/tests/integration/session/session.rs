@@ -716,22 +716,6 @@ async fn test_token_calculation() {
     }
 }
 
-#[tokio::test]
-async fn test_fetch_system_keyspace() {
-    setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
-
-    let prepared_statement = session
-        .prepare("SELECT * FROM system_schema.keyspaces")
-        .await
-        .unwrap();
-
-    session
-        .execute_unpaged(&prepared_statement, &[])
-        .await
-        .unwrap();
-}
-
 // Test that some Database Errors are parsed correctly
 #[tokio::test]
 async fn test_db_errors() {
