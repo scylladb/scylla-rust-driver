@@ -907,13 +907,11 @@ mod tests {
             ),
             // QUERY, PREPARE, EXECUTE -> ERROR rule
             RequestRule(
-                Condition::or(
+                Condition::any([
                     Condition::RequestOpcode(RequestOpcode::Query),
-                    Condition::or(
-                        Condition::RequestOpcode(RequestOpcode::Prepare),
-                        Condition::RequestOpcode(RequestOpcode::Execute),
-                    ),
-                ),
+                    Condition::RequestOpcode(RequestOpcode::Prepare),
+                    Condition::RequestOpcode(RequestOpcode::Execute),
+                ]),
                 RequestReaction::forge().server_error(),
             ),
         ];
