@@ -3,8 +3,10 @@ use std::net::Ipv4Addr;
 use crate::utils::{create_new_session_builder, find_local_ip_for_destination, setup_tracing};
 
 use assert_matches::assert_matches;
+use futures::FutureExt as _;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
+use tokio::net::TcpListener;
 
 #[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
@@ -95,4 +97,28 @@ async fn valid_local_ip_address() {
         .query_unpaged("SELECT host_id FROM system.local WHERE key='local'", &[])
         .await
         .unwrap();
+}
+
+/// Make sure that Session::connect fails when the control connection fails to connect.
+#[tokio::test]
+async fn test_connection_failure() {
+    setup_tracing();
+
+    // Create a dummy server which immediately closes the connection.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let (fut, _handle) = async move {
+        loop {
+            let _ = listener.accept().await;
+        }
+    }
+    .remote_handle();
+    tokio::spawn(fut);
+
+    let res = SessionBuilder::new().known_node_addr(addr).build().await;
+    match res {
+        Ok(_) => panic!("Unexpected success"),
+        Err(err) => println!("Connection error (it was expected): {:?}", err),
+    }
 }
