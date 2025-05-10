@@ -6,3 +6,4 @@ mod retries;
 mod self_identity;
 #[expect(clippy::module_inception)]
 mod session;
+mod tracing;
