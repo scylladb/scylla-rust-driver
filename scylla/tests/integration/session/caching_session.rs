@@ -53,15 +53,18 @@ async fn test_caching_session_metadata_cache() {
 
             const REQUEST: &str = "SELECT * FROM system.local WHERE key = 'local'";
 
-            let session = SessionBuilder::new()
-                .known_node(proxy_uris[0].as_str())
-                .address_translator(Arc::new(translation_map.clone()))
-                .build()
-                .await
-                .unwrap();
-            let caching_session: CachingSession = CachingSessionBuilder::new(session)
-                .use_cached_result_metadata(false) // Default, set just to be more explicit
-                .build();
+            let session = Arc::new(
+                SessionBuilder::new()
+                    .known_node(proxy_uris[0].as_str())
+                    .address_translator(Arc::new(translation_map.clone()))
+                    .build()
+                    .await
+                    .unwrap(),
+            );
+            let caching_session: CachingSession =
+                CachingSessionBuilder::new_shared(Arc::clone(&session))
+                    .use_cached_result_metadata(false) // Default, set just to be more explicit
+                    .build();
 
             // Skipping metadata was not set, so metadata should be present
             verify_statement_metadata(&caching_session, REQUEST, true, &mut feedback_rx).await;
@@ -69,15 +72,10 @@ async fn test_caching_session_metadata_cache() {
             // It should also be present when executing statement already in cache
             verify_statement_metadata(&caching_session, REQUEST, true, &mut feedback_rx).await;
 
-            let session = SessionBuilder::new()
-                .known_node(proxy_uris[0].as_str())
-                .address_translator(Arc::new(translation_map))
-                .build()
-                .await
-                .unwrap();
-            let caching_session: CachingSession = CachingSessionBuilder::new(session)
-                .use_cached_result_metadata(true)
-                .build();
+            let caching_session: CachingSession =
+                CachingSessionBuilder::new_shared(Arc::clone(&session))
+                    .use_cached_result_metadata(true)
+                    .build();
 
             // Now we set skip_metadata to true, so metadata should not be present for a new query
             verify_statement_metadata(&caching_session, REQUEST, false, &mut feedback_rx).await;
