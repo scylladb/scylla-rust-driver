@@ -2,10 +2,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::utils::{
-    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
-    PerformDDL,
+    create_new_session_builder, scylla_supports_tablets, setup_tracing, test_with_3_node_cluster,
+    unique_keyspace_name, PerformDDL,
 };
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::cluster::{ClusterState, NodeRef};
+use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
+use scylla::routing::Shard;
 use tokio::sync::mpsc;
 
 use scylla_proxy::TargetShard;
@@ -86,4 +90,55 @@ async fn test_consistent_shard_awareness() {
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
     }
+}
+
+/// Regression test for panic that appeared if LBP picked a
+/// shard that is out of range for the node.
+#[tokio::test]
+async fn test_shard_out_of_range() {
+    setup_tracing();
+
+    #[derive(Debug)]
+    struct ShardOutOfRangeLBP;
+    impl LoadBalancingPolicy for ShardOutOfRangeLBP {
+        fn pick<'a>(
+            &'a self,
+            _query: &'a RoutingInfo,
+            cluster: &'a ClusterState,
+        ) -> Option<(NodeRef<'a>, Option<Shard>)> {
+            let node = &cluster.get_nodes_info()[0];
+            match node.sharder() {
+                Some(sharder) => Some((node, Some(sharder.nr_shards.get() as u32))),
+                // For Cassandra let's pick some crazy shard number - it should be ignored anyway.
+                None => Some((node, Some(u16::MAX as u32))),
+            }
+        }
+
+        fn fallback<'a>(
+            &'a self,
+            _query: &'a RoutingInfo,
+            _cluster: &'a ClusterState,
+        ) -> FallbackPlan<'a> {
+            Box::new(std::iter::empty())
+        }
+
+        fn name(&self) -> String {
+            "ShardOutOfRangeLBP".into()
+        }
+    }
+
+    let handle = ExecutionProfile::builder()
+        .load_balancing_policy(Arc::new(ShardOutOfRangeLBP))
+        .build()
+        .into_handle();
+    let session = create_new_session_builder()
+        .default_execution_profile_handle(handle)
+        .build()
+        .await
+        .unwrap();
+
+    let _ = session
+        .query_unpaged("SELECT * FROM system.local WHERE key='local'", ())
+        .await
+        .unwrap();
 }

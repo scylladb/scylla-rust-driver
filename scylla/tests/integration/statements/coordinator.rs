@@ -5,67 +5,15 @@ use std::sync::Arc;
 use assert_matches::assert_matches;
 use futures::StreamExt;
 use scylla::client::session::Session;
-use scylla::cluster::metadata::{ColumnType, NativeType};
 use scylla::errors::ExecutionError;
-use scylla::frame::response::result::{ColumnSpec, TableSpec};
+
 use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
+use scylla::response::Coordinator;
+use scylla::routing::Shard;
 use scylla::statement::Statement;
 use uuid::Uuid;
 
-use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
-
-#[tokio::test]
-async fn test_prepared_statement_col_specs() {
-    setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
-
-    let ks = unique_keyspace_name();
-    session
-        .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = 
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
-        ))
-        .await
-        .unwrap();
-    session.use_keyspace(&ks, false).await.unwrap();
-
-    session
-        .ddl(
-            "CREATE TABLE t (k1 int, k2 varint, c1 timestamp,
-            a tinyint, b text, c smallint, PRIMARY KEY ((k1, k2), c1))",
-        )
-        .await
-        .unwrap();
-
-    let spec = |name: &'static str, typ: ColumnType<'static>| -> ColumnSpec<'_> {
-        ColumnSpec::borrowed(name, typ, TableSpec::borrowed(&ks, "t"))
-    };
-
-    let prepared = session
-        .prepare("SELECT * FROM t WHERE k1 = ? AND k2 = ? AND c1 > ?")
-        .await
-        .unwrap();
-
-    let variable_col_specs = prepared.get_variable_col_specs().as_slice();
-    let expected_variable_col_specs = &[
-        spec("k1", ColumnType::Native(NativeType::Int)),
-        spec("k2", ColumnType::Native(NativeType::Varint)),
-        spec("c1", ColumnType::Native(NativeType::Timestamp)),
-    ];
-    assert_eq!(variable_col_specs, expected_variable_col_specs);
-
-    let result_set_col_specs = prepared.get_result_set_col_specs().as_slice();
-    let expected_result_set_col_specs = &[
-        spec("k1", ColumnType::Native(NativeType::Int)),
-        spec("k2", ColumnType::Native(NativeType::Varint)),
-        spec("c1", ColumnType::Native(NativeType::Timestamp)),
-        spec("a", ColumnType::Native(NativeType::TinyInt)),
-        spec("b", ColumnType::Native(NativeType::Text)),
-        spec("c", ColumnType::Native(NativeType::SmallInt)),
-    ];
-    assert_eq!(result_set_col_specs, expected_result_set_col_specs);
-}
+use crate::utils::{create_new_session_builder, setup_tracing};
 
 #[tokio::test]
 async fn test_enforce_request_coordinator() {
@@ -159,4 +107,75 @@ async fn test_enforce_non_existent_request_coordinator() {
 
     let result = session.query_unpaged(statement, ()).await;
     assert_matches!(result, Err(ExecutionError::EmptyPlan))
+}
+
+/// Checks that if a node is enforced as the coordinator of a request, the [Coordinator] struct
+/// exposed on the request result (`QueryResult` and `QueryPager`) contains that `Node`.
+#[tokio::test]
+async fn test_exposed_request_coordinator() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+
+    let cluster_state = session.get_cluster_state();
+    for node in cluster_state.get_nodes_info() {
+        let num_shards = node
+            .sharder()
+            .map_or(0, |sharder| sharder.nr_shards.get() as Shard);
+        for requested_shard in std::iter::once(None).chain((0..num_shards).map(Some)) {
+            let mut statement =
+                Statement::new("SELECT host_id, rpc_address FROM system.local WHERE key='local'");
+            statement.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
+                NodeIdentifier::Node(Arc::clone(node)),
+                requested_shard,
+            )));
+
+            let expected_node_id = node.host_id;
+            let expected_node_ip = node.address.ip();
+
+            let check_coordinator = |coordinator: &Coordinator| {
+                assert_eq!(coordinator.node(), node);
+
+                // If we requested no shard, in ScyllaDB we still target some (unspecified) shard, not None.
+                if let Some(shard) = requested_shard {
+                    assert_eq!(coordinator.shard(), Some(shard));
+                }
+            };
+
+            // Check query_unpaged
+            {
+                let query_rows_result = session
+                    .query_unpaged(statement.clone(), ())
+                    .await
+                    .unwrap()
+                    .into_rows_result()
+                    .unwrap();
+
+                let (actual_node_id, actual_node_ip) = query_rows_result
+                    .single_row::<(uuid::Uuid, IpAddr)>()
+                    .unwrap();
+                assert_eq!(expected_node_id, actual_node_id);
+                assert_eq!(expected_node_ip, actual_node_ip);
+
+                let coordinator = query_rows_result.request_coordinator();
+                check_coordinator(coordinator);
+            }
+
+            // Check query_iter
+            {
+                let mut rows_stream = session
+                    .query_iter(statement, ())
+                    .await
+                    .unwrap()
+                    .rows_stream::<(uuid::Uuid, IpAddr)>()
+                    .unwrap();
+
+                let (actual_node_id, actual_node_ip) = rows_stream.next().await.unwrap().unwrap();
+                assert_eq!(expected_node_id, actual_node_id);
+                assert_eq!(expected_node_ip, actual_node_ip);
+
+                let coordinator = rows_stream.request_coordinators().next().unwrap();
+                check_coordinator(coordinator);
+            }
+        }
+    }
 }
