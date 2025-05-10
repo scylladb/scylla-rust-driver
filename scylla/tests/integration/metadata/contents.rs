@@ -436,3 +436,61 @@ async fn test_table_partitioner_in_metadata() {
         "com.scylladb.dht.CDCPartitioner"
     );
 }
+
+#[tokio::test]
+async fn test_views_in_schema_info() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks);
+    // Materialized views + tablets are not supported in Scylla 2025.1.
+    if scylla_supports_tablets(&session).await {
+        create_ks += " and TABLETS = { 'enabled': false}";
+    }
+    session.ddl(create_ks).await.unwrap();
+    session.use_keyspace(ks.clone(), false).await.unwrap();
+
+    session
+        .ddl("CREATE TABLE t(id int PRIMARY KEY, v int)")
+        .await
+        .unwrap();
+
+    session.ddl("CREATE MATERIALIZED VIEW mv1 AS SELECT * FROM t WHERE v IS NOT NULL PRIMARY KEY (v, id)").await.unwrap();
+    session.ddl("CREATE MATERIALIZED VIEW mv2 AS SELECT id, v FROM t WHERE v IS NOT NULL PRIMARY KEY (v, id)").await.unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let keyspace_meta = session
+        .get_cluster_state()
+        .get_keyspace(&ks)
+        .unwrap()
+        .clone();
+
+    let tables = keyspace_meta
+        .tables
+        .keys()
+        .collect::<std::collections::HashSet<&String>>();
+
+    let views = keyspace_meta
+        .views
+        .keys()
+        .collect::<std::collections::HashSet<&String>>();
+    let views_base_table = keyspace_meta
+        .views
+        .values()
+        .map(|view_meta| &view_meta.base_table_name)
+        .collect::<std::collections::HashSet<&String>>();
+
+    assert_eq!(tables, std::collections::HashSet::from([&"t".to_string()]));
+    assert_eq!(
+        views,
+        std::collections::HashSet::from([&"mv1".to_string(), &"mv2".to_string()])
+    );
+    assert_eq!(
+        views_base_table,
+        std::collections::HashSet::from([&"t".to_string()])
+    )
+}
