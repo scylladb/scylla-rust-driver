@@ -1,5 +1,4 @@
-#[expect(clippy::module_inception)]
-mod load_balancing;
+mod latency_awareness;
 mod lwt_optimisation;
 mod shards;
 mod tablets;
