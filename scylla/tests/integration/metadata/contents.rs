@@ -494,3 +494,19 @@ async fn test_views_in_schema_info() {
         std::collections::HashSet::from([&"t".to_string()])
     )
 }
+
+#[tokio::test]
+async fn test_fetch_system_keyspace() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+
+    let prepared_statement = session
+        .prepare("SELECT * FROM system_schema.keyspaces")
+        .await
+        .unwrap();
+
+    session
+        .execute_unpaged(&prepared_statement, &[])
+        .await
+        .unwrap();
+}
