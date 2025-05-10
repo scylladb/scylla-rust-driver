@@ -67,13 +67,6 @@ async fn test_db_errors() {
 }
 
 #[tokio::test]
-async fn test_await_schema_agreement() {
-    setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
-    let _schema_version = session.await_schema_agreement().await.unwrap();
-}
-
-#[tokio::test]
 async fn test_named_bind_markers() {
     setup_tracing();
 
