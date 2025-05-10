@@ -49,7 +49,7 @@ pub enum Condition {
     /// True for predefined number of evaluations, then always false.
     TrueForLimitedTimes(usize),
 
-    // True if any REGISTER was sent on this connection. Useful to filter out control connection messages.
+    /// True if any REGISTER was sent on this connection. Useful to filter out control connection messages.
     ConnectionRegisteredAnyEvent,
 }
 
