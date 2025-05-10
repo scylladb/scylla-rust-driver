@@ -1,6 +1,6 @@
 mod batch;
 mod consistency;
-mod enforce_coordinator;
+mod coordinator;
 mod execution_profiles;
 mod named_bind_markers;
 mod prepared;
