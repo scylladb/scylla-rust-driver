@@ -2,10 +2,18 @@ use crate::utils::{
     create_new_session_builder, setup_tracing, unique_keyspace_name, DeserializeOwnedValue,
     PerformDDL,
 };
-use scylla::client::session::Session;
-use scylla::value::CqlValue;
+use scylla::cluster::metadata::NativeType;
+use scylla::deserialize::value::DeserializeValue;
+use scylla::value::{
+    CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
+};
+use scylla::{client::session::Session, cluster::metadata::ColumnType};
 use scylla_cql::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::Debug;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::str::FromStr as _;
+use uuid::Uuid;
 
 async fn connect() -> Session {
     let session = create_new_session_builder().build().await.unwrap();
@@ -33,7 +41,7 @@ async fn insert_and_select<InsertT, SelectT>(
     expected: &SelectT,
 ) where
     InsertT: SerializeValue,
-    SelectT: DeserializeOwnedValue + PartialEq + std::fmt::Debug,
+    SelectT: DeserializeOwnedValue + PartialEq + Debug,
 {
     session
         .query_unpaged(
@@ -225,4 +233,379 @@ async fn test_cql_tuple() {
         Some(CqlValue::Text("cql_value_text".to_string())),
     ]);
     insert_and_select(&session, table_name, &tuple_cql_value, &tuple_cql_value).await;
+}
+
+// TODO: Remove this ignore when vector type is supported in ScyllaDB
+#[cfg_attr(not(cassandra_tests), ignore)]
+#[tokio::test]
+async fn test_vector_type_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session
+        .ddl(
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)",
+                ks
+            ),
+        )
+        .await
+        .unwrap();
+
+    session.refresh_metadata().await.unwrap();
+    let metadata = session.get_cluster_state();
+    let columns = &metadata.get_keyspace(&ks).unwrap().tables["t"].columns;
+    assert_eq!(
+        columns["b"].typ,
+        ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Int)),
+            dimensions: 4,
+        },
+    );
+    assert_eq!(
+        columns["c"].typ,
+        ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Text)),
+            dimensions: 2,
+        },
+    );
+}
+
+// TODO: Remove this ignore when vector type is supported in ScyllaDB
+#[cfg_attr(not(cassandra_tests), ignore)]
+#[tokio::test]
+async fn test_vector_type_unprepared() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session
+        .ddl(
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)",
+                ks
+            ),
+        )
+        .await
+        .unwrap();
+
+    session
+        .query_unpaged(
+            format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks),
+            &(1, vec![1, 2, 3, 4], vec!["foo", "bar"]),
+        )
+        .await
+        .unwrap();
+
+    session
+        .query_unpaged(
+            format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks),
+            &(2, &[5, 6, 7, 8][..], &["afoo", "abar"][..]),
+        )
+        .await
+        .unwrap();
+
+    let query_result = session
+        .query_unpaged(format!("SELECT a, b, c FROM {}.t", ks), &[])
+        .await
+        .unwrap();
+
+    let rows: Vec<(i32, Vec<i32>, Vec<String>)> = query_result
+        .into_rows_result()
+        .unwrap()
+        .rows::<(i32, Vec<i32>, Vec<String>)>()
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(
+        rows[0],
+        (
+            1,
+            vec![1, 2, 3, 4],
+            vec!["foo".to_string(), "bar".to_string()]
+        )
+    );
+    assert_eq!(
+        rows[1],
+        (
+            2,
+            vec![5, 6, 7, 8],
+            vec!["afoo".to_string(), "abar".to_string()]
+        )
+    );
+}
+
+// TODO: Remove this ignore when vector type is supported in ScyllaDB
+#[cfg_attr(not(cassandra_tests), ignore)]
+#[tokio::test]
+async fn test_vector_type_prepared() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session
+        .ddl(
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)",
+                ks
+            ),
+        )
+        .await
+        .unwrap();
+
+    let prepared_statement = session
+        .prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks))
+        .await
+        .unwrap();
+    session
+        .execute_unpaged(
+            &prepared_statement,
+            &(2, vec![11, 12, 13, 14], vec!["afoo", "abar"]),
+        )
+        .await
+        .unwrap();
+
+    let query_result = session
+        .query_unpaged(format!("SELECT a, b, c FROM {}.t", ks), &[])
+        .await
+        .unwrap();
+
+    let row = query_result
+        .into_rows_result()
+        .unwrap()
+        .single_row::<(i32, Vec<i32>, Vec<String>)>()
+        .unwrap();
+    assert_eq!(
+        row,
+        (
+            2,
+            vec![11, 12, 13, 14],
+            vec!["afoo".to_string(), "abar".to_string()]
+        )
+    );
+}
+
+async fn test_vector_single_type<
+    T: SerializeValue + for<'a> DeserializeValue<'a, 'a> + PartialEq + Debug + Clone,
+>(
+    keyspace: &str,
+    session: &Session,
+    type_name: &str,
+    values: Vec<T>,
+) {
+    let table_name = format!(
+        "test_vector_{}",
+        type_name
+            .replace("<", "A")
+            .replace(">", "B")
+            .replace(",", "C")
+    );
+    let create_statement = format!(
+        "CREATE TABLE {}.{} (a int PRIMARY KEY, b vector<{}, {}>)",
+        keyspace,
+        table_name,
+        type_name,
+        values.len()
+    );
+    session.ddl(create_statement).await.unwrap();
+
+    let prepared_insert = session
+        .prepare(format!(
+            "INSERT INTO {}.{} (a, b) VALUES (?, ?)",
+            keyspace, table_name
+        ))
+        .await
+        .unwrap();
+    let prepared_select = session
+        .prepare(format!("SELECT a, b FROM {}.{}", keyspace, table_name))
+        .await
+        .unwrap();
+    session
+        .execute_unpaged(&prepared_insert, &(1, &values))
+        .await
+        .unwrap();
+
+    let query_result = session
+        .execute_unpaged(&prepared_select, &[])
+        .await
+        .unwrap();
+
+    let result = query_result.into_rows_result().unwrap();
+
+    let row = result.single_row::<(i32, Vec<T>)>().unwrap();
+
+    assert_eq!(row, (1, values));
+
+    let drop_statement = format!("DROP TABLE {}.{}", keyspace, table_name);
+    session.ddl(drop_statement).await.unwrap();
+}
+
+// TODO: Remove this ignore when vector type is available in ScyllaDB
+#[cfg_attr(not(cassandra_tests), ignore)]
+#[tokio::test]
+async fn test_vector_type_all_types() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+
+    // Native types
+
+    test_vector_single_type(
+        &ks,
+        &session,
+        "ascii",
+        vec!["foo".to_string(), "bar".to_string()],
+    )
+    .await;
+    test_vector_single_type(&ks, &session, "bigint", vec![1i64, 2i64, 3i64]).await;
+    test_vector_single_type(
+        &ks,
+        &session,
+        "blob",
+        vec![vec![1_u8, 2_u8], vec![3_u8, 4_u8]],
+    )
+    .await;
+    test_vector_single_type(&ks, &session, "boolean", vec![true, false]).await;
+    test_vector_single_type(&ks, &session, "date", vec![CqlDate(123), CqlDate(456)]).await;
+    test_vector_single_type(
+        &ks,
+        &session,
+        "decimal",
+        vec![
+            CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"123", 42),
+            CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"123", 42),
+        ],
+    )
+    .await;
+    test_vector_single_type(&ks, &session, "double", vec![1.0f64, 2.0f64, 3.0f64]).await;
+    test_vector_single_type(
+        &ks,
+        &session,
+        "duration",
+        vec![
+            CqlDuration {
+                months: 1,
+                days: 2,
+                nanoseconds: 3,
+            },
+            CqlDuration {
+                months: 1,
+                days: 2,
+                nanoseconds: 3,
+            },
+        ],
+    )
+    .await;
+    test_vector_single_type(&ks, &session, "float", vec![1.0f32, 2.0f32, 3.0f32]).await;
+    test_vector_single_type(
+        &ks,
+        &session,
+        "inet",
+        vec![
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ],
+    )
+    .await;
+    test_vector_single_type(&ks, &session, "int", vec![1, 2, 3]).await;
+    test_vector_single_type(&ks, &session, "smallint", vec![1_i16, 2_i16]).await;
+    test_vector_single_type(
+        &ks,
+        &session,
+        "text",
+        vec!["foo".to_string(), "bar".to_string()],
+    )
+    .await;
+    test_vector_single_type(&ks, &session, "time", vec![CqlTime(1234), CqlTime(5678)]).await;
+    test_vector_single_type(
+        &ks,
+        &session,
+        "timestamp",
+        vec![CqlTimestamp(1234), CqlTimestamp(5678)],
+    )
+    .await;
+    test_vector_single_type(
+        &ks,
+        &session,
+        "timeuuid",
+        vec![
+            CqlTimeuuid::from_str("f4a7c45e-220e-11f0-8a95-325096b39f47").unwrap(),
+            CqlTimeuuid::from_str("f4a7c620-220e-11f0-bfde-325096b39f47").unwrap(),
+        ],
+    )
+    .await;
+    test_vector_single_type(&ks, &session, "tinyint", vec![1_i8, 2_i8, 3_i8, 4_i8]).await;
+    test_vector_single_type(&ks, &session, "uuid", vec![Uuid::new_v4(), Uuid::new_v4()]).await;
+
+    test_vector_single_type(
+        &ks,
+        &session,
+        "varchar",
+        vec!["foo".to_string(), "bar".to_string()],
+    )
+    .await;
+    test_vector_single_type(
+        &ks,
+        &session,
+        "varint",
+        vec![
+            CqlVarint::from_signed_bytes_be(vec![1, 2]),
+            CqlVarint::from_signed_bytes_be(vec![3, 4]),
+        ],
+    )
+    .await;
+
+    // Collections
+
+    test_vector_single_type(&ks, &session, "list<int>", vec![vec![1, 2], vec![3, 4]]).await;
+
+    test_vector_single_type(
+        &ks,
+        &session,
+        "set<int>",
+        vec![HashSet::from([1, 2]), HashSet::from([3, 4])],
+    )
+    .await;
+
+    test_vector_single_type(
+        &ks,
+        &session,
+        "map<int,text>",
+        vec![
+            HashMap::from([(1, "foo".to_string()), (2, "bar".to_string())]),
+            HashMap::from([(3, "baz".to_string()), (4, "qux".to_string())]),
+        ],
+    )
+    .await;
+
+    // Tuples
+
+    test_vector_single_type(
+        &ks,
+        &session,
+        "tuple<int,text>",
+        vec![
+            (1, "foo".to_string()),
+            (2, "bar".to_string()),
+            (3, "baz".to_string()),
+        ],
+    )
+    .await;
+
+    // Nested vectors
+    test_vector_single_type(&ks, &session, "vector<int,3>", vec![vec![1, 2, 3]]).await;
+
+    test_vector_single_type(
+        &ks,
+        &session,
+        "list<vector<int,2>>",
+        vec![vec![vec![1, 2], vec![3, 4]], vec![vec![5, 6], vec![7, 8]]],
+    )
+    .await;
 }
