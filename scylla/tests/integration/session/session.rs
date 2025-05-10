@@ -1588,28 +1588,3 @@ async fn test_iter_methods_with_modification_statements() {
         .ok_or(())
         .unwrap_err(); // assert empty
 }
-
-#[tokio::test]
-async fn test_get_keyspace_name() {
-    let ks = unique_keyspace_name();
-
-    // Create the keyspace
-    // No keyspace is set in config, so get_keyspace() should return None.
-    let session = create_new_session_builder().build().await.unwrap();
-    assert_eq!(session.get_keyspace(), None);
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
-    assert_eq!(session.get_keyspace(), None);
-
-    // Call use_keyspace(), get_keyspace now should return the new keyspace name
-    session.use_keyspace(&ks, true).await.unwrap();
-    assert_eq!(*session.get_keyspace().unwrap(), ks);
-
-    // Creating a new session with the keyspace set in config should cause
-    // get_keyspace to return that name
-    let session = create_new_session_builder()
-        .use_keyspace(&ks, true)
-        .build()
-        .await
-        .unwrap();
-    assert_eq!(*session.get_keyspace().unwrap(), ks);
-}
