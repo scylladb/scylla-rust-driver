@@ -299,8 +299,12 @@ impl CachingSessionBuilder<RandomState> {
     /// which can be used to create a new [CachingSession].
     ///
     pub fn new(session: Session) -> Self {
+        Self::new_shared(Arc::new(session))
+    }
+
+    pub fn new_shared(session: Arc<Session>) -> Self {
         Self {
-            session: Arc::new(session),
+            session,
             max_capacity: DEFAULT_MAX_CAPACITY,
             hasher: RandomState::default(),
             use_cached_metadata: false,
