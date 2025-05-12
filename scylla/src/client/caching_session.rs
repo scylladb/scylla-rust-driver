@@ -37,12 +37,13 @@ pub struct CachingSession<S = RandomState>
 where
     S: Clone + BuildHasher,
 {
-    session: Session,
+    session: Arc<Session>,
     /// The prepared statement cache size
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
     max_capacity: usize,
     cache: DashMap<String, RawPreparedStatementData, S>,
+    use_cached_metadata: bool,
 }
 
 impl<S> fmt::Debug for CachingSession<S>
@@ -64,9 +65,10 @@ where
 {
     pub fn from(session: Session, cache_size: usize) -> Self {
         Self {
-            session,
+            session: Arc::new(session),
             max_capacity: cache_size,
             cache: Default::default(),
+            use_cached_metadata: false,
         }
     }
 }
@@ -79,9 +81,10 @@ where
     /// and a [`BuildHasher`], using a customer hasher.
     pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
         Self {
-            session,
+            session: Arc::new(session),
             max_capacity: cache_size,
             cache: DashMap::with_hasher(hasher),
+            use_cached_metadata: false,
         }
     }
 }
@@ -207,10 +210,15 @@ where
                 query.config,
             );
             stmt.set_partitioner_name(raw.partitioner_name.clone());
+            stmt.set_use_cached_result_metadata(self.use_cached_metadata);
             Ok(stmt)
         } else {
             let query_contents = query.contents.clone();
-            let prepared = self.session.prepare(query).await?;
+            let prepared = {
+                let mut stmt = self.session.prepare(query).await?;
+                stmt.set_use_cached_result_metadata(self.use_cached_metadata);
+                stmt
+            };
 
             if self.max_capacity == self.cache.len() {
                 // Cache is full, remove the first entry
@@ -280,9 +288,10 @@ pub struct CachingSessionBuilder<S = RandomState>
 where
     S: Clone + BuildHasher,
 {
-    session: Session,
+    session: Arc<Session>,
     max_capacity: usize,
     hasher: S,
+    use_cached_metadata: bool,
 }
 
 impl CachingSessionBuilder<RandomState> {
@@ -290,10 +299,15 @@ impl CachingSessionBuilder<RandomState> {
     /// which can be used to create a new [CachingSession].
     ///
     pub fn new(session: Session) -> Self {
+        Self::new_shared(Arc::new(session))
+    }
+
+    pub fn new_shared(session: Arc<Session>) -> Self {
         Self {
             session,
             max_capacity: DEFAULT_MAX_CAPACITY,
             hasher: RandomState::default(),
+            use_cached_metadata: false,
         }
     }
 }
@@ -308,9 +322,33 @@ where
         self
     }
 
+    /// Make use of cached metadata to decode results
+    /// of the statement's execution.
+    ///
+    /// If true, the driver will request the server not to
+    /// attach the result metadata in response to the statement execution.
+    ///
+    /// The driver will cache the result metadata received from the server
+    /// after statement preparation and will use it
+    /// to deserialize the results of statement execution.
+    ///
+    /// See documentation of [`PreparedStatement`] for more details on limitations
+    /// of this functionality.
+    ///
+    /// This option is false by default.
+    pub fn use_cached_result_metadata(mut self, use_cached_metadata: bool) -> Self {
+        self.use_cached_metadata = use_cached_metadata;
+        self
+    }
+
     /// Finishes configuration of [CachingSession].
     pub fn build(self) -> CachingSession<S> {
-        CachingSession::with_hasher(self.session, self.max_capacity, self.hasher)
+        CachingSession {
+            session: self.session,
+            max_capacity: self.max_capacity,
+            cache: DashMap::with_hasher(self.hasher),
+            use_cached_metadata: self.use_cached_metadata,
+        }
     }
 }
 
@@ -364,11 +402,13 @@ where
             session,
             max_capacity,
             hasher: _,
+            use_cached_metadata,
         } = self;
         CachingSessionBuilder {
             session,
             max_capacity,
             hasher,
+            use_cached_metadata,
         }
     }
 }
