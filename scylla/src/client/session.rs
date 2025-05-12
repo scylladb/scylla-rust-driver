@@ -2196,33 +2196,74 @@ impl Session {
         // Therefore, this iterator is guaranteed to be nonempty, too.
         let handles = per_node_connections.map(Session::read_node_schema_version);
         // Hence, this is nonempty, too.
-        let versions = try_join_all(handles).await?;
+        let versions_results = try_join_all(handles).await?;
 
-        // Therefore, taking the first element is safe.
-        let local_version: Uuid = versions[0];
-        let in_agreement = versions.into_iter().all(|v| v == local_version);
+        // unwrap is safe because iterator is still not empty.
+        let local_version = match versions_results
+            .iter()
+            .find_or_first(|r| matches!(r, SchemaNodeResult::Success(_)))
+            .unwrap()
+        {
+            SchemaNodeResult::Success(v) => *v,
+            SchemaNodeResult::BrokenConnection(err) => {
+                // There are only broken connection errors. Nothing better to do
+                // than to return an error.
+                return Err(SchemaAgreementError::RequestError(
+                    RequestAttemptError::BrokenConnectionError(err.clone()),
+                ));
+            }
+        };
+
+        let in_agreement = versions_results
+            .into_iter()
+            .filter_map(|v_r| match v_r {
+                SchemaNodeResult::Success(v) => Some(v),
+                SchemaNodeResult::BrokenConnection(_) => None,
+            })
+            .all(|v| v == local_version);
         Ok(in_agreement.then_some(local_version))
     }
 
-    // Iterator must be non-empty!
+    /// Iterate over connections to the node.
+    /// If fetching succeeds on some connection, return first fetched schema version,
+    /// as Ok(SchemaNodeResult::Success(...)).
+    /// Otherwise it means there are only errors:
+    /// - If, and only if, all connections returned ConnectionBrokenError, first such error will be returned,
+    ///   as Ok(SchemaNodeResult::BrokenConnection(...)).
+    /// - Otherwise there is some other type of error on some connection. First such error will be returned as Err(...).
+    ///
+    /// `connections_to_node` iterator must be non-empty!
     async fn read_node_schema_version(
         connections_to_node: impl Iterator<Item = Arc<Connection>>,
-    ) -> Result<Uuid, SchemaAgreementError> {
-        // Iterate over connections to the node. Fail if fetching schema version failed on all connections.
-        // Else, return the first fetched schema version, because all shards have the same schema version.
-        let mut first_err = None;
+    ) -> Result<SchemaNodeResult, SchemaAgreementError> {
+        let mut first_broken_connection_err: Option<BrokenConnectionError> = None;
+        let mut first_unignorable_err: Option<SchemaAgreementError> = None;
         for connection in connections_to_node {
             match connection.fetch_schema_version().await {
-                Ok(schema_version) => return Ok(schema_version),
+                Ok(schema_version) => return Ok(SchemaNodeResult::Success(schema_version)),
+                Err(SchemaAgreementError::RequestError(
+                    RequestAttemptError::BrokenConnectionError(conn_err),
+                )) => {
+                    if first_broken_connection_err.is_none() {
+                        first_broken_connection_err = Some(conn_err);
+                    }
+                }
                 Err(err) => {
-                    if first_err.is_none() {
-                        first_err = Some(err);
+                    if first_unignorable_err.is_none() {
+                        first_unignorable_err = Some(err);
                     }
                 }
             }
         }
         // The iterator was guaranteed to be nonempty, so there must have been at least one error.
-        Err(first_err.unwrap())
+        // It means at least one of `first_broken_connection_err` and `first_unrecoverable_err` is Some.
+        if let Some(err) = first_unignorable_err {
+            return Err(err);
+        }
+
+        Ok(SchemaNodeResult::BrokenConnection(
+            first_broken_connection_err.unwrap(),
+        ))
     }
 
     /// Retrieves the handle to execution profile that is used by this session
@@ -2305,4 +2346,10 @@ impl ExecuteRequestContext<'_> {
             .listener
             .log_attempt_error(*attempt_id, error, retry_decision);
     }
+}
+
+#[derive(Debug)]
+enum SchemaNodeResult {
+    Success(Uuid),
+    BrokenConnection(BrokenConnectionError),
 }
