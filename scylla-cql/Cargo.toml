@@ -48,7 +48,7 @@ harness = false
 
 [features]
 secrecy-08 = ["dep:secrecy-08"]
-serde = ["serde"]
+serde = ["dep:serde"]
 time-03 = ["dep:time-03"]
 chrono-04 = []
 num-bigint-03 = ["dep:num-bigint-03"]
