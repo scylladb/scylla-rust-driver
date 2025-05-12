@@ -12,8 +12,9 @@ use crate::cluster::node::CloudEndpoint;
 use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
-    BadQuery, ExecutionError, MetadataError, NewSessionError, PagerExecutionError, PrepareError,
-    RequestAttemptError, RequestError, SchemaAgreementError, TracingError, UseKeyspaceError,
+    BadQuery, BrokenConnectionError, ExecutionError, MetadataError, NewSessionError,
+    PagerExecutionError, PrepareError, RequestAttemptError, RequestError, SchemaAgreementError,
+    TracingError, UseKeyspaceError,
 };
 use crate::frame::response::result;
 use crate::network::tls::TlsProvider;
@@ -2193,23 +2194,7 @@ impl Session {
         let per_node_connections = cluster_state.iter_working_connections_per_node()?;
 
         // Therefore, this iterator is guaranteed to be nonempty, too.
-        let handles = per_node_connections.map(|connections_to_node| async move {
-            // Iterate over connections to the node. Fail if fetching schema version failed on all connections.
-            // Else, return the first fetched schema version, because all shards have the same schema version.
-            let mut first_err = None;
-            for connection in connections_to_node {
-                match connection.fetch_schema_version().await {
-                    Ok(schema_version) => return Ok(schema_version),
-                    Err(err) => {
-                        if first_err.is_none() {
-                            first_err = Some(err);
-                        }
-                    }
-                }
-            }
-            // The iterator was guaranteed to be nonempty, so there must have been at least one error.
-            Err(first_err.unwrap())
-        });
+        let handles = per_node_connections.map(Session::read_node_schema_version);
         // Hence, this is nonempty, too.
         let versions = try_join_all(handles).await?;
 
@@ -2217,6 +2202,27 @@ impl Session {
         let local_version: Uuid = versions[0];
         let in_agreement = versions.into_iter().all(|v| v == local_version);
         Ok(in_agreement.then_some(local_version))
+    }
+
+    // Iterator must be non-empty!
+    async fn read_node_schema_version(
+        connections_to_node: impl Iterator<Item = Arc<Connection>>,
+    ) -> Result<Uuid, SchemaAgreementError> {
+        // Iterate over connections to the node. Fail if fetching schema version failed on all connections.
+        // Else, return the first fetched schema version, because all shards have the same schema version.
+        let mut first_err = None;
+        for connection in connections_to_node {
+            match connection.fetch_schema_version().await {
+                Ok(schema_version) => return Ok(schema_version),
+                Err(err) => {
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                }
+            }
+        }
+        // The iterator was guaranteed to be nonempty, so there must have been at least one error.
+        Err(first_err.unwrap())
     }
 
     /// Retrieves the handle to execution profile that is used by this session
