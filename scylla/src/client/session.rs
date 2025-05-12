@@ -1116,7 +1116,8 @@ impl Session {
         };
 
         self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(&response).await?;
+        self.handle_auto_await_schema_agreement(&response, coordinator.node().host_id)
+            .await?;
 
         let (result, paging_state_response) =
             response.into_query_result_and_paging_state(coordinator)?;
@@ -1144,10 +1145,12 @@ impl Session {
     async fn handle_auto_await_schema_agreement(
         &self,
         response: &NonErrorQueryResponse,
+        coordinator_id: Uuid,
     ) -> Result<(), ExecutionError> {
         if self.schema_agreement_automatic_waiting {
             if response.as_schema_change().is_some() {
-                self.await_schema_agreement().await?;
+                self.await_schema_agreement_with_required_node(Some(coordinator_id))
+                    .await?;
             }
 
             if self.refresh_metadata_on_auto_schema_agreement
@@ -1489,7 +1492,8 @@ impl Session {
         };
 
         self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(&response).await?;
+        self.handle_auto_await_schema_agreement(&response, coordinator.node().host_id)
+            .await?;
 
         let (result, paging_state_response) =
             response.into_query_result_and_paging_state(coordinator)?;
@@ -2160,10 +2164,19 @@ impl Session {
     ///
     /// Issues an agreement check each `Session::schema_agreement_interval`.
     /// Loops indefinitely until the agreement is reached.
-    async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, SchemaAgreementError> {
+    ///
+    /// If `required_node` is Some, only returns Ok if this node successfully
+    /// returned its schema version during the agreement process.
+    async fn await_schema_agreement_indefinitely(
+        &self,
+        required_node: Option<Uuid>,
+    ) -> Result<Uuid, SchemaAgreementError> {
         loop {
             tokio::time::sleep(self.schema_agreement_interval).await;
-            if let Some(agreed_version) = self.check_schema_agreement().await? {
+            if let Some(agreed_version) = self
+                .check_schema_agreement_with_required_node(required_node)
+                .await?
+            {
                 return Ok(agreed_version);
             }
         }
@@ -2177,7 +2190,29 @@ impl Session {
     pub async fn await_schema_agreement(&self) -> Result<Uuid, SchemaAgreementError> {
         timeout(
             self.schema_agreement_timeout,
-            self.await_schema_agreement_indefinitely(),
+            self.await_schema_agreement_indefinitely(None),
+        )
+        .await
+        .unwrap_or(Err(SchemaAgreementError::Timeout(
+            self.schema_agreement_timeout,
+        )))
+    }
+
+    /// Awaits schema agreement among all reachable nodes.
+    ///
+    /// Issues an agreement check each `Session::schema_agreement_interval`.
+    /// If agreement is not reached in `Session::schema_agreement_timeout`,
+    /// `SchemaAgreementError::Timeout` is returned.
+    ///
+    /// If `required_node` is Some, only returns Ok if this node successfully
+    /// returned its schema version during the agreement process.
+    async fn await_schema_agreement_with_required_node(
+        &self,
+        required_node: Option<Uuid>,
+    ) -> Result<Uuid, SchemaAgreementError> {
+        timeout(
+            self.schema_agreement_timeout,
+            self.await_schema_agreement_indefinitely(required_node),
         )
         .await
         .unwrap_or(Err(SchemaAgreementError::Timeout(
@@ -2189,14 +2224,54 @@ impl Session {
     ///
     /// If so, returns that agreed upon version.
     pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, SchemaAgreementError> {
+        self.check_schema_agreement_with_required_node(None).await
+    }
+
+    /// Checks if all reachable nodes have the same schema version.
+    /// If so, returns that agreed upon version.
+    ///
+    /// If `required_node` is Some, only returns Ok if this node successfully
+    /// returned its schema version.
+    async fn check_schema_agreement_with_required_node(
+        &self,
+        required_node: Option<Uuid>,
+    ) -> Result<Option<Uuid>, SchemaAgreementError> {
         let cluster_state = self.get_cluster_state();
         // The iterator is guaranteed to be nonempty.
         let per_node_connections = cluster_state.iter_working_connections_per_node()?;
 
         // Therefore, this iterator is guaranteed to be nonempty, too.
-        let handles = per_node_connections.map(Session::read_node_schema_version);
+        let handles = per_node_connections.map(|(host_id, pool)| async move {
+            (host_id, Session::read_node_schema_version(pool).await)
+        });
         // Hence, this is nonempty, too.
-        let versions_results = try_join_all(handles).await?;
+        let versions_results = join_all(handles).await;
+
+        // Verify that required host is present, and returned success.
+        if let Some(required_node) = required_node {
+            match versions_results
+                .iter()
+                .find(|(host_id, _)| *host_id == required_node)
+            {
+                Some((_, Ok(SchemaNodeResult::Success(_version)))) => (),
+                // For other connections we can ignore Broken error, but for required
+                // host we need an actual schema version.
+                Some((_, Ok(SchemaNodeResult::BrokenConnection(e)))) => {
+                    return Err(SchemaAgreementError::RequestError(
+                        RequestAttemptError::BrokenConnectionError(e.clone()),
+                    ))
+                }
+                Some((_, Err(e))) => return Err(e.clone()),
+                None => return Err(SchemaAgreementError::RequiredHostAbsent(required_node)),
+            }
+        }
+
+        // Now we no longer need all the errors. We can return if there is
+        // irrecoverable one, and collect the Ok values otherwise.
+        let versions_results: Vec<_> = versions_results
+            .into_iter()
+            .map(|(_, result)| result)
+            .try_collect()?;
 
         // unwrap is safe because iterator is still not empty.
         let local_version = match versions_results

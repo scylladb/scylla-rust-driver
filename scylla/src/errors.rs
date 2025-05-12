@@ -6,6 +6,7 @@ use std::net::{AddrParseError, IpAddr, SocketAddr};
 use std::num::ParseIntError;
 use std::sync::Arc;
 use thiserror::Error;
+use uuid::Uuid;
 
 use crate::frame::response;
 
@@ -209,6 +210,12 @@ pub enum SchemaAgreementError {
     /// Schema agreement timed out.
     #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
     Timeout(std::time::Duration),
+
+    #[error(
+        "Host with id {} required for schema agreement is not present in connection pool",
+        0
+    )]
+    RequiredHostAbsent(Uuid),
 }
 
 /// An error that occurred during tracing info fetch.
