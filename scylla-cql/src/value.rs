@@ -25,6 +25,12 @@ pub struct Unset;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Counter(pub i64);
 
+impl From<i64> for Counter {
+    fn from(value: i64) -> Self {
+        Counter(value)
+    }
+}
+
 /// Enum providing a way to represent a value that might be unset
 #[derive(Debug, Clone, Copy, Default)]
 pub enum MaybeUnset<V> {
@@ -810,6 +816,7 @@ impl TryInto<time_03::Time> for CqlTime {
 }
 
 /// Represents a CQL Duration value
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct CqlDuration {
     pub months: i32,
