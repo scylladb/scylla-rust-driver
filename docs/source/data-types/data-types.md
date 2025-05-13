@@ -16,7 +16,7 @@ Database types and their Rust equivalents:
 * `BigInt` <----> `i64`
 * `Float` <----> `f32`
 * `Double` <----> `f64`
-* `Ascii`, `Text`, `Varchar` <----> `&str`, `String`
+* `Ascii`, `Text`, `Varchar` <----> `&str`, `String`, `Box<str>`, `Arc<str>`
 * `Counter` <----> `value::Counter`
 * `Blob` <----> `Vec<u8>`
 * `Inet` <----> `std::net::IpAddr`
