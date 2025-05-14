@@ -39,7 +39,7 @@ pub struct SingleTargetLoadBalancingPolicy {
 
 impl SingleTargetLoadBalancingPolicy {
     /// Creates a new instance of [`SingleTargetLoadBalancingPolicy`].
-    #[allow(clippy::new_ret_no_self)]
+    #[expect(clippy::new_ret_no_self)]
     pub fn new(
         node_identifier: NodeIdentifier,
         shard: Option<Shard>,

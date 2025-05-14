@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(range, ShardAwarePortRange::EPHEMERAL_PORT_RANGE);
 
         // Test invalid range (empty)
-        #[allow(clippy::reversed_empty_ranges)]
+        #[expect(clippy::reversed_empty_ranges)]
         {
             assert!(ShardAwarePortRange::new(49152..=49151).is_err());
         }

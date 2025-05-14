@@ -299,9 +299,7 @@ impl ConnectionConfig {
     /// Customizes the config for a specific endpoint.
     pub(crate) fn to_host_connection_config(
         &self,
-        // Currently, this is only used for cloud; but it makes abstract sense to pass endpoint here
-        // also for non-cloud cases, so let's just allow(unused).
-        #[allow(unused)] endpoint: &UntranslatedEndpoint,
+        endpoint: &UntranslatedEndpoint,
     ) -> HostConnectionConfig {
         let tls_config = self
             .tls_provider
@@ -1337,7 +1335,7 @@ impl Connection {
 
         if let Some(tls_config) = &config.tls_config {
             // To silence warnings when TlsContext is an empty enum (tls features are disabled).
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code)]
             match tls_config.new_tls()? {
                 #[cfg(feature = "openssl-010")]
                 crate::network::tls::Tls::OpenSsl010(ssl) => {

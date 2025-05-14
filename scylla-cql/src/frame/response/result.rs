@@ -260,7 +260,7 @@ impl ColumnType<'_> {
     // Scylla's set of types supported for empty values as it's smaller;
     // with Cassandra, some rejects will just have to be rejected on the db side.
     pub(crate) fn supports_special_empty_value(&self) -> bool {
-        #[allow(clippy::match_like_matches_macro)]
+        #[expect(clippy::match_like_matches_macro)]
         match self {
             ColumnType::Native(NativeType::Counter)
             | ColumnType::Native(NativeType::Duration)

@@ -854,7 +854,7 @@ impl Session {
         #[cfg(not(feature = "unstable-cloud"))]
         let cloud_known_nodes: Option<Vec<InternalKnownNode>> = None;
 
-        #[allow(clippy::unnecessary_literal_unwrap)]
+        #[expect(clippy::unnecessary_literal_unwrap)]
         let known_nodes = cloud_known_nodes
             .unwrap_or_else(|| known_nodes.into_iter().map(|node| node.into()).collect());
 
@@ -865,7 +865,7 @@ impl Session {
 
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
 
-        #[allow(unused_labels)] // Triggers when `cloud` feature is disabled.
+        #[expect(unused_labels)] // Triggers when `cloud` feature is disabled.
         let address_translator = 'translator: {
             #[cfg(feature = "unstable-cloud")]
             if let Some(translator) = config.cloud_config.clone() {
@@ -902,9 +902,9 @@ impl Session {
             if let Some(tls_context) = config.tls_context {
                 // To silence warnings when TlsContext is an empty enum (tls features are disabled).
                 // In such case, TlsProvider is uninhabited.
-                #[allow(unused_variables)]
+                #[expect(unused_variables)]
                 let provider = TlsProvider::new_with_global_context(tls_context);
-                #[allow(unreachable_code)]
+                #[expect(unreachable_code)]
                 break 'provider Some(provider);
             }
             None

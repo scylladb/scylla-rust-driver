@@ -337,11 +337,11 @@ pub(crate) struct OwnedRoutingInfo {
     consistency: Consistency,
     serial_consistency: Option<SerialConsistency>,
 
-    #[allow(unused)]
+    #[expect(unused)]
     table: Option<TableSpec<'static>>,
-    #[allow(unused)]
+    #[expect(unused)]
     token: Option<Token>,
-    #[allow(unused)]
+    #[expect(unused)]
     is_confirmed_lwt: bool,
 }
 

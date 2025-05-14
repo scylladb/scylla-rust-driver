@@ -1228,7 +1228,7 @@ impl ProxyWorker {
         .await;
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn request_processor(
         self,
         mut requests_rx: mpsc::UnboundedReceiver<RequestFrame>,
@@ -1350,7 +1350,7 @@ impl ProxyWorker {
         .await;
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     async fn response_processor(
         self,
         mut responses_rx: mpsc::UnboundedReceiver<ResponseFrame>,

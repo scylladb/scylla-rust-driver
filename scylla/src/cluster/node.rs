@@ -166,7 +166,7 @@ impl Node {
     /// See [Node::is_connected] for a better way of checking node availability.
     // TODO: When control connection is broken, we should mark
     // all nodes as being up.
-    #[allow(unused)]
+    #[expect(unused)]
     pub(crate) fn is_down(&self) -> bool {
         self.down_marker.load(Ordering::Relaxed)
     }
@@ -281,7 +281,7 @@ pub(crate) struct CloudEndpoint {
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
-    #[cfg_attr(not(feature = "unstable-cloud"), allow(unused))]
+    #[cfg_attr(not(feature = "unstable-cloud"), expect(unused))]
     pub(crate) datacenter: Option<String>,
 }
 
