@@ -420,7 +420,7 @@ impl Metadata {
 
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         initial_known_nodes: Vec<InternalKnownNode>,
         control_connection_repair_requester: broadcast::Sender<()>,
@@ -1663,7 +1663,7 @@ impl ControlConnection {
         'tables_loop: for ((keyspace_name, table_name), table_result) in tables_schema {
             let keyspace_and_table_name = (keyspace_name, table_name);
 
-            #[allow(clippy::type_complexity)]
+            #[expect(clippy::type_complexity)]
             let (columns, partition_key_columns, clustering_key_columns): (
                 HashMap<String, Column>,
                 Vec<(i32, String)>,

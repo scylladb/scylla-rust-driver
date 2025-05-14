@@ -60,7 +60,7 @@ impl TlsProvider {
     pub(crate) fn make_tls_config(
         &self,
         // Currently, this is only used for cloud; but it makes abstract sense to pass endpoint here
-        // also for non-cloud cases, so let's just allow(unused).
+        // also for non-cloud cases, so let's just expect(unused).
         #[allow(unused)] endpoint: &UntranslatedEndpoint,
     ) -> Option<TlsConfig> {
         match self {

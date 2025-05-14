@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
     }
 
     // Or as custom structs that derive DeserializeRow
-    #[allow(unused)]
+    #[expect(unused)]
     #[derive(Debug, DeserializeRow)]
     struct RowData {
         a: i32,

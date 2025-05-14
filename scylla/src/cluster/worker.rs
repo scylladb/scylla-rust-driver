@@ -97,7 +97,7 @@ struct UseKeyspaceRequest {
 }
 
 impl Cluster {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         known_nodes: Vec<InternalKnownNode>,
         pool_config: PoolConfig,

@@ -932,9 +932,9 @@ fn metadata_does_not_bound_deserialized_rows() {
         #[derive(DeserializeRow)]
         #[scylla(crate=crate)]
         struct MyRow<'frame> {
-            #[allow(dead_code)]
+            #[expect(dead_code)]
             bytes: &'frame [u8],
-            #[allow(dead_code)]
+            #[expect(dead_code)]
             text: &'frame str,
         }
         let decoded_custom_struct_res = deserialize::<MyRow>(row_typ, &bytes);

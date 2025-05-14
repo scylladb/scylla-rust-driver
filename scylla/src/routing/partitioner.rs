@@ -76,7 +76,7 @@ impl PartitionerHasher for PartitionerHasherAny {
 mod sealed {
     // This is a sealed trait - its whole purpose is to be unnameable.
     // This means we need to disable the check.
-    #[allow(unnameable_types)]
+    #[expect(unnameable_types)]
     pub trait Sealed {}
 }
 

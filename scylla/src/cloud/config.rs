@@ -264,12 +264,12 @@ impl AuthInfo {
         &self.tls
     }
 
-    #[allow(unused)]
+    #[expect(unused)]
     pub(crate) fn get_username(&self) -> Option<&str> {
         self.username.as_deref()
     }
 
-    #[allow(unused)]
+    #[expect(unused)]
     pub(crate) fn get_password(&self) -> Option<&str> {
         self.password.as_deref()
     }
@@ -291,7 +291,7 @@ impl Datacenter {
         &self.server
     }
 
-    #[allow(unused)]
+    #[expect(unused)]
     pub(crate) fn get_tls_server_name(&self) -> Option<&str> {
         self.tls_server_name.as_deref()
     }
@@ -304,7 +304,7 @@ impl Datacenter {
         self.insecure_skip_tls_verify
     }
 
-    #[allow(unused)]
+    #[expect(unused)]
     pub(crate) fn get_proxy_url(&self) -> Option<&str> {
         self.proxy_url.as_deref()
     }
@@ -367,7 +367,7 @@ mod deserialize {
     const NODE_DOMAIN_MAX_LENGTH: usize = 255 - 32 - 4 - 1;
 
     #[derive(Deserialize)]
-    #[allow(non_snake_case)]
+    #[expect(non_snake_case)]
     struct RawCloudConfig {
         // Kind is a string value representing the REST resource this object represents.
         // Servers may infer this from the endpoint the client submits requests to.
@@ -398,7 +398,7 @@ mod deserialize {
         parameters: Option<Parameters>,
     }
 
-    #[allow(non_snake_case)]
+    #[expect(non_snake_case)]
     #[derive(Deserialize)]
     struct AuthInfo {
         // ClientCertificateData contains PEM-encoded data from a client cert file for TLS. Overrides ClientCertificatePath.
@@ -425,7 +425,7 @@ mod deserialize {
         password: Option<String>,
     }
 
-    #[allow(non_snake_case)]
+    #[expect(non_snake_case)]
     #[derive(Deserialize)]
     struct Datacenter {
         // CertificateAuthorityPath is the path to a cert file for the certificate authority.
@@ -462,7 +462,7 @@ mod deserialize {
         proxyUrl: Option<String>,
     }
 
-    #[allow(non_snake_case)]
+    #[expect(non_snake_case)]
     #[derive(Deserialize)]
     struct Context {
         // DatacenterName is the name of the datacenter for this context.
@@ -472,7 +472,7 @@ mod deserialize {
         authInfoName: String,
     }
 
-    #[allow(non_snake_case)]
+    #[expect(non_snake_case)]
     #[derive(Deserialize, Debug)]
     struct Parameters {
         // DefaultConsistency is the default consistency level used for user queries.
