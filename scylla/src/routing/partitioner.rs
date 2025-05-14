@@ -92,7 +92,7 @@ pub trait Partitioner: sealed::Sealed {
 
     fn build_hasher(&self) -> Self::Hasher;
 
-    #[allow(unused)] // Currently, no public API uses this.
+    // Currently, no public API uses this.
     fn hash_one(&self, data: &[u8]) -> Token {
         let mut hasher = self.build_hasher();
         hasher.write(data);

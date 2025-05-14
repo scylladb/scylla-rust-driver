@@ -166,7 +166,6 @@ impl Node {
     /// See [Node::is_connected] for a better way of checking node availability.
     // TODO: When control connection is broken, we should mark
     // all nodes as being up.
-    #[allow(unused)]
     pub(crate) fn is_down(&self) -> bool {
         self.down_marker.load(Ordering::Relaxed)
     }
