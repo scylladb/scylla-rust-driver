@@ -1,6 +1,6 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
-use crate::frame::response::event::{Event, StatusChangeEvent};
+use crate::frame::response::event::Event;
 use crate::network::{PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
@@ -12,13 +12,12 @@ use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::frame::response::result::TableSpec;
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use super::metadata::MetadataReader;
-use super::node::{InternalKnownNode, NodeAddr};
+use super::node::InternalKnownNode;
 use super::state::{ClusterState, ClusterStateNeatDebug};
 
 /// Cluster manages up to date information and connections to database nodes.
@@ -290,7 +289,7 @@ impl ClusterWorker {
                         debug!("Received server event: {:?}", event);
                         match event {
                             Event::TopologyChange(_) => (), // Refresh immediately
-                            Event::StatusChange(status) => {
+                            Event::StatusChange(_status) => {
                                 // If some node went down/up, update it's marker and refresh
                                 // later as planned.
 
@@ -304,10 +303,6 @@ impl ClusterWorker {
                                 // - When receiving up event, and we have no connections to the node,
                                 //   then try to open new connections.
 
-                                match status {
-                                    StatusChangeEvent::Down(addr) => self.change_node_down_marker(addr, true),
-                                    StatusChangeEvent::Up(addr) => self.change_node_down_marker(addr, false),
-                                }
                                 continue;
                             },
                             _ => continue, // Don't go to refreshing
@@ -367,27 +362,6 @@ impl ClusterWorker {
                 let _ = request.response_chan.send(refresh_res);
             }
         }
-    }
-
-    fn change_node_down_marker(&mut self, addr: SocketAddr, is_down: bool) {
-        let cluster_state = self.cluster_state.load_full();
-
-        // We need to iterate through the whole map here, but there will rarely more than ~100 nodes,
-        // and changes of down marker are infrequent enough to afford this. As an important tradeoff,
-        // we only keep one hashmap of known_peers, which is indexed by host IDs for node identification.
-        let node = match cluster_state
-            .known_peers
-            .values()
-            .find(|&peer| peer.address == NodeAddr::Translatable(addr))
-        {
-            Some(node) => node,
-            None => {
-                warn!("Unknown node address {}", addr);
-                return;
-            }
-        };
-
-        node.change_down_marker(is_down);
     }
 
     async fn handle_use_keyspace_request(

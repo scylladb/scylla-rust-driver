@@ -1476,12 +1476,11 @@ mod tests {
         info!("Example plan from policy:",);
         for (node, shard) in example_plan {
             info!(
-                "Node port: {}, shard: {}, dc: {:?}, rack: {:?}, down: {:?}",
+                "Node port: {}, shard: {}, dc: {:?}, rack: {:?}",
                 node.address.port(),
                 shard,
                 node.datacenter,
                 node.rack,
-                node.is_down()
             );
         }
 
