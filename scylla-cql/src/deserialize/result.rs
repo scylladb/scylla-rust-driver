@@ -175,7 +175,7 @@ impl RawRowLendingIterator {
     /// The column iterator must be consumed before the rows iterator can
     /// continue.
     #[inline]
-    #[allow(clippy::should_implement_trait)] // https://github.com/rust-lang/rust-clippy/issues/5004
+    #[expect(clippy::should_implement_trait)] // https://github.com/rust-lang/rust-clippy/issues/5004
     pub fn next(&mut self) -> Option<Result<ColumnIterator, DeserializationError>> {
         self.remaining = self.remaining.checked_sub(1)?;
 

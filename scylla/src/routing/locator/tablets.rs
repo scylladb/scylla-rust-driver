@@ -230,7 +230,7 @@ impl Tablet {
     // make much sense to do so, looking at the caller of this function.
     // Tablet returned in `Err` variant is used as if no error appeared.
     // The only difference is that we use node ids to emit some debug logs.
-    #[allow(clippy::result_large_err)]
+    #[expect(clippy::result_large_err)]
     pub(crate) fn from_raw_tablet(
         raw_tablet: RawTablet,
         replica_translator: impl Fn(Uuid) -> Option<Arc<Node>>,
@@ -520,7 +520,7 @@ impl TabletsInfo {
             .add_tablet(tablet)
     }
 
-    #[allow(clippy::doc_overindented_list_items)]
+    #[expect(clippy::doc_overindented_list_items)]
     /// This method is supposed to be called when topology is updated.
     /// It goes through tablet info and adjusts it to topology changes, to prevent
     /// a situation where local tablet info and a real one are permanently different.

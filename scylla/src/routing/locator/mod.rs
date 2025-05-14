@@ -729,7 +729,7 @@ impl<'a> Iterator for ReplicasOrderedNTSIterator<'a> {
                 // Clippy can't check that in Eq and Hash impls we don't actually use any field with interior mutability
                 // (in Node only `down_marker` is such, being an AtomicBool).
                 // https://rust-lang.github.io/rust-clippy/master/index.html#mutable_key_type
-                #[allow(clippy::mutable_key_type)]
+                #[expect(clippy::mutable_key_type)]
                 let mut all_replicas: HashSet<&'a Arc<Node>> = HashSet::new();
                 for (datacenter, repfactor) in datacenter_repfactors.iter() {
                     all_replicas.extend(

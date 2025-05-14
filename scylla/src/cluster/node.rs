@@ -260,7 +260,7 @@ pub(crate) struct CloudEndpoint {
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
-    #[cfg_attr(not(feature = "unstable-cloud"), allow(unused))]
+    #[cfg_attr(not(feature = "unstable-cloud"), expect(unused))]
     pub(crate) datacenter: Option<String>,
 }
 

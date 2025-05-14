@@ -42,7 +42,7 @@ fn test_custom_cassandra_type_parser() {
             dimensions: 5,
         },
     ),
-    (  "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)", 
+    (  "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)",
         ColumnType::Collection {
             frozen: false,
             typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
@@ -2781,9 +2781,9 @@ fn metadata_does_not_bound_deserialized_values() {
         #[derive(DeserializeValue)]
         #[scylla(crate=crate)]
         struct Udt<'frame> {
-            #[allow(dead_code)]
+            #[expect(dead_code)]
             bytes: &'frame [u8],
-            #[allow(dead_code)]
+            #[expect(dead_code)]
             text: &'frame str,
         }
         let decoded_udt_res = deserialize::<Udt>(&udt_typ, &bytes);

@@ -121,7 +121,7 @@ impl Condition {
     }
 
     /// A convenience function for creating [Condition::Not] variant.
-    #[allow(clippy::should_implement_trait)]
+    #[expect(clippy::should_implement_trait)]
     pub fn not(c: Self) -> Self {
         Condition::Not(Box::new(c))
     }
