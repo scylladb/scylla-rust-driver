@@ -639,8 +639,8 @@ impl QueryPager {
     }
 
     /// Tries to acquire a non-empty page, if current page is exhausted.
-    fn poll_fill_page<'r>(
-        mut self: Pin<&'r mut Self>,
+    fn poll_fill_page(
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<(), NextRowError>>> {
         if !self.is_current_page_exhausted() {
@@ -662,8 +662,8 @@ impl QueryPager {
     /// On success, returns Some(Ok()).
     /// On failure, returns Some(Err()).
     /// If there are no more pages, returns None.
-    fn poll_next_page<'r>(
-        mut self: Pin<&'r mut Self>,
+    fn poll_next_page(
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<(), NextRowError>>> {
         let mut s = self.as_mut();
