@@ -16,7 +16,6 @@ use std::num::Wrapping;
 use crate::routing::Token;
 use crate::statement::prepared::TokenCalculationError;
 
-#[allow(clippy::upper_case_acronyms)]
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 #[non_exhaustive]
 pub enum PartitionerName {
@@ -51,7 +50,6 @@ impl Partitioner for PartitionerName {
     }
 }
 
-#[allow(clippy::upper_case_acronyms)]
 #[non_exhaustive]
 pub enum PartitionerHasherAny {
     Murmur3(Murmur3PartitionerHasher),
@@ -92,7 +90,7 @@ pub trait Partitioner: sealed::Sealed {
 
     fn build_hasher(&self) -> Self::Hasher;
 
-    #[allow(unused)] // Currently, no public API uses this.
+    // Currently, no public API uses this.
     fn hash_one(&self, data: &[u8]) -> Token {
         let mut hasher = self.build_hasher();
         hasher.write(data);

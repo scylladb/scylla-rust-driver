@@ -184,8 +184,6 @@ impl TlsConfig {
 
     /// Produces a new Tls object that is able to wrap a TCP stream.
     pub(crate) fn new_tls(&self) -> Result<Tls, TlsError> {
-        // To silence warnings when TlsContext is an empty enum (tls features are disabled).
-        #[allow(unreachable_code)]
         match self.context {
             #[cfg(feature = "openssl-010")]
             TlsContext::OpenSsl010(ref context) => {

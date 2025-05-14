@@ -322,7 +322,6 @@ impl DeserializeAssumeOrderGenerator<'_> {
 
         parse_quote! {
             fn deserialize(
-                #[allow(unused_mut)]
                 mut row: #macro_internal::ColumnIterator<#frame_lifetime, #metadata_lifetime>,
             ) -> ::std::result::Result<Self, #macro_internal::DeserializationError> {
                 ::std::result::Result::Ok(Self {
@@ -576,8 +575,7 @@ impl DeserializeUnorderedGenerator<'_> {
 
         parse_quote! {
             fn deserialize(
-                #[allow(unused_mut)]
-                mut row: #macro_internal::ColumnIterator<#frame_lifetime, #metadata_lifetime>,
+                row: #macro_internal::ColumnIterator<#frame_lifetime, #metadata_lifetime>,
             ) -> ::std::result::Result<Self, #macro_internal::DeserializationError> {
 
                 // Generate fields that will serve as temporary storage

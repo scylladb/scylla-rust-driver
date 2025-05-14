@@ -84,12 +84,10 @@ fn test_deserialization_as_column_iterator() {
 // Do not remove. It's not used in tests but we keep it here to check that
 // we properly ignore warnings about unused variables, unnecessary `mut`s
 // etc. that usually pop up when generating code for empty structs.
-#[allow(unused)]
 #[derive(DeserializeRow)]
 #[scylla(crate = crate)]
 struct TestUdtWithNoFieldsUnordered {}
 
-#[allow(unused)]
 #[derive(DeserializeRow)]
 #[scylla(crate = crate, flavor = "enforce_order")]
 struct TestUdtWithNoFieldsOrdered {}

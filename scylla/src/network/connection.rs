@@ -299,9 +299,7 @@ impl ConnectionConfig {
     /// Customizes the config for a specific endpoint.
     pub(crate) fn to_host_connection_config(
         &self,
-        // Currently, this is only used for cloud; but it makes abstract sense to pass endpoint here
-        // also for non-cloud cases, so let's just allow(unused).
-        #[allow(unused)] endpoint: &UntranslatedEndpoint,
+        endpoint: &UntranslatedEndpoint,
     ) -> HostConnectionConfig {
         let tls_config = self
             .tls_provider
