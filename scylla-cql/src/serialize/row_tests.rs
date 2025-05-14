@@ -94,7 +94,6 @@ fn test_dyn_serialize_row() {
 #[test]
 fn test_tuple_errors() {
     // Unit
-    #[allow(clippy::let_unit_value)] // The let binding below is intentional
     let v = ();
     let spec = [col("a", ColumnType::Native(NativeType::Text))];
     let err = do_serialize_err(v, &spec);
@@ -224,7 +223,6 @@ fn test_map_errors() {
 // Do not remove. It's not used in tests but we keep it here to check that
 // we properly ignore warnings about unused variables, unnecessary `mut`s
 // etc. that usually pop up when generating code for empty structs.
-#[allow(unused)]
 #[derive(SerializeRow)]
 #[scylla(crate = crate)]
 struct TestRowWithNoColumns {}

@@ -359,7 +359,6 @@ impl std::str::FromStr for ColumnKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-#[allow(clippy::enum_variant_names)]
 pub enum Strategy {
     SimpleStrategy {
         replication_factor: usize,

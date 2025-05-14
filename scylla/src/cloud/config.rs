@@ -168,9 +168,7 @@ pub enum CloudTlsProvider {
 #[derive(Debug)]
 pub(crate) struct AuthInfo {
     tls: TlsInfo,
-    #[allow(unused)]
     username: Option<String>,
-    #[allow(unused)]
     password: Option<String>,
 }
 
@@ -282,11 +280,9 @@ impl AuthInfo {
 pub(crate) struct Datacenter {
     ca_cert: TlsCert,
     server: String,
-    #[allow(unused)]
     tls_server_name: Option<String>,
     node_domain: String,
     insecure_skip_tls_verify: bool,
-    #[allow(unused)]
     proxy_url: Option<String>,
 }
 
