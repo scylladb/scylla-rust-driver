@@ -522,7 +522,7 @@ fn test_cql_value_udt_errors() {
 // Do not remove. It's not used in tests but we keep it here to check that
 // we properly ignore warnings about unused variables, unnecessary `mut`s
 // etc. that usually pop up when generating code for empty structs.
-#[allow(unused)]
+#[expect(unused)]
 #[derive(SerializeValue)]
 #[scylla(crate = crate)]
 struct TestUdtWithNoFields {}
@@ -1162,7 +1162,7 @@ fn test_udt_serialization_with_field_rename_and_enforce_order() {
     assert_eq!(reference, udt);
 }
 
-#[allow(unused)]
+#[expect(unused)]
 #[derive(SerializeValue, Debug)]
 #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
 struct TestUdtWithSkippedNameChecks {
@@ -1329,7 +1329,7 @@ struct TestUdtWithSkippedFields {
     a: String,
     b: i32,
     #[scylla(skip)]
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     skipped: Vec<String>,
     c: Vec<i64>,
 }

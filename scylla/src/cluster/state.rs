@@ -76,7 +76,7 @@ impl ClusterState {
 
     /// Creates new ClusterState using information about topology held in `metadata`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,

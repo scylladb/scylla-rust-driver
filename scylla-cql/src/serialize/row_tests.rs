@@ -669,7 +669,7 @@ struct TestRowWithSkippedFields {
     a: String,
     b: i32,
     #[scylla(skip)]
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     skipped: Vec<String>,
     c: Vec<i64>,
 }

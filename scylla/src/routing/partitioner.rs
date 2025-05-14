@@ -16,7 +16,7 @@ use std::num::Wrapping;
 use crate::routing::Token;
 use crate::statement::prepared::TokenCalculationError;
 
-#[allow(clippy::upper_case_acronyms)]
+#[expect(clippy::upper_case_acronyms)]
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 #[non_exhaustive]
 pub enum PartitionerName {
@@ -51,7 +51,7 @@ impl Partitioner for PartitionerName {
     }
 }
 
-#[allow(clippy::upper_case_acronyms)]
+#[expect(clippy::upper_case_acronyms)]
 #[non_exhaustive]
 pub enum PartitionerHasherAny {
     Murmur3(Murmur3PartitionerHasher),
@@ -78,7 +78,7 @@ impl PartitionerHasher for PartitionerHasherAny {
 mod sealed {
     // This is a sealed trait - its whole purpose is to be unnameable.
     // This means we need to disable the check.
-    #[allow(unnameable_types)]
+    #[expect(unnameable_types)]
     pub trait Sealed {}
 }
 

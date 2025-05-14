@@ -50,7 +50,7 @@ impl NodeLocationPreference {
         }
     }
 
-    #[allow(unused)]
+    #[expect(unused)]
     fn rack(&self) -> Option<&str> {
         match self {
             Self::Any | Self::Datacenter(_) => None,
@@ -108,7 +108,7 @@ enum PickedReplica<'a> {
 /// to be a better metric showing how (over)loaded a target node/shard is.
 /// For now, however, we don't have an implementation of the
 /// in-flight-requests-aware policy.
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity)]
 pub struct DefaultPolicy {
     /// Preferences regarding node location. One of: rack and DC, DC, or no preference.
     preferences: NodeLocationPreference,
