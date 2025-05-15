@@ -99,3 +99,39 @@ shell:
 clean: down
 	cargo clean
 	rm -rf docs/book
+
+# Msrv-related items. Helpful when verifying changes to Cargo.toml
+# and updating MSRV.
+.PHONY: use_cargo_lock_msrv
+use_cargo_lock_msrv:
+	mv Cargo.lock Cargo.lock.bak
+	mv Cargo.lock.msrv Cargo.lock
+
+.PHONY: restore_cargo_lock
+restore_cargo_lock:
+	mv Cargo.lock Cargo.lock.msrv
+	mv Cargo.lock.bak Cargo.lock
+
+.PHONY: test_cargo_lock_msrv
+test_cargo_lock_msrv: use_cargo_lock_msrv check restore_cargo_lock
+
+.PHONY: static_full
+static_full:
+	cargo fmt --all -- --check
+	cargo clippy --all-targets
+	cargo clippy --all-targets --all-features
+	cargo clippy --all-targets -p scylla-cql --features "full-serialization"
+	RUSTFLAGS="--cfg cpp_rust_unstable -Dwarnings" cargo clippy --all-targets --all-features
+	cargo check --all-targets -p scylla --features ""
+	cargo check --all-targets -p scylla --all-features
+	cargo check --all-targets -p scylla --features "full-serialization"
+	cargo check --all-targets -p scylla --features "metrics"
+	cargo check --all-targets -p scylla --features "secrecy-08"
+	cargo check --all-targets -p scylla --features "chrono-04"
+	cargo check --all-targets -p scylla --features "time-03"
+	cargo check --all-targets -p scylla --features "num-bigint-03"
+	cargo check --all-targets -p scylla --features "num-bigint-04"
+	cargo check --all-targets -p scylla --features "bigdecimal-04"
+	cargo check --all-targets -p scylla --features "openssl-010"
+	cargo check --all-targets -p scylla --features "rustls-023"
+	cargo check --features "openssl-010" --features "rustls-023"

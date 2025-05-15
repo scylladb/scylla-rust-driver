@@ -110,7 +110,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             assert!(num_queried == 1);
         }
 
-        #[allow(unused)]
+        #[expect(unused)]
         fn who_was_queried(rxs: &mut Rxs) {
             for (i, rx) in rxs.iter_mut().enumerate() {
                 if rx.try_recv().is_ok() {

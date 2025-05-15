@@ -26,9 +26,10 @@ itertools = "0.14.0"
 num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
 num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
-chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, features = ["alloc"] }
+chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, features = [
+    "alloc",
+] }
 lz4_flex = { version = "0.11.1" }
-async-trait = "0.1.57"
 serde = { version = "1.0", features = ["derive"], optional = true }
 time-03 = { package = "time", version = "0.3", optional = true }
 yoke = { version = "0.7", features = ["derive"] }
@@ -36,8 +37,7 @@ stable_deref_trait = "1.2"
 
 [dev-dependencies]
 assert_matches = "1.5.0"
-criterion = "0.4"        # Note: v0.5 needs at least rust 1.70.0
-lazy_static = "1"        # We can migrate to std::sync::LazyLock once MSRV is bumped to 1.80.
+criterion = "0.5"
 # Use large-dates feature to test potential edge cases
 time-03 = { package = "time", version = "0.3.21", features = ["large-dates"] }
 uuid = { version = "1.0", features = ["v4"] }

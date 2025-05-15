@@ -28,7 +28,7 @@ use tracing::warn;
 mod sealed {
     // This is a sealed trait - its whole purpose is to be unnameable.
     // This means we need to disable the check.
-    #[allow(unnameable_types)]
+    #[expect(unnameable_types)]
     pub trait Sealed {}
 }
 pub trait SessionBuilderKind: sealed::Sealed + Clone {}

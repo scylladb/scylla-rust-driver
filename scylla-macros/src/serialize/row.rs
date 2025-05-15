@@ -396,7 +396,7 @@ impl Generator for ColumnSortingGenerator<'_> {
                 #partial_struct
                 #partial_serialize
 
-                #[allow(non_local_definitions)]
+                #[expect(non_local_definitions)]
                 #serialize_by_name
 
                 #crate_path::ser::row::ByName::<Self>::serialize(#crate_path::ser::row::ByName(self), ctx, writer)
@@ -447,7 +447,7 @@ impl Generator for ColumnOrderedGenerator<'_> {
                 ctx: &#crate_path::RowSerializationContext,
                 writer: &mut #crate_path::RowWriter<'_scylla_ser_row_writer_buffer>,
             ) -> ::std::result::Result<(), #crate_path::SerializationError> {
-                #[allow(non_local_definitions)]
+                #[expect(non_local_definitions)]
                 impl #impl_generics #crate_path::SerializeRowInOrder for #struct_name #ty_generics #where_clause {
                     fn serialize_in_order(
                         &self,

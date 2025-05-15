@@ -116,6 +116,9 @@ pub enum PrepareError {
 /// An error that occurred during construction of [`QueryPager`][crate::client::pager::QueryPager].
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
+// Check triggers because all variants end with "Error".
+// TODO(2.0): Remove the "Error" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum PagerExecutionError {
     /// Failed to prepare the statement.
     #[error("Failed to prepare the statement to be used by the pager: {0}")]

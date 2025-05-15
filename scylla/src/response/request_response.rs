@@ -18,7 +18,7 @@ pub(crate) struct QueryResponse {
     pub(crate) response: Response,
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Vec<String>,
-    #[allow(dead_code)] // This is not exposed to user (yet?)
+    // This is not exposed to user (yet?)
     pub(crate) custom_payload: Option<HashMap<String, Bytes>>,
 }
 

@@ -176,9 +176,9 @@ macro_rules! test_crate {
         // correctly re-exported in `scylla` crate.
         #[test]
         fn test_types_imports() {
-            #[allow(unused_imports)]
+            #[expect(unused_imports)]
             use _scylla::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
-            #[allow(unused_imports)]
+            #[expect(unused_imports)]
             use _scylla::value::{
                 Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
                 CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, MaybeUnset, Row, Unset, ValueOverflow

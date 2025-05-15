@@ -6,6 +6,9 @@ use crate::frame::types;
 use std::net::SocketAddr;
 
 #[derive(Debug)]
+// Check triggers because all variants end with "Change".
+// TODO(2.0): Remove the "Change" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum Event {
     TopologyChange(TopologyChangeEvent),
     StatusChange(StatusChangeEvent),
@@ -25,6 +28,9 @@ pub enum StatusChangeEvent {
 }
 
 #[derive(Debug)]
+// Check triggers because all variants end with "Change".
+// TODO(2.0): Remove the "Change" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum SchemaChangeEvent {
     KeyspaceChange {
         change_type: SchemaChangeType,
