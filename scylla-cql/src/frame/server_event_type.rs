@@ -3,6 +3,9 @@ use std::str::FromStr;
 
 use super::frame_errors::CqlEventParseError;
 
+// Check triggers because all variants end with "Change".
+// TODO(2.0): Remove the "Change" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum EventType {
     TopologyChange,
     StatusChange,

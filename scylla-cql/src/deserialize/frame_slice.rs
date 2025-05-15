@@ -121,6 +121,9 @@ impl<'frame> FrameSlice<'frame> {
     /// Returns a new Bytes object which is a subslice of the original Bytes
     /// frame slice object.
     #[inline]
+    // Check triggers because `self` is `Copy`, so `to_` should take it by value.
+    // TODO(2.0): Take self by value.
+    #[expect(clippy::wrong_self_convention)]
     pub fn to_bytes(&self) -> Bytes {
         if self.original_frame.is_empty() {
             // For the borrowed, deficient version of FrameSlice - the one created with

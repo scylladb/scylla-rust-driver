@@ -21,6 +21,11 @@ use crate::statement::prepared::TokenCalculationError;
 pub enum PartitionerName {
     #[default]
     Murmur3,
+    // Check triggers, because according to guidelines acronyms should be counted
+    // as one word and written in UpperCamelCase. In this case the variant should
+    // be Cdc.
+    // TODO(2.0): Rename variant to Cdc.
+    #[expect(clippy::upper_case_acronyms)]
     CDC,
 }
 
@@ -53,6 +58,12 @@ impl Partitioner for PartitionerName {
 #[non_exhaustive]
 pub enum PartitionerHasherAny {
     Murmur3(Murmur3PartitionerHasher),
+    // Check triggers, because according to guidelines acronyms should be counted
+    // as one word and written in UpperCamelCase. In this case the variant should
+    // be Cdc.
+    // TODO(2.0): Rename variant to Cdc.
+    // TODO(2.0): Rename CDCPartitionerHasher to CdcPartitionerHasher
+    #[expect(clippy::upper_case_acronyms)]
     CDC(CDCPartitionerHasher),
 }
 
