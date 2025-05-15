@@ -2167,6 +2167,9 @@ impl From<VectorDeserializationErrorKind> for BuiltinDeserializationErrorKind {
 /// Describes why deserialization of a map type failed.
 #[derive(Debug)]
 #[non_exhaustive]
+// Check triggers because all variants end with "DeserializationFailed".
+// TODO(2.0): Remove the "DeserializationFailed" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum MapDeserializationErrorKind {
     /// Failed to deserialize map's length.
     LengthDeserializationFailed(DeserializationError),

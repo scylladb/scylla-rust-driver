@@ -359,6 +359,9 @@ impl std::str::FromStr for ColumnKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
+// Check triggers because all variants end with "Strategy".
+// TODO(2.0): Remove the "Strategy" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum Strategy {
     SimpleStrategy {
         replication_factor: usize,

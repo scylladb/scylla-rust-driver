@@ -130,6 +130,9 @@ pub enum CqlRequestSerializationError {
 /// server response fails.
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
+// Check triggers because all variants begin with "Cql".
+// TODO(2.0): Remove the "Cql" prefix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum CqlResponseParseError {
     #[error("Failed to deserialize ERROR response: {0}")]
     CqlErrorParseError(#[from] CqlErrorParseError),
@@ -313,6 +316,9 @@ pub enum PreparedParseError {
 /// - paging state response
 #[non_exhaustive]
 #[derive(Debug, Error, Clone)]
+// Check triggers because all variants end with "ParseError".
+// TODO(2.0): Remove the "ParseError" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum RawRowsAndPagingStateResponseParseError {
     /// Failed to parse metadata flags.
     #[error("Malformed metadata flags: {0}")]
@@ -331,6 +337,9 @@ pub enum RawRowsAndPagingStateResponseParseError {
 /// of statement's prepared metadata failed.
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
+// Check triggers because all variants end with "ParseError".
+// TODO(2.0): Remove the "ParseError" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum PreparedMetadataParseError {
     /// Failed to parse metadata flags.
     #[error("Malformed metadata flags: {0}")]
@@ -375,6 +384,9 @@ pub enum ResultMetadataAndRowsCountParseError {
 /// of result metadata failed.
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
+// Check triggers because all variants end with "ParseError".
+// TODO(2.0): Remove the "ParseError" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum ResultMetadataParseError {
     /// Failed to parse metadata flags.
     #[error("Malformed metadata flags: {0}")]
@@ -422,6 +434,9 @@ pub struct ColumnSpecParseError {
 /// of a column specification.
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
+// Check triggers because all variants end with "ParseError".
+// TODO(2.0): Remove the "ParseError" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum ColumnSpecParseErrorKind {
     #[error("Invalid table spec: {0}")]
     TableSpecParseError(#[from] TableSpecParseError),
