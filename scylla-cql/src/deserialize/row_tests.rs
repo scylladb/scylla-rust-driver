@@ -84,12 +84,10 @@ fn test_deserialization_as_column_iterator() {
 // Do not remove. It's not used in tests but we keep it here to check that
 // we properly ignore warnings about unused variables, unnecessary `mut`s
 // etc. that usually pop up when generating code for empty structs.
-#[allow(unused)]
 #[derive(DeserializeRow)]
 #[scylla(crate = crate)]
 struct TestUdtWithNoFieldsUnordered {}
 
-#[allow(unused)]
 #[derive(DeserializeRow)]
 #[scylla(crate = crate, flavor = "enforce_order")]
 struct TestUdtWithNoFieldsOrdered {}
@@ -934,9 +932,9 @@ fn metadata_does_not_bound_deserialized_rows() {
         #[derive(DeserializeRow)]
         #[scylla(crate=crate)]
         struct MyRow<'frame> {
-            #[allow(dead_code)]
+            #[expect(dead_code)]
             bytes: &'frame [u8],
-            #[allow(dead_code)]
+            #[expect(dead_code)]
             text: &'frame str,
         }
         let decoded_custom_struct_res = deserialize::<MyRow>(row_typ, &bytes);

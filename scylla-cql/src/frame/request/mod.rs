@@ -162,7 +162,7 @@ impl Request<'_> {
             Request::Query(q) => Some(q.parameters.consistency),
             Request::Execute(e) => Some(e.parameters.consistency),
             Request::Batch(b) => Some(b.consistency),
-            #[allow(unreachable_patterns)] // until other opcodes are supported
+            #[expect(unreachable_patterns)] // until other opcodes are supported
             _ => None,
         }
     }
@@ -173,7 +173,7 @@ impl Request<'_> {
             Request::Query(q) => Some(q.parameters.serial_consistency),
             Request::Execute(e) => Some(e.parameters.serial_consistency),
             Request::Batch(b) => Some(b.serial_consistency),
-            #[allow(unreachable_patterns)] // until other opcodes are supported
+            #[expect(unreachable_patterns)] // until other opcodes are supported
             _ => None,
         }
     }

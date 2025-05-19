@@ -31,7 +31,7 @@ impl<'slice, 'spec> ColumnSpecs<'slice, 'spec> {
     }
 
     /// Returns number of columns.
-    #[allow(clippy::len_without_is_empty)]
+    #[expect(clippy::len_without_is_empty)]
     #[inline]
     pub fn len(&self) -> usize {
         self.specs.len()

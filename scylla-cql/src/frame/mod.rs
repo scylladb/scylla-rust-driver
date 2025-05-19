@@ -31,8 +31,11 @@ pub mod flag {
     pub const WARNING: u8 = 0x08;
 }
 
-// All of the Authenticators supported by Scylla
+/// All of the Authenticators supported by Scylla
 #[derive(Debug, PartialEq, Eq, Clone)]
+// Check triggers because all variants end with "Authenticator".
+// TODO(2.0): Remove the "Authenticator" postfix from variants.
+#[expect(clippy::enum_variant_names)]
 pub enum Authenticator {
     AllowAllAuthenticator,
     PasswordAuthenticator,
