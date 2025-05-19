@@ -145,11 +145,11 @@ impl From<TlsError> for io::Error {
             #[cfg(feature = "openssl-010")]
             TlsError::OpenSsl010(e) => e.into(),
             #[cfg(feature = "rustls-023")]
-            TlsError::InvalidName(e) => io::Error::new(io::ErrorKind::Other, e),
+            TlsError::InvalidName(e) => io::Error::other(e),
             #[cfg(feature = "rustls-023")]
-            TlsError::PemParse(e) => io::Error::new(io::ErrorKind::Other, e),
+            TlsError::PemParse(e) => io::Error::other(e),
             #[cfg(feature = "rustls-023")]
-            TlsError::Rustls023(e) => io::Error::new(io::ErrorKind::Other, e),
+            TlsError::Rustls023(e) => io::Error::other(e),
         }
     }
 }

@@ -1346,7 +1346,7 @@ impl Connection {
                     std::pin::Pin::new(&mut stream)
                         .connect()
                         .await
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                        .map_err(std::io::Error::other)?;
                     return Ok(spawn_router_and_get_handle(
                         config,
                         stream,
