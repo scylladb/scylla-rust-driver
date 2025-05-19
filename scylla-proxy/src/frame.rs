@@ -243,7 +243,7 @@ pub(crate) async fn write_frame(
 ) -> Result<(), tokio::io::Error> {
     let compressed_body = compression
         .maybe_compress_body(params.flags, body)
-        .map_err(|e| tokio::io::Error::new(std::io::ErrorKind::Other, e))?;
+        .map_err(tokio::io::Error::other)?;
 
     let body = compressed_body.as_deref().unwrap_or(body);
 

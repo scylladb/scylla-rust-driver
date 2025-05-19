@@ -248,17 +248,18 @@ pub(crate) mod batch_values {
 
     use super::BatchStatement;
 
-    // Takes an optional reference to the first statement in the batch and
-    // the batch values, and tries to compute the token for the statement.
-    // Returns the (optional) token and batch values. If the function needed
-    // to serialize values for the first statement, the returned batch values
-    // will cache the results of the serialization.
-    //
-    // NOTE: Batch values returned by this function might not type check
-    // the first statement when it is serialized! However, if they don't,
-    // then the first row was already checked by the function. It is assumed
-    // that `statement` holds the first prepared statement of the batch (if
-    // there is one), and that it will be used later to serialize the values.
+    /// Takes an optional reference to the first statement in the batch and
+    /// the batch values, and tries to compute the token for the statement.
+    /// Returns the (optional) token and batch values. If the function needed
+    /// to serialize values for the first statement, the returned batch values
+    /// will cache the results of the serialization.
+    ///
+    /// NOTE: Batch values returned by this function might not type check
+    /// the first statement when it is serialized! However, if they don't,
+    /// then the first row was already checked by the function. It is assumed
+    /// that `statement` holds the first prepared statement of the batch (if
+    /// there is one), and that it will be used later to serialize the values.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn peek_first_token<'bv>(
         values: impl BatchValues + 'bv,
         statement: Option<&BatchStatement>,

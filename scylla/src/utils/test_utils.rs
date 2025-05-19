@@ -2,7 +2,6 @@ use scylla_cql::frame::response::error::DbError;
 use tracing::{error, warn};
 
 use crate::client::caching_session::CachingSession;
-use crate::client::execution_profile::ExecutionProfile;
 use crate::client::session::Session;
 use crate::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::cluster::ClusterState;
@@ -214,7 +213,7 @@ fn apply_ddl_lbp(query: &mut Statement) {
     let policy = query
         .get_execution_profile_handle()
         .map(|profile| profile.pointee_to_builder())
-        .unwrap_or(ExecutionProfile::builder())
+        .unwrap_or_default()
         .load_balancing_policy(Arc::new(SchemaQueriesLBP))
         .retry_policy(Arc::new(SchemaQueriesRetryPolicy))
         .build();

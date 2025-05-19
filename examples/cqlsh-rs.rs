@@ -177,6 +177,7 @@ impl Completer for CqlHelper {
     }
 }
 
+#[allow(clippy::result_large_err)]
 fn print_result(result: QueryResult) -> Result<(), IntoRowsResultError> {
     match result.into_rows_result() {
         Ok(rows_result) => {

@@ -207,6 +207,8 @@ impl QueryResult {
     /// Ok(())
     /// # }
     /// ```
+    // `allow(clippy::result_large_err)` is fine. `QueryRowsResult` is larger than `IntoRowsResultError`.
+    #[allow(clippy::result_large_err)]
     pub fn into_rows_result(self) -> Result<QueryRowsResult, IntoRowsResultError> {
         let Some(raw_metadata_and_rows) = self.raw_metadata_and_rows else {
             return Err(IntoRowsResultError::ResultNotRows(self));
