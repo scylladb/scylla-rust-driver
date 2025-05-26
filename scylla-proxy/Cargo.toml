@@ -14,7 +14,7 @@ license = "MIT OR Apache-2.0"
 defaults = []
 
 [dependencies]
-scylla-cql = { version = "1.1.0", path = "../scylla-cql" }
+scylla-cql = { version = "1.2.0", path = "../scylla-cql" }
 byteorder = "1.3.4"
 bytes = "1.2.0"
 futures = "0.3.6"
