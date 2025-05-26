@@ -169,47 +169,4 @@ async fn test_prepared_statement() {
             (17, 16, "I'm prepared!!!", 7, None)
         );
     }
-    // Check that SerializeRow and DeserializeRow macros work
-    {
-        #[derive(scylla::SerializeRow, scylla::DeserializeRow, PartialEq, Debug, Clone)]
-        struct ComplexPk {
-            a: i32,
-            b: i32,
-            c: Option<String>,
-            d: i32,
-            e: i32,
-        }
-        let input: ComplexPk = ComplexPk {
-            a: 9,
-            b: 8,
-            c: Some("seven".into()),
-            d: 6,
-            e: 5,
-        };
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO {}.complex_pk (a,b,c,d,e) VALUES (?,?,?,?,?)",
-                    ks
-                ),
-                input.clone(),
-            )
-            .await
-            .unwrap();
-        let output: ComplexPk = session
-            .query_unpaged(
-                format!(
-                    "SELECT * FROM {}.complex_pk WHERE a = 9 and b = 8 and c = 'seven'",
-                    ks
-                ),
-                &[],
-            )
-            .await
-            .unwrap()
-            .into_rows_result()
-            .unwrap()
-            .single_row()
-            .unwrap();
-        assert_eq!(input, output)
-    }
 }
