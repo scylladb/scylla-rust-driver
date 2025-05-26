@@ -5,7 +5,6 @@ mod execution_profiles;
 mod named_bind_markers;
 mod prepared;
 mod request_timeout;
-mod silent_prepare_query;
 mod skip_metadata_optimization;
 mod timestamps;
 mod transparent_reprepare;
