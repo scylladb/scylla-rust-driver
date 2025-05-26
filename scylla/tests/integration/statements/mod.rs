@@ -1,6 +1,10 @@
 mod batch;
 mod consistency;
+mod enforce_coordinator;
 mod execution_profiles;
-mod silent_prepare_query;
-mod skip_metadata_optimization;
-mod statement;
+mod named_bind_markers;
+mod prepared;
+mod request_timeout;
+mod timestamps;
+mod transparent_reprepare;
+mod unprepared;
