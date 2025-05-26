@@ -5,6 +5,7 @@ mod history;
 mod new_session;
 mod pager;
 mod retries;
+mod schema_agreement;
 mod self_identity;
 mod tracing;
 mod use_keyspace;
