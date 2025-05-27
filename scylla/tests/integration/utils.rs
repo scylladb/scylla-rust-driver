@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{error, warn};
+use uuid::Uuid;
 
 use scylla_proxy::{Node, Proxy, ProxyError, RunningProxy, ShardAwareness};
 
@@ -319,4 +320,52 @@ impl PerformDDL for CachingSession {
         apply_ddl_lbp(&mut query);
         self.execute_unpaged(query, &[]).await.map(|_| ())
     }
+}
+
+/// Calculates a list of nodes host ids, in the same order as passed proxy_uris.
+/// Useful if a test wants to set rules on some node, and then send requests to this node.
+pub(crate) fn calculate_proxy_host_ids(
+    proxy_uris: &[String],
+    translation_map: &HashMap<SocketAddr, SocketAddr>,
+    session: &Session,
+) -> Vec<Uuid> {
+    let proxy_ips: Vec<IpAddr> = proxy_uris
+        .iter()
+        .map(|uri| uri.as_str().parse::<SocketAddr>().unwrap().ip())
+        .collect::<Vec<_>>();
+
+    let real_node_ips: Vec<IpAddr> = {
+        let reversed_translation_map = translation_map
+            .iter()
+            .map(|(a, b)| (b.ip(), a.ip()))
+            .collect::<HashMap<_, _>>();
+
+        proxy_uris
+            .iter()
+            .map(|uri| {
+                *reversed_translation_map
+                    .get(&uri.as_str().parse::<SocketAddr>().unwrap().ip())
+                    .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(proxy_ips.len(), real_node_ips.len());
+
+    let state = session.get_cluster_state();
+    let nodes = state.get_nodes_info();
+
+    let host_ids: Vec<Uuid> = proxy_ips
+        .into_iter()
+        .zip(real_node_ips)
+        .map(|(proxy_ip, real_ip)| {
+            let node = nodes
+                .iter()
+                .find(|n| n.address.ip() == proxy_ip || n.address.ip() == real_ip)
+                .unwrap();
+            node.host_id
+        })
+        .collect();
+
+    assert_eq!(host_ids.len(), proxy_uris.len());
+    host_ids
 }

@@ -324,17 +324,21 @@ impl ClusterState {
     /// Internal iterator iterates over working connections to all shards of given node.
     pub(crate) fn iter_working_connections_per_node(
         &self,
-    ) -> Result<impl Iterator<Item = impl Iterator<Item = Arc<Connection>>> + '_, ConnectionPoolError>
-    {
+    ) -> Result<
+        impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>>)> + '_,
+        ConnectionPoolError,
+    > {
         // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
         assert!(!self.known_peers.is_empty());
         let nodes_iter = self.known_peers.values();
-        let mut connection_pool_per_node_iter =
-            nodes_iter.map(|node| node.get_working_connections());
+        let mut connection_pool_per_node_iter = nodes_iter.map(|node| {
+            node.get_working_connections()
+                .map(|pool| (node.host_id, pool))
+        });
 
         // First we try to find the first working pool of connections.
         // If none is found, return error.
-        let first_working_pool_or_error: Result<Vec<Arc<Connection>>, ConnectionPoolError> =
+        let first_working_pool_or_error: Result<(Uuid, Vec<Arc<Connection>>), ConnectionPoolError> =
             connection_pool_per_node_iter
                 .by_ref()
                 .find_or_first(Result::is_ok)
@@ -344,19 +348,19 @@ impl ClusterState {
         // 1. either consumed the whole iterator without success and got the first error,
         //    in which case we propagate it;
         // 2. or found the first working pool of connections.
-        let first_working_pool: Vec<Arc<Connection>> = first_working_pool_or_error?;
+        let first_working_pool: (Uuid, Vec<Arc<Connection>>) = first_working_pool_or_error?;
 
         // We retrieve connection pools for remaining nodes (those that are left in the iterator
         // once the first working pool has been found).
         let remaining_pools_iter = connection_pool_per_node_iter;
         // Errors (non-working pools) are filtered out.
         let remaining_working_pools_iter = remaining_pools_iter.filter_map(Result::ok);
-        // Pools are made iterators, so now we have `impl Iterator<Item = impl Iterator<Item = Arc<Connection>>>`.
-        let remaining_working_per_node_connections_iter =
-            remaining_working_pools_iter.map(IntoIterator::into_iter);
 
-        Ok(std::iter::once(first_working_pool.into_iter())
-            .chain(remaining_working_per_node_connections_iter))
+        // First pool is chained with the rest.
+        // Then, pools are made iterators, so now we have `impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>>)>`.
+        Ok(std::iter::once(first_working_pool)
+            .chain(remaining_working_pools_iter)
+            .map(|(host_id, pool)| (host_id, IntoIterator::into_iter(pool))))
         // By an invariant `self.known_peers` is nonempty, so the returned iterator
         // is nonempty, too.
     }
@@ -366,7 +370,7 @@ impl ClusterState {
         &self,
     ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, ConnectionPoolError> {
         self.iter_working_connections_per_node()
-            .map(|iter| iter.flatten())
+            .map(|outer_iter| outer_iter.flat_map(|(_, inner_iter)| inner_iter))
     }
 
     /// Returns nonempty iterator of working connections to all nodes.
