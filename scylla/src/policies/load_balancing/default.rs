@@ -1395,7 +1395,7 @@ mod tests {
         // based on locator mock cluster
         pub(crate) async fn mock_cluster_state_for_token_aware_tests() -> ClusterState {
             let metadata = mock_metadata_for_token_aware_tests();
-            ClusterState::new(
+            let state = ClusterState::new(
                 metadata,
                 &Default::default(),
                 &HashMap::new(),
@@ -1406,7 +1406,13 @@ mod tests {
                 #[cfg(feature = "metrics")]
                 &Default::default(),
             )
-            .await
+            .await;
+
+            for node in state.get_nodes_info() {
+                node.use_enabled_as_connected();
+            }
+
+            state
         }
 
         // creates ClusterState with info about 5 nodes living in 2 different datacenters
@@ -1428,7 +1434,7 @@ mod tests {
                 keyspaces: HashMap::new(),
             };
 
-            ClusterState::new(
+            let state = ClusterState::new(
                 info,
                 &Default::default(),
                 &HashMap::new(),
@@ -1439,7 +1445,13 @@ mod tests {
                 #[cfg(feature = "metrics")]
                 &Default::default(),
             )
-            .await
+            .await;
+
+            for node in state.get_nodes_info() {
+                node.use_enabled_as_connected();
+            }
+
+            state
         }
 
         pub(crate) fn get_plan_and_collect_node_identifiers(
@@ -2500,6 +2512,10 @@ mod tests {
             &Default::default(),
         )
         .await;
+
+        for node in cluster_with_disabled_node_f.get_nodes_info() {
+            node.use_enabled_as_connected();
+        }
 
         let tests_with_disabled_node_f = [
             // Keyspace NTS with RF=3 without preferred DC.

@@ -380,7 +380,6 @@ mod tests {
             }
         }
 
-        #[allow(unused)]
         pub(crate) fn use_enabled_as_connected(&self) {
             self.enabled_as_connected.store(true, Ordering::SeqCst);
         }
