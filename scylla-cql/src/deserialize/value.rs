@@ -383,6 +383,28 @@ impl_string_type!(
         Ok(s.to_string())
     }
 );
+impl_string_type!(
+    Box<str>,
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        check_ascii::<Box<str>>(typ, val)?;
+        let s = std::str::from_utf8(val).map_err(|err| {
+            mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::InvalidUtf8(err))
+        })?;
+        Ok(s.into())
+    }
+);
+impl_string_type!(
+    Arc<str>,
+    |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        check_ascii::<Arc<str>>(typ, val)?;
+        let s = std::str::from_utf8(val).map_err(|err| {
+            mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::InvalidUtf8(err))
+        })?;
+        Ok(s.into())
+    }
+);
 
 // TODO: Consider support for deserialization of string::String<Bytes>
 
