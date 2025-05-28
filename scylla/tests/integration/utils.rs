@@ -329,6 +329,9 @@ pub(crate) fn calculate_proxy_host_ids(
     translation_map: &HashMap<SocketAddr, SocketAddr>,
     session: &Session,
 ) -> Vec<Uuid> {
+    // First we calculate lists of proxy and real ips of nodes.
+    // Why only ips? Because they are always unique (at least in tests, but it should be true as a general statement too),
+    // and dealing with ports would complicate code.
     let proxy_ips: Vec<IpAddr> = proxy_uris
         .iter()
         .map(|uri| uri.as_str().parse::<SocketAddr>().unwrap().ip())
@@ -354,6 +357,10 @@ pub(crate) fn calculate_proxy_host_ids(
     let state = session.get_cluster_state();
     let nodes = state.get_nodes_info();
 
+    // Now we can generate a list of host ids, by iterating over IPs, finding matching `Node` object
+    // and retrieving its `host_id`.
+    // Each Node object has either translated or untranslated address inside, so we need to
+    // compare against both when searching.
     let host_ids: Vec<Uuid> = proxy_ips
         .into_iter()
         .zip(real_node_ips)

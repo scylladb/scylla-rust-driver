@@ -26,13 +26,11 @@ async fn run_some_ddl_with_unreachable_node(
     // It simulates a node that became unreachable after our DDL completed,
     // but the pool in the driver is not yet `Broken`.
     running_proxy.running_nodes[paused].change_request_rules(Some(vec![RequestRule(
-        Condition::and(
-            Condition::not(Condition::ConnectionRegisteredAnyEvent),
-            Condition::and(
-                Condition::RequestOpcode(RequestOpcode::Query),
-                Condition::BodyContainsCaseSensitive(Box::new(*b"system.local")),
-            ),
-        ),
+        Condition::not(Condition::ConnectionRegisteredAnyEvent)
+            .and(Condition::RequestOpcode(RequestOpcode::Query))
+            .and(Condition::BodyContainsCaseSensitive(Box::new(
+                *b"system.local",
+            ))),
         // Simulates driver discovering that node is unreachable.
         RequestReaction::drop_connection(),
     )]));
