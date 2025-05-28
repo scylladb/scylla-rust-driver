@@ -42,7 +42,7 @@ fn test_custom_cassandra_type_parser() {
             dimensions: 5,
         },
     ),
-    (  "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)", 
+    (  "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)",
         ColumnType::Collection {
             frozen: false,
             typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
@@ -1200,12 +1200,10 @@ impl UdtSerializer {
 // Do not remove. It's not used in tests but we keep it here to check that
 // we properly ignore warnings about unused variables, unnecessary `mut`s
 // etc. that usually pop up when generating code for empty structs.
-#[allow(unused)]
 #[derive(scylla_macros::DeserializeValue)]
 #[scylla(crate = crate)]
 struct TestUdtWithNoFieldsUnordered {}
 
-#[allow(unused)]
 #[derive(scylla_macros::DeserializeValue)]
 #[scylla(crate = crate, flavor = "enforce_order")]
 struct TestUdtWithNoFieldsOrdered {}
@@ -2783,9 +2781,9 @@ fn metadata_does_not_bound_deserialized_values() {
         #[derive(DeserializeValue)]
         #[scylla(crate=crate)]
         struct Udt<'frame> {
-            #[allow(dead_code)]
+            #[expect(dead_code)]
             bytes: &'frame [u8],
-            #[allow(dead_code)]
+            #[expect(dead_code)]
             text: &'frame str,
         }
         let decoded_udt_res = deserialize::<Udt>(&udt_typ, &bytes);

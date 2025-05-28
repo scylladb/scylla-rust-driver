@@ -226,9 +226,6 @@ impl BatchStatement<'_> {
     }
 }
 
-// Disable the lint, if there is more than one lifetime included.
-// Can be removed once https://github.com/rust-lang/rust-clippy/issues/12495 is fixed.
-#[allow(clippy::needless_lifetimes)]
 impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
     fn from(value: &'s BatchStatement) -> Self {
         match value {

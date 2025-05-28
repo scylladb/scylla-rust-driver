@@ -536,8 +536,7 @@ impl DeserializeAssumeOrderGenerator<'_> {
         let field_idents = fields.iter().map(|f| f.ident.as_ref().unwrap());
         let field_finalizers = fields.iter().map(|f| self.generate_finalize_field(f));
 
-        #[allow(unused_mut)]
-        let mut iterator_type: syn::Type =
+        let iterator_type: syn::Type =
             parse_quote!(#macro_internal::UdtIterator<#frame_lifetime, #metadata_lifetime>);
 
         parse_quote! {

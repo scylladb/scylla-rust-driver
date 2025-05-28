@@ -1,5 +1,6 @@
-#[allow(clippy::module_inception)]
-mod load_balancing;
+mod latency_awareness;
 mod lwt_optimisation;
 mod shards;
+mod simple_strategy;
 mod tablets;
+mod token_awareness;

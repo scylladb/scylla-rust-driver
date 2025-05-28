@@ -299,9 +299,7 @@ impl ConnectionConfig {
     /// Customizes the config for a specific endpoint.
     pub(crate) fn to_host_connection_config(
         &self,
-        // Currently, this is only used for cloud; but it makes abstract sense to pass endpoint here
-        // also for non-cloud cases, so let's just allow(unused).
-        #[allow(unused)] endpoint: &UntranslatedEndpoint,
+        endpoint: &UntranslatedEndpoint,
     ) -> HostConnectionConfig {
         let tls_config = self
             .tls_provider
@@ -1346,7 +1344,7 @@ impl Connection {
                     std::pin::Pin::new(&mut stream)
                         .connect()
                         .await
-                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                        .map_err(std::io::Error::other)?;
                     return Ok(spawn_router_and_get_handle(
                         config,
                         stream,

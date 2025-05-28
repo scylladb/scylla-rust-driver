@@ -1,8 +1,8 @@
 [package]
 name = "scylla"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.81"
 description = "Async CQL driver for Rust, optimized for Scylla, fully compatible with Apache Cassandra™"
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
@@ -43,8 +43,7 @@ metrics = ["dep:histogram"]
 unstable-testing = []
 
 [dependencies]
-scylla-cql = { version = "1.1.0", path = "../scylla-cql" }
-byteorder = "1.3.4"
+scylla-cql = { version = "1.2.0", path = "../scylla-cql" }
 bytes = "1.0.1"
 futures = "0.3.6"
 hashbrown = "0.14"
@@ -57,7 +56,6 @@ tokio = { version = "1.40", features = [
     "rt",
     "macros",
 ] }
-snap = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 rand = "0.9.0"
 thiserror = "2.0.6"
@@ -70,7 +68,6 @@ tokio-rustls = { version = "0.26", optional = true }
 rustls = { version = "0.23", optional = true }
 arc-swap = "1.3.0"
 dashmap = "5.2"
-lz4_flex = { version = "0.11.1" }
 smallvec = "1.8.0"
 async-trait = "0.1.56"
 serde = { version = "1.0", features = ["derive"], optional = true }
@@ -84,9 +81,9 @@ socket2 = { version = "0.5.3", features = ["all"] }
 num-bigint-03 = { package = "num-bigint", version = "0.3" }
 num-bigint-04 = { package = "num-bigint", version = "0.4" }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4" }
-scylla-proxy = { version = "0.0.3", path = "../scylla-proxy" }
+scylla-proxy = { version = "0.0.4", path = "../scylla-proxy" }
 ntest = "0.9.3"
-criterion = "0.4"                                                      # Note: v0.5 needs at least rust 1.70.0
+criterion = "0.5"
 tokio = { version = "1.34", features = ["test-util"] }
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 assert_matches = "1.5.0"

@@ -18,10 +18,7 @@ use std::net::IpAddr;
 use std::{
     hash::{Hash, Hasher},
     net::SocketAddr,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::Arc,
 };
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
@@ -81,8 +78,6 @@ pub struct Node {
 
     // If the node is filtered out by the host filter, this will be None
     pool: Option<NodeConnectionPool>,
-
-    down_marker: AtomicBool,
 }
 
 /// A way that Nodes are often passed and accessed in the driver's code.
@@ -121,7 +116,6 @@ impl Node {
             datacenter,
             rack,
             pool,
-            down_marker: false.into(),
         }
     }
 
@@ -140,7 +134,6 @@ impl Node {
         }
         Self {
             address,
-            down_marker: false.into(),
             datacenter: node.datacenter.clone(),
             rack: node.rack.clone(),
             host_id: node.host_id,
@@ -161,16 +154,6 @@ impl Node {
         self.get_pool()?.connection_for_shard(shard)
     }
 
-    /// Is the node down according to CQL events?
-    /// This status is unreliable and should not be used.
-    /// See [Node::is_connected] for a better way of checking node availability.
-    // TODO: When control connection is broken, we should mark
-    // all nodes as being up.
-    #[allow(unused)]
-    pub(crate) fn is_down(&self) -> bool {
-        self.down_marker.load(Ordering::Relaxed)
-    }
-
     /// Returns true if the driver has any open connections in the pool for this
     /// node.
     pub fn is_connected(&self) -> bool {
@@ -185,10 +168,6 @@ impl Node {
     /// no connections will be opened.
     pub fn is_enabled(&self) -> bool {
         self.pool.is_some()
-    }
-
-    pub(crate) fn change_down_marker(&self, is_down: bool) {
-        self.down_marker.store(is_down, Ordering::Relaxed);
     }
 
     pub(crate) async fn use_keyspace(
@@ -281,7 +260,7 @@ pub(crate) struct CloudEndpoint {
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
-    #[cfg_attr(not(feature = "unstable-cloud"), allow(unused))]
+    #[cfg_attr(not(feature = "unstable-cloud"), expect(unused))]
     pub(crate) datacenter: Option<String>,
 }
 
@@ -301,10 +280,10 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::E
     addrs
         .find_or_last(|addr| matches!(addr, SocketAddr::V4(_)))
         .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Empty address list returned by DNS for {}", hostname),
-            )
+            io::Error::other(format!(
+                "Empty address list returned by DNS for {}",
+                hostname
+            ))
         })
 }
 
@@ -378,7 +357,6 @@ mod tests {
                 datacenter,
                 rack,
                 pool: None,
-                down_marker: false.into(),
             }
         }
     }

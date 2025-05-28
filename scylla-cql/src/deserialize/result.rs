@@ -175,7 +175,7 @@ impl RawRowLendingIterator {
     /// The column iterator must be consumed before the rows iterator can
     /// continue.
     #[inline]
-    #[allow(clippy::should_implement_trait)] // https://github.com/rust-lang/rust-clippy/issues/5004
+    #[expect(clippy::should_implement_trait)] // https://github.com/rust-lang/rust-clippy/issues/5004
     pub fn next(&mut self) -> Option<Result<ColumnIterator, DeserializationError>> {
         self.remaining = self.remaining.checked_sub(1)?;
 
@@ -256,9 +256,6 @@ mod tests {
         fn lend_next(&mut self) -> Option<Result<Self::Item<'_>, DeserializationError>>;
     }
 
-    // Disable the lint, if there is more than one lifetime included.
-    // Can be removed once https://github.com/rust-lang/rust-clippy/issues/12495 is fixed.
-    #[allow(clippy::needless_lifetimes)]
     impl<'frame, 'metadata> LendingIterator for RawRowIterator<'frame, 'metadata> {
         type Item<'borrow>
             = ColumnIterator<'borrow, 'borrow>

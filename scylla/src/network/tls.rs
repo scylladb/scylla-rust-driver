@@ -145,11 +145,11 @@ impl From<TlsError> for io::Error {
             #[cfg(feature = "openssl-010")]
             TlsError::OpenSsl010(e) => e.into(),
             #[cfg(feature = "rustls-023")]
-            TlsError::InvalidName(e) => io::Error::new(io::ErrorKind::Other, e),
+            TlsError::InvalidName(e) => io::Error::other(e),
             #[cfg(feature = "rustls-023")]
-            TlsError::PemParse(e) => io::Error::new(io::ErrorKind::Other, e),
+            TlsError::PemParse(e) => io::Error::other(e),
             #[cfg(feature = "rustls-023")]
-            TlsError::Rustls023(e) => io::Error::new(io::ErrorKind::Other, e),
+            TlsError::Rustls023(e) => io::Error::other(e),
         }
     }
 }
@@ -184,8 +184,6 @@ impl TlsConfig {
 
     /// Produces a new Tls object that is able to wrap a TCP stream.
     pub(crate) fn new_tls(&self) -> Result<Tls, TlsError> {
-        // To silence warnings when TlsContext is an empty enum (tls features are disabled).
-        #[allow(unreachable_code)]
         match self.context {
             #[cfg(feature = "openssl-010")]
             TlsContext::OpenSsl010(ref context) => {

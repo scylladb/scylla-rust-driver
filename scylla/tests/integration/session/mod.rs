@@ -1,8 +1,11 @@
 mod authenticate;
 mod caching_session;
+mod db_errors;
 mod history;
 mod new_session;
+mod pager;
 mod retries;
+mod schema_agreement;
 mod self_identity;
-#[allow(clippy::module_inception)]
-mod session;
+mod tracing;
+mod use_keyspace;

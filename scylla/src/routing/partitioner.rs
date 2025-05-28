@@ -16,12 +16,16 @@ use std::num::Wrapping;
 use crate::routing::Token;
 use crate::statement::prepared::TokenCalculationError;
 
-#[allow(clippy::upper_case_acronyms)]
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 #[non_exhaustive]
 pub enum PartitionerName {
     #[default]
     Murmur3,
+    // Check triggers, because according to guidelines acronyms should be counted
+    // as one word and written in UpperCamelCase. In this case the variant should
+    // be Cdc.
+    // TODO(2.0): Rename variant to Cdc.
+    #[expect(clippy::upper_case_acronyms)]
     CDC,
 }
 
@@ -51,10 +55,15 @@ impl Partitioner for PartitionerName {
     }
 }
 
-#[allow(clippy::upper_case_acronyms)]
 #[non_exhaustive]
 pub enum PartitionerHasherAny {
     Murmur3(Murmur3PartitionerHasher),
+    // Check triggers, because according to guidelines acronyms should be counted
+    // as one word and written in UpperCamelCase. In this case the variant should
+    // be Cdc.
+    // TODO(2.0): Rename variant to Cdc.
+    // TODO(2.0): Rename CDCPartitionerHasher to CdcPartitionerHasher
+    #[expect(clippy::upper_case_acronyms)]
     CDC(CDCPartitionerHasher),
 }
 
@@ -78,7 +87,7 @@ impl PartitionerHasher for PartitionerHasherAny {
 mod sealed {
     // This is a sealed trait - its whole purpose is to be unnameable.
     // This means we need to disable the check.
-    #[allow(unnameable_types)]
+    #[expect(unnameable_types)]
     pub trait Sealed {}
 }
 
@@ -92,7 +101,7 @@ pub trait Partitioner: sealed::Sealed {
 
     fn build_hasher(&self) -> Self::Hasher;
 
-    #[allow(unused)] // Currently, no public API uses this.
+    // Currently, no public API uses this.
     fn hash_one(&self, data: &[u8]) -> Token {
         let mut hasher = self.build_hasher();
         hasher.write(data);
