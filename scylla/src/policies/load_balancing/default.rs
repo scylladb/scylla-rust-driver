@@ -900,9 +900,11 @@ impl DefaultPolicy {
 
     /// Returns true iff the node should be considered to be alive.
     fn is_alive(node: NodeRef, _shard: Option<Shard>) -> bool {
-        // For now, we leave this as stub, until we have time to improve node events.
-        // node.is_enabled() && !node.is_down()
-        node.is_enabled()
+        // For now we ignore the shard.
+        // We could theoretically only return true if we have a connection open to given shard, but:
+        //  - There is no public API to check that, and I don't want DefaultPolicy to use private APIs.
+        //  - Shards returned from policy are only a hint anyway, so it probably makes no sense to throw out the whole host.
+        node.is_connected()
     }
 
     /// Returns true iff the datacenter failover is permitted for the statement being executed.
