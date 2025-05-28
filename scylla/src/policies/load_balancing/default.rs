@@ -1461,7 +1461,7 @@ mod tests {
         serial_consistency: Some(SerialConsistency::Serial),
     };
 
-    pub(super) async fn test_default_policy_with_given_cluster_and_routing_info(
+    pub(super) fn test_default_policy_with_given_cluster_and_routing_info(
         policy: &DefaultPolicy,
         cluster: &ClusterState,
         routing_info: &RoutingInfo<'_>,
@@ -1498,8 +1498,7 @@ mod tests {
             &cluster,
             &EMPTY_ROUTING_INFO,
             expected_groups,
-        )
-        .await;
+        );
     }
 
     #[tokio::test]
@@ -2013,8 +2012,7 @@ mod tests {
                 &cluster,
                 &routing_info,
                 &expected_groups,
-            )
-            .await;
+            );
         }
     }
 
@@ -2478,8 +2476,7 @@ mod tests {
                 &cluster,
                 &routing_info,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         let cluster_with_disabled_node_f = ClusterState::new(
@@ -2548,8 +2545,7 @@ mod tests {
                 &cluster_with_disabled_node_f,
                 &routing_info,
                 &expected_groups,
-            )
-            .await;
+            );
         }
     }
 }
@@ -3241,8 +3237,7 @@ mod latency_awareness {
                 &cluster,
                 &EMPTY_ROUTING_INFO,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         #[tokio::test]
@@ -3302,8 +3297,7 @@ mod latency_awareness {
                 &cluster,
                 &EMPTY_ROUTING_INFO,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         #[tokio::test]
@@ -3363,8 +3357,7 @@ mod latency_awareness {
                 &cluster,
                 &EMPTY_ROUTING_INFO,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         #[tokio::test]
@@ -3428,8 +3421,7 @@ mod latency_awareness {
                 &cluster,
                 &EMPTY_ROUTING_INFO,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         #[tokio::test]
@@ -3514,8 +3506,7 @@ mod latency_awareness {
                 &cluster,
                 &EMPTY_ROUTING_INFO,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         #[tokio::test]
@@ -3582,8 +3573,7 @@ mod latency_awareness {
                     &cluster,
                     &EMPTY_ROUTING_INFO,
                     &expected_groups,
-                )
-                .await;
+                );
             }
 
             // node 3 becomes as slow as node 1
@@ -3622,8 +3612,7 @@ mod latency_awareness {
                     &cluster,
                     &EMPTY_ROUTING_INFO,
                     &expected_groups,
-                )
-                .await;
+                );
             }
 
             updater.tick().await;
@@ -3639,8 +3628,7 @@ mod latency_awareness {
                     &cluster,
                     &EMPTY_ROUTING_INFO,
                     &expected_groups,
-                )
-                .await;
+                );
             }
         }
 
@@ -3837,8 +3825,7 @@ mod latency_awareness {
                     &cluster,
                     &test.routing_info,
                     &test.expected_groups,
-                )
-                .await;
+                );
             }
         }
 
