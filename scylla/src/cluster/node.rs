@@ -15,6 +15,8 @@ use crate::routing::{Shard, Sharder};
 use std::fmt::Display;
 use std::io;
 use std::net::IpAddr;
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     hash::{Hash, Hasher},
     net::SocketAddr,
@@ -78,6 +80,15 @@ pub struct Node {
 
     // If the node is filtered out by the host filter, this will be None
     pool: Option<NodeConnectionPool>,
+
+    // In unit tests Node objects are mocked, and don't have real connection
+    // pools. We want DefaultPolicy to use is_connected to filter out nodes,
+    // but it would mean that all nodes would be filtered out in unit tests.
+
+    // This field allows using is_enabled as a result of is_connected. Tests can
+    // utilize this to simulate node being connected.
+    #[cfg(test)]
+    enabled_as_connected: AtomicBool,
 }
 
 /// A way that Nodes are often passed and accessed in the driver's code.
@@ -116,6 +127,8 @@ impl Node {
             datacenter,
             rack,
             pool,
+            #[cfg(test)]
+            enabled_as_connected: AtomicBool::new(false),
         }
     }
 
@@ -138,6 +151,8 @@ impl Node {
             rack: node.rack.clone(),
             host_id: node.host_id,
             pool: node.pool.clone(),
+            #[cfg(test)]
+            enabled_as_connected: AtomicBool::new(node.enabled_as_connected.load(Ordering::SeqCst)),
         }
     }
 
@@ -157,6 +172,10 @@ impl Node {
     /// Returns true if the driver has any open connections in the pool for this
     /// node.
     pub fn is_connected(&self) -> bool {
+        #[cfg(test)]
+        if self.enabled_as_connected.load(Ordering::SeqCst) {
+            return self.is_enabled();
+        }
         let Ok(pool) = self.get_pool() else {
             return false;
         };
@@ -357,7 +376,12 @@ mod tests {
                 datacenter,
                 rack,
                 pool: None,
+                enabled_as_connected: AtomicBool::new(false),
             }
+        }
+
+        pub(crate) fn use_enabled_as_connected(&self) {
+            self.enabled_as_connected.store(true, Ordering::SeqCst);
         }
     }
 }

@@ -900,9 +900,11 @@ impl DefaultPolicy {
 
     /// Returns true iff the node should be considered to be alive.
     fn is_alive(node: NodeRef, _shard: Option<Shard>) -> bool {
-        // For now, we leave this as stub, until we have time to improve node events.
-        // node.is_enabled() && !node.is_down()
-        node.is_enabled()
+        // For now we ignore the shard.
+        // We could theoretically only return true if we have a connection open to given shard, but:
+        //  - There is no public API to check that, and I don't want DefaultPolicy to use private APIs.
+        //  - Shards returned from policy are only a hint anyway, so it probably makes no sense to throw out the whole host.
+        node.is_connected()
     }
 
     /// Returns true iff the datacenter failover is permitted for the statement being executed.
@@ -1395,7 +1397,7 @@ mod tests {
         // based on locator mock cluster
         pub(crate) async fn mock_cluster_state_for_token_aware_tests() -> ClusterState {
             let metadata = mock_metadata_for_token_aware_tests();
-            ClusterState::new(
+            let state = ClusterState::new(
                 metadata,
                 &Default::default(),
                 &HashMap::new(),
@@ -1406,7 +1408,13 @@ mod tests {
                 #[cfg(feature = "metrics")]
                 &Default::default(),
             )
-            .await
+            .await;
+
+            for node in state.get_nodes_info() {
+                node.use_enabled_as_connected();
+            }
+
+            state
         }
 
         // creates ClusterState with info about 5 nodes living in 2 different datacenters
@@ -1428,7 +1436,7 @@ mod tests {
                 keyspaces: HashMap::new(),
             };
 
-            ClusterState::new(
+            let state = ClusterState::new(
                 info,
                 &Default::default(),
                 &HashMap::new(),
@@ -1439,7 +1447,13 @@ mod tests {
                 #[cfg(feature = "metrics")]
                 &Default::default(),
             )
-            .await
+            .await;
+
+            for node in state.get_nodes_info() {
+                node.use_enabled_as_connected();
+            }
+
+            state
         }
 
         pub(crate) fn get_plan_and_collect_node_identifiers(
@@ -1461,7 +1475,7 @@ mod tests {
         serial_consistency: Some(SerialConsistency::Serial),
     };
 
-    pub(super) async fn test_default_policy_with_given_cluster_and_routing_info(
+    pub(super) fn test_default_policy_with_given_cluster_and_routing_info(
         policy: &DefaultPolicy,
         cluster: &ClusterState,
         routing_info: &RoutingInfo<'_>,
@@ -1498,8 +1512,7 @@ mod tests {
             &cluster,
             &EMPTY_ROUTING_INFO,
             expected_groups,
-        )
-        .await;
+        );
     }
 
     #[tokio::test]
@@ -2013,8 +2026,7 @@ mod tests {
                 &cluster,
                 &routing_info,
                 &expected_groups,
-            )
-            .await;
+            );
         }
     }
 
@@ -2478,8 +2490,7 @@ mod tests {
                 &cluster,
                 &routing_info,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         let cluster_with_disabled_node_f = ClusterState::new(
@@ -2503,6 +2514,10 @@ mod tests {
             &Default::default(),
         )
         .await;
+
+        for node in cluster_with_disabled_node_f.get_nodes_info() {
+            node.use_enabled_as_connected();
+        }
 
         let tests_with_disabled_node_f = [
             // Keyspace NTS with RF=3 without preferred DC.
@@ -2548,8 +2563,7 @@ mod tests {
                 &cluster_with_disabled_node_f,
                 &routing_info,
                 &expected_groups,
-            )
-            .await;
+            );
         }
     }
 }
@@ -3241,8 +3255,7 @@ mod latency_awareness {
                 &cluster,
                 &EMPTY_ROUTING_INFO,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         #[tokio::test]
@@ -3302,8 +3315,7 @@ mod latency_awareness {
                 &cluster,
                 &EMPTY_ROUTING_INFO,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         #[tokio::test]
@@ -3363,8 +3375,7 @@ mod latency_awareness {
                 &cluster,
                 &EMPTY_ROUTING_INFO,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         #[tokio::test]
@@ -3428,8 +3439,7 @@ mod latency_awareness {
                 &cluster,
                 &EMPTY_ROUTING_INFO,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         #[tokio::test]
@@ -3514,8 +3524,7 @@ mod latency_awareness {
                 &cluster,
                 &EMPTY_ROUTING_INFO,
                 &expected_groups,
-            )
-            .await;
+            );
         }
 
         #[tokio::test]
@@ -3582,8 +3591,7 @@ mod latency_awareness {
                     &cluster,
                     &EMPTY_ROUTING_INFO,
                     &expected_groups,
-                )
-                .await;
+                );
             }
 
             // node 3 becomes as slow as node 1
@@ -3622,8 +3630,7 @@ mod latency_awareness {
                     &cluster,
                     &EMPTY_ROUTING_INFO,
                     &expected_groups,
-                )
-                .await;
+                );
             }
 
             updater.tick().await;
@@ -3639,8 +3646,7 @@ mod latency_awareness {
                     &cluster,
                     &EMPTY_ROUTING_INFO,
                     &expected_groups,
-                )
-                .await;
+                );
             }
         }
 
@@ -3837,8 +3843,7 @@ mod latency_awareness {
                     &cluster,
                     &test.routing_info,
                     &test.expected_groups,
-                )
-                .await;
+                );
             }
         }
 
