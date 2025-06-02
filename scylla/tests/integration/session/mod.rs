@@ -1,4 +1,3 @@
-mod authenticate;
 mod caching_session;
 mod db_errors;
 mod history;

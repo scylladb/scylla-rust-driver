@@ -1,3 +1,4 @@
+pub(crate) mod ccm;
 mod load_balancing;
 mod macros;
 mod metadata;
