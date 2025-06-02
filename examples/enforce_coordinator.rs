@@ -1,4 +1,6 @@
-//! This example show how to enforce the target the request is sent to.
+//! This example shows:
+//! - how to enforce the target the request is sent to;
+//! - how to inspect the coordinator node that executed the request.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -12,26 +14,35 @@ use scylla::statement::prepared::PreparedStatement;
 
 /// Executes "SELECT host_id, rpc_address FROM system.local" query with `node` as the enforced target.
 /// Checks whether the result matches the expected values (i.e. ones stored in peers metadata).
+/// Additionally, it verifies that the coordinator node (as observed by the driver based on the metadata
+/// fetched from the cluster previosly) is the same as the one we enforced.
 async fn query_system_local_and_verify(
     session: &Session,
-    node: &Arc<Node>,
+    enforced_node: &Arc<Node>,
     query_local: &PreparedStatement,
 ) {
-    let (actual_host_id, actual_node_ip) = session
+    let result = session
         .execute_unpaged(query_local, ())
         .await
         .unwrap()
         .into_rows_result()
-        .unwrap()
-        .single_row::<(uuid::Uuid, IpAddr)>()
         .unwrap();
 
+    // "Actual" host_id and node_ip are the ones returned by the query, i.e. the ones stored in system.local.
+    let (actual_host_id, actual_node_ip) = result.single_row::<(uuid::Uuid, IpAddr)>().unwrap();
     println!(
         "queried host_id: {}; queried node_ip: {}",
         actual_host_id, actual_node_ip
     );
-    assert_eq!(node.host_id, actual_host_id);
-    assert_eq!(node.address.ip(), actual_node_ip);
+
+    assert_eq!(enforced_node.host_id, actual_host_id);
+    assert_eq!(enforced_node.address.ip(), actual_node_ip);
+
+    // "Coordinator" is the node that executed the request, as observed by the driver
+    // based on the metadata fetched from the cluster previously.
+    let coordinator_node = result.request_coordinator().node();
+    assert_eq!(coordinator_node.host_id, actual_host_id);
+    assert_eq!(coordinator_node.address.ip(), actual_node_ip);
 }
 
 #[tokio::main]
