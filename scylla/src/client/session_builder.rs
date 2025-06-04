@@ -335,12 +335,13 @@ impl GenericSessionBuilder<DefaultMode> {
 # Example
 
 ```
-    # use std::fs;
-    # use std::path::PathBuf;
-    # use scylla::client::session::Session;
-    # use scylla::client::session_builder::SessionBuilder;
-    # use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
     # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+    use std::path::PathBuf;
+    use scylla::client::session::Session;
+    use scylla::client::session_builder::SessionBuilder;
+    use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
+
     let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
     let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
     context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
