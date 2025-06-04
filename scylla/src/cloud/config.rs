@@ -35,7 +35,8 @@ pub enum CloudConfigError {
 
 /// Configuration for creating a session to a serverless cluster.
 /// This can be automatically created if you provide the bundle path
-/// to the [`CloudSessionBuilder`] constructor.
+/// to the [`CloudSessionBuilder`](crate::client::session_builder::CloudSessionBuilder)
+/// constructor.
 #[derive(Debug)]
 pub struct CloudConfig {
     datacenters: HashMap<String, Datacenter>,
