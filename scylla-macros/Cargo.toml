@@ -12,6 +12,9 @@ license = "MIT OR Apache-2.0"
 [lib]
 proc-macro = true
 
+[package.metadata."docs.rs"]
+all-features = true
+
 [dependencies]
 darling = "0.20.10"
 syn = "2.0"
