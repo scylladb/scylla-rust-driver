@@ -10,6 +10,9 @@ keywords = ["database", "scylla", "cql", "cassandra"]
 categories = ["database"]
 license = "MIT OR Apache-2.0"
 
+[package.metadata."docs.rs"]
+all-features = true
+
 [dependencies]
 # Important: We use precise version of scylla-macros. This enables
 # us to make breaking changes in the doc(hidden) interfaces that are

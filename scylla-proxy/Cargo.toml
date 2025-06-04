@@ -10,6 +10,9 @@ keywords = ["database", "scylla", "cql", "cassandra"]
 categories = ["database"]
 license = "MIT OR Apache-2.0"
 
+[package.metadata."docs.rs"]
+all-features = true
+
 [features]
 defaults = []
 

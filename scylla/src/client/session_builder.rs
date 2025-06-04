@@ -329,27 +329,34 @@ impl GenericSessionBuilder<DefaultMode> {
     ///
     /// Default is None.
     ///
-    /// # Example
-    /// ```
-    /// # use std::fs;
-    /// # use std::path::PathBuf;
-    /// # use scylla::client::session::Session;
-    /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
-    /// let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    /// context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
-    /// context_builder.set_verify(SslVerifyMode::NONE);
-    ///
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .tls_context(Some(context_builder.build()))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    #[cfg_attr(
+        feature = "openssl-010",
+        doc = r#"
+# Example
+
+```
+    # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+    use std::path::PathBuf;
+    use scylla::client::session::Session;
+    use scylla::client::session_builder::SessionBuilder;
+    use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
+
+    let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
+    let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
+    context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
+    context_builder.set_verify(SslVerifyMode::NONE);
+
+    let session: Session = SessionBuilder::new()
+        .known_node("127.0.0.1:9042")
+        .tls_context(Some(context_builder.build()))
+        .build()
+        .await?;
+    # Ok(())
+    # }
+```
+"#
+    )]
     pub fn tls_context(mut self, tls_context: Option<impl Into<TlsContext>>) -> Self {
         self.config.tls_context = tls_context.map(|t| t.into());
         self
