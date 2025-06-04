@@ -49,10 +49,10 @@ pub enum ExecutionError {
 
     /// Load balancing policy returned an empty plan.
     #[error(
-        "Load balancing policy returned an empty plan.\
-        First thing to investigate should be the logic of custom LBP implementation.\
-        If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
-        then this is most probably a driver bug!"
+        "Load balancing policy returned an empty plan. \
+        If you are using DefaultPolicy, ensure that you have not selected a nonexistent datacenter as preferred. \
+        If you are using a custom LBP implementation, ensure that your LBP implementation is correct. \
+        If neither of the above suggestions is the cause, then this is most likely a driver bug!"
     )]
     EmptyPlan,
 
