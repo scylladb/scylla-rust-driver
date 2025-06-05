@@ -167,22 +167,8 @@ impl LoadBalancingPolicy for DefaultPolicy {
          * for the statement, so that we can pick one of them. */
         let routing_info = self.routing_info(query, cluster);
 
-        if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
-            if self.preferences.datacenter().is_some()
-                && !self.permit_dc_failover
-                && matches!(
-                    token_with_strategy.strategy,
-                    Strategy::SimpleStrategy { .. }
-                )
-            {
-                warn!("\
-Combining SimpleStrategy with preferred_datacenter set to Some and disabled datacenter failover may lead to empty query plans for some tokens.\
-It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
-how many replicas there are in each datacenter (you probably want at least 1 to avoid empty plans while preferring that datacenter), \
-or refrain from preferring datacenters (which may ban all other datacenters, if datacenter failover happens to be not possible)."
-                );
-            }
-        }
+        /* Check for misconfiguration and warn if any is discovered. */
+        self.pick_sanity_checks(&routing_info, cluster);
 
         /* LWT statements need to be routed differently: always to the same replica, to avoid Paxos contention. */
         let statement_type = if query.is_confirmed_lwt {
@@ -600,6 +586,26 @@ impl DefaultPolicy {
         }
 
         routing_info
+    }
+
+    /// Checks for misconfiguration and warns if any is discovered.
+    fn pick_sanity_checks(&self, routing_info: &ProcessedRoutingInfo, _cluster: &ClusterState) {
+        if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
+            if self.preferences.datacenter().is_some()
+                && !self.permit_dc_failover
+                && matches!(
+                    token_with_strategy.strategy,
+                    Strategy::SimpleStrategy { .. }
+                )
+            {
+                warn!("\
+Combining SimpleStrategy with preferred_datacenter set to Some and disabled datacenter failover may lead to empty query plans for some tokens.\
+It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
+how many replicas there are in each datacenter (you probably want at least 1 to avoid empty plans while preferring that datacenter), \
+or refrain from preferring datacenters (which may ban all other datacenters, if datacenter failover happens to be not possible)."
+                );
+            }
+        }
     }
 
     /// Returns all nodes in the local datacenter if one is given,
