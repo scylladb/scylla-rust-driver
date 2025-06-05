@@ -589,8 +589,9 @@ impl DefaultPolicy {
     }
 
     /// Checks for misconfiguration and warns if any is discovered.
-    fn pick_sanity_checks(&self, routing_info: &ProcessedRoutingInfo, _cluster: &ClusterState) {
-        if let Some(_preferred_dc) = self.preferences.datacenter() {
+    fn pick_sanity_checks(&self, routing_info: &ProcessedRoutingInfo, cluster: &ClusterState) {
+        if let Some(preferred_dc) = self.preferences.datacenter() {
+            // Preferred DC + no datacenter failover + SimpleStrategy is an anti-pattern.
             if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
                 if !self.permit_dc_failover
                     && matches!(
@@ -603,6 +604,56 @@ Combining SimpleStrategy with preferred_datacenter set to Some and disabled data
 It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
 how many replicas there are in each datacenter (you probably want at least 1 to avoid empty plans while preferring that datacenter), \
 or refrain from preferring datacenters (which may ban all other datacenters, if datacenter failover happens to be not possible)."
+                    );
+                }
+            }
+
+            // Verify that the preferred datacenter is actually present in the cluster.
+            // If not, shout a warning.
+            if cluster
+                .replica_locator()
+                .unique_nodes_in_datacenter_ring(preferred_dc)
+                .unwrap_or(&[])
+                .is_empty()
+            {
+                if self.permit_dc_failover {
+                    warn!(
+                        "\
+The preferred datacenter (\"{preferred_dc}\") is not present in the cluster! \
+Datacenter failover is enabled, so the request will be always sent to remote DCs. \
+This is most likely not what you want!"
+                    );
+                } else {
+                    warn!(
+                        "\
+The preferred datacenter (\"{preferred_dc}\") is not present in the cluster! \
+Datacenter failover is disabled, so the query plans will be empty! \
+You won't be able to execute any requests!"
+                    );
+                }
+            }
+            // Verify that there exist any enabled nodes in the preferred datacenter.
+            // If not, shout a warning.
+            else if !cluster
+                .replica_locator()
+                .unique_nodes_in_datacenter_ring(preferred_dc)
+                .unwrap_or(&[])
+                .iter()
+                .any(|node| node.is_enabled())
+            {
+                if self.permit_dc_failover {
+                    warn!(
+                        "\
+All nodes in the preferred datacenter (\"{preferred_dc}\") are disabled by the HostFilter! \
+Datacenter failover is enabled, so the request will be always sent to remote DCs. \
+This is most likely a misconfiguration!"
+                    );
+                } else {
+                    warn!(
+                        "\
+All nodes in the preferred datacenter (\"{preferred_dc}\") are disabled by the HostFilter! \
+Datacenter failover is disabled, so the query plans will be empty! \
+You won't be able to execute any requests! This is most likely a misconfiguration!"
                     );
                 }
             }
