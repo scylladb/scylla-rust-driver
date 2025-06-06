@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::utils::{
+    execute_prepared_statement_everywhere, execute_unprepared_statement_everywhere,
     scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
     PerformDDL,
 };
@@ -9,15 +10,10 @@ use futures::future::try_join_all;
 use futures::TryStreamExt;
 use itertools::Itertools;
 use scylla::client::session::Session;
-use scylla::cluster::ClusterState;
 use scylla::cluster::Node;
-use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
-use scylla::response::query_result::QueryResult;
-use scylla::serialize::row::SerializeRow;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 
-use scylla::errors::ExecutionError;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule,
     ShardAwareness, TargetShard, WorkerError,
@@ -152,50 +148,6 @@ fn calculate_key_per_tablet(tablets: &[Tablet], prepared: &PreparedStatement) ->
     value_lists
 }
 
-async fn send_statement_everywhere(
-    session: &Session,
-    cluster: &ClusterState,
-    statement: &PreparedStatement,
-    values: &dyn SerializeRow,
-) -> Result<Vec<QueryResult>, ExecutionError> {
-    let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
-        let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
-        (0..shard_count).map(|shard| {
-            let mut stmt = statement.clone();
-            let values_ref = &values;
-            stmt.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
-                NodeIdentifier::Node(Arc::clone(node)),
-                Some(shard as u32),
-            )));
-
-            async move { session.execute_unpaged(&stmt, values_ref).await }
-        })
-    });
-
-    try_join_all(tasks).await
-}
-
-async fn send_unprepared_query_everywhere(
-    session: &Session,
-    cluster: &ClusterState,
-    query: &Statement,
-) -> Result<Vec<QueryResult>, ExecutionError> {
-    let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
-        let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
-        (0..shard_count).map(|shard| {
-            let mut stmt = query.clone();
-            stmt.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
-                NodeIdentifier::Node(Arc::clone(node)),
-                Some(shard as u32),
-            )));
-
-            async move { session.query_unpaged(stmt, &()).await }
-        })
-    });
-
-    try_join_all(tasks).await
-}
-
 fn frame_has_tablet_feedback(frame: ResponseFrame) -> bool {
     let response =
         scylla_cql::frame::parse_response_body_extensions(frame.params.flags, None, frame.body)
@@ -218,7 +170,7 @@ fn count_tablet_feedbacks(
 async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: usize) {
     session
         .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} 
+            "CREATE KEYSPACE IF NOT EXISTS {}
             WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 2}}
             AND tablets = {{ 'initial': {} }}",
             ks, tablet_count
@@ -414,16 +366,17 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
 
             // I expect Scylla to not send feedback for unprepared queries,
             // as such queries cannot be token-aware anyway
-            send_unprepared_query_everywhere(
+            execute_unprepared_statement_everywhere(
                 &session,
                 session.get_cluster_state().as_ref(),
                 &Statement::new(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')")),
+                &(),
             )
             .await
             .unwrap();
 
             let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-            assert!(feedbacks == 0);
+            assert_eq!(feedbacks, 0);
 
             running_proxy
         },
@@ -520,7 +473,7 @@ async fn test_lwt_optimization_works_with_tablets() {
                         .unwrap()
                         .value()
                 );
-                send_statement_everywhere(
+                execute_prepared_statement_everywhere(
                     &session,
                     session.get_cluster_state().as_ref(),
                     &prepared_insert,

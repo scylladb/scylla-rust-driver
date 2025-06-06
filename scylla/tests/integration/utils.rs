@@ -1,4 +1,6 @@
+use futures::future::try_join_all;
 use futures::Future;
+use itertools::Either;
 use scylla::client::caching_session::CachingSession;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
@@ -7,9 +9,14 @@ use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
 use scylla::deserialize::value::DeserializeValue;
 use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
-use scylla::policies::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
+use scylla::policies::load_balancing::{
+    FallbackPlan, LoadBalancingPolicy, NodeIdentifier, RoutingInfo, SingleTargetLoadBalancingPolicy,
+};
 use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
+use scylla::response::query_result::QueryResult;
 use scylla::routing::Shard;
+use scylla::serialize::row::SerializeRow;
+use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 use std::collections::HashMap;
 use std::env;
@@ -375,4 +382,64 @@ pub(crate) fn calculate_proxy_host_ids(
 
     assert_eq!(host_ids.len(), proxy_uris.len());
     host_ids
+}
+
+async fn for_each_target_execute<ExecuteFn, ExecuteFut>(
+    cluster: &ClusterState,
+    execute: ExecuteFn,
+) -> Result<Vec<QueryResult>, ExecutionError>
+where
+    ExecuteFn: Fn(Arc<scylla::cluster::Node>, Option<Shard>) -> ExecuteFut,
+    ExecuteFut: Future<Output = Result<QueryResult, ExecutionError>>,
+{
+    let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
+        let maybe_shard_count: Option<u16> = node.sharder().map(|sharder| sharder.nr_shards.into());
+        match maybe_shard_count {
+            Some(shard_count) => Either::Left(
+                (0..shard_count).map(|shard| execute(node.clone(), Some(shard as u32))),
+            ),
+            None => Either::Right(std::iter::once(execute(node.clone(), None))),
+        }
+    });
+
+    try_join_all(tasks).await
+}
+
+pub(crate) async fn execute_prepared_statement_everywhere(
+    session: &Session,
+    cluster: &ClusterState,
+    statement: &PreparedStatement,
+    values: &dyn SerializeRow,
+) -> Result<Vec<QueryResult>, ExecutionError> {
+    for_each_target_execute(cluster, |node, shard| async move {
+        let mut stmt = statement.clone();
+        let values_ref = &values;
+        let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
+        let execution_profile = ExecutionProfile::builder()
+            .load_balancing_policy(policy)
+            .build();
+        stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
+
+        session.execute_unpaged(&stmt, values_ref).await
+    })
+    .await
+}
+
+pub(crate) async fn execute_unprepared_statement_everywhere(
+    session: &Session,
+    cluster: &ClusterState,
+    statement: &Statement,
+    values: &dyn SerializeRow,
+) -> Result<Vec<QueryResult>, ExecutionError> {
+    for_each_target_execute(cluster, |node, shard| async move {
+        let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
+        let execution_profile = ExecutionProfile::builder()
+            .load_balancing_policy(policy)
+            .build();
+        let mut statement = statement.clone();
+        statement.set_execution_profile_handle(Some(execution_profile.into_handle()));
+
+        session.query_unpaged(statement, values).await
+    })
+    .await
 }

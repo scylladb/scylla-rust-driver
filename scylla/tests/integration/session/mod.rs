@@ -1,4 +1,5 @@
 mod caching_session;
+mod cluster_reachability;
 mod db_errors;
 mod history;
 mod new_session;
