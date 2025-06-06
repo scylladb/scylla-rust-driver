@@ -19,6 +19,10 @@ use uuid::Uuid;
 use super::metadata::{Keyspace, Metadata, Strategy};
 use super::node::{Node, NodeRef};
 
+/// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
+///
+/// It is immutable after creation, and is replaced atomically upon a metadata refresh.
+/// Can be accessed through [Session::get_cluster_state()](crate::client::session::Session::get_cluster_state).
 #[derive(Clone)]
 pub struct ClusterState {
     /// All nodes known to be part of the cluster, accessible by their host ID.
