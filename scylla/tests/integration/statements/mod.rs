@@ -1,4 +1,5 @@
 mod batch;
+mod bound;
 mod consistency;
 mod coordinator;
 mod execution_profiles;

@@ -14,6 +14,7 @@ use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
+use super::bound::BoundStatement;
 use super::{PageSize, StatementConfig};
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::errors::{BadQuery, ExecutionError};
@@ -673,6 +674,13 @@ impl PreparedStatement {
         self.serialize_values(values)
     }
 
+    /// Binds values with a prepared statement, consuming the statement.
+    ///
+    /// This method will serialize the values and thus type erase them on return.
+    pub fn bind(self, values: &impl SerializeRow) -> Result<BoundStatement, SerializationError> {
+        BoundStatement::new(self, values)
+    }
+
     pub(crate) fn serialize_values(
         &self,
         values: &impl SerializeRow,
@@ -780,7 +788,7 @@ pub(crate) struct PartitionKey<'ps> {
 impl<'ps> PartitionKey<'ps> {
     const SMALLVEC_ON_STACK_SIZE: usize = 8;
 
-    fn new(
+    pub(super) fn new(
         prepared_metadata: &'ps PreparedMetadata,
         bound_values: &'ps SerializedValues,
     ) -> Result<Self, PartitionKeyExtractionError> {
