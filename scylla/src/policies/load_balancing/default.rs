@@ -3,6 +3,7 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterState;
+use crate::observability::warn_rate_limited;
 use crate::{
     cluster::metadata::Strategy,
     cluster::node::Node,
@@ -16,7 +17,7 @@ use rand_pcg::Pcg32;
 use scylla_cql::frame::response::result::TableSpec;
 use std::hash::{Hash, Hasher};
 use std::{fmt, sync::Arc, time::Duration};
-use tracing::{debug, warn};
+use tracing::debug;
 use uuid::Uuid;
 
 #[derive(Clone, Copy)]
@@ -590,6 +591,8 @@ impl DefaultPolicy {
 
     /// Checks for misconfiguration and warns if any is discovered.
     fn pick_sanity_checks(&self, routing_info: &ProcessedRoutingInfo, cluster: &ClusterState) {
+        const SANITY_CHECKS_WARNING_INTERVAL: std::time::Duration =
+            std::time::Duration::from_secs(1);
         if let Some(preferred_dc) = self.preferences.datacenter() {
             // Preferred DC + no datacenter failover + SimpleStrategy is an anti-pattern.
             if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
@@ -599,7 +602,7 @@ impl DefaultPolicy {
                         Strategy::SimpleStrategy { .. }
                     )
                 {
-                    warn!("\
+                    warn_rate_limited!(SANITY_CHECKS_WARNING_INTERVAL, "\
 Combining SimpleStrategy with preferred_datacenter set to Some and disabled datacenter failover may lead to empty query plans for some tokens.\
 It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
 how many replicas there are in each datacenter (you probably want at least 1 to avoid empty plans while preferring that datacenter), \
@@ -617,14 +620,16 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 .is_empty()
             {
                 if self.permit_dc_failover {
-                    warn!(
+                    warn_rate_limited!(
+                        SANITY_CHECKS_WARNING_INTERVAL,
                         "\
 The preferred datacenter (\"{preferred_dc}\") is not present in the cluster! \
 Datacenter failover is enabled, so the request will be always sent to remote DCs. \
 This is most likely not what you want!"
                     );
                 } else {
-                    warn!(
+                    warn_rate_limited!(
+                        SANITY_CHECKS_WARNING_INTERVAL,
                         "\
 The preferred datacenter (\"{preferred_dc}\") is not present in the cluster! \
 Datacenter failover is disabled, so the query plans will be empty! \
@@ -642,14 +647,16 @@ You won't be able to execute any requests!"
                 .any(|node| node.is_enabled())
             {
                 if self.permit_dc_failover {
-                    warn!(
+                    warn_rate_limited!(
+                        SANITY_CHECKS_WARNING_INTERVAL,
                         "\
-All nodes in the preferred datacenter (\"{preferred_dc}\") are disabled by the HostFilter! \
-Datacenter failover is enabled, so the request will be always sent to remote DCs. \
-This is most likely a misconfiguration!"
+                    All nodes in the preferred datacenter (\"{preferred_dc}\") are disabled by the HostFilter! \
+                    Datacenter failover is enabled, so the request will be always sent to remote DCs. \
+                    This is most likely a misconfiguration!"
                     );
                 } else {
-                    warn!(
+                    warn_rate_limited!(
+                        SANITY_CHECKS_WARNING_INTERVAL,
                         "\
 All nodes in the preferred datacenter (\"{preferred_dc}\") are disabled by the HostFilter! \
 Datacenter failover is disabled, so the query plans will be empty! \
