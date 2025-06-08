@@ -1,5 +1,4 @@
-// CQL Tracing allows to see each step during execution of a query
-// query() prepare() execute() batch() query_iter() and execute_iter() can be traced
+//! CQL Tracing allows to see each step during execution of a statement.
 
 use anyhow::{Result, anyhow};
 use futures::StreamExt as _;
