@@ -20,6 +20,8 @@ use std::{fmt, sync::Arc, time::Duration};
 use tracing::debug;
 use uuid::Uuid;
 
+const SANITY_CHECKS_WARNING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
 #[derive(Clone, Copy)]
 enum NodeLocationCriteria<'a> {
     Any,
@@ -591,8 +593,6 @@ impl DefaultPolicy {
 
     /// Checks for misconfiguration and warns if any is discovered.
     fn pick_sanity_checks(&self, routing_info: &ProcessedRoutingInfo, cluster: &ClusterState) {
-        const SANITY_CHECKS_WARNING_INTERVAL: std::time::Duration =
-            std::time::Duration::from_secs(1);
         if let Some(preferred_dc) = self.preferences.datacenter() {
             // Preferred DC + no datacenter failover + SimpleStrategy is an anti-pattern.
             if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
@@ -677,7 +677,8 @@ You won't be able to execute any requests! This is most likely a misconfiguratio
             {
                 nodes
             } else {
-                tracing::warn!(
+                warn_rate_limited!(
+                    SANITY_CHECKS_WARNING_INTERVAL,
                     "Datacenter specified as the preferred one ({}) does not exist!",
                     preferred_datacenter
                 );
