@@ -110,8 +110,10 @@ impl Statement {
     }
 
     /// Enable or disable CQL Tracing for this statement
-    /// If enabled session.query() will return a QueryResult containing tracing_id
-    /// which can be used to query tracing information about the execution of this query
+    ///
+    /// If enabled, statement execution will return a [QueryResult](crate::response::query_result::QueryResult) /
+    /// [QueryPager](crate::client::pager::QueryPager) containing tracing_id
+    /// which can be used to query tracing information about the execution of this statement.
     pub fn set_tracing(&mut self, should_trace: bool) {
         self.config.tracing = should_trace;
     }
