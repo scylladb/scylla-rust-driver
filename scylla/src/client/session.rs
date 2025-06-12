@@ -1115,10 +1115,6 @@ impl Session {
             RunRequestResult::Completed(response) => response,
         };
 
-        self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(&response, coordinator.node().host_id)
-            .await?;
-
         let (result, paging_state_response) =
             response.into_query_result_and_paging_state(coordinator)?;
         span.record_result_fields(&result);
@@ -1491,10 +1487,6 @@ impl Session {
             RunRequestResult::Completed(response) => response,
         };
 
-        self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(&response, coordinator.node().host_id)
-            .await?;
-
         let (result, paging_state_response) =
             response.into_query_result_and_paging_state(coordinator)?;
         span.record_result_fields(&result);
@@ -1858,17 +1850,16 @@ impl Session {
     /// On success, this request's result is returned.
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
-    async fn run_request<'a, QueryFut, ResT>(
+    async fn run_request<'a, QueryFut>(
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         execution_profile: Arc<ExecutionProfileInner>,
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
-    ) -> Result<(RunRequestResult<ResT>, Coordinator), ExecutionError>
+    ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where
-        QueryFut: Future<Output = Result<ResT, RequestAttemptError>>,
-        ResT: AllowedRunRequestResTType,
+        QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         let history_listener_and_id: Option<(&'a dyn HistoryListener, history::RequestId)> =
             statement_config
@@ -2021,6 +2012,13 @@ impl Session {
             }
         }
 
+        // Automatically handle meaningful responses.
+        if let Ok((RunRequestResult::Completed(ref response), ref coordinator)) = result {
+            self.handle_set_keyspace_response(response).await?;
+            self.handle_auto_await_schema_agreement(response, coordinator.node().host_id)
+                .await?;
+        }
+
         result.map_err(RequestError::into_execution_error)
     }
 
@@ -2029,16 +2027,15 @@ impl Session {
     /// If request fails, retry session is used to perform retries.
     ///
     /// Returns None, if provided plan is empty.
-    async fn run_request_speculative_fiber<'a, QueryFut, ResT>(
+    async fn run_request_speculative_fiber<'a, QueryFut>(
         &'a self,
         request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
-    ) -> Option<Result<(RunRequestResult<ResT>, Coordinator), RequestError>>
+    ) -> Option<Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>>
     where
-        QueryFut: Future<Output = Result<ResT, RequestAttemptError>>,
-        ResT: AllowedRunRequestResTType,
+        QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         let mut last_error: Option<RequestError> = None;
         let mut current_consistency: Consistency = context
@@ -2079,7 +2076,7 @@ impl Session {
 
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connect_address);
-                let request_result: Result<ResT, RequestAttemptError> =
+                let request_result: Result<NonErrorQueryResponse, RequestAttemptError> =
                     run_request_once(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
                         .await;
@@ -2347,21 +2344,6 @@ impl Session {
         &self.default_execution_profile_handle
     }
 }
-
-// run_request, run_request_speculative_fiber, etc have a template type called ResT.
-// There was a bug where ResT was set to QueryResponse, which could
-// be an error response. This was not caught by retry policy which
-// assumed all errors would come from analyzing Result<ResT, ExecutionError>.
-// This trait is a guard to make sure that this mistake doesn't
-// happen again.
-// When using run_request make sure that the ResT type is NOT able
-// to contain any errors.
-// See https://github.com/scylladb/scylla-rust-driver/issues/501
-pub(crate) trait AllowedRunRequestResTType {}
-
-impl AllowedRunRequestResTType for Uuid {}
-impl AllowedRunRequestResTType for QueryResult {}
-impl AllowedRunRequestResTType for NonErrorQueryResponse {}
 
 struct ExecuteRequestContext<'a> {
     is_idempotent: bool,
