@@ -1115,10 +1115,6 @@ impl Session {
             RunRequestResult::Completed(response) => response,
         };
 
-        self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(&response, coordinator.node().host_id)
-            .await?;
-
         let (result, paging_state_response) =
             response.into_query_result_and_paging_state(coordinator)?;
         span.record_result_fields(&result);
@@ -1490,10 +1486,6 @@ impl Session {
             },
             RunRequestResult::Completed(response) => response,
         };
-
-        self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(&response, coordinator.node().host_id)
-            .await?;
 
         let (result, paging_state_response) =
             response.into_query_result_and_paging_state(coordinator)?;
@@ -2018,6 +2010,13 @@ impl Session {
                 Ok(_) => history_listener.log_request_success(request_id),
                 Err(e) => history_listener.log_request_error(request_id, e),
             }
+        }
+
+        // Automatically handle meaningful responses.
+        if let Ok((RunRequestResult::Completed(ref response), ref coordinator)) = result {
+            self.handle_set_keyspace_response(response).await?;
+            self.handle_auto_await_schema_agreement(response, coordinator.node().host_id)
+                .await?;
         }
 
         result.map_err(RequestError::into_execution_error)
