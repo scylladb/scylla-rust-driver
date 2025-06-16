@@ -3,6 +3,7 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterState;
+use crate::observability::warn_rate_limited;
 use crate::{
     cluster::metadata::Strategy,
     cluster::node::Node,
@@ -16,8 +17,10 @@ use rand_pcg::Pcg32;
 use scylla_cql::frame::response::result::TableSpec;
 use std::hash::{Hash, Hasher};
 use std::{fmt, sync::Arc, time::Duration};
-use tracing::{debug, warn};
+use tracing::debug;
 use uuid::Uuid;
+
+const SANITY_CHECKS_WARNING_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Clone, Copy)]
 enum NodeLocationCriteria<'a> {
@@ -167,22 +170,8 @@ impl LoadBalancingPolicy for DefaultPolicy {
          * for the statement, so that we can pick one of them. */
         let routing_info = self.routing_info(query, cluster);
 
-        if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
-            if self.preferences.datacenter().is_some()
-                && !self.permit_dc_failover
-                && matches!(
-                    token_with_strategy.strategy,
-                    Strategy::SimpleStrategy { .. }
-                )
-            {
-                warn!("\
-Combining SimpleStrategy with preferred_datacenter set to Some and disabled datacenter failover may lead to empty query plans for some tokens.\
-It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
-how many replicas there are in each datacenter (you probably want at least 1 to avoid empty plans while preferring that datacenter), \
-or refrain from preferring datacenters (which may ban all other datacenters, if datacenter failover happens to be not possible)."
-                );
-            }
-        }
+        /* Check for misconfiguration and warn if any is discovered. */
+        self.pick_sanity_checks(&routing_info, cluster);
 
         /* LWT statements need to be routed differently: always to the same replica, to avoid Paxos contention. */
         let statement_type = if query.is_confirmed_lwt {
@@ -602,6 +591,82 @@ impl DefaultPolicy {
         routing_info
     }
 
+    /// Checks for misconfiguration and warns if any is discovered.
+    fn pick_sanity_checks(&self, routing_info: &ProcessedRoutingInfo, cluster: &ClusterState) {
+        if let Some(preferred_dc) = self.preferences.datacenter() {
+            // Preferred DC + no datacenter failover + SimpleStrategy is an anti-pattern.
+            if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
+                if !self.permit_dc_failover
+                    && matches!(
+                        token_with_strategy.strategy,
+                        Strategy::SimpleStrategy { .. }
+                    )
+                {
+                    warn_rate_limited!(SANITY_CHECKS_WARNING_INTERVAL, "\
+Combining SimpleStrategy with preferred_datacenter set to Some and disabled datacenter failover may lead to empty query plans for some tokens.\
+It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
+how many replicas there are in each datacenter (you probably want at least 1 to avoid empty plans while preferring that datacenter), \
+or refrain from preferring datacenters (which may ban all other datacenters, if datacenter failover happens to be not possible)."
+                    );
+                }
+            }
+
+            // Verify that the preferred datacenter is actually present in the cluster.
+            // If not, shout a warning.
+            if cluster
+                .replica_locator()
+                .unique_nodes_in_datacenter_ring(preferred_dc)
+                .unwrap_or(&[])
+                .is_empty()
+            {
+                if self.permit_dc_failover {
+                    warn_rate_limited!(
+                        SANITY_CHECKS_WARNING_INTERVAL,
+                        "\
+The preferred datacenter (\"{preferred_dc}\") is not present in the cluster! \
+Datacenter failover is enabled, so the request will be always sent to remote DCs. \
+This is most likely not what you want!"
+                    );
+                } else {
+                    warn_rate_limited!(
+                        SANITY_CHECKS_WARNING_INTERVAL,
+                        "\
+The preferred datacenter (\"{preferred_dc}\") is not present in the cluster! \
+Datacenter failover is disabled, so the query plans will be empty! \
+You won't be able to execute any requests!"
+                    );
+                }
+            }
+            // Verify that there exist any enabled nodes in the preferred datacenter.
+            // If not, shout a warning.
+            else if !cluster
+                .replica_locator()
+                .unique_nodes_in_datacenter_ring(preferred_dc)
+                .unwrap_or(&[])
+                .iter()
+                .any(|node| node.is_enabled())
+            {
+                if self.permit_dc_failover {
+                    warn_rate_limited!(
+                        SANITY_CHECKS_WARNING_INTERVAL,
+                        "\
+                    All nodes in the preferred datacenter (\"{preferred_dc}\") are disabled by the HostFilter! \
+                    Datacenter failover is enabled, so the request will be always sent to remote DCs. \
+                    This is most likely a misconfiguration!"
+                    );
+                } else {
+                    warn_rate_limited!(
+                        SANITY_CHECKS_WARNING_INTERVAL,
+                        "\
+All nodes in the preferred datacenter (\"{preferred_dc}\") are disabled by the HostFilter! \
+Datacenter failover is disabled, so the query plans will be empty! \
+You won't be able to execute any requests! This is most likely a misconfiguration!"
+                    );
+                }
+            }
+        }
+    }
+
     /// Returns all nodes in the local datacenter if one is given,
     /// or else all nodes in the cluster.
     fn preferred_node_set<'a>(&'a self, cluster: &'a ClusterState) -> &'a [Arc<Node>] {
@@ -612,7 +677,8 @@ impl DefaultPolicy {
             {
                 nodes
             } else {
-                tracing::warn!(
+                warn_rate_limited!(
+                    SANITY_CHECKS_WARNING_INTERVAL,
                     "Datacenter specified as the preferred one ({}) does not exist!",
                     preferred_datacenter
                 );
