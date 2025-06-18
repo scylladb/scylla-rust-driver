@@ -287,6 +287,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
     pub(crate) write_coalescing_delay: Option<WriteCoalescingDelay>,
+    pub(crate) pending_request_channel_size: Option<usize>,
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
@@ -320,17 +321,44 @@ impl ConnectionConfig {
             authenticator: self.authenticator.clone(),
             address_translator: self.address_translator.clone(),
             write_coalescing_delay: self.write_coalescing_delay.clone(),
+            pending_request_channel_size: self.pending_request_channel_size,
+
             keepalive_interval: self.keepalive_interval,
             keepalive_timeout: self.keepalive_timeout,
             tablet_sender: self.tablet_sender.clone(),
             identity: self.identity.clone(),
         }
     }
+
+    /// Set the size of the pending request channel for each connection.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - The maximum number of pending requests per connection.
+    ///   
+    /// # Notes
+    /// 
+    /// - This is different from cpp-driver's implementation, which uses a per-RequestProcessor queue.
+    /// - The default is 2048, a balanced value between performance and memory usage.
+    /// - Adjust based on your specific workload and system resources.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let session = SessionBuilder::new()
+    ///     .connection_config(
+    ///         ConnectionConfig::new()
+    ///             .with_pending_request_channel_size(4096)
+    ///     )
+    ///     .build()
+    ///     .await?;
+    /// ```
+    pub fn with_pending_request_channel_size(mut self, size: usize) -> Self {
+        self.pending_request_channel_size = Some(size);
+        self
+    }
 }
 
-/// Configuration used for new connections, customized for a specific endpoint.
-///
-/// Created from [ConnectionConfig] using [ConnectionConfig::to_host_connection_config].
 #[derive(Clone)]
 pub(crate) struct HostConnectionConfig {
     pub(crate) local_ip_address: Option<IpAddr>,
@@ -347,12 +375,20 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
     pub(crate) write_coalescing_delay: Option<WriteCoalescingDelay>,
+    pub(crate) pending_request_channel_size: Option<usize>,
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
     pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
+}
+
+#[cfg(test)]
+impl HostConnectionConfig {
+    fn is_tls(&self) -> bool {
+        self.tls_config.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -380,6 +416,7 @@ impl Default for HostConnectionConfig {
             tablet_sender: None,
 
             identity: SelfIdentity::default(),
+            pending_request_channel_size: Some(2048),
         }
     }
 }
@@ -409,18 +446,10 @@ impl Default for ConnectionConfig {
             tablet_sender: None,
 
             identity: SelfIdentity::default(),
+            pending_request_channel_size: Some(2048),
         }
     }
 }
-
-impl HostConnectionConfig {
-    fn is_tls(&self) -> bool {
-        self.tls_config.is_some()
-    }
-}
-
-// Used to listen for fatal error in connection
-pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<ConnectionError>;
 
 impl Connection {
     // Returns new connection and ErrorReceiver which can be used to wait for a fatal error
@@ -449,7 +478,7 @@ impl Connection {
         }
 
         // TODO: What should be the size of the channel?
-        let (sender, receiver) = mpsc::channel(1024);
+        let (sender, receiver) = mpsc::channel(config.pending_request_channel_size.unwrap_or(1024));
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
         // Unbounded because it allows for synchronous pushes
         let (orphan_notification_sender, orphan_notification_receiver) = mpsc::unbounded_channel();
