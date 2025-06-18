@@ -1560,6 +1560,41 @@ impl<'frame, 'metadata, T: DeserializeValue<'frame, 'metadata>> DeserializeValue
     }
 }
 
+// Special cases for Box<str> and Arc<str>
+// The generic implementations above don't work for str. This is because
+// DeserializeValue is implemented for &str, but not for str. We can't change this:
+// the type for DeserializeValue must be Sized because it is returned from deserialize method.
+
+impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for Box<str> {
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        <String as DeserializeValue>::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        String::deserialize(typ, v)
+            .map(String::into_boxed_str)
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
+impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for Arc<str> {
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        <&str as DeserializeValue>::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        <&str as DeserializeValue>::deserialize(typ, v)
+            .map(Into::<Arc<str>>::into)
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
