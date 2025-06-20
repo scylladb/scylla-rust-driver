@@ -145,6 +145,11 @@ fn test_ref_errors() {
     verify_typeck_error_in_wrapper::<&i32>(&123_i32);
 }
 
+#[test]
+fn test_box_errors() {
+    verify_typeck_error_in_wrapper::<Box<i32>>(Box::new(123));
+}
+
 #[cfg(feature = "bigdecimal-04")]
 #[test]
 fn test_native_errors_bigdecimal_04() {
