@@ -698,6 +698,7 @@ make_error_replace_rust_name!(
 // lists and sets
 
 /// An iterator over either a CQL set or list.
+#[derive(Debug, Clone)]
 pub struct ListlikeIterator<'frame, 'metadata, T> {
     coll_typ: &'metadata ColumnType<'metadata>,
     elem_typ: &'metadata ColumnType<'metadata>,
@@ -950,6 +951,7 @@ where
 /// It would be nice to have a rule to determine if the element type is fixed-length or not,
 /// however, we only have a heuristic. There are a few types that should, for all intents and purposes,
 /// be considered fixed-length, but are not, e.g TinyInt. See ColumnType::type_size() for the list.
+#[derive(Debug, Clone)]
 pub struct VectorIterator<'frame, 'metadata, T> {
     collection_type: &'metadata ColumnType<'metadata>,
     element_type: &'metadata ColumnType<'metadata>,
@@ -1108,6 +1110,7 @@ where
 }
 
 /// An iterator over a CQL map.
+#[derive(Debug, Clone)]
 pub struct MapIterator<'frame, 'metadata, K, V> {
     coll_typ: &'metadata ColumnType<'metadata>,
     k_typ: &'metadata ColumnType<'metadata>,
@@ -1423,6 +1426,7 @@ impl_tuple_multiple!(
 /// - `None` - missing from the serialized form
 /// - `Some(None)` - present, but null
 /// - `Some(Some(...))` - non-null, present value
+#[derive(Debug, Clone)]
 pub struct UdtIterator<'frame, 'metadata> {
     all_fields: &'metadata [(Cow<'metadata, str>, ColumnType<'metadata>)],
     type_name: &'metadata str,
