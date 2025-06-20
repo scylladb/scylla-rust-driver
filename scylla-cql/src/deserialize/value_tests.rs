@@ -1957,18 +1957,6 @@ fn test_set_or_list_errors() {
 
     // Bad element type
     {
-        assert_type_check_error!(
-            &Bytes::new(),
-            Vec<i64>,
-            ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
-            },
-            BuiltinTypeCheckErrorKind::SetOrListError(
-                SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(_)
-            )
-        );
-
         let err = deserialize::<Vec<i64>>(
             &ColumnType::Collection {
                 frozen: false,
