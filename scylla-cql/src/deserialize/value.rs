@@ -1990,7 +1990,7 @@ impl Display for UdtTypeCheckErrorKind {
 }
 
 /// Deserialization of one of the built-in types failed.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 #[error("Failed to deserialize Rust type {rust_name} from CQL type {cql_type:?}: {kind}")]
 pub struct BuiltinDeserializationError {
     /// Name of the Rust type being deserialized.
@@ -2025,7 +2025,7 @@ fn mk_deser_err_named(
 }
 
 /// Describes why deserialization of some of the built-in types failed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum BuiltinDeserializationErrorKind {
     /// Failed to deserialize one of date's fields.
@@ -2118,7 +2118,7 @@ impl Display for BuiltinDeserializationErrorKind {
 }
 
 /// Describes why deserialization of a set or list type failed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SetOrListDeserializationErrorKind {
     /// Failed to deserialize set or list's length.
@@ -2149,7 +2149,7 @@ impl From<SetOrListDeserializationErrorKind> for BuiltinDeserializationErrorKind
 }
 
 /// Describes why deserialization of a vector type failed.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum VectorDeserializationErrorKind {
     /// One of the elements of the vector failed to deserialize.
@@ -2165,7 +2165,7 @@ impl From<VectorDeserializationErrorKind> for BuiltinDeserializationErrorKind {
 }
 
 /// Describes why deserialization of a map type failed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 // Check triggers because all variants end with "DeserializationFailed".
 // TODO(2.0): Remove the "DeserializationFailed" postfix from variants.
