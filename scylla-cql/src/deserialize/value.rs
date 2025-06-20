@@ -880,8 +880,8 @@ where
         match typ {
             ColumnType::Collection {
                 frozen: false,
-                typ: CollectionType::Set(el_t),
-            } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
+                typ: CollectionType::Set(_),
+            } => ListlikeIterator::<'frame, 'metadata, T>::type_check(typ)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
                 typ,
@@ -911,8 +911,8 @@ where
         match typ {
             ColumnType::Collection {
                 frozen: false,
-                typ: CollectionType::Set(el_t),
-            } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
+                typ: CollectionType::Set(_),
+            } => ListlikeIterator::<'frame, 'metadata, T>::type_check(typ)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
                 typ,
