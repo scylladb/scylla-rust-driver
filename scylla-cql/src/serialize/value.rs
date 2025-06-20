@@ -384,7 +384,9 @@ impl<V: SerializeValue> SerializeValue for MaybeUnset<V> {
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
         match self {
-            MaybeUnset::Set(v) => v.serialize(typ, writer),
+            MaybeUnset::Set(v) => v
+                .serialize(typ, writer)
+                .map_err(fix_rust_name_in_err::<Self>),
             MaybeUnset::Unset => Ok(writer.set_unset()),
         }
     }
