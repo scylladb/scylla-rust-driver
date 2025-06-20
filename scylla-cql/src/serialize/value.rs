@@ -350,7 +350,9 @@ impl<T: SerializeValue> SerializeValue for Option<T> {
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
         match self {
-            Some(v) => v.serialize(typ, writer),
+            Some(v) => v
+                .serialize(typ, writer)
+                .map_err(fix_rust_name_in_err::<Self>),
             None => Ok(writer.set_null()),
         }
     }

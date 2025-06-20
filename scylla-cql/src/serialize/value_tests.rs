@@ -130,6 +130,11 @@ fn test_secrecy_08_errors() {
     verify_typeck_error_in_wrapper::<Secret<i32>>(Secret::new(123));
 }
 
+#[test]
+fn test_option_errors() {
+    verify_typeck_error_in_wrapper::<Option<i32>>(Some(123));
+}
+
 #[cfg(feature = "bigdecimal-04")]
 #[test]
 fn test_native_errors_bigdecimal_04() {
