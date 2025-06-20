@@ -223,7 +223,7 @@ impl<V: SerializeValue + secrecy_08::Zeroize> SerializeValue for secrecy_08::Sec
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
         use secrecy_08::ExposeSecret;
-        V::serialize(self.expose_secret(), typ, writer)
+        V::serialize(self.expose_secret(), typ, writer).map_err(fix_rust_name_in_err::<Self>)
     }
 }
 impl SerializeValue for bool {

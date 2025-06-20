@@ -106,6 +106,30 @@ fn test_native_errors() {
     // a value which is at least 2GB in size.
 }
 
+/// Helper function for tests of wrappers (Option<T>, Box<T> etc).
+/// Its main purpose is to verify that the rust_name in typecheck error
+/// is the name of whole container instead of container value (for example
+/// `Option<i32>` instead of `i32`).
+fn verify_typeck_error_in_wrapper<T: SerializeValue>(v: T) {
+    let err = do_serialize_err::<T>(v, &ColumnType::Native(NativeType::Text));
+    let err = get_typeck_err(&err);
+    assert_eq!(err.rust_name, std::any::type_name::<T>());
+    assert_eq!(err.got, ColumnType::Native(NativeType::Text));
+    assert_matches!(
+        err.kind,
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[ColumnType::Native(NativeType::Int)]
+        }
+    );
+}
+
+#[cfg(feature = "secrecy-08")]
+#[test]
+fn test_secrecy_08_errors() {
+    use secrecy_08::Secret;
+    verify_typeck_error_in_wrapper::<Secret<i32>>(Secret::new(123));
+}
+
 #[cfg(feature = "bigdecimal-04")]
 #[test]
 fn test_native_errors_bigdecimal_04() {
