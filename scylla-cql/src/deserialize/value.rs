@@ -79,14 +79,16 @@ where
     T: DeserializeValue<'frame, 'metadata>,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-        T::type_check(typ)
+        T::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
     }
 
     fn deserialize(
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        v.map(|_| T::deserialize(typ, v)).transpose()
+        v.map(|_| T::deserialize(typ, v))
+            .transpose()
+            .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
 

@@ -1846,6 +1846,32 @@ fn test_native_errors() {
 }
 
 #[test]
+fn test_option_errors() {
+    // Type check correctly renames Rust type
+    assert_type_check_error!(
+        &Bytes::new(),
+        Option<i32>,
+        ColumnType::Native(NativeType::Text),
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[ColumnType::Native(NativeType::Int)]
+        }
+    );
+
+    // Deserialize correctly renames Rust type
+    let v = 123_i32;
+    let bytes = serialize(&ColumnType::Native(NativeType::Int), &v);
+    assert_deser_error!(
+        &bytes,
+        Option<f64>,
+        ColumnType::Native(NativeType::Double),
+        BuiltinDeserializationErrorKind::ByteLengthMismatch {
+            expected: 8,
+            got: 4,
+        }
+    );
+}
+
+#[test]
 fn test_set_or_list_errors() {
     // Not a set or list
     {
@@ -2699,7 +2725,7 @@ fn test_udt_errors() {
                 };
                 assert_eq!(field_name.as_str(), "b");
                 let err = get_deser_err(err);
-                assert_eq!(err.rust_name, std::any::type_name::<i32>());
+                assert_eq!(err.rust_name, std::any::type_name::<Option<i32>>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
                 assert_matches!(
                     err.kind,
