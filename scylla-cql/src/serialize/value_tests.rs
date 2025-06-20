@@ -140,6 +140,11 @@ fn test_maybe_unset_errors() {
     verify_typeck_error_in_wrapper::<MaybeUnset<i32>>(MaybeUnset::Set(123));
 }
 
+#[test]
+fn test_ref_errors() {
+    verify_typeck_error_in_wrapper::<&i32>(&123_i32);
+}
+
 #[cfg(feature = "bigdecimal-04")]
 #[test]
 fn test_native_errors_bigdecimal_04() {
