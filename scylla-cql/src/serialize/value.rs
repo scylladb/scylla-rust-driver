@@ -549,7 +549,7 @@ impl SerializeValue for CqlValue {
         typ: &ColumnType,
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
-        serialize_cql_value(self, typ, writer).map_err(fix_cql_value_name_in_err::<Self>)
+        serialize_cql_value(self, typ, writer).map_err(fix_rust_name_in_err::<Self>)
     }
 }
 
@@ -631,7 +631,7 @@ fn serialize_cql_value<'b>(
     }
 }
 
-fn fix_cql_value_name_in_err<RustT>(mut err: SerializationError) -> SerializationError {
+fn fix_rust_name_in_err<RustT>(mut err: SerializationError) -> SerializationError {
     // The purpose of this function is to change the `rust_name` field
     // in the error to the given one. Most of the time, the `err` given to the
     // function here will be the sole owner of the data, so theoretically
@@ -713,7 +713,7 @@ fn serialize_udt<'b>(
         match fvalue {
             None => writer.set_null(),
             Some(v) => serialize_cql_value(v, ftyp, writer).map_err(|err| {
-                let err = fix_cql_value_name_in_err::<CqlValue>(err);
+                let err = fix_rust_name_in_err::<CqlValue>(err);
                 mk_ser_err::<CqlValue>(
                     typ,
                     UdtSerializationErrorKind::FieldSerializationFailed {
@@ -756,7 +756,7 @@ fn serialize_tuple_like<'t, 'b>(
         match el {
             None => sub.set_null(),
             Some(el) => serialize_cql_value(el, el_typ, sub).map_err(|err| {
-                let err = fix_cql_value_name_in_err::<CqlValue>(err);
+                let err = fix_rust_name_in_err::<CqlValue>(err);
                 mk_ser_err::<CqlValue>(
                     typ,
                     TupleSerializationErrorKind::ElementSerializationFailed { index, err },
