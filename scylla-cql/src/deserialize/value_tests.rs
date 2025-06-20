@@ -1934,17 +1934,51 @@ fn test_secrecy_08_errors() {
 
 #[test]
 fn test_set_or_list_general_type_errors() {
-    assert_type_check_error!(
-        &Bytes::new(),
-        Vec<i64>,
-        ColumnType::Native(NativeType::Float),
-        BuiltinTypeCheckErrorKind::NotDeserializableToVec
-    );
+    // Types that are not even collections
+    {
+        assert_type_check_error!(
+            &Bytes::new(),
+            Vec<i64>,
+            ColumnType::Native(NativeType::Float),
+            BuiltinTypeCheckErrorKind::NotDeserializableToVec
+        );
+
+        assert_type_check_error!(
+            &Bytes::new(),
+            BTreeSet<i64>,
+            ColumnType::Native(NativeType::Float),
+            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
+        );
+
+        assert_type_check_error!(
+            &Bytes::new(),
+            HashSet<i64>,
+            ColumnType::Native(NativeType::Float),
+            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
+        );
+
+        assert_type_check_error!(
+            &Bytes::new(),
+            ListlikeIterator<i64>,
+            ColumnType::Native(NativeType::Float),
+            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSetOrList)
+        );
+    }
 
     // Type check of Rust set against CQL list must fail, because it would be lossy.
     assert_type_check_error!(
         &Bytes::new(),
         BTreeSet<i32>,
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+        },
+        BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
+    );
+
+    assert_type_check_error!(
+        &Bytes::new(),
+        HashSet<i32>,
         ColumnType::Collection {
             frozen: false,
             typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
