@@ -397,7 +397,7 @@ impl<T: SerializeValue + ?Sized> SerializeValue for &T {
         typ: &ColumnType,
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
-        T::serialize(*self, typ, writer)
+        T::serialize(*self, typ, writer).map_err(fix_rust_name_in_err::<Self>)
     }
 }
 impl<T: SerializeValue + ?Sized> SerializeValue for Box<T> {
