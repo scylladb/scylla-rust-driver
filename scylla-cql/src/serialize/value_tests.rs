@@ -5,6 +5,7 @@ use crate::serialize::value::{
     SetOrListSerializationErrorKind, SetOrListTypeCheckErrorKind, TupleSerializationErrorKind,
     TupleTypeCheckErrorKind, UdtSerializationErrorKind, UdtTypeCheckErrorKind,
 };
+use crate::serialize::writers::WrittenCellProof;
 use crate::serialize::{CellWriter, SerializationError};
 use crate::value::{
     Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
@@ -20,7 +21,30 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use assert_matches::assert_matches;
+use thiserror::Error;
 use uuid::Uuid;
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct SerializeWithCustomError;
+
+#[derive(Error, Debug)]
+#[error("Custom serialization error")]
+struct CustomSerializationError;
+
+impl SerializeValue for SerializeWithCustomError {
+    fn serialize<'b>(
+        &self,
+        _typ: &ColumnType,
+        _writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        Err(SerializationError::new(CustomSerializationError))
+    }
+}
+
+#[cfg(feature = "secrecy-08")]
+impl secrecy_08::Zeroize for SerializeWithCustomError {
+    fn zeroize(&mut self) {}
+}
 
 #[test]
 fn test_dyn_serialize_value() {
@@ -123,31 +147,51 @@ fn verify_typeck_error_in_wrapper<T: SerializeValue>(v: T) {
     );
 }
 
+fn verify_custom_error_in_wrapper<T: SerializeValue>(v: T) {
+    let err = do_serialize_err::<T>(v, &ColumnType::Native(NativeType::BigInt));
+    err.0
+        .downcast_ref::<CustomSerializationError>()
+        .expect("CustomSerializationError");
+}
+
 #[cfg(feature = "secrecy-08")]
 #[test]
 fn test_secrecy_08_errors() {
     use secrecy_08::Secret;
     verify_typeck_error_in_wrapper::<Secret<i32>>(Secret::new(123));
+    verify_custom_error_in_wrapper::<Secret<SerializeWithCustomError>>(Secret::new(
+        SerializeWithCustomError,
+    ));
 }
 
 #[test]
 fn test_option_errors() {
     verify_typeck_error_in_wrapper::<Option<i32>>(Some(123));
+    verify_custom_error_in_wrapper::<Option<SerializeWithCustomError>>(Some(
+        SerializeWithCustomError,
+    ));
 }
 
 #[test]
 fn test_maybe_unset_errors() {
     verify_typeck_error_in_wrapper::<MaybeUnset<i32>>(MaybeUnset::Set(123));
+    verify_custom_error_in_wrapper::<MaybeUnset<SerializeWithCustomError>>(MaybeUnset::Set(
+        SerializeWithCustomError,
+    ));
 }
 
 #[test]
 fn test_ref_errors() {
     verify_typeck_error_in_wrapper::<&i32>(&123_i32);
+    verify_custom_error_in_wrapper::<&SerializeWithCustomError>(&SerializeWithCustomError);
 }
 
 #[test]
 fn test_box_errors() {
     verify_typeck_error_in_wrapper::<Box<i32>>(Box::new(123));
+    verify_custom_error_in_wrapper::<Box<SerializeWithCustomError>>(Box::new(
+        SerializeWithCustomError,
+    ));
 }
 
 #[cfg(feature = "bigdecimal-04")]
@@ -221,6 +265,25 @@ fn test_set_or_list_errors() {
             expected: &[ColumnType::Native(NativeType::Int)],
         }
     );
+
+    // Test serialization with custom error
+    let err = do_serialize_err(
+        vec![SerializeWithCustomError],
+        &ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Double))),
+        },
+    );
+    let err = get_ser_err(&err);
+    let BuiltinSerializationErrorKind::SetOrListError(
+        SetOrListSerializationErrorKind::ElementSerializationFailed(err),
+    ) = &err.kind
+    else {
+        panic!("unexpected error kind: {}", err.kind)
+    };
+    err.0
+        .downcast_ref::<CustomSerializationError>()
+        .expect("CustomSerializationError");
 }
 
 #[test]
@@ -292,6 +355,51 @@ fn test_map_errors() {
             expected: &[ColumnType::Native(NativeType::Int)],
         }
     );
+
+    // Test serialization with custom error
+    // Value
+    let err = do_serialize_err(
+        BTreeMap::from([(123_i32, SerializeWithCustomError)]),
+        &ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Native(NativeType::Int)),
+            ),
+        },
+    );
+    let err = get_ser_err(&err);
+    let BuiltinSerializationErrorKind::MapError(
+        MapSerializationErrorKind::ValueSerializationFailed(err),
+    ) = &err.kind
+    else {
+        panic!("unexpected error kind: {}", err.kind)
+    };
+    err.0
+        .downcast_ref::<CustomSerializationError>()
+        .expect("CustomSerializationError");
+
+    // Key
+    let err = do_serialize_err(
+        BTreeMap::from([(SerializeWithCustomError, 123_i32)]),
+        &ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::Map(
+                Box::new(ColumnType::Native(NativeType::Int)),
+                Box::new(ColumnType::Native(NativeType::Int)),
+            ),
+        },
+    );
+    let err = get_ser_err(&err);
+    let BuiltinSerializationErrorKind::MapError(MapSerializationErrorKind::KeySerializationFailed(
+        err,
+    )) = &err.kind
+    else {
+        panic!("unexpected error kind: {}", err.kind)
+    };
+    err.0
+        .downcast_ref::<CustomSerializationError>()
+        .expect("CustomSerializationError");
 }
 
 #[test]
@@ -346,6 +454,25 @@ fn test_tuple_errors() {
             expected: &[ColumnType::Native(NativeType::Double)],
         }
     );
+
+    // Test serialization with custom error
+    let err = do_serialize_err(
+        (SerializeWithCustomError, SerializeWithCustomError),
+        &ColumnType::Tuple(vec![
+            ColumnType::Native(NativeType::Double),
+            ColumnType::Native(NativeType::Double),
+        ]),
+    );
+    let err = get_ser_err(&err);
+    let BuiltinSerializationErrorKind::TupleError(
+        TupleSerializationErrorKind::ElementSerializationFailed { index: 0, err },
+    ) = &err.kind
+    else {
+        panic!("unexpected error kind: {}", err.kind)
+    };
+    err.0
+        .downcast_ref::<CustomSerializationError>()
+        .expect("CustomSerializationError");
 }
 
 #[test]
