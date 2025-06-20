@@ -1933,107 +1933,105 @@ fn test_secrecy_08_errors() {
 }
 
 #[test]
-fn test_set_or_list_errors() {
-    // Not a set or list
-    {
-        assert_type_check_error!(
-            &Bytes::new(),
-            Vec<i64>,
-            ColumnType::Native(NativeType::Float),
-            BuiltinTypeCheckErrorKind::NotDeserializableToVec
-        );
+fn test_set_or_list_general_type_errors() {
+    assert_type_check_error!(
+        &Bytes::new(),
+        Vec<i64>,
+        ColumnType::Native(NativeType::Float),
+        BuiltinTypeCheckErrorKind::NotDeserializableToVec
+    );
 
-        // Type check of Rust set against CQL list must fail, because it would be lossy.
-        assert_type_check_error!(
-            &Bytes::new(),
-            BTreeSet<i32>,
-            ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
-            },
-            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
-        );
-    }
+    // Type check of Rust set against CQL list must fail, because it would be lossy.
+    assert_type_check_error!(
+        &Bytes::new(),
+        BTreeSet<i32>,
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+        },
+        BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
+    );
+}
 
-    // Bad element type
+#[test]
+fn test_set_or_list_elem_type_errors() {
+    let err = deserialize::<Vec<i64>>(
+        &ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+        },
+        &Bytes::new(),
+    )
+    .unwrap_err();
+    let err = get_typeck_err(&err);
+    assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
+    assert_eq!(
+        err.cql_type,
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+        },
+    );
+    let BuiltinTypeCheckErrorKind::SetOrListError(
+        SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(ref err),
+    ) = err.kind
+    else {
+        panic!("unexpected error kind: {}", err.kind)
+    };
+    let err = get_typeck_err_inner(err.0.as_ref());
+    assert_eq!(err.rust_name, std::any::type_name::<i64>());
+    assert_eq!(err.cql_type, ColumnType::Native(NativeType::Varint));
+    assert_matches!(
+        err.kind,
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[ColumnType::Native(NativeType::BigInt)]
+        }
+    );
+}
+
+#[test]
+fn test_set_or_list_elem_deser_errors() {
+    let ser_typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+    };
+    let v = vec![123_i32];
+    let bytes = serialize(&ser_typ, &v);
+
     {
         let err = deserialize::<Vec<i64>>(
             &ColumnType::Collection {
                 frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
             },
-            &Bytes::new(),
+            &bytes,
         )
         .unwrap_err();
-        let err = get_typeck_err(&err);
+        let err = get_deser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
         assert_eq!(
             err.cql_type,
             ColumnType::Collection {
                 frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
             },
         );
-        let BuiltinTypeCheckErrorKind::SetOrListError(
-            SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(ref err),
-        ) = err.kind
+        let BuiltinDeserializationErrorKind::SetOrListError(
+            SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
+        ) = &err.kind
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_typeck_err_inner(err.0.as_ref());
+        let err = get_deser_err(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
-        assert_eq!(err.cql_type, ColumnType::Native(NativeType::Varint));
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         assert_matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::MismatchedType {
-                expected: &[ColumnType::Native(NativeType::BigInt)]
+            BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                expected: 8,
+                got: 4
             }
         );
-    }
-
-    {
-        let ser_typ = ColumnType::Collection {
-            frozen: false,
-            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
-        };
-        let v = vec![123_i32];
-        let bytes = serialize(&ser_typ, &v);
-
-        {
-            let err = deserialize::<Vec<i64>>(
-                &ColumnType::Collection {
-                    frozen: false,
-                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
-                },
-                &bytes,
-            )
-            .unwrap_err();
-            let err = get_deser_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
-            assert_eq!(
-                err.cql_type,
-                ColumnType::Collection {
-                    frozen: false,
-                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
-                },
-            );
-            let BuiltinDeserializationErrorKind::SetOrListError(
-                SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
-            ) = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            let err = get_deser_err(err);
-            assert_eq!(err.rust_name, std::any::type_name::<i64>());
-            assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
-            assert_matches!(
-                err.kind,
-                BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                    expected: 8,
-                    got: 4
-                }
-            );
-        }
     }
 }
 
