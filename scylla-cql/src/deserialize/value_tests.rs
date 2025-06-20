@@ -1897,6 +1897,41 @@ fn test_maybe_empty_errors() {
     );
 }
 
+#[cfg(feature = "secrecy-08")]
+#[test]
+fn test_secrecy_08_errors() {
+    use secrecy_08::Secret;
+
+    use crate::frame::frame_errors::LowLevelDeserializationError;
+    // Type check correctly renames Rust type
+    assert_type_check_error!(
+        &Bytes::new(),
+        Secret<String>,
+        ColumnType::Native(NativeType::Int),
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[
+                ColumnType::Native(NativeType::Ascii),
+                ColumnType::Native(NativeType::Text)
+            ]
+        }
+    );
+
+    // Deserialize correctly renames Rust type
+    let v = 123_i32;
+    let bytes = serialize(&ColumnType::Native(NativeType::Int), &v);
+    assert_deser_error!(
+        &bytes,
+        Secret<Vec<String>>,
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Text)))
+        },
+        BuiltinDeserializationErrorKind::RawCqlBytesReadError(
+            LowLevelDeserializationError::IoError(_)
+        )
+    );
+}
+
 #[test]
 fn test_set_or_list_errors() {
     // Not a set or list

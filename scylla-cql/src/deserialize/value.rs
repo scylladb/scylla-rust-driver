@@ -666,13 +666,16 @@ where
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
+            .map_err(typck_error_replace_rust_name::<Self>)
     }
 
     fn deserialize(
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v).map(secrecy_08::Secret::new)
+        <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)
+            .map(secrecy_08::Secret::new)
+            .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
 
