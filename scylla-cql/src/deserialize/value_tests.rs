@@ -2035,25 +2035,54 @@ fn test_set_or_list_elem_deser_errors() {
     };
     let v = vec![123_i32];
     let bytes = serialize(&ser_typ, &v);
+    let deser_type = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::BigInt))),
+    };
 
-    {
-        let err = deserialize::<Vec<i64>>(
-            &ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
-            },
-            &bytes,
-        )
-        .unwrap_err();
+    // In contrary to the test above, here we could require owned deserialization, since
+    // ListLikeIterator can't be tested with that function anyway. For consistency and future ease of
+    // editing, I used the same approach as in the previous test anyway.
+    fn verify_elem_deser_err<'meta, 'frame, T: DeserializeValue<'frame, 'meta> + Debug>(
+        frame: &'frame Bytes,
+        meta: &'meta ColumnType<'meta>,
+    ) {
+        let err = deserialize::<T>(meta, frame).unwrap_err();
         let err = get_deser_err(&err);
-        assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
-        assert_eq!(
-            err.cql_type,
-            ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
-            },
+        assert_eq!(err.rust_name, std::any::type_name::<T>());
+        assert_eq!(err.cql_type, *meta);
+        let BuiltinDeserializationErrorKind::SetOrListError(
+            SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
+        ) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        let err = get_deser_err(err);
+        assert_eq!(err.rust_name, std::any::type_name::<i64>());
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
+        assert_matches!(
+            err.kind,
+            BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                expected: 8,
+                got: 4
+            }
         );
+    }
+
+    verify_elem_deser_err::<Vec<i64>>(&bytes, &deser_type);
+    verify_elem_deser_err::<BTreeSet<i64>>(&bytes, &deser_type);
+    verify_elem_deser_err::<HashSet<i64>>(&bytes, &deser_type);
+
+    // ListlikeIterator has to be tested separately.
+    {
+        let mut iterator = deserialize::<ListlikeIterator<i64>>(&deser_type, &bytes).unwrap();
+        let err = iterator.next().unwrap().unwrap_err();
+        let err = get_deser_err(&err);
+        assert_eq!(
+            err.rust_name,
+            std::any::type_name::<ListlikeIterator<i64>>()
+        );
+        assert_eq!(err.cql_type, deser_type);
         let BuiltinDeserializationErrorKind::SetOrListError(
             SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
         ) = &err.kind
