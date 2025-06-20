@@ -120,6 +120,7 @@ where
     #[inline]
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
+            .map_err(typck_error_replace_rust_name::<Self>)
     }
 
     fn deserialize(
@@ -130,7 +131,8 @@ where
         if val.is_empty() {
             Ok(MaybeEmpty::Empty)
         } else {
-            let v = <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)?;
+            let v = <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)
+                .map_err(deser_error_replace_rust_name::<Self>)?;
             Ok(MaybeEmpty::Value(v))
         }
     }

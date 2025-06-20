@@ -1872,6 +1872,32 @@ fn test_option_errors() {
 }
 
 #[test]
+fn test_maybe_empty_errors() {
+    // Type check correctly renames Rust type
+    assert_type_check_error!(
+        &Bytes::new(),
+        MaybeEmpty<i32>,
+        ColumnType::Native(NativeType::Text),
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[ColumnType::Native(NativeType::Int)]
+        }
+    );
+
+    // Deserialize correctly renames Rust type
+    let v = 123_i32;
+    let bytes = serialize(&ColumnType::Native(NativeType::Int), &v);
+    assert_deser_error!(
+        &bytes,
+        MaybeEmpty<f64>,
+        ColumnType::Native(NativeType::Double),
+        BuiltinDeserializationErrorKind::ByteLengthMismatch {
+            expected: 8,
+            got: 4,
+        }
+    );
+}
+
+#[test]
 fn test_set_or_list_errors() {
     // Not a set or list
     {
