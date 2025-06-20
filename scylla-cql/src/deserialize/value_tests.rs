@@ -1989,38 +1989,42 @@ fn test_set_or_list_general_type_errors() {
 
 #[test]
 fn test_set_or_list_elem_type_errors() {
-    let err = deserialize::<Vec<i64>>(
-        &ColumnType::Collection {
-            frozen: false,
-            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
-        },
-        &Bytes::new(),
-    )
-    .unwrap_err();
-    let err = get_typeck_err(&err);
-    assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
-    assert_eq!(
-        err.cql_type,
-        ColumnType::Collection {
-            frozen: false,
-            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
-        },
-    );
-    let BuiltinTypeCheckErrorKind::SetOrListError(
-        SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(ref err),
-    ) = err.kind
-    else {
-        panic!("unexpected error kind: {}", err.kind)
+    let cql_type = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Varint))),
     };
-    let err = get_typeck_err_inner(err.0.as_ref());
-    assert_eq!(err.rust_name, std::any::type_name::<i64>());
-    assert_eq!(err.cql_type, ColumnType::Native(NativeType::Varint));
-    assert_matches!(
-        err.kind,
-        BuiltinTypeCheckErrorKind::MismatchedType {
-            expected: &[ColumnType::Native(NativeType::BigInt)]
-        }
-    );
+    // Explicitly passing frame and meta from outside is the only way I know to satisfy
+    // the borrow checker. The issue otherwise is that the lifetime (specified by the caller)
+    // could be bigger than lifetime of local arguments (frame, column type), and so they can't
+    // be borrowed for so long.
+    fn verify_elem_typck_err<'meta, 'frame, T: DeserializeValue<'frame, 'meta> + Debug>(
+        frame: &'frame Bytes,
+        meta: &'meta ColumnType<'meta>,
+    ) {
+        let err = deserialize::<T>(meta, frame).unwrap_err();
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<T>());
+        assert_eq!(err.cql_type, *meta);
+        let BuiltinTypeCheckErrorKind::SetOrListError(
+            SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(ref err),
+        ) = err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        let err = get_typeck_err_inner(err.0.as_ref());
+        assert_eq!(err.rust_name, std::any::type_name::<i64>());
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::Varint));
+        assert_matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MismatchedType {
+                expected: &[ColumnType::Native(NativeType::BigInt)]
+            }
+        );
+    }
+    verify_elem_typck_err::<Vec<i64>>(&Bytes::new(), &cql_type);
+    verify_elem_typck_err::<BTreeSet<i64>>(&Bytes::new(), &cql_type);
+    verify_elem_typck_err::<HashSet<i64>>(&Bytes::new(), &cql_type);
+    verify_elem_typck_err::<ListlikeIterator<i64>>(&Bytes::new(), &cql_type);
 }
 
 #[test]
