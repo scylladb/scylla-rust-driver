@@ -223,7 +223,7 @@ impl<V: SerializeValue + secrecy_08::Zeroize> SerializeValue for secrecy_08::Sec
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
         use secrecy_08::ExposeSecret;
-        V::serialize(self.expose_secret(), typ, writer)
+        V::serialize(self.expose_secret(), typ, writer).map_err(fix_rust_name_in_err::<Self>)
     }
 }
 impl SerializeValue for bool {
@@ -350,7 +350,9 @@ impl<T: SerializeValue> SerializeValue for Option<T> {
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
         match self {
-            Some(v) => v.serialize(typ, writer),
+            Some(v) => v
+                .serialize(typ, writer)
+                .map_err(fix_rust_name_in_err::<Self>),
             None => Ok(writer.set_null()),
         }
     }
@@ -382,7 +384,9 @@ impl<V: SerializeValue> SerializeValue for MaybeUnset<V> {
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
         match self {
-            MaybeUnset::Set(v) => v.serialize(typ, writer),
+            MaybeUnset::Set(v) => v
+                .serialize(typ, writer)
+                .map_err(fix_rust_name_in_err::<Self>),
             MaybeUnset::Unset => Ok(writer.set_unset()),
         }
     }
@@ -393,7 +397,7 @@ impl<T: SerializeValue + ?Sized> SerializeValue for &T {
         typ: &ColumnType,
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
-        T::serialize(*self, typ, writer)
+        T::serialize(*self, typ, writer).map_err(fix_rust_name_in_err::<Self>)
     }
 }
 impl<T: SerializeValue + ?Sized> SerializeValue for Box<T> {
@@ -402,7 +406,7 @@ impl<T: SerializeValue + ?Sized> SerializeValue for Box<T> {
         typ: &ColumnType,
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
-        T::serialize(&**self, typ, writer)
+        T::serialize(&**self, typ, writer).map_err(fix_rust_name_in_err::<Self>)
     }
 }
 impl<V: SerializeValue, S: BuildHasher + Default> SerializeValue for HashSet<V, S> {
@@ -549,7 +553,7 @@ impl SerializeValue for CqlValue {
         typ: &ColumnType,
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
-        serialize_cql_value(self, typ, writer).map_err(fix_cql_value_name_in_err)
+        serialize_cql_value(self, typ, writer).map_err(fix_rust_name_in_err::<Self>)
     }
 }
 
@@ -631,13 +635,13 @@ fn serialize_cql_value<'b>(
     }
 }
 
-fn fix_cql_value_name_in_err(mut err: SerializationError) -> SerializationError {
+fn fix_rust_name_in_err<RustT>(mut err: SerializationError) -> SerializationError {
     // The purpose of this function is to change the `rust_name` field
-    // in the error to CqlValue. Most of the time, the `err` given to the
+    // in the error to the given one. Most of the time, the `err` given to the
     // function here will be the sole owner of the data, so theoretically
     // we could fix this in place.
 
-    let rust_name = std::any::type_name::<CqlValue>();
+    let rust_name = std::any::type_name::<RustT>();
 
     match Arc::get_mut(&mut err.0) {
         Some(err_mut) => {
@@ -713,7 +717,7 @@ fn serialize_udt<'b>(
         match fvalue {
             None => writer.set_null(),
             Some(v) => serialize_cql_value(v, ftyp, writer).map_err(|err| {
-                let err = fix_cql_value_name_in_err(err);
+                let err = fix_rust_name_in_err::<CqlValue>(err);
                 mk_ser_err::<CqlValue>(
                     typ,
                     UdtSerializationErrorKind::FieldSerializationFailed {
@@ -756,7 +760,7 @@ fn serialize_tuple_like<'t, 'b>(
         match el {
             None => sub.set_null(),
             Some(el) => serialize_cql_value(el, el_typ, sub).map_err(|err| {
-                let err = fix_cql_value_name_in_err(err);
+                let err = fix_rust_name_in_err::<CqlValue>(err);
                 mk_ser_err::<CqlValue>(
                     typ,
                     TupleSerializationErrorKind::ElementSerializationFailed { index, err },
