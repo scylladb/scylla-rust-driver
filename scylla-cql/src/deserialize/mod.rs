@@ -295,27 +295,30 @@ impl DeserializationError {
 // - ONLY in proper type_check()/deserialize() implementation,
 // - BEFORE an error is cloned (because otherwise the Arc::get_mut fails).
 macro_rules! make_error_replace_rust_name {
-    ($privacy: vis, $fn_name: ident, $outer_err: ty, $inner_err: ty) => {
+    ($privacy: vis, $fn_name: ident, $outer_err: ty, $inner_err: ident) => {
         // Not part of the public API; used in derive macros.
         #[doc(hidden)]
         #[allow(clippy::needless_pub_self)]
         $privacy fn $fn_name<RustT>(mut err: $outer_err) -> $outer_err {
-            // Safety: the assumed usage of this function guarantees that the Arc has not yet been cloned.
-            let arc_mut = std::sync::Arc::get_mut(&mut err.0).unwrap();
-
-            let rust_name: &mut &str = {
-                if let Some(err) = arc_mut.downcast_mut::<$inner_err>() {
-                    &mut err.rust_name
-                } else {
-                    unreachable!(concat!(
-                        "This function is assumed to be called only on built-in ",
-                        stringify!($inner_err),
-                        " kinds."
-                    ))
+            let rust_name = std::any::type_name::<RustT>();
+            match std::sync::Arc::get_mut(&mut err.0) {
+                Some(arc_mut) => {
+                    if let Some(err) = arc_mut.downcast_mut::<$inner_err>() {
+                        err.rust_name = rust_name;
+                    }
+                },
+                None => {
+                    if let Some(err) = err.0.downcast_ref::<$inner_err>() {
+                        if err.rust_name != rust_name {
+                            return <$outer_err>::new($inner_err {
+                                rust_name,
+                                ..err.clone()
+                            });
+                        }
+                    }
                 }
-            };
+            }
 
-            *rust_name = std::any::type_name::<RustT>();
             err
         }
     };

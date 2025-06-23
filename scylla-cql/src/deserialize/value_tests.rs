@@ -1846,8 +1846,95 @@ fn test_native_errors() {
 }
 
 #[test]
-fn test_set_or_list_errors() {
-    // Not a set or list
+fn test_option_errors() {
+    // Type check correctly renames Rust type
+    assert_type_check_error!(
+        &Bytes::new(),
+        Option<i32>,
+        ColumnType::Native(NativeType::Text),
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[ColumnType::Native(NativeType::Int)]
+        }
+    );
+
+    // Deserialize correctly renames Rust type
+    let v = 123_i32;
+    let bytes = serialize(&ColumnType::Native(NativeType::Int), &v);
+    assert_deser_error!(
+        &bytes,
+        Option<f64>,
+        ColumnType::Native(NativeType::Double),
+        BuiltinDeserializationErrorKind::ByteLengthMismatch {
+            expected: 8,
+            got: 4,
+        }
+    );
+}
+
+#[test]
+fn test_maybe_empty_errors() {
+    // Type check correctly renames Rust type
+    assert_type_check_error!(
+        &Bytes::new(),
+        MaybeEmpty<i32>,
+        ColumnType::Native(NativeType::Text),
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[ColumnType::Native(NativeType::Int)]
+        }
+    );
+
+    // Deserialize correctly renames Rust type
+    let v = 123_i32;
+    let bytes = serialize(&ColumnType::Native(NativeType::Int), &v);
+    assert_deser_error!(
+        &bytes,
+        MaybeEmpty<f64>,
+        ColumnType::Native(NativeType::Double),
+        BuiltinDeserializationErrorKind::ByteLengthMismatch {
+            expected: 8,
+            got: 4,
+        }
+    );
+}
+
+#[cfg(feature = "secrecy-08")]
+#[test]
+fn test_secrecy_08_errors() {
+    use secrecy_08::Secret;
+
+    use crate::frame::frame_errors::LowLevelDeserializationError;
+    // Type check correctly renames Rust type
+    assert_type_check_error!(
+        &Bytes::new(),
+        Secret<String>,
+        ColumnType::Native(NativeType::Int),
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[
+                ColumnType::Native(NativeType::Ascii),
+                ColumnType::Native(NativeType::Text)
+            ]
+        }
+    );
+
+    // Deserialize correctly renames Rust type
+    let v = 123_i32;
+    let bytes = serialize(&ColumnType::Native(NativeType::Int), &v);
+    assert_deser_error!(
+        &bytes,
+        Secret<Vec<String>>,
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Text)))
+        },
+        BuiltinDeserializationErrorKind::RawCqlBytesReadError(
+            LowLevelDeserializationError::IoError(_)
+        )
+    );
+}
+
+#[test]
+fn test_set_or_list_general_type_errors() {
+    // Types that are not even collections
     {
         assert_type_check_error!(
             &Bytes::new(),
@@ -1856,49 +1943,68 @@ fn test_set_or_list_errors() {
             BuiltinTypeCheckErrorKind::NotDeserializableToVec
         );
 
-        // Type check of Rust set against CQL list must fail, because it would be lossy.
         assert_type_check_error!(
             &Bytes::new(),
-            BTreeSet<i32>,
-            ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
-            },
+            BTreeSet<i64>,
+            ColumnType::Native(NativeType::Float),
             BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
+        );
+
+        assert_type_check_error!(
+            &Bytes::new(),
+            HashSet<i64>,
+            ColumnType::Native(NativeType::Float),
+            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
+        );
+
+        assert_type_check_error!(
+            &Bytes::new(),
+            ListlikeIterator<i64>,
+            ColumnType::Native(NativeType::Float),
+            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSetOrList)
         );
     }
 
-    // Bad element type
-    {
-        assert_type_check_error!(
-            &Bytes::new(),
-            Vec<i64>,
-            ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Ascii))),
-            },
-            BuiltinTypeCheckErrorKind::SetOrListError(
-                SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(_)
-            )
-        );
+    // Type check of Rust set against CQL list must fail, because it would be lossy.
+    assert_type_check_error!(
+        &Bytes::new(),
+        BTreeSet<i32>,
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+        },
+        BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
+    );
 
-        let err = deserialize::<Vec<i64>>(
-            &ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
-            },
-            &Bytes::new(),
-        )
-        .unwrap_err();
+    assert_type_check_error!(
+        &Bytes::new(),
+        HashSet<i32>,
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+        },
+        BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
+    );
+}
+
+#[test]
+fn test_set_or_list_elem_type_errors() {
+    let cql_type = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Varint))),
+    };
+    // Explicitly passing frame and meta from outside is the only way I know to satisfy
+    // the borrow checker. The issue otherwise is that the lifetime (specified by the caller)
+    // could be bigger than lifetime of local arguments (frame, column type), and so they can't
+    // be borrowed for so long.
+    fn verify_elem_typck_err<'meta, 'frame, T: DeserializeValue<'frame, 'meta> + Debug>(
+        frame: &'frame Bytes,
+        meta: &'meta ColumnType<'meta>,
+    ) {
+        let err = deserialize::<T>(meta, frame).unwrap_err();
         let err = get_typeck_err(&err);
-        assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
-        assert_eq!(
-            err.cql_type,
-            ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Varint))),
-            },
-        );
+        assert_eq!(err.rust_name, std::any::type_name::<T>());
+        assert_eq!(err.cql_type, *meta);
         let BuiltinTypeCheckErrorKind::SetOrListError(
             SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(ref err),
         ) = err.kind
@@ -1915,50 +2021,84 @@ fn test_set_or_list_errors() {
             }
         );
     }
+    verify_elem_typck_err::<Vec<i64>>(&Bytes::new(), &cql_type);
+    verify_elem_typck_err::<BTreeSet<i64>>(&Bytes::new(), &cql_type);
+    verify_elem_typck_err::<HashSet<i64>>(&Bytes::new(), &cql_type);
+    verify_elem_typck_err::<ListlikeIterator<i64>>(&Bytes::new(), &cql_type);
+}
 
-    {
-        let ser_typ = ColumnType::Collection {
-            frozen: false,
-            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+#[test]
+fn test_set_or_list_elem_deser_errors() {
+    let ser_typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+    };
+    let v = vec![123_i32];
+    let bytes = serialize(&ser_typ, &v);
+    let deser_type = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::BigInt))),
+    };
+
+    // In contrary to the test above, here we could require owned deserialization, since
+    // ListLikeIterator can't be tested with that function anyway. For consistency and future ease of
+    // editing, I used the same approach as in the previous test anyway.
+    fn verify_elem_deser_err<'meta, 'frame, T: DeserializeValue<'frame, 'meta> + Debug>(
+        frame: &'frame Bytes,
+        meta: &'meta ColumnType<'meta>,
+    ) {
+        let err = deserialize::<T>(meta, frame).unwrap_err();
+        let err = get_deser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<T>());
+        assert_eq!(err.cql_type, *meta);
+        let BuiltinDeserializationErrorKind::SetOrListError(
+            SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
+        ) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
         };
-        let v = vec![123_i32];
-        let bytes = serialize(&ser_typ, &v);
+        let err = get_deser_err(err);
+        assert_eq!(err.rust_name, std::any::type_name::<i64>());
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
+        assert_matches!(
+            err.kind,
+            BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                expected: 8,
+                got: 4
+            }
+        );
+    }
 
-        {
-            let err = deserialize::<Vec<i64>>(
-                &ColumnType::Collection {
-                    frozen: false,
-                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
-                },
-                &bytes,
-            )
-            .unwrap_err();
-            let err = get_deser_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
-            assert_eq!(
-                err.cql_type,
-                ColumnType::Collection {
-                    frozen: false,
-                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::BigInt))),
-                },
-            );
-            let BuiltinDeserializationErrorKind::SetOrListError(
-                SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
-            ) = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            let err = get_deser_err(err);
-            assert_eq!(err.rust_name, std::any::type_name::<i64>());
-            assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
-            assert_matches!(
-                err.kind,
-                BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                    expected: 8,
-                    got: 4
-                }
-            );
-        }
+    verify_elem_deser_err::<Vec<i64>>(&bytes, &deser_type);
+    verify_elem_deser_err::<BTreeSet<i64>>(&bytes, &deser_type);
+    verify_elem_deser_err::<HashSet<i64>>(&bytes, &deser_type);
+
+    // ListlikeIterator has to be tested separately.
+    {
+        let mut iterator = deserialize::<ListlikeIterator<i64>>(&deser_type, &bytes).unwrap();
+        let err = iterator.next().unwrap().unwrap_err();
+        let err = get_deser_err(&err);
+        assert_eq!(
+            err.rust_name,
+            std::any::type_name::<ListlikeIterator<i64>>()
+        );
+        assert_eq!(err.cql_type, deser_type);
+        let BuiltinDeserializationErrorKind::SetOrListError(
+            SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
+        ) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        let err = get_deser_err(err);
+        assert_eq!(err.rust_name, std::any::type_name::<i64>());
+        assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
+        assert_matches!(
+            err.kind,
+            BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                expected: 8,
+                got: 4
+            }
+        );
     }
 }
 
@@ -2699,7 +2839,7 @@ fn test_udt_errors() {
                 };
                 assert_eq!(field_name.as_str(), "b");
                 let err = get_deser_err(err);
-                assert_eq!(err.rust_name, std::any::type_name::<i32>());
+                assert_eq!(err.rust_name, std::any::type_name::<Option<i32>>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
                 assert_matches!(
                     err.kind,

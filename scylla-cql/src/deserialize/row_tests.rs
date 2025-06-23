@@ -426,7 +426,7 @@ fn test_row_errors() {
         };
         assert_eq!(column_name, col_name);
         let err = super::super::value::tests::get_deser_err(err);
-        assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
+        assert_eq!(err.rust_name, std::any::type_name::<Option<CqlValue>>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         let super::super::value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
             expected: 8,
@@ -883,7 +883,7 @@ fn test_struct_deserialization_errors() {
                 assert_eq!(column_name.as_str(), "b");
                 assert_eq!(field_index, 2);
                 let err = value::tests::get_deser_err(err);
-                assert_eq!(err.rust_name, std::any::type_name::<i32>());
+                assert_eq!(err.rust_name, std::any::type_name::<Option<i32>>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
                 assert_matches!(
                     err.kind,

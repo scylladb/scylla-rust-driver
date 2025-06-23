@@ -79,14 +79,16 @@ where
     T: DeserializeValue<'frame, 'metadata>,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-        T::type_check(typ)
+        T::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
     }
 
     fn deserialize(
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        v.map(|_| T::deserialize(typ, v)).transpose()
+        v.map(|_| T::deserialize(typ, v))
+            .transpose()
+            .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
 
@@ -118,6 +120,7 @@ where
     #[inline]
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
+            .map_err(typck_error_replace_rust_name::<Self>)
     }
 
     fn deserialize(
@@ -128,7 +131,8 @@ where
         if val.is_empty() {
             Ok(MaybeEmpty::Empty)
         } else {
-            let v = <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)?;
+            let v = <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)
+                .map_err(deser_error_replace_rust_name::<Self>)?;
             Ok(MaybeEmpty::Value(v))
         }
     }
@@ -662,13 +666,16 @@ where
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
+            .map_err(typck_error_replace_rust_name::<Self>)
     }
 
     fn deserialize(
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v).map(secrecy_08::Secret::new)
+        <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)
+            .map(secrecy_08::Secret::new)
+            .map_err(deser_error_replace_rust_name::<Self>)
     }
 }
 
@@ -691,6 +698,7 @@ make_error_replace_rust_name!(
 // lists and sets
 
 /// An iterator over either a CQL set or list.
+#[derive(Debug, Clone)]
 pub struct ListlikeIterator<'frame, 'metadata, T> {
     coll_typ: &'metadata ColumnType<'metadata>,
     elem_typ: &'metadata ColumnType<'metadata>,
@@ -873,8 +881,8 @@ where
         match typ {
             ColumnType::Collection {
                 frozen: false,
-                typ: CollectionType::Set(el_t),
-            } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
+                typ: CollectionType::Set(_),
+            } => ListlikeIterator::<'frame, 'metadata, T>::type_check(typ)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
                 typ,
@@ -904,8 +912,8 @@ where
         match typ {
             ColumnType::Collection {
                 frozen: false,
-                typ: CollectionType::Set(el_t),
-            } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t)
+                typ: CollectionType::Set(_),
+            } => ListlikeIterator::<'frame, 'metadata, T>::type_check(typ)
                 .map_err(typck_error_replace_rust_name::<Self>),
             _ => Err(mk_typck_err::<Self>(
                 typ,
@@ -943,6 +951,7 @@ where
 /// It would be nice to have a rule to determine if the element type is fixed-length or not,
 /// however, we only have a heuristic. There are a few types that should, for all intents and purposes,
 /// be considered fixed-length, but are not, e.g TinyInt. See ColumnType::type_size() for the list.
+#[derive(Debug, Clone)]
 pub struct VectorIterator<'frame, 'metadata, T> {
     collection_type: &'metadata ColumnType<'metadata>,
     element_type: &'metadata ColumnType<'metadata>,
@@ -1101,6 +1110,7 @@ where
 }
 
 /// An iterator over a CQL map.
+#[derive(Debug, Clone)]
 pub struct MapIterator<'frame, 'metadata, K, V> {
     coll_typ: &'metadata ColumnType<'metadata>,
     k_typ: &'metadata ColumnType<'metadata>,
@@ -1416,6 +1426,7 @@ impl_tuple_multiple!(
 /// - `None` - missing from the serialized form
 /// - `Some(None)` - present, but null
 /// - `Some(Some(...))` - non-null, present value
+#[derive(Debug, Clone)]
 pub struct UdtIterator<'frame, 'metadata> {
     all_fields: &'metadata [(Cow<'metadata, str>, ColumnType<'metadata>)],
     type_name: &'metadata str,
@@ -1990,7 +2001,7 @@ impl Display for UdtTypeCheckErrorKind {
 }
 
 /// Deserialization of one of the built-in types failed.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 #[error("Failed to deserialize Rust type {rust_name} from CQL type {cql_type:?}: {kind}")]
 pub struct BuiltinDeserializationError {
     /// Name of the Rust type being deserialized.
@@ -2025,7 +2036,7 @@ fn mk_deser_err_named(
 }
 
 /// Describes why deserialization of some of the built-in types failed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum BuiltinDeserializationErrorKind {
     /// Failed to deserialize one of date's fields.
@@ -2118,7 +2129,7 @@ impl Display for BuiltinDeserializationErrorKind {
 }
 
 /// Describes why deserialization of a set or list type failed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SetOrListDeserializationErrorKind {
     /// Failed to deserialize set or list's length.
@@ -2149,7 +2160,7 @@ impl From<SetOrListDeserializationErrorKind> for BuiltinDeserializationErrorKind
 }
 
 /// Describes why deserialization of a vector type failed.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum VectorDeserializationErrorKind {
     /// One of the elements of the vector failed to deserialize.
@@ -2165,7 +2176,7 @@ impl From<VectorDeserializationErrorKind> for BuiltinDeserializationErrorKind {
 }
 
 /// Describes why deserialization of a map type failed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 // Check triggers because all variants end with "DeserializationFailed".
 // TODO(2.0): Remove the "DeserializationFailed" postfix from variants.
