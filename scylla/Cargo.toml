@@ -100,7 +100,7 @@ async-trait = "0.1.56"
 # we could manually do what this macro does.
 thiserror = "2.0.6"
 # Used by CachingSession for its internal statement cache.
-dashmap = "5.2"
+dashmap = "6.0"
 # Required to set TCP keepalive on a socket.
 # Unfortunately, neither std nor tokio have this functionality yet,
 # so such workaround is required.
@@ -112,7 +112,7 @@ rand_pcg = "0.9.0"
 # Used in execution profiles and ClusterState.
 arc-swap = "1.3.0"
 # Used in tablets to have a hashmap queryable with borrowed key.
-hashbrown = "0.14"
+hashbrown = "0.15"
 # Used to avoid allocs when representing PK values / replica list.
 smallvec = "1.8.0"
 
