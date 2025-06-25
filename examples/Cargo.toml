@@ -29,7 +29,7 @@ time = { version = "0.3.22" }
 uuid = { version = "1.0", features = ["v1"] }
 tower = "0.5"
 stats_alloc = "0.1"
-clap = { version = "3.2.4", features = ["derive"] }
+clap = { version = "4.0", features = ["derive"] }
 rand = "0.9.0"
 env_logger = "0.11"
 rustls = "0.23"

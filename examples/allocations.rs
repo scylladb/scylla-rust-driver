@@ -11,25 +11,25 @@ use tokio::sync::Barrier;
 use stats_alloc::{Stats, StatsAlloc, INSTRUMENTED_SYSTEM};
 use std::alloc::System;
 
-use clap::{ArgEnum, Parser};
+use clap::{Parser, ValueEnum};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(arg_enum, value_parser, default_value = "all")]
+    #[clap(value_enum, default_value = "all")]
     mode: Mode,
 
-    #[clap(short, long, value_parser, default_value = "127.0.0.1:9042")]
+    #[clap(short, long, default_value = "127.0.0.1:9042")]
     node: String,
 
-    #[clap(short, long, value_parser, default_value_t = 256usize)]
+    #[clap(short, long, default_value_t = 256usize)]
     parallelism: usize,
 
-    #[clap(short, long, value_parser, default_value_t = 100_000usize)]
+    #[clap(short, long, default_value_t = 100_000usize)]
     requests: usize,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum Mode {
     All,
     Insert,
