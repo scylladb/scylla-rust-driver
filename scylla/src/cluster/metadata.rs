@@ -640,7 +640,7 @@ impl MetadataReader {
         self.known_peers = metadata
             .peers
             .iter()
-            .filter(|peer| host_filter.map_or(true, |f| f.accept(peer)))
+            .filter(|peer| host_filter.is_none_or(|f| f.accept(peer)))
             .map(|peer| UntranslatedEndpoint::Peer(peer.to_peer_endpoint()))
             .collect();
 
@@ -664,12 +664,12 @@ impl MetadataReader {
             .iter()
             .find(|peer| matches!(self.control_connection_endpoint, UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if address == peer.address));
         if let Some(peer) = control_connection_peer {
-            if !self.host_filter.as_ref().map_or(true, |f| f.accept(peer)) {
+            if !self.host_filter.as_ref().is_none_or(|f| f.accept(peer)) {
                 warn!(
                     filtered_node_ips = tracing::field::display(metadata
                         .peers
                         .iter()
-                        .filter(|peer| self.host_filter.as_ref().map_or(true, |p| p.accept(peer)))
+                        .filter(|peer| self.host_filter.as_ref().is_none_or(|p| p.accept(peer)))
                         .map(|peer| peer.address)
                         .format(", ")
                     ),

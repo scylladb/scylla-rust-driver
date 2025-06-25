@@ -1438,7 +1438,7 @@ async fn test_blob() {
 
     let long_blob: Vec<u8> = vec![0x11; 1234];
     let mut long_blob_str: String = "0x".to_string();
-    long_blob_str.extend(std::iter::repeat('1').take(2 * 1234));
+    long_blob_str.extend(std::iter::repeat_n('1', 2 * 1234));
 
     let tests = [
         ("0x", vec![]),

@@ -14,33 +14,58 @@ license = "MIT OR Apache-2.0"
 all-features = true
 
 [dependencies]
+###########################
+# Main, public dependencies
+###########################
 # Important: We use precise version of scylla-macros. This enables
 # us to make breaking changes in the doc(hidden) interfaces that are
 # used by macros.
 scylla-macros = { version = "=1.2.0", path = "../scylla-macros" }
-byteorder = "1.3.4"
-bytes = "1.0.1"
+# AsyncRead trait used in read_response_frame
 tokio = { version = "1.40", features = ["io-util", "time"] }
-secrecy-08 = { package = "secrecy", version = "0.8", optional = true }
-snap = "1.0"
+# FrameSlice and other parts of public API
+bytes = "1.0.1"
+# Tracing ids, CqlTimeuuid, ser/deser of CQL UUID
 uuid = "1.0"
-thiserror = "2.0.6"
-itertools = "0.14.0"
-num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
-num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
-bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
+
+#################################
+# Serialization / deserialization
+#################################
+# Ser/deser of time-related types. Not optional, because it is also used by Display impl
+# of CqlValue
 chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, features = [
     "alloc",
 ] }
-lz4_flex = { version = "0.11.1" }
-serde = { version = "1.0", features = ["derive"], optional = true }
+secrecy-08 = { package = "secrecy", version = "0.8", optional = true }
+num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
+num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
+bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
 time-03 = { package = "time", version = "0.3", optional = true }
-yoke = { version = "0.7", features = ["derive"] }
+# Used to add ser/deser of Consistency and SerialConsistency.
+# This is used by unstable-cloud in `scylla` crate.
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+####################
+# Internal utilities
+####################
+# yoke and stable_deref_trait enable us to have self-referential type: SelfBorrowedMetadataContainer
+yoke = { version = "0.8", features = ["derive"] }
 stable_deref_trait = "1.2"
+# Easier error type creation, used in most of our errors.
+# Technically not part of public API, for similar reasons as async-trait:
+# we could manually do what this macro does.
+thiserror = "2.0.6"
+# Useful operations on iterators and Either type.
+itertools = "0.14.0"
+# Easier deserialization of numeric types from byte arrays.
+byteorder = "1.3.4"
+# Compression algorithms
+snap = "1.0"
+lz4_flex = "0.11.1"
 
 [dev-dependencies]
 assert_matches = "1.5.0"
-criterion = "0.5"
+criterion = "0.6"
 # Use large-dates feature to test potential edge cases
 time-03 = { package = "time", version = "0.3.21", features = ["large-dates"] }
 uuid = { version = "1.0", features = ["v4"] }
