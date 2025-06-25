@@ -43,11 +43,10 @@ metrics = ["dep:histogram"]
 unstable-testing = []
 
 [dependencies]
+###########################
+# Main, public dependencies
+###########################
 scylla-cql = { version = "1.2.0", path = "../scylla-cql" }
-bytes = "1.0.1"
-futures = "0.3.6"
-hashbrown = "0.14"
-histogram = { version = "0.11.1", optional = true }
 tokio = { version = "1.40", features = [
     "net",
     "time",
@@ -56,26 +55,66 @@ tokio = { version = "1.40", features = [
     "rt",
     "macros",
 ] }
-uuid = { version = "1.0", features = ["v4"] }
-rand = "0.9.0"
-thiserror = "2.0.6"
-itertools = "0.14.0"
 tracing = "0.1.36"
+# Appears in various places of our public API
+bytes = "1.0.1"
+# Used for representing tracing ids and host ids.
+uuid = { version = "1.0", features = ["v4"] }
+# Used in history module to represent times of events.
 chrono = { version = "0.4.32", default-features = false, features = ["clock"] }
+# Stream trait is part of public API (in pager).
+# Stream and future combinators are used in many places in the crate.
+futures = "0.3.6"
+# Part of ReplicaSet::choose_filtered public API.
+# Used internally in some other places (mostly in LBP / routing).
+rand = "0.9.0"
+
+#####################
+# TLS implementations
+#####################
 openssl = { version = "0.10.70", optional = true }
+# Not part of public API
 tokio-openssl = { version = "0.6.1", optional = true }
-tokio-rustls = { version = "0.26", optional = true }
 rustls = { version = "0.23", optional = true }
-arc-swap = "1.3.0"
-dashmap = "5.2"
-smallvec = "1.8.0"
-async-trait = "0.1.56"
+# Not part of public API
+tokio-rustls = { version = "0.26", optional = true }
+#################################
+# Dependencies for unstable-cloud
+#################################
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_yaml = { version = "0.9.14", optional = true }
 url = { version = "2.3.1", optional = true }
 base64 = { version = "0.22.1", optional = true }
-rand_pcg = "0.9.0"
+
+####################
+# Internal utilities
+####################
+# Used in metrics.
+histogram = { version = "0.11.1", optional = true }
+# Used by authentication and address translation public traits.
+# Technically not part of public API, since it just transforms the
+# trait code, which we could do without it.
+async-trait = "0.1.56"
+# Easier error type creation, used in most of our errors.
+# Technically not part of public API, for similar reasons as async-trait:
+# we could manually do what this macro does.
+thiserror = "2.0.6"
+# Used by CachingSession for its internal statement cache.
+dashmap = "5.2"
+# Required to set TCP keepalive on a socket.
+# Unfortunately, neither std nor tokio have this functionality yet,
+# so such workaround is required.
 socket2 = { version = "0.5.3", features = ["all"] }
+# Useful operations on iterators.
+itertools = "0.14.0"
+# Used by DefaultPolicy to have reproducible randomness.
+rand_pcg = "0.9.0"
+# Used in execution profiles and ClusterState.
+arc-swap = "1.3.0"
+# Used in tablets to have a hashmap queryable with borrowed key.
+hashbrown = "0.14"
+# Used to avoid allocs when representing PK values / replica list.
+smallvec = "1.8.0"
 
 [dev-dependencies]
 num-bigint-03 = { package = "num-bigint", version = "0.3" }
