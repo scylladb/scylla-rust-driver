@@ -116,7 +116,7 @@ impl ClusterState {
                     }
                 }
                 _ => {
-                    let is_enabled = host_filter.map_or(true, |f| f.accept(&peer));
+                    let is_enabled = host_filter.is_none_or(|f| f.accept(&peer));
                     let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
                     peer_tokens = tokens;
                     Arc::new(Node::new(

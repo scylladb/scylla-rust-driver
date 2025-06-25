@@ -54,7 +54,7 @@ fn calculate_token_bench(c: &mut Criterion) {
         .unwrap();
     serialized_simple_pk_long_column
         .add_value(
-            &String::from_iter(std::iter::repeat('.').take(2000)),
+            &String::from_iter(std::iter::repeat_n('.', 2000)),
             &ColumnType::Native(NativeType::Text),
         )
         .unwrap();
@@ -79,7 +79,7 @@ fn calculate_token_bench(c: &mut Criterion) {
         .unwrap();
     serialized_values_long_column
         .add_value(
-            &String::from_iter(std::iter::repeat('.').take(2000)),
+            &String::from_iter(std::iter::repeat_n('.', 2000)),
             &ColumnType::Native(NativeType::Text),
         )
         .unwrap();
