@@ -221,7 +221,7 @@ async fn main() -> Result<()> {
         .history_ignore_space(true)
         .completion_type(CompletionType::List)
         .build();
-    let mut rl = Editor::with_config(config);
+    let mut rl = Editor::with_config(config)?;
     rl.set_helper(Some(CqlHelper {}));
     loop {
         let readline = rl.readline(">> ");
@@ -230,7 +230,7 @@ async fn main() -> Result<()> {
                 if line.is_empty() {
                     continue;
                 }
-                rl.add_history_entry(line.as_str());
+                rl.add_history_entry(line.as_str())?;
                 let maybe_res = session.query_unpaged(line, &[]).await;
                 match maybe_res {
                     Err(err) => println!("Error: {}", err),
