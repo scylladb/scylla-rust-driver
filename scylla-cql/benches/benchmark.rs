@@ -53,7 +53,7 @@ fn serialized_request_make_bench(c: &mut Criterion) {
             &query,
             |b, query| {
                 b.iter(|| {
-                    let _ = criterion::black_box(SerializedRequest::make(
+                    let _ = std::hint::black_box(SerializedRequest::make(
                         query,
                         Some(Compression::Lz4),
                         false,
