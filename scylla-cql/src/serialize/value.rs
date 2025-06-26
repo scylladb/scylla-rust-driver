@@ -294,7 +294,7 @@ impl SerializeValue for num_bigint_04::BigInt {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl SerializeValue for &str {
+impl SerializeValue for str {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Ascii, Text);
         writer
@@ -401,6 +401,15 @@ impl<T: SerializeValue + ?Sized> SerializeValue for &T {
     }
 }
 impl<T: SerializeValue + ?Sized> SerializeValue for Box<T> {
+    fn serialize<'b>(
+        &self,
+        typ: &ColumnType,
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        T::serialize(&**self, typ, writer).map_err(fix_rust_name_in_err::<Self>)
+    }
+}
+impl<T: SerializeValue + ?Sized> SerializeValue for Arc<T> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -1066,7 +1075,7 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-fn mk_typck_err<T>(
+fn mk_typck_err<T: ?Sized>(
     got: &ColumnType,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
 ) -> SerializationError {
@@ -1099,7 +1108,7 @@ pub struct BuiltinSerializationError {
     pub kind: BuiltinSerializationErrorKind,
 }
 
-pub(crate) fn mk_ser_err<T>(
+pub(crate) fn mk_ser_err<T: ?Sized>(
     got: &ColumnType,
     kind: impl Into<BuiltinSerializationErrorKind>,
 ) -> SerializationError {

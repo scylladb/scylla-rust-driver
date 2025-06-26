@@ -1,5 +1,5 @@
 # Ascii, Text, Varchar
-`Ascii`, `Text` and `Varchar` are represented as `&str` and `String`
+`Ascii`, `Text` and `Varchar` are represented as any of: `&str`, `String`, `Box<str>`, `Arc<str>`.
 
 ```rust
 # extern crate scylla;

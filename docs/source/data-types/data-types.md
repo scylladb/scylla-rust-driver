@@ -16,7 +16,7 @@ Database types and their Rust equivalents:
 * `BigInt` <----> `i64`
 * `Float` <----> `f32`
 * `Double` <----> `f64`
-* `Ascii`, `Text`, `Varchar` <----> `&str`, `String`
+* `Ascii`, `Text`, `Varchar` <----> `&str`, `String`, `Box<str>`, `Arc<str>`
 * `Counter` <----> `value::Counter`
 * `Blob` <----> `Vec<u8>`
 * `Inet` <----> `std::net::IpAddr`
@@ -35,6 +35,7 @@ Database types and their Rust equivalents:
 * `UDT (User defined type)` <----> Custom user structs with macros
 * `Vector` <----> `Vec<T>`
 
+Additionally, `Box` and `Arc` serialization and deserialization is supported for all above types.
 
 ```{eval-rst}
 .. toctree::
