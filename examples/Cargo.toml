@@ -4,6 +4,9 @@ name = "examples"
 publish = false
 version = "0.0.0"
 
+[lints.clippy]
+uninlined_format_args = "allow"
+
 [dev-dependencies]
 anyhow = "1.0.33"
 futures = "0.3.6"

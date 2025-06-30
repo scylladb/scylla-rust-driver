@@ -15,6 +15,9 @@ proc-macro = true
 [package.metadata."docs.rs"]
 all-features = true
 
+[lints.clippy]
+uninlined_format_args = "allow"
+
 [dependencies]
 darling = "0.20.10"
 syn = "2.0"

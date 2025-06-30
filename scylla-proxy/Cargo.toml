@@ -13,6 +13,9 @@ license = "MIT OR Apache-2.0"
 [package.metadata."docs.rs"]
 all-features = true
 
+[lints.clippy]
+uninlined_format_args = "allow"
+
 [features]
 defaults = []
 

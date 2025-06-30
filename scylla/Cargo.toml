@@ -14,6 +14,9 @@ license = "MIT OR Apache-2.0"
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[lints.clippy]
+uninlined_format_args = "allow"
+
 [features]
 default = []
 openssl-010 = ["dep:tokio-openssl", "dep:openssl"]
