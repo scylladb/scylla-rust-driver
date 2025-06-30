@@ -145,7 +145,7 @@ impl Batch {
 
     /// Get the retry policy set for the batch.
     ///
-    /// This method returns the retry policy that is **overriden** on this statement.
+    /// This method returns the retry policy that is **overridden** on this statement.
     /// In other words, it returns the retry policy set using [`Batch::set_retry_policy`].
     /// This does not take the retry policy from the set execution profile into account.
     #[inline]
@@ -164,7 +164,7 @@ impl Batch {
 
     /// Get the load balancing policy set for the batch.
     ///
-    /// This method returns the load balancing policy that is **overriden** on this statement.
+    /// This method returns the load balancing policy that is **overridden** on this statement.
     /// In other words, it returns the load balancing policy set using [`Batch::set_load_balancing_policy`].
     /// This does not take the load balancing policy from the set execution profile into account.
     #[inline]
