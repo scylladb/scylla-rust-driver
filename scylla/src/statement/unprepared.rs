@@ -60,6 +60,13 @@ impl Statement {
         self.config.consistency = Some(c);
     }
 
+    /// Unsets the consistency overridden on this statement.
+    /// This means that consistency will be derived from the execution profile
+    /// (per-statement or, if absent, the default one).
+    pub fn unset_consistency(&mut self) {
+        self.config.consistency = None;
+    }
+
     /// Gets the consistency to be used when executing this statement if it is filled.
     /// If this is empty, the default_consistency of the session will be used.
     pub fn get_consistency(&self) -> Option<Consistency> {
@@ -70,6 +77,13 @@ impl Statement {
     /// (Ignored unless the statement is an LWT)
     pub fn set_serial_consistency(&mut self, sc: Option<SerialConsistency>) {
         self.config.serial_consistency = Some(sc);
+    }
+
+    /// Unsets the serial consistency overridden on this statement.
+    /// This means that serial consistency will be derived from the execution profile
+    /// (per-statement or, if absent, the default one).
+    pub fn unset_serial_consistency(&mut self) {
+        self.config.serial_consistency = None;
     }
 
     /// Gets the serial consistency to be used when executing this statement.
