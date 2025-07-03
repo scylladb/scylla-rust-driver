@@ -126,7 +126,7 @@ async fn measure(
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    println!("{:?}", args);
+    println!("{args:?}");
 
     println!("Connecting to {} ...", args.node);
 

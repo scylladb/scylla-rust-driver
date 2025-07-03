@@ -18,7 +18,7 @@ use uuid::Uuid;
 async fn connect() -> Session {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -27,8 +27,7 @@ async fn connect() -> Session {
 async fn create_table(session: &Session, table_name: &str, value_type: &str) {
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {} (p int PRIMARY KEY, val {})",
-            table_name, value_type
+            "CREATE TABLE IF NOT EXISTS {table_name} (p int PRIMARY KEY, val {value_type})"
         ))
         .await
         .unwrap();
@@ -45,14 +44,14 @@ async fn insert_and_select<InsertT, SelectT>(
 {
     session
         .query_unpaged(
-            format!("INSERT INTO {} (p, val) VALUES (0, ?)", table_name),
+            format!("INSERT INTO {table_name} (p, val) VALUES (0, ?)"),
             (&to_insert,),
         )
         .await
         .unwrap();
 
     let selected_value: SelectT = session
-        .query_unpaged(format!("SELECT val FROM {} WHERE p = 0", table_name), ())
+        .query_unpaged(format!("SELECT val FROM {table_name} WHERE p = 0"), ())
         .await
         .unwrap()
         .into_rows_result()
@@ -243,12 +242,11 @@ async fn test_vector_type_metadata() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session
         .ddl(
             format!(
-                "CREATE TABLE IF NOT EXISTS {}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)",
-                ks
+                "CREATE TABLE IF NOT EXISTS {ks}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)"
             ),
         )
         .await
@@ -281,12 +279,11 @@ async fn test_vector_type_unprepared() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session
         .ddl(
             format!(
-                "CREATE TABLE IF NOT EXISTS {}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)",
-                ks
+                "CREATE TABLE IF NOT EXISTS {ks}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)"
             ),
         )
         .await
@@ -294,7 +291,7 @@ async fn test_vector_type_unprepared() {
 
     session
         .query_unpaged(
-            format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks),
+            format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, ?)"),
             &(1, vec![1, 2, 3, 4], vec!["foo", "bar"]),
         )
         .await
@@ -302,14 +299,14 @@ async fn test_vector_type_unprepared() {
 
     session
         .query_unpaged(
-            format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks),
+            format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, ?)"),
             &(2, &[5, 6, 7, 8][..], &["afoo", "abar"][..]),
         )
         .await
         .unwrap();
 
     let query_result = session
-        .query_unpaged(format!("SELECT a, b, c FROM {}.t", ks), &[])
+        .query_unpaged(format!("SELECT a, b, c FROM {ks}.t"), &[])
         .await
         .unwrap();
 
@@ -346,19 +343,18 @@ async fn test_vector_type_prepared() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session
         .ddl(
             format!(
-                "CREATE TABLE IF NOT EXISTS {}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)",
-                ks
+                "CREATE TABLE IF NOT EXISTS {ks}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)"
             ),
         )
         .await
         .unwrap();
 
     let prepared_statement = session
-        .prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks))
+        .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, ?)"))
         .await
         .unwrap();
     session
@@ -370,7 +366,7 @@ async fn test_vector_type_prepared() {
         .unwrap();
 
     let query_result = session
-        .query_unpaged(format!("SELECT a, b, c FROM {}.t", ks), &[])
+        .query_unpaged(format!("SELECT a, b, c FROM {ks}.t"), &[])
         .await
         .unwrap();
 
@@ -415,13 +411,12 @@ async fn test_vector_single_type<
 
     let prepared_insert = session
         .prepare(format!(
-            "INSERT INTO {}.{} (a, b) VALUES (?, ?)",
-            keyspace, table_name
+            "INSERT INTO {keyspace}.{table_name} (a, b) VALUES (?, ?)"
         ))
         .await
         .unwrap();
     let prepared_select = session
-        .prepare(format!("SELECT a, b FROM {}.{}", keyspace, table_name))
+        .prepare(format!("SELECT a, b FROM {keyspace}.{table_name}"))
         .await
         .unwrap();
     session
@@ -440,7 +435,7 @@ async fn test_vector_single_type<
 
     assert_eq!(row, (1, values));
 
-    let drop_statement = format!("DROP TABLE {}.{}", keyspace, table_name);
+    let drop_statement = format!("DROP TABLE {keyspace}.{table_name}");
     session.ddl(drop_statement).await.unwrap();
 }
 
@@ -452,7 +447,7 @@ async fn test_vector_type_all_types() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
 
     // Native types
 
@@ -620,7 +615,7 @@ async fn test_deserialize_empty_collections() {
     // Setup session.
     let ks = unique_keyspace_name();
     let session = create_new_session_builder().build().await.unwrap();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(&ks, true).await.unwrap();
 
     async fn deserialize_empty_collection<
@@ -633,22 +628,21 @@ async fn test_deserialize_empty_collections() {
         // Create a table for the given collection type.
         let table_name = "test_empty_".to_owned() + collection_name;
         let query = format!(
-            "CREATE TABLE {} (n int primary key, c {}<{}>)",
-            table_name, collection_name, collection_type_params
+            "CREATE TABLE {table_name} (n int primary key, c {collection_name}<{collection_type_params}>)"
         );
         session.ddl(query).await.unwrap();
 
         // Populate the table with an empty collection, effectively inserting null as the collection.
         session
             .query_unpaged(
-                format!("INSERT INTO {} (n, c) VALUES (?, ?)", table_name,),
+                format!("INSERT INTO {table_name} (n, c) VALUES (?, ?)",),
                 (0, Collection::default()),
             )
             .await
             .unwrap();
 
         let query_rows_result = session
-            .query_unpaged(format!("SELECT c FROM {}", table_name), ())
+            .query_unpaged(format!("SELECT c FROM {table_name}"), ())
             .await
             .unwrap()
             .into_rows_result()

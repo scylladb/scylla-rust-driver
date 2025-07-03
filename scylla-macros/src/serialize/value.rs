@@ -328,7 +328,7 @@ impl Generator for FieldSortingGenerator<'_> {
         );
 
         fn make_visited_flag_ident(field_name: &syn::Ident) -> syn::Ident {
-            syn::Ident::new(&format!("visited_flag_{}", field_name), field_name.span())
+            syn::Ident::new(&format!("visited_flag_{field_name}"), field_name.span())
         }
 
         // Generate a "visited" flag for each field

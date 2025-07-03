@@ -15,7 +15,7 @@ use std::time::Duration;
 async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let profile1 = ExecutionProfile::builder()
         .consistency(Consistency::LocalQuorum)

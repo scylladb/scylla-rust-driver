@@ -1753,7 +1753,7 @@ pub(crate) fn get_typeck_err_inner<'a>(
 ) -> &'a BuiltinTypeCheckError {
     match err.downcast_ref() {
         Some(err) => err,
-        None => panic!("not a BuiltinTypeCheckError: {:?}", err),
+        None => panic!("not a BuiltinTypeCheckError: {err:?}"),
     }
 }
 
@@ -1766,7 +1766,7 @@ pub(crate) fn get_typeck_err(err: &DeserializationError) -> &BuiltinTypeCheckErr
 pub(crate) fn get_deser_err(err: &DeserializationError) -> &BuiltinDeserializationError {
     match err.0.downcast_ref() {
         Some(err) => err,
-        None => panic!("not a BuiltinDeserializationError: {:?}", err),
+        None => panic!("not a BuiltinDeserializationError: {err:?}"),
     }
 }
 

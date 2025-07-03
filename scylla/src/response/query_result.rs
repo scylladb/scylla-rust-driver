@@ -495,7 +495,7 @@ mod tests {
     fn column_spec_infinite_iter() -> impl Iterator<Item = ColumnSpec<'static>> {
         (0..).map(|k| {
             ColumnSpec::owned(
-                format!("col_{}", k),
+                format!("col_{k}"),
                 match k % 3 {
                     0 => ColumnType::Native(NativeType::Ascii),
                     1 => ColumnType::Native(NativeType::Boolean),

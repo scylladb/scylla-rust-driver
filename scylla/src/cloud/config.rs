@@ -505,15 +505,13 @@ mod deserialize {
                 .and_then(|mut f| f.read_to_end(&mut buf))
                 .map_err(|_| {
                     CloudConfigError::Validation(format!(
-                        "Cannot read file at given {} {}.",
-                        path_name, path,
+                        "Cannot read file at given {path_name} {path}.",
                     ))
                 })?;
             buf
         } else {
             return Err(CloudConfigError::Validation(format!(
-                "Either {} or {} has to be provided for authInfo.",
-                data_name, path_name,
+                "Either {data_name} or {path_name} has to be provided for authInfo.",
             )));
         };
         Ok(pem.into_boxed_slice())

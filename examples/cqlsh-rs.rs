@@ -164,7 +164,7 @@ impl Completer for CqlHelper {
                     if keyword.starts_with(prefix) {
                         matches.push(Pair {
                             display: keyword.to_string(),
-                            replacement: format!("{} ", keyword),
+                            replacement: format!("{keyword} "),
                         })
                     }
                 }
@@ -189,7 +189,7 @@ fn print_result(result: QueryResult) -> Result<(), IntoRowsResultError> {
                         " {:16}",
                         match column {
                             None => "null".to_owned(),
-                            Some(value) => format!("{:?}", value),
+                            Some(value) => format!("{value:?}"),
                         }
                     );
                 }
@@ -209,7 +209,7 @@ fn print_result(result: QueryResult) -> Result<(), IntoRowsResultError> {
 async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
@@ -233,13 +233,13 @@ async fn main() -> Result<()> {
                 rl.add_history_entry(line.as_str())?;
                 let maybe_res = session.query_unpaged(line, &[]).await;
                 match maybe_res {
-                    Err(err) => println!("Error: {}", err),
+                    Err(err) => println!("Error: {err}"),
                     Ok(res) => print_result(res)?,
                 }
             }
             Err(ReadlineError::Interrupted) => continue,
             Err(ReadlineError::Eof) => break,
-            Err(err) => println!("Error: {}", err),
+            Err(err) => println!("Error: {err}"),
         }
     }
     Ok(())

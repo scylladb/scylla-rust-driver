@@ -36,7 +36,7 @@ async fn speculative_execution_is_fired() {
             .unwrap();
 
         let ks = unique_keyspace_name();
-        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks)).await.unwrap();
+        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
         session.use_keyspace(ks, false).await.unwrap();
         session
             .ddl("CREATE TABLE t (a int primary key)")
@@ -112,7 +112,7 @@ async fn retries_occur() {
             .unwrap();
 
         let ks = unique_keyspace_name();
-        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks)).await.unwrap();
+        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
         session.use_keyspace(ks, false).await.unwrap();
         session
             .ddl("CREATE TABLE t (a int primary key)")
@@ -192,7 +192,7 @@ async fn speculative_execution_panic_regression_test() {
             .unwrap();
 
         let ks = unique_keyspace_name();
-        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks)).await.unwrap();
+        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
         session.use_keyspace(ks, false).await.unwrap();
         session
             .ddl("CREATE TABLE t (a int primary key)")

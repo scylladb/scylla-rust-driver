@@ -1878,7 +1878,7 @@ impl Display for SetOrListTypeCheckErrorKind {
                 f.write_str("the CQL type the Rust type was attempted to be type checked against was not a set")
             }
             SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err) => {
-                write!(f, "the set or list element types between the CQL type and the Rust type failed to type check against each other: {}", err)
+                write!(f, "the set or list element types between the CQL type and the Rust type failed to type check against each other: {err}")
             }
         }
     }
@@ -1917,10 +1917,10 @@ impl Display for MapTypeCheckErrorKind {
                 f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a map")
             }
             MapTypeCheckErrorKind::KeyTypeCheckFailed(err) => {
-                write!(f, "the map key types between the CQL type and the Rust type failed to type check against each other: {}", err)
+                write!(f, "the map key types between the CQL type and the Rust type failed to type check against each other: {err}")
             },
             MapTypeCheckErrorKind::ValueTypeCheckFailed(err) => {
-                write!(f, "the map value types between the CQL type and the Rust type failed to type check against each other: {}", err)
+                write!(f, "the map value types between the CQL type and the Rust type failed to type check against each other: {err}")
             },
         }
     }
@@ -1969,9 +1969,7 @@ impl Display for TupleTypeCheckErrorKind {
 
             TupleTypeCheckErrorKind::FieldTypeCheckFailed { position, err } => write!(
                 f,
-                "the CQL type and the Rust type of the tuple field {} failed to type check against each other: {}",
-                position,
-                err
+                "the CQL type and the Rust type of the tuple field {position} failed to type check against each other: {err}"
             )
         }
     }
@@ -2047,25 +2045,19 @@ impl Display for UdtTypeCheckErrorKind {
             ),
             UdtTypeCheckErrorKind::ExcessFieldInUdt { db_field_name } => write!(
                 f,
-                "UDT contains an excess field {}, which does not correspond to any Rust struct's field.",
-                db_field_name
+                "UDT contains an excess field {db_field_name}, which does not correspond to any Rust struct's field."
             ),
             UdtTypeCheckErrorKind::DuplicatedField { field_name } => write!(
                 f,
-                "field {} occurs more than once in CQL UDT type",
-                field_name
+                "field {field_name} occurs more than once in CQL UDT type"
             ),
             UdtTypeCheckErrorKind::TooFewFields { required_fields, present_fields } => write!(
                 f,
-                "fewer fields present in the UDT than required by the Rust type: UDT has {:?}, Rust type requires {:?}",
-                present_fields,
-                required_fields,
+                "fewer fields present in the UDT than required by the Rust type: UDT has {present_fields:?}, Rust type requires {required_fields:?}",
             ),
             UdtTypeCheckErrorKind::FieldTypeCheckFailed { field_name, err } => write!(
                 f,
-                "the UDT field {} types between the CQL type and the Rust type failed to type check against each other: {}",
-                field_name,
-                err
+                "the UDT field {field_name} types between the CQL type and the Rust type failed to type check against each other: {err}"
             ),
         }
     }
@@ -2163,16 +2155,15 @@ pub enum BuiltinDeserializationErrorKind {
 impl Display for BuiltinDeserializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuiltinDeserializationErrorKind::BadDate { date_field, err } => write!(f, "malformed {} during 'date' deserialization: {}", date_field, err),
-            BuiltinDeserializationErrorKind::BadDecimalScale(err) => write!(f, "malformed decimal's scale: {}", err),
-            BuiltinDeserializationErrorKind::RawCqlBytesReadError(err) => write!(f, "failed to read raw cql value bytes: {}", err),
+            BuiltinDeserializationErrorKind::BadDate { date_field, err } => write!(f, "malformed {date_field} during 'date' deserialization: {err}"),
+            BuiltinDeserializationErrorKind::BadDecimalScale(err) => write!(f, "malformed decimal's scale: {err}"),
+            BuiltinDeserializationErrorKind::RawCqlBytesReadError(err) => write!(f, "failed to read raw cql value bytes: {err}"),
             BuiltinDeserializationErrorKind::ExpectedNonNull => {
                 f.write_str("expected a non-null value, got null")
             }
             BuiltinDeserializationErrorKind::ByteLengthMismatch { expected, got } => write!(
                 f,
-                "the CQL type requires {} bytes, but got {}",
-                expected, got,
+                "the CQL type requires {expected} bytes, but got {got}",
             ),
             BuiltinDeserializationErrorKind::ExpectedAscii => {
                 f.write_str("expected a valid ASCII string")
@@ -2214,10 +2205,10 @@ impl Display for SetOrListDeserializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SetOrListDeserializationErrorKind::LengthDeserializationFailed(err) => {
-                write!(f, "failed to deserialize set or list's length: {}", err)
+                write!(f, "failed to deserialize set or list's length: {err}")
             }
             SetOrListDeserializationErrorKind::ElementDeserializationFailed(err) => {
-                write!(f, "failed to deserialize one of the elements: {}", err)
+                write!(f, "failed to deserialize one of the elements: {err}")
             }
         }
     }
@@ -2267,13 +2258,13 @@ impl Display for MapDeserializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MapDeserializationErrorKind::LengthDeserializationFailed(err) => {
-                write!(f, "failed to deserialize map's length: {}", err)
+                write!(f, "failed to deserialize map's length: {err}")
             }
             MapDeserializationErrorKind::KeyDeserializationFailed(err) => {
-                write!(f, "failed to deserialize one of the keys: {}", err)
+                write!(f, "failed to deserialize one of the keys: {err}")
             }
             MapDeserializationErrorKind::ValueDeserializationFailed(err) => {
-                write!(f, "failed to deserialize one of the values: {}", err)
+                write!(f, "failed to deserialize one of the values: {err}")
             }
         }
     }

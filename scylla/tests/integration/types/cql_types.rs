@@ -25,9 +25,8 @@ async fn init_test_maybe_without_tablets(
     let ks = unique_keyspace_name();
 
     let mut create_ks = format!(
-        "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-    {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-        ks
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
+    {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
     );
 
     if !supports_tablets && scylla_supports_tablets(&session).await {
@@ -38,14 +37,13 @@ async fn init_test_maybe_without_tablets(
     session.use_keyspace(ks, false).await.unwrap();
 
     session
-        .ddl(format!("DROP TABLE IF EXISTS {}", table_name))
+        .ddl(format!("DROP TABLE IF EXISTS {table_name}"))
         .await
         .unwrap();
 
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
-            table_name, type_name
+            "CREATE TABLE IF NOT EXISTS {table_name} (id int PRIMARY KEY, val {type_name})"
         ))
         .await
         .unwrap();
@@ -77,20 +75,20 @@ where
 
     for test in tests.iter() {
         let insert_string_encoded_value =
-            format!("INSERT INTO {} (id, val) VALUES (0, {})", type_name, test);
+            format!("INSERT INTO {type_name} (id, val) VALUES (0, {test})");
         session
             .query_unpaged(insert_string_encoded_value, &[])
             .await
             .unwrap();
 
-        let insert_bound_value = format!("INSERT INTO {} (id, val) VALUES (1, ?)", type_name);
+        let insert_bound_value = format!("INSERT INTO {type_name} (id, val) VALUES (1, ?)");
         let value_to_bound = T::from_str(test).ok().unwrap();
         session
             .query_unpaged(insert_bound_value, (value_to_bound,))
             .await
             .unwrap();
 
-        let select_values = format!("SELECT val from {}", type_name);
+        let select_values = format!("SELECT val from {type_name}");
         let read_values: Vec<T> = session
             .query_unpaged(select_values, &[])
             .await
@@ -170,9 +168,8 @@ async fn test_cql_varint() {
 
     session
         .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
         ))
         .await
         .unwrap();
@@ -180,21 +177,17 @@ async fn test_cql_varint() {
 
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val varint)",
-            table_name
+            "CREATE TABLE IF NOT EXISTS {table_name} (id int PRIMARY KEY, val varint)"
         ))
         .await
         .unwrap();
 
     let prepared_insert = session
-        .prepare(format!(
-            "INSERT INTO {} (id, val) VALUES (0, ?)",
-            table_name
-        ))
+        .prepare(format!("INSERT INTO {table_name} (id, val) VALUES (0, ?)"))
         .await
         .unwrap();
     let prepared_select = session
-        .prepare(format!("SELECT val FROM {} WHERE id = 0", table_name))
+        .prepare(format!("SELECT val FROM {table_name} WHERE id = 0"))
         .await
         .unwrap();
 
@@ -274,14 +267,14 @@ async fn test_counter() {
     let session: Session = init_test_maybe_without_tablets(type_name, type_name, false).await;
 
     for (i, test) in tests.iter().enumerate() {
-        let update_bound_value = format!("UPDATE {} SET val = val + ? WHERE id = ?", type_name);
+        let update_bound_value = format!("UPDATE {type_name} SET val = val + ? WHERE id = ?");
         let value_to_bound = Counter(i64::from_str(test).unwrap());
         session
             .query_unpaged(update_bound_value, (value_to_bound, i as i32))
             .await
             .unwrap();
 
-        let select_values = format!("SELECT val FROM {} WHERE id = ?", type_name);
+        let select_values = format!("SELECT val FROM {type_name} WHERE id = ?");
         let read_values: Vec<Counter> = session
             .query_unpaged(select_values, (i as i32,))
             .await
@@ -351,10 +344,7 @@ async fn test_naive_date_04() {
     for (date_text, date) in tests.iter() {
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO chrono_naive_date_tests (id, val) VALUES (0, '{}')",
-                    date_text
-                ),
+                format!("INSERT INTO chrono_naive_date_tests (id, val) VALUES (0, '{date_text}')"),
                 &[],
             )
             .await
@@ -417,10 +407,7 @@ async fn test_cql_date() {
     for (date_text, date) in &tests {
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO cql_date_tests (id, val) VALUES (0, '{}')",
-                    date_text
-                ),
+                format!("INSERT INTO cql_date_tests (id, val) VALUES (0, '{date_text}')"),
                 &[],
             )
             .await
@@ -502,10 +489,7 @@ async fn test_date_03() {
     for (date_text, date) in tests.iter() {
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO time_date_tests (id, val) VALUES (0, '{}')",
-                    date_text
-                ),
+                format!("INSERT INTO time_date_tests (id, val) VALUES (0, '{date_text}')"),
                 &[],
             )
             .await
@@ -569,10 +553,7 @@ async fn test_cql_time() {
         // Insert time as a string and verify that it matches
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO cql_time_tests (id, val) VALUES (0, '{}')",
-                    time_str
-                ),
+                format!("INSERT INTO cql_time_tests (id, val) VALUES (0, '{time_str}')"),
                 &[],
             )
             .await
@@ -625,10 +606,7 @@ async fn test_cql_time() {
     for time_str in &invalid_tests {
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO cql_time_tests (id, val) VALUES (0, '{}')",
-                    time_str
-                ),
+                format!("INSERT INTO cql_time_tests (id, val) VALUES (0, '{time_str}')"),
                 &[],
             )
             .await
@@ -669,10 +647,7 @@ async fn test_naive_time_04() {
         // Insert as string and read it again
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO chrono_time_tests (id, val) VALUES (0, '{}')",
-                    time_text
-                ),
+                format!("INSERT INTO chrono_time_tests (id, val) VALUES (0, '{time_text}')"),
                 &[],
             )
             .await
@@ -753,10 +728,7 @@ async fn test_time_03() {
         // Insert as string and read it again
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO time_time_tests (id, val) VALUES (0, '{}')",
-                    time_text
-                ),
+                format!("INSERT INTO time_time_tests (id, val) VALUES (0, '{time_text}')"),
                 &[],
             )
             .await
@@ -828,10 +800,7 @@ async fn test_cql_timestamp() {
         // Insert timestamp as a string and verify that it matches
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO cql_timestamp_tests (id, val) VALUES (0, '{}')",
-                    timestamp_str
-                ),
+                format!("INSERT INTO cql_timestamp_tests (id, val) VALUES (0, '{timestamp_str}')"),
                 &[],
             )
             .await
@@ -928,8 +897,7 @@ async fn test_date_time_04() {
         session
             .query_unpaged(
                 format!(
-                    "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, '{}')",
-                    datetime_text
+                    "INSERT INTO chrono_datetime_tests (id, val) VALUES (0, '{datetime_text}')"
                 ),
                 &[],
             )
@@ -1096,10 +1064,7 @@ async fn test_offset_date_time_03() {
         // Insert as string and read it again
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO time_datetime_tests (id, val) VALUES (0, '{}')",
-                    datetime_text
-                ),
+                format!("INSERT INTO time_datetime_tests (id, val) VALUES (0, '{datetime_text}')"),
                 &[],
             )
             .await
@@ -1225,10 +1190,7 @@ async fn test_timeuuid() {
         // Insert timeuuid as a string and verify that it matches
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO timeuuid_tests (id, val) VALUES (0, {})",
-                    timeuuid_str
-                ),
+                format!("INSERT INTO timeuuid_tests (id, val) VALUES (0, {timeuuid_str})"),
                 &[],
             )
             .await
@@ -1276,9 +1238,8 @@ async fn test_timeuuid_ordering() {
 
     session
         .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
         ))
         .await
         .unwrap();
@@ -1392,10 +1353,7 @@ async fn test_inet() {
         // Insert inet as a string and verify that it matches
         session
             .query_unpaged(
-                format!(
-                    "INSERT INTO inet_tests (id, val) VALUES (0, '{}')",
-                    inet_str
-                ),
+                format!("INSERT INTO inet_tests (id, val) VALUES (0, '{inet_str}')"),
                 &[],
             )
             .await
@@ -1465,7 +1423,7 @@ async fn test_blob() {
         // Insert blob as a string and verify that it matches
         session
             .query_unpaged(
-                format!("INSERT INTO blob_tests (id, val) VALUES (0, {})", blob_str),
+                format!("INSERT INTO blob_tests (id, val) VALUES (0, {blob_str})"),
                 &[],
             )
             .await
@@ -1512,36 +1470,33 @@ async fn test_udt_after_schema_update() {
 
     session
         .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
         ))
         .await
         .unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
-        .ddl(format!("DROP TABLE IF EXISTS {}", table_name))
+        .ddl(format!("DROP TABLE IF EXISTS {table_name}"))
         .await
         .unwrap();
 
     session
-        .ddl(format!("DROP TYPE IF EXISTS {}", type_name))
+        .ddl(format!("DROP TYPE IF EXISTS {type_name}"))
         .await
         .unwrap();
 
     session
         .ddl(format!(
-            "CREATE TYPE IF NOT EXISTS {} (first int, second boolean)",
-            type_name
+            "CREATE TYPE IF NOT EXISTS {type_name} (first int, second boolean)"
         ))
         .await
         .unwrap();
 
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
-            table_name, type_name
+            "CREATE TABLE IF NOT EXISTS {table_name} (id int PRIMARY KEY, val {type_name})"
         ))
         .await
         .unwrap();
@@ -1569,7 +1524,7 @@ async fn test_udt_after_schema_update() {
         .unwrap();
 
     let (read_udt,): (UdtV1,) = session
-        .query_unpaged(format!("SELECT val from {} WHERE id = 0", table_name), &[])
+        .query_unpaged(format!("SELECT val from {table_name} WHERE id = 0"), &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1581,14 +1536,14 @@ async fn test_udt_after_schema_update() {
 
     session
         .query_unpaged(
-            format!("INSERT INTO {}(id,val) VALUES (0, ?)", table_name),
+            format!("INSERT INTO {table_name}(id,val) VALUES (0, ?)"),
             &(&v1,),
         )
         .await
         .unwrap();
 
     let (read_udt,): (UdtV1,) = session
-        .query_unpaged(format!("SELECT val from {} WHERE id = 0", table_name), &[])
+        .query_unpaged(format!("SELECT val from {table_name} WHERE id = 0"), &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1599,7 +1554,7 @@ async fn test_udt_after_schema_update() {
     assert_eq!(read_udt, v1);
 
     session
-        .ddl(format!("ALTER TYPE {} ADD third text;", type_name))
+        .ddl(format!("ALTER TYPE {type_name} ADD third text;"))
         .await
         .unwrap();
 
@@ -1611,7 +1566,7 @@ async fn test_udt_after_schema_update() {
     }
 
     let (read_udt,): (UdtV2,) = session
-        .query_unpaged(format!("SELECT val from {} WHERE id = 0", table_name), &[])
+        .query_unpaged(format!("SELECT val from {table_name} WHERE id = 0"), &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -1684,36 +1639,33 @@ async fn test_udt_with_missing_field() {
 
     session
         .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
         ))
         .await
         .unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
-        .ddl(format!("DROP TABLE IF EXISTS {}", table_name))
+        .ddl(format!("DROP TABLE IF EXISTS {table_name}"))
         .await
         .unwrap();
 
     session
-        .ddl(format!("DROP TYPE IF EXISTS {}", type_name))
+        .ddl(format!("DROP TYPE IF EXISTS {type_name}"))
         .await
         .unwrap();
 
     session
         .ddl(format!(
-            "CREATE TYPE IF NOT EXISTS {} (first int, second boolean, third float, fourth blob)",
-            type_name
+            "CREATE TYPE IF NOT EXISTS {type_name} (first int, second boolean, third float, fourth blob)"
         ))
         .await
         .unwrap();
 
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
-            table_name, type_name
+            "CREATE TABLE IF NOT EXISTS {table_name} (id int PRIMARY KEY, val {type_name})"
         ))
         .await
         .unwrap();
@@ -1732,16 +1684,13 @@ async fn test_udt_with_missing_field() {
     {
         session
             .query_unpaged(
-                format!("INSERT INTO {}(id,val) VALUES (?,?)", table_name),
+                format!("INSERT INTO {table_name}(id,val) VALUES (?,?)"),
                 &(id, &element),
             )
             .await
             .unwrap();
         let result = session
-            .query_unpaged(
-                format!("SELECT val from {} WHERE id = ?", table_name),
-                &(id,),
-            )
+            .query_unpaged(format!("SELECT val from {table_name} WHERE id = ?"), &(id,))
             .await
             .unwrap()
             .into_rows_result()
@@ -1871,7 +1820,7 @@ async fn test_unusual_serializerow_impls() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session

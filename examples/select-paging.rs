@@ -11,7 +11,7 @@ use std::ops::ControlFlow;
 async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
 
     while let Some(next_row_res) = rows_stream.next().await {
         let (a, b, c) = next_row_res?;
-        println!("a, b, c: {}, {}, {}", a, b, c);
+        println!("a, b, c: {a}, {b}, {c}");
     }
 
     let paged_query =

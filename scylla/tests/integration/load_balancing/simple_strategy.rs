@@ -10,24 +10,22 @@ async fn simple_strategy_test() {
 
     session
         .ddl(format!(
-            "CREATE KEYSPACE {} WITH REPLICATION = \
-                {{'class': 'SimpleStrategy', 'replication_factor': 1}}",
-            ks
+            "CREATE KEYSPACE {ks} WITH REPLICATION = \
+                {{'class': 'SimpleStrategy', 'replication_factor': 1}}"
         ))
         .await
         .unwrap();
 
     session
         .ddl(format!(
-            "CREATE TABLE {}.tab (p int, c int, r int, PRIMARY KEY (p, c, r))",
-            ks
+            "CREATE TABLE {ks}.tab (p int, c int, r int, PRIMARY KEY (p, c, r))"
         ))
         .await
         .unwrap();
 
     session
         .query_unpaged(
-            format!("INSERT INTO {}.tab (p, c, r) VALUES (1, 2, 3)", ks),
+            format!("INSERT INTO {ks}.tab (p, c, r) VALUES (1, 2, 3)"),
             (),
         )
         .await
@@ -35,21 +33,21 @@ async fn simple_strategy_test() {
 
     session
         .query_unpaged(
-            format!("INSERT INTO {}.tab (p, c, r) VALUES (?, ?, ?)", ks),
+            format!("INSERT INTO {ks}.tab (p, c, r) VALUES (?, ?, ?)"),
             (4, 5, 6),
         )
         .await
         .unwrap();
 
     let prepared = session
-        .prepare(format!("INSERT INTO {}.tab (p, c, r) VALUES (?, ?, ?)", ks))
+        .prepare(format!("INSERT INTO {ks}.tab (p, c, r) VALUES (?, ?, ?)"))
         .await
         .unwrap();
 
     session.execute_unpaged(&prepared, (7, 8, 9)).await.unwrap();
 
     let mut rows: Vec<(i32, i32, i32)> = session
-        .query_unpaged(format!("SELECT p, c, r FROM {}.tab", ks), ())
+        .query_unpaged(format!("SELECT p, c, r FROM {ks}.tab"), ())
         .await
         .unwrap()
         .into_rows_result()

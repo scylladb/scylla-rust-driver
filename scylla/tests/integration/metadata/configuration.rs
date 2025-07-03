@@ -221,7 +221,7 @@ async fn test_refresh_metadata_after_schema_agreement() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
@@ -259,12 +259,12 @@ async fn test_turning_off_schema_fetching() {
     let ks = unique_keyspace_name();
 
     session
-        .ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
+        .ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
         .await
         .unwrap();
 
     session
-        .query_unpaged(format!("USE {}", ks), &[])
+        .query_unpaged(format!("USE {ks}"), &[])
         .await
         .unwrap();
 
@@ -332,7 +332,7 @@ async fn test_keyspaces_to_fetch() {
     let session_default = create_new_session_builder().build().await.unwrap();
     for ks in [&ks1, &ks2] {
         session_default
-            .ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
+            .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
             .await
             .unwrap();
     }

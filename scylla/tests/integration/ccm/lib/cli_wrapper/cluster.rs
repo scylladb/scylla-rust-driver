@@ -179,10 +179,10 @@ impl ClusterStart<'_> {
     fn get_ccm_env(&self) -> HashMap<String, String> {
         let mut value = String::new();
         if let Some(smp) = self.scylla_smp {
-            write!(value, "--smp={} ", smp).unwrap();
+            write!(value, "--smp={smp} ").unwrap();
         }
         if let Some(mem_megabytes) = self.scylla_mem_megabytes {
-            write!(value, "--memory={}M ", mem_megabytes).unwrap();
+            write!(value, "--memory={mem_megabytes}M ").unwrap();
         }
 
         let mut env = HashMap::new();

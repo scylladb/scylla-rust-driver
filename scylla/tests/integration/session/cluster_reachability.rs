@@ -22,10 +22,7 @@ async fn test_all_nodes_are_reachable_and_serving() {
     prepare_schema(&session, &ks, "t").await;
 
     let prepared = session
-        .prepare(format!(
-            "INSERT INTO {}.t (a, b, c) VALUES (?, ?, 'abc')",
-            ks
-        ))
+        .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, 'abc')"))
         .await
         .unwrap();
 
@@ -43,16 +40,14 @@ async fn test_all_nodes_are_reachable_and_serving() {
 async fn prepare_schema(session: &Session, ks: &str, table: &str) {
     session
         .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {}
-            WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
+            "CREATE KEYSPACE IF NOT EXISTS {ks}
+            WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
         ))
         .await
         .unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.{} (a int, b int, c text, primary key (a, b))",
-            ks, table
+            "CREATE TABLE IF NOT EXISTS {ks}.{table} (a int, b int, c text, primary key (a, b))"
         ))
         .await
         .unwrap();

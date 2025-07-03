@@ -402,25 +402,25 @@ impl Display for StructuredHistory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Requests History:")?;
         for (i, request) in self.requests.iter().enumerate() {
-            writeln!(f, "=== Request #{} ===", i)?;
+            writeln!(f, "=== Request #{i} ===")?;
             writeln!(f, "| start_time: {}", request.start_time)?;
             writeln!(f, "| Non-speculative attempts:")?;
             write_fiber_attempts(&request.non_speculative_fiber, f)?;
             for (spec_i, speculative_fiber) in request.speculative_fibers.iter().enumerate() {
                 writeln!(f, "|")?;
                 writeln!(f, "|")?;
-                writeln!(f, "| > Speculative fiber #{}", spec_i)?;
+                writeln!(f, "| > Speculative fiber #{spec_i}")?;
                 writeln!(f, "| fiber start time: {}", speculative_fiber.start_time)?;
                 write_fiber_attempts(speculative_fiber, f)?;
             }
             writeln!(f, "|")?;
             match &request.result {
                 Some(RequestHistoryResult::Success(succ_time)) => {
-                    writeln!(f, "| Request successful at {}", succ_time)?;
+                    writeln!(f, "| Request successful at {succ_time}")?;
                 }
                 Some(RequestHistoryResult::Error(err_time, error)) => {
-                    writeln!(f, "| Request failed at {}", err_time)?;
-                    writeln!(f, "| Error: {}", error)?;
+                    writeln!(f, "| Request failed at {err_time}")?;
+                    writeln!(f, "| Error: {error}")?;
                 }
                 None => writeln!(f, "| Request still running - no final result yet")?,
             };
@@ -438,11 +438,11 @@ fn write_fiber_attempts(fiber: &FiberHistory, f: &mut std::fmt::Formatter<'_>) -
         writeln!(f, "| - Attempt #{} sent to {}", i, attempt.node_addr)?;
         writeln!(f, "|   request send time: {}", attempt.send_time)?;
         match &attempt.result {
-            Some(AttemptResult::Success(time)) => writeln!(f, "|   Success at {}", time)?,
+            Some(AttemptResult::Success(time)) => writeln!(f, "|   Success at {time}")?,
             Some(AttemptResult::Error(time, err, retry_decision)) => {
-                writeln!(f, "|   Error at {}", time)?;
-                writeln!(f, "|   Error: {}", err)?;
-                writeln!(f, "|   Retry decision: {:?}", retry_decision)?;
+                writeln!(f, "|   Error at {time}")?;
+                writeln!(f, "|   Error: {err}")?;
+                writeln!(f, "|   Retry decision: {retry_decision:?}")?;
             }
             None => writeln!(f, "|   No result yet")?,
         };
@@ -548,7 +548,7 @@ mod tests {
 
         let displayed = "Requests History:
 ";
-        assert_eq!(displayed, format!("{}", history));
+        assert_eq!(displayed, format!("{history}"));
     }
 
     #[test]

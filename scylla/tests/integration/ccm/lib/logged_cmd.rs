@@ -84,7 +84,7 @@ impl LoggedCmd {
                     format!("exited[{}]", run_id),
                     e
                 );
-                Err(Error::from(e).context(format!("Command `{}` failed", command_with_args,)))
+                Err(Error::from(e).context(format!("Command `{command_with_args}` failed",)))
             }
         }
     }
@@ -285,9 +285,9 @@ mod tests {
     impl tracing::field::Visit for PrintlnVisitor {
         fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
             if self.log_message.is_empty() {
-                write!(self.log_message, "{:?}", value).unwrap();
+                write!(self.log_message, "{value:?}").unwrap();
             } else {
-                write!(self.log_message, ", {}: {:?}", field, value).unwrap();
+                write!(self.log_message, ", {field}: {value:?}").unwrap();
             }
         }
     }

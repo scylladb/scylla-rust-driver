@@ -33,7 +33,7 @@ impl Service<scylla::statement::unprepared::Statement> for SessionService {
 async fn main() -> anyhow::Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
     let mut session: SessionService = SessionService {
         session: Arc::new(SessionBuilder::new().known_node(uri).build().await?),
     };

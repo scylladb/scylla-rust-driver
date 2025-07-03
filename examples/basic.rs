@@ -11,7 +11,7 @@ use std::env;
 async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<(i32, i32, String)>()?;
     while let Some((a, b, c)) = iter.try_next().await? {
-        println!("a, b, c: {}, {}, {}", a, b, c);
+        println!("a, b, c: {a}, {b}, {c}");
     }
 
     // Or as custom structs that derive DeserializeRow
@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<RowData>()?;
     while let Some(row_data) = iter.try_next().await? {
-        println!("row_data: {:?}", row_data);
+        println!("row_data: {row_data:?}");
     }
 
     // Or simply as untyped rows
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
         let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
         let b = row.columns[1].as_ref().unwrap().as_int().unwrap();
         let c = row.columns[2].as_ref().unwrap().as_text().unwrap();
-        println!("a, b, c: {}, {}, {}", a, b, c);
+        println!("a, b, c: {a}, {b}, {c}");
     }
 
     let metrics = session.get_metrics();

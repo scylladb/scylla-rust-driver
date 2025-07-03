@@ -32,7 +32,7 @@ pub(crate) fn unique_keyspace_name() -> String {
             .as_secs(),
         cnt
     );
-    println!("Unique name: {}", name);
+    println!("Unique name: {name}");
     name
 }
 

@@ -299,10 +299,7 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::E
     addrs
         .find_or_last(|addr| matches!(addr, SocketAddr::V4(_)))
         .ok_or_else(|| {
-            io::Error::other(format!(
-                "Empty address list returned by DNS for {}",
-                hostname
-            ))
+            io::Error::other(format!("Empty address list returned by DNS for {hostname}"))
         })
 }
 

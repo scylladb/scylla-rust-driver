@@ -20,7 +20,7 @@ use uuid::Uuid;
 async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
     let session: Session = SessionBuilder::new()
         .known_node(uri.as_str())
         .build()
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
 
     // prepared.prepare_tracing_id contains tracing ids of all prepare requests
     let prepare_ids: &Vec<Uuid> = &prepared.prepare_tracing_ids;
-    println!("Prepare tracing ids: {:?}\n", prepare_ids);
+    println!("Prepare tracing ids: {prepare_ids:?}\n");
 
     // EXECUTE
     // To trace execution of a prepared statement tracing must be enabled for it

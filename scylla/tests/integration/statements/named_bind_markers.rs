@@ -12,12 +12,12 @@ async fn test_named_bind_markers() {
     let ks = unique_keyspace_name();
 
     session
-        .ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
+        .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
         .await
         .unwrap();
 
     session
-        .query_unpaged(format!("USE {}", ks), &[])
+        .query_unpaged(format!("USE {ks}"), &[])
         .await
         .unwrap();
 

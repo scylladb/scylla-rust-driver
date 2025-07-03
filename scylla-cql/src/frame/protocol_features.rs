@@ -59,7 +59,7 @@ impl ProtocolFeatures {
         if let Some(mask) = self.lwt_optimization_meta_bit_mask {
             options.insert(
                 Cow::Borrowed(SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION),
-                Cow::Owned(format!("{}={}", LWT_OPTIMIZATION_META_BIT_MASK_KEY, mask)),
+                Cow::Owned(format!("{LWT_OPTIMIZATION_META_BIT_MASK_KEY}={mask}")),
             );
         }
 

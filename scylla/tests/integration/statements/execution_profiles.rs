@@ -165,19 +165,18 @@ async fn test_execution_profiles() {
         let ks = unique_keyspace_name();
 
         /* Prepare schema */
-        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks)).await.unwrap();
+        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
         session
             .ddl(
                 format!(
-                    "CREATE TABLE IF NOT EXISTS {}.t (a int, b int, c text, primary key (a, b))",
-                    ks
+                    "CREATE TABLE IF NOT EXISTS {ks}.t (a int, b int, c text, primary key (a, b))"
                 ),
             )
             .await
             .unwrap();
 
-        let mut query = Statement::from(format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks));
-        let mut prepared = session.prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks)).await.unwrap();
+        let mut query = Statement::from(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 2, 'abc')"));
+        let mut prepared = session.prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 2, 'abc')")).await.unwrap();
         let mut batch = Batch::new_with_statements(BatchType::Unlogged, vec![BatchStatement::Query(query.clone())]);
 
         while profile_rx.try_recv().is_ok() {}

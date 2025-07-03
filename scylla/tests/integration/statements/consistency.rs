@@ -56,7 +56,7 @@ const CREATE_TABLE_STR: &str = "CREATE TABLE consistency_tests (a int, b int, PR
 const QUERY_STR: &str = "INSERT INTO consistency_tests (a, b) VALUES (?, 1)";
 
 async fn create_schema(session: &Session, ks: &str) {
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session.ddl(CREATE_TABLE_STR).await.unwrap();

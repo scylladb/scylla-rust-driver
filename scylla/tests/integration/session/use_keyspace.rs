@@ -13,18 +13,17 @@ async fn test_use_keyspace() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
 
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.tab (a text primary key)",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.tab (a text primary key)"
         ))
         .await
         .unwrap();
 
     session
-        .query_unpaged(format!("INSERT INTO {}.tab (a) VALUES ('test1')", ks), &[])
+        .query_unpaged(format!("INSERT INTO {ks}.tab (a) VALUES ('test1')"), &[])
         .await
         .unwrap();
 
@@ -108,28 +107,24 @@ async fn test_use_keyspace_case_sensitivity() {
     let ks_lower = unique_keyspace_name().to_lowercase();
     let ks_upper = ks_lower.to_uppercase();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS \"{}\" WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks_lower)).await.unwrap();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS \"{}\" WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks_upper)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS \"{ks_lower}\" WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS \"{ks_upper}\" WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
 
     session
-        .ddl(format!(
-            "CREATE TABLE {}.tab (a text primary key)",
-            ks_lower
-        ))
+        .ddl(format!("CREATE TABLE {ks_lower}.tab (a text primary key)"))
         .await
         .unwrap();
 
     session
         .ddl(format!(
-            "CREATE TABLE \"{}\".tab (a text primary key)",
-            ks_upper
+            "CREATE TABLE \"{ks_upper}\".tab (a text primary key)"
         ))
         .await
         .unwrap();
 
     session
         .query_unpaged(
-            format!("INSERT INTO {}.tab (a) VALUES ('lowercase')", ks_lower),
+            format!("INSERT INTO {ks_lower}.tab (a) VALUES ('lowercase')"),
             &[],
         )
         .await
@@ -137,7 +132,7 @@ async fn test_use_keyspace_case_sensitivity() {
 
     session
         .query_unpaged(
-            format!("INSERT INTO \"{}\".tab (a) VALUES ('uppercase')", ks_upper),
+            format!("INSERT INTO \"{ks_upper}\".tab (a) VALUES ('uppercase')"),
             &[],
         )
         .await
@@ -184,26 +179,22 @@ async fn test_raw_use_keyspace() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
 
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.tab (a text primary key)",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.tab (a text primary key)"
         ))
         .await
         .unwrap();
 
     session
-        .query_unpaged(
-            format!("INSERT INTO {}.tab (a) VALUES ('raw_test')", ks),
-            &[],
-        )
+        .query_unpaged(format!("INSERT INTO {ks}.tab (a) VALUES ('raw_test')"), &[])
         .await
         .unwrap();
 
     session
-        .query_unpaged(format!("use    \"{}\"    ;", ks), &[])
+        .query_unpaged(format!("use    \"{ks}\"    ;"), &[])
         .await
         .unwrap();
 
@@ -240,7 +231,7 @@ async fn test_get_keyspace_name() {
     // No keyspace is set in config, so get_keyspace() should return None.
     let session = create_new_session_builder().build().await.unwrap();
     assert_eq!(session.get_keyspace(), None);
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     assert_eq!(session.get_keyspace(), None);
 
     // Call use_keyspace(), get_keyspace now should return the new keyspace name

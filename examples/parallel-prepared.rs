@@ -10,7 +10,7 @@ use tokio::sync::Semaphore;
 async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
     let session = Arc::new(session);
@@ -29,14 +29,14 @@ async fn main() -> Result<()> {
             .prepare("INSERT INTO examples_ks.parallel_prepared (a, b, c) VALUES (?, ?, 'abc')")
             .await?,
     );
-    println!("Prepared statement: {:#?}", prepared);
+    println!("Prepared statement: {prepared:#?}");
 
     let parallelism = 256;
     let sem = Arc::new(Semaphore::new(parallelism));
 
     for i in 0..100_000usize {
         if i % 1000 == 0 {
-            println!("{}", i);
+            println!("{i}");
         }
         let session = session.clone();
         let prepared = prepared.clone();

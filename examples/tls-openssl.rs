@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     // Create connection
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9142".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
     let ca_dir = fs::canonicalize(PathBuf::from("./test/tls/ca.crt"))?;
@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<(i32, i32, String)>()?;
     while let Some((a, b, c)) = iter.try_next().await? {
-        println!("a, b, c: {}, {}, {}", a, b, c);
+        println!("a, b, c: {a}, {b}, {c}");
     }
 
     println!("Ok.");

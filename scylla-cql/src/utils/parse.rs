@@ -34,7 +34,7 @@ pub enum ParseErrorCause {
 impl Display for ParseErrorCause {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParseErrorCause::Expected(e) => write!(f, "expected {:?}", e),
+            ParseErrorCause::Expected(e) => write!(f, "expected {e:?}"),
             ParseErrorCause::Other(e) => f.write_str(e),
         }
     }

@@ -5,7 +5,7 @@ use scylla::client::session_builder::SessionBuilder;
 async fn main() -> Result<()> {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} with cassandra superuser ...", uri);
+    println!("Connecting to {uri} with cassandra superuser ...");
 
     let session = SessionBuilder::new()
         .known_node(uri)

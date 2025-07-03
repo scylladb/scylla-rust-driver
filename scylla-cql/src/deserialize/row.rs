@@ -367,16 +367,13 @@ impl Display for BuiltinTypeCheckErrorKind {
             BuiltinTypeCheckErrorKind::ColumnWithUnknownName { column_name, column_index } => {
                 write!(
                     f,
-                    "the CQL row contains a column {} at column index {}, but the corresponding field is not found in the Rust type",
-                    column_name,
-                    column_index,
+                    "the CQL row contains a column {column_name} at column index {column_index}, but the corresponding field is not found in the Rust type",
                 )
             }
             BuiltinTypeCheckErrorKind::ValuesMissingForColumns { column_names } => {
                 write!(
                     f,
-                    "values for columns {:?} are missing from the DB data but are required by the Rust type",
-                    column_names
+                    "values for columns {column_names:?} are missing from the DB data but are required by the Rust type"
                 )
             },
             BuiltinTypeCheckErrorKind::ColumnNameMismatch {
@@ -385,11 +382,7 @@ impl Display for BuiltinTypeCheckErrorKind {
                 db_column_name
             } => write!(
                 f,
-                "expected column with name {} at column index {}, but the Rust field name at corresponding field index {} is {}",
-                db_column_name,
-                column_index,
-                field_index,
-                rust_column_name,
+                "expected column with name {db_column_name} at column index {column_index}, but the Rust field name at corresponding field index {field_index} is {rust_column_name}",
             ),
             BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
                 column_index,
@@ -401,9 +394,7 @@ impl Display for BuiltinTypeCheckErrorKind {
             ),
             BuiltinTypeCheckErrorKind::DuplicatedColumn { column_name, column_index } => write!(
                 f,
-                "column {} occurs more than once in DB metadata; second occurrence is at column index {}",
-                column_name,
-                column_index,
+                "column {column_name} occurs more than once in DB metadata; second occurrence is at column index {column_index}",
             ),
         }
     }

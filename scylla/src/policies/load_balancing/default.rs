@@ -1315,8 +1315,7 @@ mod tests {
                             if gots.len() > 1 && s.len() > 1 {
                                 assert!(
                                     sets.len() > 1,
-                                    "Group {:?} is expected to be nondeterministic, but it appears to be deterministic",
-                                    expected
+                                    "Group {expected:?} is expected to be nondeterministic, but it appears to be deterministic"
                                 );
                             }
                         }
@@ -1330,8 +1329,7 @@ mod tests {
                             assert_eq!(
                                 sets.len(),
                                 1,
-                                "Group {:?} is expected to be deterministic, but it appears to be nondeterministic",
-                                expected
+                                "Group {expected:?} is expected to be deterministic, but it appears to be nondeterministic"
                             );
                         }
                     }
@@ -3185,7 +3183,7 @@ mod latency_awareness {
                         .unwrap();
                     let mut node_latency =
                         node_latencies.entry(host_id).or_default().write().unwrap();
-                    println!("Set latency: node {}, latency {:?}.", id, average);
+                    println!("Set latency: node {id}, latency {average:?}.");
                     *node_latency = average;
                 }
                 println!("Set node latency stats.")
