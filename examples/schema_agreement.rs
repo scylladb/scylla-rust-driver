@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
     // Create connection
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
 
     let schema_version = session.await_schema_agreement().await?;
 
-    println!("Schema version: {}", schema_version);
+    println!("Schema version: {schema_version}");
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -74,13 +74,13 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<(i32, i32, String)>()?;
     while let Some((a, b, c)) = iter.try_next().await? {
-        println!("a, b, c: {}, {}, {}", a, b, c);
+        println!("a, b, c: {a}, {b}, {c}");
     }
 
     println!("Ok.");
 
     let schema_version = session.await_schema_agreement().await?;
-    println!("Schema version: {}", schema_version);
+    println!("Schema version: {schema_version}");
 
     Ok(())
 }

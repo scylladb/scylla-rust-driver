@@ -5,12 +5,8 @@ pub(crate) fn parse_named_fields<'a>(
     input: &'a DeriveInput,
     current_derive: &str,
 ) -> Result<&'a FieldsNamed, syn::Error> {
-    let create_err_msg = || {
-        format!(
-            "derive({}) works only for structs with named fields",
-            current_derive
-        )
-    };
+    let create_err_msg =
+        || format!("derive({current_derive}) works only for structs with named fields");
 
     match &input.data {
         Data::Struct(data) => match &data.fields {

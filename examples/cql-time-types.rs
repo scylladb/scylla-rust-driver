@@ -14,7 +14,7 @@ use std::env;
 async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
             Err(_) => continue, // We might read a date that does not fit in NaiveDate, skip it
         };
 
-        println!("Parsed a date into chrono::NaiveDate: {:?}", read_date);
+        println!("Parsed a date into chrono::NaiveDate: {read_date:?}");
     }
 
     // Alternatively, you can enable 'time' feature and use `time::Date` to represent date. `time::Date` only allows
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
             Err(_) => continue, // We might read a date that does not fit in time::Date, skip it
         };
 
-        println!("Parsed a date into time::Date: {:?}", read_date);
+        println!("Parsed a date into time::Date: {read_date:?}");
     }
 
     // Dates outside this range must be represented in the raw form - an u32 describing days since -5877641-06-23
@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
             _ => panic!("oh no"),
         };
 
-        println!("Read a date as raw days: {}", read_days);
+        println!("Read a date as raw days: {read_days}");
     }
 
     // Time
@@ -126,7 +126,7 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<(NaiveTime,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
-        println!("Parsed a time into chrono::NaiveTime: {:?}", read_time);
+        println!("Parsed a time into chrono::NaiveTime: {read_time:?}");
     }
 
     // time::Time
@@ -141,7 +141,7 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<(time::Time,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
-        println!("Parsed a time into time::Time: {:?}", read_time);
+        println!("Parsed a time into time::Time: {read_time:?}");
     }
 
     // CqlTime
@@ -156,7 +156,7 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<(CqlTime,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
-        println!("Read a time as raw nanos: {:?}", read_time);
+        println!("Read a time as raw nanos: {read_time:?}");
     }
 
     // Timestamp
@@ -187,10 +187,7 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<(DateTime<Utc>,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
-        println!(
-            "Parsed a timestamp into chrono::DateTime<chrono::Utc>: {:?}",
-            read_time
-        );
+        println!("Parsed a timestamp into chrono::DateTime<chrono::Utc>: {read_time:?}");
     }
 
     // time::OffsetDateTime
@@ -208,10 +205,7 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<(time::OffsetDateTime,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
-        println!(
-            "Parsed a timestamp into time::OffsetDateTime: {:?}",
-            read_time
-        );
+        println!("Parsed a timestamp into time::OffsetDateTime: {read_time:?}");
     }
 
     // CqlTimestamp
@@ -229,7 +223,7 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<(CqlTimestamp,)>()?;
     while let Some((read_time,)) = iter.try_next().await? {
-        println!("Read a timestamp as raw millis: {:?}", read_time);
+        println!("Read a timestamp as raw millis: {read_time:?}");
     }
 
     Ok(())

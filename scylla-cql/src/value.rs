@@ -1128,14 +1128,14 @@ impl std::fmt::Display for CqlValue {
                     HexBytes(bytes)
                 )?
             }
-            CqlValue::Float(fl) => write!(f, "{}", fl)?,
-            CqlValue::Double(d) => write!(f, "{}", d)?,
-            CqlValue::Boolean(b) => write!(f, "{}", b)?,
-            CqlValue::Int(i) => write!(f, "{}", i)?,
-            CqlValue::BigInt(bi) => write!(f, "{}", bi)?,
-            CqlValue::Inet(i) => write!(f, "'{}'", i)?,
-            CqlValue::SmallInt(si) => write!(f, "{}", si)?,
-            CqlValue::TinyInt(ti) => write!(f, "{}", ti)?,
+            CqlValue::Float(fl) => write!(f, "{fl}")?,
+            CqlValue::Double(d) => write!(f, "{d}")?,
+            CqlValue::Boolean(b) => write!(f, "{b}")?,
+            CqlValue::Int(i) => write!(f, "{i}")?,
+            CqlValue::BigInt(bi) => write!(f, "{bi}")?,
+            CqlValue::Inet(i) => write!(f, "'{i}'")?,
+            CqlValue::SmallInt(si) => write!(f, "{si}")?,
+            CqlValue::TinyInt(ti) => write!(f, "{ti}")?,
             CqlValue::Varint(vi) => write!(
                 f,
                 "blobAsVarint(0x{:x})",
@@ -1146,7 +1146,7 @@ impl std::fmt::Display for CqlValue {
                 // TODO: chrono::NaiveDate does not handle the whole range
                 // supported by the `date` datatype
                 match d.try_to_chrono_04_naive_date() {
-                    Ok(d) => write!(f, "'{}'", d)?,
+                    Ok(d) => write!(f, "'{d}'")?,
                     Err(_) => f.write_str("<date out of representable range>")?,
                 }
             }
@@ -1165,8 +1165,8 @@ impl std::fmt::Display for CqlValue {
                 Ok(d) => write!(f, "{}", d.format("'%Y-%m-%d %H:%M:%S%.3f%z'"))?,
                 Err(_) => f.write_str("<timestamp out of representable range>")?,
             },
-            CqlValue::Timeuuid(t) => write!(f, "{}", t)?,
-            CqlValue::Uuid(u) => write!(f, "{}", u)?,
+            CqlValue::Timeuuid(t) => write!(f, "{t}")?,
+            CqlValue::Uuid(u) => write!(f, "{u}")?,
 
             // Compound types
             CqlValue::Tuple(t) => {

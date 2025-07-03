@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
     // Create connection
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9142".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let rustls_ca = CertificateDer::from_pem_file("./test/tls/ca.crt")?;
     let mut root_store = rustls::RootCertStore::empty();
@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
         .await?
         .rows_stream::<(i32, i32, String)>()?;
     while let Some((a, b, c)) = iter.try_next().await? {
-        println!("a, b, c: {}, {}, {}", a, b, c);
+        println!("a, b, c: {a}, {b}, {c}");
     }
 
     println!("Ok.");

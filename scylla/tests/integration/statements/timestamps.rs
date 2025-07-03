@@ -22,18 +22,17 @@ async fn test_timestamp() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t_timestamp (a text, b text, primary key (a))",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.t_timestamp (a text, b text, primary key (a))"
         ))
         .await
         .unwrap();
 
     session.await_schema_agreement().await.unwrap();
 
-    let query_str = format!("INSERT INTO {}.t_timestamp (a, b) VALUES (?, ?)", ks);
+    let query_str = format!("INSERT INTO {ks}.t_timestamp (a, b) VALUES (?, ?)");
 
     // test regular query timestamps
 
@@ -99,7 +98,7 @@ async fn test_timestamp() {
 
     let query_rows_result = session
         .query_unpaged(
-            format!("SELECT a, b, WRITETIME(b) FROM {}.t_timestamp", ks),
+            format!("SELECT a, b, WRITETIME(b) FROM {ks}.t_timestamp"),
             &[],
         )
         .await
@@ -152,36 +151,26 @@ async fn test_timestamp_generator() {
         .await
         .unwrap();
     let ks = unique_keyspace_name();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t_generator (a int primary key, b int)",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.t_generator (a int primary key, b int)"
         ))
         .await
         .unwrap();
 
     let prepared = session
-        .prepare(format!(
-            "INSERT INTO {}.t_generator (a, b) VALUES (1, 1)",
-            ks
-        ))
+        .prepare(format!("INSERT INTO {ks}.t_generator (a, b) VALUES (1, 1)"))
         .await
         .unwrap();
     session.execute_unpaged(&prepared, []).await.unwrap();
 
-    let unprepared = Statement::new(format!(
-        "INSERT INTO {}.t_generator (a, b) VALUES (2, 2)",
-        ks
-    ));
+    let unprepared = Statement::new(format!("INSERT INTO {ks}.t_generator (a, b) VALUES (2, 2)"));
     session.query_unpaged(unprepared, []).await.unwrap();
 
     let mut batch = Batch::new(BatchType::Unlogged);
     let stmt = session
-        .prepare(format!(
-            "INSERT INTO {}.t_generator (a, b) VALUES (3, 3)",
-            ks
-        ))
+        .prepare(format!("INSERT INTO {ks}.t_generator (a, b) VALUES (3, 3)"))
         .await
         .unwrap();
     batch.append_statement(stmt);
@@ -189,7 +178,7 @@ async fn test_timestamp_generator() {
 
     let query_rows_result = session
         .query_unpaged(
-            format!("SELECT a, b, WRITETIME(b) FROM {}.t_generator", ks),
+            format!("SELECT a, b, WRITETIME(b) FROM {ks}.t_generator"),
             &[],
         )
         .await

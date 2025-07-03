@@ -119,6 +119,6 @@ async fn test_connection_failure() {
     let res = SessionBuilder::new().known_node_addr(addr).build().await;
     match res {
         Ok(_) => panic!("Unexpected success"),
-        Err(err) => println!("Connection error (it was expected): {:?}", err),
+        Err(err) => println!("Connection error (it was expected): {err:?}"),
     }
 }

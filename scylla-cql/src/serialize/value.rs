@@ -1308,10 +1308,10 @@ impl Display for MapSerializationErrorKind {
                 f.write_str("the map contains too many elements to fit in CQL representation")
             }
             MapSerializationErrorKind::KeySerializationFailed(err) => {
-                write!(f, "failed to serialize one of the keys: {}", err)
+                write!(f, "failed to serialize one of the keys: {err}")
             }
             MapSerializationErrorKind::ValueSerializationFailed(err) => {
-                write!(f, "failed to serialize one of the values: {}", err)
+                write!(f, "failed to serialize one of the values: {err}")
             }
         }
     }

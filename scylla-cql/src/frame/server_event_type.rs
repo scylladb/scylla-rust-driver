@@ -20,7 +20,7 @@ impl fmt::Display for EventType {
             Self::SchemaChange => "SCHEMA_CHANGE",
         };
 
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 

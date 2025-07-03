@@ -1003,7 +1003,7 @@ mod tests {
             alive: 2,
         };
 
-        let db_error_displayed: String = format!("{}", db_error);
+        let db_error_displayed: String = format!("{db_error}");
 
         let mut expected_dberr_msg =
             "Not enough nodes are alive to satisfy required consistency level ".to_string();
@@ -1016,7 +1016,7 @@ mod tests {
             db_error,
             "a message about unavailable error".to_string(),
         ));
-        let execution_error_displayed: String = format!("{}", execution_error);
+        let execution_error_displayed: String = format!("{execution_error}");
 
         let mut expected_execution_err_msg = "Database returned an error: ".to_string();
         expected_execution_err_msg += &expected_dberr_msg;

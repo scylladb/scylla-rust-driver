@@ -72,7 +72,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
 
         // Create schema
         let ks = unique_keyspace_name();
-        let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks);
+        let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}");
         if scylla_supports_tablets(&session).await {
             create_ks += " and TABLETS = { 'enabled': false}";
         }
@@ -114,7 +114,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         fn who_was_queried(rxs: &mut Rxs) {
             for (i, rx) in rxs.iter_mut().enumerate() {
                 if rx.try_recv().is_ok() {
-                    println!("{} was queried.", i);
+                    println!("{i} was queried.");
                     return;
                 }
             }

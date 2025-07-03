@@ -170,17 +170,15 @@ fn count_tablet_feedbacks(
 async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: usize) {
     session
         .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {}
+            "CREATE KEYSPACE IF NOT EXISTS {ks}
             WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 2}}
-            AND tablets = {{ 'initial': {} }}",
-            ks, tablet_count
+            AND tablets = {{ 'initial': {tablet_count} }}"
         ))
         .await
         .unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.{} (a int, b int, c text, primary key (a, b))",
-            ks, table
+            "CREATE TABLE IF NOT EXISTS {ks}.{table} (a int, b int, c text, primary key (a, b))"
         ))
         .await
         .unwrap();
@@ -225,10 +223,7 @@ async fn test_default_policy_is_tablet_aware() {
             let tablets = get_tablets(&session, &ks, "t").await;
 
             let prepared = session
-                .prepare(format!(
-                    "INSERT INTO {}.t (a, b, c) VALUES (?, ?, 'abc')",
-                    ks
-                ))
+                .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, 'abc')"))
                 .await
                 .unwrap();
 
@@ -433,17 +428,13 @@ async fn test_lwt_optimization_works_with_tablets() {
             let tablets = get_tablets(&session, &ks, "t").await;
 
             let prepared_insert = session
-                .prepare(format!(
-                    "INSERT INTO {}.t (a, b, c) VALUES (?, ?, null)",
-                    ks
-                ))
+                .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, null)"))
                 .await
                 .unwrap();
 
             let prepared_lwt_update = session
                 .prepare(format!(
-                    "UPDATE {}.t SET c = ? WHERE a = ? and b = ? IF c != null",
-                    ks
+                    "UPDATE {ks}.t SET c = ? WHERE a = ? and b = ? IF c != null"
                 ))
                 .await
                 .unwrap();

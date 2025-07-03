@@ -20,7 +20,7 @@ async fn batch_statements_and_values_mismatch_detected() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
     session
         .ddl("CREATE TABLE IF NOT EXISTS batch_serialization_test (p int PRIMARY KEY, val int)")
@@ -103,13 +103,12 @@ async fn test_large_batch_statements() {
 async fn create_test_session(session: Session, ks: &String) -> Session {
     session
         .ddl(
-            format!("CREATE KEYSPACE {} WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1 }}",ks),
+            format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1 }}"),
         )
         .await.unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE {}.pairs (dummy int, k blob, v blob, primary key (dummy, k))",
-            ks
+            "CREATE TABLE {ks}.pairs (dummy int, k blob, v blob, primary key (dummy, k))"
         ))
         .await
         .unwrap();
@@ -123,7 +122,7 @@ async fn write_batch(
 ) -> Result<QueryResult, ExecutionError> {
     let mut batch_query = Batch::new(BatchType::Unlogged);
     let mut batch_values = Vec::new();
-    let statement_str = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);
+    let statement_str = format!("INSERT INTO {ks}.pairs (dummy, k, v) VALUES (0, ?, ?)");
     let statement = Statement::new(statement_str);
     let prepared_statement = session.prepare(statement).await.unwrap();
     for i in 0..n {
@@ -143,7 +142,7 @@ async fn test_quietly_prepare_batch() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
@@ -232,10 +231,7 @@ async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(
         .collect();
     for expected_row in expected_rows.iter() {
         if !selected_rows.contains(expected_row) {
-            panic!(
-                "Expected {:?} to contain row: {:?}, but they didn't",
-                selected_rows, expected_row
-            );
+            panic!("Expected {selected_rows:?} to contain row: {expected_row:?}, but they didn't");
         }
     }
 }
@@ -246,7 +242,7 @@ async fn test_batch_lwts() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    let mut create_ks = format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}", ks);
+    let mut create_ks = format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}");
     if scylla_supports_tablets(&session).await {
         create_ks += " and TABLETS = { 'enabled': false}";
     }
@@ -372,7 +368,7 @@ async fn test_prepare_batch() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
@@ -467,19 +463,17 @@ async fn test_batch() {
     let session = Arc::new(create_new_session_builder().build().await.unwrap());
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t_batch (a int, b int, c text, primary key (a, b))",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.t_batch (a int, b int, c text, primary key (a, b))"
         ))
         .await
         .unwrap();
 
     let prepared_statement = session
         .prepare(format!(
-            "INSERT INTO {}.t_batch (a, b, c) VALUES (?, ?, ?)",
-            ks
+            "INSERT INTO {ks}.t_batch (a, b, c) VALUES (?, ?, ?)"
         ))
         .await
         .unwrap();
@@ -487,8 +481,8 @@ async fn test_batch() {
     // TODO: Add API that supports binding values to statements in batch creation process,
     // to avoid problem of statements/values count mismatch
     let mut batch: Batch = Default::default();
-    batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (?, ?, ?)", ks)[..]);
-    batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (7, 11, '')", ks)[..]);
+    batch.append_statement(&format!("INSERT INTO {ks}.t_batch (a, b, c) VALUES (?, ?, ?)")[..]);
+    batch.append_statement(&format!("INSERT INTO {ks}.t_batch (a, b, c) VALUES (7, 11, '')")[..]);
     batch.append_statement(prepared_statement.clone());
 
     let four_value: i32 = 4;
@@ -511,7 +505,7 @@ async fn test_batch() {
     .unwrap();
 
     let mut results: Vec<(i32, i32, String)> = session
-        .query_unpaged(format!("SELECT a, b, c FROM {}.t_batch", ks), &[])
+        .query_unpaged(format!("SELECT a, b, c FROM {ks}.t_batch"), &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -539,18 +533,14 @@ async fn test_batch() {
     // This statement flushes the prepared statement cache
     session
         .ddl(format!(
-            "ALTER TABLE {}.t_batch WITH gc_grace_seconds = 42",
-            ks
+            "ALTER TABLE {ks}.t_batch WITH gc_grace_seconds = 42"
         ))
         .await
         .unwrap();
     session.batch(&batch, values).await.unwrap();
 
     let results: Vec<(i32, i32, String)> = session
-        .query_unpaged(
-            format!("SELECT a, b, c FROM {}.t_batch WHERE a = 4", ks),
-            &[],
-        )
+        .query_unpaged(format!("SELECT a, b, c FROM {ks}.t_batch WHERE a = 4"), &[])
         .await
         .unwrap()
         .into_rows_result()
@@ -571,7 +561,7 @@ async fn test_counter_batch() {
 
     // Need to disable tablets in this test because they don't support counters yet.
     // (https://github.com/scylladb/scylladb/commit/c70f321c6f581357afdf3fd8b4fe8e5c5bb9736e).
-    let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks);
+    let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}");
     if scylla_supports_tablets(&session).await {
         create_ks += " AND TABLETS = {'enabled': false}"
     }
@@ -579,13 +569,12 @@ async fn test_counter_batch() {
     session.ddl(create_ks).await.unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t_batch (key int PRIMARY KEY, value counter)",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.t_batch (key int PRIMARY KEY, value counter)"
         ))
         .await
         .unwrap();
 
-    let statement_str = format!("UPDATE {}.t_batch SET value = value + ? WHERE key = ?", ks);
+    let statement_str = format!("UPDATE {ks}.t_batch SET value = value + ? WHERE key = ?");
     let query = Statement::from(statement_str);
     let prepared = session.prepare(query.clone()).await.unwrap();
 
@@ -622,7 +611,7 @@ async fn test_batch_to_multiple_tables() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(&ks, true).await.unwrap();
     session
         .ddl("CREATE TABLE IF NOT EXISTS t_batch1 (a int, b int, c text, primary key (a, b))")

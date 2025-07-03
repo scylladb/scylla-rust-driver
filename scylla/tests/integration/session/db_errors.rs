@@ -21,9 +21,9 @@ async fn test_db_errors() {
     ));
 
     // AlreadyExists when creating a keyspace for the second time
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
 
-    let create_keyspace_res = session.ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await;
+    let create_keyspace_res = session.ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await;
     let keyspace_exists_error: DbError = match create_keyspace_res {
         Err(ExecutionError::LastAttemptError(RequestAttemptError::DbError(e, _))) => e,
         _ => panic!("Second CREATE KEYSPACE didn't return an error!"),
@@ -40,14 +40,13 @@ async fn test_db_errors() {
     // AlreadyExists when creating a table for the second time
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.tab (a text primary key)",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.tab (a text primary key)"
         ))
         .await
         .unwrap();
 
     let create_table_res = session
-        .ddl(format!("CREATE TABLE {}.tab (a text primary key)", ks))
+        .ddl(format!("CREATE TABLE {ks}.tab (a text primary key)"))
         .await;
     let create_tab_error: DbError = match create_table_res {
         Err(ExecutionError::LastAttemptError(RequestAttemptError::DbError(e, _))) => e,
@@ -76,7 +75,7 @@ async fn test_rate_limit_exceeded_exception() {
     }
 
     let ks = unique_keyspace_name();
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
     session.ddl("CREATE TABLE tbl (pk int PRIMARY KEY, v int) WITH per_partition_rate_limit = {'max_writes_per_second': 1}").await.unwrap();
 
@@ -107,6 +106,6 @@ async fn test_rate_limit_exceeded_exception() {
         )) => {
             assert_eq!(op_type, OperationType::Write);
         }
-        err => panic!("Unexpected error type received: {:?}", err),
+        err => panic!("Unexpected error type received: {err:?}"),
     }
 }

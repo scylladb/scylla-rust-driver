@@ -44,7 +44,7 @@ async fn test_consistent_shard_awareness() {
         let ks = unique_keyspace_name();
 
         /* Prepare schema */
-        let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks);
+        let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}");
         if scylla_supports_tablets(&session).await {
             create_ks += " and TABLETS = { 'enabled': false}";
         }
@@ -52,14 +52,13 @@ async fn test_consistent_shard_awareness() {
         session
             .ddl(
                 format!(
-                    "CREATE TABLE IF NOT EXISTS {}.t (a int, b int, c text, primary key (a, b))",
-                    ks
+                    "CREATE TABLE IF NOT EXISTS {ks}.t (a int, b int, c text, primary key (a, b))"
                 ),
             )
             .await
             .unwrap();
 
-        let prepared = session.prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, 'abc')", ks)).await.unwrap();
+        let prepared = session.prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, 'abc')")).await.unwrap();
 
         let value_lists = [
             (4, 2),

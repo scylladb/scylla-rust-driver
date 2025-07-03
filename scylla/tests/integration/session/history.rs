@@ -216,7 +216,7 @@ async fn iterator_query_history() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
     session
-    .ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
+    .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
     .await
     .unwrap();
     session.use_keyspace(ks, true).await.unwrap();

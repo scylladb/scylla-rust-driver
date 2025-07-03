@@ -175,7 +175,7 @@ impl TlsConfig {
             context,
             #[cfg(feature = "unstable-cloud")]
             sni: Some(if let Some(host_id) = host_id {
-                format!("{}.{}", host_id, domain_name)
+                format!("{host_id}.{domain_name}")
             } else {
                 domain_name.into()
             }),

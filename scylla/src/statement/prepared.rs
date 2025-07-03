@@ -645,7 +645,7 @@ mod tests {
         let col_specs: Vec<_> = cols
             .into_iter()
             .enumerate()
-            .map(|(i, typ)| ColumnSpec::owned(format!("col_{}", i), typ, table_spec.clone()))
+            .map(|(i, typ)| ColumnSpec::owned(format!("col_{i}"), typ, table_spec.clone()))
             .collect();
         let mut pk_indexes = idx
             .into_iter()

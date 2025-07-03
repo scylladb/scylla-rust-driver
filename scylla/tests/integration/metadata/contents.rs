@@ -96,12 +96,12 @@ async fn test_schema_types_in_metadata() {
     let ks = unique_keyspace_name();
 
     session
-        .ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
+        .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
         .await
         .unwrap();
 
     session
-        .query_unpaged(format!("USE {}", ks), &[])
+        .query_unpaged(format!("USE {ks}"), &[])
         .await
         .unwrap();
 
@@ -249,12 +249,12 @@ async fn test_user_defined_types_in_metadata() {
     let ks = unique_keyspace_name();
 
     session
-        .ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
+        .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
         .await
         .unwrap();
 
     session
-        .query_unpaged(format!("USE {}", ks), &[])
+        .query_unpaged(format!("USE {ks}"), &[])
         .await
         .unwrap();
 
@@ -309,12 +309,12 @@ async fn test_column_kinds_in_metadata() {
     let ks = unique_keyspace_name();
 
     session
-        .ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
+        .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
         .await
         .unwrap();
 
     session
-        .query_unpaged(format!("USE {}", ks), &[])
+        .query_unpaged(format!("USE {ks}"), &[])
         .await
         .unwrap();
 
@@ -354,12 +354,12 @@ async fn test_primary_key_ordering_in_metadata() {
     let ks = unique_keyspace_name();
 
     session
-        .ddl(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks))
+        .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
         .await
         .unwrap();
 
     session
-        .query_unpaged(format!("USE {}", ks), &[])
+        .query_unpaged(format!("USE {ks}"), &[])
         .await
         .unwrap();
 
@@ -412,7 +412,7 @@ async fn test_table_partitioner_in_metadata() {
     session.ddl(create_ks).await.unwrap();
 
     session
-        .query_unpaged(format!("USE {}", ks), &[])
+        .query_unpaged(format!("USE {ks}"), &[])
         .await
         .unwrap();
 
@@ -445,7 +445,7 @@ async fn test_views_in_schema_info() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks);
+    let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}");
     // Materialized views + tablets are not supported in Scylla 2025.1.
     if scylla_supports_tablets(&session).await {
         create_ks += " and TABLETS = { 'enabled': false}";

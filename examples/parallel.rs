@@ -10,7 +10,7 @@ use tokio::sync::Semaphore;
 async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
     let session = Arc::new(session);
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
 
     for i in 0..100_000usize {
         if i % 1000 == 0 {
-            println!("{}", i);
+            println!("{i}");
         }
         let session = session.clone();
         let permit = sem.clone().acquire_owned().await;

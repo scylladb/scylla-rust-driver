@@ -22,14 +22,13 @@ async fn test_token_awareness() {
     session.ddl(create_ks).await.unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t (a text primary key)",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.t (a text primary key)"
         ))
         .await
         .unwrap();
 
     let mut prepared_statement = session
-        .prepare(format!("INSERT INTO {}.t (a) VALUES (?)", ks))
+        .prepare(format!("INSERT INTO {ks}.t (a) VALUES (?)"))
         .await
         .unwrap();
     prepared_statement.set_tracing(true);

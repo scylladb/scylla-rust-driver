@@ -410,7 +410,7 @@ impl RequestReaction {
             error.clone(),
             None,
         )
-        .unwrap_or_else(|_| panic!("Invalid DbError provided: {:#?}", error));
+        .unwrap_or_else(|_| panic!("Invalid DbError provided: {error:#?}"));
 
         RequestReaction {
             to_addressee: None,

@@ -5,7 +5,7 @@ pub(crate) struct HexBytes<'a>(pub(crate) &'a [u8]);
 impl LowerHex for HexBytes<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for b in self.0 {
-            write!(f, "{:02x}", b)?;
+            write!(f, "{b:02x}")?;
         }
         Ok(())
     }
@@ -14,7 +14,7 @@ impl LowerHex for HexBytes<'_> {
 impl UpperHex for HexBytes<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for b in self.0 {
-            write!(f, "{:02X}", b)?;
+            write!(f, "{b:02X}")?;
         }
         Ok(())
     }
@@ -63,7 +63,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.0 {
             None => write!(f, "null")?,
-            Some(v) => write!(f, "{}", v)?,
+            Some(v) => write!(f, "{v}")?,
         }
         Ok(())
     }

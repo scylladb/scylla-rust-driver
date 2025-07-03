@@ -83,14 +83,14 @@ fn do_serialize_err<T: SerializeValue>(t: T, typ: &ColumnType) -> SerializationE
 fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {
     match err.0.downcast_ref() {
         Some(err) => err,
-        None => panic!("not a BuiltinTypeCheckError: {}", err),
+        None => panic!("not a BuiltinTypeCheckError: {err}"),
     }
 }
 
 pub(crate) fn get_ser_err(err: &SerializationError) -> &BuiltinSerializationError {
     match err.0.downcast_ref() {
         Some(err) => err,
-        None => panic!("not a BuiltinSerializationError: {}", err),
+        None => panic!("not a BuiltinSerializationError: {err}"),
     }
 }
 

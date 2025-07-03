@@ -118,13 +118,13 @@ impl TryFrom<Consistency> for SerialConsistency {
 
 impl std::fmt::Display for Consistency {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
 impl std::fmt::Display for SerialConsistency {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -568,7 +568,7 @@ fn type_consistency() {
 
     // Check that the error message contains information about the invalid value
     let err_str = format!("{}", c_result.unwrap_err());
-    assert!(err_str.contains(&format!("{}", c)));
+    assert!(err_str.contains(&format!("{c}")));
 }
 
 pub fn read_inet(buf: &mut &[u8]) -> Result<SocketAddr, LowLevelDeserializationError> {

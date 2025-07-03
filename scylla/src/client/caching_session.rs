@@ -462,8 +462,7 @@ mod tests {
 
         session
             .ddl(format!(
-                "CREATE TABLE IF NOT EXISTS {}.test_table (a int primary key, b int)",
-                ks
+                "CREATE TABLE IF NOT EXISTS {ks}.test_table (a int primary key, b int)"
             ))
             .await
             .expect("Could not create table");
@@ -615,8 +614,7 @@ mod tests {
         for expected_row in expected_rows.iter() {
             if !selected_rows.contains(expected_row) {
                 panic!(
-                    "Expected {:?} to contain row: {:?}, but they didn't",
-                    selected_rows, expected_row
+                    "Expected {selected_rows:?} to contain row: {expected_row:?}, but they didn't"
                 );
             }
         }

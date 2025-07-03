@@ -14,7 +14,7 @@ use std::sync::Arc;
 async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    println!("Connecting to {} ...", uri);
+    println!("Connecting to {uri} ...");
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
@@ -37,13 +37,13 @@ async fn main() -> Result<()> {
 
     // Access the collected history and print it
     let structured_history: StructuredHistory = history_listener.clone_structured_history();
-    println!("Query history: {}", structured_history);
+    println!("Query history: {structured_history}");
 
     // A single history collector can contain histories of multiple queries.
     // To clear a collector create a new one and set it again.
     let _second_execution = session.query_unpaged(query, ()).await;
     let structured_history: StructuredHistory = history_listener.clone_structured_history();
-    println!("Two queries history: {}", structured_history);
+    println!("Two queries history: {structured_history}");
 
     // The same works for other types of queries, e.g iterators
     for i in 0..32 {

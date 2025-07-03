@@ -214,7 +214,7 @@ impl Generator for ColumnSortingGenerator<'_> {
         let struct_name = &self.ctx.struct_name;
         // 1. Defining a partial struct
         let partial_struct_name = syn::Ident::new(
-            &format!("_{}ScyllaSerPartial", struct_name),
+            &format!("_{struct_name}ScyllaSerPartial"),
             struct_name.span(),
         );
         let mut partial_generics = self.ctx.generics.clone();

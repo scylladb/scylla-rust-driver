@@ -34,16 +34,15 @@ async fn test_prepared_statement() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t2 (a int, b int, c text, primary key (a, b))",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.t2 (a int, b int, c text, primary key (a, b))"
         ))
         .await
         .unwrap();
     session
-        .ddl(format!("CREATE TABLE IF NOT EXISTS {}.complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))", ks))
+        .ddl(format!("CREATE TABLE IF NOT EXISTS {ks}.complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))"))
         .await
         .unwrap();
 
@@ -52,7 +51,7 @@ async fn test_prepared_statement() {
     session.refresh_metadata().await.unwrap();
 
     let prepared_statement = session
-        .prepare(format!("SELECT a, b, c FROM {}.t2", ks))
+        .prepare(format!("SELECT a, b, c FROM {ks}.t2"))
         .await
         .unwrap();
     let query_result = session.execute_iter(prepared_statement, &[]).await.unwrap();
@@ -64,13 +63,12 @@ async fn test_prepared_statement() {
     }
 
     let prepared_statement = session
-        .prepare(format!("INSERT INTO {}.t2 (a, b, c) VALUES (?, ?, ?)", ks))
+        .prepare(format!("INSERT INTO {ks}.t2 (a, b, c) VALUES (?, ?, ?)"))
         .await
         .unwrap();
     let prepared_complex_pk_statement = session
         .prepare(format!(
-            "INSERT INTO {}.complex_pk (a, b, c, d) VALUES (?, ?, ?, 7)",
-            ks
+            "INSERT INTO {ks}.complex_pk (a, b, c, d) VALUES (?, ?, ?, 7)"
         ))
         .await
         .unwrap();
@@ -89,7 +87,7 @@ async fn test_prepared_statement() {
     // Verify that token calculation is compatible with Scylla
     {
         let (value,): (i64,) = session
-            .query_unpaged(format!("SELECT token(a) FROM {}.t2", ks), &[])
+            .query_unpaged(format!("SELECT token(a) FROM {ks}.t2"), &[])
             .await
             .unwrap()
             .into_rows_result()
@@ -110,7 +108,7 @@ async fn test_prepared_statement() {
     }
     {
         let (value,): (i64,) = session
-            .query_unpaged(format!("SELECT token(a,b,c) FROM {}.complex_pk", ks), &[])
+            .query_unpaged(format!("SELECT token(a,b,c) FROM {ks}.complex_pk"), &[])
             .await
             .unwrap()
             .into_rows_result()
@@ -133,7 +131,7 @@ async fn test_prepared_statement() {
     // Verify that correct data was inserted
     {
         let rs = session
-            .query_unpaged(format!("SELECT a,b,c FROM {}.t2", ks), &[])
+            .query_unpaged(format!("SELECT a,b,c FROM {ks}.t2"), &[])
             .await
             .unwrap()
             .into_rows_result()
@@ -146,7 +144,7 @@ async fn test_prepared_statement() {
         assert_eq!(r, &(17, 16, String::from("I'm prepared!!!")));
 
         let mut results_from_manual_paging = vec![];
-        let query = Statement::new(format!("SELECT a, b, c FROM {}.t2", ks)).with_page_size(1);
+        let query = Statement::new(format!("SELECT a, b, c FROM {ks}.t2")).with_page_size(1);
         let prepared_paged = session.prepare(query).await.unwrap();
         let mut paging_state = PagingState::start();
         let mut watchdog = 0;
@@ -176,7 +174,7 @@ async fn test_prepared_statement() {
     }
     {
         let (a, b, c, d, e): (i32, i32, String, i32, Option<i32>) = session
-            .query_unpaged(format!("SELECT a,b,c,d,e FROM {}.complex_pk", ks), &[])
+            .query_unpaged(format!("SELECT a,b,c,d,e FROM {ks}.complex_pk"), &[])
             .await
             .unwrap()
             .into_rows_result()
@@ -280,7 +278,7 @@ async fn test_token_calculation() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks.as_str(), true).await.unwrap();
 
     #[allow(clippy::too_many_arguments)]
@@ -338,7 +336,7 @@ async fn test_token_calculation() {
             .unwrap();
 
         for i in 1..50usize {
-            eprintln!("Trying key size {}", i);
+            eprintln!("Trying key size {i}");
             let mut s = String::new();
             for _ in 0..i {
                 s.push('a');
@@ -440,9 +438,8 @@ async fn test_prepared_statement_col_specs() {
     let ks = unique_keyspace_name();
     session
         .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION =
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION =
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
         ))
         .await
         .unwrap();
@@ -506,7 +503,7 @@ async fn test_skip_result_metadata() {
             .unwrap();
 
         let ks = unique_keyspace_name();
-        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks)).await.unwrap();
+        session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
         session.use_keyspace(ks, false).await.unwrap();
         session
             .ddl("CREATE TABLE t (a int primary key, b int, c text)")
@@ -561,7 +558,7 @@ async fn test_skip_result_metadata() {
         {
             let ks = unique_keyspace_name();
 
-            session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+            session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
             session.use_keyspace(ks, true).await.unwrap();
 
             type RowT = (i32, i32, String);
@@ -667,8 +664,7 @@ fn assert_preparation_attempted_exactly_once_on_each_node(
         let preparation_attempts_to_node: usize = per_shard_feedbacks_count.values().sum();
         assert_eq!(
             1, preparation_attempts_to_node,
-            "Unexpected number of preparation attempts on node {}: expected 1, got {}",
-            node_num, preparation_attempts_to_node,
+            "Unexpected number of preparation attempts on node {node_num}: expected 1, got {preparation_attempts_to_node}",
         );
     }
 }
@@ -690,9 +686,7 @@ fn assert_preparation_attempted_on_all_shards(
             {
                 assert!(
                     preparation_attempts_to_shard >= 1,
-                    "Preparation was not attempted on node {}, shard {}",
-                    node_num,
-                    shard
+                    "Preparation was not attempted on node {node_num}, shard {shard}"
                 );
             }
         }

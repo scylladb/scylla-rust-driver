@@ -9,14 +9,14 @@ use crate::utils::{
 
 async fn rename(session: &Session, rename_str: &str) {
     session
-        .ddl(format!("ALTER TABLE tab RENAME {}", rename_str))
+        .ddl(format!("ALTER TABLE tab RENAME {rename_str}"))
         .await
         .unwrap();
 }
 
 async fn rename_caching(session: &CachingSession, rename_str: &str) {
     session
-        .ddl(format!("ALTER TABLE tab RENAME {}", rename_str))
+        .ddl(format!("ALTER TABLE tab RENAME {rename_str}"))
         .await
         .unwrap();
 }
@@ -35,7 +35,7 @@ async fn test_unprepared_reprepare_in_execute() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -102,7 +102,7 @@ async fn test_unprepared_reprepare_in_batch() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -165,7 +165,7 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     let caching_session: CachingSession = CachingSession::from(session, 64);

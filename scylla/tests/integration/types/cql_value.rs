@@ -12,9 +12,8 @@ async fn test_cqlvalue_udt() {
     let ks = unique_keyspace_name();
     session
         .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
         ))
         .await
         .unwrap();
@@ -63,9 +62,8 @@ async fn test_cqlvalue_duration() {
     let ks = unique_keyspace_name();
     session
         .ddl(format!(
-            "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-                {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-            ks
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = \
+                {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
         ))
         .await
         .unwrap();

@@ -200,7 +200,7 @@ struct DisplayableRealAddrOption(Option<SocketAddr>);
 impl Display for DisplayableRealAddrOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(addr) = self.0 {
-            write!(f, "{}", addr)
+            write!(f, "{addr}")
         } else {
             write!(f, "<dry mode>")
         }
@@ -212,7 +212,7 @@ struct DisplayableShard(Option<TargetShard>);
 impl Display for DisplayableShard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(shard) = self.0 {
-            write!(f, "shard {}", shard)
+            write!(f, "shard {shard}")
         } else {
             write!(f, "unknown shard")
         }
@@ -455,8 +455,7 @@ impl RunningProxy {
     pub async fn finish(mut self) -> Result<(), ProxyError> {
         self.terminate_signaler.send(()).map_err(|err| {
             ProxyError::AwaitFinishFailure(format!(
-                "Send error in terminate_signaler: {} (bug!)",
-                err
+                "Send error in terminate_signaler: {err} (bug!)"
             ))
         })?;
         info!("Sent finish signal to proxy workers.");
@@ -1725,7 +1724,7 @@ mod tests {
                     let socket = TcpSocket::new_v4().unwrap();
                     socket
                         .bind(mock_driver_addr)
-                        .unwrap_or_else(|_| panic!("driver_addr failed: {}", mock_driver_addr));
+                        .unwrap_or_else(|_| panic!("driver_addr failed: {mock_driver_addr}"));
                     driver_addr_tx.send(socket.local_addr().unwrap()).unwrap();
                     socket.connect(node1_proxy_addr).await.unwrap()
                 };

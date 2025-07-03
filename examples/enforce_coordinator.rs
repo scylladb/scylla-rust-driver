@@ -30,10 +30,7 @@ async fn query_system_local_and_verify(
 
     // "Actual" host_id and node_ip are the ones returned by the query, i.e. the ones stored in system.local.
     let (actual_host_id, actual_node_ip) = result.single_row::<(uuid::Uuid, IpAddr)>().unwrap();
-    println!(
-        "queried host_id: {}; queried node_ip: {}",
-        actual_host_id, actual_node_ip
-    );
+    println!("queried host_id: {actual_host_id}; queried node_ip: {actual_node_ip}");
 
     assert_eq!(enforced_node.host_id, actual_host_id);
     assert_eq!(enforced_node.address.ip(), actual_node_ip);
@@ -67,7 +64,7 @@ async fn main() -> Result<()> {
     // Enforce the node using `Arc<Node>`.
     {
         let node_identifier = NodeIdentifier::Node(Arc::clone(node));
-        println!("Enforcing target using {:?}...", node_identifier);
+        println!("Enforcing target using {node_identifier:?}...");
         query_local.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
             node_identifier,
             None,
@@ -79,7 +76,7 @@ async fn main() -> Result<()> {
     // Enforce the node using host_id.
     {
         let node_identifier = NodeIdentifier::HostId(expected_host_id);
-        println!("Enforcing target using {:?}...", node_identifier);
+        println!("Enforcing target using {node_identifier:?}...");
         query_local.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
             node_identifier,
             None,
@@ -92,7 +89,7 @@ async fn main() -> Result<()> {
     {
         let node_identifier =
             NodeIdentifier::NodeAddress(SocketAddr::new(expected_node_ip, node.address.port()));
-        println!("Enforcing target using {:?}...", node_identifier);
+        println!("Enforcing target using {node_identifier:?}...");
         query_local.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
             node_identifier,
             None,

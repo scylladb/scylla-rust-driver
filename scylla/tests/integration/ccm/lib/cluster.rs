@@ -159,21 +159,20 @@ impl Cluster {
                     );
                 }
             }
-            Err(err) => {
-                match err.kind() {
-                    std::io::ErrorKind::NotFound => {
-                        tokio::fs::create_dir_all(config_dir_path).await.with_context(
-                        || format! {"failed to create root directory {:?}", config_dir_path},
-                    )?;
-                    }
-                    _ => {
-                        return Err(Error::from(err).context(format!(
-                            "failed to create root directory {:?}",
-                            config_dir_path
-                        )));
-                    }
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::NotFound => {
+                    tokio::fs::create_dir_all(config_dir_path)
+                        .await
+                        .with_context(
+                            || format! {"failed to create root directory {config_dir_path:?}"},
+                        )?;
                 }
-            }
+                _ => {
+                    return Err(Error::from(err).context(format!(
+                        "failed to create root directory {config_dir_path:?}"
+                    )));
+                }
+            },
         }
 
         let lcmd = Arc::new(LoggedCmd::new());
@@ -305,7 +304,7 @@ impl Cluster {
             datacenter_id,
             ..NodeOptions::from_cluster_opts(&self.opts)
         };
-        let datacenter_name = format!("dc{}", datacenter_id);
+        let datacenter_name = format!("dc{datacenter_id}");
         self.ccm_cmd
             .cluster_add_node(self.opts.db_type, node_options.name())
             .dc(datacenter_name)

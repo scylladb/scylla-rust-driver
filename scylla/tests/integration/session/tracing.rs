@@ -17,12 +17,11 @@ async fn test_tracing() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
 
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.tab (a text primary key)",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.tab (a text primary key)"
         ))
         .await
         .unwrap();
@@ -38,14 +37,14 @@ async fn test_tracing() {
 
 async fn test_tracing_query(session: &Session, ks: String) {
     // A query without tracing enabled has no tracing uuid in result
-    let untraced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
+    let untraced_query: Statement = Statement::new(format!("SELECT * FROM {ks}.tab"));
     let untraced_query_result: QueryResult =
         session.query_unpaged(untraced_query, &[]).await.unwrap();
 
     assert!(untraced_query_result.tracing_id().is_none());
 
     // A query with tracing enabled has a tracing uuid in result
-    let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
+    let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {ks}.tab"));
     traced_query.set_tracing(true);
 
     let traced_query_result: QueryResult = session.query_unpaged(traced_query, &[]).await.unwrap();
@@ -58,7 +57,7 @@ async fn test_tracing_query(session: &Session, ks: String) {
 async fn test_tracing_execute(session: &Session, ks: String) {
     // Executing a prepared statement without tracing enabled has no tracing uuid in result
     let untraced_prepared = session
-        .prepare(format!("SELECT * FROM {}.tab", ks))
+        .prepare(format!("SELECT * FROM {ks}.tab"))
         .await
         .unwrap();
 
@@ -71,7 +70,7 @@ async fn test_tracing_execute(session: &Session, ks: String) {
 
     // Executing a prepared statement with tracing enabled has a tracing uuid in result
     let mut traced_prepared = session
-        .prepare(format!("SELECT * FROM {}.tab", ks))
+        .prepare(format!("SELECT * FROM {ks}.tab"))
         .await
         .unwrap();
 
@@ -90,14 +89,14 @@ async fn test_tracing_execute(session: &Session, ks: String) {
 async fn test_tracing_prepare(session: &Session, ks: String) {
     // Preparing a statement without tracing enabled has no tracing uuids in result
     let untraced_prepared = session
-        .prepare(format!("SELECT * FROM {}.tab", ks))
+        .prepare(format!("SELECT * FROM {ks}.tab"))
         .await
         .unwrap();
 
     assert!(untraced_prepared.prepare_tracing_ids.is_empty());
 
     // Preparing a statement with tracing enabled has tracing uuids in result
-    let mut to_prepare_traced = Statement::new(format!("SELECT * FROM {}.tab", ks));
+    let mut to_prepare_traced = Statement::new(format!("SELECT * FROM {ks}.tab"));
     to_prepare_traced.set_tracing(true);
 
     let traced_prepared = session.prepare(to_prepare_traced).await.unwrap();
@@ -111,7 +110,7 @@ async fn test_tracing_prepare(session: &Session, ks: String) {
 
 async fn test_get_tracing_info(session: &Session, ks: String) {
     // A query with tracing enabled has a tracing uuid in result
-    let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
+    let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {ks}.tab"));
     traced_query.set_tracing(true);
 
     let traced_query_result: QueryResult = session.query_unpaged(traced_query, &[]).await.unwrap();
@@ -125,7 +124,7 @@ async fn test_get_tracing_info(session: &Session, ks: String) {
 
 async fn test_tracing_query_iter(session: &Session, ks: String) {
     // A query without tracing enabled has no tracing ids
-    let untraced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
+    let untraced_query: Statement = Statement::new(format!("SELECT * FROM {ks}.tab"));
 
     let untraced_query_pager = session.query_iter(untraced_query, &[]).await.unwrap();
     assert!(untraced_query_pager.tracing_ids().is_empty());
@@ -134,7 +133,7 @@ async fn test_tracing_query_iter(session: &Session, ks: String) {
     assert!(untraced_typed_row_iter.tracing_ids().is_empty());
 
     // A query with tracing enabled has a tracing ids in result
-    let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {}.tab", ks));
+    let mut traced_query: Statement = Statement::new(format!("SELECT * FROM {ks}.tab"));
     traced_query.set_tracing(true);
 
     let traced_query_pager = session.query_iter(traced_query, &[]).await.unwrap();
@@ -150,7 +149,7 @@ async fn test_tracing_query_iter(session: &Session, ks: String) {
 async fn test_tracing_execute_iter(session: &Session, ks: String) {
     // A prepared statement without tracing enabled has no tracing ids
     let untraced_prepared = session
-        .prepare(format!("SELECT * FROM {}.tab", ks))
+        .prepare(format!("SELECT * FROM {ks}.tab"))
         .await
         .unwrap();
 
@@ -162,7 +161,7 @@ async fn test_tracing_execute_iter(session: &Session, ks: String) {
 
     // A prepared statement with tracing enabled has a tracing ids in result
     let mut traced_prepared = session
-        .prepare(format!("SELECT * FROM {}.tab", ks))
+        .prepare(format!("SELECT * FROM {ks}.tab"))
         .await
         .unwrap();
     traced_prepared.set_tracing(true);
@@ -180,14 +179,14 @@ async fn test_tracing_execute_iter(session: &Session, ks: String) {
 async fn test_tracing_batch(session: &Session, ks: String) {
     // A batch without tracing enabled has no tracing id
     let mut untraced_batch: Batch = Default::default();
-    untraced_batch.append_statement(&format!("INSERT INTO {}.tab (a) VALUES('a')", ks)[..]);
+    untraced_batch.append_statement(&format!("INSERT INTO {ks}.tab (a) VALUES('a')")[..]);
 
     let untraced_batch_result: QueryResult = session.batch(&untraced_batch, ((),)).await.unwrap();
     assert!(untraced_batch_result.tracing_id().is_none());
 
     // Batch with tracing enabled has a tracing uuid in result
     let mut traced_batch: Batch = Default::default();
-    traced_batch.append_statement(&format!("INSERT INTO {}.tab (a) VALUES('a')", ks)[..]);
+    traced_batch.append_statement(&format!("INSERT INTO {ks}.tab (a) VALUES('a')")[..]);
     traced_batch.set_tracing(true);
 
     let traced_batch_result: QueryResult = session.batch(&traced_batch, ((),)).await.unwrap();

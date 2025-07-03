@@ -106,19 +106,15 @@ async fn test_iter_methods_with_modification_statements() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks)).await.unwrap();
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {}.t (a int, b int, c text, primary key (a, b))",
-            ks
+            "CREATE TABLE IF NOT EXISTS {ks}.t (a int, b int, c text, primary key (a, b))"
         ))
         .await
         .unwrap();
 
-    let mut query = Statement::from(format!(
-        "INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')",
-        ks
-    ));
+    let mut query = Statement::from(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 2, 'abc')"));
     query.set_tracing(true);
     let mut rows_stream = session
         .query_iter(query, &[])
@@ -130,7 +126,7 @@ async fn test_iter_methods_with_modification_statements() {
     assert!(!rows_stream.tracing_ids().is_empty());
 
     let prepared_statement = session
-        .prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks))
+        .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, ?)"))
         .await
         .unwrap();
     let query_pager = session

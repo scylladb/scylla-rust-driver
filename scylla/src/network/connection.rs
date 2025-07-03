@@ -2496,7 +2496,7 @@ mod tests {
         setup_tracing();
         const MASK: &str = "2137";
 
-        let lwt_optimisation_entry = format!("{}={}", LWT_OPTIMIZATION_META_BIT_MASK_KEY, MASK);
+        let lwt_optimisation_entry = format!("{LWT_OPTIMIZATION_META_BIT_MASK_KEY}={MASK}");
 
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
 
