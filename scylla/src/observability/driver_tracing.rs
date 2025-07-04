@@ -3,13 +3,11 @@ use crate::network::Connection;
 use crate::response::query_result::QueryResult;
 use crate::routing::{Shard, Token};
 use itertools::{Either, Itertools};
-use scylla_cql::frame::response::result::ColumnSpec;
-use scylla_cql::frame::response::result::RawMetadataAndRawRows;
+use scylla_cql::frame::response::result::{ColumnSpec, RawMetadataAndRawRows};
 use scylla_cql::value::deser_cql_value;
 use std::borrow::Borrow;
 use std::fmt::Display;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tracing::trace_span;
 
