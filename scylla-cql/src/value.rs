@@ -25,6 +25,42 @@ pub struct Unset;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Counter(pub i64);
 
+// serde Serialize implementation for Counter
+#[cfg(feature = "serde")]
+impl serde::Serialize for Counter {
+    fn serialize<S>(&self, serializer: S) -> StdResult<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        serializer.serialize_i64(self.0)
+    }
+}
+
+// serde Deserialize implementation for Counter
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Counter {
+    fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
+    where
+    D: serde::Deserializer<'de> {
+        struct CounterVisitor;
+    
+        impl<'de> serde::de::Visitor<'de> for CounterVisitor {
+            type Value = Counter;
+        
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("Expecting i64 data type!")
+            }
+
+            fn visit_i64<E>(self, v: i64) -> StdResult<Self::Value, E>
+                where
+                    E: serde::de::Error, {
+                Ok(Counter(v))
+            }
+        }
+
+        deserializer.deserialize_i64(CounterVisitor)
+    }
+}
+
 /// Enum providing a way to represent a value that might be unset
 #[derive(Debug, Clone, Copy, Default)]
 pub enum MaybeUnset<V> {
@@ -49,6 +85,48 @@ impl<V> MaybeUnset<V> {
 /// For details, see [`Ord` implementation](#impl-Ord-for-CqlTimeuuid).
 #[derive(Debug, Clone, Copy, Eq)]
 pub struct CqlTimeuuid(Uuid);
+
+
+// serde Serialize implementation for CqlTimeuuid
+#[cfg(feature = "serde")]
+impl serde::Serialize for CqlTimeuuid {
+    fn serialize<S>(&self, serializer: S) -> StdResult<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        serializer.serialize_str(&self.0.simple().to_string())
+    }
+}
+
+// serde Deserialize implementation for CqlTimeuuid
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for CqlTimeuuid {
+    fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
+    where
+    D: serde::Deserializer<'de> {
+        struct CqlTimeuuidVisitor;
+    
+        impl<'de> serde::de::Visitor<'de> for CqlTimeuuidVisitor {
+            type Value = CqlTimeuuid;
+        
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("Expecting i64 data type!")
+            }
+
+            fn visit_borrowed_str<E>(self, v: &'de str) -> StdResult<Self::Value, E>
+                where
+                    E: serde::de::Error, {
+                uuid::Uuid::try_parse(v)
+                .map(|uuid| CqlTimeuuid(uuid))
+                .map_err(|_| serde::de::Error::invalid_value(
+                    serde::de::Unexpected::Str(v),
+                    &"Expected a Uuid string!"
+                ))
+            }
+        }
+
+        deserializer.deserialize_str(CqlTimeuuidVisitor)
+    }
+}
 
 /// [`Uuid`] delegate methods
 impl CqlTimeuuid {
@@ -237,6 +315,41 @@ impl std::hash::Hash for CqlTimeuuid {
 /// before comparison. For details, check [examples](#impl-PartialEq-for-CqlVarint).
 #[derive(Clone, Eq, Debug)]
 pub struct CqlVarint(Vec<u8>);
+
+// serde Serialize implementation for CqlVarint
+#[cfg(feature="serde")]
+impl serde::Serialize for CqlVarint {
+    fn serialize<S>(&self, serializer: S) -> StdResult<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+
+// serde Deserialize implementation for CqlVarint
+#[cfg(feature="serde")]
+impl<'de> serde::Deserialize<'de> for CqlVarint {
+    fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
+    where
+        D: serde::Deserializer<'de> {
+        struct VarintVisitor;
+        impl<'de> serde::de::Visitor<'de> for VarintVisitor {
+            type Value = CqlVarint;
+            fn visit_bytes<E>(self, v: &[u8]) -> StdResult<Self::Value, E>
+                where
+                E: serde::de::Error, {
+                    Ok(CqlVarint(v.to_vec()))
+            }
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("Expected Vec<u8>")
+            }
+        }
+
+        deserializer.deserialize_bytes(VarintVisitor)
+    }
+}
 
 /// A borrowed version of native CQL `varint` representation.
 ///
@@ -596,12 +709,16 @@ pub struct CqlDate(pub u32);
 /// Native CQL timestamp representation that allows full supported timestamp range.
 ///
 /// Represented as signed milliseconds since unix epoch.
+/// 
+/// serde traits not necessary. use chrono::DateTime<chrono::Utc>
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CqlTimestamp(pub i64);
 
 /// Native CQL time representation.
 ///
 /// Represented as nanoseconds since midnight.
+/// 
+/// serde traits not necessary. use chrono::NaiveTime
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CqlTime(pub i64);
 
@@ -810,6 +927,7 @@ impl TryInto<time_03::Time> for CqlTime {
 }
 
 /// Represents a CQL Duration value
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct CqlDuration {
     pub months: i32,
