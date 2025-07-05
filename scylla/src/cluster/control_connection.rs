@@ -18,21 +18,21 @@ use crate::statement::Statement;
 pub(super) struct ControlConnection {
     conn: Arc<Connection>,
     /// The custom server-side timeout set for requests executed on the control connection.
-    overriden_serverside_timeout: Option<Duration>,
+    overridden_serverside_timeout: Option<Duration>,
 }
 
 impl ControlConnection {
     pub(super) fn new(conn: Arc<Connection>) -> Self {
         Self {
             conn,
-            overriden_serverside_timeout: None,
+            overridden_serverside_timeout: None,
         }
     }
 
     /// Sets the custom server-side timeout set for requests executed on the control connection.
-    pub(super) fn override_serverside_timeout(self, overriden_timeout: Option<Duration>) -> Self {
+    pub(super) fn override_serverside_timeout(self, overridden_timeout: Option<Duration>) -> Self {
         Self {
-            overriden_serverside_timeout: overriden_timeout,
+            overridden_serverside_timeout: overridden_timeout,
             ..self
         }
     }
@@ -49,7 +49,7 @@ impl ControlConnection {
     /// Appends the custom server-side timeout to the statement string, if such custom timeout
     /// is provided and we are connected to ScyllaDB (since custom timeouts is ScyllaDB-only feature).
     fn maybe_append_timeout_override(&self, statement: &mut Statement) {
-        if let Some(timeout) = self.overriden_serverside_timeout {
+        if let Some(timeout) = self.overridden_serverside_timeout {
             if self.is_to_scylladb() {
                 // SAFETY: io::fmt::Write impl for String is infallible.
                 write!(

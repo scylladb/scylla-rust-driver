@@ -298,6 +298,13 @@ impl PreparedStatement {
         self.config.consistency = Some(c);
     }
 
+    /// Unsets the consistency overridden on this statement.
+    /// This means that consistency will be derived from the execution profile
+    /// (per-statement or, if absent, the default one).
+    pub fn unset_consistency(&mut self) {
+        self.config.consistency = None;
+    }
+
     /// Gets the consistency to be used when executing this prepared statement if it is filled.
     /// If this is empty, the default_consistency of the session will be used.
     pub fn get_consistency(&self) -> Option<Consistency> {
@@ -308,6 +315,13 @@ impl PreparedStatement {
     /// (Ignored unless the statement is an LWT)
     pub fn set_serial_consistency(&mut self, sc: Option<SerialConsistency>) {
         self.config.serial_consistency = Some(sc);
+    }
+
+    /// Unsets the serial consistency overridden on this statement.
+    /// This means that serial consistency will be derived from the execution profile
+    /// (per-statement or, if absent, the default one).
+    pub fn unset_serial_consistency(&mut self) {
+        self.config.serial_consistency = None;
     }
 
     /// Gets the serial consistency to be used when executing this statement.
@@ -432,7 +446,7 @@ impl PreparedStatement {
 
     /// Get the retry policy set for the statement.
     ///
-    /// This method returns the retry policy that is **overriden** on this statement.
+    /// This method returns the retry policy that is **overridden** on this statement.
     /// In other words, it returns the retry policy set using [`PreparedStatement::set_retry_policy`].
     /// This does not take the retry policy from the set execution profile into account.
     #[inline]
@@ -451,7 +465,7 @@ impl PreparedStatement {
 
     /// Get the load balancing policy set for the statement.
     ///
-    /// This method returns the load balancing policy that is **overriden** on this statement.
+    /// This method returns the load balancing policy that is **overridden** on this statement.
     /// In other words, it returns the load balancing policy set using [`PreparedStatement::set_load_balancing_policy`].
     /// This does not take the load balancing policy from the set execution profile into account.
     #[inline]
