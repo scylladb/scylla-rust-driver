@@ -393,7 +393,7 @@ impl PreparedStatement {
     /// Sets the client-side timeout for this statement.
     /// If not None, the driver will stop waiting for the request
     /// to finish after `timeout` passed.
-    /// Otherwise, default session client timeout will be applied.
+    /// Otherwise, execution profile timeout will be applied.
     pub fn set_request_timeout(&mut self, timeout: Option<Duration>) {
         self.config.request_timeout = timeout
     }

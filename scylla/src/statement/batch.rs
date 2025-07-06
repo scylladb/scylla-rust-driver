@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::observability::history::HistoryListener;
@@ -135,6 +136,19 @@ impl Batch {
     /// Gets the default timestamp for this batch in microseconds.
     pub fn get_timestamp(&self) -> Option<i64> {
         self.config.timestamp
+    }
+
+    /// Sets the client-side timeout for this batch.
+    /// If not None, the driver will stop waiting for the request
+    /// to finish after `timeout` passed.
+    /// Otherwise, execution profile timeout will be applied.
+    pub fn set_request_timeout(&mut self, timeout: Option<Duration>) {
+        self.config.request_timeout = timeout
+    }
+
+    /// Gets client timeout associated with this batch.
+    pub fn get_request_timeout(&self) -> Option<Duration> {
+        self.config.request_timeout
     }
 
     /// Set the retry policy for this batch, overriding the one from execution profile if not None.
