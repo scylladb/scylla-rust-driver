@@ -13,14 +13,14 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- Global variables
 
 # Build documentation for the following tags and branches
-TAGS = ['v1.1.0', 'v1.2.0']
+TAGS = ['v1.2.0', 'v1.3.0']
 BRANCHES = ['main']
 # Set the latest version.
-LATEST_VERSION = 'v1.2.0'
+LATEST_VERSION = 'v1.3.0'
 # Set which versions are not released yet.
 UNSTABLE_VERSIONS = ['main']
 # Set which versions are deprecated
-DEPRECATED_VERSIONS = ['v1.1.0']
+DEPRECATED_VERSIONS = ['v1.2.0']
 
 # -- General configuration
 
@@ -135,7 +135,7 @@ html_sidebars = {'**': ['side-nav.html']}
 # Output file base name for HTML help builder.
 htmlhelp_basename = 'ScyllaDocumentationdoc'
 
-# URL which points to the root of the HTML documentation. 
+# URL which points to the root of the HTML documentation.
 html_baseurl = 'https://rust-driver.docs.scylladb.com'
 
 # Dictionary of values to pass into the template engine’s context for all pages
