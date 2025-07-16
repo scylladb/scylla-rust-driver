@@ -4,6 +4,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::cluster::{ClusterState, Node, NodeRef};
+use crate::observability::warn_rate_limited;
 use crate::routing::Shard;
 
 use super::{LoadBalancingPolicy, RoutingInfo};
@@ -69,7 +70,8 @@ impl LoadBalancingPolicy for SingleTargetLoadBalancingPolicy {
         match node {
             Some(node) => Some((node, self.shard)),
             None => {
-                tracing::warn!(
+                warn_rate_limited!(
+                    std::time::Duration::from_secs(1),
                     "SingleTargetLoadBalancingPolicy failed to find requested node {:?} in cluster metadata.",
                     self.node_identifier
                 );

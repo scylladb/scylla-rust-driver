@@ -9,4 +9,7 @@ pub(crate) mod driver_tracing;
 pub mod history;
 #[cfg(feature = "metrics")]
 pub mod metrics;
+mod rate_limiting;
 pub mod tracing;
+
+pub(crate) use rate_limiting::{rate_limited, warn_rate_limited, RateLimiter};
