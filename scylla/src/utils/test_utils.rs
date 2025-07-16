@@ -118,7 +118,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
 
     // The reason why we enable so long waiting for TracingInfo is... Cassandra. (Yes, again.)
     // In Cassandra Java Driver, the wait time for tracing info is 10 seconds, so here we do the same.
-    // However, as Scylla usually gets TracingInfo ready really fast (our default interval is hence 3ms),
+    // However, as ScyllaDB usually gets TracingInfo ready really fast (our default interval is hence 3ms),
     // we stick to a not-so-much-terribly-long interval here.
     session_builder
         .tracing_info_fetch_attempts(NonZeroU32::new(200).unwrap())
@@ -149,7 +149,7 @@ impl LoadBalancingPolicy for SchemaQueriesLBP {
         _query: &'a RoutingInfo,
         cluster: &'a ClusterState,
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
-        // I'm not sure if Scylla can handle concurrent DDL queries to different shard,
+        // I'm not sure if ScyllaDB can handle concurrent DDL queries to different shard,
         // in other words if its local lock is per-node or per shard.
         // Just to be safe, let's use explicit shard.
         cluster.get_nodes_info().first().map(|node| (node, Some(0)))
@@ -184,7 +184,7 @@ impl RetrySession for SchemaQueriesRetrySession {
                 // In this case we really should do something about it in the
                 // core, because it is absurd for DDL queries to fail this often.
                 if self.count >= 10 {
-                    error!("Received TENTH(!) group 0 concurrent modification error during DDL. Please fix Scylla Core.");
+                    error!("Received TENTH(!) group 0 concurrent modification error during DDL. Please fix ScyllaDB Core.");
                     RetryDecision::DontRetry
                 } else {
                     warn!("Received group 0 concurrent modification error during DDL. Performing retry #{}.", self.count);

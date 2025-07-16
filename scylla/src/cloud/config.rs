@@ -418,10 +418,10 @@ mod deserialize {
         // +optional
         clientKeyPath: Option<String>,
 
-        // Username is the username for basic authentication to the Scylla cluster.
+        // Username is the username for basic authentication to the ScyllaDB cluster.
         // +optional
         username: Option<String>,
-        // Password is the password for basic authentication to the Scylla cluster.
+        // Password is the password for basic authentication to the ScyllaDB cluster.
         // +optional
         password: Option<String>,
     }
@@ -437,7 +437,7 @@ mod deserialize {
         // +optional
         certificateAuthorityData: Option<String>,
 
-        // Server is the initial contact point of the Scylla cluster.
+        // Server is the initial contact point of the ScyllaDB cluster.
         // Example: https://hostname:port
         server: String,
 

@@ -93,7 +93,7 @@ impl RawTablet {
         };
 
         Some(Ok(RawTablet {
-            // +1 because Scylla sends left-open range, so received
+            // +1 because ScyllaDB sends left-open range, so received
             // number is the last token not belonging to this tablet.
             first_token: Token::new(first_token + 1),
             last_token: Token::new(last_token),
@@ -708,7 +708,7 @@ mod tests {
         custom_payload.insert(
             CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(),
             // Skipping length because `SerializeValue::serialize` adds length at the
-            // start of serialized value while Scylla sends the value without initial
+            // start of serialized value while ScyllaDB sends the value without initial
             // length.
             Bytes::copy_from_slice(&data[4..]),
         );

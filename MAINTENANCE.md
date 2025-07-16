@@ -130,7 +130,7 @@ For an example, see four last commits of this PR: https://github.com/scylladb/sc
 
 Commits that update `scylla-proxy` / `scylla-macros` / `scylla-cql` change:
 - `version` field in relevant `Cargo.toml`
-- Version number in crates that depend on given crate (so a commit bumping `scylla-macros` will also change version of 
+- Version number in crates that depend on given crate (so a commit bumping `scylla-macros` will also change version of
 `scylla-macros` in `scylla` and `scylla-cql` crates).
 - Version number of the crate in `Cargo.lock.msrv`
 
@@ -249,7 +249,7 @@ should contain links to relevant PR / PRs.
 
 ```
 The ScyllaDB team is pleased to announce ScyllaDB Rust Driver X.Y.Z,
-an asynchronous CQL driver for Rust, optimized for Scylla, but also compatible with Apache Cassandra!
+an asynchronous CQL driver for Rust, optimized for ScyllaDB, but also compatible with Apache Cassandra!
 
 Some interesting statistics:
 
@@ -300,4 +300,3 @@ Contributors since the last release:
 | 17      | Mercedes Marks    |
 
 ```
-

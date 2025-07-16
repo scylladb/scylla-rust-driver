@@ -6,7 +6,7 @@ There are two separate ways to get information about what happened with a query:
 ### Tracing
 
 Tracing is a feature provided by Scylla. When sending a query we can set a flag that signifies that we would like it to be traced.
-After completing the query Scylla provides a `tracing_id` which can be used to fetch information about it - which nodes it was sent to, what operations were performed etc.
+After completing the query ScyllaDB provides a `tracing_id` which can be used to fetch information about it - which nodes it was sent to, what operations were performed etc.
 
 Queries that support tracing:
 * [`Session::query_unpaged()`](basic.md)
@@ -17,7 +17,7 @@ Queries that support tracing:
 * [`Session::prepare()`](prepare.md)
 
 After obtaining the tracing id you can use `Session::get_tracing_info()` to query tracing information.\
-`TracingInfo` contains values that are the same in Scylla and Cassandra®, skipping any database-specific ones.\
+`TracingInfo` contains values that are the same in ScyllaDB and Cassandra®, skipping any database-specific ones.\
 If `TracingInfo` does not contain some needed value it's possible to query it manually from the tables
 `system_traces.sessions` and `system_traces.events`
 

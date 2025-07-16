@@ -1,13 +1,13 @@
-# Scylla Rust Driver
+# ScyllaDB Rust Driver
 This book contains documentation for [scylla-rust-driver](https://github.com/scylladb/scylla-rust-driver) - a driver
-for the [Scylla](https://scylladb.com) database written in Rust.
+for [ScyllaDB](https://scylladb.com) written in Rust.
 Although optimized for Scylla, the driver is also compatible with [Apache Cassandra®](https://cassandra.apache.org/).
 
 ### Other documentation
 * [Examples](https://github.com/scylladb/scylla-rust-driver/tree/main/examples)
-* [Rust and Scylla lesson](https://university.scylladb.com/courses/using-scylla-drivers/lessons/rust-and-scylla-2/) on Scylla University
+* [Rust and ScyllaDB lesson](https://university.scylladb.com/courses/using-scylla-drivers/lessons/rust-and-scylla-2/) on Scylla University
 * [API documentation](https://docs.rs/scylla)
-* [Scylla documentation](https://docs.scylladb.com)
+* [ScyllaDB documentation](https://docs.scylladb.com)
 * [Cassandra® documentation](https://cassandra.apache.org/doc/latest/)
 
 

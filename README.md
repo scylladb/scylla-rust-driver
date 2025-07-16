@@ -9,7 +9,7 @@ This is a client-side driver for [ScyllaDB] written in pure Rust with a fully as
 Although optimized for ScyllaDB, the driver is also compatible with [Apache Cassandra®].
 
 ## Getting Started
-The [documentation book](https://rust-driver.docs.scylladb.com/stable/index.html) is a good place to get started. Another useful resource is the Rust and Scylla [lesson](https://university.scylladb.com/courses/using-scylla-drivers/lessons/rust-and-scylla-2/) on Scylla University.
+The [documentation book](https://rust-driver.docs.scylladb.com/stable/index.html) is a good place to get started. Another useful resource is the Rust and ScyllaDB [lesson](https://university.scylladb.com/courses/using-scylla-drivers/lessons/rust-and-scylla-2/) on Scylla University.
 
 ## Examples
 ```rust
@@ -27,7 +27,7 @@ while let Some((a, b, c)) = stream.try_next().await? {
 ```
 
 Please see the full [example](examples/basic.rs) program for more information.
-You can also run the example as follows if you have a Scylla server running:
+You can also run the example as follows if you have a ScyllaDB server running:
 
 ```sh
 SCYLLA_URI="127.0.0.1:9042" cargo run --example basic

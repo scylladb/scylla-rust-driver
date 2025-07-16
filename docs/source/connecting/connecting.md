@@ -1,6 +1,6 @@
 # Connecting to the cluster
 
-Scylla is a distributed database, which means that it operates on multiple nodes running independently.
+ScyllaDB is a distributed database, which means that it operates on multiple nodes running independently.
 When creating a `Session` you can specify a few known nodes to which the driver will try connecting:
 ```rust
 # extern crate scylla;
@@ -56,9 +56,9 @@ If you need to share `Session` with different threads / Tokio tasks etc. use `Ar
 The driver refreshes the cluster metadata periodically, which contains information about cluster topology as well as the cluster schema. By default, the driver refreshes the cluster metadata every 60 seconds.
 However, you can set the `cluster_metadata_refresh_interval` to a non-negative value to periodically refresh the cluster metadata. This is useful when you do not have unexpected amount of traffic or when you have an extra traffic causing topology to change frequently.
 
-## Scylla Cloud Serverless
+## ScyllaDB Cloud Serverless
 
-Scylla Serverless is an elastic and dynamic deployment model. When creating a `Session` you need to
+ScyllaDB Serverless is an elastic and dynamic deployment model. When creating a `Session` you need to
 specify the secure connection bundle as follows:
 
 ```rust

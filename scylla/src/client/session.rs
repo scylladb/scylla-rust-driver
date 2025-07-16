@@ -189,7 +189,7 @@ pub struct SessionConfig {
     pub connect_timeout: Duration,
 
     /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.
-    /// The default is `PerShard(1)`, which is the recommended setting for Scylla clusters.
+    /// The default is `PerShard(1)`, which is the recommended setting for ScyllaDB clusters.
     pub connection_pool_size: PoolSize,
 
     /// If true, prevents the driver from connecting to the shard-aware port, even if the node supports it.

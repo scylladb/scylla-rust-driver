@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 60
     steps:
     - uses: actions/checkout@v3
-    - name: Setup 3-node Scylla cluster
+    - name: Setup 3-node ScyllaDB cluster
       run: |
         sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
         docker compose -f test/cluster/docker-compose.yml up -d --wait

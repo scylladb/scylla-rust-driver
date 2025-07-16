@@ -24,9 +24,9 @@ pub(crate) const DEFAULT_SMP: u16 = 1;
 pub(crate) struct ClusterOptions {
     /// Cluster Name
     pub(crate) name: String,
-    /// What to database to run: Scylla or Cassandra
+    /// What to database to run: ScyllaDB or Cassandra
     pub(crate) db_type: DBType,
-    /// Scylla or Cassandra version string that goes to CCM.
+    /// ScyllaDB or Cassandra version string that goes to CCM.
     /// Examples: `release:6.2.2`, `unstable:master/2021-05-24T17:16:53Z`
     pub(crate) version: String,
     /// CCM allocates node ip addresses based on this prefix:
