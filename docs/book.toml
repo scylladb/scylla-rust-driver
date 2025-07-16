@@ -1,6 +1,6 @@
 [book]
-title = "Scylla Rust Driver"
-description = "Documentation for Scylla Rust Driver"
+title = "ScyllaDB Rust Driver"
+description = "Documentation for ScyllaDB Rust Driver"
 authors = []
 language = "en"
 multilingual = false
@@ -16,8 +16,8 @@ git-repository-url = "https://github.com/scylladb/scylla-rust-driver"
 [preprocessor.sphinx]
 command = '''bash -c '
 if test -f "./docs/sphinx_preprocessor.py"; then
-    python ./docs/sphinx_preprocessor.py "$@" 
-else 
+    python ./docs/sphinx_preprocessor.py "$@"
+else
     python ./sphinx_preprocessor.py "$@"
 fi' run_preprocessor
 '''

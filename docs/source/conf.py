@@ -49,9 +49,9 @@ autosectionlabel_prefix_document = True
 master_doc = 'contents'
 
 # General information about the project.
-project = 'Scylla Rust Driver'
+project = 'ScyllaDB Rust Driver'
 copyright = str(date.today().year) + ', ScyllaDB. All rights reserved.'
-author = u'Scylla Project Contributors'
+author = u'ScyllaDB Project Contributors'
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -116,7 +116,7 @@ html_theme_options = {
     'github_repository': 'scylladb/scylla-rust-driver',
     'github_issues_repository': 'scylladb/scylla-rust-driver',
     'hide_banner': 'true',
-    'site_description': 'Scylla Driver for Rust.',
+    'site_description': 'ScyllaDB Driver for Rust.',
     'hide_edit_this_page_button': 'false',
     'hide_feedback_buttons': 'false',
     'versions_unstable': UNSTABLE_VERSIONS,

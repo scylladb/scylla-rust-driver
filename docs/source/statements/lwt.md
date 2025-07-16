@@ -4,7 +4,7 @@ A lightweight transaction statement can be expressed just like any other stateme
 
 
 ### Format of the statement
-A lightweight transaction statement is not a separate type - it can be expressed just like any other statements: via `Statement`, `PreparedStatement`, batches, and so on. The difference lays in the statement string itself - when it contains a condition (e.g. `IF NOT EXISTS`), it becomes a lightweight transaction. It's important to remember that CQL specification requires a separate, additional consistency level to be defined for LWT statements - `serial_consistency_level`. The serial consistency level can only be set to two values: `SerialConsistency::Serial` or `SerialConsistency::LocalSerial`. The "local" variant makes the transaction consistent only within the same datacenter. For convenience, Scylla Rust Driver sets the default consistency level to `LocalSerial`, as it's more commonly used. For cross-datacenter consistency, please remember to always override the default with `SerialConsistency::Serial`.
+A lightweight transaction statement is not a separate type - it can be expressed just like any other statements: via `Statement`, `PreparedStatement`, batches, and so on. The difference lays in the statement string itself - when it contains a condition (e.g. `IF NOT EXISTS`), it becomes a lightweight transaction. It's important to remember that CQL specification requires a separate, additional consistency level to be defined for LWT statements - `serial_consistency_level`. The serial consistency level can only be set to two values: `SerialConsistency::Serial` or `SerialConsistency::LocalSerial`. The "local" variant makes the transaction consistent only within the same datacenter. For convenience, ScyllaDB Rust Driver sets the default consistency level to `LocalSerial`, as it's more commonly used. For cross-datacenter consistency, please remember to always override the default with `SerialConsistency::Serial`.
 ```rust
 # extern crate scylla;
 # use scylla::client::session::Session;
@@ -29,4 +29,3 @@ session.query_unpaged(my_statement, (to_insert,)).await?;
 The rest of the API remains identical for LWT and non-LWT statements.
 
 See [Statement API documentation](https://docs.rs/scylla/latest/scylla/statement/struct.Statement.html) for more options
-

@@ -22,7 +22,7 @@ pub struct SelfIdentity<'id> {
     //   application variables are not.
     //
     // ### A:
-    // The following options are not exposed anywhere in Scylla tables.
+    // The following options are not exposed anywhere in ScyllaDB tables.
     // They come directly from CPP driver, and they are supported in Cassandra
     //
     // See https://github.com/scylladb/cpp-driver/blob/fa0f27069a625057984d1fa58f434ea99b86c83f/include/cassandra.h#L2916.

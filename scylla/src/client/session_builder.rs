@@ -662,7 +662,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// use scylla::client::PoolSize;
     ///
     /// // This session will establish 4 connections to each node.
-    /// // For Scylla clusters, this number will be divided across shards
+    /// // For ScyllaDB clusters, this number will be divided across shards
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .pool_size(PoolSize::PerHost(NonZeroUsize::new(4).unwrap()))
@@ -688,7 +688,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// In order to be able to use the shard-aware port effectively, the port needs to be
     /// reachable and not behind a NAT which changes source ports (the driver uses the source port
-    /// to tell Scylla which shard to assign). However, the driver is designed to behave in a robust
+    /// to tell ScyllaDB which shard to assign). However, the driver is designed to behave in a robust
     /// way if those conditions are not met - if the driver fails to connect to the port or gets
     /// a connection to the wrong shard, it will re-attempt the connection to the regular transport port.
     ///

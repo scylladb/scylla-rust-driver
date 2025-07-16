@@ -34,7 +34,7 @@ use tracing::{debug, error, trace, warn};
 pub enum PoolSize {
     /// Indicates that the pool should establish given number of connections to the node.
     ///
-    /// If this option is used with a Scylla cluster, it is not guaranteed that connections will be
+    /// If this option is used with a ScyllaDB cluster, it is not guaranteed that connections will be
     /// distributed evenly across shards. Use this option if you cannot use the shard-aware port
     /// and you suffer from the "connection storm" problems.
     PerHost(NonZeroUsize),
@@ -43,7 +43,7 @@ pub enum PoolSize {
     ///
     /// Cassandra nodes will be treated as if they have only one shard.
     ///
-    /// The recommended setting for Scylla is one connection per shard - `PerShard(1)`.
+    /// The recommended setting for ScyllaDB is one connection per shard - `PerShard(1)`.
     PerShard(NonZeroUsize),
 }
 
@@ -492,15 +492,15 @@ struct PoolRefiller {
     connection_errors:
         FuturesUnordered<Pin<Box<dyn Future<Output = BrokenConnectionEvent> + Send + 'static>>>,
 
-    // When connecting, Scylla always assigns the shard which handles the least
+    // When connecting, ScyllaDB always assigns the shard which handles the least
     // number of connections. If there are some non-shard-aware clients
     // connected to the same node, they might cause the shard distribution
-    // to be heavily biased and Scylla will be very reluctant to assign some shards.
+    // to be heavily biased and ScyllaDB will be very reluctant to assign some shards.
     //
     // In order to combat this, if the pool is not full and we get a connection
     // for a shard which was already filled, we keep those additional connections
-    // in order to affect how Scylla assigns shards. A similar method is used
-    // in Scylla's forks of the java and gocql drivers.
+    // in order to affect how ScyllaDB assigns shards. A similar method is used
+    // in ScyllaDB's forks of the java and gocql drivers.
     //
     // The number of those connections is bounded by the number of shards multiplied
     // by a constant factor, and are all closed when they exceed this number.
@@ -729,8 +729,8 @@ impl PoolRefiller {
                 .map(|conns| target.get().saturating_sub(conns.len()))
                 .sum::<usize>(),
         };
-        // When connecting to Scylla through non-shard-aware port,
-        // Scylla alone will choose shards for us. We hope that
+        // When connecting to ScyllaDB through non-shard-aware port,
+        // ScyllaDB alone will choose shards for us. We hope that
         // they will distribute across shards in the way we want,
         // but we have no guarantee, so we might have to retry
         // connecting later.
@@ -861,7 +861,7 @@ impl PoolRefiller {
 
                     self.start_opening_connection(None);
                 } else {
-                    // We got unlucky and Scylla didn't distribute
+                    // We got unlucky and ScyllaDB didn't distribute
                     // shards across connections evenly.
                     // We will retry in the next iteration,
                     // for now put it into the excess connection

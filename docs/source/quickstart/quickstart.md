@@ -8,7 +8,7 @@ Topics Include:
 
 * [Create a Rust Project](create-project.md)
 * [Example](example.md)
-* [Install Scylla with Docker](scylla-docker.md)
+* [Install ScyllaDB with Docker](scylla-docker.md)
 
 
 ```{eval-rst}

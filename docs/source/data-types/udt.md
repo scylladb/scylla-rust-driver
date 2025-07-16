@@ -1,5 +1,5 @@
 # User defined types
-Scylla allows users to define their own data types with named fields (See [the official documentation](https://opensource.docs.scylladb.com/stable/cql/types.html#user-defined-types))\
+ScyllaDB allows users to define their own data types with named fields (See [the official documentation](https://opensource.docs.scylladb.com/stable/cql/types.html#user-defined-types))\
 To use user defined types in the driver, you can create a corresponding struct in Rust, and use it to read and write UDT values.
 
 

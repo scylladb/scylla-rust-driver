@@ -1,10 +1,10 @@
 # Summary
 
-[Scylla Rust Driver](index.md)
+[ScyllaDB Rust Driver](index.md)
 
 - [Quick start](quickstart/quickstart.md)
     - [Creating a project](quickstart/create-project.md)
-    - [Running Scylla using Docker](quickstart/scylla-docker.md)
+    - [Running ScyllaDB using Docker](quickstart/scylla-docker.md)
     - [Connecting and executing a simple CQL statement](quickstart/example.md)
 
 - [Migration guides](migration-guides/migration-guides.md)

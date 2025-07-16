@@ -24,7 +24,7 @@ pub(crate) use sharding::{ShardInfo, ShardingError};
 /// a valid token. It is used to represent infinity.
 /// For this reason tokens are normalized - i64::MIN
 /// is replaced with i64::MAX. See this fragment of
-/// Scylla code for more information:
+/// ScyllaDB code for more information:
 /// <https://github.com/scylladb/scylladb/blob/4be70bfc2bc7f133cab492b4aac7bab9c790a48c/dht/token.hh#L32>
 ///
 /// This struct is a wrapper over i64 that performs this normalization

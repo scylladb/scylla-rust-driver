@@ -38,7 +38,7 @@ To run a cargo test suite, use the command below (note that you must have Docker
 ```bash
 make test
 ```
-When on non-Linux machine, however, it can be impossible to connect to containerized Scylla instance from outside Docker.\
+When on non-Linux machine, however, it can be impossible to connect to containerized ScyllaDB instance from outside Docker.\
 If you are using macOS, we provide a `dockerized-test` make target for running tests inside another Docker container:
 ```bash
 make dockerized-test
@@ -110,7 +110,7 @@ There are a few scenarios:
          using command like `cargo update -p toml_datetime --precise 0.6.3` and go back to step 3.
       5. Rename `Cargo.lock` to `Cargo.lock.msrv`.
 
-### Semver checking 
+### Semver checking
 
 Our CI runs cargo semver-checks and labels PRs that introduce breaking changes.
 If you don't intend to change public API, you can perform the checks locally,

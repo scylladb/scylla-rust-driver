@@ -349,8 +349,8 @@ impl PartitionerHasher for CDCPartitionerHasher {
 
     fn finish(&self) -> Token {
         match self.state {
-            // Looking at Scylla code it seems that here we actually want token with this value.
-            // If the value is too short Scylla returns `dht::minimum_token()`:
+            // Looking at ScyllaDB code it seems that here we actually want token with this value.
+            // If the value is too short ScyllaDB returns `dht::minimum_token()`:
             // https://github.com/scylladb/scylladb/blob/4be70bfc2bc7f133cab492b4aac7bab9c790a48c/cdc/cdc_partitioner.cc#L32
             // When you call `long_token` on `minimum_token` it will actually return `i64::MIN`:
             // https://github.com/scylladb/scylladb/blob/0a7854ea4de04f20b71326ba5940b5fac6f7241a/dht/token.cc#L21-L35

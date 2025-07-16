@@ -25,12 +25,12 @@ The lower consistency level to use for retries is determined by the following ru
   - if 1, 2 or 3 replicas responded, use the corresponding level `Consistency::One`, `Consistency::Two` or
       `Consistency::Three`.
 
-Note that if the initial consistency level was `Consistency::EachQuorum`, Scylla returns the number
+Note that if the initial consistency level was `Consistency::EachQuorum`, ScyllaDB returns the number
 of live replicas _in the datacenter that failed to reach consistency_, not the overall
 number in the cluster. Therefore if this number is 0, we still retry at `Consistency::One`, on the
 assumption that a host may still be up in another datacenter.
 The reasoning being this retry policy is the following one. If, based on the information the
-Scylla coordinator node returns, retrying the operation with the initially requested
+ScyllaDB coordinator node returns, retrying the operation with the initially requested
 consistency has a chance to succeed, do it. Otherwise, if based on this information we know
 **the initially requested consistency level cannot be achieved currently**, then:
   - For writes, ignore the exception (thus silently failing the consistency requirement) if we

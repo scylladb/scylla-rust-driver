@@ -2,7 +2,7 @@ use crate::routing::Token;
 
 /// A token ring is a continuous hash ring. It defines association by hashing a key
 /// onto the ring and then walking the ring in one direction.
-/// Cassandra and Scylla use it for determining data ownership which allows for efficient load balancing.
+/// Cassandra and ScyllaDB use it for determining data ownership which allows for efficient load balancing.
 /// The token ring is used by the driver to find the replicas for a given token.
 /// Each ring member has a token (i64 number) which defines the member's position on the ring.
 /// The ring is circular and can be traversed in the order of increasing tokens.

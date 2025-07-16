@@ -1,6 +1,6 @@
 # DefaultPolicy
 
-`DefaultPolicy` is the default load balancing policy in Scylla Rust Driver. It
+`DefaultPolicy` is the default load balancing policy in ScyllaDB Rust Driver. It
 can be configured to be datacenter-aware and token-aware. Datacenter failover
 for queries with non-local consistency mode is also supported.
 

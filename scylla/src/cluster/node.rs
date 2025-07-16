@@ -26,7 +26,7 @@ use std::{
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
 /// This enum is introduced to support address translation only upon opening a connection,
-/// as well as to cope with a bug present in older Cassandra and Scylla releases.
+/// as well as to cope with a bug present in older Cassandra and ScyllaDB releases.
 /// The bug involves misconfiguration of rpc_address and/or broadcast_rpc_address
 /// in system.local to 0.0.0.0. Mitigation involves replacing the faulty address
 /// with connection's address, but then that address must not be subject to `AddressTranslator`,

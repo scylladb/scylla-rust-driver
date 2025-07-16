@@ -96,7 +96,7 @@ impl Sharder {
         (((biased_token as u128) * (self.nr_shards.get() as u128)) >> 64) as Shard
     }
 
-    /// If we connect to Scylla using Scylla's shard aware port, then Scylla assigns a shard to the
+    /// If we connect to ScyllaDB using ScyllaDB's shard aware port, then ScyllaDB assigns a shard to the
     /// connection based on the source port. This calculates the assigned shard.
     pub fn shard_of_source_port(&self, source_port: u16) -> Shard {
         (source_port % self.nr_shards.get()) as Shard
