@@ -24,6 +24,7 @@ proc-macro2 = "1.0"
 [lints.rust]
 unnameable_types = "warn"
 unreachable_pub = "warn"
+missing-docs = "warn"
 
 [dev-dependencies]
 scylla = { path = "../scylla" }
