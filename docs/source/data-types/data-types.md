@@ -18,7 +18,7 @@ Database types and their Rust equivalents:
 * `Double` <----> `f64`
 * `Ascii`, `Text`, `Varchar` <----> `&str`, `String`, `Box<str>`, `Arc<str>`
 * `Counter` <----> `value::Counter`
-* `Blob` <----> `Vec<u8>`
+* `Blob` <----> `&[u8]`, `Vec<u8>`, `Bytes`, (and `[u8; N]` for serialization only)
 * `Inet` <----> `std::net::IpAddr`
 * `Uuid` <----> `uuid::Uuid`
 * `Timeuuid` <----> `value::CqlTimeuuid`

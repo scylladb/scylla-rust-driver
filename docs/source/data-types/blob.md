@@ -1,5 +1,9 @@
 # Blob
-`Blob` is represented as `Vec<u8>`
+`Blob` is represented as one of:
+- `&[u8]`,
+- `Vec<u8>`,
+- `bytes::Bytes`,
+- `[u8; N]` (only serialization supported).
 
 
 ```rust
