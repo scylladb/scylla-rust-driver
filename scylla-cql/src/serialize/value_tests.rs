@@ -21,6 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use assert_matches::assert_matches;
+use bytes::Bytes;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -1828,6 +1829,15 @@ fn u8_slice_serialization() {
     let val = vec![1u8, 1, 1, 1];
     assert_eq!(
         do_serialize(val.as_slice(), &ColumnType::Native(NativeType::Blob)),
+        vec![0, 0, 0, 4, 1, 1, 1, 1]
+    );
+}
+
+#[test]
+fn bytes_serialization() {
+    let val = Bytes::from_static(&[1u8, 1, 1, 1]);
+    assert_eq!(
+        do_serialize(val, &ColumnType::Native(NativeType::Blob)),
         vec![0, 0, 0, 4, 1, 1, 1, 1]
     );
 }

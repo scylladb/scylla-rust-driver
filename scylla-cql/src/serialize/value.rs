@@ -10,6 +10,7 @@ use std::net::IpAddr;
 use std::ops::Deref as _;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -323,6 +324,14 @@ impl<const N: usize> SerializeValue for [u8; N] {
         exact_type_check!(typ, Blob);
         writer
             .set_value(me.as_ref())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
+}
+impl SerializeValue for Bytes {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Blob);
+        writer
+            .set_value(me)
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
