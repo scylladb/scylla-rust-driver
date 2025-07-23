@@ -1,3 +1,6 @@
+//! Defines CQL values of various types and their representations,
+//! as well as conversion between them and other types.
+
 use std::net::IpAddr;
 use std::result::Result as StdResult;
 
@@ -13,8 +16,15 @@ use crate::deserialize::FrameSlice;
 use crate::frame::response::result::{CollectionType, ColumnType};
 use crate::frame::types;
 
+/// Error type indicating that the value is too large to fit in the destination type.
+///
+/// Intended to be used when converting between CQL types and other types
+/// in case the source type is larger than the destination type.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-#[error("Value is too large to fit in the CQL type")]
+#[error(
+    "Conversion between CQL type and another type is not possible because\
+    value of one of them is too large to fit in the other"
+)]
 pub struct ValueOverflow;
 
 /// Represents an unset value
@@ -28,12 +38,15 @@ pub struct Counter(pub i64);
 /// Enum providing a way to represent a value that might be unset
 #[derive(Debug, Clone, Copy, Default)]
 pub enum MaybeUnset<V> {
+    /// The value is unset, so the server's state about this value will not be changed.
     #[default]
     Unset,
+    /// The value is set, so the server's state will be changed to this value.
     Set(V),
 }
 
 impl<V> MaybeUnset<V> {
+    /// Converts an `Option<V>` into a `MaybeUnset<V>`.
     #[inline]
     pub fn from_option(opt: Option<V>) -> Self {
         match opt {
@@ -45,65 +58,93 @@ impl<V> MaybeUnset<V> {
 
 /// Represents timeuuid (uuid V1) value
 ///
-/// This type has custom comparison logic which follows Scylla/Cassandra semantics.
+/// This type has custom comparison logic which follows ScyllaDB/Cassandra semantics.
 /// For details, see [`Ord` implementation](#impl-Ord-for-CqlTimeuuid).
 #[derive(Debug, Clone, Copy, Eq)]
 pub struct CqlTimeuuid(Uuid);
 
 /// [`Uuid`] delegate methods
 impl CqlTimeuuid {
+    /// Creates a new nil `CqlTimeuuid`.
+    /// See [`Uuid::nil`] for details.
     pub fn nil() -> Self {
         Self(Uuid::nil())
     }
 
+    /// Returns byte representation of the `CqlTimeuuid`.
+    /// See [`Uuid::as_bytes`] for details.
     pub fn as_bytes(&self) -> &[u8; 16] {
         self.0.as_bytes()
     }
 
+    /// Returns a `u128` representation of the `CqlTimeuuid`.
+    /// See [`Uuid::as_u128`] for details.
     pub fn as_u128(&self) -> u128 {
         self.0.as_u128()
     }
 
+    /// Returns a representation of the `CqlTimeuuid` as a list of its logical fields.
+    /// See [`Uuid::as_fields`] for details.
     pub fn as_fields(&self) -> (u32, u16, u16, &[u8; 8]) {
         self.0.as_fields()
     }
 
+    /// Returns a representation of the `CqlTimeuuid` as a pair of `u64` values.
+    /// See [`Uuid::as_u64_pair`] for details.
     pub fn as_u64_pair(&self) -> (u64, u64) {
         self.0.as_u64_pair()
     }
 
+    /// Creates a new `CqlTimeuuid` from a big-endian byte representation.
+    /// See [`Uuid::from_slice`] for details.
     pub fn from_slice(b: &[u8]) -> Result<Self, uuid::Error> {
         Ok(Self(Uuid::from_slice(b)?))
     }
 
+    /// Creates a new `CqlTimeuuid` from a little-endian byte representation.
+    /// See [`Uuid::from_slice_le`] for details.
     pub fn from_slice_le(b: &[u8]) -> Result<Self, uuid::Error> {
         Ok(Self(Uuid::from_slice_le(b)?))
     }
 
+    /// Creates a new `CqlTimeuuid` from a big-endian byte representation.
+    /// See [`Uuid::from_bytes`] for details.
     pub fn from_bytes(bytes: [u8; 16]) -> Self {
         Self(Uuid::from_bytes(bytes))
     }
 
+    /// Creates a new `CqlTimeuuid` from a little-endian byte representation.
+    /// See [`Uuid::from_bytes_le`] for details.
     pub fn from_bytes_le(bytes: [u8; 16]) -> Self {
         Self(Uuid::from_bytes_le(bytes))
     }
 
+    /// Creates a new `CqlTimeuuid` from a big-endian byte representation of its fields.
+    /// See [`Uuid::from_fields`] for details.
     pub fn from_fields(d1: u32, d2: u16, d3: u16, d4: &[u8; 8]) -> Self {
         Self(Uuid::from_fields(d1, d2, d3, d4))
     }
 
+    /// Creates a new `CqlTimeuuid` from a little-endian byte representation of its fields.
+    /// See [`Uuid::from_fields_le`] for details.
     pub fn from_fields_le(d1: u32, d2: u16, d3: u16, d4: &[u8; 8]) -> Self {
         Self(Uuid::from_fields_le(d1, d2, d3, d4))
     }
 
+    /// Creates a new `CqlTimeuuid` from a big-endian `u128` value.
+    /// See [`Uuid::from_u128`] for details.
     pub fn from_u128(v: u128) -> Self {
         Self(Uuid::from_u128(v))
     }
 
+    /// Creates a new `CqlTimeuuid` from a little-endian `u128` value.
+    /// See [`Uuid::from_u128_le`] for details.
     pub fn from_u128_le(v: u128) -> Self {
         Self(Uuid::from_u128_le(v))
     }
 
+    /// Creates a new `CqlTimeuuid` from a pair of `u64` values.
+    /// See [`Uuid::from_u64_pair`] for details.
     pub fn from_u64_pair(high_bits: u64, low_bits: u64) -> Self {
         Self(Uuid::from_u64_pair(high_bits, low_bits))
     }
@@ -812,55 +853,93 @@ impl TryInto<time_03::Time> for CqlTime {
 /// Represents a CQL Duration value
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct CqlDuration {
+    /// Number of months.
     pub months: i32,
+    /// Number of days.
     pub days: i32,
+    /// Number of nanoseconds.
     pub nanoseconds: i64,
 }
 
+/// Represents all possible CQL values that can be returned by the database.
+///
+/// This type can represent a CQL value of any type. Therefore, it should be used in places
+/// where dynamic capabilities are needed, while, for efficiency purposes, avoided in places
+/// where the type of the value is known in the compile time.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum CqlValue {
+    /// ASCII-only string.
     Ascii(String),
+    /// Boolean value.
     Boolean(bool),
+    /// Binary data of any length.
     Blob(Vec<u8>),
+    /// Counter value, represented as a 64-bit integer.
     Counter(Counter),
+    /// Variable-precision decimal.
     Decimal(CqlDecimal),
     /// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
-    /// Can be converted to chrono::NaiveDate (-262145-1-1 to 262143-12-31) using as_date
+    /// Can be converted to chrono::NaiveDate (-262145-1-1 to 262143-12-31) using [TryInto].
     Date(CqlDate),
+    /// 64-bit IEEE-754 floating point number.
     Double(f64),
+    /// A duration with nanosecond precision.
     Duration(CqlDuration),
+    /// An empty value, which is distinct from null and is some DB legacy.
     Empty,
+    /// 32-bit IEEE-754 floating point number.
     Float(f32),
+    /// 32-bit signed integer.
     Int(i32),
+    /// 64-bit signed integer.
     BigInt(i64),
+    /// UTF-8 encoded string.
     Text(String),
-    /// Milliseconds since unix epoch
+    /// Milliseconds since unix epoch.
     Timestamp(CqlTimestamp),
+    /// IPv4 or IPv6 address.
     Inet(IpAddr),
+    /// A list of CQL values of the same types.
     List(Vec<CqlValue>),
+    /// A map of CQL values, whose all keys have the same type
+    /// and all values have the same type.
     Map(Vec<(CqlValue, CqlValue)>),
+    /// A set of CQL values of the same types.
     Set(Vec<CqlValue>),
+    /// A user-defined type (UDT) value.
+    /// UDT is composed of fields, each with a name
+    /// and an optional value of its own type.
     UserDefinedType {
+        /// Keyspace the type belongs to.
         keyspace: String,
+        /// Name of the user-defined type.
         name: String,
-        /// Order of `fields` vector must match the order of fields as defined in the UDT. The
-        /// driver does not check it by itself, so incorrect data will be written if the order is
-        /// wrong.
+        /// Fields of the user-defined type - (name, value) pairs.
         fields: Vec<(String, Option<CqlValue>)>,
     },
+    /// 16-bit signed integer.
     SmallInt(i16),
+    /// 8-bit signed integer.
     TinyInt(i8),
-    /// Nanoseconds since midnight
+    /// Nanoseconds since midnight.
     Time(CqlTime),
+    /// Version 1 UUID, generally used as a “conflict-free” timestamp.
     Timeuuid(CqlTimeuuid),
+    /// A tuple of CQL values of independent types each, where each element can be `None`
+    /// if the value is null. The length of the tuple is part of its CQL type.
     Tuple(Vec<Option<CqlValue>>),
+    /// Universally unique identifier (UUID) of any version.
     Uuid(Uuid),
+    /// Arbitrary-precision integer.
     Varint(CqlVarint),
+    /// A vector of CQL values of the same type.
+    /// The length of the vector is part of its CQL type.
     Vector(Vec<CqlValue>),
 }
 
 impl CqlValue {
+    /// Casts the value to ASCII string if it is of that type.
     pub fn as_ascii(&self) -> Option<&String> {
         match self {
             Self::Ascii(s) => Some(s),
@@ -868,6 +947,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to CQL Date if it is of that type.
     pub fn as_cql_date(&self) -> Option<CqlDate> {
         match self {
             Self::Date(d) => Some(*d),
@@ -875,18 +955,21 @@ impl CqlValue {
         }
     }
 
+    /// Converts the value to `chrono` NaiveDate if it is of Date type.
     #[cfg(test)]
     #[cfg(feature = "chrono-04")]
     pub(crate) fn as_naive_date_04(&self) -> Option<chrono_04::NaiveDate> {
         self.as_cql_date().and_then(|date| date.try_into().ok())
     }
 
+    /// Converts the value to `time` Date if it is of Date type.
     #[cfg(test)]
     #[cfg(feature = "time-03")]
     pub(crate) fn as_date_03(&self) -> Option<time_03::Date> {
         self.as_cql_date().and_then(|date| date.try_into().ok())
     }
 
+    /// Casts the value to CQL Timestamp if it is of that type.
     pub fn as_cql_timestamp(&self) -> Option<CqlTimestamp> {
         match self {
             Self::Timestamp(i) => Some(*i),
@@ -894,18 +977,21 @@ impl CqlValue {
         }
     }
 
+    /// Converts the value to `chrono` DateTime if it is of Timestamp type.
     #[cfg(test)]
     #[cfg(feature = "chrono-04")]
     pub(crate) fn as_datetime_04(&self) -> Option<chrono_04::DateTime<chrono_04::Utc>> {
         self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
     }
 
+    /// Converts the value to `time` OffsetDateTime if it is of Timestamp type.
     #[cfg(test)]
     #[cfg(feature = "time-03")]
     pub(crate) fn as_offset_date_time_03(&self) -> Option<time_03::OffsetDateTime> {
         self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
     }
 
+    /// Casts the value to CQL Time if it is of that type.
     pub fn as_cql_time(&self) -> Option<CqlTime> {
         match self {
             Self::Time(i) => Some(*i),
@@ -913,18 +999,21 @@ impl CqlValue {
         }
     }
 
+    /// Converts the value to `chrono` NaiveTime if it is of Time type.
     #[cfg(test)]
     #[cfg(feature = "chrono-04")]
     pub(crate) fn as_naive_time_04(&self) -> Option<chrono_04::NaiveTime> {
         self.as_cql_time().and_then(|ts| ts.try_into().ok())
     }
 
+    /// Converts the value to `time` Time if it is of Time type.
     #[cfg(test)]
     #[cfg(feature = "time-03")]
     pub(crate) fn as_time_03(&self) -> Option<time_03::Time> {
         self.as_cql_time().and_then(|ts| ts.try_into().ok())
     }
 
+    /// Casts the value to CQL Duration if it is of that type.
     pub fn as_cql_duration(&self) -> Option<CqlDuration> {
         match self {
             Self::Duration(i) => Some(*i),
@@ -932,6 +1021,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to CQL Counter if it is of that type.
     pub fn as_counter(&self) -> Option<Counter> {
         match self {
             Self::Counter(i) => Some(*i),
@@ -939,6 +1029,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to bool if it is of that type.
     pub fn as_boolean(&self) -> Option<bool> {
         match self {
             Self::Boolean(i) => Some(*i),
@@ -946,6 +1037,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to double-precision float if it is of that type.
     pub fn as_double(&self) -> Option<f64> {
         match self {
             Self::Double(d) => Some(*d),
@@ -953,6 +1045,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to UUID if it is of that type.
     pub fn as_uuid(&self) -> Option<Uuid> {
         match self {
             Self::Uuid(u) => Some(*u),
@@ -960,6 +1053,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to single-precision float if it is of that type.
     pub fn as_float(&self) -> Option<f32> {
         match self {
             Self::Float(f) => Some(*f),
@@ -967,6 +1061,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to 32-bit signed integer if it is of that type.
     pub fn as_int(&self) -> Option<i32> {
         match self {
             Self::Int(i) => Some(*i),
@@ -974,6 +1069,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to 64-bit signed integer if it is of that type.
     pub fn as_bigint(&self) -> Option<i64> {
         match self {
             Self::BigInt(i) => Some(*i),
@@ -981,6 +1077,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to 8-bit signed integer if it is of that type.
     pub fn as_tinyint(&self) -> Option<i8> {
         match self {
             Self::TinyInt(i) => Some(*i),
@@ -988,6 +1085,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to 16-bit signed integer if it is of that type.
     pub fn as_smallint(&self) -> Option<i16> {
         match self {
             Self::SmallInt(i) => Some(*i),
@@ -995,6 +1093,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to a byte sequence if it is of `blob` type.
     pub fn as_blob(&self) -> Option<&Vec<u8>> {
         match self {
             Self::Blob(v) => Some(v),
@@ -1002,6 +1101,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to UTF-8 encoded string if it is of `text` type.
     pub fn as_text(&self) -> Option<&String> {
         match self {
             Self::Text(s) => Some(s),
@@ -1009,6 +1109,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to CQL Timeuuid if it is of that type.
     pub fn as_timeuuid(&self) -> Option<CqlTimeuuid> {
         match self {
             Self::Timeuuid(u) => Some(*u),
@@ -1016,6 +1117,7 @@ impl CqlValue {
         }
     }
 
+    /// Converts the value to string if it is of `ascii` or `text` type.
     pub fn into_string(self) -> Option<String> {
         match self {
             Self::Ascii(s) => Some(s),
@@ -1024,6 +1126,7 @@ impl CqlValue {
         }
     }
 
+    /// Converts the value to a byte sequence if it is of `blob` type.
     pub fn into_blob(self) -> Option<Vec<u8>> {
         match self {
             Self::Blob(b) => Some(b),
@@ -1031,6 +1134,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to an IP address if it is of `inet` type.
     pub fn as_inet(&self) -> Option<IpAddr> {
         match self {
             Self::Inet(a) => Some(*a),
@@ -1038,6 +1142,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to a vec of CQL values if it is of `list` type.
     pub fn as_list(&self) -> Option<&Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
@@ -1045,6 +1150,7 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to a vec of CQL values if it is of `set` type.
     pub fn as_set(&self) -> Option<&Vec<CqlValue>> {
         match self {
             Self::Set(s) => Some(s),
@@ -1052,6 +1158,8 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to a vec of pairs of CQL values if it is of `map` type,
+    /// where each pair is a key-value pair.
     pub fn as_map(&self) -> Option<&Vec<(CqlValue, CqlValue)>> {
         match self {
             Self::Map(s) => Some(s),
@@ -1059,6 +1167,9 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to a user-defined type (UDT) if it is of that type.
+    /// The UDT is represented as a vector of pairs,
+    /// where each pair consists of a field name and an optional (=nullable) value.
     pub fn as_udt(&self) -> Option<&Vec<(String, Option<CqlValue>)>> {
         match self {
             Self::UserDefinedType { fields, .. } => Some(fields),
@@ -1066,6 +1177,7 @@ impl CqlValue {
         }
     }
 
+    /// Converts the value to a vector of CQL values if it is of `list` or `set` type.
     pub fn into_vec(self) -> Option<Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
@@ -1074,6 +1186,8 @@ impl CqlValue {
         }
     }
 
+    /// Converts the value to a vec of pairs of CQL values if it is of `map` type,
+    /// where each pair is a key-value pair.
     pub fn into_pair_vec(self) -> Option<Vec<(CqlValue, CqlValue)>> {
         match self {
             Self::Map(s) => Some(s),
@@ -1081,6 +1195,8 @@ impl CqlValue {
         }
     }
 
+    /// Converts the value to a vec of pairs if it is a user-defined type (UDT).
+    /// Each pair consists of a field name and an optional (=nullable) value.
     pub fn into_udt_pair_vec(self) -> Option<Vec<(String, Option<CqlValue>)>> {
         match self {
             Self::UserDefinedType { fields, .. } => Some(fields),
@@ -1088,6 +1204,7 @@ impl CqlValue {
         }
     }
 
+    /// Converts the value to CQL Varint if it is of that type.
     pub fn into_cql_varint(self) -> Option<CqlVarint> {
         match self {
             Self::Varint(i) => Some(i),
@@ -1095,6 +1212,7 @@ impl CqlValue {
         }
     }
 
+    /// Converts the value to CQL Decimal if it is of that type.
     pub fn into_cql_decimal(self) -> Option<CqlDecimal> {
         match self {
             Self::Decimal(i) => Some(i),
@@ -1213,6 +1331,7 @@ impl std::fmt::Display for CqlValue {
     }
 }
 
+/// Deserializes any CQL value from a byte slice according to the provided CQL type.
 pub fn deser_cql_value(
     typ: &ColumnType,
     buf: &mut &[u8],
@@ -1380,8 +1499,21 @@ pub fn deser_cql_value(
     })
 }
 
+/// A row in a CQL result set, containing a vector of columns.
+/// Each column can be either a `CqlValue` or `None` if the column
+/// is null.
+///
+/// This type can represent any row:
+/// - with any number of columns,
+/// - with any column types.
+///
+/// Therefore, this type should be used in places where dynamic capabilities are needed,
+/// while, for efficiency purposes, avoided in places where the row structure is known at compile time.
 #[derive(Debug, Default, PartialEq)]
 pub struct Row {
+    /// A vector of columns in the row.
+    ///
+    /// Each column is represented as an `Option<CqlValue>`, where `None` indicates a null value.
     pub columns: Vec<Option<CqlValue>>,
 }
 
