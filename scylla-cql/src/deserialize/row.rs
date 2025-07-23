@@ -1,4 +1,7 @@
 //! Provides types for dealing with row deserialization.
+//!
+//! Those yield raw values, whose deserialization is handled by
+//! the `value` module.
 
 use std::fmt::Display;
 
@@ -12,8 +15,14 @@ use crate::value::{CqlValue, Row};
 /// Represents a raw, unparsed column value.
 #[non_exhaustive]
 pub struct RawColumn<'frame, 'metadata> {
+    /// Index of the column in the row.
     pub index: usize,
+
+    /// Specification of the column, including its name and type.
     pub spec: &'metadata ColumnSpec<'metadata>,
+
+    /// Slice of the frame that contains the serialized value of the column.
+    /// None means that the column is null.
     pub slice: Option<FrameSlice<'frame>>,
 }
 

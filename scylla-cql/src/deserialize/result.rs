@@ -1,3 +1,8 @@
+//! Provides types for dealing with query result deserialization.
+//!
+//! Those yield raw rows, whose deserialization is handled by
+//! the `row` module.
+
 use bytes::Bytes;
 
 use crate::frame::response::result::{
@@ -209,6 +214,9 @@ impl RawRowLendingIterator {
         Some(Ok(iter))
     }
 
+    /// Returns the bounds on the remaining length of the iterator.
+    ///
+    /// This is analogous to [Iterator::size_hint].
     #[inline]
     pub fn size_hint(&self) -> (usize, Option<usize>) {
         // next() is written in a way that it does not progress on error, so once an error
