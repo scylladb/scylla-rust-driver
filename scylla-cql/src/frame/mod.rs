@@ -1,3 +1,13 @@
+//! Abstractions of the CQL wire protocol:
+//! - request and response frames' representation and ser/de;
+//! - frame header and body;
+//! - serialization and deserialization of low-level CQL protocol types;
+//! - protocol features negotiation;
+//! - compression, tracing, custom payload support;
+//! - consistency levels;
+//! - errors that can occur during the above operations.
+//!
+
 pub mod frame_errors;
 pub mod protocol_features;
 pub mod request;
@@ -25,9 +35,17 @@ const HEADER_SIZE: usize = 9;
 
 pub mod flag {
     //! Frame flags
+
+    /// The frame contains a compressed body.
     pub const COMPRESSION: u8 = 0x01;
+
+    /// The frame contains tracing ID.
     pub const TRACING: u8 = 0x02;
+
+    /// The frame contains a custom payload.
     pub const CUSTOM_PAYLOAD: u8 = 0x04;
+
+    /// The frame contains warnings.
     pub const WARNING: u8 = 0x08;
 }
 
@@ -54,6 +72,7 @@ pub enum Compression {
 }
 
 impl Compression {
+    /// Returns the string representation of the compression algorithm.
     pub fn as_str(&self) -> &'static str {
         match self {
             Compression::Lz4 => "lz4",
@@ -89,11 +108,21 @@ impl Display for Compression {
     }
 }
 
+/// A serialized CQL request frame, nearly ready to be sent over the wire.
+///
+/// The only difference from a real frame is that it does not contain the stream number yet.
+/// The stream number is set by the `set_stream` method before sending.
 pub struct SerializedRequest {
     data: Vec<u8>,
 }
 
 impl SerializedRequest {
+    /// Creates a new serialized request frame from a request object.
+    ///
+    /// # Parameters
+    /// - `req`: The request object to serialize. Must implement `SerializableRequest`.
+    /// - `compression`: An optional compression algorithm to use for the request body.
+    /// - `tracing`: A boolean indicating whether to request tracing information in the response.
     pub fn make<R: SerializableRequest>(
         req: &R,
         compression: Option<Compression>,
@@ -125,20 +154,32 @@ impl SerializedRequest {
         Ok(Self { data })
     }
 
+    /// Sets the stream number for this request frame.
+    /// Intended to be called before sending the request,
+    /// once a stream ID has been assigned.
     pub fn set_stream(&mut self, stream: i16) {
         self.data[2..4].copy_from_slice(&stream.to_be_bytes());
     }
 
+    /// Returns the serialized frame data, including the header and body.
     pub fn get_data(&self) -> &[u8] {
         &self.data[..]
     }
 }
 
-// Parts of the frame header which are not determined by the request/response type.
+/// Parts of the frame header which are not determined by the request/response type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct FrameParams {
+    /// The version of the frame protocol. Currently, only version 4 is supported.
+    /// The most significant bit (0x80) is treated specially:
+    /// it indicates whether the frame is from the client or server.
     pub version: u8,
+
+    /// Flags for the frame, indicating features like compression, tracing, etc.
     pub flags: u8,
+
+    /// The stream ID for this frame, which allows matching requests and responses
+    /// in a multiplexed connection.
     pub stream: i16,
 }
 
@@ -152,6 +193,8 @@ impl Default for FrameParams {
     }
 }
 
+/// Reads a response frame from the provided reader (usually, a socket).
+/// Then parses and validates the frame header and extracts the body.
 pub async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
 ) -> Result<(FrameParams, ResponseOpcode, Bytes), FrameHeaderParseError> {
@@ -203,13 +246,29 @@ pub async fn read_response_frame(
     Ok((frame_params, opcode, raw_body.into_inner().into()))
 }
 
+/// Represents the already parsed response body extensions,
+/// including trace ID, warnings, and custom payload,
+/// and the remaining body raw data.
 pub struct ResponseBodyWithExtensions {
+    /// The trace ID if tracing was requested in the request.
+    ///
+    /// This can be used to issue a follow-up request to the server
+    /// to get detailed tracing information about the request.
     pub trace_id: Option<Uuid>,
+
+    /// Warnings returned by the server, if any.
     pub warnings: Vec<String>,
-    pub body: Bytes,
+
+    /// Custom payload (see [the CQL protocol description of the feature](https://github.com/apache/cassandra/blob/a39f3b066f010d465a1be1038d5e06f1e31b0391/doc/native_protocol_v4.spec#L276))
+    /// returned by the server, if any.
     pub custom_payload: Option<HashMap<String, Bytes>>,
+
+    /// The remaining body data after parsing the extensions.
+    pub body: Bytes,
 }
 
+/// Decompresses the response body if compression is enabled,
+/// and parses any extensions like trace ID, warnings, and custom payload.
 pub fn parse_response_body_extensions(
     flags: u8,
     compression: Option<Compression>,
@@ -260,11 +319,13 @@ pub fn parse_response_body_extensions(
     Ok(ResponseBodyWithExtensions {
         trace_id,
         warnings,
-        body,
         custom_payload,
+        body,
     })
 }
 
+/// Compresses the request body using the specified compression algorithm,
+/// appending the compressed data to the provided output buffer.
 pub fn compress_append(
     uncomp_body: &[u8],
     compression: Compression,
@@ -291,6 +352,8 @@ pub fn compress_append(
     }
 }
 
+/// Deompresses the response body using the specified compression algorithm
+/// and returns the decompressed data as an owned buffer.
 pub fn decompress(
     mut comp_body: &[u8],
     compression: Compression,

@@ -87,6 +87,7 @@ impl TryFrom<i16> for SerialConsistency {
 }
 
 impl Consistency {
+    /// Checks if the consistency is a serial consistency.
     pub fn is_serial(&self) -> bool {
         matches!(self, Consistency::Serial | Consistency::LocalSerial)
     }
