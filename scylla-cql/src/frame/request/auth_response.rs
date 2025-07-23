@@ -1,3 +1,5 @@
+//! CQL protocol-level representation of a `AUTH_RESPONSE` request.
+
 use std::num::TryFromIntError;
 
 use thiserror::Error;
@@ -7,8 +9,11 @@ use crate::frame::frame_errors::CqlRequestSerializationError;
 use crate::frame::request::{RequestOpcode, SerializableRequest};
 use crate::frame::types::write_bytes_opt;
 
-// Implements Authenticate Response
+/// Represents AUTH_RESPONSE CQL request.
+///
+/// This request is sent by the client to respond to an authentication challenge.
 pub struct AuthResponse {
+    /// Raw response bytes.
     pub response: Option<Vec<u8>>,
 }
 

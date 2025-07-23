@@ -1,3 +1,5 @@
+//! CQL protocol-level representation of a `PREPARE` request.
+
 use std::num::TryFromIntError;
 
 use thiserror::Error;
@@ -9,7 +11,10 @@ use crate::{
     frame::types,
 };
 
+/// CQL protocol-level representation of an `PREPARE` request,
+/// used to prepare a single statement for further execution.
 pub struct Prepare<'a> {
+    /// CQL statement string to prepare.
     pub query: &'a str,
 }
 

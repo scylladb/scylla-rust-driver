@@ -1,3 +1,5 @@
+//! CQL protocol-level representation of a `BATCH` request.
+
 use bytes::{Buf, BufMut};
 use std::{borrow::Cow, convert::TryInto, num::TryFromIntError};
 use thiserror::Error;
@@ -20,6 +22,8 @@ const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
 const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
 const ALL_FLAGS: u8 = FLAG_WITH_SERIAL_CONSISTENCY | FLAG_WITH_DEFAULT_TIMESTAMP;
 
+/// CQL protocol-level representation of a `BATCH` request, used to execute
+/// a batch of statements (prepared, unprepared, or a mix of both).
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct Batch<'b, Statement, Values>
 where
@@ -27,11 +31,22 @@ where
     Statement: Clone,
     Values: RawBatchValues,
 {
+    /// The statements in the batch.
     pub statements: Cow<'b, [Statement]>,
+
+    /// The type of the batch.
     pub batch_type: BatchType,
+
+    /// The consistency level for the batch.
     pub consistency: types::Consistency,
+
+    /// The serial consistency level for the batch, if any.
     pub serial_consistency: Option<types::SerialConsistency>,
+
+    /// The client-side-assigned timestamp for the batch, if any.
     pub timestamp: Option<i64>,
+
+    /// The bound values for the batch statements.
     pub values: Values,
 }
 
@@ -39,11 +54,24 @@ where
 #[derive(Clone, Copy)]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub enum BatchType {
+    /// By default, all operations in the batch are performed as logged, to ensure all mutations
+    /// eventually complete (or none will). See the notes on [UNLOGGED](BatchType::Unlogged) batches for more details.
+    /// A `LOGGED` batch to a single partition will be converted to an `UNLOGGED` batch as an optimization.
     Logged = 0,
+
+    /// By default, ScyllaDB uses a batch log to ensure all operations in a batch eventually complete or none will
+    /// (note, however, that operations are only isolated within a single partition).
+    /// There is a performance penalty for batch atomicity when a batch spans multiple partitions. If you do not want
+    /// to incur this penalty, you can tell Scylla to skip the batchlog with the `UNLOGGED` option. If the `UNLOGGED`
+    /// option is used, a failed batch might leave the batch only partly applied.
     Unlogged = 1,
+
+    /// Use the `COUNTER` option for batched counter updates. Unlike other updates in ScyllaDB, counter updates
+    /// are not idempotent.
     Counter = 2,
 }
 
+/// Encountered a malformed batch type.
 #[derive(Debug, Error)]
 #[error("Malformed batch type: {value}")]
 pub struct BatchTypeParseError {
@@ -63,10 +91,19 @@ impl TryFrom<u8> for BatchType {
     }
 }
 
+/// A single statement in a batch, which can either be a statement string or a prepared statement ID.
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum BatchStatement<'a> {
-    Query { text: Cow<'a, str> },
-    Prepared { id: Cow<'a, [u8]> },
+    /// Unprepared CQL statement.
+    Query {
+        /// CQL statement string.
+        text: Cow<'a, str>,
+    },
+    /// Prepared CQL statement.
+    Prepared {
+        /// Prepared CQL statement's ID.
+        id: Cow<'a, [u8]>,
+    },
 }
 
 impl<Statement, Values> Batch<'_, Statement, Values>

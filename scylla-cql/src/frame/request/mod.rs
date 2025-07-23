@@ -1,3 +1,5 @@
+//! CQL requests sent by the client.
+
 pub mod auth_response;
 pub mod batch;
 pub mod execute;
@@ -59,6 +61,7 @@ impl std::fmt::Display for CqlRequestKind {
     }
 }
 
+/// Opcode of a request, used to identify the request type in a CQL frame.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum RequestOpcode {
@@ -93,11 +96,15 @@ impl TryFrom<u8> for RequestOpcode {
     }
 }
 
+/// Requests that can be serialized into a CQL frame.
 pub trait SerializableRequest {
+    /// Opcode of the request, used to identify the request type in the CQL frame.
     const OPCODE: RequestOpcode;
 
+    /// Serializes the request into the provided buffer.
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError>;
 
+    /// Serializes the request into a heap-allocated `Bytes` object.
     fn to_bytes(&self) -> Result<Bytes, CqlRequestSerializationError> {
         let mut v = Vec::new();
         self.serialize(&mut v)?;
@@ -105,9 +112,12 @@ pub trait SerializableRequest {
     }
 }
 
+/// Requests that can be deserialized from a CQL frame.
+///
 /// Not intended for driver's direct usage (as driver has no interest in deserialising CQL requests),
 /// but very useful for testing (e.g. asserting that the sent requests have proper parameters set).
 pub trait DeserializableRequest: SerializableRequest + Sized {
+    /// Deserializes the request from the provided buffer.
     fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError>;
 }
 
@@ -133,14 +143,20 @@ pub enum RequestDeserializationError {
     UnexpectedBatchStatementKind(u8),
 }
 
+/// A CQL request that can be sent to the server.
 #[non_exhaustive] // TODO: add remaining request types
 pub enum Request<'r> {
+    /// QUERY request, used to execute a single unprepared statement.
     Query(Query<'r>),
+    /// EXECUTE request, used to execute a single prepared statement.
     Execute(Execute<'r>),
+    /// BATCH request, used to execute a batch of (prepared, unprepared, or mix of both)
+    /// statements.
     Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
 }
 
 impl Request<'_> {
+    /// Deserializes the request from the provided buffer.
     pub fn deserialize(
         buf: &mut &[u8],
         opcode: RequestOpcode,
