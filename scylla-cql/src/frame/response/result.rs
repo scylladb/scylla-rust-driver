@@ -1,3 +1,5 @@
+//! CQL protocol-level representation of a `RESULT` response.
+
 use crate::deserialize::result::{RawRowIterator, TypedRowIterator};
 use crate::deserialize::row::DeserializeRow;
 use crate::deserialize::{FrameSlice, TypeCheckError};
@@ -18,23 +20,40 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::{result::Result as StdResult, str};
 
+/// Represents a CQL `RESULT::SetKeyspace` response.
 #[derive(Debug)]
 pub struct SetKeyspace {
+    /// The name of the keyspace that was set as an effect
+    /// of the executed request.
     pub keyspace_name: String,
 }
 
+/// Represents a CQL `RESULT::Prepared` response,
+/// which is sent in response to a `PREPARE` request.
 #[derive(Debug)]
 pub struct Prepared {
+    /// ID of the prepared statement.
     pub id: Bytes,
+    /// Metadata about the bound values which need to be provided
+    /// by the driver when the prepared statement is executed.
     pub prepared_metadata: PreparedMetadata,
+    /// Metadata about the result set which will be returned
+    /// by the server when the prepared statement is executed.
     pub result_metadata: ResultMetadata<'static>,
 }
 
+/// Represents a CQL `RESULT::SchemaChange` response,
+/// which indicates that a schema changed as an effect
+/// of the executed request.
 #[derive(Debug)]
 pub struct SchemaChange {
+    /// Event that describes the schema change.
     pub event: SchemaChangeEvent,
 }
 
+/// Specification of a table in a keyspace.
+///
+/// For a given cluster, [TableSpec] uniquely identifies a table.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableSpec<'a> {
     ks_name: Cow<'a, str>,
@@ -59,7 +78,12 @@ pub enum ColumnType<'frame> {
     /// Collection types: Map, Set, and List. Those are composite types with
     /// dynamic size but constant predefined element types.
     Collection {
+        /// If a collection is not frozen, elements in the collection can be updated individually.
+        /// If it is frozen, the entire collection will be overwritten when it is updated.
+        /// A collection cannot contain another collection unless the inner collection is frozen.
+        /// The frozen type will be treated as a blob.
         frozen: bool,
+        /// Type of the collection's elements.
         typ: CollectionType<'frame>,
     },
 
@@ -67,13 +91,21 @@ pub enum ColumnType<'frame> {
     /// are of the same type. Intuitively, it can be viewed as a list with constant
     /// predefined size, or as a tuple which has all elements of the same type.
     Vector {
+        /// Type of the vector's elements.
         typ: Box<ColumnType<'frame>>,
+        /// Length of the vector.
         dimensions: u16,
     },
 
     /// A C-struct-like type defined by the user.
     UserDefinedType {
+        /// Analogous to [ColumnType::Collection::frozen].
+        /// If a UDT is not frozen, elements in the UDT can be updated individually.
+        /// If it is frozen, the entire UDT will be overwritten when it is updated.
+        /// A UDT cannot contain another UDT unless the inner UDT is frozen.
+        /// The frozen type will be treated as a blob.
         frozen: bool,
+        /// Definition of the user-defined type.
         definition: Arc<UserDefinedType<'frame>>,
     },
 
@@ -86,25 +118,45 @@ pub enum ColumnType<'frame> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NativeType {
+    /// ASCII-only string.
     Ascii,
+    /// Boolean value.
     Boolean,
+    /// Binary data of any length.
     Blob,
+    /// Counter value, represented as a 64-bit integer.
     Counter,
+    /// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
     Date,
+    /// Variable-precision decimal.
     Decimal,
+    /// 64-bit IEEE-754 floating point number.
     Double,
+    /// A duration with nanosecond precision.
     Duration,
+    /// 32-bit IEEE-754 floating point number.
     Float,
+    /// 32-bit signed integer.
     Int,
+    /// 64-bit signed integer.
     BigInt,
+    /// UTF-8 encoded string.
     Text,
+    /// Milliseconds since unix epoch.
     Timestamp,
+    /// IPv4 or IPv6 address.
     Inet,
+    /// 16-bit signed integer.
     SmallInt,
+    /// 8-bit signed integer.
     TinyInt,
+    /// Nanoseconds since midnight.
     Time,
+    /// Version 1 UUID, generally used as a “conflict-free” timestamp.
     Timeuuid,
+    /// Universally unique identifier (UUID) of any version.
     Uuid,
+    /// Arbitrary-precision integer.
     Varint,
 }
 
@@ -147,20 +199,32 @@ impl NativeType {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CollectionType<'frame> {
+    /// A list of CQL values of the same types.
     List(Box<ColumnType<'frame>>),
+    /// A map of CQL values, whose all keys have the same type
+    /// and all values have the same type.
     Map(Box<ColumnType<'frame>>, Box<ColumnType<'frame>>),
+    /// A set of CQL values of the same types.
     Set(Box<ColumnType<'frame>>),
 }
 
-/// Definition of a user-defined type
+/// Definition of a user-defined type (UDT).
+/// UDT is composed of fields, each with a name and an optional value of its own type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserDefinedType<'frame> {
+    /// Name of the user-defined type.
     pub name: Cow<'frame, str>,
+    /// Keyspace the type belongs to.
     pub keyspace: Cow<'frame, str>,
+    /// Fields of the user-defined type - (name, type) pairs.
     pub field_types: Vec<(Cow<'frame, str>, ColumnType<'frame>)>,
 }
 
 impl ColumnType<'_> {
+    /// Converts a [ColumnType] to an owned version, where all
+    /// references are replaced with owned values.
+    ///
+    /// Unfortunately, this allocates even if the type is already owned.
     pub fn into_owned(self) -> ColumnType<'static> {
         match self {
             ColumnType::Native(b) => ColumnType::Native(b),
@@ -203,6 +267,10 @@ impl ColumnType<'_> {
 }
 
 impl CollectionType<'_> {
+    /// Converts a [CollectionType] to an owned version, where all
+    /// references are replaced with owned values.
+    ///
+    /// Unfortunately, this allocates even if the type is already owned.
     fn into_owned(self) -> CollectionType<'static> {
         match self {
             CollectionType::List(elem_type) => {
@@ -217,6 +285,7 @@ impl CollectionType<'_> {
 }
 
 impl<'a> TableSpec<'a> {
+    /// Creates a new borrowed [TableSpec] with the given keyspace and table names.
     pub const fn borrowed(ks: &'a str, table: &'a str) -> Self {
         Self {
             ks_name: Cow::Borrowed(ks),
@@ -224,24 +293,33 @@ impl<'a> TableSpec<'a> {
         }
     }
 
+    /// Retrieves the keyspace name.
     pub fn ks_name(&'a self) -> &'a str {
         self.ks_name.as_ref()
     }
 
+    /// Retrieves the table name.
     pub fn table_name(&'a self) -> &'a str {
         self.table_name.as_ref()
     }
 
+    /// Converts the [TableSpec] to an owned version, where all references are replaced with owned values.
+    ///
+    /// Does not allocate if the [TableSpec] is already owned.
     pub fn into_owned(self) -> TableSpec<'static> {
         TableSpec::owned(self.ks_name.into_owned(), self.table_name.into_owned())
     }
 
+    /// Converts the [TableSpec] to an owned version, where all references are replaced with owned values.
+    ///
+    /// Allocates a new [TableSpec] even if the original is already owned.
     pub fn to_owned(&self) -> TableSpec<'static> {
         TableSpec::owned(self.ks_name().to_owned(), self.table_name().to_owned())
     }
 }
 
 impl TableSpec<'static> {
+    /// Creates a new owned [TableSpec] with the given keyspace and table names.
     pub fn owned(ks_name: String, table_name: String) -> Self {
         Self {
             ks_name: Cow::Owned(ks_name),
@@ -251,14 +329,14 @@ impl TableSpec<'static> {
 }
 
 impl ColumnType<'_> {
-    // Returns true if the type allows a special, empty value in addition to its
-    // natural representation. For example, bigint represents a 32-bit integer,
-    // but it can also hold a 0-bit empty value.
-    //
-    // It looks like Cassandra 4.1.3 rejects empty values for some more types than
-    // Scylla: date, time, smallint and tinyint. We will only check against
-    // Scylla's set of types supported for empty values as it's smaller;
-    // with Cassandra, some rejects will just have to be rejected on the db side.
+    /// Returns true if the type allows a special, empty value in addition to its
+    /// natural representation. For example, bigint represents a 32-bit integer,
+    /// but it can also hold a 0-bit empty value.
+    ///
+    /// It looks like Cassandra 4.1.3 rejects empty values for some more types than
+    /// Scylla: date, time, smallint and tinyint. We will only check against
+    /// Scylla's set of types supported for empty values as it's smaller;
+    /// with Cassandra, some rejects will just have to be rejected on the db side.
     pub(crate) fn supports_special_empty_value(&self) -> bool {
         #[expect(clippy::match_like_matches_macro)]
         match self {
@@ -272,6 +350,9 @@ impl ColumnType<'_> {
     }
 }
 
+/// Specification of a column of a table.
+///
+/// For a given cluster, [ColumnSpec] uniquely identifies a column.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnSpec<'frame> {
     pub(crate) table_spec: TableSpec<'frame>,
@@ -280,6 +361,7 @@ pub struct ColumnSpec<'frame> {
 }
 
 impl ColumnSpec<'static> {
+    /// Creates a new owned [ColumnSpec] with the given name, type, and table specification.
     #[inline]
     pub fn owned(name: String, typ: ColumnType<'static>, table_spec: TableSpec<'static>) -> Self {
         Self {
@@ -291,6 +373,7 @@ impl ColumnSpec<'static> {
 }
 
 impl<'frame> ColumnSpec<'frame> {
+    /// Creates a new borrowed [ColumnSpec] with the given name, type, and table specification.
     #[inline]
     pub const fn borrowed(
         name: &'frame str,
@@ -304,22 +387,28 @@ impl<'frame> ColumnSpec<'frame> {
         }
     }
 
+    /// Retrieves the table specification associated with this column.
     #[inline]
     pub fn table_spec(&self) -> &TableSpec<'frame> {
         &self.table_spec
     }
 
+    /// Retrieves the name of the column.
     #[inline]
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Retrieves the type of the column.
     #[inline]
     pub fn typ(&self) -> &ColumnType<'frame> {
         &self.typ
     }
 }
 
+/// Metadata of a result set.
+///
+/// Includes the number of columns and their specifications.
 #[derive(Debug, Clone)]
 pub struct ResultMetadata<'a> {
     col_count: usize,
@@ -327,16 +416,20 @@ pub struct ResultMetadata<'a> {
 }
 
 impl<'a> ResultMetadata<'a> {
+    /// Retrieves the number of columns in the result set.
     #[inline]
     pub fn col_count(&self) -> usize {
         self.col_count
     }
 
+    /// Retrieves the specifications of the columns in the result set.
     #[inline]
     pub fn col_specs(&self) -> &[ColumnSpec<'a>] {
         &self.col_specs
     }
 
+    /// Creates a new mock empty [ResultMetadata] with 0 columns.
+    /// Used only for testing purposes.
     // Preferred to implementing Default, because users shouldn't be encouraged to create
     // empty ResultMetadata.
     #[inline]
@@ -354,7 +447,9 @@ impl<'a> ResultMetadata<'a> {
 /// 2. sharing ownership of metadata cached in PreparedStatement.
 #[derive(Debug)]
 pub enum ResultMetadataHolder {
+    /// [ResultMetadata] that is self-borrowed from the RESULT:Rows frame.
     SelfBorrowed(SelfBorrowedMetadataContainer),
+    /// [ResultMetadata] that is shared and cached in PreparedStatement.
     SharedCached(Arc<ResultMetadata<'static>>),
 }
 
@@ -379,21 +474,32 @@ impl ResultMetadataHolder {
     }
 }
 
+/// Represents the relationship between partition key columns and bind markers.
+/// This allows implementations with token-aware routing to correctly
+/// construct the partition key without needing to inspect table
+/// metadata.
+///
+/// For example, `PartitionKeyIndex { index: 2, sequence: 1 }` means
+/// that the third bind marker is the second column of the partition key.
 #[derive(Debug, Copy, Clone)]
 pub struct PartitionKeyIndex {
-    /// index in the serialized values
+    /// Index of the bind marker.
     pub index: u16,
-    /// sequence number in partition key
+    /// Sequence number in partition key.
     pub sequence: u16,
 }
 
+/// Metadata of a prepared statement about its bound values.
 #[derive(Debug, Clone)]
 pub struct PreparedMetadata {
+    /// Currently just the `GLOBAL_TABLES_SPEC` flag.
     pub flags: i32,
+    /// Number of bound values in the prepared statement.
     pub col_count: usize,
     /// pk_indexes are sorted by `index` and can be reordered in partition key order
     /// using `sequence` field
     pub pk_indexes: Vec<PartitionKeyIndex>,
+    /// Specifications of the bound values.
     pub col_specs: Vec<ColumnSpec<'static>>,
 }
 
@@ -589,6 +695,7 @@ impl DeserializedMetadataAndRawRows {
         self.raw_rows.len()
     }
 
+    /// Creates an empty [DeserializedMetadataAndRawRows].
     // Preferred to implementing Default, because users shouldn't be encouraged to create
     // empty DeserializedMetadataAndRawRows.
     #[inline]
@@ -627,12 +734,21 @@ impl DeserializedMetadataAndRawRows {
     }
 }
 
+/// Represents the result of a CQL `RESULT` response.
 #[derive(Debug)]
 pub enum Result {
+    /// A result with no associated data.
     Void,
+    /// A result with metadata and rows.
     Rows((RawMetadataAndRawRows, PagingStateResponse)),
+    /// A result indicating that a keyspace was set as an effect
+    /// of the executed request.
     SetKeyspace(SetKeyspace),
+    /// A result indicating that a statement was prepared
+    /// as an effect of the `PREPARE` request.
     Prepared(Prepared),
+    /// A result indicating that a schema change occurred
+    /// as an effect of the executed request.
     SchemaChange(SchemaChange),
 }
 
@@ -1093,6 +1209,9 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
     })
 }
 
+/// Deserializes a CQL `RESULT` response from the provided buffer.
+///
+/// Reuses cached metadata if provided, otherwise deserializes it.
 pub fn deserialize(
     buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,

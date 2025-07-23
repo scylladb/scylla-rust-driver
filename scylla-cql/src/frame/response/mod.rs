@@ -1,3 +1,5 @@
+//! CQL responses sent by the server.
+
 pub mod authenticate;
 pub mod custom_type_parser;
 pub mod error;
@@ -47,6 +49,7 @@ impl std::fmt::Display for CqlResponseKind {
     }
 }
 
+/// Opcode of a response, used to identify the response type in a CQL frame.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum ResponseOpcode {
@@ -81,19 +84,30 @@ impl TryFrom<u8> for ResponseOpcode {
     }
 }
 
+/// A CQL response that has been received from the server.
 #[derive(Debug)]
 pub enum Response {
+    /// ERROR response, returned by the server when an error occurs.
     Error(Error),
+    /// READY response, indicating that the server is ready to process requests,
+    /// typically after a connection is established.
     Ready,
+    /// RESULT response, containing the result of a statement execution.
     Result(result::Result),
+    /// AUTHENTICATE response, indicating that the server requires authentication.
     Authenticate(authenticate::Authenticate),
+    /// AUTH_SUCCESS response, indicating that the authentication was successful.
     AuthSuccess(authenticate::AuthSuccess),
+    /// AUTH_CHALLENGE response, indicating that the server requires further authentication.
     AuthChallenge(authenticate::AuthChallenge),
+    /// SUPPORTED response, containing the features supported by the server.
     Supported(Supported),
+    /// EVENT response, containing an event that occurred on the server.
     Event(event::Event),
 }
 
 impl Response {
+    /// Returns the kind of this response.
     pub fn to_response_kind(&self) -> CqlResponseKind {
         match self {
             Response::Error(_) => CqlResponseKind::Error,
@@ -107,6 +121,7 @@ impl Response {
         }
     }
 
+    /// Deserialize a response from the given bytes.
     pub fn deserialize(
         features: &ProtocolFeatures,
         opcode: ResponseOpcode,
@@ -136,6 +151,7 @@ impl Response {
         Ok(response)
     }
 
+    /// Converts this response into a `NonErrorResponse`, returning an error if it is an `Error` response.
     pub fn into_non_error_response(self) -> Result<NonErrorResponse, error::Error> {
         let non_error_response = match self {
             Response::Error(e) => return Err(e),
@@ -152,19 +168,29 @@ impl Response {
     }
 }
 
-// A Response which can not be Response::Error
+/// A CQL response that has been received from the server, excluding error responses.
+/// This is used to handle responses that are not errors, allowing for easier processing
+/// of valid responses without need to handle error case any later.
 #[derive(Debug)]
 pub enum NonErrorResponse {
+    /// See [`Response::Ready`].
     Ready,
+    /// See [`Response::Result`].
     Result(result::Result),
+    /// See [`Response::Authenticate`].
     Authenticate(authenticate::Authenticate),
+    /// See [`Response::AuthSuccess`].
     AuthSuccess(authenticate::AuthSuccess),
+    /// See [`Response::AuthChallenge`].
     AuthChallenge(authenticate::AuthChallenge),
+    /// See [`Response::Supported`].
     Supported(Supported),
+    /// See [`Response::Event`].
     Event(event::Event),
 }
 
 impl NonErrorResponse {
+    /// Returns the kind of this non-error response.
     pub fn to_response_kind(&self) -> CqlResponseKind {
         match self {
             NonErrorResponse::Ready => CqlResponseKind::Ready,
