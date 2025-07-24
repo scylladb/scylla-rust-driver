@@ -124,11 +124,15 @@ impl std::fmt::Debug for Session {
     }
 }
 
+/// Represents a TLS context used to configure TLS connections to DB nodes.
+/// Abstracts over various TLS implementations, such as OpenSSL and Rustls.
 #[derive(Clone)] // Cheaply clonable - reference counted.
 #[non_exhaustive]
 pub enum TlsContext {
+    /// TLS context backed by OpenSSL 0.10.
     #[cfg(feature = "openssl-010")]
     OpenSsl010(openssl::ssl::SslContext),
+    /// TLS context backed by Rustls 0.23.
     #[cfg(feature = "rustls-023")]
     Rustls023(Arc<rustls::ClientConfig>),
 }
@@ -173,19 +177,41 @@ pub struct SessionConfig {
     /// Preferred compression algorithm to use on connections.
     /// If it's not supported by database server Session will fall back to no compression.
     pub compression: Option<Compression>,
+
+    /// Whether to set the nodelay TCP flag.
     pub tcp_nodelay: bool,
+
+    /// TCP keepalive interval, which means how often keepalive messages
+    /// are sent **on TCP layer** when a connection is idle.
+    /// If `None`, no TCP keepalive messages are sent.
     pub tcp_keepalive_interval: Option<Duration>,
 
+    /// Handle to the default execution profile, which is used
+    /// for all statements that do not specify an execution profile.
     pub default_execution_profile_handle: ExecutionProfileHandle,
 
+    /// Keyspace to be used on all connections.
+    /// Each connection will send `"USE <keyspace_name>"` before sending any requests.
+    /// This can be later changed with [`Session::use_keyspace`].
     pub used_keyspace: Option<String>,
+
+    /// Whether the keyspace name is case-sensitive.
+    /// This is used to determine how the keyspace name is sent to the server:
+    /// - if case-insensitive, it is sent as-is,
+    /// - if case-sensitive, it is enclosed in double quotes.
     pub keyspace_case_sensitive: bool,
 
-    /// Provide our Session with TLS
+    /// TLS context used configure TLS connections to DB nodes.
     pub tls_context: Option<TlsContext>,
 
+    /// Custom authenticator provider to create an authenticator instance
+    /// upon session creation.
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
 
+    /// Timeout for establishing connections to a node.
+    ///
+    /// If it's higher than underlying os's default connection timeout, it won't have
+    /// any effect.
     pub connect_timeout: Duration,
 
     /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.

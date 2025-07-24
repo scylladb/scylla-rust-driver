@@ -52,9 +52,16 @@ impl NodeAddr {
             NodeAddr::Translatable(addr) | NodeAddr::Untranslatable(addr) => addr,
         }
     }
+    /// IP address of the node.
+    ///
+    /// Keep in mind that this discards the information about whether the address is translatable or not.
+    /// Don't be surprised if you get a `Translatable` address here and won't be able to reach a node using it,
+    /// because the node might be reachable through a different address, which must be obtained by translation.
     pub fn ip(&self) -> IpAddr {
         self.into_inner().ip()
     }
+
+    /// Port of the node.
     pub fn port(&self) -> u16 {
         self.into_inner().port()
     }
@@ -73,12 +80,21 @@ impl Display for NodeAddr {
 /// a new instance is created (for implementation reasons).
 #[derive(Debug)]
 pub struct Node {
+    /// Unique identifier of the node.
     pub host_id: Uuid,
+    /// Address of the node, which is used to connect to it.
+    /// This address is either the one broadcast by the node itself
+    /// (`NodeAddr::Translatable`) or the one used to connect to it
+    /// in the first place if it's a contact point (`NodeAddr::Untranslatable`).
     pub address: NodeAddr,
+    /// Datacenter of the node, if known.
     pub datacenter: Option<String>,
+    /// Rack of the node, if known.
     pub rack: Option<String>,
 
-    // If the node is filtered out by the host filter, this will be None
+    /// Connection pool for this node.
+    ///
+    /// If the node is filtered out by the host filter, this will be [None].
     pool: Option<NodeConnectionPool>,
 
     // In unit tests Node objects are mocked, and don't have real connection
@@ -156,6 +172,13 @@ impl Node {
         }
     }
 
+    /// Retrieves the sharder for this node, if it has one.
+    ///
+    /// If the node is disabled (i.e., it has no connection pool),
+    /// or the node is not sharded (i.e., it's not a ScyllaDB node), this will return `None`.
+    ///
+    /// If the node [is enabled](Self::is_enabled) and does not have a sharder,
+    /// this means it's not a ScyllaDB node.
     pub fn sharder(&self) -> Option<Sharder> {
         self.pool.as_ref()?.sharder()
     }
@@ -242,7 +265,9 @@ impl Hash for Node {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[non_exhaustive]
 pub enum KnownNode {
+    /// A node identified by its hostname.
     Hostname(String),
+    /// A node identified by its IP address + a port.
     Address(SocketAddr),
 }
 

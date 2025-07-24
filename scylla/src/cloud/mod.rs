@@ -1,3 +1,5 @@
+//! Support for connecting to ScyllaDB Serverless Cloud.
+
 mod config;
 
 pub use config::CloudConfig;

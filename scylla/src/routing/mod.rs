@@ -34,7 +34,7 @@ pub struct Token {
 }
 
 impl Token {
-    /// Creates a new token with given value, normalizing the value if necessary
+    /// Creates a new token with given value, normalizing the value if necessary.
     #[inline]
     pub fn new(value: i64) -> Self {
         Self {
@@ -49,6 +49,7 @@ impl Token {
     /// https://github.com/scylladb/scylla-rust-driver/blob/049dc3546d24e45106fed0fdb985ec2511ab5192/scylla/src/transport/partitioner.rs#L312-L322
     pub(crate) const INVALID: Self = Token { value: i64::MIN };
 
+    /// Retrieves the value of the token.
     #[inline]
     pub fn value(&self) -> i64 {
         self.value

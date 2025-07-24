@@ -1,3 +1,5 @@
+//! Policies to decide whether to retry a request and how to do so.
+
 mod default;
 mod downgrading_consistency;
 mod fallthrough;

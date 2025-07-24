@@ -1,3 +1,7 @@
+//! Abstractions for timestamp generation on the client side,
+//! which can be used to impose chronological order on statement
+//! executions.
+
 use std::{
     sync::atomic::AtomicI64,
     time::{SystemTime, UNIX_EPOCH},
@@ -20,6 +24,7 @@ pub trait TimestampGenerator: Send + Sync {
 pub struct SimpleTimestampGenerator {}
 
 impl SimpleTimestampGenerator {
+    /// Creates a new simple timestamp generator.
     pub fn new() -> Self {
         SimpleTimestampGenerator {}
     }
@@ -56,7 +61,7 @@ pub struct MonotonicTimestampGenerator {
 }
 
 impl MonotonicTimestampGenerator {
-    /// Creates a new monotonic timestamp generator with default settings
+    /// Creates a new monotonic timestamp generator with default settings.
     pub fn new() -> Self {
         MonotonicTimestampGenerator {
             last: AtomicI64::new(0),
@@ -68,6 +73,9 @@ impl MonotonicTimestampGenerator {
         }
     }
 
+    /// Configures the generator to warn the user if clock skew is detected.
+    /// Warnings will be issued if the clock skew is bigger than `warning_threshold`
+    /// and will be repeated no more than once per `warning_interval`.
     pub fn with_warning_times(
         mut self,
         warning_threshold: Duration,
@@ -80,6 +88,7 @@ impl MonotonicTimestampGenerator {
         self
     }
 
+    /// Configures the generator to not warn the user if clock skew is detected.
     pub fn without_warnings(mut self) -> Self {
         self.config = None;
         self

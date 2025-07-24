@@ -1,3 +1,6 @@
+// Rigorous documentation is not necessary for integration tests.
+#![allow(missing_docs)]
+
 pub(crate) mod ccm;
 mod load_balancing;
 mod macros;
