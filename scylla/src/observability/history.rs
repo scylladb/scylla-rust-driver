@@ -30,7 +30,7 @@ pub struct SpeculativeId(pub usize);
 /// Any type implementing this trait can be passed to Session
 /// to collect execution history of specific requests.\
 /// In order to use it call `set_history_listener` on
-/// `Query`, `PreparedStatement`, etc...\
+/// `Statement`, `PreparedStatement`, etc...\
 /// The listener has to generate unique IDs for new requests, attempts and speculative fibers.
 /// These ids are then used by the caller to identify them.\
 /// It's important to note that even after a request is finished there still might come events related to it.
@@ -68,15 +68,17 @@ pub trait HistoryListener: Debug + Send + Sync {
     );
 }
 
+/// A point in time when an event happened.
 pub type TimePoint = DateTime<Utc>;
 
-/// HistoryCollector can be used as HistoryListener to collect all the request history events.
-/// Each event is marked with an UTC timestamp.
+/// HistoryCollector can be used as [HistoryListener] to collect all the request history events.
+/// Each event is marked with a UTC timestamp.
 #[derive(Debug, Default)]
 pub struct HistoryCollector {
     data: Mutex<HistoryCollectorData>,
 }
 
+/// Data collected by [HistoryCollector].
 #[derive(Debug, Clone)]
 pub struct HistoryCollectorData {
     events: Vec<(HistoryEvent, TimePoint)>,
@@ -85,14 +87,25 @@ pub struct HistoryCollectorData {
     next_attempt_id: AttemptId,
 }
 
+/// Events that can happen during request execution,
+/// which are collected by [HistoryCollector].
 #[derive(Debug, Clone)]
 pub enum HistoryEvent {
+    /// A new request has started, with a unique [RequestId].
     NewRequest(RequestId),
+    /// Request with [RequestId] has finished successfully.
     RequestSuccess(RequestId),
+    /// Request with [RequestId] has finished with a given [RequestError].
     RequestError(RequestId, RequestError),
+    /// A new speculative fiber with a unique [SpeculativeId] has started
+    /// for a request with [RequestId].
     NewSpeculativeFiber(SpeculativeId, RequestId),
+    /// A new attempt with a unique [AttemptId] has started for a request with [RequestId].
     NewAttempt(AttemptId, RequestId, Option<SpeculativeId>, SocketAddr),
+    /// Attempt with [AttemptId] has finished successfully.
     AttemptSuccess(AttemptId),
+    /// Attempt with [AttemptId] has finished with an error,
+    /// including the error and retry decision.
     AttemptError(AttemptId, RequestAttemptError, RetryDecision),
 }
 
@@ -247,44 +260,70 @@ impl HistoryListener for HistoryCollector {
 }
 
 /// Structured representation of requests history.\
-/// HistoryCollector collects raw events which later can be converted
+/// [HistoryCollector] collects raw events which later can be converted
 /// to this pretty representation.\
 /// It has a `Display` impl which can be used for printing pretty request history.
 #[derive(Debug, Clone)]
 pub struct StructuredHistory {
+    /// List of requests with their history.
     pub requests: Vec<RequestHistory>,
 }
 
+/// History of a single request, including its speculative fibers and attempts.
 #[derive(Debug, Clone)]
 pub struct RequestHistory {
+    /// Time when the request started.
     pub start_time: TimePoint,
+    /// History of the primary (non-speculative) fiber, which includes its start time
+    /// and attempts made within it.
     pub non_speculative_fiber: FiberHistory,
+    /// List of speculative fibers for this request, each with its independent history.
     pub speculative_fibers: Vec<FiberHistory>,
+    /// Result of the request execution, if it has finished.
     pub result: Option<RequestHistoryResult>,
 }
 
+/// Result of a request execution, either successful or with an error,
+/// including the time when it finished execution.
 #[derive(Debug, Clone)]
 pub enum RequestHistoryResult {
+    /// Request was successful, with the time it finished.
     Success(TimePoint),
+    /// Request ended with an error, with the time it finished and the error itself.
     Error(TimePoint, RequestError),
 }
 
+/// History of a speculative fiber, which includes its start time and attempts made within it.
 #[derive(Debug, Clone)]
 pub struct FiberHistory {
+    /// Time when the speculative fiber started.
     pub start_time: TimePoint,
+    /// List of attempts made within this speculative fiber.
     pub attempts: Vec<AttemptHistory>,
 }
 
+/// History of a single attempt, including the time it was sent, the node it was sent to,
+/// and the result of the attempt (success or error).
 #[derive(Debug, Clone)]
 pub struct AttemptHistory {
+    /// Time when the attempt was sent.
     pub send_time: TimePoint,
+    /// Address of the node to which the attempt was sent.
     pub node_addr: SocketAddr,
+    /// Result of the attempt, if it has finished.
+    /// If the attempt has been sent but another speculative fiber completed,
+    /// this will be `None`, because the driver no longer tracks it.
     pub result: Option<AttemptResult>,
 }
 
+/// Result of an attempt execution, either successful or with an error,
+/// including the time when it finished execution and the retry decision made.
 #[derive(Debug, Clone)]
 pub enum AttemptResult {
+    /// Attempt was successful, with the time it finished.
     Success(TimePoint),
+    /// Attempt ended with an error, with the time it finished,
+    /// the error itself, and the retry decision made in response to the error.
     Error(TimePoint, RequestAttemptError, RetryDecision),
 }
 
