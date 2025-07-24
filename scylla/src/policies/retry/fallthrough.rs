@@ -3,9 +3,12 @@ use super::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 /// Forwards all errors directly to the user, never retries
 #[derive(Debug)]
 pub struct FallthroughRetryPolicy;
+
+/// Implementation of [RetrySession] for [FallthroughRetryPolicy].
 pub struct FallthroughRetrySession;
 
 impl FallthroughRetryPolicy {
+    /// Creates a new instance of [FallthroughRetryPolicy].
     pub fn new() -> FallthroughRetryPolicy {
         FallthroughRetryPolicy
     }
