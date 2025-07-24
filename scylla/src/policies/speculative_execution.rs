@@ -1,3 +1,8 @@
+//! Speculative execution mechanism allows the driver to send speculative requests to
+//! multiple nodes in the cluster when the current target takes too long to respond.
+//! This can help reduce latency for requests that may be slow due to network issues
+//! or node load.
+
 use futures::{
     future::FutureExt,
     stream::{FuturesUnordered, StreamExt},
@@ -12,10 +17,12 @@ use crate::errors::{RequestAttemptError, RequestError};
 use crate::observability::metrics::Metrics;
 use crate::response::Coordinator;
 
-/// Context is passed as an argument to `SpeculativeExecutionPolicy` methods
+/// [`Context`] is passed as an argument to [`SpeculativeExecutionPolicy`] methods.
 #[non_exhaustive]
 pub struct Context {
     #[cfg(feature = "metrics")]
+    /// Metrics instance that can be used as a context for deciding on speculative
+    /// execution.
     pub metrics: Arc<Metrics>,
 }
 
@@ -31,7 +38,7 @@ pub trait SpeculativeExecutionPolicy: std::fmt::Debug + Send + Sync {
     fn retry_interval(&self, context: &Context) -> Duration;
 }
 
-/// A SpeculativeExecutionPolicy that schedules a given number of speculative
+/// A [`SpeculativeExecutionPolicy`] that schedules a given number of speculative
 /// executions, separated by a fixed delay.
 #[derive(Debug, Clone)]
 pub struct SimpleSpeculativeExecutionPolicy {
