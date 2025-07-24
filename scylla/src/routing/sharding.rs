@@ -45,9 +45,15 @@ impl Default for ShardAwarePortRange {
 #[error("Invalid shard-aware local port range")]
 pub struct InvalidShardAwarePortRange;
 
+/// Identifies a single shard in a ScyllaDB node.
+///
+/// See [ScyllaDB explanation of sharding](https://www.scylladb.com/glossary/database-sharding/).
 pub type Shard = u32;
+
+/// Number of shards in the node.
 pub type ShardCount = NonZeroU16;
 
+/// Sharding information for a ScyllaDB node, read from the server's SUPPORTED frame.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub(crate) struct ShardInfo {
     pub(crate) shard: u16,
@@ -55,9 +61,16 @@ pub(crate) struct ShardInfo {
     pub(crate) msb_ignore: u8,
 }
 
+/// Utility that can do calculation related to sharding:
+/// - calculating the shard for a given token;
+/// - calculating the shard for a given source port;
+/// - drawing a source port for a given shard;
+/// - iterating over all source ports for a given shard.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Sharder {
+    /// Number of shards in the node.
     pub nr_shards: ShardCount,
+    /// Number of most significant bits to ignore when calculating the shard.
     pub msb_ignore: u8,
 }
 
@@ -83,6 +96,8 @@ impl ShardInfo {
 }
 
 impl Sharder {
+    /// Creates a new `Sharder` with the given number of shards and MSB ignore value.
+    // TODO(2.0): Make this crate-private.
     pub fn new(nr_shards: ShardCount, msb_ignore: u8) -> Self {
         Sharder {
             nr_shards,
@@ -90,6 +105,7 @@ impl Sharder {
         }
     }
 
+    /// Assuming the node is a replica for a given token, returns the shard that owns this token.
     pub fn shard_of(&self, token: Token) -> Shard {
         let mut biased_token = (token.value as u64).wrapping_add(1u64 << 63);
         biased_token <<= self.msb_ignore;
