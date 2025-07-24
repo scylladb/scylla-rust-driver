@@ -13,6 +13,7 @@ use crate::errors::{DbError, RequestAttemptError, WriteType};
 pub struct DowngradingConsistencyRetryPolicy;
 
 impl DowngradingConsistencyRetryPolicy {
+    /// Creates a new instance of [DowngradingConsistencyRetryPolicy].
     pub fn new() -> DowngradingConsistencyRetryPolicy {
         DowngradingConsistencyRetryPolicy
     }
@@ -30,11 +31,14 @@ impl RetryPolicy for DowngradingConsistencyRetryPolicy {
     }
 }
 
+/// Implementation of [RetrySession] for [DowngradingConsistencyRetryPolicy].
 pub struct DowngradingConsistencyRetrySession {
     was_retry: bool,
 }
 
 impl DowngradingConsistencyRetrySession {
+    /// Creates a new instance of [DowngradingConsistencyRetrySession].
+    // TODO(2.0): unpub this.
     pub fn new() -> DowngradingConsistencyRetrySession {
         DowngradingConsistencyRetrySession { was_retry: false }
     }
