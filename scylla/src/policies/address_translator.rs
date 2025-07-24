@@ -1,3 +1,9 @@
+//! Address translation capabilities.
+//!
+//! These are needed when a DB node broadcasts an address that is not reachable
+//! from the client, or when the address is not the preferred one to use to reach
+//! the node. In such cases, the driver may translate the address to another one.
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr as _;
@@ -63,6 +69,9 @@ impl UntranslatedPeer<'_> {
 /// only IP addresses retrieved from or sent by Cassandra nodes to the driver are.
 #[async_trait]
 pub trait AddressTranslator: Send + Sync {
+    /// Translates an address received from a ScyllaDB node into a locally reachable address.
+    ///
+    /// Gets the whole `UntranslatedPeer` structure, which contains more information about the node.
     async fn translate_address(
         &self,
         untranslated_peer: &UntranslatedPeer,
