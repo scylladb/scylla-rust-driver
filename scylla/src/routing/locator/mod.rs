@@ -1,3 +1,14 @@
+//! Abstractions that provide a way to find the set of owning nodes/shards for a given
+//! (token, replication strategy, table) tuple.
+//!
+//! They allow precomputation of token ranges for a given set of strategies,
+//! which can be used to speed up the process of finding replicas for a given token.
+//! Alternatively, they can compute the replicas on the fly.
+//!
+//! Two main replication mechanisms are supported:
+//! - token ring, which is the older mechanism used by ScyllaDB and Cassandra,
+//! - tablets, which is a newer mechanism used by ScyllaDB.
+
 mod precomputed_replicas;
 mod replicas;
 mod replication_info;
@@ -29,6 +40,9 @@ use tracing::debug;
 /// `ReplicaLocator` provides a way to find the set of owning nodes for a given (token,
 /// replication strategy, table) tuple. It does so by either using the precomputed
 /// token ranges, or doing the computation on the fly (precomputation is configurable).
+/// Two main replication mechanisms are supported:
+/// - token ring, which is the older mechanism used by ScyllaDB and Cassandra,
+/// - tablets, which is a newer mechanism used by ScyllaDB.
 #[derive(Debug, Clone)]
 pub struct ReplicaLocator {
     /// The data based on which `ReplicaLocator` computes replica sets.
@@ -630,6 +644,8 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
 }
 
 impl<'a> ReplicaSet<'a> {
+    /// Converts the [`ReplicaSet`], which is an (unordered) set of replicas for a given token and strategy,
+    /// into an ordered sequence of replicas.
     pub fn into_replicas_ordered(self) -> ReplicasOrdered<'a> {
         ReplicasOrdered { replica_set: self }
     }
