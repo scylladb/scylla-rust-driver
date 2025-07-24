@@ -124,11 +124,15 @@ impl std::fmt::Debug for Session {
     }
 }
 
+/// Represents a TLS context used to configure TLS connections to DB nodes.
+/// Abstracts over various TLS implementations, such as OpenSSL and Rustls.
 #[derive(Clone)] // Cheaply clonable - reference counted.
 #[non_exhaustive]
 pub enum TlsContext {
+    /// TLS context backed by OpenSSL 0.10.
     #[cfg(feature = "openssl-010")]
     OpenSsl010(openssl::ssl::SslContext),
+    /// TLS context backed by Rustls 0.23.
     #[cfg(feature = "rustls-023")]
     Rustls023(Arc<rustls::ClientConfig>),
 }
