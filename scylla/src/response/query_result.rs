@@ -1,3 +1,6 @@
+//! Types for representing results of CQL queries and iterating
+//! over them.
+
 use std::fmt::Debug;
 
 use thiserror::Error;
@@ -380,6 +383,8 @@ impl QueryRowsResult {
         }
     }
 
+    /// Deconstructs the `QueryRowsResult` into its components, which can be used by the caller
+    /// directly. Intended for use in CPP-Rust Driver only.
     #[cfg(cpp_rust_unstable)]
     pub fn into_inner(
         self,
