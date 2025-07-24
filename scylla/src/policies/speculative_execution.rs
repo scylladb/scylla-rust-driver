@@ -180,6 +180,11 @@ where
                     } else {
                         last_error = Some(r)
                     }
+                } else {
+                    // The only case where None is returned is when execution plan was exhausted.
+                    // If so, there is no reason to start any more fibers.
+                    // We can't always return - there may still be fibers running.
+                    retries_remaining = 0;
                 }
                 if async_tasks.is_empty() && retries_remaining == 0 {
                     return last_error.unwrap_or({
