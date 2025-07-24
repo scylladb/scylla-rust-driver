@@ -1,3 +1,6 @@
+//! Defines the [`PreparedStatement`] type, which represents a statement
+//! that has been prepared in advance on the server.
+
 use bytes::{Bytes, BytesMut};
 use scylla_cql::frame::response::result::{
     ColumnSpec, PartitionKeyIndex, ResultMetadata, TableSpec,
@@ -92,6 +95,7 @@ use crate::routing::Token;
 #[derive(Debug)]
 pub struct PreparedStatement {
     pub(crate) config: StatementConfig,
+    /// Tracing IDs of all queries used to prepare this statement.
     pub prepare_tracing_ids: Vec<Uuid>,
 
     id: Bytes,
@@ -147,10 +151,12 @@ impl PreparedStatement {
         }
     }
 
+    /// Retrieves the ID of this prepared statement.
     pub fn get_id(&self) -> &Bytes {
         &self.id
     }
 
+    /// Retrieves the statement string of this prepared statement.
     pub fn get_statement(&self) -> &str {
         &self.shared.statement
     }
@@ -503,16 +509,20 @@ impl PreparedStatement {
     }
 }
 
+/// Error when extracting partition key from bound values.
 #[derive(Clone, Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum PartitionKeyExtractionError {
+    /// No value with given partition key index was found in bound values.
     #[error("No value with given pk_index! pk_index: {0}, values.len(): {1}")]
     NoPkIndexValue(u16, u16),
 }
 
+/// Error when calculating token from partition key values.
 #[derive(Clone, Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum TokenCalculationError {
+    /// Value was too long to be used in partition key.
     #[error("Value bytes too long to create partition key, max 65 535 allowed! value.len(): {0}")]
     ValueTooLong(usize),
 }

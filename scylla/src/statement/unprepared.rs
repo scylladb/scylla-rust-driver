@@ -1,3 +1,5 @@
+//! Defines the [`Statement`] type, which represents an unprepared CQL statement.
+
 use super::{PageSize, StatementConfig};
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::frame::types::{Consistency, SerialConsistency};
@@ -14,6 +16,7 @@ use std::time::Duration;
 pub struct Statement {
     pub(crate) config: StatementConfig,
 
+    /// The CQL statement text.
     pub contents: String,
     page_size: PageSize,
 }
