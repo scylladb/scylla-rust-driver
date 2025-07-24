@@ -322,4 +322,39 @@ mod tests {
             now.checked_add(Duration::from_secs(24)).unwrap()
         )
     }
+
+    // Regresion test for https://github.com/scylladb/scylla-rust-driver/issues/1085
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn test_se_panic_on_ignorable_errors() {
+        let policy = SimpleSpeculativeExecutionPolicy {
+            max_retry_count: 5,
+            // Each attempt will finish before next starts
+            retry_interval: Duration::from_secs(1),
+        };
+
+        let generator = {
+            move |_first: bool| async move {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                IGNORABLE_ERROR.clone()
+            }
+        };
+
+        let now = tokio::time::Instant::now();
+        let res = super::execute(&policy, &EMPTY_CONTEXT, generator).await;
+        assert_matches!(
+            res,
+            Err(RequestError::LastAttemptError(
+                RequestAttemptError::UnableToAllocStreamId
+            ))
+        );
+        // t - now
+        // First execution is started at t
+        // Speculative executions - at t+1, t+2, t+3, t+4, t+5
+        // Each execution sleeps 5 seconds and returns ignorable error.
+        // Last execution should finish at t+10.
+        assert_eq!(
+            tokio::time::Instant::now(),
+            now.checked_add(Duration::from_secs(10)).unwrap()
+        )
+    }
 }
