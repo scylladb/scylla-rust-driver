@@ -1,3 +1,5 @@
+//! Collecting metrics of driver operations.
+
 use histogram::{AtomicHistogram, Histogram};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,8 +11,10 @@ const ORDER_TYPE: Ordering = Ordering::Relaxed;
 #[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum MetricsError {
+    /// Computing histogram statistics failed.
     #[error("Histogram error: {0}")]
     HistogramError(#[from] Arc<dyn std::error::Error + Send + Sync>),
+    /// Histogram is empty, so statistics cannot be computed.
     #[error("Histogram is empty")]
     Empty,
 }
@@ -21,15 +25,25 @@ pub enum MetricsError {
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct Snapshot {
+    /// Minimum value in the histogram.
     pub min: u64,
+    /// Maximum value in the histogram.
     pub max: u64,
+    /// Mean value in the histogram.
     pub mean: u64,
+    /// Standard deviation of values in the histogram.
     pub stddev: u64,
+    /// Median value in the histogram.
     pub median: u64,
+    /// 75th percentile value in the histogram.
     pub percentile_75: u64,
+    /// 95th percentile value in the histogram.
     pub percentile_95: u64,
+    /// 98th percentile value in the histogram.
     pub percentile_98: u64,
+    /// 99th percentile value in the histogram.
     pub percentile_99: u64,
+    /// 99.9th percentile value in the histogram.
     pub percentile_99_9: u64,
 }
 
@@ -201,14 +215,23 @@ impl Default for RequestRateMeter {
     }
 }
 
+/// Various metrics collected by the driver.
 pub struct Metrics {
+    /// Number of errors that occurred in queries executed without `QueryPager`.
     errors_num: AtomicU64,
+    /// Number of queries executed without `QueryPager`.
     queries_num: AtomicU64,
+    /// Number of errors that occurred in queries executed with `QueryPager`.
     errors_iter_num: AtomicU64,
+    /// Number of queries executed with `QueryPager`.
     queries_iter_num: AtomicU64,
+    /// Number of times a retry policy has decided to retry a query.
     retries_num: AtomicU64,
+    /// Histogram that collects latencies of queries executed by the driver.
     histogram: Arc<AtomicHistogram>,
+    /// Collects rates of queries executed by the driver.
     meter: Arc<RequestRateMeter>,
+    /// Total number of connections ever opened to the cluster by the driver.
     total_connections: AtomicU64,
     connection_timeouts: AtomicU64,
     request_timeouts: AtomicU64,
