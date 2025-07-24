@@ -4,46 +4,52 @@ use std::borrow::Cow;
 /// to be sent in STARTUP message.
 #[derive(Debug, Clone, Default)]
 pub struct SelfIdentity<'id> {
-    // Custom driver identity can be set if a custom driver build is running,
-    // or an entirely different driver is operating on top of Rust driver
-    // (e.g. cpp-rust-driver).
+    /// Custom driver identity can be set if a custom driver build is running,
+    /// or an entirely different driver is operating on top of Rust driver
+    /// (e.g. cpp-rust-driver).
     custom_driver_name: Option<Cow<'id, str>>,
+    /// Custom driver identity can be set if a custom driver build is running,
+    /// or an entirely different driver is operating on top of Rust driver
+    /// (e.g. cpp-rust-driver).
     custom_driver_version: Option<Cow<'id, str>>,
 
     // ### Q: Where do APPLICATION_NAME, APPLICATION_VERSION and CLIENT_ID come from?
     // - there are no columns in system.clients dedicated to those attributes,
     // - APPLICATION_NAME / APPLICATION_VERSION are not present in Scylla's source code at all,
     // - only 2 results in Cassandra source is some example in docs:
-    //   https://github.com/apache/cassandra/blob/d3cbf9c1f72057d2a5da9df8ed567d20cd272931/doc/modules/cassandra/pages/managing/operating/virtualtables.adoc?plain=1#L218.
+    //   <https://github.com/apache/cassandra/blob/d3cbf9c1f72057d2a5da9df8ed567d20cd272931/doc/modules/cassandra/pages/managing/operating/virtualtables.adoc?plain=1#L218>.
     //   APPLICATION_NAME and APPLICATION_VERSION appears in client_options which
     //   is an arbitrary dict where client can send any keys.
     // - driver variables are mentioned in protocol v5
-    //   (https://github.com/apache/cassandra/blob/d3cbf9c1f72057d2a5da9df8ed567d20cd272931/doc/native_protocol_v5.spec#L480),
+    //   (<https://github.com/apache/cassandra/blob/d3cbf9c1f72057d2a5da9df8ed567d20cd272931/doc/native_protocol_v5.spec#L480>),
     //   application variables are not.
     //
     // ### A:
     // The following options are not exposed anywhere in ScyllaDB tables.
     // They come directly from CPP driver, and they are supported in Cassandra
     //
-    // See https://github.com/scylladb/cpp-driver/blob/fa0f27069a625057984d1fa58f434ea99b86c83f/include/cassandra.h#L2916.
+    // See <https://github.com/scylladb/cpp-driver/blob/fa0f27069a625057984d1fa58f434ea99b86c83f/include/cassandra.h#L2916>.
     // As we want to support as big subset of its API as possible in cpp-rust-driver, I decided to expose API for setting
     // those particular key-value pairs, similarly to what cpp-driver does, and not an API to set arbitrary key-value pairs.
     //
     // Allowing users to set arbitrary options could break the driver by overwriting options that bear special meaning,
     // e.g. the shard-aware port. Therefore, I'm against such liberal API. OTOH, we need to expose APPLICATION_NAME,
     // APPLICATION_VERSION and CLIENT_ID for cpp-rust-driver.
-
-    // Application identity can be set to distinguish different applications
-    // connected to the same cluster.
+    /// Application identity can be set to distinguish different applications
+    /// connected to the same cluster.
     application_name: Option<Cow<'id, str>>,
+    /// Application identity can be set to distinguish different applications
+    /// connected to the same cluster.
     application_version: Option<Cow<'id, str>>,
 
-    // A (unique) client ID can be set to distinguish different instances
-    // of the same application connected to the same cluster.
+    /// A (unique) client ID can be set to distinguish different instances
+    /// of the same application connected to the same cluster.
     client_id: Option<Cow<'id, str>>,
 }
 
 impl<'id> SelfIdentity<'id> {
+    /// Creates a new empty instance of [`SelfIdentity`], which has all fields
+    /// set to `None`.
     pub fn new() -> Self {
         Self::default()
     }
