@@ -1,3 +1,6 @@
+//! Types for representing results of CQL queries and iterating
+//! over them.
+
 use std::fmt::Debug;
 
 use thiserror::Error;
