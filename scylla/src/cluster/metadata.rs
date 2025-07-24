@@ -120,12 +120,19 @@ pub(crate) struct Metadata {
     pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
 }
 
+/// Represents a node in the cluster, as fetched from the `system.{peers,local}` tables.
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct Peer {
+    /// Unique identifier of the node.
     pub host_id: Uuid,
+    /// Address of the node, which may be translatable by the driver or not,
+    /// depending on whether the node is a contact point or a peer.
     pub address: NodeAddr,
+    /// Tokens owned by this node.
     pub tokens: Vec<Token>,
+    /// Datacenter this node is in, if known.
     pub datacenter: Option<String>,
+    /// Rack this node is in, if known.
     pub rack: Option<String>,
 }
 
@@ -195,12 +202,19 @@ impl Peer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Keyspace {
+    /// Replication strategy used by the keyspace.
     pub strategy: Strategy,
-    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
+    /// Tables in the keyspace.
+    ///
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
     pub tables: HashMap<String, Table>,
-    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
+    /// Materialized views in the keyspace.
+    ///
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
     pub views: HashMap<String, MaterializedView>,
-    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
+    /// User defined types in the keyspace.
+    ///
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
     pub user_defined_types: HashMap<String, Arc<UserDefinedType<'static>>>,
 }
 
@@ -208,14 +222,17 @@ pub struct Keyspace {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Table {
+    /// Columns that constitute the table.
     pub columns: HashMap<String, Column>,
-    /// Names of the column of partition key.
+    /// Names of the columns that constitute the partition key.
     /// All of the names are guaranteed to be present in `columns` field.
     pub partition_key: Vec<String>,
-    /// Names of the column of clustering key.
+    /// Names of the columns that constitute the clustering key.
     /// All of the names are guaranteed to be present in `columns` field.
     pub clustering_key: Vec<String>,
+    /// Name of the partitioner used by the table.
     pub partitioner: Option<String>,
+    /// Column specs for the partition key columns.
     pub(crate) pk_column_specs: Vec<ColumnSpec<'static>>,
 }
 
@@ -223,7 +240,10 @@ pub struct Table {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct MaterializedView {
+    /// As materialized views are a special kind of table,
+    /// they have the same metadata as a table.
     pub view_metadata: Table,
+    /// The name of a table that the materialized view is an index of.
     pub base_table_name: String,
 }
 
@@ -231,7 +251,9 @@ pub struct MaterializedView {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Column {
+    /// CQL type that the value stored in this column has.
     pub typ: ColumnType<'static>,
+    /// Describes role of the column in the table.
     pub kind: ColumnKind,
 }
 
@@ -330,12 +352,18 @@ impl PreCollectionType {
     }
 }
 
+/// Some columns have a specific meaning in the context of a table,
+/// and this meaning is represented by the [ColumnKind] enum.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ColumnKind {
+    /// Just a regular column.
     Regular,
+    /// Column that has the same value for all rows in a partition.
     Static,
+    /// Column that is part of the clustering key.
     Clustering,
+    /// Column that is part of the partition key.
     PartitionKey,
 }
 
@@ -357,22 +385,44 @@ impl std::str::FromStr for ColumnKind {
     }
 }
 
+/// Replication strategy used by a keyspace.
+///
+/// This specifies how data is replicated across the cluster.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 // Check triggers because all variants end with "Strategy".
 // TODO(2.0): Remove the "Strategy" postfix from variants.
 #[expect(clippy::enum_variant_names)]
 pub enum Strategy {
+    /// _Deprecated in ScyllaDB._
+    /// **Use only for a single datacenter and one rack.**
+    /// Places the first replica on a node determined by the partitioner.
+    /// Additional replicas are placed on the next nodes clockwise in the ring
+    /// without considering topology (rack or datacenter location).
     SimpleStrategy {
+        /// Replication factor, i.e. how many replicas of each piece of data there are.
         replication_factor: usize,
     },
+    /// Use this strategy when you have (or plan to have) your cluster deployed across
+    /// multiple datacenters. This strategy specifies how many replicas you want in each
+    /// datacenter.
+    ///
+    /// `NetworkTopologyStrategy` places replicas in the same datacenter by walking the ring
+    /// clockwise until reaching the first node in another rack. It attempts to place replicas
+    /// on distinct racks because nodes in the same rack (or similar physical grouping) often
+    /// fail at the same time due to power, cooling, or network issues.
     NetworkTopologyStrategy {
-        // Replication factors of datacenters with given names
+        /// Replication factors of datacenters with given names, i.e. how many replicas of each piece
+        /// of data there are in each datacenter.
         datacenter_repfactors: HashMap<String, usize>,
     },
+    /// Used for internal purposes, e.g. for system tables.
     LocalStrategy, // replication_factor == 1
+    /// Unknown other strategy, which is not supported by the driver.
     Other {
+        /// Name of the strategy.
         name: String,
+        /// Additional parameters of the strategy, which the driver does not understand.
         data: HashMap<String, String>,
     },
 }
