@@ -23,8 +23,11 @@ use super::{LoadBalancingPolicy, RoutingInfo};
 #[derive(Debug, Clone)] // <- Cheaply clonable
 #[non_exhaustive]
 pub enum NodeIdentifier {
+    /// Identifies a node by its [`Node`] reference.
     Node(Arc<Node>),
+    /// Identifies a node by its host ID.
     HostId(Uuid),
+    /// Identifies a node by its address.
     NodeAddress(SocketAddr),
 }
 
