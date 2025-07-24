@@ -1,3 +1,6 @@
+//! Provides a convenient wrapper over the [`Session`] that caches
+//! prepared statements automatically and reuses them when possible.
+
 use crate::errors::{ExecutionError, PagerExecutionError, PrepareError};
 use crate::response::query_result::QueryResult;
 use crate::response::{PagingState, PagingStateResponse};
@@ -63,6 +66,7 @@ impl<S> CachingSession<S>
 where
     S: Default + BuildHasher + Clone,
 {
+    /// Builds a [`CachingSession`] from a [`Session`] and a cache size.
     pub fn from(session: Session, cache_size: usize) -> Self {
         Self {
             session: Arc::new(session),
@@ -246,10 +250,12 @@ where
         }
     }
 
+    /// Retrieves the maximum capacity of the prepared statements cache.
     pub fn get_max_capacity(&self) -> usize {
         self.max_capacity
     }
 
+    /// Retrieves the underlying [Session] instance.
     pub fn get_session(&self) -> &Session {
         &self.session
     }
@@ -297,11 +303,12 @@ where
 impl CachingSessionBuilder<RandomState> {
     /// Wraps a [Session] and creates a new [CachingSessionBuilder] instance,
     /// which can be used to create a new [CachingSession].
-    ///
     pub fn new(session: Session) -> Self {
         Self::new_shared(Arc::new(session))
     }
 
+    /// Wraps an Arc<[Session]> and creates a new [CachingSessionBuilder] instance,
+    /// which can be used to create a new [CachingSession].
     pub fn new_shared(session: Arc<Session>) -> Self {
         Self {
             session,
