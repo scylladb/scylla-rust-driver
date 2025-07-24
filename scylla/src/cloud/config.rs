@@ -14,21 +14,27 @@ use crate::errors::TranslationError;
 use crate::network::tls::{TlsConfig, TlsError};
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 
+/// Error that can occur while parsing the cloud config yaml file.
 #[non_exhaustive]
 #[derive(Debug, Error)]
 pub enum CloudConfigError {
+    /// Error while opening cloud config yaml.
     #[error("Error while opening cloud config yaml: {0}")]
     YamlOpen(#[from] io::Error),
 
+    /// Error while parsing cloud config yaml.
     #[error("Error while parsing cloud config yaml: {0}")]
     YamlParse(#[from] serde_yaml::Error),
 
+    /// Error while decoding base64 key/cert.
     #[error("Error while decoding base64 key/cert: {0}")]
     Base64(#[from] base64::DecodeError),
 
+    /// Error during cloud config validation.
     #[error("Error during cloud config validation: {0}")]
     Validation(String),
 
+    /// Error during TLS key/cert parsing.
     #[error("Error during key/cert parsing: {0}")]
     Tls(#[from] TlsError),
 }
@@ -158,8 +164,10 @@ impl AddressTranslator for CloudConfig {
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub enum CloudTlsProvider {
+    /// OpenSSL 0.10 - backed TLS provider.
     #[cfg(feature = "openssl-010")]
     OpenSsl010,
+    /// Rustls 0.23 - backed TLS provider.
     #[cfg(feature = "rustls-023")]
     Rustls023,
 }
