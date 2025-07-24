@@ -31,15 +31,23 @@ mod sealed {
     #[expect(unnameable_types)]
     pub trait Sealed {}
 }
+/// Kind of the session builder, used to distinguish between
+/// builders that create regular sessions and those that create custom
+/// sessions, such as cloud sessions.
+/// This is used to conditionally enable different sets of methods
+/// on the session builder based on its kind.
 pub trait SessionBuilderKind: sealed::Sealed + Clone {}
 
+/// Default session builder kind, used to create regular sessions.
 #[derive(Clone)]
 pub enum DefaultMode {}
 impl sealed::Sealed for DefaultMode {}
 impl SessionBuilderKind for DefaultMode {}
 
+/// Builder for regular sessions.
 pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
 
+/// Session builder kind for creating cloud sessions.
 #[cfg(feature = "unstable-cloud")]
 #[derive(Clone)]
 pub enum CloudMode {}
@@ -48,10 +56,17 @@ impl sealed::Sealed for CloudMode {}
 #[cfg(feature = "unstable-cloud")]
 impl SessionBuilderKind for CloudMode {}
 
+/// Builder for sessions that connect to Scylla Cloud.
 #[cfg(feature = "unstable-cloud")]
 pub type CloudSessionBuilder = GenericSessionBuilder<CloudMode>;
 
-/// SessionBuilder is used to create new Session instances
+/// Used to conveniently configure new Session instances.
+///
+/// Most likely you will want to use [`SessionBuilder`]
+/// (for building regular session). If you want to build a session
+/// that connects to Scylla Cloud, you will want to use
+/// `CloudSessionBuilder`.
+///
 /// # Example
 ///
 /// ```
@@ -69,6 +84,7 @@ pub type CloudSessionBuilder = GenericSessionBuilder<CloudMode>;
 /// ```
 #[derive(Clone)]
 pub struct GenericSessionBuilder<Kind: SessionBuilderKind> {
+    /// Configuration for the session being built.
     pub config: SessionConfig,
     kind: PhantomData<Kind>,
 }
