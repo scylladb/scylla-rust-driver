@@ -105,7 +105,10 @@ pub enum PrepareError {
 
     /// Failed to prepare statement on every connection from the pool.
     #[error("Preparation failed on every connection from the selected pool. First attempt error: {first_attempt}")]
-    AllAttemptsFailed { first_attempt: RequestAttemptError },
+    AllAttemptsFailed {
+        /// Error that the first attempt failed with.
+        first_attempt: RequestAttemptError,
+    },
 
     /// Prepared statement id mismatch.
     #[error(
@@ -169,9 +172,11 @@ pub enum UseKeyspaceError {
     RequestError(#[from] RequestAttemptError),
 
     /// Keyspace name mismatch.
-    #[error("Keyspace name mismtach; expected: {expected_keyspace_name_lowercase}, received: {result_keyspace_name_lowercase}")]
+    #[error("Keyspace name mismatch; expected: {expected_keyspace_name_lowercase}, received: {result_keyspace_name_lowercase}")]
     KeyspaceNameMismatch {
+        /// Expected keyspace name, in lowercase.
         expected_keyspace_name_lowercase: String,
+        /// Received keyspace name, in lowercase.
         result_keyspace_name_lowercase: String,
     },
 
@@ -211,6 +216,7 @@ pub enum SchemaAgreementError {
     #[error("Schema agreement exceeded {}ms", std::time::Duration::as_millis(.0))]
     Timeout(std::time::Duration),
 
+    /// Some host mandatory for schema agreement is not present in the connection pool.
     #[error(
         "Host with id {} required for schema agreement is not present in connection pool",
         0
@@ -355,7 +361,9 @@ pub enum KeyspacesMetadataError {
     /// Bad keyspace replication strategy.
     #[error("Bad keyspace <{keyspace}> replication strategy: {error}")]
     Strategy {
+        /// Keyspace name for which the error occurred.
         keyspace: String,
+        /// Reason why the keyspace strategy is bad.
         error: KeyspaceStrategyError,
     },
 }
@@ -379,7 +387,12 @@ pub enum KeyspaceStrategyError {
     /// Received an unexpected NTS option.
     /// Driver expects only 'class' and replication factor per dc ('dc': rf)
     #[error("Unexpected NetworkTopologyStrategy option: '{key}': '{value}'")]
-    UnexpectedNetworkTopologyStrategyOption { key: String, value: String },
+    UnexpectedNetworkTopologyStrategyOption {
+        /// The key of the unexpected option entry.
+        key: String,
+        /// The value of the unexpected option entry.
+        value: String,
+    },
 }
 
 /// An error that occurred during UDTs metadata fetch.
@@ -392,8 +405,11 @@ pub enum UdtMetadataError {
         Type '{typ}', at position {position}: {reason}"
     )]
     InvalidCqlType {
+        /// (Invalid) name of the invalid CQL type.
         typ: String,
+        /// Position in the CQL type string where the error occurred.
         position: usize,
+        /// Reason why the CQL type name is invalid.
         reason: String,
     },
 
@@ -412,17 +428,24 @@ pub enum TablesMetadataError {
         Type '{typ}', at position {position}: {reason}"
     )]
     InvalidCqlType {
+        /// (Invalid) name of the invalid CQL type.
         typ: String,
+        /// Position in the CQL type string where the error occurred.
         position: usize,
+        /// Reason why the CQL type name is invalid.
         reason: String,
     },
 
     /// Unknown column kind.
     #[error("Unknown column kind '{column_kind}' for {keyspace_name}.{table_name}.{column_name}")]
     UnknownColumnKind {
+        /// Keyspace name where the error occurred.
         keyspace_name: String,
+        /// Table name where the error occurred.
         table_name: String,
+        /// Column name where the error occurred.
         column_name: String,
+        /// Kind of the column that is unknown.
         column_kind: String,
     },
 }
@@ -474,6 +497,7 @@ pub enum ConnectionPoolError {
     /// A connection pool is broken. Includes an error of a last connection.
     #[error("The pool is broken; Last connection failed with: {last_connection_error}")]
     Broken {
+        /// The error that the last connection attempt failed with.
         last_connection_error: ConnectionError,
     },
 
@@ -551,7 +575,9 @@ pub enum TranslationError {
     /// A translation rule for a provided address was found, but the translated address was invalid.
     #[error("Failed to parse translated address: {translated_addr_str}, reason: {reason}")]
     InvalidAddressInRule {
+        /// The invalid translated address string.
         translated_addr_str: &'static str,
+        /// Reason why the string is not a valid address.
         reason: AddrParseError,
     },
 
@@ -566,10 +592,13 @@ pub enum TranslationError {
 #[error("Failed to perform a connection setup request. Request: {request_kind}, reason: {error}")]
 #[non_exhaustive]
 pub struct ConnectionSetupRequestError {
+    /// Kind of the request that failed.
     pub request_kind: CqlRequestKind,
+    /// Reason why the request failed.
     pub error: ConnectionSetupRequestErrorKind,
 }
 
+/// Specific reason why a connection setup request failed.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ConnectionSetupRequestErrorKind {
@@ -647,6 +676,7 @@ impl ConnectionSetupRequestError {
         }
     }
 
+    /// Retrieves the specific error that occurred during connection setup request execution.
     pub fn get_error(&self) -> &ConnectionSetupRequestErrorKind {
         &self.error
     }
@@ -785,6 +815,7 @@ pub enum RequestError {
 }
 
 impl RequestError {
+    /// Converts (widens) this error into an [`ExecutionError`].
     pub fn into_execution_error(self) -> ExecutionError {
         match self {
             RequestError::EmptyPlan => ExecutionError::EmptyPlan,
@@ -852,8 +883,14 @@ pub enum RequestAttemptError {
         Statement: \"{statement}\"; expected id: {expected_id:?}; reprepared id: {reprepared_id:?}"
     )]
     RepreparedIdChanged {
+        /// The CQL statement that was reprepared.
         statement: String,
+        /// Expected id of the prepared statement.
+        /// This is the id that was returned by the server
+        /// when the statement was prepared for the first time.
         expected_id: Vec<u8>,
+        /// The id of the prepared statement returned by the server
+        /// when the statement was reprepared.
         reprepared_id: Vec<u8>,
     },
 
@@ -958,9 +995,14 @@ pub enum ClusterStateTokenError {
     #[error(transparent)]
     Serialization(#[from] SerializationError),
 
-    /// ClusterState doesn't currently have metadata for the requested table.
+    /// `ClusterState` doesn't currently have metadata for the requested table.
     #[error("Can't find metadata for requested table ({keyspace}.{table}).")]
-    UnknownTable { keyspace: String, table: String },
+    UnknownTable {
+        /// Keyspace name for which the error occurred.
+        keyspace: String,
+        /// Table name for which the error occurred.
+        table: String,
+    },
 }
 
 #[cfg(test)]
