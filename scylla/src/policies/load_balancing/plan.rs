@@ -66,6 +66,7 @@ enum PlanState<'a> {
 ///     }
 /// }
 /// ```
+// TODO(2.0): Unpub this.
 pub struct Plan<'a> {
     policy: &'a dyn LoadBalancingPolicy,
     routing_info: &'a RoutingInfo<'a>,
@@ -75,6 +76,8 @@ pub struct Plan<'a> {
 }
 
 impl<'a> Plan<'a> {
+    /// Asks the given [LoadBalancingPolicy] to compute a load balancing plan for the given `RoutingInfo`.
+    // TODO(2.0): Unpub this.
     pub fn new(
         policy: &'a dyn LoadBalancingPolicy,
         routing_info: &'a RoutingInfo<'a>,

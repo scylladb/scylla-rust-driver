@@ -10,21 +10,38 @@ use super::{LoadBalancingPolicy, RoutingInfo};
 
 /// Node identifier used by [`SingleTargetLoadBalancingPolicy`].
 ///
-/// If `NodeIdentifier::Node` is used, it will be returned immediately without
-/// the lookup in the cluster metadata.
-///
-/// If `NodeIdentifier::HostId` or `NodeIdentifier::NodeAddress` is used,
-/// the node will be looked up in the cluster metadata based on its host_id/address.
-///
-/// Note: `NodeIdentifier::NodeAddress` assumes that provided address is **untranslated**.
-/// In other words, it should be the address of form `<rpc_address>:<cql_port>`, where
-/// `<rpc_address>` is the address of the node stored in the system tables, as well as
-/// in the [`Node`] struct.
+/// Used to specify which node the policy should target for routing requests.
 #[derive(Debug, Clone)] // <- Cheaply clonable
 #[non_exhaustive]
 pub enum NodeIdentifier {
+    /// Identifies a node by its [`Node`] reference.
+    /// If this variant is used, the node will be returned immediately, without
+    /// lookup in the cluster metadata.
     Node(Arc<Node>),
+    /// Identifies a node by its host ID.
+    /// The node will be looked up in the cluster metadata based on it.
     HostId(Uuid),
+    /// Identifies a node by its address.
+    /// The node will be looked up in the cluster metadata based on it.
+    ///
+    /// **Warning: This variant may be a footgun if used with address translation.**
+    ///
+    /// Background:
+    /// [Address translation](crate::policies::address_translator::AddressTranslator)
+    /// is a feature that allows the driver to translate addresses of nodes in the cluster
+    /// metadata to addresses that are reachable from the client. In other words, different
+    /// addresses are broadcast by the nodes in the cluster than the ones that the client
+    /// must use to connect to the nodes.
+    /// The problem is, [`Node`] holds the [`NodeAddr`](crate::cluster::NodeAddr), which may be
+    /// an untranslated or translated address, depending on whether the node that the control
+    /// connection is opened to is that `Node` or not, respectively. As the control connection
+    /// may be opened to different nodes in the cluster in different periods of time (e.g., when
+    /// the control connection breaks, it may be recreated with another node), any `Node`
+    /// in a cluster with address translation enabled may have untranslated or translated address
+    /// held in the `NodeAddr` field.
+    ///
+    /// Therefore, this variant is unreliable in the context of address translation,
+    /// so it is recommended to not use it if address translation is enabled.
     NodeAddress(SocketAddr),
 }
 
