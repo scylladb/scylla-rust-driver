@@ -1,9 +1,11 @@
+//! Defines `FrameSlice`, a borrowed reference to a part of the frame.
+
 use bytes::Bytes;
 
 use crate::frame::frame_errors::LowLevelDeserializationError;
 use crate::frame::types;
 
-/// A reference to a part of the frame.
+/// A borrowed reference to a part of the frame.
 //
 // # Design justification
 //

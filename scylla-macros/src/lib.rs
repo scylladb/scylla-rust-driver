@@ -1,3 +1,6 @@
+//! Procedural macros for ScyllaDB Rust Driver.
+//! Intended for use with the `scylla` and `scylla-cql` crates.
+
 // WARNING FOR CONTRIBUTORS
 // Doc comments in this file use a different syntax than normally.
 // Typically you use [some_item](other_crate::path::to::some_item), but this

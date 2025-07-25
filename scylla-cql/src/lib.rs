@@ -1,3 +1,8 @@
+//! Defines CQL protocol-level types and traits for interacting with ScyllaDB/Cassandra.
+//!
+//! Mainly intended to be used by the ScyllaDB driver, but can also be useful for other
+//! applications that need to interact with CQL.
+
 pub(crate) mod pretty;
 
 pub mod frame;

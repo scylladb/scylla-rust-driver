@@ -1,3 +1,6 @@
+//! Simple general-purpose recursive-descent parser.
+//! Used for parsing strings in the CQL protocol.
+
 use std::fmt::Display;
 
 /// An error that can occur during parsing.
@@ -27,7 +30,9 @@ impl ParseError {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ParseErrorCause {
+    /// Expected a specific string, but it was not found.
     Expected(&'static str),
+    /// Other error, described by a string.
     Other(&'static str),
 }
 
@@ -40,6 +45,7 @@ impl Display for ParseErrorCause {
     }
 }
 
+/// Result of a parsing operation.
 pub type ParseResult<T> = Result<T, ParseError>;
 
 /// A utility class for building simple recursive-descent parsers.

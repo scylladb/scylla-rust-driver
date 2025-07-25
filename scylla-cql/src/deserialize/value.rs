@@ -1451,6 +1451,7 @@ impl<'frame, 'metadata> UdtIterator<'frame, 'metadata> {
         }
     }
 
+    /// Returns remaining (i.e., not yet deserialized) fields of the UDT.
     #[inline]
     pub fn fields(&self) -> &'metadata [(Cow<'metadata, str>, ColumnType<'metadata>)] {
         self.remaining_fields

@@ -1,3 +1,5 @@
+//! CQL protocol-level representation of a `EXECUTE` request.
+
 use std::num::TryFromIntError;
 
 use crate::frame::frame_errors::CqlRequestSerializationError;
@@ -14,9 +16,14 @@ use super::{
     DeserializableRequest, RequestDeserializationError,
 };
 
+/// CQL protocol-level representation of an `EXECUTE` request,
+/// used to execute a single prepared statement.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct Execute<'a> {
+    /// ID of the prepared statement to execute.
     pub id: Bytes,
+
+    /// Various parameters controlling the execution of the statement.
     pub parameters: query::QueryParameters<'a>,
 }
 

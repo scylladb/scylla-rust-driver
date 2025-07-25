@@ -1,3 +1,5 @@
+//! Implementation of a parser for custom types in the CQL protocol.
+
 use super::result::CollectionType;
 use super::result::NativeType;
 use super::result::{ColumnType, UserDefinedType};

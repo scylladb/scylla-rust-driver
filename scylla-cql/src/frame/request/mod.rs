@@ -1,3 +1,5 @@
+//! CQL requests sent by the client.
+
 pub mod auth_response;
 pub mod batch;
 pub mod execute;
@@ -29,16 +31,58 @@ use super::types::SerialConsistency;
 use super::TryFromPrimitiveError;
 
 /// Possible requests sent by the client.
+// Why is it distinct from [RequestOpcode]?
+// TODO(2.0): merge this with `RequestOpcode`.
 #[derive(Debug, Copy, Clone)]
 #[non_exhaustive]
 pub enum CqlRequestKind {
+    /// Initialize the connection. The server will respond by either a READY message
+    /// (in which case the connection is ready for queries) or an AUTHENTICATE message
+    /// (in which case credentials will need to be provided using AUTH_RESPONSE).
+    ///
+    /// This must be the first message of the connection, except for OPTIONS that can
+    /// be sent before to find out the options supported by the server. Once the
+    /// connection has been initialized, a client should not send any more STARTUP
+    /// messages.
     Startup,
+
+    /// Answers a server authentication challenge.
+
+    /// Authentication in the protocol is SASL based. The server sends authentication
+    /// challenges (a bytes token) to which the client answers with this message. Those
+    /// exchanges continue until the server accepts the authentication by sending a
+    /// AUTH_SUCCESS message after a client AUTH_RESPONSE. Note that the exchange
+    /// begins with the client sending an initial AUTH_RESPONSE in response to a
+    /// server AUTHENTICATE request.
+    ///
+    /// The response to a AUTH_RESPONSE is either a follow-up AUTH_CHALLENGE message,
+    /// an AUTH_SUCCESS message or an ERROR message.
     AuthResponse,
+
+    /// Asks the server to return which STARTUP options are supported. The server
+    /// will respond with a SUPPORTED message.
     Options,
+
+    /// Performs a CQL query, i.e., executes an unprepared statement.
+    /// The server will respond to a QUERY message with a RESULT message, the content
+    /// of which depends on the query.
     Query,
+
+    /// Prepares a query for later execution (through EXECUTE).
+    /// The server will respond with a RESULT::Prepared message.
     Prepare,
+
+    /// Executes a prepared query.
+    /// The response from the server will be a RESULT message.
     Execute,
+
+    /// Allows executing a list of queries (prepared or not) as a batch (note that
+    /// only DML statements are accepted in a batch).
+    /// The server will respond with a RESULT message.
     Batch,
+
+    /// Register this connection to receive some types of events.
+    /// The response to a REGISTER message will be a READY message.
     Register,
 }
 
@@ -59,16 +103,25 @@ impl std::fmt::Display for CqlRequestKind {
     }
 }
 
+/// Opcode of a request, used to identify the request type in a CQL frame.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum RequestOpcode {
+    /// See [CqlRequestKind::Startup].
     Startup = 0x01,
+    /// See [CqlRequestKind::Options].
     Options = 0x05,
+    /// See [CqlRequestKind::Query].
     Query = 0x07,
+    /// See [CqlRequestKind::Prepare].
     Prepare = 0x09,
+    /// See [CqlRequestKind::Execute].
     Execute = 0x0A,
+    /// See [CqlRequestKind::Register].
     Register = 0x0B,
+    /// See [CqlRequestKind::Batch].
     Batch = 0x0D,
+    /// See [CqlRequestKind::AuthResponse].
     AuthResponse = 0x0F,
 }
 
@@ -93,11 +146,15 @@ impl TryFrom<u8> for RequestOpcode {
     }
 }
 
+/// Requests that can be serialized into a CQL frame.
 pub trait SerializableRequest {
+    /// Opcode of the request, used to identify the request type in the CQL frame.
     const OPCODE: RequestOpcode;
 
+    /// Serializes the request into the provided buffer.
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError>;
 
+    /// Serializes the request into a heap-allocated `Bytes` object.
     fn to_bytes(&self) -> Result<Bytes, CqlRequestSerializationError> {
         let mut v = Vec::new();
         self.serialize(&mut v)?;
@@ -105,9 +162,12 @@ pub trait SerializableRequest {
     }
 }
 
+/// Requests that can be deserialized from a CQL frame.
+///
 /// Not intended for driver's direct usage (as driver has no interest in deserialising CQL requests),
 /// but very useful for testing (e.g. asserting that the sent requests have proper parameters set).
 pub trait DeserializableRequest: SerializableRequest + Sized {
+    /// Deserializes the request from the provided buffer.
     fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError>;
 }
 
@@ -133,14 +193,20 @@ pub enum RequestDeserializationError {
     UnexpectedBatchStatementKind(u8),
 }
 
+/// A CQL request that can be sent to the server.
 #[non_exhaustive] // TODO: add remaining request types
 pub enum Request<'r> {
+    /// QUERY request, used to execute a single unprepared statement.
     Query(Query<'r>),
+    /// EXECUTE request, used to execute a single prepared statement.
     Execute(Execute<'r>),
+    /// BATCH request, used to execute a batch of (prepared, unprepared, or mix of both)
+    /// statements.
     Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
 }
 
 impl Request<'_> {
+    /// Deserializes the request from the provided buffer.
     pub fn deserialize(
         buf: &mut &[u8],
         opcode: RequestOpcode,

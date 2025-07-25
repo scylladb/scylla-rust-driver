@@ -1,3 +1,5 @@
+//! CQL protocol-level representation of a `QUERY` request.
+
 use std::{borrow::Cow, num::TryFromIntError, ops::ControlFlow, sync::Arc};
 
 use crate::frame::{frame_errors::CqlRequestSerializationError, types::SerialConsistency};
@@ -28,9 +30,14 @@ const ALL_FLAGS: u8 = FLAG_VALUES
     | FLAG_WITH_DEFAULT_TIMESTAMP
     | FLAG_WITH_NAMES_FOR_VALUES;
 
+/// CQL protocol-level representation of an `QUERY` request,
+/// used to execute a single unprepared statement.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct Query<'q> {
+    /// CQL statement string to execute.
     pub contents: Cow<'q, str>,
+
+    /// Various parameters controlling the execution of the statement.
     pub parameters: QueryParameters<'q>,
 }
 
@@ -59,14 +66,36 @@ impl DeserializableRequest for Query<'_> {
     }
 }
 
+/// Various parameters controlling the execution of the statement.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct QueryParameters<'a> {
+    /// Consistency level for the query.
     pub consistency: types::Consistency,
+
+    /// Serial consistency level for the query, if specified.
     pub serial_consistency: Option<types::SerialConsistency>,
+
+    /// Client-side-assigned timestamp for the query, if specified.
     pub timestamp: Option<i64>,
+
+    /// Maximum number of rows to return for the query, if specified.
+    /// If not specified, the server will not page the result, and instead return all rows
+    /// in a single response. This is not recommended for large result sets, as it puts
+    /// a lot of pressure on the server and network, as well as brings high memory usage
+    /// on both client and server sides.
     pub page_size: Option<i32>,
+
+    /// Paging state for the query, used to resume fetching results from a previous query.
+    /// If empty paging state is provided, the query will start from the beginning.
     pub paging_state: PagingState,
+
+    /// Whether to skip metadata for the values in the result set.
+    /// This is an optimisation that can be used when the client does not need
+    /// the metadata for the values, because it has already been fetched upon
+    /// preparing the statement.
     pub skip_metadata: bool,
+
+    /// Values bound to the statements.
     pub values: Cow<'a, SerializedValues>,
 }
 
@@ -85,6 +114,7 @@ impl Default for QueryParameters<'_> {
 }
 
 impl QueryParameters<'_> {
+    /// Serializes the parameters into the provided buffer.
     pub fn serialize(
         &self,
         buf: &mut impl BufMut,
@@ -145,6 +175,7 @@ impl QueryParameters<'_> {
 }
 
 impl QueryParameters<'_> {
+    /// Deserializes the parameters from the provided buffer.
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let consistency = types::read_consistency(buf)?;
 
@@ -209,9 +240,19 @@ impl QueryParameters<'_> {
     }
 }
 
+/// A response containing the paging state of a paged query,
+/// i.e. whether there are more pages to fetch or not, and if so,
+/// what is the state to use for resuming the query from the next page.
 #[derive(Debug, Clone)]
 pub enum PagingStateResponse {
-    HasMorePages { state: PagingState },
+    /// Indicates that there are more pages to fetch, and provides the
+    /// [PagingState] to use for resuming the query from the next page.
+    HasMorePages {
+        /// The paging state to use for resuming the query from the next page.
+        state: PagingState,
+    },
+
+    /// Indicates that there are no more pages to fetch, and the query has finished.
     NoMorePages,
 }
 

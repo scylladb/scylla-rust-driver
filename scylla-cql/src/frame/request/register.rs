@@ -1,3 +1,5 @@
+//! CQL protocol-level representation of a `REGISTER` request.
+
 use std::num::TryFromIntError;
 
 use thiserror::Error;
@@ -9,7 +11,10 @@ use crate::frame::{
     types,
 };
 
+/// The CQL protocol-level representation of an `REGISTER` request,
+/// used to subscribe for server events.
 pub struct Register {
+    /// A list of event types to register for.
     pub event_types_to_register_for: Vec<EventType>,
 }
 

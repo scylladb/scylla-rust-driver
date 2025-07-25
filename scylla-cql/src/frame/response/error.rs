@@ -1,3 +1,5 @@
+//! CQL protocol-level representation of an `ERROR` response.
+
 use crate::frame::frame_errors::{CqlErrorParseError, LowLevelDeserializationError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::types;
@@ -6,9 +8,14 @@ use byteorder::ReadBytesExt;
 use bytes::Bytes;
 use thiserror::Error;
 
+/// Represents a CQL protocol-level error that is sent by the database in response to a query
+/// that failed to execute successfully.
 #[derive(Debug, Clone)]
 pub struct Error {
+    /// Error code and other context of the error.
     pub error: DbError,
+
+    /// The reason for the error, typically a human-readable message.
     pub reason: String,
 }
 
@@ -25,6 +32,7 @@ fn make_error_field_err(
 }
 
 impl Error {
+    /// Deserializes the error response from the provided buffer.
     pub fn deserialize(
         features: &ProtocolFeatures,
         buf: &mut &[u8],
@@ -327,6 +335,7 @@ pub enum DbError {
 }
 
 impl DbError {
+    /// Returns the error code for this error, as defined in the CQL protocol specification.
     pub fn code(&self, protocol_features: &ProtocolFeatures) -> i32 {
         match self {
             DbError::ServerError => 0x0000,
@@ -456,7 +465,7 @@ pub enum WriteType {
     Cas,
     /// Write involves VIEW update and failure to acquire local view(MV) lock for key within timeout
     View,
-    /// Timeout occurred  when a cdc_total_space_in_mb is exceeded when doing a write to data tracked by cdc
+    /// Timeout occurred when a cdc_total_space_in_mb is exceeded when doing a write to data tracked by cdc
     Cdc,
     /// Other type not specified in the specification
     Other(String),
@@ -495,6 +504,7 @@ impl From<&str> for WriteType {
 }
 
 impl WriteType {
+    /// Returns the string representation of the write type as defined in the CQL protocol specification.
     pub fn as_str(&self) -> &str {
         match self {
             WriteType::Simple => "SIMPLE",

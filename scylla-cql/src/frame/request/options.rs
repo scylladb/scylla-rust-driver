@@ -1,7 +1,11 @@
+//! CQL protocol-level representation of a `OPTIONS` request.
+
 use crate::frame::frame_errors::CqlRequestSerializationError;
 
 use crate::frame::request::{RequestOpcode, SerializableRequest};
 
+/// The CQL protocol-level representation of an `OPTIONS` request,
+/// used to retrieve the server's supported options.
 pub struct Options;
 
 impl SerializableRequest for Options {

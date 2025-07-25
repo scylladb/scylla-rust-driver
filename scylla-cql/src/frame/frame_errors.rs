@@ -1,3 +1,5 @@
+//! Low-level errors that can occur during CQL frame parsing and serialization.
+
 use std::error::Error;
 use std::sync::Arc;
 
@@ -67,6 +69,8 @@ pub enum FrameHeaderParseError {
     #[error("Received frame marked as coming from a client")]
     FrameFromClient,
 
+    /// Received a frame marked as coming from a server, while expecting a frame
+    /// coming from a client.
     // FIXME: this should not belong here. User always expects a frame from server.
     // This variant is only used in scylla-proxy - need to investigate it later.
     #[error("Received frame marked as coming from the server")]
@@ -151,6 +155,7 @@ pub enum CqlResponseParseError {
 }
 
 impl CqlResponseParseError {
+    /// Retrieves the kind of CQL response that this error corresponds to.
     pub fn to_response_kind(&self) -> CqlResponseKind {
         match self {
             CqlResponseParseError::CqlErrorParseError(_) => CqlResponseKind::Error,

@@ -1,3 +1,5 @@
+//! CQL protocol-level representation of a `STARTUP` request.
+
 use thiserror::Error;
 
 use crate::frame::frame_errors::CqlRequestSerializationError;
@@ -11,7 +13,10 @@ use crate::{
 
 use super::DeserializableRequest;
 
+/// The CQL protocol-level representation of an `STARTUP` request,
+/// used to finalise connection negotiation phase and establish the CQL connection.
 pub struct Startup<'a> {
+    /// The protocol options that were suggested by the server and accepted by the client.
     pub options: HashMap<Cow<'a, str>, Cow<'a, str>>,
 }
 
