@@ -101,14 +101,20 @@ fn test_struct_deserialization_loose_ordering() {
         b: Option<i32>,
         #[scylla(skip)]
         c: String,
+        #[scylla(default_when_null)]
+        d: i32,
+        #[scylla(default_when_null)]
+        e: &'a str,
     }
 
     // Original order of columns
     let specs = &[
         spec("a", ColumnType::Native(NativeType::Text)),
         spec("b", ColumnType::Native(NativeType::Int)),
+        spec("d", ColumnType::Native(NativeType::Int)),
+        spec("e", ColumnType::Native(NativeType::Text)),
     ];
-    let byts = serialize_cells([val_str("abc"), val_int(123)]);
+    let byts = serialize_cells([val_str("abc"), val_int(123), None, val_str("def")]);
     let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
     assert_eq!(
         row,
@@ -116,15 +122,19 @@ fn test_struct_deserialization_loose_ordering() {
             a: "abc",
             b: Some(123),
             c: String::new(),
+            d: 0,
+            e: "def",
         }
     );
 
     // Different order of columns - should still work
     let specs = &[
+        spec("e", ColumnType::Native(NativeType::Text)),
         spec("b", ColumnType::Native(NativeType::Int)),
+        spec("d", ColumnType::Native(NativeType::Int)),
         spec("a", ColumnType::Native(NativeType::Text)),
     ];
-    let byts = serialize_cells([val_int(123), val_str("abc")]);
+    let byts = serialize_cells([None, val_int(123), None, val_str("abc")]);
     let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
     assert_eq!(
         row,
@@ -132,11 +142,23 @@ fn test_struct_deserialization_loose_ordering() {
             a: "abc",
             b: Some(123),
             c: String::new(),
+            d: 0,
+            e: String::default().as_str(),
         }
     );
 
     // Missing column
-    let specs = &[spec("a", ColumnType::Native(NativeType::Text))];
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("e", ColumnType::Native(NativeType::Text)),
+    ];
+    MyRow::type_check(specs).unwrap_err();
+
+    // Missing both default_when_null column
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+    ];
     MyRow::type_check(specs).unwrap_err();
 
     // Wrong column type
@@ -156,14 +178,20 @@ fn test_struct_deserialization_strict_ordering() {
         b: Option<i32>,
         #[scylla(skip)]
         c: String,
+        #[scylla(default_when_null)]
+        d: i32,
+        #[scylla(default_when_null)]
+        e: &'a str,
     }
 
     // Correct order of columns
     let specs = &[
         spec("a", ColumnType::Native(NativeType::Text)),
         spec("b", ColumnType::Native(NativeType::Int)),
+        spec("d", ColumnType::Native(NativeType::Int)),
+        spec("e", ColumnType::Native(NativeType::Text)),
     ];
-    let byts = serialize_cells([val_str("abc"), val_int(123)]);
+    let byts = serialize_cells([val_str("abc"), val_int(123), None, val_str("def")]);
     let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
     assert_eq!(
         row,
@@ -171,6 +199,8 @@ fn test_struct_deserialization_strict_ordering() {
             a: "abc",
             b: Some(123),
             c: String::new(),
+            d: 0,
+            e: "def",
         }
     );
 
@@ -178,11 +208,23 @@ fn test_struct_deserialization_strict_ordering() {
     let specs = &[
         spec("b", ColumnType::Native(NativeType::Int)),
         spec("a", ColumnType::Native(NativeType::Text)),
+        spec("d", ColumnType::Native(NativeType::Int)),
+        spec("e", ColumnType::Native(NativeType::Text)),
     ];
     MyRow::type_check(specs).unwrap_err();
 
     // Missing column
-    let specs = &[spec("a", ColumnType::Native(NativeType::Text))];
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("e", ColumnType::Native(NativeType::Text)),
+    ];
+    MyRow::type_check(specs).unwrap_err();
+
+    // Missing both default_when_null column
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+    ];
     MyRow::type_check(specs).unwrap_err();
 
     // Wrong column type
