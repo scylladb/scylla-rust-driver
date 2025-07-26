@@ -46,13 +46,18 @@ struct Field {
     #[darling(default)]
     rename: Option<String>,
 
+    // If true, then - if this column is present but set to null - it will be
+    // initialized to Default::default().
+    #[darling(default)]
+    default_when_null: bool,
+
     ident: Option<syn::Ident>,
     ty: syn::Type,
 }
 
 impl DeserializeCommonFieldAttrs for Field {
     fn needs_default(&self) -> bool {
-        self.skip
+        self.skip || self.default_when_null
     }
 
     fn deserialize_target(&self) -> &syn::Type {
@@ -221,8 +226,18 @@ impl TypeCheckAssumeOrderGenerator<'_> {
                 self.generate_name_verification(field_idx, col_idx, field, fidents)
             });
 
-        let required_fields_deserializers =
-            required_fields_iter().map(|(_, f)| f.deserialize_target());
+        let required_fields_deserializers = required_fields_iter().map(|(_, f)| -> syn::Type {
+            let typ = f.deserialize_target();
+            if f.default_when_null {
+                parse_quote! {
+                    ::std::option::Option<#typ>
+                }
+            } else {
+                parse_quote! {
+                    #typ
+                }
+            }
+        });
         let numbers = 0usize..;
 
         parse_quote! {
@@ -289,14 +304,20 @@ impl DeserializeAssumeOrderGenerator<'_> {
             }
         });
 
-        parse_quote!(
-            {
-                let col = ::std::iter::Iterator::next(&mut row)
-                    .expect("Typecheck should have prevented this scenario! Too few columns in the serialized data.")
-                    .map_err(#macro_internal::row_deser_error_replace_rust_name::<Self>)?;
-
-                #name_check
-
+        let deserialize_expr: syn::Expr = if field.default_when_null {
+            parse_quote! {
+                <::std::option::Option<#deserializer> as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
+                    .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
+                        #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
+                            column_index: #field_index,
+                            column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
+                            err,
+                        }
+                    ))?
+                    .unwrap_or_default()
+            }
+        } else {
+            parse_quote! {
                 <#deserializer as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
                     .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
                         #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
@@ -305,6 +326,18 @@ impl DeserializeAssumeOrderGenerator<'_> {
                             err,
                         }
                     ))?
+            }
+        };
+
+        parse_quote!(
+            {
+                let col = ::std::iter::Iterator::next(&mut row)
+                    .expect("Typecheck should have prevented this scenario! Too few columns in the serialized data.")
+                    .map_err(#macro_internal::row_deser_error_replace_rust_name::<Self>)?;
+
+                #name_check
+
+                #deserialize_expr
             }
         )
     }
@@ -365,10 +398,20 @@ impl TypeCheckUnorderedGenerator<'_> {
                 remaining_required_fields -= 1;
             });
 
+            let typ_expr: syn::Type = if field.default_when_null {
+                parse_quote! {
+                    ::std::option::Option<#typ>
+                }
+            } else {
+                parse_quote! {
+                    #typ
+                }
+            };
+
             parse_quote! {
                 {
                     if !#visited_flag {
-                        <#typ as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(spec.typ())
+                        <#typ_expr as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(spec.typ())
                             .map_err(|err| {
                                 #macro_internal::mk_row_typck_err::<Self>(
                                     column_types_iter(),
@@ -515,6 +558,35 @@ impl DeserializeUnorderedGenerator<'_> {
         let deserialize_field = Self::deserialize_field_variable(field);
         let deserializer = field.deserialize_target();
 
+        let deserialize_expr: syn::Expr = if field.default_when_null {
+            parse_quote! {
+                <::std::option::Option<#deserializer> as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
+                    .map_err(|err| {
+                        #macro_internal::mk_row_deser_err::<Self>(
+                            #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
+                                column_index: #column_index,
+                                column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
+                                err,
+                            }
+                        )
+                    })?
+                    .unwrap_or_default()
+            }
+        } else {
+            parse_quote! {
+                <#deserializer as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
+                    .map_err(|err| {
+                        #macro_internal::mk_row_deser_err::<Self>(
+                            #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
+                                column_index: #column_index,
+                                column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
+                                err,
+                            }
+                        )
+                    })?
+            }
+        };
+
         parse_quote! {
             {
                 assert!(
@@ -524,16 +596,7 @@ impl DeserializeUnorderedGenerator<'_> {
                 );
 
                 #deserialize_field = ::std::option::Option::Some(
-                    <#deserializer as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
-                        .map_err(|err| {
-                            #macro_internal::mk_row_deser_err::<Self>(
-                                #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
-                                    column_index: #column_index,
-                                    column_name: <_ as ::std::borrow::ToOwned>::to_owned(col.spec.name()),
-                                    err,
-                                }
-                            )
-                        })?
+                    #deserialize_expr
                 );
             }
         }
