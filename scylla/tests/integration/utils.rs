@@ -28,14 +28,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{error, warn};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 use uuid::Uuid;
 
 use scylla_proxy::{Node, Proxy, ProxyError, RunningProxy, ShardAwareness};
 
 pub(crate) fn setup_tracing() {
-    let _ = tracing_subscriber::fmt::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_writer(tracing_subscriber::fmt::TestWriter::new())
+    let testing_layer = tracing_subscriber::fmt::layer()
+        .with_test_writer()
+        .with_filter(tracing_subscriber::EnvFilter::from_default_env());
+    let noop_layer = tracing_subscriber::fmt::layer().with_writer(std::io::sink);
+    let _ = tracing_subscriber::registry()
+        .with(testing_layer)
+        .with(noop_layer)
         .try_init();
 }
 
