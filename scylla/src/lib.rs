@@ -186,8 +186,9 @@ pub mod serialize {
     }
 }
 
-/// Deserializing DB response containing CQL query results.
 pub mod deserialize {
+    #![doc = include_str!("../../scylla-cql/src/deserialize/README.md")]
+
     pub use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 
     /// Deserializing the whole query result contents.
