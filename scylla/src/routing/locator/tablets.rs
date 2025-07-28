@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use itertools::Itertools;
 use scylla_cql::deserialize::value::{DeserializeValue, ListlikeIterator};
 use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use scylla_cql::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
@@ -9,6 +8,7 @@ use uuid::Uuid;
 
 use crate::cluster::Node;
 use crate::routing::{Shard, Token};
+use crate::utils::safe_format::IteratorSafeFormatExt;
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
@@ -417,7 +417,7 @@ impl TableTablets {
                 if let Err(failed) = &r {
                     warn!("Nodes ({}) listed as replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} are not present in ClusterState.known_peers, \
                            despite topology refresh. Removing problematic tablet.",
-                           failed.iter().format(", "), self.table_spec.ks_name(), self.table_spec.table_name(), tablet.first_token.value(), tablet.last_token.value());
+                           failed.iter().safe_format(", "), self.table_spec.ks_name(), self.table_spec.table_name(), tablet.first_token.value(), tablet.last_token.value());
                 }
 
                 r.is_ok()

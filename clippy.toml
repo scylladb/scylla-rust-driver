@@ -1,1 +1,4 @@
 avoid-breaking-exported-api = false
+disallowed-methods = [
+    { path = "itertools::Itertools::format", reason = "Footgun: panics on double formatting.", replacement = "crate::utils::safe_format::IteratorSafeFormatExt::safe_format" }
+]

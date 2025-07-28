@@ -2,7 +2,8 @@ use crate::cluster::node::Node;
 use crate::network::Connection;
 use crate::response::query_result::QueryResult;
 use crate::routing::{Shard, Token};
-use itertools::{Either, Itertools};
+use crate::utils::safe_format::IteratorSafeFormatExt;
+use itertools::Either;
 use scylla_cql::frame::response::result::ColumnSpec;
 use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::value::deser_cql_value;
@@ -137,7 +138,7 @@ impl RequestSpan {
             tracing::field::display(
                 replicas
                     .map(|(node, shard)| Replica(node, shard))
-                    .format(", "),
+                    .safe_format(", "),
             ),
         );
     }
@@ -176,5 +177,5 @@ fn partition_key_displayer<'ps, 'res, 'spec: 'ps>(
         Ok(c) => Either::Left(c),
         Err(_) => Either::Right("<decoding error>"),
     })
-    .format(", ")
+    .safe_format(", ")
 }
