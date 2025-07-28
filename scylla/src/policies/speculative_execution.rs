@@ -21,6 +21,7 @@ pub struct Context {
 
 /// The policy that decides if the driver will send speculative queries to the
 /// next targets when the current target takes too long to respond.
+// TODO(2.0): Consider renaming the methods to get rid of "retry" naming.
 pub trait SpeculativeExecutionPolicy: std::fmt::Debug + Send + Sync {
     /// The maximum number of speculative executions that will be triggered
     /// for a given request (does not include the initial request)
