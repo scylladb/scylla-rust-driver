@@ -12,6 +12,7 @@ where
     <I as Iterator>::Item: Display,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        #[allow(clippy::disallowed_methods)]
         self.cloneable_iter.clone().format(self.sep).fmt(f)
     }
 }
@@ -22,6 +23,7 @@ where
     <I as Iterator>::Item: Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        #[allow(clippy::disallowed_methods)]
         self.cloneable_iter.clone().format(self.sep).fmt(f)
     }
 }
