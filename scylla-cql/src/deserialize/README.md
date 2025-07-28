@@ -11,7 +11,7 @@ Those traits are quite similar to each other, both in the idea behind them
 and the interface that they expose.
 
 It's important to understand what is a _deserialized type_. It's not just
-an implementor of Deserialize{Value, Row}; there are some implementors of
+an implementor of `Deserialize{Value, Row}`; there are some implementors of
 `Deserialize{Value, Row}` who are not yet final types, but **partially**
 deserialized types that support further deserialization - _type
 deserializers_, such as `ListlikeIterator`, `UdtIterator` or `ColumnIterator`.
