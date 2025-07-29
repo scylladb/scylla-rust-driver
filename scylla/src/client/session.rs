@@ -1401,11 +1401,13 @@ impl Session {
         page_size: Option<PageSize>,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
         let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)
+            .extract_partition_key_and_calculate_token(
+                prepared.get_partitioner_name(),
+                serialized_values,
+            )
             .map_err(PartitionKeyError::into_execution_error)?
             .unzip();
 
@@ -1463,7 +1465,7 @@ impl Session {
                         connection
                             .execute_raw_with_consistency(
                                 prepared,
-                                values_ref,
+                                serialized_values,
                                 consistency,
                                 serial_consistency,
                                 page_size,
