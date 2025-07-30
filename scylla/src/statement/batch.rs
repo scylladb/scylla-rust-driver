@@ -1,3 +1,6 @@
+//! Defines the [`Batch`] type, which represents a batch of CQL statements
+//! that can be executed together.
+
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +23,11 @@ pub use crate::frame::request::batch::BatchType;
 pub struct Batch {
     pub(crate) config: StatementConfig,
 
+    /// Statements that constitute this batch.
+    ///
+    /// Any mix of prepared and unprepared statements is allowed.
+    /// For maximum performance, it is recommended to use prepared statements
+    /// whenever possible.
     pub statements: Vec<BatchStatement>,
     batch_type: BatchType,
 }
@@ -45,6 +53,10 @@ impl Batch {
     }
 
     /// Creates a new, empty `Batch` of `batch_type` type with the provided statements.
+    ///
+    /// Any mix of prepared and unprepared statements is allowed.
+    /// For maximum performance, it is recommended to use prepared statements
+    /// whenever possible.
     pub fn new_with_statements(batch_type: BatchType, statements: Vec<BatchStatement>) -> Self {
         Self {
             batch_type,
@@ -54,6 +66,10 @@ impl Batch {
     }
 
     /// Appends a new statement to the batch.
+    ///
+    /// Both prepared and unprepared statements are allowed.
+    /// For maximum performance, it is recommended to use prepared statements
+    /// whenever possible.
     pub fn append_statement(&mut self, statement: impl Into<BatchStatement>) {
         self.statements.push(statement.into());
     }
@@ -218,11 +234,15 @@ impl Default for Batch {
     }
 }
 
-/// This enum represents a CQL statement, that can be part of batch.
+/// Represents a CQL statement that can be part of batch.
 #[derive(Clone)]
 #[non_exhaustive]
 pub enum BatchStatement {
+    /// Unprepared statement, which is a CQL query string.
+    // TODO(2.0): rename this variant to `Unprepared`.
     Query(Statement),
+    /// Prepared statement, which is a prepared statement ID.
+    // TODO(2.0): shorten this variant's name to `Prepared`.
     PreparedStatement(PreparedStatement),
 }
 

@@ -16,11 +16,15 @@ use std::num::Wrapping;
 use crate::routing::Token;
 use crate::statement::prepared::TokenCalculationError;
 
+/// Name of the partitioner employed by a table to partition its data.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 #[non_exhaustive]
 pub enum PartitionerName {
+    /// See [Murmur3Partitioner].
     #[default]
     Murmur3,
+
+    /// Partitioner used for Change Data Capture (CDC) in ScyllaDB.
     // Check triggers, because according to guidelines acronyms should be counted
     // as one word and written in UpperCamelCase. In this case the variant should
     // be Cdc.
@@ -55,9 +59,13 @@ impl Partitioner for PartitionerName {
     }
 }
 
+/// Enum that can represent any partitioner hasher.
 #[non_exhaustive]
 pub enum PartitionerHasherAny {
+    /// Hasher for [Murmur3Partitioner].
     Murmur3(Murmur3PartitionerHasher),
+
+    /// Hasher for [CDCPartitioner].
     // Check triggers, because according to guidelines acronyms should be counted
     // as one word and written in UpperCamelCase. In this case the variant should
     // be Cdc.
@@ -97,10 +105,15 @@ mod sealed {
 /// corresponds to `HasherBuilder`, and `PartitionerHasher` to `Hasher`.
 /// See their documentation for more details.
 pub trait Partitioner: sealed::Sealed {
+    /// Stateful hasher that can compute a token based on partition key values.
     type Hasher: PartitionerHasher;
 
+    /// Creates a fresh new instance of `PartitionerHasher` that can be used
+    /// to compute a token based on partition key values.
     fn build_hasher(&self) -> Self::Hasher;
 
+    /// Computes a token for the given data. A convenience method to hash
+    /// just a single piece of data without needing to create a hasher instance.
     // Currently, no public API uses this.
     fn hash_one(&self, data: &[u8]) -> Token {
         let mut hasher = self.build_hasher();
@@ -115,10 +128,14 @@ pub trait Partitioner: sealed::Sealed {
 /// At any point, one can call `finish()` and a `Token` will be computed
 /// based on values that has been fed so far.
 pub trait PartitionerHasher: sealed::Sealed {
+    /// Accepts a serialized partition key value and feeds it to the hasher.
     fn write(&mut self, pk_part: &[u8]);
+
+    /// Computes the token based on the values that have been fed so far.
     fn finish(&self) -> Token;
 }
 
+/// Default partitioner used by ScyllaDB and Cassandra.
 pub struct Murmur3Partitioner;
 
 impl sealed::Sealed for Murmur3Partitioner {}
@@ -135,6 +152,7 @@ impl Partitioner for Murmur3Partitioner {
     }
 }
 
+/// Hasher for [Murmur3Partitioner].
 pub struct Murmur3PartitionerHasher {
     total_len: usize,
     buf: [u8; Self::BUF_CAPACITY],
@@ -303,8 +321,10 @@ enum CDCPartitionerHasherState {
     Computed(Token),
 }
 
+/// Partitioner used for Change Data Capture (CDC) in ScyllaDB.
 pub struct CDCPartitioner;
 
+/// Hasher for [CDCPartitioner].
 pub struct CDCPartitionerHasher {
     state: CDCPartitionerHasherState,
 }

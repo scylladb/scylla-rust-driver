@@ -140,6 +140,7 @@ required-features = ["unstable-testing"]
 [lints.rust]
 unnameable_types = "warn"
 unreachable_pub = "warn"
+missing-docs = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(scylla_cloud_tests)',
     'cfg(cassandra_tests)',

@@ -22,16 +22,18 @@ pub use single_target::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 #[derive(Default, Clone, Debug)]
 #[non_exhaustive]
 pub struct RoutingInfo<'a> {
-    /// Requested consistency information allows to route requests to the appropriate
-    /// datacenters. E.g. requests with a LOCAL_ONE consistency should be routed to the same
-    /// datacenter.
+    /// Consistency level for the request.
     pub consistency: types::Consistency,
+
+    /// Serial consistency level to be used for serial part of the request, if set.
     pub serial_consistency: Option<types::SerialConsistency>,
 
     /// Information that are the basis of token-aware routing:
     /// - token, keyspace for vnodes-based routing;
     /// - token, keyspace, table for tablets-based routing.
     pub token: Option<Token>,
+
+    /// Keyspace and table that the request is being executed against.
     pub table: Option<&'a TableSpec<'a>>,
 
     /// If, while preparing, we received from the cluster information that the statement is an LWT,
@@ -39,7 +41,7 @@ pub struct RoutingInfo<'a> {
     /// can be performed: the request should be routed to the replicas in a predefined order
     /// (i. e. always try first to contact replica A, then B if it fails, then C, etc.).
     /// If false, the request should be routed normally.
-    /// Note: this a Scylla-specific optimisation. Therefore, the flag will be always false for Cassandra.
+    /// Note: this a ScyllaDB-specific optimisation. Therefore, the flag will be always false for Cassandra.
     pub is_confirmed_lwt: bool,
 }
 

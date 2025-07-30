@@ -129,12 +129,16 @@ pub(crate) enum Tls {
 #[error(transparent)]
 #[non_exhaustive]
 pub enum TlsError {
+    /// Collection of errors coming from OpenSSL 0.10.
     #[cfg(feature = "openssl-010")]
     OpenSsl010(#[from] openssl::error::ErrorStack),
+    /// Invalid DNS name error, coming from rustls 0.23.
     #[cfg(feature = "rustls-023")]
     InvalidName(#[from] rustls::pki_types::InvalidDnsNameError),
+    /// PEM parsing error, coming from rustls 0.23.
     #[cfg(feature = "rustls-023")]
     PemParse(#[from] rustls::pki_types::pem::Error),
+    /// General error coming from rustls 0.23.
     #[cfg(feature = "rustls-023")]
     Rustls023(#[from] rustls::Error),
 }

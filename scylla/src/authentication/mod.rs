@@ -1,3 +1,5 @@
+//! Traits and implementations for custom authentication against a server.
+
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 
@@ -25,7 +27,7 @@ pub trait AuthenticatorSession: Send + Sync {
 /// Trait used to represent a factory of [`AuthenticatorSession`] instances.
 /// A new [`AuthenticatorSession`] instance will be created for each session.
 ///
-/// The custom authenticator can be set using SessionBuilder::authenticator_provider method.  
+/// The custom authenticator can be set using SessionBuilder::authenticator_provider method.
 ///
 /// Default: [`PlainTextAuthenticator`] is the default authenticator which requires username and
 /// password. It can be set by using SessionBuilder::user(\"user\", \"pass\") method.

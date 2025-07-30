@@ -102,6 +102,9 @@ pub mod _macro_internal {
 pub use scylla_cql::{DeserializeRow, DeserializeValue, SerializeRow, SerializeValue};
 
 pub mod value {
+    //! Defines CQL values of various types and their representations,
+    //! as well as conversion between them and other types.
+
     // Every `pub` item is re-exported here, apart from `deser_cql_value`.
     pub use scylla_cql::value::{
         Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
@@ -110,6 +113,8 @@ pub mod value {
 }
 
 pub mod frame {
+    //! Abstractions of the CQL wire protocol.
+
     pub use scylla_cql::frame::{frame_errors, Authenticator, Compression};
     pub(crate) use scylla_cql::frame::{
         parse_response_body_extensions, protocol_features, read_response_frame, request,
@@ -117,13 +122,21 @@ pub mod frame {
     };
 
     pub mod types {
+        //! CQL binary protocol in-wire types.
+
         pub use scylla_cql::frame::types::{Consistency, SerialConsistency};
     }
 
     pub mod response {
+        //! CQL responses sent by the server.
+
         pub(crate) use scylla_cql::frame::response::*;
 
         pub mod result {
+            //! CQL protocol-level representation of a `RESULT` response.
+            //!
+            //! Contains lower-level types that are used to represent the result of a query.
+
             #[cfg(cpp_rust_unstable)]
             pub use scylla_cql::frame::response::result::DeserializedMetadataAndRawRows;
 

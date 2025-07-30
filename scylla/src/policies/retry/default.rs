@@ -10,6 +10,7 @@ use super::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 pub struct DefaultRetryPolicy;
 
 impl DefaultRetryPolicy {
+    /// Creates a new instance of [DefaultRetryPolicy].
     pub fn new() -> DefaultRetryPolicy {
         DefaultRetryPolicy
     }
@@ -27,6 +28,7 @@ impl RetryPolicy for DefaultRetryPolicy {
     }
 }
 
+/// Implementation of [RetrySession] for [DefaultRetryPolicy].
 pub struct DefaultRetrySession {
     was_unavailable_retry: bool,
     was_read_timeout_retry: bool,
@@ -34,6 +36,8 @@ pub struct DefaultRetrySession {
 }
 
 impl DefaultRetrySession {
+    /// Creates a new instance of [DefaultRetrySession].
+    // TODO(2.0): unpub this.
     pub fn new() -> DefaultRetrySession {
         DefaultRetrySession {
             was_unavailable_retry: false,
@@ -43,6 +47,7 @@ impl DefaultRetrySession {
     }
 }
 
+// TODO(2.0): remove this.
 impl Default for DefaultRetrySession {
     fn default() -> DefaultRetrySession {
         DefaultRetrySession::new()
