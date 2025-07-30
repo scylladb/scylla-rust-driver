@@ -110,7 +110,7 @@ impl ClusterState {
                     let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
                     peer_tokens = tokens;
                     if node.address == peer_address {
-                        node.clone()
+                        Arc::clone(node)
                     } else {
                         // If IP changes, the Node struct is recreated, but the underlying pool is preserved and notified about the IP change.
                         Arc::new(Node::inherit_with_ip_changed(node, peer_endpoint))
@@ -131,10 +131,10 @@ impl ClusterState {
                 }
             };
 
-            new_known_peers.insert(peer_host_id, node.clone());
+            new_known_peers.insert(peer_host_id, Arc::clone(&node));
 
             for token in peer_tokens {
-                ring.push((token, node.clone()));
+                ring.push((token, Arc::clone(&node)));
             }
         }
 
