@@ -245,6 +245,8 @@ async fn check_for_all_consistencies_and_setting_options<
             .unwrap();
         rx = check_consistencies(consistency, serial_consistency, rx).await;
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 // Checks that the expected consistency and serial_consistency are set
