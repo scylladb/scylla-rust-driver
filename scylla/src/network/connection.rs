@@ -2277,14 +2277,14 @@ mod tests {
         let connection = Arc::new(connection);
 
         let ks = unique_keyspace_name();
+        let session = SessionBuilder::new()
+            .known_node_addr(addr)
+            .build()
+            .await
+            .unwrap();
 
         {
             // Preparation phase
-            let session = SessionBuilder::new()
-                .known_node_addr(addr)
-                .build()
-                .await
-                .unwrap();
             session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
             session.use_keyspace(ks.clone(), false).await.unwrap();
             session
@@ -2298,7 +2298,7 @@ mod tests {
         }
 
         connection
-            .use_keyspace(&super::VerifiedKeyspaceName::new(ks, false).unwrap())
+            .use_keyspace(&super::VerifiedKeyspaceName::new(ks.clone(), false).unwrap())
             .await
             .unwrap();
 
@@ -2357,6 +2357,11 @@ mod tests {
             .await
             .unwrap();
         assert!(insert_res1.is_empty());
+
+        {
+            // Teardown phase
+            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+        }
     }
 
     #[tokio::test]
@@ -2377,13 +2382,14 @@ mod tests {
         let addr: SocketAddr = resolve_hostname(&uri).await;
         let ks = unique_keyspace_name();
 
+        let session = SessionBuilder::new()
+            .known_node_addr(addr)
+            .build()
+            .await
+            .unwrap();
+
         {
             // Preparation phase
-            let session = SessionBuilder::new()
-                .known_node_addr(addr)
-                .build()
-                .await
-                .unwrap();
             session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
             session.use_keyspace(ks.clone(), false).await.unwrap();
             session
@@ -2484,6 +2490,11 @@ mod tests {
         .await;
         // No delay - coalescing disabled
         subtest(None, ks.clone()).await;
+
+        {
+            // Teardown phase
+            session.ddl(format!("DROP KEYSPACE {ks} ")).await.unwrap();
+        }
     }
 
     // Returns the sum of integral numbers in the range [0..n)
