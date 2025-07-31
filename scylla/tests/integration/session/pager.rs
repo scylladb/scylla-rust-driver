@@ -64,7 +64,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
         create_ks += " and TABLETS = { 'enabled': false}";
     }
     session.ddl(create_ks).await.unwrap();
-    session.use_keyspace(ks, true).await.unwrap();
+    session.use_keyspace(&ks, true).await.unwrap();
     session
         .ddl("CREATE TABLE t (pk int PRIMARY KEY, v int)")
         .await
@@ -99,6 +99,8 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
 
     assert!(retried_flag.load(Ordering::Relaxed));
     while iter.try_next().await.unwrap().is_some() {}
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -140,4 +142,6 @@ async fn test_iter_methods_with_modification_statements() {
         .await
         .ok_or(())
         .unwrap_err(); // assert empty
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
