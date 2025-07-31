@@ -257,6 +257,26 @@ async fn populate_internal_driver_tablet_info(
     }
 }
 
+async fn verify_queries_routed_to_correct_tablets(
+    session: &Session,
+    prepared: &PreparedStatement,
+    value_per_tablet: &[(i32, i32)],
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
+) {
+    for values in value_per_tablet.iter() {
+        info!(
+            "Second loop, trying key {:?}, token: {}",
+            values,
+            prepared.calculate_token(&values).unwrap().unwrap().value()
+        );
+        try_join_all((0..100).map(|_| async { session.execute_unpaged(prepared, values).await }))
+            .await
+            .unwrap();
+        let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
+        assert_eq!(feedbacks, 0);
+    }
+}
+
 /// Tests that, when using DefaultPolicy with TokenAwareness and querying table
 /// that uses tablets:
 /// 1. When querying data that belongs to tablet we didn't receive yet we will
@@ -324,20 +344,13 @@ async fn test_default_policy_is_tablet_aware() {
             // Now we must have info about all the tablets. It should not be
             // possible to receive any feedback if DefaultPolicy is properly
             // tablet-aware.
-            for values in value_lists.iter() {
-                info!(
-                    "Second loop, trying key {:?}, token: {}",
-                    values,
-                    prepared.calculate_token(&values).unwrap().unwrap().value()
-                );
-                try_join_all(
-                    (0..100).map(|_| async { session.execute_unpaged(&prepared, values).await }),
-                )
-                .await
-                .unwrap();
-                let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-                assert_eq!(feedbacks, 0);
-            }
+            verify_queries_routed_to_correct_tablets(
+                &session,
+                &prepared,
+                &value_lists,
+                &mut feedback_rxs,
+            )
+            .await;
 
             running_proxy
         },
