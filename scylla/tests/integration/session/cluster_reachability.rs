@@ -35,6 +35,8 @@ async fn test_all_nodes_are_reachable_and_serving() {
     )
     .await
     .unwrap();
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 async fn prepare_schema(session: &Session, ks: &str, table: &str) {
