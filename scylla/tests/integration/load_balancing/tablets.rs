@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::utils::{
     execute_prepared_statement_everywhere, execute_unprepared_statement_everywhere,
-    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
-    PerformDDL,
+    scylla_supports_tablets, setup_tracing, supports_feature, test_with_3_node_cluster,
+    unique_keyspace_name, PerformDDL,
 };
 
 use futures::future::try_join_all;
@@ -168,17 +168,31 @@ fn count_tablet_feedbacks(
 }
 
 async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: usize) {
+    let supports_table_tablet_options = supports_feature(session, "TABLET_OPTIONS").await;
+    let (keyspace_tablet_opts, table_tablet_opts) = if supports_table_tablet_options {
+        (
+            "AND tablets = { 'enabled': true }".to_string(),
+            format!("WITH tablets = {{ 'min_tablet_count': {tablet_count} }}"),
+        )
+    } else {
+        (
+            format!("AND tablets = {{ 'initial': {tablet_count} }}"),
+            String::new(),
+        )
+    };
+
     session
         .ddl(format!(
             "CREATE KEYSPACE IF NOT EXISTS {ks}
             WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 2}}
-            AND tablets = {{ 'initial': {tablet_count} }}"
+            {keyspace_tablet_opts}"
         ))
         .await
         .unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {ks}.{table} (a int, b int, c text, primary key (a, b))"
+            "CREATE TABLE IF NOT EXISTS {ks}.{table} (a int, b int, c text, primary key (a, b))
+            {table_tablet_opts}"
         ))
         .await
         .unwrap();
