@@ -60,4 +60,6 @@ async fn test_named_bind_markers() {
     for wrongmap in wrongmaps {
         assert!(session.execute_unpaged(&prepared, &wrongmap).await.is_err());
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
