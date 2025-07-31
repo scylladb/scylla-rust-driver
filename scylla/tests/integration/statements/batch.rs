@@ -21,7 +21,7 @@ async fn batch_statements_and_values_mismatch_detected() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
     session
         .ddl("CREATE TABLE IF NOT EXISTS batch_serialization_test (p int PRIMARY KEY, val int)")
         .await
@@ -77,6 +77,8 @@ async fn batch_statements_and_values_mismatch_detected() {
             ))
         )
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -97,7 +99,9 @@ async fn test_large_batch_statements() {
     assert_matches!(
         batch_insert_result.unwrap_err(),
         ExecutionError::BadQuery(BadQuery::TooManyQueriesInBatchStatement(_too_many_queries)) if _too_many_queries == too_many_queries
-    )
+    );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 async fn create_test_session(session: Session, ks: &String) -> Session {
@@ -216,6 +220,8 @@ async fn test_quietly_prepare_batch() {
             .unwrap();
         assert_test_batch_table_rows_contain(&session, &[(33, 43), (33, 7), (4, 5)]).await;
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(i32, i32)]) {
@@ -275,6 +281,8 @@ async fn test_batch_lwts() {
     } else {
         test_batch_lwts_for_cassandra(&session, &batch, &batch_deserializer).await;
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 async fn test_batch_lwts_for_scylla(
@@ -455,6 +463,8 @@ async fn test_prepare_batch() {
 
         assert!(session.prepare_batch(&bad_batch).await.is_err());
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -551,6 +561,8 @@ async fn test_batch() {
         .unwrap();
 
     assert_eq!(results, vec![(4, 20, String::from("foobar"))]);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -602,6 +614,8 @@ async fn test_counter_batch() {
         )
         .await
         .unwrap();
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 // This is a regression test for #1134.
@@ -638,4 +652,6 @@ async fn test_batch_to_multiple_tables() {
         .execute_unpaged(&prepared_statement, (1, 2, "ala", 4, 5, "ma"))
         .await
         .unwrap();
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
