@@ -123,6 +123,8 @@ async fn test_timestamp() {
     .collect::<Vec<_>>();
 
     assert_eq!(results, expected_results);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -186,10 +188,14 @@ async fn test_timestamp_generator() {
         .into_rows_result()
         .unwrap();
 
-    let timestamps_locked = timestamps.lock().unwrap();
-    assert!(query_rows_result
-        .rows::<(i32, i32, i64)>()
-        .unwrap()
-        .map(|row_result| row_result.unwrap())
-        .all(|(_a, _b, writetime)| timestamps_locked.contains(&writetime)));
+    {
+        let timestamps_locked = timestamps.lock().unwrap();
+        assert!(query_rows_result
+            .rows::<(i32, i32, i64)>()
+            .unwrap()
+            .map(|row_result| row_result.unwrap())
+            .all(|(_a, _b, writetime)| timestamps_locked.contains(&writetime)));
+    }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
