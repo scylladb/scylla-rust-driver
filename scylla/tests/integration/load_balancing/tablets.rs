@@ -262,7 +262,7 @@ async fn verify_queries_routed_to_correct_tablets(
     prepared: &PreparedStatement,
     value_per_tablet: &[(i32, i32)],
     feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
-) {
+) -> Result<(), String> {
     for values in value_per_tablet.iter() {
         info!(
             "Second loop, trying key {:?}, token: {}",
@@ -273,8 +273,12 @@ async fn verify_queries_routed_to_correct_tablets(
             .await
             .unwrap();
         let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-        assert_eq!(feedbacks, 0);
+        if feedbacks != 0 {
+            return Err(format!("Expected 0 tablet feedbacks, received {feedbacks}"));
+        }
     }
+
+    Ok(())
 }
 
 /// Tests that, when using DefaultPolicy with TokenAwareness and querying table
@@ -350,7 +354,8 @@ async fn test_default_policy_is_tablet_aware() {
                 &value_lists,
                 &mut feedback_rxs,
             )
-            .await;
+            .await
+            .unwrap();
 
             running_proxy
         },
