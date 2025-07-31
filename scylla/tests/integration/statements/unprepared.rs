@@ -114,6 +114,8 @@ async fn test_unprepared_statement() {
         watchdog += 1;
     }
     assert_eq!(results_from_manual_paging, results);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -135,7 +137,7 @@ async fn test_prepare_query_with_values() {
 
         let ks = unique_keyspace_name();
         session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
-        session.use_keyspace(ks, false).await.unwrap();
+        session.use_keyspace(&ks, false).await.unwrap();
         session
             .ddl("CREATE TABLE t (a int primary key)")
             .await
@@ -156,6 +158,9 @@ async fn test_prepare_query_with_values() {
             _res = session.query_unpaged(s, (0,)) => (),
             _ = tokio::time::sleep(TIMEOUT_PER_REQUEST) => panic!("Rules did not work: no received response"),
         };
+
+        running_proxy.turn_off_rules();
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
         running_proxy
     }).await;
@@ -186,7 +191,7 @@ async fn test_query_with_no_values() {
 
         let ks = unique_keyspace_name();
         session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
-        session.use_keyspace(ks, false).await.unwrap();
+        session.use_keyspace(&ks, false).await.unwrap();
         session
             .ddl("CREATE TABLE t (a int primary key)")
             .await
@@ -207,6 +212,8 @@ async fn test_query_with_no_values() {
             _res = session.query_unpaged(s, ()) => (),
             _ = tokio::time::sleep(TIMEOUT_PER_REQUEST) => panic!("Rules did not work: no received response"),
         };
+
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
         running_proxy
     }).await;
