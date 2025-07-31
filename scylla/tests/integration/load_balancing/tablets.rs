@@ -189,7 +189,6 @@ async fn populate_internal_driver_tablet_info(
     prepared: &PreparedStatement,
     value_per_tablet: &[(i32, i32)],
     feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
-    tablet_count: usize,
 ) {
     // When the driver never received tablet info for any tablet in a given table,
     // then it will not be aware that the table is tablet-based and fall back
@@ -233,7 +232,7 @@ async fn populate_internal_driver_tablet_info(
         }
     }
 
-    assert_eq!(total_tablets_with_feedback, tablet_count);
+    assert_eq!(total_tablets_with_feedback, value_per_tablet.len());
 }
 
 /// Tests that, when using DefaultPolicy with TokenAwareness and querying table
@@ -297,7 +296,6 @@ async fn test_default_policy_is_tablet_aware() {
                 &prepared,
                 &value_lists,
                 &mut feedback_rxs,
-                TABLET_COUNT,
             )
             .await;
 
