@@ -385,6 +385,11 @@ mod deserialize;
 /// The field will be completely ignored during deserialization and will
 /// be initialized with `Default::default()`.
 ///
+/// `#[scylla(default_when_null)]`
+///
+/// If the value of the field received from DB is null, the field will be
+/// initialized with `Default::default()`.
+///
 /// `#[scylla(rename = "field_name")]`
 ///
 /// By default, the generated implementation will try to match the Rust field
