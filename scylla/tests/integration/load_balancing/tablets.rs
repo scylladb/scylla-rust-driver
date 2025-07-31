@@ -19,7 +19,7 @@ use scylla_proxy::{
     ShardAwareness, TargetShard, WorkerError,
 };
 
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tracing::info;
 use uuid::Uuid;
 
@@ -184,6 +184,58 @@ async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: 
         .unwrap();
 }
 
+async fn populate_internal_driver_tablet_info(
+    session: &Session,
+    prepared: &PreparedStatement,
+    value_per_tablet: &[(i32, i32)],
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
+    tablet_count: usize,
+) {
+    // When the driver never received tablet info for any tablet in a given table,
+    // then it will not be aware that the table is tablet-based and fall back
+    // to token-ring routing for this table.
+    // After it receives any tablet for this table:
+    // - tablet-aware routing will be used for tablets that the driver has locally
+    // - non-token-aware routing will be used for other tablets (which basically means
+    //   sending the requests to random nodes)
+    // In the following code I want to make sure that the driver fetches info
+    // about all the tablets in the table.
+    // Obvious way to do this would be to, for each tablet, send some requests (here some == 100)
+    // and expect that at least one will land on non-replica and return tablet feedback.
+    // This mostly works, but there is a problem: initially driver has no
+    // tablet information at all for this table so it will fall back to token-ring routing.
+    // It is possible that token-ring replicas and tablet replicas are the same
+    // for some tokens. If it happens for the first token that we use in this loop,
+    // then no matter how many requests we send we are not going to receive any tablet feedback.
+    // The solution is to iterate over tablets twice.
+    //
+    // First iteration guarantees that the driver will receive at least one tablet
+    // for this table (it is statistically improbable for all tokens used here to have the same
+    // set of replicas for tablets and token-ring). In practice it will receive all or almost all of the tablets.
+    //
+    // Second iteration will not use token-ring routing (because the driver has some tablets
+    // for this table, so it is aware that the table is tablet based),
+    // which means that for unknown tablets it will send requests to random nodes,
+    // and definitely fetch the rest of the tablets.
+    let mut total_tablets_with_feedback = 0;
+    for values in value_per_tablet.iter().chain(value_per_tablet.iter()) {
+        info!(
+            "First loop, trying key {:?}, token: {}",
+            values,
+            prepared.calculate_token(&values).unwrap().unwrap().value()
+        );
+        try_join_all((0..100).map(|_| async { session.execute_unpaged(&prepared, values).await }))
+            .await
+            .unwrap();
+        let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
+        if feedbacks > 0 {
+            total_tablets_with_feedback += 1;
+        }
+    }
+
+    assert_eq!(total_tablets_with_feedback, tablet_count);
+}
+
 /// Tests that, when using DefaultPolicy with TokenAwareness and querying table
 /// that uses tablets:
 /// 1. When querying data that belongs to tablet we didn't receive yet we will
@@ -240,51 +292,14 @@ async fn test_default_policy_is_tablet_aware() {
                 )]));
             }
 
-            // When the driver never received tablet info for any tablet in a given table,
-            // then it will not be aware that the table is tablet-based and fall back
-            // to token-ring routing for this table.
-            // After it receives any tablet for this table:
-            // - tablet-aware routing will be used for tablets that the driver has locally
-            // - non-token-aware routing will be used for other tablets (which basically means
-            //   sending the requests to random nodes)
-            // In the following code I want to make sure that the driver fetches info
-            // about all the tablets in the table.
-            // Obvious way to do this would be to, for each tablet, send some requests (here some == 100)
-            // and expect that at least one will land on non-replica and return tablet feedback.
-            // This mostly works, but there is a problem: initially driver has no
-            // tablet information at all for this table so it will fall back to token-ring routing.
-            // It is possible that token-ring replicas and tablet replicas are the same
-            // for some tokens. If it happens for the first token that we use in this loop,
-            // then no matter how many requests we send we are not going to receive any tablet feedback.
-            // The solution is to iterate over tablets twice.
-            //
-            // First iteration guarantees that the driver will receive at least one tablet
-            // for this table (it is statistically improbable for all tokens used here to have the same
-            // set of replicas for tablets and token-ring). In practice it will receive all or almost all of the tablets.
-            //
-            // Second iteration will not use token-ring routing (because the driver has some tablets
-            // for this table, so it is aware that the table is tablet based),
-            // which means that for unknown tablets it will send requests to random nodes,
-            // and definitely fetch the rest of the tablets.
-            let mut total_tablets_with_feedback = 0;
-            for values in value_lists.iter().chain(value_lists.iter()) {
-                info!(
-                    "First loop, trying key {:?}, token: {}",
-                    values,
-                    prepared.calculate_token(&values).unwrap().unwrap().value()
-                );
-                try_join_all(
-                    (0..100).map(|_| async { session.execute_unpaged(&prepared, values).await }),
-                )
-                .await
-                .unwrap();
-                let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-                if feedbacks > 0 {
-                    total_tablets_with_feedback += 1;
-                }
-            }
-
-            assert_eq!(total_tablets_with_feedback, TABLET_COUNT);
+            populate_internal_driver_tablet_info(
+                &session,
+                &prepared,
+                &value_lists,
+                &mut feedback_rxs,
+                TABLET_COUNT,
+            )
+            .await;
 
             // Now we must have info about all the tablets. It should not be
             // possible to receive any feedback if DefaultPolicy is properly
