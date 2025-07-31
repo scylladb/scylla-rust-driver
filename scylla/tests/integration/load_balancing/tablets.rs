@@ -281,6 +281,21 @@ async fn verify_queries_routed_to_correct_tablets(
     Ok(())
 }
 
+async fn run_test_default_policy_is_tablet_aware_attempt(
+    session: &Session,
+    prepared: &PreparedStatement,
+    value_per_tablet: &[(i32, i32)],
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
+) -> Result<(), String> {
+    populate_internal_driver_tablet_info(session, prepared, value_per_tablet, feedback_rxs).await?;
+
+    // Now we must have info about all the tablets. It should not be
+    // possible to receive any feedback if DefaultPolicy is properly
+    // tablet-aware.
+    verify_queries_routed_to_correct_tablets(session, prepared, value_per_tablet, feedback_rxs)
+        .await
+}
+
 /// Tests that, when using DefaultPolicy with TokenAwareness and querying table
 /// that uses tablets:
 /// 1. When querying data that belongs to tablet we didn't receive yet we will
@@ -334,24 +349,11 @@ async fn test_default_policy_is_tablet_aware() {
             }
 
             let tablets = get_tablets(&session, &ks, "t").await;
-            let value_lists = calculate_key_per_tablet(&tablets, &prepared);
-
-            populate_internal_driver_tablet_info(
+            let value_per_tablet = calculate_key_per_tablet(&tablets, &prepared);
+            run_test_default_policy_is_tablet_aware_attempt(
                 &session,
                 &prepared,
-                &value_lists,
-                &mut feedback_rxs,
-            )
-            .await
-            .unwrap();
-
-            // Now we must have info about all the tablets. It should not be
-            // possible to receive any feedback if DefaultPolicy is properly
-            // tablet-aware.
-            verify_queries_routed_to_correct_tablets(
-                &session,
-                &prepared,
-                &value_lists,
+                &value_per_tablet,
                 &mut feedback_rxs,
             )
             .await
