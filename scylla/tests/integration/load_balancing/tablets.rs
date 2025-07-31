@@ -343,7 +343,11 @@ async fn test_default_policy_is_tablet_aware() {
                 )
                 .await
                 {
-                    Ok(_) => return running_proxy, // Test succeeded
+                    Ok(_) => {
+                        // Test succeeded
+                        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+                        return running_proxy;
+                    }
                     Err(e) => {
                         let new_tablets = get_tablets(&session, &ks, "t").await;
                         if tablets == new_tablets {
@@ -426,6 +430,8 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
 
             let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
             assert_eq!(feedbacks, 0);
+
+            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
             running_proxy
         },
@@ -572,6 +578,8 @@ async fn test_lwt_optimization_works_with_tablets() {
 
                 assert_eq!(queried_nodes, 1);
             }
+
+            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
             running_proxy
         },
