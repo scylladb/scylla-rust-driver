@@ -16,7 +16,7 @@ use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use scylla::statement::Statement;
 use uuid::Uuid;
 
-use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name};
+use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 
 #[tokio::test]
 async fn test_enforce_request_coordinator() {
@@ -118,10 +118,10 @@ async fn test_enforce_non_existent_request_coordinator() {
 async fn test_exposed_request_coordinator() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
 
     // Create schema for batches.
     {
-        let ks = unique_keyspace_name();
         session
             .ddl(
                 format!(
@@ -130,7 +130,7 @@ async fn test_exposed_request_coordinator() {
             )
             .await
             .unwrap();
-        session.use_keyspace(ks, true).await.unwrap();
+        session.use_keyspace(&ks, true).await.unwrap();
         session
             .ddl("CREATE TABLE IF NOT EXISTS test (a int PRIMARY KEY)")
             .await
@@ -242,4 +242,6 @@ async fn test_exposed_request_coordinator() {
             }
         }
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
