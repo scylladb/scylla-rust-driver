@@ -203,7 +203,7 @@ async fn populate_internal_driver_tablet_info(
     prepared: &PreparedStatement,
     value_per_tablet: &[(i32, i32)],
     feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
-) {
+) -> Result<(), String> {
     // When the driver never received tablet info for any tablet in a given table,
     // then it will not be aware that the table is tablet-based and fall back
     // to token-ring routing for this table.
@@ -246,7 +246,15 @@ async fn populate_internal_driver_tablet_info(
         }
     }
 
-    assert_eq!(total_tablets_with_feedback, value_per_tablet.len());
+    if total_tablets_with_feedback == value_per_tablet.len() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Expected feedback for {} tablets, got it for {}",
+            value_per_tablet.len(),
+            total_tablets_with_feedback
+        ))
+    }
 }
 
 /// Tests that, when using DefaultPolicy with TokenAwareness and querying table
@@ -311,7 +319,8 @@ async fn test_default_policy_is_tablet_aware() {
                 &value_lists,
                 &mut feedback_rxs,
             )
-            .await;
+            .await
+            .unwrap();
 
             // Now we must have info about all the tablets. It should not be
             // possible to receive any feedback if DefaultPolicy is properly
