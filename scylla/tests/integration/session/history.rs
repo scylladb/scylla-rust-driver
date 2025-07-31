@@ -219,7 +219,7 @@ async fn iterator_query_history() {
     .ddl(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"))
     .await
     .unwrap();
-    session.use_keyspace(ks, true).await.unwrap();
+    session.use_keyspace(&ks, true).await.unwrap();
 
     session
         .ddl("CREATE TABLE t (p int primary key)")
@@ -295,4 +295,6 @@ async fn iterator_query_history() {
     );
 
     assert!(displayed_str.starts_with(displayed_prefix),);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
