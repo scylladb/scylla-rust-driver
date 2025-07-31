@@ -293,14 +293,10 @@ async fn test_default_policy_is_tablet_aware() {
             /* Prepare schema */
             prepare_schema(&session, &ks, "t", TABLET_COUNT).await;
 
-            let tablets = get_tablets(&session, &ks, "t").await;
-
             let prepared = session
                 .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, 'abc')"))
                 .await
                 .unwrap();
-
-            let value_lists = calculate_key_per_tablet(&tablets, &prepared);
 
             let (feedback_txs, mut feedback_rxs): (Vec<_>, Vec<_>) = (0..3)
                 .map(|_| mpsc::unbounded_channel::<(ResponseFrame, Option<TargetShard>)>())
@@ -312,6 +308,9 @@ async fn test_default_policy_is_tablet_aware() {
                     ResponseReaction::noop().with_feedback_when_performed(tx),
                 )]));
             }
+
+            let tablets = get_tablets(&session, &ks, "t").await;
+            let value_lists = calculate_key_per_tablet(&tablets, &prepared);
 
             populate_internal_driver_tablet_info(
                 &session,
