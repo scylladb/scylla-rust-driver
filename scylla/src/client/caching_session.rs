@@ -482,6 +482,11 @@ mod tests {
         session
     }
 
+    async fn teardown_keyspace(session: &Session) {
+        let ks = session.get_keyspace().unwrap();
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+    }
+
     async fn create_caching_session() -> CachingSession {
         let session = CachingSession::from(new_for_test(true).await, 2);
 
@@ -533,6 +538,8 @@ mod tests {
         let middle_query_removed = session.cache.get(middle_query).is_none();
 
         assert!(first_query_removed || middle_query_removed);
+
+        teardown_keyspace(session.get_session()).await;
     }
 
     /// Checks that the same prepared statement is reused when executing the same query twice
@@ -558,6 +565,8 @@ mod tests {
 
         assert_eq!(1, session.cache.len());
         assert_eq!(1, result_rows.rows_num());
+
+        teardown_keyspace(session.get_session()).await;
     }
 
     /// Checks that caching works with execute_iter
@@ -585,6 +594,8 @@ mod tests {
 
         assert_eq!(1, rows);
         assert_eq!(1, session.cache.len());
+
+        teardown_keyspace(session.get_session()).await;
     }
 
     /// Checks that caching works with execute_single_page
@@ -602,6 +613,8 @@ mod tests {
 
         assert_eq!(1, session.cache.len());
         assert_eq!(1, result.into_rows_result().unwrap().rows_num());
+
+        teardown_keyspace(session.get_session()).await;
     }
 
     async fn assert_test_batch_table_rows_contain(
@@ -653,12 +666,15 @@ mod tests {
     async fn test_custom_hasher() {
         setup_tracing();
 
-        let _session: CachingSession<std::collections::hash_map::RandomState> =
+        let session: CachingSession<std::collections::hash_map::RandomState> =
             CachingSession::from(new_for_test(true).await, 2);
-        let _session: CachingSession<CustomBuildHasher> =
+        teardown_keyspace(session.get_session()).await;
+        let session: CachingSession<CustomBuildHasher> =
             CachingSession::from(new_for_test(true).await, 2);
-        let _session: CachingSession<CustomBuildHasher> =
+        teardown_keyspace(session.get_session()).await;
+        let session: CachingSession<CustomBuildHasher> =
             CachingSession::with_hasher(new_for_test(true).await, 2, Default::default());
+        teardown_keyspace(session.get_session()).await;
     }
 
     #[tokio::test]
@@ -775,6 +791,8 @@ mod tests {
             assert!(session.batch(&bad_batch, ((1, 2), (), (2,))).await.is_err());
             assert!(session.prepare_batch(&bad_batch).await.is_err());
         }
+
+        teardown_keyspace(session.get_session()).await;
     }
 
     // The CachingSession::execute and friends should have the same StatementConfig
@@ -829,6 +847,8 @@ mod tests {
 
         rows.sort_unstable();
         assert_eq!(rows, vec![(1, 1000), (2, 2000)]);
+
+        teardown_keyspace(session.get_session()).await;
     }
 
     // Checks whether the PartitionerName is cached properly.
@@ -866,6 +886,8 @@ mod tests {
         // one can see which case failed by looking at the full backtrace
         verify_partitioner().await;
         verify_partitioner().await;
+
+        teardown_keyspace(session.get_session()).await;
     }
 
     // NOTE: intentionally no `#[test]`: this is a compile-time test
