@@ -29,6 +29,7 @@ struct SelectedTablet {
     replicas: Vec<(Uuid, i32)>,
 }
 
+#[derive(Eq, PartialEq)]
 struct Tablet {
     first_token: i64,
     last_token: i64,
@@ -348,18 +349,36 @@ async fn test_default_policy_is_tablet_aware() {
                 )]));
             }
 
-            let tablets = get_tablets(&session, &ks, "t").await;
-            let value_per_tablet = calculate_key_per_tablet(&tablets, &prepared);
-            run_test_default_policy_is_tablet_aware_attempt(
-                &session,
-                &prepared,
-                &value_per_tablet,
-                &mut feedback_rxs,
-            )
-            .await
-            .unwrap();
-
-            running_proxy
+            // Test attempt can fail because of tablet migrations.
+            // Let's try a few times if there are migrations.
+            let mut last_error = None;
+            for _ in 0..5 {
+                let tablets = get_tablets(&session, &ks, "t").await;
+                let value_per_tablet = calculate_key_per_tablet(&tablets, &prepared);
+                match run_test_default_policy_is_tablet_aware_attempt(
+                    &session,
+                    &prepared,
+                    &value_per_tablet,
+                    &mut feedback_rxs,
+                )
+                .await
+                {
+                    Ok(_) => return running_proxy, // Test succeeded
+                    Err(e) => {
+                        let new_tablets = get_tablets(&session, &ks, "t").await;
+                        if tablets == new_tablets {
+                            // We failed, but there was no migration.
+                            panic!("Test attempt failed despite no migration. Error: {e}");
+                        }
+                        last_error = Some(e);
+                        // There was a migration, let's try again
+                    }
+                }
+            }
+            panic!(
+                "There was a tablet migration during each attempt! Last error: {}",
+                last_error.unwrap()
+            );
         },
     )
     .await;
