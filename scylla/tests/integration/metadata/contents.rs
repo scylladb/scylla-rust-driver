@@ -240,6 +240,8 @@ async fn test_schema_types_in_metadata() {
             frozen: true
         }
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -300,6 +302,8 @@ async fn test_user_defined_types_in_metadata() {
     let type_c = &user_defined_types["type_c"];
 
     assert_eq!(*type_c, udt_type_c_def(&ks));
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -345,6 +349,8 @@ async fn test_column_kinds_in_metadata() {
     assert_eq!(columns["d"].kind, ColumnKind::Static);
     assert_eq!(columns["e"].kind, ColumnKind::PartitionKey);
     assert_eq!(columns["f"].kind, ColumnKind::Regular);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -389,6 +395,8 @@ async fn test_primary_key_ordering_in_metadata() {
 
     assert_eq!(table.partition_key, vec!["c", "e"]);
     assert_eq!(table.clustering_key, vec!["b", "a"]);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -434,6 +442,8 @@ async fn test_table_partitioner_in_metadata() {
         cdc_table.partitioner.as_ref().unwrap(),
         "com.scylladb.dht.CDCPartitioner"
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -491,7 +501,9 @@ async fn test_views_in_schema_info() {
     assert_eq!(
         views_base_table,
         std::collections::HashSet::from([&"t".to_string()])
-    )
+    );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 /// This test case indicates that we support enough CQL types to parse schema keyspace information.
