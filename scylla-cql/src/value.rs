@@ -4,6 +4,8 @@
 use std::net::IpAddr;
 use std::result::Result as StdResult;
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -33,6 +35,7 @@ pub struct ValueOverflow;
 pub struct Unset;
 
 /// Represents an counter value
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Counter(pub i64);
 
@@ -61,6 +64,7 @@ impl<V> MaybeUnset<V> {
 ///
 /// This type has custom comparison logic which follows ScyllaDB/Cassandra semantics.
 /// For details, see [`Ord` implementation](#impl-Ord-for-CqlTimeuuid).
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, Eq)]
 pub struct CqlTimeuuid(Uuid);
 
@@ -277,6 +281,7 @@ impl std::hash::Hash for CqlTimeuuid {
 ///
 /// The implementation of [`PartialEq`], however, normalizes the underlying bytes
 /// before comparison. For details, check [examples](#impl-PartialEq-for-CqlVarint).
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Eq, Debug)]
 pub struct CqlVarint(Vec<u8>);
 
@@ -284,6 +289,7 @@ pub struct CqlVarint(Vec<u8>);
 ///
 /// Refer to the documentation of [`CqlVarint`].
 /// Especially, see the disclaimer about [non-normalized values](CqlVarint#db-data-format).
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Eq, Debug)]
 pub struct CqlVarintBorrowed<'b>(&'b [u8]);
 
@@ -511,6 +517,7 @@ impl From<CqlVarintBorrowed<'_>> for num_bigint_04::BigInt {
 /// Notice that [constructors](CqlDecimal#impl-CqlDecimal)
 /// don't perform any normalization on the provided data.
 /// For more details, see [`CqlVarint`] documentation.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CqlDecimal {
     int_val: CqlVarint,
@@ -525,8 +532,10 @@ pub struct CqlDecimal {
 ///
 /// Refer to the documentation of [`CqlDecimal`].
 /// Especially, see the disclaimer about [non-normalized values](CqlDecimal#db-data-format).
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CqlDecimalBorrowed<'b> {
+    #[cfg_attr(feature = "serde", serde(borrow))]
     int_val: CqlVarintBorrowed<'b>,
     scale: i32,
 }
@@ -632,18 +641,21 @@ impl TryFrom<bigdecimal_04::BigDecimal> for CqlDecimal {
 /// Native CQL date representation that allows for a bigger range of dates (-262145-1-1 to 262143-12-31).
 ///
 /// Represented as number of days since -5877641-06-23 i.e. 2^31 days before unix epoch.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CqlDate(pub u32);
 
 /// Native CQL timestamp representation that allows full supported timestamp range.
 ///
 /// Represented as signed milliseconds since unix epoch.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CqlTimestamp(pub i64);
 
 /// Native CQL time representation.
 ///
 /// Represented as nanoseconds since midnight.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CqlTime(pub i64);
 
@@ -852,6 +864,7 @@ impl TryInto<time_03::Time> for CqlTime {
 }
 
 /// Represents a CQL Duration value
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct CqlDuration {
     /// Number of months.
@@ -1355,83 +1368,83 @@ pub fn deser_cql_value(
 
     Ok(match typ {
         Native(Ascii) => {
-            let s = String::deserialize(typ, v)?;
+            let s = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Ascii(s)
         }
         Native(Boolean) => {
-            let b = bool::deserialize(typ, v)?;
+            let b = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Boolean(b)
         }
         Native(Blob) => {
-            let b = Vec::<u8>::deserialize(typ, v)?;
+            let b = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Blob(b)
         }
         Native(Date) => {
-            let d = CqlDate::deserialize(typ, v)?;
+            let d = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Date(d)
         }
         Native(Counter) => {
-            let c = crate::value::Counter::deserialize(typ, v)?;
+            let c = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Counter(c)
         }
         Native(Decimal) => {
-            let d = CqlDecimal::deserialize(typ, v)?;
+            let d = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Decimal(d)
         }
         Native(Double) => {
-            let d = f64::deserialize(typ, v)?;
+            let d = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Double(d)
         }
         Native(Float) => {
-            let f = f32::deserialize(typ, v)?;
+            let f = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Float(f)
         }
         Native(Int) => {
-            let i = i32::deserialize(typ, v)?;
+            let i = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Int(i)
         }
         Native(SmallInt) => {
-            let si = i16::deserialize(typ, v)?;
+            let si = DeserializeValue::deserialize(typ, v)?;
             CqlValue::SmallInt(si)
         }
         Native(TinyInt) => {
-            let ti = i8::deserialize(typ, v)?;
+            let ti = DeserializeValue::deserialize(typ, v)?;
             CqlValue::TinyInt(ti)
         }
         Native(BigInt) => {
-            let bi = i64::deserialize(typ, v)?;
+            let bi = DeserializeValue::deserialize(typ, v)?;
             CqlValue::BigInt(bi)
         }
         Native(Text) => {
-            let s = String::deserialize(typ, v)?;
+            let s = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Text(s)
         }
         Native(Timestamp) => {
-            let t = CqlTimestamp::deserialize(typ, v)?;
+            let t = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Timestamp(t)
         }
         Native(Time) => {
-            let t = CqlTime::deserialize(typ, v)?;
+            let t = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Time(t)
         }
         Native(Timeuuid) => {
-            let t = CqlTimeuuid::deserialize(typ, v)?;
+            let t = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Timeuuid(t)
         }
         Native(Duration) => {
-            let d = CqlDuration::deserialize(typ, v)?;
+            let d = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Duration(d)
         }
         Native(Inet) => {
-            let i = IpAddr::deserialize(typ, v)?;
+            let i = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Inet(i)
         }
         Native(Uuid) => {
-            let uuid = uuid::Uuid::deserialize(typ, v)?;
+            let uuid = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Uuid(uuid)
         }
         Native(Varint) => {
-            let vi = CqlVarint::deserialize(typ, v)?;
+            let vi = DeserializeValue::deserialize(typ, v)?;
             CqlValue::Varint(vi)
         }
         Collection {
