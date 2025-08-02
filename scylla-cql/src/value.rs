@@ -4,10 +4,10 @@
 use std::net::IpAddr;
 use std::result::Result as StdResult;
 
-use thiserror::Error;
-use uuid::Uuid;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use uuid::Uuid;
 
 use crate::deserialize::value::DeserializeValue;
 use crate::deserialize::value::{
