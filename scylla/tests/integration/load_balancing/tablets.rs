@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::utils::{
     execute_prepared_statement_everywhere, execute_unprepared_statement_everywhere,
-    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
-    PerformDDL,
+    scylla_supports_tablets, setup_tracing, supports_feature, test_with_3_node_cluster,
+    unique_keyspace_name, PerformDDL,
 };
 
 use futures::future::try_join_all;
@@ -19,7 +19,7 @@ use scylla_proxy::{
     ShardAwareness, TargetShard, WorkerError,
 };
 
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tracing::info;
 use uuid::Uuid;
 
@@ -29,6 +29,7 @@ struct SelectedTablet {
     replicas: Vec<(Uuid, i32)>,
 }
 
+#[derive(Eq, PartialEq)]
 struct Tablet {
     first_token: i64,
     last_token: i64,
@@ -168,31 +169,123 @@ fn count_tablet_feedbacks(
 }
 
 async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: usize) {
+    let supports_table_tablet_options = supports_feature(session, "TABLET_OPTIONS").await;
+    let (keyspace_tablet_opts, table_tablet_opts) = if supports_table_tablet_options {
+        (
+            "AND tablets = { 'enabled': true }".to_string(),
+            format!("WITH tablets = {{ 'min_tablet_count': {tablet_count} }}"),
+        )
+    } else {
+        (
+            format!("AND tablets = {{ 'initial': {tablet_count} }}"),
+            String::new(),
+        )
+    };
+
     session
         .ddl(format!(
             "CREATE KEYSPACE IF NOT EXISTS {ks}
             WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 2}}
-            AND tablets = {{ 'initial': {tablet_count} }}"
+            {keyspace_tablet_opts}"
         ))
         .await
         .unwrap();
     session
         .ddl(format!(
-            "CREATE TABLE IF NOT EXISTS {ks}.{table} (a int, b int, c text, primary key (a, b))"
+            "CREATE TABLE IF NOT EXISTS {ks}.{table} (a int, b int, c text, primary key (a, b))
+            {table_tablet_opts}"
         ))
         .await
         .unwrap();
 }
 
-/// Tests that, when using DefaultPolicy with TokenAwareness and querying table
-/// that uses tablets:
-/// 1. When querying data that belongs to tablet we didn't receive yet we will
-///    receive this tablet at some point.
-/// 2. When we have all tablets info locally then we'll never receive tablet info.
+async fn populate_internal_driver_tablet_info(
+    session: &Session,
+    prepared: &PreparedStatement,
+    value_per_tablet: &[(i32, i32)],
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
+) -> Result<(), String> {
+    let mut total_tablets_with_feedback = 0;
+    for values in value_per_tablet.iter() {
+        info!(
+            "First loop, trying key {:?}, token: {}",
+            values,
+            prepared.calculate_token(&values).unwrap().unwrap().value()
+        );
+        execute_prepared_statement_everywhere(
+            session,
+            &session.get_cluster_state(),
+            prepared,
+            values,
+        )
+        .await
+        .unwrap();
+        let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
+        if feedbacks > 0 {
+            total_tablets_with_feedback += 1;
+        }
+    }
+
+    if total_tablets_with_feedback == value_per_tablet.len() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Expected feedback for {} tablets, got it for {}",
+            value_per_tablet.len(),
+            total_tablets_with_feedback
+        ))
+    }
+}
+
+async fn verify_queries_routed_to_correct_tablets(
+    session: &Session,
+    prepared: &PreparedStatement,
+    value_per_tablet: &[(i32, i32)],
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
+) -> Result<(), String> {
+    for values in value_per_tablet.iter() {
+        info!(
+            "Second loop, trying key {:?}, token: {}",
+            values,
+            prepared.calculate_token(&values).unwrap().unwrap().value()
+        );
+        try_join_all((0..100).map(|_| async { session.execute_unpaged(prepared, values).await }))
+            .await
+            .unwrap();
+        let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
+        if feedbacks != 0 {
+            return Err(format!("Expected 0 tablet feedbacks, received {feedbacks}"));
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_test_default_policy_is_tablet_aware_attempt(
+    session: &Session,
+    prepared: &PreparedStatement,
+    value_per_tablet: &[(i32, i32)],
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
+) -> Result<(), String> {
+    populate_internal_driver_tablet_info(session, prepared, value_per_tablet, feedback_rxs).await?;
+
+    // Now we must have info about all the tablets. It should not be
+    // possible to receive any feedback if DefaultPolicy is properly
+    // tablet-aware.
+    verify_queries_routed_to_correct_tablets(session, prepared, value_per_tablet, feedback_rxs)
+        .await
+}
+
+/// Tests that, when:
+/// - Using DefaultPolicy with TokenAwareness
+/// - Querying table that uses tablets
+/// - Driver has all driver info fetched locally
+/// Then we'll never receive tablet info.
 ///
-/// The test first sends 100 queries per tablet and expects to receive tablet info.
-/// After that we know we have all the info. The test sends the statements again
-/// and expects to not receive any tablet info.
+/// The test first sends, to each possible target, one insert request per tablet.
+/// It expects to get tablet feedback for each tablet.
+/// After that we know we have all the info. The test sends the same insert request
+/// per tablet, this time using DefaultPolicy, and expects to not get any feedbacks.
 #[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
 #[ntest::timeout(30000)]
@@ -220,14 +313,10 @@ async fn test_default_policy_is_tablet_aware() {
             /* Prepare schema */
             prepare_schema(&session, &ks, "t", TABLET_COUNT).await;
 
-            let tablets = get_tablets(&session, &ks, "t").await;
-
             let prepared = session
                 .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, 'abc')"))
                 .await
                 .unwrap();
-
-            let value_lists = calculate_key_per_tablet(&tablets, &prepared);
 
             let (feedback_txs, mut feedback_rxs): (Vec<_>, Vec<_>) = (0..3)
                 .map(|_| mpsc::unbounded_channel::<(ResponseFrame, Option<TargetShard>)>())
@@ -240,71 +329,36 @@ async fn test_default_policy_is_tablet_aware() {
                 )]));
             }
 
-            // When the driver never received tablet info for any tablet in a given table,
-            // then it will not be aware that the table is tablet-based and fall back
-            // to token-ring routing for this table.
-            // After it receives any tablet for this table:
-            // - tablet-aware routing will be used for tablets that the driver has locally
-            // - non-token-aware routing will be used for other tablets (which basically means
-            //   sending the requests to random nodes)
-            // In the following code I want to make sure that the driver fetches info
-            // about all the tablets in the table.
-            // Obvious way to do this would be to, for each tablet, send some requests (here some == 100)
-            // and expect that at least one will land on non-replica and return tablet feedback.
-            // This mostly works, but there is a problem: initially driver has no
-            // tablet information at all for this table so it will fall back to token-ring routing.
-            // It is possible that token-ring replicas and tablet replicas are the same
-            // for some tokens. If it happens for the first token that we use in this loop,
-            // then no matter how many requests we send we are not going to receive any tablet feedback.
-            // The solution is to iterate over tablets twice.
-            //
-            // First iteration guarantees that the driver will receive at least one tablet
-            // for this table (it is statistically improbable for all tokens used here to have the same
-            // set of replicas for tablets and token-ring). In practice it will receive all or almost all of the tablets.
-            //
-            // Second iteration will not use token-ring routing (because the driver has some tablets
-            // for this table, so it is aware that the table is tablet based),
-            // which means that for unknown tablets it will send requests to random nodes,
-            // and definitely fetch the rest of the tablets.
-            let mut total_tablets_with_feedback = 0;
-            for values in value_lists.iter().chain(value_lists.iter()) {
-                info!(
-                    "First loop, trying key {:?}, token: {}",
-                    values,
-                    prepared.calculate_token(&values).unwrap().unwrap().value()
-                );
-                try_join_all(
-                    (0..100).map(|_| async { session.execute_unpaged(&prepared, values).await }),
+            // Test attempt can fail because of tablet migrations.
+            // Let's try a few times if there are migrations.
+            let mut last_error = None;
+            for _ in 0..5 {
+                let tablets = get_tablets(&session, &ks, "t").await;
+                let value_per_tablet = calculate_key_per_tablet(&tablets, &prepared);
+                match run_test_default_policy_is_tablet_aware_attempt(
+                    &session,
+                    &prepared,
+                    &value_per_tablet,
+                    &mut feedback_rxs,
                 )
                 .await
-                .unwrap();
-                let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-                if feedbacks > 0 {
-                    total_tablets_with_feedback += 1;
+                {
+                    Ok(_) => return running_proxy, // Test succeeded
+                    Err(e) => {
+                        let new_tablets = get_tablets(&session, &ks, "t").await;
+                        if tablets == new_tablets {
+                            // We failed, but there was no migration.
+                            panic!("Test attempt failed despite no migration. Error: {e}");
+                        }
+                        last_error = Some(e);
+                        // There was a migration, let's try again
+                    }
                 }
             }
-
-            assert_eq!(total_tablets_with_feedback, TABLET_COUNT);
-
-            // Now we must have info about all the tablets. It should not be
-            // possible to receive any feedback if DefaultPolicy is properly
-            // tablet-aware.
-            for values in value_lists.iter() {
-                info!(
-                    "Second loop, trying key {:?}, token: {}",
-                    values,
-                    prepared.calculate_token(&values).unwrap().unwrap().value()
-                );
-                try_join_all(
-                    (0..100).map(|_| async { session.execute_unpaged(&prepared, values).await }),
-                )
-                .await
-                .unwrap();
-                let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-                assert_eq!(feedbacks, 0);
-            }
-
-            running_proxy
+            panic!(
+                "There was a tablet migration during each attempt! Last error: {}",
+                last_error.unwrap()
+            );
         },
     )
     .await;
