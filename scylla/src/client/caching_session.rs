@@ -833,11 +833,9 @@ mod tests {
 
     // Checks whether the PartitionerName is cached properly.
     #[tokio::test]
+    #[cfg_attr(cassandra_tests, ignore)]
     async fn test_partitioner_name_caching() {
         setup_tracing();
-        if option_env!("CDC") == Some("disabled") {
-            return;
-        }
 
         // This test uses CDC which is not yet compatible with Scylla's tablets.
         let session: CachingSession = CachingSession::from(new_for_test(false).await, 100);

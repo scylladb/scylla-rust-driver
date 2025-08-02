@@ -215,6 +215,7 @@ async fn test_prepared_config() {
 }
 
 #[tokio::test]
+#[cfg_attr(cassandra_tests, ignore)]
 async fn test_prepared_partitioner() {
     setup_tracing();
 
@@ -248,10 +249,6 @@ async fn test_prepared_partitioner() {
         prepared_statement_for_main_table.get_partitioner_name(),
         &PartitionerName::Murmur3
     );
-
-    if option_env!("CDC") == Some("disabled") {
-        return;
-    }
 
     session
         .ddl("CREATE TABLE IF NOT EXISTS t2 (a int primary key) WITH cdc = {'enabled':true}")

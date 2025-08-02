@@ -392,11 +392,9 @@ async fn test_primary_key_ordering_in_metadata() {
 }
 
 #[tokio::test]
+#[cfg_attr(cassandra_tests, ignore)]
 async fn test_table_partitioner_in_metadata() {
     setup_tracing();
-    if option_env!("CDC") == Some("disabled") {
-        return;
-    }
 
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
