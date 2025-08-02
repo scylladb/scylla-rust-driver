@@ -1,0 +1,13 @@
+[package]
+edition = "2021"
+name = "utils"
+publish = false
+version = "0.0.0"
+
+[dependencies]
+scylla = { path = "../scylla" }
+tokio = { version = "1.34", features = ["rt", "rt-multi-thread", "macros"] }
+futures = "0.3.6"
+
+[[bin]]
+name = "find_stale_test_keyspaces"
