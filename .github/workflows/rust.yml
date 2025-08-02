@@ -100,6 +100,8 @@ jobs:
     - name: Run tests
       run: |
         RUST_LOG=trace SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --features "full-serialization"
+    - name: Check for stale test keyspaces
+      run: SCYLLA_URI=172.42.0.2:9042 cargo run --bin find_stale_test_keyspaces
     - name: Stop the cluster
       if: ${{ always() }}
       run: docker compose -f test/cluster/docker-compose.yml stop
