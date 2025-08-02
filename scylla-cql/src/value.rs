@@ -35,7 +35,7 @@ pub struct ValueOverflow;
 pub struct Unset;
 
 /// Represents an counter value
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Counter(pub i64);
 
@@ -517,7 +517,7 @@ impl From<CqlVarintBorrowed<'_>> for num_bigint_04::BigInt {
 /// Notice that [constructors](CqlDecimal#impl-CqlDecimal)
 /// don't perform any normalization on the provided data.
 /// For more details, see [`CqlVarint`] documentation.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CqlDecimal {
     int_val: CqlVarint,
