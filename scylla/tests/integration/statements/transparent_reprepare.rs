@@ -36,7 +36,7 @@ async fn test_unprepared_reprepare_in_execute() {
     let ks = unique_keyspace_name();
 
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
     session
         .ddl("CREATE TABLE IF NOT EXISTS tab (a int, b int, c int, primary key (a, b, c))")
@@ -86,6 +86,8 @@ async fn test_unprepared_reprepare_in_execute() {
         .collect();
     all_rows.sort_unstable();
     assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 // A tests which checks that Session::batch automatically reprepares PreparedStatemtns if they become unprepared.
@@ -103,7 +105,7 @@ async fn test_unprepared_reprepare_in_batch() {
     let ks = unique_keyspace_name();
 
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
     session
         .ddl("CREATE TABLE IF NOT EXISTS tab (a int, b int, c int, primary key (a, b, c))")
@@ -149,6 +151,8 @@ async fn test_unprepared_reprepare_in_batch() {
         .collect();
     all_rows.sort_unstable();
     assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2), (4, 5, 6), (4, 6, 5)]);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 // A tests which checks that Session::execute automatically reprepares PreparedStatemtns if they become unprepared.
@@ -166,7 +170,7 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
     let ks = unique_keyspace_name();
 
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
     let caching_session: CachingSession = CachingSession::from(session, 64);
 
@@ -215,4 +219,9 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
         .collect();
     all_rows.sort_unstable();
     assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
+
+    caching_session
+        .ddl(format!("DROP KEYSPACE {ks}"))
+        .await
+        .unwrap();
 }

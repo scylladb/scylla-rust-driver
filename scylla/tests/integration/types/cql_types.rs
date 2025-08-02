@@ -104,6 +104,11 @@ where
         let expected_value = T::from_str(test).ok().unwrap();
         assert_eq!(read_values, vec![expected_value.clone(), expected_value]);
     }
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
@@ -173,7 +178,7 @@ async fn test_cql_varint() {
         ))
         .await
         .unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
     session
         .ddl(format!(
@@ -212,6 +217,8 @@ async fn test_cql_varint() {
 
         assert_eq!(read_values, vec![cql_varint])
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[cfg(feature = "bigdecimal-04")]
@@ -290,6 +297,11 @@ async fn test_counter() {
         let expected_value = Counter(i64::from_str(test).unwrap());
         assert_eq!(read_values, vec![expected_value]);
     }
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[cfg(feature = "chrono-04")]
@@ -386,6 +398,11 @@ async fn test_naive_date_04() {
             assert_eq!(read_date, *naive_date);
         }
     }
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -441,6 +458,11 @@ async fn test_cql_date() {
         )
         .await
         .unwrap_err();
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[cfg(feature = "time-03")]
@@ -528,6 +550,11 @@ async fn test_date_03() {
             assert_eq!(read_date, *date);
         }
     }
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -612,6 +639,11 @@ async fn test_cql_time() {
             .await
             .unwrap_err();
     }
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[cfg(feature = "chrono-04")]
@@ -693,6 +725,11 @@ async fn test_naive_time_04() {
         )
         .await
         .unwrap_err();
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[cfg(feature = "time-03")]
@@ -764,6 +801,11 @@ async fn test_time_03() {
             .unwrap();
         assert_eq!(read_time, *time);
     }
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -837,6 +879,11 @@ async fn test_cql_timestamp() {
 
         assert_eq!(read_timestamp, *timestamp_duration);
     }
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[cfg(feature = "chrono-04")]
@@ -1005,6 +1052,11 @@ async fn test_date_time_04() {
         )
         .await
         .unwrap_err();
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[cfg(feature = "time-03")]
@@ -1157,6 +1209,11 @@ async fn test_offset_date_time_03() {
         .first_row::<(OffsetDateTime,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1228,6 +1285,11 @@ async fn test_timeuuid() {
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
     }
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1243,7 +1305,7 @@ async fn test_timeuuid_ordering() {
         ))
         .await
         .unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
     session
         .ddl("CREATE TABLE tab (p int, t timeuuid, PRIMARY KEY (p, t))")
@@ -1305,6 +1367,8 @@ async fn test_timeuuid_ordering() {
 
         assert_eq!(sorted_timeuuid_vals, rust_sorted_timeuuids);
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -1387,6 +1451,11 @@ async fn test_inet() {
 
         assert_eq!(read_inet, *inet);
     }
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1457,6 +1526,11 @@ async fn test_blob() {
 
         assert_eq!(read_blob, *blob);
     }
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1475,7 +1549,7 @@ async fn test_udt_after_schema_update() {
         ))
         .await
         .unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
     session
         .ddl(format!("DROP TABLE IF EXISTS {table_name}"))
@@ -1582,6 +1656,8 @@ async fn test_udt_after_schema_update() {
             third: None,
         }
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -1626,6 +1702,11 @@ async fn test_empty() {
         .unwrap();
 
     assert_eq!(empty, CqlValue::Empty);
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1644,7 +1725,7 @@ async fn test_udt_with_missing_field() {
         ))
         .await
         .unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
     session
         .ddl(format!("DROP TABLE IF EXISTS {table_name}"))
@@ -1811,6 +1892,8 @@ async fn test_udt_with_missing_field() {
         },
     )
     .await;
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -1821,7 +1904,7 @@ async fn test_unusual_serializerow_impls() {
     let ks = unique_keyspace_name();
 
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
     session
         .ddl("CREATE TABLE IF NOT EXISTS tab (a int, b int, c varchar, primary key (a, b, c))")
@@ -1871,4 +1954,6 @@ async fn test_unusual_serializerow_impls() {
             (1, 3, "Box dyn".to_owned())
         ]
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

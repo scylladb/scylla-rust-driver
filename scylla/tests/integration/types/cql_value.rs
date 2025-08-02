@@ -26,7 +26,7 @@ async fn test_cqlvalue_udt() {
     session.ddl("CREATE TABLE IF NOT EXISTS cqlvalue_udt_test (k int, my cqlvalue_udt_type, primary key (k))").await.unwrap();
 
     let udt_cql_value = CqlValue::UserDefinedType {
-        keyspace: ks,
+        keyspace: ks.clone(),
         name: "cqlvalue_udt_type".to_string(),
         fields: vec![
             ("int_val".to_string(), Some(CqlValue::Int(42))),
@@ -52,6 +52,8 @@ async fn test_cqlvalue_udt() {
     let (received_udt_cql_value,) = rows_result.single_row::<(CqlValue,)>().unwrap();
 
     assert_eq!(received_udt_cql_value, udt_cql_value);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -145,4 +147,6 @@ async fn test_cqlvalue_duration() {
     );
 
     assert_matches!(rows_iter.next(), None);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

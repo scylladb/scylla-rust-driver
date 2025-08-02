@@ -94,6 +94,11 @@ async fn test_cql_list() {
         &list_cql_value_empty_selected,
     )
     .await;
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -158,6 +163,11 @@ async fn test_cql_set() {
         &set_cql_value_empty_selected,
     )
     .await;
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -209,6 +219,11 @@ async fn test_cql_map() {
         &map_cql_value_empty_selected,
     )
     .await;
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -232,6 +247,11 @@ async fn test_cql_tuple() {
         Some(CqlValue::Text("cql_value_text".to_string())),
     ]);
     insert_and_select(&session, table_name, &tuple_cql_value, &tuple_cql_value).await;
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
 }
 
 // TODO: Remove this ignore when vector type is supported in ScyllaDB
@@ -269,6 +289,8 @@ async fn test_vector_type_metadata() {
             dimensions: 2,
         },
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 // TODO: Remove this ignore when vector type is supported in ScyllaDB
@@ -333,6 +355,8 @@ async fn test_vector_type_unprepared() {
             vec!["afoo".to_string(), "abar".to_string()]
         )
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 // TODO: Remove this ignore when vector type is supported in ScyllaDB
@@ -383,6 +407,8 @@ async fn test_vector_type_prepared() {
             vec!["afoo".to_string(), "abar".to_string()]
         )
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 async fn test_vector_single_type<
@@ -603,6 +629,8 @@ async fn test_vector_type_all_types() {
         vec![vec![vec![1, 2], vec![3, 4]], vec![vec![5, 6], vec![7, 8]]],
     )
     .await;
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 /// ScyllaDB does not distinguish empty collections from nulls. That is, INSERTing an empty collection
@@ -666,4 +694,6 @@ async fn test_deserialize_empty_collections() {
     )
     .await;
     assert!(map.is_empty());
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

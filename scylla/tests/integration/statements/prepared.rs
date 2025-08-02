@@ -187,6 +187,8 @@ async fn test_prepared_statement() {
             (17, 16, "I'm prepared!!!", 7, None)
         );
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 /// Tests that PreparedStatement inherits the StatementConfig from Statement
@@ -215,6 +217,7 @@ async fn test_prepared_config() {
 }
 
 #[tokio::test]
+#[cfg_attr(cassandra_tests, ignore)]
 async fn test_prepared_partitioner() {
     setup_tracing();
 
@@ -229,7 +232,7 @@ async fn test_prepared_partitioner() {
     }
 
     session.ddl(create_ks).await.unwrap();
-    session.use_keyspace(ks, false).await.unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
     session
         .ddl("CREATE TABLE IF NOT EXISTS t1 (a int primary key)")
@@ -249,10 +252,6 @@ async fn test_prepared_partitioner() {
         &PartitionerName::Murmur3
     );
 
-    if option_env!("CDC") == Some("disabled") {
-        return;
-    }
-
     session
         .ddl("CREATE TABLE IF NOT EXISTS t2 (a int primary key) WITH cdc = {'enabled':true}")
         .await
@@ -270,6 +269,8 @@ async fn test_prepared_partitioner() {
         prepared_statement_for_cdc_log.get_partitioner_name(),
         &PartitionerName::CDC
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -428,6 +429,8 @@ async fn test_token_calculation() {
         )
         .await;
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -480,6 +483,8 @@ async fn test_prepared_statement_col_specs() {
         spec("c", ColumnType::Native(NativeType::SmallInt)),
     ];
     assert_eq!(result_set_col_specs, expected_result_set_col_specs);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -504,7 +509,7 @@ async fn test_skip_result_metadata() {
 
         let ks = unique_keyspace_name();
         session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
-        session.use_keyspace(ks, false).await.unwrap();
+        session.use_keyspace(&ks, false).await.unwrap();
         session
             .ddl("CREATE TABLE t (a int primary key, b int, c text)")
             .await
@@ -559,7 +564,7 @@ async fn test_skip_result_metadata() {
             let ks = unique_keyspace_name();
 
             session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
-            session.use_keyspace(ks, true).await.unwrap();
+            session.use_keyspace(&ks, true).await.unwrap();
 
             type RowT = (i32, i32, String);
             session
@@ -625,7 +630,11 @@ async fn test_skip_result_metadata() {
                 }
                 assert_eq!(results_from_manual_paging, rs);
             }
+
+            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
         }
+
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
         running_proxy
     }).await;
