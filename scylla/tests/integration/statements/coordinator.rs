@@ -123,17 +123,16 @@ async fn test_exposed_request_coordinator() {
     {
         let ks = unique_keyspace_name();
         session
-            .query_unpaged(
+            .ddl(
                 format!(
                     "CREATE KEYSPACE IF NOT EXISTS {ks} WITH replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
                 ),
-                (),
             )
             .await
             .unwrap();
         session.use_keyspace(ks, true).await.unwrap();
         session
-            .query_unpaged("CREATE TABLE IF NOT EXISTS test (a int PRIMARY KEY)", ())
+            .ddl("CREATE TABLE IF NOT EXISTS test (a int PRIMARY KEY)")
             .await
             .unwrap();
     }
