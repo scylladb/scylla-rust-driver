@@ -33,6 +33,8 @@ async fn test_tracing() {
     test_tracing_query_iter(&session, ks.clone()).await;
     test_tracing_execute_iter(&session, ks.clone()).await;
     test_tracing_batch(&session, ks.clone()).await;
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 async fn test_tracing_query(session: &Session, ks: String) {

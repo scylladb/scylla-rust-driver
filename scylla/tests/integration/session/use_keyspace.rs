@@ -98,6 +98,8 @@ async fn test_use_keyspace() {
     rows2.sort();
 
     assert_eq!(rows2, vec!["test1".to_string(), "test2".to_string()]);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -157,7 +159,7 @@ async fn test_use_keyspace_case_sensitivity() {
 
     // Use uppercase keyspace with case sensitivity
     // Should select the uppercase one
-    session.use_keyspace(ks_upper, true).await.unwrap();
+    session.use_keyspace(&ks_upper, true).await.unwrap();
 
     let rows: Vec<String> = session
         .query_unpaged("SELECT * from tab", &[])
@@ -171,6 +173,15 @@ async fn test_use_keyspace_case_sensitivity() {
         .collect();
 
     assert_eq!(rows, vec!["uppercase".to_string()]);
+
+    session
+        .ddl(format!("DROP KEYSPACE \"{ks_lower}\""))
+        .await
+        .unwrap();
+    session
+        .ddl(format!("DROP KEYSPACE \"{ks_upper}\""))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -221,6 +232,8 @@ async fn test_raw_use_keyspace() {
         .query_unpaged(format!("use    {}    ;", ks.to_uppercase()), &[])
         .await
         .is_ok());
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -246,4 +259,6 @@ async fn test_get_keyspace_name() {
         .await
         .unwrap();
     assert_eq!(*session.get_keyspace().unwrap(), ks);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

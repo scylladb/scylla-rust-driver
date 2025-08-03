@@ -59,4 +59,6 @@ async fn simple_strategy_test() {
     rows.sort();
 
     assert_eq!(rows, vec![(1, 2, 3), (4, 5, 6), (7, 8, 9)]);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

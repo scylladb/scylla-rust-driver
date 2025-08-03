@@ -318,6 +318,8 @@ async fn test_execution_profiles() {
             running_proxy.running_nodes[i].change_request_rules(None);
         }
 
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+
         running_proxy
     }).await;
     match res {

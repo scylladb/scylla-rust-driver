@@ -60,8 +60,9 @@ async fn authenticate_superuser_cluster_one_node() {
         let ks = unique_keyspace_name();
 
         session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
-        session.use_keyspace(ks, false).await.unwrap();
+        session.use_keyspace(&ks, false).await.unwrap();
         session.ddl("DROP TABLE IF EXISTS t;").await.unwrap();
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
         tracing::info!("Ok.");
     }
@@ -124,8 +125,9 @@ async fn custom_authentication_cluster_one_node() {
         let ks = unique_keyspace_name();
 
         session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
-        session.use_keyspace(ks, false).await.unwrap();
+        session.use_keyspace(&ks, false).await.unwrap();
         session.ddl("DROP TABLE IF EXISTS t;").await.unwrap();
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
         tracing::info!("Ok.");
     }

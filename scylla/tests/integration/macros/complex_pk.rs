@@ -9,7 +9,7 @@ async fn test_macros_complex_pk() {
     let ks = unique_keyspace_name();
 
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
-    session.use_keyspace(ks, true).await.unwrap();
+    session.use_keyspace(&ks, true).await.unwrap();
     session
         .ddl("CREATE TABLE IF NOT EXISTS complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))")
         .await
@@ -52,4 +52,6 @@ async fn test_macros_complex_pk() {
             .unwrap();
         assert_eq!(input, output)
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

@@ -62,4 +62,6 @@ async fn test_token_awareness() {
         // Again, verify that only one node was involved
         assert_eq!(tracing_info.nodes().len(), 1);
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

@@ -77,7 +77,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             create_ks += " and TABLETS = { 'enabled': false}";
         }
         session.ddl(create_ks).await.unwrap();
-        session.use_keyspace(ks, false).await.unwrap();
+        session.use_keyspace(&ks, false).await.unwrap();
 
         session
             .ddl("CREATE TABLE t (a int primary key, b int)")
@@ -161,6 +161,8 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             // ...else we assert that replicas were shuffled as in case of non-LWT.
             assert_multiple_replicas_queried(&mut prepared_rxs);
         }
+
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
         running_proxy
     }).await;

@@ -5,6 +5,8 @@ use scylla::client::session_builder::SessionBuilder;
 use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla::policies::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::statement::unprepared::Statement;
+use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
@@ -37,7 +39,7 @@ async fn speculative_execution_is_fired() {
 
         let ks = unique_keyspace_name();
         session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
-        session.use_keyspace(ks, false).await.unwrap();
+        session.use_keyspace(&ks, false).await.unwrap();
         session
             .ddl("CREATE TABLE t (a int primary key)")
             .await
@@ -86,6 +88,8 @@ async fn speculative_execution_is_fired() {
 
         info!("--------------------- FINISHING main test part ----------------");
 
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+
         running_proxy
     }).await;
 
@@ -113,7 +117,7 @@ async fn retries_occur() {
 
         let ks = unique_keyspace_name();
         session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
-        session.use_keyspace(ks, false).await.unwrap();
+        session.use_keyspace(&ks, false).await.unwrap();
         session
             .ddl("CREATE TABLE t (a int primary key)")
             .await
@@ -155,6 +159,8 @@ async fn retries_occur() {
 
         info!("--------------------- FINISHING main test part ----------------");
 
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+
         running_proxy
     }).await;
 
@@ -167,13 +173,14 @@ async fn retries_occur() {
 
 // See https://github.com/scylladb/scylla-rust-driver/issues/1085
 #[tokio::test]
-#[ntest::timeout(30000)]
 #[cfg_attr(scylla_cloud_tests, ignore)]
 async fn speculative_execution_panic_regression_test() {
     use scylla_proxy::RunningProxy;
 
     setup_tracing();
-    let test = |proxy_uris: [String; 3], translation_map, mut running_proxy: RunningProxy| async move {
+    let test = |proxy_uris: [String; 3],
+                translation_map: HashMap<SocketAddr, SocketAddr>,
+                mut running_proxy: RunningProxy| async move {
         let se = SimpleSpeculativeExecutionPolicy {
             max_retry_count: 2,
             retry_interval: Duration::from_millis(1),
@@ -185,7 +192,7 @@ async fn speculative_execution_panic_regression_test() {
         // DB preparation phase
         let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
-            .address_translator(Arc::new(translation_map))
+            .address_translator(Arc::new(translation_map.clone()))
             .default_execution_profile_handle(profile.into_handle())
             .build()
             .await
@@ -193,7 +200,7 @@ async fn speculative_execution_panic_regression_test() {
 
         let ks = unique_keyspace_name();
         session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}")).await.unwrap();
-        session.use_keyspace(ks, false).await.unwrap();
+        session.use_keyspace(&ks, false).await.unwrap();
         session
             .ddl("CREATE TABLE t (a int primary key)")
             .await
@@ -221,6 +228,16 @@ async fn speculative_execution_panic_regression_test() {
             .change_request_rules(Some(vec![drop_connection_on_execute.clone()]));
 
         let _result = session.execute_unpaged(&q, (2,)).await.unwrap_err();
+
+        // Need to recreate session - old one has connections dropped and fails the request.
+        running_proxy.turn_off_rules();
+        let session: Session = SessionBuilder::new()
+            .known_node(proxy_uris[0].as_str())
+            .address_translator(Arc::new(translation_map))
+            .build()
+            .await
+            .unwrap();
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
         running_proxy
     };

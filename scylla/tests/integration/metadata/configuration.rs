@@ -237,7 +237,7 @@ async fn test_refresh_metadata_after_schema_agreement() {
     assert_eq!(
         udt,
         Some(&Arc::new(UserDefinedType {
-            keyspace: ks.into(),
+            keyspace: ks.clone().into(),
             name: "udt".into(),
             field_types: Vec::from([
                 ("field1".into(), ColumnType::Native(NativeType::Int)),
@@ -246,6 +246,8 @@ async fn test_refresh_metadata_after_schema_agreement() {
             ])
         }))
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -320,6 +322,8 @@ async fn test_turning_off_schema_fetching() {
     );
     assert_eq!(keyspace.tables.len(), 0);
     assert_eq!(keyspace.user_defined_types.len(), 0);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -361,4 +365,11 @@ async fn test_keyspaces_to_fetch() {
         .unwrap();
     assert!(session_all.get_cluster_state().get_keyspace(&ks1).is_some());
     assert!(session_all.get_cluster_state().get_keyspace(&ks2).is_some());
+
+    for ks in [&ks1, &ks2] {
+        session_default
+            .ddl(format!("DROP KEYSPACE {ks}"))
+            .await
+            .unwrap();
+    }
 }

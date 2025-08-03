@@ -82,6 +82,8 @@ async fn test_consistent_shard_awareness() {
             }
         }
 
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+
         running_proxy
     }).await;
     match res {

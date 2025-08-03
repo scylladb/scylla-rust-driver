@@ -60,6 +60,8 @@ async fn test_db_errors() {
             table: "tab".to_string()
         }
     );
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 #[tokio::test]
@@ -108,4 +110,6 @@ async fn test_rate_limit_exceeded_exception() {
         }
         err => panic!("Unexpected error type received: {err:?}"),
     }
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
