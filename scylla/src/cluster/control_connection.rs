@@ -9,6 +9,7 @@ use std::time::Duration;
 use scylla_cql::serialize::row::SerializedValues;
 
 use crate::client::pager::QueryPager;
+use crate::cluster::metadata::UntranslatedEndpoint;
 use crate::errors::{NextRowError, RequestAttemptError};
 use crate::network::Connection;
 use crate::statement::prepared::PreparedStatement;
@@ -17,14 +18,16 @@ use crate::statement::Statement;
 /// The single connection used to fetch metadata and receive events from the cluster.
 pub(super) struct ControlConnection {
     conn: Arc<Connection>,
+    endpoint: UntranslatedEndpoint,
     /// The custom server-side timeout set for requests executed on the control connection.
     overridden_serverside_timeout: Option<Duration>,
 }
 
 impl ControlConnection {
-    pub(super) fn new(conn: Arc<Connection>) -> Self {
+    pub(super) fn new(conn: Arc<Connection>, endpoint: UntranslatedEndpoint) -> Self {
         Self {
             conn,
+            endpoint,
             overridden_serverside_timeout: None,
         }
     }
@@ -39,6 +42,10 @@ impl ControlConnection {
 
     pub(super) fn get_connect_address(&self) -> SocketAddr {
         self.conn.get_connect_address()
+    }
+
+    pub(super) fn get_endpoint(&self) -> &UntranslatedEndpoint {
+        &self.endpoint
     }
 
     /// Returns true iff the target node is a ScyllaDB node (and not a, e.g., Cassandra node).
@@ -234,19 +241,16 @@ mod tests {
             proxy_addr: SocketAddr,
             feedback_rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
         ) {
-            let (conn, _error_receiver) = open_connection(
-                &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
-                    address: proxy_addr,
-                    datacenter: None,
-                }),
-                None,
-                &Default::default(),
-            )
-            .await
-            .unwrap();
+            let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+                address: proxy_addr,
+                datacenter: None,
+            });
+            let (conn, _error_receiver) = open_connection(&endpoint, None, &Default::default())
+                .await
+                .unwrap();
 
             let connected_to_scylladb = conn.get_shard_info().is_some();
-            let conn_with_default_timeout = ControlConnection::new(Arc::new(conn));
+            let conn_with_default_timeout = ControlConnection::new(Arc::new(conn), endpoint);
 
             // No custom timeout set.
             {

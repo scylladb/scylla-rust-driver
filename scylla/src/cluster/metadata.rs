@@ -661,15 +661,14 @@ impl MetadataReader {
     async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, MetadataError> {
         // TODO: Timeouts?
         self.control_connection.wait_until_initialized().await;
-        let conn = ControlConnection::new(self.control_connection.random_connection()?)
-            .override_serverside_timeout(self.request_serverside_timeout);
+        let conn = ControlConnection::new(
+            self.control_connection.random_connection()?,
+            self.control_connection_endpoint.clone(),
+        )
+        .override_serverside_timeout(self.request_serverside_timeout);
 
         let res = conn
-            .query_metadata(
-                self.control_connection_endpoint.address().port(),
-                &self.keyspaces_to_fetch,
-                self.fetch_schema,
-            )
+            .query_metadata(&self.keyspaces_to_fetch, self.fetch_schema)
             .await;
 
         if initial {
@@ -778,11 +777,10 @@ impl MetadataReader {
 impl ControlConnection {
     async fn query_metadata(
         &self,
-        connect_port: u16,
         keyspace_to_fetch: &[String],
         fetch_schema: bool,
     ) -> Result<Metadata, MetadataError> {
-        let peers_query = self.query_peers(connect_port);
+        let peers_query = self.query_peers();
         let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, fetch_schema);
 
         let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
@@ -831,7 +829,7 @@ impl NodeInfoSource {
 const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
 impl ControlConnection {
-    async fn query_peers(&self, connect_port: u16) -> Result<Vec<Peer>, MetadataError> {
+    async fn query_peers(&self) -> Result<Vec<Peer>, MetadataError> {
         let mut peers_query = Statement::new(
             "select host_id, rpc_address, data_center, rack, tokens from system.peers",
         );
@@ -876,7 +874,7 @@ impl ControlConnection {
         let untranslated_rows = stream::select(peers_query_stream, local_query_stream);
 
         let local_ip: IpAddr = self.get_connect_address().ip();
-        let local_address = SocketAddr::new(local_ip, connect_port);
+        let local_address = SocketAddr::new(local_ip, self.get_endpoint().address().port());
 
         let translated_peers_futures = untranslated_rows.map(|row_result| async {
             match row_result {
