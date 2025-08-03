@@ -21,14 +21,23 @@ pub(super) struct ControlConnection {
     endpoint: UntranslatedEndpoint,
     /// The custom server-side timeout set for requests executed on the control connection.
     overridden_serverside_timeout: Option<Duration>,
+    pub(super) fetch_schema: bool,
+    pub(super) keyspaces_to_fetch: Vec<String>,
 }
 
 impl ControlConnection {
-    pub(super) fn new(conn: Arc<Connection>, endpoint: UntranslatedEndpoint) -> Self {
+    pub(super) fn new(
+        conn: Arc<Connection>,
+        endpoint: UntranslatedEndpoint,
+        fetch_schema: bool,
+        keyspaces_to_fetch: Vec<String>,
+    ) -> Self {
         Self {
             conn,
             endpoint,
             overridden_serverside_timeout: None,
+            fetch_schema,
+            keyspaces_to_fetch,
         }
     }
 
@@ -250,7 +259,8 @@ mod tests {
                 .unwrap();
 
             let connected_to_scylladb = conn.get_shard_info().is_some();
-            let conn_with_default_timeout = ControlConnection::new(Arc::new(conn), endpoint);
+            let conn_with_default_timeout =
+                ControlConnection::new(Arc::new(conn), endpoint, true, vec![]);
 
             // No custom timeout set.
             {

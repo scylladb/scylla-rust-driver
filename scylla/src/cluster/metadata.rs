@@ -664,12 +664,12 @@ impl CCManager {
         let conn = ControlConnection::new(
             self.control_connection.random_connection()?,
             self.control_connection_endpoint.clone(),
+            self.fetch_schema,
+            self.keyspaces_to_fetch.clone(),
         )
         .override_serverside_timeout(self.request_serverside_timeout);
 
-        let res = conn
-            .query_metadata(&self.keyspaces_to_fetch, self.fetch_schema)
-            .await;
+        let res = conn.query_metadata().await;
 
         if initial {
             if let Err(err) = res {
@@ -775,13 +775,9 @@ impl CCManager {
 }
 
 impl ControlConnection {
-    async fn query_metadata(
-        &self,
-        keyspace_to_fetch: &[String],
-        fetch_schema: bool,
-    ) -> Result<Metadata, MetadataError> {
+    async fn query_metadata(&self) -> Result<Metadata, MetadataError> {
         let peers_query = self.query_peers();
-        let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, fetch_schema);
+        let keyspaces_query = self.query_keyspaces();
 
         let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
 
@@ -1014,22 +1010,20 @@ impl ControlConnection {
 
     async fn query_keyspaces(
         &self,
-        keyspaces_to_fetch: &[String],
-        fetch_schema: bool,
     ) -> Result<PerKeyspaceResult<Keyspace, SingleKeyspaceMetadataError>, MetadataError> {
         let rows = self
             .query_filter_keyspace_name::<(String, HashMap<String, String>)>(
                 "select keyspace_name, replication from system_schema.keyspaces",
-                keyspaces_to_fetch,
+                &self.keyspaces_to_fetch,
             )
             .map_err(|error| MetadataFetchError {
                 error,
                 table: "system_schema.keyspaces",
             });
 
-        let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
-            let udts = self.query_user_defined_types(keyspaces_to_fetch).await?;
-            let mut tables_schema = self.query_tables_schema(keyspaces_to_fetch, &udts).await?;
+        let (mut all_tables, mut all_views, mut all_user_defined_types) = if self.fetch_schema {
+            let udts = self.query_user_defined_types().await?;
+            let mut tables_schema = self.query_tables_schema(&udts).await?;
             (
                 // We pass the mutable reference to the same map to the both functions.
                 // First function fetches `system_schema.tables`, and removes found
@@ -1038,10 +1032,8 @@ impl ControlConnection {
                 // The assumption here is that no keys (table names) can appear in both
                 // of those schema table.
                 // As far as we know this assumption is true for Scylla and Cassandra.
-                self.query_tables(keyspaces_to_fetch, &mut tables_schema)
-                    .await?,
-                self.query_views(keyspaces_to_fetch, &mut tables_schema)
-                    .await?,
+                self.query_tables(&mut tables_schema).await?,
+                self.query_views(&mut tables_schema).await?,
                 udts,
             )
         } else {
@@ -1141,14 +1133,13 @@ impl TryFrom<UdtRow> for UdtRowWithParsedFieldTypes {
 impl ControlConnection {
     async fn query_user_defined_types(
         &self,
-        keyspaces_to_fetch: &[String],
     ) -> Result<
         PerKeyspaceResult<PerTable<Arc<UserDefinedType<'static>>>, MissingUserDefinedType>,
         MetadataError,
     > {
         let rows = self.query_filter_keyspace_name::<UdtRow>(
         "select keyspace_name, type_name, field_names, field_types from system_schema.types",
-        keyspaces_to_fetch,
+        &self.keyspaces_to_fetch,
     )
     .map_err(|error| MetadataFetchError {
         error,
@@ -1487,14 +1478,13 @@ mod toposort_tests {
 impl ControlConnection {
     async fn query_tables(
         &self,
-        keyspaces_to_fetch: &[String],
         tables: &mut PerKsTableResult<Table, SingleKeyspaceMetadataError>,
     ) -> Result<PerKeyspaceResult<PerTable<Table>, SingleKeyspaceMetadataError>, MetadataError>
     {
         let rows = self
             .query_filter_keyspace_name::<(String, String)>(
                 "SELECT keyspace_name, table_name FROM system_schema.tables",
-                keyspaces_to_fetch,
+                &self.keyspaces_to_fetch,
             )
             .map_err(|error| MetadataFetchError {
                 error,
@@ -1534,7 +1524,6 @@ impl ControlConnection {
 
     async fn query_views(
         &self,
-        keyspaces_to_fetch: &[String],
         tables: &mut PerKsTableResult<Table, SingleKeyspaceMetadataError>,
     ) -> Result<
         PerKeyspaceResult<PerTable<MaterializedView>, SingleKeyspaceMetadataError>,
@@ -1543,7 +1532,7 @@ impl ControlConnection {
         let rows = self
             .query_filter_keyspace_name::<(String, String, String)>(
                 "SELECT keyspace_name, view_name, base_table_name FROM system_schema.views",
-                keyspaces_to_fetch,
+                &self.keyspaces_to_fetch,
             )
             .map_err(|error| MetadataFetchError {
                 error,
@@ -1593,7 +1582,6 @@ impl ControlConnection {
 
     async fn query_tables_schema(
         &self,
-        keyspaces_to_fetch: &[String],
         udts: &PerKeyspaceResult<PerTable<Arc<UserDefinedType<'static>>>, MissingUserDefinedType>,
     ) -> Result<PerKsTableResult<Table, SingleKeyspaceMetadataError>, MetadataError> {
         // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
@@ -1605,7 +1593,7 @@ impl ControlConnection {
 
         let rows = self.query_filter_keyspace_name::<RowType>(
         "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns",
-        keyspaces_to_fetch
+        &self.keyspaces_to_fetch
     ).map_err(|error| MetadataFetchError {
         error,
         table: "system_schema.columns",
