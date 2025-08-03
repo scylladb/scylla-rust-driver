@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
 
-use super::metadata::MetadataReader;
+use super::metadata::CCManager;
 use super::node::InternalKnownNode;
 use super::state::{ClusterState, ClusterStateNeatDebug};
 
@@ -51,7 +51,7 @@ struct ClusterWorker {
     cluster_state: Arc<ArcSwap<ClusterState>>,
 
     // Cluster connections
-    metadata_reader: MetadataReader,
+    metadata_reader: CCManager,
     pool_config: PoolConfig,
 
     // To listen for refresh requests
@@ -115,7 +115,7 @@ impl Cluster {
         let (control_connection_repair_sender, control_connection_repair_receiver) =
             tokio::sync::broadcast::channel(32);
 
-        let mut metadata_reader = MetadataReader::new(
+        let mut metadata_reader = CCManager::new(
             known_nodes,
             control_connection_repair_sender,
             pool_config.connection_config.clone(),

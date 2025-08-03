@@ -89,7 +89,7 @@ pub(crate) enum SingleKeyspaceMetadataError {
 }
 
 /// Allows to read current metadata from the cluster
-pub(crate) struct MetadataReader {
+pub(crate) struct CCManager {
     control_connection_pool_config: PoolConfig,
     request_serverside_timeout: Option<Duration>,
 
@@ -471,7 +471,7 @@ impl Metadata {
     }
 }
 
-impl MetadataReader {
+impl CCManager {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
@@ -525,7 +525,7 @@ impl MetadataReader {
             metrics.clone(),
         );
 
-        Ok(MetadataReader {
+        Ok(CCManager {
             control_connection_pool_config,
             control_connection_endpoint,
             control_connection,
