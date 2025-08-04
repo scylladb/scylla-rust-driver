@@ -24,6 +24,13 @@ struct StructAttrs {
     // This annotation only works if `enforce_order` is specified.
     #[darling(default)]
     skip_name_checks: bool,
+
+    // If true, then - if this field is missing from the UDT fields metadata
+    // - it will be initialized to Default::default().
+    // currently only supported with Flavor::MatchByName
+    #[darling(default)]
+    #[darling(rename = "allow_missing")]
+    default_when_missing: bool,
 }
 
 impl DeserializeCommonStructAttrs for StructAttrs {
@@ -50,6 +57,13 @@ struct Field {
     // initialized to Default::default().
     #[darling(default)]
     default_when_null: bool,
+
+    // If true, then - if this field is missing from the UDT fields metadata
+    // - it will be initialized to Default::default().
+    // currently only supported with Flavor::MatchByName
+    #[darling(default)]
+    #[darling(rename = "allow_missing")]
+    default_when_missing: bool,
 
     ident: Option<syn::Ident>,
     ty: syn::Type,
@@ -135,7 +149,7 @@ fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::
 impl Field {
     // Returns whether this field is mandatory for deserialization.
     fn is_required(&self) -> bool {
-        !self.skip
+        !self.skip && !self.default_when_missing
     }
 
     // The name of the column corresponding to this Rust struct field
@@ -209,13 +223,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
         let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
 
-        let required_fields_iter = || {
-            self.0
-                .fields()
-                .iter()
-                .enumerate()
-                .filter(|(_, f)| f.is_required())
-        };
+        let required_fields_iter = || self.0.fields().iter().enumerate().filter(|(_, f)| !f.skip);
         let required_fields_count = required_fields_iter().count();
         let required_fields_idents: Vec<_> = (0..required_fields_count)
             .map(|i| quote::format_ident!("f_{}", i))
@@ -394,7 +402,7 @@ impl TypeCheckUnorderedGenerator<'_> {
             let visited_flag = Self::visited_flag_variable(field);
             let typ = field.deserialize_target();
             let cql_name_literal = field.cql_name_literal();
-            let decrement_if_required: Option::<syn::Stmt> = field.is_required().then(|| parse_quote! {
+            let decrement_if_required: Option::<syn::Stmt> = (!self.0.attrs.default_when_missing && field.is_required()).then(|| parse_quote! {
                 remaining_required_fields -= 1;
             });
 
@@ -467,7 +475,11 @@ impl TypeCheckUnorderedGenerator<'_> {
             .iter()
             .filter(|f| !f.skip)
             .map(|f| f.cql_name_literal());
-        let field_count_lit = fields.iter().filter(|f| f.is_required()).count();
+        let field_count_lit = if self.0.attrs.default_when_missing {
+            0
+        } else {
+            fields.iter().filter(|f| f.is_required()).count()
+        };
 
         parse_quote! {
             fn type_check(
@@ -541,11 +553,18 @@ impl DeserializeUnorderedGenerator<'_> {
 
         let deserialize_field = Self::deserialize_field_variable(field);
         let cql_name_literal = field.cql_name_literal();
-        parse_quote! {
-            #deserialize_field.unwrap_or_else(|| ::std::panic!(
-                "column {} missing in DB row - type check should have prevented this!",
-                #cql_name_literal
-            ))
+        if self.0.attrs.default_when_missing || field.default_when_missing {
+            // Generate Default::default if the field was missing
+            parse_quote! {
+                #deserialize_field.unwrap_or_default()
+            }
+        } else {
+            parse_quote! {
+                #deserialize_field.unwrap_or_else(|| ::std::panic!(
+                    "column {} missing in DB row - type check should have prevented this!",
+                    #cql_name_literal
+                ))
+            }
         }
     }
 
