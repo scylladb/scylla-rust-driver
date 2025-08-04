@@ -31,6 +31,12 @@ struct StructAttrs {
     // they will be ignored. With true, an error will be raised.
     #[darling(default)]
     forbid_excess_udt_fields: bool,
+
+    // If true, then - if this field is missing from the UDT fields metadata
+    // - it will be initialized to Default::default().
+    #[darling(default)]
+    #[darling(rename = "allow_missing")]
+    default_when_missing: bool,
 }
 
 impl DeserializeCommonStructAttrs for StructAttrs {
@@ -229,7 +235,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
         let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
         let rust_field_name = field.cql_name_literal();
         let rust_field_typ = field.deserialize_target();
-        let default_when_missing = field.default_when_missing;
+        let default_when_missing = self.0.attrs.default_when_missing || field.default_when_missing;
         let skip_name_checks = self.0.attrs.skip_name_checks;
 
         // Action performed in case of field name mismatch.
@@ -593,8 +599,8 @@ impl TypeCheckUnorderedGenerator<'_> {
             let visited_flag = Self::visited_flag_variable(field);
             let typ = field.deserialize_target();
             let cql_name_literal = field.cql_name_literal();
-            let decrement_if_required: Option<syn::Stmt> = field
-                .is_required()
+            let decrement_if_required: Option<syn::Stmt> = (!self.0.attrs.default_when_missing && field
+                .is_required())
                 .then(|| parse_quote! {remaining_required_cql_fields -= 1;});
 
             parse_quote! {
@@ -659,7 +665,12 @@ impl TypeCheckUnorderedGenerator<'_> {
             .iter()
             .filter(|f| !f.skip)
             .map(|f| f.cql_name_literal());
-        let required_cql_field_count = rust_fields.iter().filter(|f| f.is_required()).count();
+        let required_cql_field_count = if self.0.attrs.default_when_missing {
+            0
+        } else {
+            rust_fields.iter().filter(|f| f.is_required()).count()
+        };
+
         let required_cql_field_count_lit =
             syn::LitInt::new(&required_cql_field_count.to_string(), Span::call_site());
         let extract_cql_fields_expr = self.0.generate_extract_fields_from_type(parse_quote!(typ));
@@ -746,7 +757,7 @@ impl DeserializeUnorderedGenerator<'_> {
         }
 
         let deserialize_field = Self::deserialize_field_variable(field);
-        if field.default_when_missing {
+        if self.0.attrs.default_when_missing || field.default_when_missing {
             // Generate Default::default if the field was missing
             parse_quote! {
                 #deserialize_field.unwrap_or_default()
