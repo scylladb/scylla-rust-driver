@@ -4,11 +4,13 @@ mod ip_allocator;
 mod logged_cmd;
 pub(crate) mod node;
 
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use cluster::Cluster;
 use cluster::ClusterOptions;
+use futures::FutureExt;
 use ip_allocator::IpAllocator;
 use tracing::info;
 
@@ -107,16 +109,17 @@ pub(crate) async fn run_ccm_test_with_configuration<C, Conf, T>(
     cluster = configure(cluster).await;
     cluster.start(None).await.expect("failed to start cluster");
 
-    struct ClusterWrapper(Cluster);
-    impl Drop for ClusterWrapper {
-        fn drop(&mut self) {
-            if std::thread::panicking() && *TEST_KEEP_CLUSTER_ON_FAILURE {
+    let result = AssertUnwindSafe(test_body(&mut cluster))
+        .catch_unwind()
+        .await;
+    match result {
+        Ok(()) => (),
+        Err(err) => {
+            if *TEST_KEEP_CLUSTER_ON_FAILURE {
                 println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
-                self.0.set_keep_on_drop(true);
+                cluster.set_keep_on_drop(true);
             }
+            std::panic::resume_unwind(err);
         }
     }
-    let mut wrapper = ClusterWrapper(cluster);
-    test_body(&mut wrapper.0).await;
-    std::mem::drop(wrapper);
 }
