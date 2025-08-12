@@ -1319,7 +1319,7 @@ impl ProxyWorker {
                                     connection_close_signaler.clone();
                                 let drop_action = async move {
                                     if let Some(ref delay) = drop_connection_action {
-                                        if let Some(ref time) = delay {
+                                        if let Some(time) = delay {
                                             tokio::time::sleep(*time).await;
                                         }
                                         // close connection.
@@ -1425,7 +1425,7 @@ impl ProxyWorker {
                                     connection_close_signaler.clone();
                                 let drop_action = async move {
                                     if let Some(ref delay) = drop_connection_action {
-                                        if let Some(ref time) = delay {
+                                        if let Some(time) = delay {
                                             tokio::time::sleep(*time).await;
                                         }
                                         // close connection.
