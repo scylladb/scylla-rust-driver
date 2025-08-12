@@ -808,8 +808,8 @@ impl DefaultPolicy {
         let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster, table_spec);
 
         if let Some(fixed) = self.fixed_seed {
-            let mut gen = Pcg32::new(fixed, 0);
-            replica_set.choose_filtered(&mut gen, |(node, shard)| predicate(node, *shard))
+            let mut generator = Pcg32::new(fixed, 0);
+            replica_set.choose_filtered(&mut generator, |(node, shard)| predicate(node, *shard))
         } else {
             replica_set.choose_filtered(&mut rng(), |(node, shard)| predicate(node, *shard))
         }
@@ -889,8 +889,8 @@ impl DefaultPolicy {
         let mut vec: Vec<(NodeRef<'_>, Shard)> = iter.collect();
 
         if let Some(fixed) = self.fixed_seed {
-            let mut gen = Pcg32::new(fixed, 0);
-            vec.shuffle(&mut gen);
+            let mut generator = Pcg32::new(fixed, 0);
+            vec.shuffle(&mut generator);
         } else {
             vec.shuffle(&mut rng());
         }

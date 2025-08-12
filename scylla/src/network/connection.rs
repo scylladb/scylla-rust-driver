@@ -855,7 +855,7 @@ impl Connection {
             self.config
                 .timestamp_generator
                 .as_ref()
-                .map(|gen| gen.next_timestamp())
+                .map(|generator| generator.next_timestamp())
         };
         let timestamp = statement.get_timestamp().or_else(get_timestamp_from_gen);
 
@@ -912,7 +912,7 @@ impl Connection {
             self.config
                 .timestamp_generator
                 .as_ref()
-                .map(|gen| gen.next_timestamp())
+                .map(|generator| generator.next_timestamp())
         };
         let timestamp = prepared_statement
             .get_timestamp()
@@ -1047,7 +1047,7 @@ impl Connection {
             self.config
                 .timestamp_generator
                 .as_ref()
-                .map(|gen| gen.next_timestamp())
+                .map(|generator| generator.next_timestamp())
         };
         let timestamp = batch.get_timestamp().or_else(get_timestamp_from_gen);
 
