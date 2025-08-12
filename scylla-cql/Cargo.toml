@@ -93,3 +93,7 @@ full-serialization = [
 [lints.rust]
 unnameable_types = "warn"
 unreachable_pub = "warn"
+
+[lints.clippy]
+# Needless lifetimes are often written for documentation purposes.
+needless_lifetimes = "allow"
