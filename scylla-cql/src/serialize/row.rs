@@ -49,7 +49,7 @@ impl<'a> RowSerializationContext<'a> {
 
     /// Returns column/bind marker specifications for given query.
     #[inline]
-    pub fn columns(&self) -> &'a [ColumnSpec] {
+    pub fn columns(&self) -> &'a [ColumnSpec<'_>] {
         self.columns
     }
 }
@@ -530,7 +530,7 @@ impl SerializedValues {
 
     /// Returns an iterator over the values serialized into the object so far.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = RawValue> {
+    pub fn iter(&self) -> impl Iterator<Item = RawValue<'_>> {
         SerializedValuesIterator {
             serialized_values: &self.serialized_values,
         }

@@ -74,7 +74,7 @@ impl RequestFrame {
         .await
     }
 
-    pub fn deserialize(&self) -> Result<Request, RequestDeserializationError> {
+    pub fn deserialize(&self) -> Result<Request<'_>, RequestDeserializationError> {
         Request::deserialize(&mut &self.body[..], self.opcode)
     }
 }
