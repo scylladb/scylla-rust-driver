@@ -47,7 +47,7 @@ pub enum CqlRequestKind {
     Startup,
 
     /// Answers a server authentication challenge.
-
+    ///
     /// Authentication in the protocol is SASL based. The server sends authentication
     /// challenges (a bytes token) to which the client answers with this message. Those
     /// exchanges continue until the server accepts the authentication by sending a
