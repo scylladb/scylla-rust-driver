@@ -673,15 +673,15 @@ impl DefaultPolicy {
     /// Respects requested replica order, i.e. if requested, returns replicas ordered
     /// deterministically (i.e. by token ring order or by tablet definition order),
     /// else returns replicas in arbitrary order.
-    fn filtered_replicas<'a>(
+    fn filtered_replicas<'a, PredicateT: Fn(NodeRef<'a>, Shard) -> bool + 'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
+        predicate: PredicateT,
         cluster: &'a ClusterState,
         order: ReplicaOrder,
         table_spec: &TableSpec,
-    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> + use<'a, PredicateT> {
         let predicate = Self::make_sharded_rack_predicate(predicate, replica_location);
 
         let replica_iter = match order {
@@ -819,15 +819,15 @@ impl DefaultPolicy {
     /// by provided location criteria and predicate.
     /// By default, the replicas are shuffled.
     /// For LWTs, though, the replicas are instead returned in a deterministic order.
-    fn maybe_shuffled_replicas<'a>(
+    fn maybe_shuffled_replicas<'a, PredicateT: Fn(NodeRef<'a>, Shard) -> bool + 'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
+        predicate: PredicateT,
         cluster: &'a ClusterState,
         statement_type: StatementType,
         table_spec: &TableSpec,
-    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> + use<'a, PredicateT> {
         let order = match statement_type {
             StatementType::Lwt => ReplicaOrder::Deterministic,
             StatementType::NonLwt => ReplicaOrder::Arbitrary,
@@ -882,10 +882,10 @@ impl DefaultPolicy {
     }
 
     /// Wraps a given iterator by shuffling its contents.
-    fn shuffle<'a>(
+    fn shuffle<'a, IterT: Iterator<Item = (NodeRef<'a>, Shard)>>(
         &self,
-        iter: impl Iterator<Item = (NodeRef<'a>, Shard)>,
-    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
+        iter: IterT,
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> + use<'a, IterT> {
         let mut vec: Vec<(NodeRef<'_>, Shard)> = iter.collect();
 
         if let Some(fixed) = self.fixed_seed {
@@ -2785,10 +2785,10 @@ mod latency_awareness {
             }
         }
 
-        pub(super) fn wrap<'a>(
+        pub(super) fn wrap<'a, FallbackPlanT: Iterator<Item = (NodeRef<'a>, Option<Shard>)>>(
             &self,
-            fallback: impl Iterator<Item = (NodeRef<'a>, Option<Shard>)>,
-        ) -> impl Iterator<Item = (NodeRef<'a>, Option<Shard>)> {
+            fallback: FallbackPlanT,
+        ) -> impl Iterator<Item = (NodeRef<'a>, Option<Shard>)> + use<'a, FallbackPlanT> {
             let min_avg_latency = match self.last_min_latency.load() {
                 Some(min_avg) => min_avg,
                 None => return Either::Left(fallback), // noop, as no latency data has been collected yet
