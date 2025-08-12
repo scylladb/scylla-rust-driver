@@ -1,6 +1,6 @@
 use crate::utils::{
-    create_new_session_builder, setup_tracing, unique_keyspace_name, DeserializeOwnedValue,
-    PerformDDL,
+    DeserializeOwnedValue, PerformDDL, create_new_session_builder, setup_tracing,
+    unique_keyspace_name,
 };
 use scylla::cluster::metadata::NativeType;
 use scylla::deserialize::value::DeserializeValue;

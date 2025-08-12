@@ -4,7 +4,7 @@ use scylla::{
 };
 
 use crate::utils::{
-    create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, setup_tracing, unique_keyspace_name,
 };
 
 async fn rename(session: &Session, rename_str: &str) {
@@ -57,15 +57,19 @@ async fn test_unprepared_reprepare_in_execute() {
     rename(&session, "b TO tmp_name").await;
 
     // During rename the query should fail
-    assert!(session
-        .execute_unpaged(&insert_a_b_c, (1, 2, 3))
-        .await
-        .is_err());
+    assert!(
+        session
+            .execute_unpaged(&insert_a_b_c, (1, 2, 3))
+            .await
+            .is_err()
+    );
     rename(&session, "c TO b").await;
-    assert!(session
-        .execute_unpaged(&insert_a_b_c, (1, 2, 3))
-        .await
-        .is_err());
+    assert!(
+        session
+            .execute_unpaged(&insert_a_b_c, (1, 2, 3))
+            .await
+            .is_err()
+    );
     rename(&session, "tmp_name TO c").await;
 
     // Insert values again (b and c are swapped so those are different inserts)
@@ -190,15 +194,19 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
     rename_caching(&caching_session, "b TO tmp_name").await;
 
     // During rename the query should fail
-    assert!(caching_session
-        .execute_unpaged(insert_a_b_c, &(1, 2, 3))
-        .await
-        .is_err());
+    assert!(
+        caching_session
+            .execute_unpaged(insert_a_b_c, &(1, 2, 3))
+            .await
+            .is_err()
+    );
     rename_caching(&caching_session, "c TO b").await;
-    assert!(caching_session
-        .execute_unpaged(insert_a_b_c, &(1, 2, 3))
-        .await
-        .is_err());
+    assert!(
+        caching_session
+            .execute_unpaged(insert_a_b_c, &(1, 2, 3))
+            .await
+            .is_err()
+    );
     rename_caching(&caching_session, "tmp_name TO c").await;
 
     // Insert values again (b and c are swapped so those are different inserts)

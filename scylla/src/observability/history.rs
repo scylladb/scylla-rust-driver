@@ -355,11 +355,21 @@ impl From<&HistoryCollectorData> for StructuredHistory {
                     match attempts.get_mut(attempt_id) {
                         Some(attempt) => {
                             if attempt.result.is_some() {
-                                warn!("StructuredHistory - attempt with id {:?} has multiple results", attempt_id);
+                                warn!(
+                                    "StructuredHistory - attempt with id {:?} has multiple results",
+                                    attempt_id
+                                );
                             }
-                            attempt.result = Some(AttemptResult::Error(*event_time, error.clone(), retry_decision.clone()));
-                        },
-                        None => warn!("StructuredHistory - attempt with id {:?} finished with an error but not created", attempt_id)
+                            attempt.result = Some(AttemptResult::Error(
+                                *event_time,
+                                error.clone(),
+                                retry_decision.clone(),
+                            ));
+                        }
+                        None => warn!(
+                            "StructuredHistory - attempt with id {:?} finished with an error but not created",
+                            attempt_id
+                        ),
                     }
                 }
                 HistoryEvent::NewRequest(request_id) => {
@@ -506,7 +516,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-    use scylla_cql::{frame::response::CqlResponseKind, Consistency};
+    use scylla_cql::{Consistency, frame::response::CqlResponseKind};
 
     // Set a single time for all timestamps within StructuredHistory.
     // HistoryCollector sets the timestamp to current time which changes with each test.
@@ -600,10 +610,12 @@ mod tests {
         let history: StructuredHistory = history_collector.clone_structured_history();
 
         assert_eq!(history.requests.len(), 1);
-        assert!(history.requests[0]
-            .non_speculative_fiber
-            .attempts
-            .is_empty());
+        assert!(
+            history.requests[0]
+                .non_speculative_fiber
+                .attempts
+                .is_empty()
+        );
         assert!(history.requests[0].speculative_fibers.is_empty());
 
         let displayed = "Requests History:
@@ -720,20 +732,28 @@ mod tests {
         let history: StructuredHistory = history_collector.clone_structured_history();
 
         assert_eq!(history.requests.len(), 1);
-        assert!(history.requests[0]
-            .non_speculative_fiber
-            .attempts
-            .is_empty());
+        assert!(
+            history.requests[0]
+                .non_speculative_fiber
+                .attempts
+                .is_empty()
+        );
         assert_eq!(history.requests[0].speculative_fibers.len(), 3);
-        assert!(history.requests[0].speculative_fibers[0]
-            .attempts
-            .is_empty());
-        assert!(history.requests[0].speculative_fibers[1]
-            .attempts
-            .is_empty());
-        assert!(history.requests[0].speculative_fibers[2]
-            .attempts
-            .is_empty());
+        assert!(
+            history.requests[0].speculative_fibers[0]
+                .attempts
+                .is_empty()
+        );
+        assert!(
+            history.requests[0].speculative_fibers[1]
+                .attempts
+                .is_empty()
+        );
+        assert!(
+            history.requests[0].speculative_fibers[2]
+                .attempts
+                .is_empty()
+        );
 
         let displayed = "Requests History:
 === Request #0 ===

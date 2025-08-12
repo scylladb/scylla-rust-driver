@@ -605,17 +605,17 @@ mod tests {
 
     use bytes::Bytes;
     use scylla_cql::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
-    use scylla_cql::serialize::value::SerializeValue;
     use scylla_cql::serialize::CellWriter;
+    use scylla_cql::serialize::value::SerializeValue;
     use tracing::debug;
     use uuid::Uuid;
 
     use crate::cluster::Node;
-    use crate::routing::locator::tablets::{
-        RawTablet, RawTabletReplicas, TabletParsingError, CUSTOM_PAYLOAD_TABLETS_V1_KEY,
-        RAW_TABLETS_CQL_TYPE,
-    };
     use crate::routing::Token;
+    use crate::routing::locator::tablets::{
+        CUSTOM_PAYLOAD_TABLETS_V1_KEY, RAW_TABLETS_CQL_TYPE, RawTablet, RawTabletReplicas,
+        TabletParsingError,
+    };
     use crate::test_utils::setup_tracing;
     use crate::value::CqlValue;
 

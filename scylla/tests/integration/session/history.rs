@@ -10,7 +10,7 @@ use scylla::observability::history::{
 use scylla::statement::unprepared::Statement;
 use scylla::value::Row;
 
-use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
+use crate::utils::{PerformDDL, create_new_session_builder, setup_tracing, unique_keyspace_name};
 
 // Set a single time for all timestamps within StructuredHistory.
 // HistoryCollector sets the timestamp to current time which changes with each test.

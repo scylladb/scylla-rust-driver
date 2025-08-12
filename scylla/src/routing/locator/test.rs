@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use super::tablets::TabletsInfo;
 use super::{ReplicaLocator, ReplicaSet};
-use crate::cluster::metadata::{Keyspace, Metadata, Peer, Strategy};
 use crate::cluster::Node;
+use crate::cluster::metadata::{Keyspace, Metadata, Peer, Strategy};
 use crate::cluster::{NodeAddr, NodeRef};
 use crate::network::PoolConfig;
 use crate::routing::Token;

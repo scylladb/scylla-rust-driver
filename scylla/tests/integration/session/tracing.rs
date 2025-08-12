@@ -2,13 +2,13 @@ use scylla::{
     client::session::Session,
     observability::tracing::TracingInfo,
     response::query_result::QueryResult,
-    statement::{batch::Batch, Statement},
+    statement::{Statement, batch::Batch},
 };
 use scylla_cql::Consistency;
 use uuid::Uuid;
 
 use crate::utils::{
-    create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, setup_tracing, unique_keyspace_name,
 };
 
 #[tokio::test]

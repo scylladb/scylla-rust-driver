@@ -10,9 +10,9 @@ use crate::frame::{
     types::{self, SerialConsistency},
 };
 use crate::serialize::{
+    RowWriter, SerializationError,
     raw_batch::{RawBatchValues, RawBatchValuesIterator},
     row::SerializedValues,
-    RowWriter, SerializationError,
 };
 
 use super::{DeserializableRequest, RequestDeserializationError};
@@ -163,7 +163,7 @@ where
                         error: BatchStatementSerializationError::TooManyValues(
                             row_writer.value_count(),
                         ),
-                    })
+                    });
                 }
             };
             buf[length_pos..length_pos + 2].copy_from_slice(&count.to_be_bytes());
@@ -336,11 +336,15 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
 #[derive(Error, Debug, Clone)]
 pub enum BatchSerializationError {
     /// Maximum number of batch statements exceeded.
-    #[error("Too many statements in the batch. Received {0} statements, when u16::MAX is maximum possible value.")]
+    #[error(
+        "Too many statements in the batch. Received {0} statements, when u16::MAX is maximum possible value."
+    )]
     TooManyStatements(usize),
 
     /// Number of batch statements differs from number of provided bound value lists.
-    #[error("Number of provided value lists must be equal to number of batch statements (got {n_value_lists} value lists, {n_statements} statements)")]
+    #[error(
+        "Number of provided value lists must be equal to number of batch statements (got {n_value_lists} value lists, {n_statements} statements)"
+    )]
     ValuesAndStatementsLengthMismatch {
         n_value_lists: usize,
         n_statements: usize,
@@ -354,7 +358,9 @@ pub enum BatchSerializationError {
     },
 
     /// Number of announced batch statements differs from actual number of batch statements.
-    #[error("Invalid Batch constructed: not as many statements serialized as announced (announced: {n_announced_statements}, serialized: {n_serialized_statements})")]
+    #[error(
+        "Invalid Batch constructed: not as many statements serialized as announced (announced: {n_announced_statements}, serialized: {n_serialized_statements})"
+    )]
     BadBatchConstructed {
         n_announced_statements: usize,
         n_serialized_statements: usize,

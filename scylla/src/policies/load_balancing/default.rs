@@ -11,7 +11,7 @@ use crate::{
     routing::{Shard, Token},
 };
 use itertools::{Either, Itertools};
-use rand::{prelude::SliceRandom, rng, Rng};
+use rand::{Rng, prelude::SliceRandom, rng};
 use rand_pcg::Pcg32;
 use scylla_cql::frame::response::result::TableSpec;
 use std::hash::{Hash, Hasher};
@@ -175,7 +175,8 @@ impl LoadBalancingPolicy for DefaultPolicy {
                     Strategy::SimpleStrategy { .. }
                 )
             {
-                warn!("\
+                warn!(
+                    "\
 Combining SimpleStrategy with preferred_datacenter set to Some and disabled datacenter failover may lead to empty query plans for some tokens.\
 It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
 how many replicas there are in each datacenter (you probably want at least 1 to avoid empty plans while preferring that datacenter), \
@@ -1147,23 +1148,23 @@ impl<'a> TokenWithStrategy<'a> {
 mod tests {
     use std::collections::HashMap;
 
-    use scylla_cql::{frame::types::SerialConsistency, Consistency};
+    use scylla_cql::{Consistency, frame::types::SerialConsistency};
     use tracing::info;
 
     use self::framework::{
-        get_plan_and_collect_node_identifiers, mock_cluster_state_for_token_unaware_tests,
-        ExpectedGroups, ExpectedGroupsBuilder,
+        ExpectedGroups, ExpectedGroupsBuilder, get_plan_and_collect_node_identifiers,
+        mock_cluster_state_for_token_unaware_tests,
     };
     use crate::policies::host_filter::HostFilter;
     use crate::routing::locator::tablets::TabletsInfo;
     use crate::routing::locator::test::{
-        id_to_invalid_addr, mock_metadata_for_token_aware_tests, TABLE_NTS_RF_2, TABLE_NTS_RF_3,
-        TABLE_SS_RF_2,
+        TABLE_NTS_RF_2, TABLE_NTS_RF_3, TABLE_SS_RF_2, id_to_invalid_addr,
+        mock_metadata_for_token_aware_tests,
     };
     use crate::{
         cluster::ClusterState,
         policies::load_balancing::{
-            default::tests::framework::mock_cluster_state_for_token_aware_tests, Plan, RoutingInfo,
+            Plan, RoutingInfo, default::tests::framework::mock_cluster_state_for_token_aware_tests,
         },
         routing::Token,
         test_utils::setup_tracing,
@@ -1181,8 +1182,8 @@ mod tests {
 
         use crate::{
             cluster::{
-                metadata::{Metadata, Peer},
                 ClusterState,
+                metadata::{Metadata, Peer},
             },
             policies::load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             routing::Token,
@@ -2567,7 +2568,7 @@ mod tests {
 }
 
 mod latency_awareness {
-    use futures::{future::RemoteHandle, FutureExt};
+    use futures::{FutureExt, future::RemoteHandle};
     use itertools::Either;
     use tokio::time::{Duration, Instant};
     use tracing::{trace, warn};
@@ -2581,8 +2582,8 @@ mod latency_awareness {
         collections::HashMap,
         ops::Deref,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
     };
 
@@ -3131,8 +3132,8 @@ mod latency_awareness {
         use scylla_cql::Consistency;
 
         use super::{
-            super::tests::{framework::*, EMPTY_ROUTING_INFO},
             super::DefaultPolicy,
+            super::tests::{EMPTY_ROUTING_INFO, framework::*},
             *,
         };
 
@@ -3141,13 +3142,13 @@ mod latency_awareness {
             cluster::NodeAddr,
             policies::load_balancing::default::NodeLocationPreference,
             policies::load_balancing::{
-                default::tests::test_default_policy_with_given_cluster_and_routing_info,
                 RoutingInfo,
+                default::tests::test_default_policy_with_given_cluster_and_routing_info,
             },
-            routing::locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
-            routing::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
             routing::Shard,
             routing::Token,
+            routing::locator::test::{A, B, C, D, E, F, G, id_to_invalid_addr},
+            routing::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
             test_utils::setup_tracing,
         };
         use tokio::time::Instant;
@@ -3526,8 +3527,8 @@ mod latency_awareness {
         }
 
         #[tokio::test]
-        async fn latency_aware_default_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses(
-        ) {
+        async fn latency_aware_default_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses()
+         {
             setup_tracing();
 
             let (policy, updater) = latency_aware_default_policy_with_explicit_updater();

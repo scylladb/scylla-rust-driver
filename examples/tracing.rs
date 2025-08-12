@@ -1,7 +1,7 @@
 // CQL Tracing allows to see each step during execution of a query
 // query() prepare() execute() batch() query_iter() and execute_iter() can be traced
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::StreamExt as _;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;

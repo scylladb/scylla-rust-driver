@@ -7,8 +7,8 @@ use scylla::errors::AuthError;
 use tokio::sync::Mutex;
 
 use crate::ccm::lib::cluster::{Cluster, ClusterOptions};
-use crate::ccm::lib::{run_ccm_test_with_configuration, CLUSTER_VERSION};
-use crate::utils::{setup_tracing, unique_keyspace_name, PerformDDL};
+use crate::ccm::lib::{CLUSTER_VERSION, run_ccm_test_with_configuration};
+use crate::utils::{PerformDDL, setup_tracing, unique_keyspace_name};
 
 fn cluster_1_node() -> ClusterOptions {
     ClusterOptions {

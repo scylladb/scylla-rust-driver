@@ -11,8 +11,8 @@ use scylla_cql::serialize::row::SerializedValues;
 use crate::client::pager::QueryPager;
 use crate::errors::{NextRowError, RequestAttemptError};
 use crate::network::Connection;
-use crate::statement::prepared::PreparedStatement;
 use crate::statement::Statement;
+use crate::statement::prepared::PreparedStatement;
 
 /// The single connection used to fetch metadata and receive events from the cluster.
 pub(super) struct ControlConnection {

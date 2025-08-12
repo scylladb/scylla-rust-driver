@@ -6,11 +6,11 @@ use scylla::errors::{DbError, PrepareError, RequestAttemptError};
 use scylla::frame::response::result::{ColumnSpec, TableSpec};
 use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 use scylla::response::{PagingState, PagingStateResponse};
-use scylla::routing::partitioner::PartitionerName;
 use scylla::routing::Token;
+use scylla::routing::partitioner::PartitionerName;
 use scylla::serialize::row::SerializeRow;
-use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::Statement;
+use scylla::statement::prepared::PreparedStatement;
 use scylla_cql::frame::types;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
@@ -24,8 +24,8 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::utils::{
-    create_new_session_builder, scylla_supports_tablets, setup_tracing, test_with_3_node_cluster,
-    unique_keyspace_name, PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
+    test_with_3_node_cluster, unique_keyspace_name,
 };
 
 #[tokio::test]
@@ -226,7 +226,8 @@ async fn test_prepared_partitioner() {
 
     // This test uses CDC which is not yet compatible with Scylla's tablets.
     let mut create_ks = format!(
-        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}");
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    );
     if scylla_supports_tablets(&session).await {
         create_ks += " AND TABLETS = {'enabled': false}"
     }

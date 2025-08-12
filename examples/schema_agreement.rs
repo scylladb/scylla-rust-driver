@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use futures::TryStreamExt as _;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;

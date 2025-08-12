@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
+use crate::SerializeRow;
 use crate::frame::response::result::{
     CollectionType, ColumnSpec, ColumnType, NativeType, TableSpec,
 };
@@ -12,12 +13,11 @@ use crate::serialize::row::{
 };
 use crate::serialize::value::tests::get_ser_err as get_value_ser_err;
 use crate::serialize::value::{
-    mk_ser_err, BuiltinSerializationErrorKind as BuiltinValueSerializationErrorKind,
+    BuiltinSerializationErrorKind as BuiltinValueSerializationErrorKind, mk_ser_err,
 };
 use crate::serialize::writers::WrittenCellProof;
 use crate::serialize::{CellWriter, RowWriter, SerializationError};
 use crate::value::MaybeUnset;
-use crate::SerializeRow;
 
 use assert_matches::assert_matches;
 
@@ -561,9 +561,11 @@ fn test_serialized_values_max_capacity() {
         .unwrap_err();
 
     assert_eq!(values.iter().count(), 65535);
-    assert!(values
-        .iter()
-        .all(|v| v == RawValue::Value(&[0, 0, 0, 0, 0x07, 0x5b, 0xcd, 0x15])))
+    assert!(
+        values
+            .iter()
+            .all(|v| v == RawValue::Value(&[0, 0, 0, 0, 0x07, 0x5b, 0xcd, 0x15]))
+    )
 }
 
 #[derive(SerializeRow, Debug)]

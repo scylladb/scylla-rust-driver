@@ -190,7 +190,9 @@ impl Context {
             let field_name = field.field_name();
             if let Some(other_field) = used_names.get(&field_name) {
                 let other_field_ident = &other_field.ident;
-                let msg = format!("the UDT field name `{field_name}` used by this struct field is already used by field `{other_field_ident}`");
+                let msg = format!(
+                    "the UDT field name `{field_name}` used by this struct field is already used by field `{other_field_ident}`"
+                );
                 let err = darling::Error::custom(msg).with_span(&field.ident);
                 errors.push(err);
             } else {

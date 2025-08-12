@@ -36,7 +36,9 @@ async fn run_some_ddl_with_unreachable_node(
     )]));
 
     let ks = unique_keyspace_name();
-    let mut request = Statement::new(format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"));
+    let mut request = Statement::new(format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    ));
     request.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
         coordinator,
         None,

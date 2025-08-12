@@ -205,10 +205,10 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        routing::locator::test::{
-            create_ring, mock_metadata_for_token_aware_tests, A, B, C, D, E, F, G,
-        },
         routing::Token,
+        routing::locator::test::{
+            A, B, C, D, E, F, G, create_ring, mock_metadata_for_token_aware_tests,
+        },
         test_utils::setup_tracing,
     };
 

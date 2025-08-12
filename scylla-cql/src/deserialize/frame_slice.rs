@@ -195,7 +195,7 @@ impl<'frame> FrameSlice<'frame> {
 mod tests {
     use bytes::Bytes;
 
-    use super::super::tests::{serialize_cells, CELL1, CELL2};
+    use super::super::tests::{CELL1, CELL2, serialize_cells};
     use super::FrameSlice;
 
     #[test]

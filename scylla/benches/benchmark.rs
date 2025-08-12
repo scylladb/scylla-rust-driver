@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use bytes::BytesMut;
 use scylla::internal_testing::calculate_token_for_partition_key;

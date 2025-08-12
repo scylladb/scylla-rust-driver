@@ -8,7 +8,7 @@ use std::fmt::Display;
 use thiserror::Error;
 
 use super::value::DeserializeValue;
-use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
+use super::{DeserializationError, FrameSlice, TypeCheckError, make_error_replace_rust_name};
 use crate::frame::response::result::{ColumnSpec, ColumnType};
 use crate::value::{CqlValue, Row};
 
@@ -264,7 +264,9 @@ impl_tuple_multiple!(
 /// Failed to type check incoming result column types again given Rust type,
 /// one of the types having support built into the driver.
 #[derive(Debug, Error, Clone)]
-#[error("Failed to type check the Rust type {rust_name} against CQL column types {cql_types:?} : {kind}")]
+#[error(
+    "Failed to type check the Rust type {rust_name} against CQL column types {cql_types:?} : {kind}"
+)]
 pub struct BuiltinTypeCheckError {
     /// Name of the Rust type used to represent the values.
     pub rust_name: &'static str,
@@ -371,9 +373,15 @@ impl Display for BuiltinTypeCheckErrorKind {
                 rust_cols,
                 cql_cols,
             } => {
-                write!(f, "wrong column count: the statement operates on {cql_cols} columns, but the given rust types contains {rust_cols}")
+                write!(
+                    f,
+                    "wrong column count: the statement operates on {cql_cols} columns, but the given rust types contains {rust_cols}"
+                )
             }
-            BuiltinTypeCheckErrorKind::ColumnWithUnknownName { column_name, column_index } => {
+            BuiltinTypeCheckErrorKind::ColumnWithUnknownName {
+                column_name,
+                column_index,
+            } => {
                 write!(
                     f,
                     "the CQL row contains a column {column_name} at column index {column_index}, but the corresponding field is not found in the Rust type",
@@ -384,11 +392,12 @@ impl Display for BuiltinTypeCheckErrorKind {
                     f,
                     "values for columns {column_names:?} are missing from the DB data but are required by the Rust type"
                 )
-            },
+            }
             BuiltinTypeCheckErrorKind::ColumnNameMismatch {
                 field_index,
-                column_index,rust_column_name,
-                db_column_name
+                column_index,
+                rust_column_name,
+                db_column_name,
             } => write!(
                 f,
                 "expected column with name {db_column_name} at column index {column_index}, but the Rust field name at corresponding field index {field_index} is {rust_column_name}",
@@ -401,7 +410,10 @@ impl Display for BuiltinTypeCheckErrorKind {
                 f,
                 "mismatched types in column {column_name} at index {column_index}: {err}"
             ),
-            BuiltinTypeCheckErrorKind::DuplicatedColumn { column_name, column_index } => write!(
+            BuiltinTypeCheckErrorKind::DuplicatedColumn {
+                column_name,
+                column_index,
+            } => write!(
                 f,
                 "column {column_name} occurs more than once in DB metadata; second occurrence is at column index {column_index}",
             ),
