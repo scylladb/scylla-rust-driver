@@ -129,7 +129,7 @@ impl ReplicationInfo {
         token: Token,
         datacenter_name: &str,
         replication_factor: usize,
-    ) -> impl Iterator<Item = &'a Arc<Node>> {
+    ) -> impl Iterator<Item = &'a Arc<Node>> + use<'a> {
         let dc_lb_data: &DatacenterNodes = self
             .datacenters
             .get(datacenter_name)

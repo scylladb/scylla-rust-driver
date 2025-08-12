@@ -150,7 +150,7 @@ impl Sharder {
     /// Stops once all possible ports have been returned
     ///
     /// The ports are chosen from ephemeral port range [49152, 65535].
-    pub fn iter_source_ports_for_shard(&self, shard: Shard) -> impl Iterator<Item = u16> {
+    pub fn iter_source_ports_for_shard(&self, shard: Shard) -> impl Iterator<Item = u16> + use<> {
         self.iter_source_ports_for_shard_from_range(
             shard,
             &ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
@@ -166,7 +166,7 @@ impl Sharder {
         &self,
         shard: Shard,
         port_range: &ShardAwarePortRange,
-    ) -> impl Iterator<Item = u16> {
+    ) -> impl Iterator<Item = u16> + use<> {
         assert!(shard < self.nr_shards.get() as u32);
 
         let (range_start, range_end) = (port_range.0.start(), port_range.0.end());

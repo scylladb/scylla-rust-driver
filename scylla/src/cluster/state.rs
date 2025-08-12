@@ -289,7 +289,7 @@ impl ClusterState {
         &self,
         table_spec: &TableSpec,
         token: Token,
-    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> + Clone {
+    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> + Clone + use<'_> {
         let keyspace = self.keyspaces.get(table_spec.ks_name());
         let strategy = keyspace
             .map(|k| &k.strategy)
@@ -330,7 +330,7 @@ impl ClusterState {
     pub(crate) fn iter_working_connections_per_node(
         &self,
     ) -> Result<
-        impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>>)> + '_,
+        impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>> + use<>)> + '_,
         ConnectionPoolError,
     > {
         // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.

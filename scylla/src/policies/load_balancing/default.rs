@@ -2766,7 +2766,7 @@ mod latency_awareness {
             }
         }
 
-        pub(super) fn generate_predicate(&self) -> impl Fn(&Node) -> bool {
+        pub(super) fn generate_predicate(&self) -> impl Fn(&Node) -> bool + use<> {
             let last_min_latency = self.last_min_latency.clone();
             let node_avgs = self.node_avgs.clone();
             let exclusion_threshold = self.exclusion_threshold;
