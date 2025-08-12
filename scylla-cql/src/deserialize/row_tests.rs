@@ -395,7 +395,7 @@ fn test_tuple_errors() {
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
         assert_matches!(
             &err.kind,
-            super::super::value::BuiltinTypeCheckErrorKind::MismatchedType {
+            &super::super::value::BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Native(NativeType::BigInt)]
             }
         );
