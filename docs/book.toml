@@ -7,7 +7,7 @@ multilingual = false
 src = "source"
 
 [rust]
-edition = "2021"
+edition = "2024"
 
 [output.html]
 default-theme = "ayu"
