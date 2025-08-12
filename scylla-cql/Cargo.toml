@@ -2,7 +2,7 @@
 name = "scylla-cql"
 version = "1.3.1"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.85"
 description = "CQL data types and primitives, for interacting with ScyllaDB."
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
