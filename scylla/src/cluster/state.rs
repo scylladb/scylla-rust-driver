@@ -56,17 +56,19 @@ impl std::fmt::Debug for ClusterStateNeatDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cluster_state = &self.0;
 
+        let ring_printer = {
+            struct RingSizePrinter(usize);
+            impl std::fmt::Debug for RingSizePrinter {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    write!(f, "<size={}>", self.0)
+                }
+            }
+            RingSizePrinter(cluster_state.locator.ring().len())
+        };
+
         f.debug_struct("ClusterState")
             .field("known_peers", &cluster_state.known_peers)
-            .field("ring", {
-                struct RingSizePrinter(usize);
-                impl std::fmt::Debug for RingSizePrinter {
-                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                        write!(f, "<size={}>", self.0)
-                    }
-                }
-                &RingSizePrinter(cluster_state.locator.ring().len())
-            })
+            .field("ring", &ring_printer)
             .field("keyspaces", &cluster_state.keyspaces.keys())
             .finish_non_exhaustive()
     }
