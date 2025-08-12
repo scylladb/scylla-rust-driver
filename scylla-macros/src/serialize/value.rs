@@ -120,12 +120,12 @@ pub(crate) fn derive_serialize_value(
     let ctx = Context { attributes, fields };
     ctx.validate(&input.ident)?;
 
-    let gen: Box<dyn Generator> = match ctx.attributes.flavor {
+    let generator: Box<dyn Generator> = match ctx.attributes.flavor {
         Flavor::MatchByName => Box::new(FieldSortingGenerator { ctx: &ctx }),
         Flavor::EnforceOrder => Box::new(FieldOrderedGenerator { ctx: &ctx }),
     };
 
-    let serialize_item = gen.generate_serialize();
+    let serialize_item = generator.generate_serialize();
 
     let res = parse_quote! {
         #[automatically_derived]

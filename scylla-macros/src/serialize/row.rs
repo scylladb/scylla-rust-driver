@@ -111,13 +111,13 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
     };
     ctx.validate(&input.ident)?;
 
-    let gen: Box<dyn Generator> = match ctx.attributes.flavor {
+    let generator: Box<dyn Generator> = match ctx.attributes.flavor {
         Flavor::MatchByName => Box::new(ColumnSortingGenerator { ctx: &ctx }),
         Flavor::EnforceOrder => Box::new(ColumnOrderedGenerator { ctx: &ctx }),
     };
 
-    let serialize_item = gen.generate_serialize();
-    let is_empty_item = gen.generate_is_empty();
+    let serialize_item = generator.generate_serialize();
+    let is_empty_item = generator.generate_is_empty();
 
     let res = parse_quote! {
         #[automatically_derived]
