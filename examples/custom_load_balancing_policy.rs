@@ -1,6 +1,6 @@
 use anyhow::Result;
-use rand::rng;
 use rand::Rng;
+use rand::rng;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;

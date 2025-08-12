@@ -12,8 +12,8 @@ pub mod startup;
 use batch::BatchTypeParseError;
 use thiserror::Error;
 
-use crate::serialize::row::SerializedValues;
 use crate::Consistency;
+use crate::serialize::row::SerializedValues;
 use bytes::Bytes;
 
 pub use auth_response::AuthResponse;
@@ -26,9 +26,9 @@ pub use startup::Startup;
 
 use self::batch::BatchStatement;
 
+use super::TryFromPrimitiveError;
 use super::frame_errors::{CqlRequestSerializationError, LowLevelDeserializationError};
 use super::types::SerialConsistency;
-use super::TryFromPrimitiveError;
 
 /// Possible requests sent by the client.
 // Why is it distinct from [RequestOpcode]?
@@ -253,17 +253,17 @@ mod tests {
 
     use crate::serialize::row::SerializedValues;
     use crate::{
+        Consistency,
         frame::{
             request::{
+                DeserializableRequest, SerializableRequest,
                 batch::{Batch, BatchStatement, BatchType},
                 execute::Execute,
                 query::{Query, QueryParameters},
-                DeserializableRequest, SerializableRequest,
             },
             response::result::{ColumnType, NativeType},
             types::{self, SerialConsistency},
         },
-        Consistency,
     };
 
     use super::query::PagingState;

@@ -9,7 +9,7 @@ use crate::frame::response::result::{
     ColumnSpec, DeserializedMetadataAndRawRows, ResultMetadata, ResultMetadataHolder,
 };
 
-use super::row::{mk_deser_err, BuiltinDeserializationErrorKind, ColumnIterator, DeserializeRow};
+use super::row::{BuiltinDeserializationErrorKind, ColumnIterator, DeserializeRow, mk_deser_err};
 use super::{DeserializationError, FrameSlice, TypeCheckError};
 use std::marker::PhantomData;
 
@@ -251,7 +251,7 @@ mod tests {
         ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, NativeType, ResultMetadata,
     };
 
-    use super::super::tests::{serialize_cells, spec, CELL1, CELL2};
+    use super::super::tests::{CELL1, CELL2, serialize_cells, spec};
     use super::{
         ColumnIterator, DeserializationError, FrameSlice, RawRowIterator, RawRowLendingIterator,
         TypedRowIterator,

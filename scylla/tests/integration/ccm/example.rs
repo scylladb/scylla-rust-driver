@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::ccm::lib::cluster::{Cluster, ClusterOptions};
-use crate::ccm::lib::{run_ccm_test, CLUSTER_VERSION};
+use crate::ccm::lib::{CLUSTER_VERSION, run_ccm_test};
 use crate::utils::setup_tracing;
 
 use tokio::sync::Mutex;

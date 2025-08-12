@@ -1,4 +1,4 @@
-use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
+use crate::utils::{PerformDDL, setup_tracing, test_with_3_node_cluster, unique_keyspace_name};
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::client::session::Session;
@@ -7,13 +7,13 @@ use scylla::cluster::NodeRef;
 use scylla::policies::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::FallthroughRetryPolicy;
 use scylla::routing::{Shard, Token};
+use scylla::statement::SerialConsistency;
 use scylla::statement::batch::BatchStatement;
 use scylla::statement::batch::{Batch, BatchType};
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
-use scylla::statement::SerialConsistency;
-use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::Consistency;
+use scylla_cql::frame::response::result::TableSpec;
 use scylla_proxy::ShardAwareness;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,

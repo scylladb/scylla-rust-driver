@@ -1,9 +1,9 @@
 //! CQL protocol-level representation of an `ERROR` response.
 
+use crate::Consistency;
 use crate::frame::frame_errors::{CqlErrorParseError, LowLevelDeserializationError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::types;
-use crate::Consistency;
 use byteorder::ReadBytesExt;
 use bytes::Bytes;
 use thiserror::Error;
@@ -234,8 +234,10 @@ pub enum DbError {
     TruncateError,
 
     /// Not enough nodes responded to the read request in time to satisfy required consistency level
-    #[error("Not enough nodes responded to the read request in time to satisfy required consistency level \
-            (consistency: {consistency}, received: {received}, required: {required}, data_present: {data_present})")]
+    #[error(
+        "Not enough nodes responded to the read request in time to satisfy required consistency level \
+            (consistency: {consistency}, received: {received}, required: {required}, data_present: {data_present})"
+    )]
     ReadTimeout {
         /// Consistency level of the query
         consistency: Consistency,
@@ -248,8 +250,10 @@ pub enum DbError {
     },
 
     /// Not enough nodes responded to the write request in time to satisfy required consistency level
-    #[error("Not enough nodes responded to the write request in time to satisfy required consistency level \
-            (consistency: {consistency}, received: {received}, required: {required}, write_type: {write_type})")]
+    #[error(
+        "Not enough nodes responded to the write request in time to satisfy required consistency level \
+            (consistency: {consistency}, received: {received}, required: {required}, write_type: {write_type})"
+    )]
     WriteTimeout {
         /// Consistency level of the query
         consistency: Consistency,
@@ -523,8 +527,8 @@ impl WriteType {
 #[cfg(test)]
 mod tests {
     use super::{DbError, Error, OperationType, WriteType};
-    use crate::frame::protocol_features::ProtocolFeatures;
     use crate::Consistency;
+    use crate::frame::protocol_features::ProtocolFeatures;
     use bytes::Bytes;
     use std::convert::TryInto;
 

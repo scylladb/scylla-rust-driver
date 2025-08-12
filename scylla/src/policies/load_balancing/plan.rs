@@ -1,4 +1,4 @@
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 use tracing::error;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
@@ -132,7 +132,10 @@ impl<'a> Iterator for Plan<'a> {
                         };
                         Some(Self::with_random_shard_if_unknown(node))
                     } else {
-                        error!("Load balancing policy returned an empty plan! The query cannot be executed. Routing info: {:?}", self.routing_info);
+                        error!(
+                            "Load balancing policy returned an empty plan! The query cannot be executed. Routing info: {:?}",
+                            self.routing_info
+                        );
                         self.state = PlanState::PickedNone;
                         None
                     }

@@ -12,9 +12,9 @@ use std::sync::Arc;
 pub use error::Error;
 pub use supported::Supported;
 
+use crate::frame::TryFromPrimitiveError;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::response::result::ResultMetadata;
-use crate::frame::TryFromPrimitiveError;
 
 use super::frame_errors::CqlResponseParseError;
 

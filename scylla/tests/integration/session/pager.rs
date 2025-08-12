@@ -1,6 +1,6 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use futures::{StreamExt as _, TryStreamExt as _};
@@ -13,8 +13,8 @@ use scylla::{
 use scylla_cql::Consistency;
 
 use crate::utils::{
-    create_new_session_builder, scylla_supports_tablets, setup_tracing, unique_keyspace_name,
-    PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
+    unique_keyspace_name,
 };
 
 // Reproduces the problem with execute_iter mentioned in #608.
@@ -59,7 +59,11 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     // Create a keyspace with replication factor that is larger than the cluster size
     let cluster_size = session.get_cluster_state().get_nodes_info().len();
     let ks = unique_keyspace_name();
-    let mut create_ks = format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}", ks, cluster_size + 1);
+    let mut create_ks = format!(
+        "CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}",
+        ks,
+        cluster_size + 1
+    );
     if scylla_supports_tablets(&session).await {
         create_ks += " and TABLETS = { 'enabled': false}";
     }

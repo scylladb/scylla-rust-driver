@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::utils::{
-    create_new_session_builder, scylla_supports_tablets, setup_tracing, test_with_3_node_cluster,
-    unique_keyspace_name, PerformDDL,
+    PerformDDL, create_new_session_builder, scylla_supports_tablets, setup_tracing,
+    test_with_3_node_cluster, unique_keyspace_name,
 };
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session_builder::SessionBuilder;

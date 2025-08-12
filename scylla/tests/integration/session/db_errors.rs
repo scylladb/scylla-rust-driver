@@ -1,5 +1,5 @@
 use crate::utils::{
-    create_new_session_builder, setup_tracing, supports_feature, unique_keyspace_name, PerformDDL,
+    PerformDDL, create_new_session_builder, setup_tracing, supports_feature, unique_keyspace_name,
 };
 
 use scylla::errors::OperationType;

@@ -1,4 +1,4 @@
-use futures::{stream, StreamExt};
+use futures::{StreamExt, stream};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 

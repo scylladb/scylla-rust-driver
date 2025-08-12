@@ -9,7 +9,7 @@ use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;
-use futures::{future::RemoteHandle, FutureExt};
+use futures::{FutureExt, future::RemoteHandle};
 use scylla_cql::frame::response::result::TableSpec;
 use std::collections::HashMap;
 use std::sync::Arc;

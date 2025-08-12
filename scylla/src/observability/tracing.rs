@@ -8,8 +8,8 @@
 //! as well as return a tracing ID in the response, which can be used to query the tracing
 //! info later.
 
-use crate::value::CqlTimestamp;
 use crate::DeserializeRow;
+use crate::value::CqlTimestamp;
 use itertools::Itertools;
 use scylla_cql::value::CqlTimeuuid;
 use std::collections::HashMap;
@@ -105,11 +105,9 @@ impl TracingInfo {
 }
 
 // A query used to query TracingInfo from system_traces.sessions
-pub(crate) const TRACES_SESSION_QUERY_STR: &str =
-    "SELECT client, command, coordinator, duration, parameters, request, started_at \
+pub(crate) const TRACES_SESSION_QUERY_STR: &str = "SELECT client, command, coordinator, duration, parameters, request, started_at \
     FROM system_traces.sessions WHERE session_id = ?";
 
 // A query used to query TracingEvent from system_traces.events
-pub(crate) const TRACES_EVENTS_QUERY_STR: &str =
-    "SELECT event_id, activity, source, source_elapsed, thread \
+pub(crate) const TRACES_EVENTS_QUERY_STR: &str = "SELECT event_id, activity, source, source_elapsed, thread \
     FROM system_traces.events WHERE session_id = ?";

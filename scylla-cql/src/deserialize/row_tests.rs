@@ -3,7 +3,7 @@ use bytes::Bytes;
 use scylla_macros::DeserializeRow;
 
 use crate::deserialize::row::BuiltinDeserializationErrorKind;
-use crate::deserialize::{value, DeserializationError, FrameSlice};
+use crate::deserialize::{DeserializationError, FrameSlice, value};
 use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
 
 use super::super::tests::{serialize_cells, spec};

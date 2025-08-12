@@ -10,16 +10,16 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::Stream;
+use scylla_cql::Consistency;
 use scylla_cql::deserialize::result::RawRowLendingIterator;
 use scylla_cql::deserialize::row::{ColumnIterator, DeserializeRow};
 use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
 use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::request::query::PagingState;
-use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::frame::response::NonErrorResponse;
+use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::serialize::row::SerializedValues;
-use scylla_cql::Consistency;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -40,7 +40,7 @@ use crate::response::query_result::ColumnSpecs;
 use crate::response::{NonErrorQueryResponse, QueryResponse};
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
-use tracing::{trace, trace_span, warn, Instrument};
+use tracing::{Instrument, trace, trace_span, warn};
 use uuid::Uuid;
 
 // Like std::task::ready!, but handles the whole stack of Poll<Option<Result<>>>.

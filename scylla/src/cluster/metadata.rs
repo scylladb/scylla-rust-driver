@@ -16,6 +16,7 @@
 //!     - [CollectionType],
 //!
 
+use crate::DeserializeRow;
 use crate::client::pager::{NextPageError, NextRowError, QueryPager};
 use crate::cluster::node::resolve_contact_points;
 use crate::deserialize::DeserializeOwnedRow;
@@ -30,14 +31,13 @@ use crate::policies::host_filter::HostFilter;
 use crate::routing::Token;
 use crate::statement::unprepared::Statement;
 use crate::utils::safe_format::IteratorSafeFormatExt;
-use crate::DeserializeRow;
 use scylla_cql::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
+use futures::Stream;
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
-use futures::Stream;
 use rand::seq::{IndexedRandom, SliceRandom};
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 use scylla_cql::frame::response::result::{ColumnSpec, TableSpec};
 use std::borrow::BorrowMut;
 use std::cell::Cell;
@@ -307,7 +307,7 @@ impl PreColumnType {
                         return Err(MissingUserDefinedType {
                             name,
                             keyspace: keyspace_name.clone(),
-                        })
+                        });
                     }
                 };
                 Ok(ColumnType::UserDefinedType { frozen, definition })
@@ -586,7 +586,9 @@ impl MetadataReader {
             if !initial {
                 // If no known peer is reachable, try falling back to initial contact points, in hope that
                 // there are some hostnames there which will resolve to reachable new addresses.
-                warn!("Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points.");
+                warn!(
+                    "Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points."
+                );
                 let (initial_peers, _hostnames) =
                     resolve_contact_points(&self.initial_known_nodes).await;
                 result = self
@@ -853,8 +855,9 @@ impl ControlConnection {
             })
             .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
-        let mut local_query =
-        Statement::new("select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'");
+        let mut local_query = Statement::new(
+            "select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'",
+        );
         local_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
         let local_query_stream = self
             .query_iter(local_query)
@@ -915,7 +918,13 @@ impl ControlConnection {
         let host_id = match host_id {
             Some(host_id) => host_id,
             None => {
-                warn!("{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.", source.describe(), untranslated_ip_addr, datacenter, rack);
+                warn!(
+                    "{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.",
+                    source.describe(),
+                    untranslated_ip_addr,
+                    datacenter,
+                    rack
+                );
                 return None;
             }
         };
@@ -951,7 +960,10 @@ impl ControlConnection {
                 // in order for it to work with non-standard token sizes.
                 // Also, we could implement support for Cassandra's other standard partitioners
                 // like RandomPartitioner or ByteOrderedPartitioner.
-                trace!("Couldn't parse tokens as 64-bit integers: {}, proceeding with a dummy token. If you're using a partitioner with different token size, consider migrating to murmur3", e);
+                trace!(
+                    "Couldn't parse tokens as 64-bit integers: {}, proceeding with a dummy token. If you're using a partitioner with different token size, consider migrating to murmur3",
+                    e
+                );
                 vec![Token::new(rand::rng().random::<i64>())]
             }
         };
@@ -1083,7 +1095,7 @@ impl ControlConnection {
                     return Ok((
                         keyspace_name,
                         Err(SingleKeyspaceMetadataError::MissingUDT(e)),
-                    ))
+                    ));
                 }
             };
 
@@ -1325,7 +1337,7 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), UdtM
 mod toposort_tests {
     use crate::test_utils::setup_tracing;
 
-    use super::{topo_sort_udts, UdtRow, UdtRowWithParsedFieldTypes};
+    use super::{UdtRow, UdtRowWithParsedFieldTypes, topo_sort_udts};
 
     const KEYSPACE1: &str = "KEYSPACE1";
     const KEYSPACE2: &str = "KEYSPACE2";

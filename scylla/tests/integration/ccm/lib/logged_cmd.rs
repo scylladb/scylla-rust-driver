@@ -269,9 +269,9 @@ impl LoggedCmd {
 mod tests {
     use std::fmt::Write;
     use std::sync::{Arc, Mutex};
+    use tracing::Subscriber;
     use tracing::field::Field;
     use tracing::subscriber::DefaultGuard;
-    use tracing::Subscriber;
     use tracing_subscriber::layer::{Context, SubscriberExt};
     use tracing_subscriber::registry::LookupSpan;
     use tracing_subscriber::{Layer, Registry};
@@ -345,7 +345,10 @@ mod tests {
                 .unwrap();
 
             let log_contents = logs.lock().unwrap().join("\n");
-            assert_eq!(log_contents, "started[1]      -> echo Test Success\nstdout[1]       ->  Test Success\nexited[1]       -> status = 0");
+            assert_eq!(
+                log_contents,
+                "started[1]      -> echo Test Success\nstdout[1]       ->  Test Success\nexited[1]       -> status = 0"
+            );
         }
 
         #[tokio::test]
@@ -360,13 +363,17 @@ mod tests {
                 .err();
 
             assert!(err.is_some());
-            assert!(err
-                .unwrap()
-                .to_string()
-                .contains("No such file or directory"));
+            assert!(
+                err.unwrap()
+                    .to_string()
+                    .contains("No such file or directory")
+            );
 
             let log_contents = logs.lock().unwrap().join("\n");
-            assert_eq!(log_contents, "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2");
+            assert_eq!(
+                log_contents,
+                "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2"
+            );
         }
 
         #[tokio::test]
@@ -387,7 +394,10 @@ mod tests {
             assert_eq!(status.code(), Some(2));
 
             let log_contents = logs.lock().unwrap().join("\n");
-            assert_eq!(log_contents, "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2");
+            assert_eq!(
+                log_contents,
+                "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2"
+            );
         }
 
         #[tokio::test]
@@ -408,7 +418,10 @@ mod tests {
                 .unwrap();
 
             let log_contents = logs.lock().unwrap().join("\n");
-            assert_eq!(log_contents, "env[1]          -> TEST_ENV=12345\nstarted[1]      -> printenv TEST_ENV\nstdout[1]       ->  12345\nexited[1]       -> status = 0");
+            assert_eq!(
+                log_contents,
+                "env[1]          -> TEST_ENV=12345\nstarted[1]      -> printenv TEST_ENV\nstdout[1]       ->  12345\nexited[1]       -> status = 0"
+            );
         }
     }
 
@@ -428,7 +441,10 @@ mod tests {
                 .unwrap();
 
             let log_contents = logs.lock().unwrap().join("\n");
-            assert_eq!(log_contents, "started[1]      -> echo Test Success\nstdout[1]       ->  Test Success\nexited[1]       -> status = 0");
+            assert_eq!(
+                log_contents,
+                "started[1]      -> echo Test Success\nstdout[1]       ->  Test Success\nexited[1]       -> status = 0"
+            );
         }
 
         #[test]
@@ -442,13 +458,17 @@ mod tests {
                 .err();
 
             assert!(err.is_some());
-            assert!(err
-                .unwrap()
-                .to_string()
-                .contains("No such file or directory"));
+            assert!(
+                err.unwrap()
+                    .to_string()
+                    .contains("No such file or directory")
+            );
 
             let log_contents = logs.lock().unwrap().join("\n");
-            assert_eq!(log_contents, "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2");
+            assert_eq!(
+                log_contents,
+                "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2"
+            );
         }
 
         #[test]
@@ -468,7 +488,10 @@ mod tests {
             assert_eq!(status.code(), Some(2));
 
             let log_contents = logs.lock().unwrap().join("\n");
-            assert_eq!(log_contents, "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2");
+            assert_eq!(
+                log_contents,
+                "started[1]      -> ls /nonexistent_path\nstderr[1]       ->  ls: cannot access '/nonexistent_path': No such file or directory\nexited[1]       -> status = 2"
+            );
         }
 
         #[test]
@@ -488,7 +511,10 @@ mod tests {
                 .unwrap();
 
             let log_contents = logs.lock().unwrap().join("\n");
-            assert_eq!(log_contents, "env[1]          -> TEST_ENV=12345\nstarted[1]      -> printenv TEST_ENV\nstdout[1]       ->  12345\nexited[1]       -> status = 0");
+            assert_eq!(
+                log_contents,
+                "env[1]          -> TEST_ENV=12345\nstarted[1]      -> printenv TEST_ENV\nstdout[1]       ->  12345\nexited[1]       -> status = 0"
+            );
         }
     }
 }

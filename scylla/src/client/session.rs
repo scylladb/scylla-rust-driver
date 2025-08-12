@@ -57,7 +57,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 #[cfg(feature = "unstable-cloud")]
 use tracing::warn;
-use tracing::{debug, error, trace, trace_span, Instrument};
+use tracing::{Instrument, debug, error, trace, trace_span};
 use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
@@ -1018,7 +1018,9 @@ impl Session {
             .query(statement, values, None, PagingState::start())
             .await?;
         if !paging_state_response.finished() {
-            error!("Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
+            error!(
+                "Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug."
+            );
             return Err(ExecutionError::LastAttemptError(
                 RequestAttemptError::NonfinishedPagingState,
             ));
@@ -1390,7 +1392,9 @@ impl Session {
             .execute(prepared, &serialized_values, None, PagingState::start())
             .await?;
         if !paging_state.finished() {
-            error!("Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
+            error!(
+                "Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug."
+            );
             return Err(ExecutionError::LastAttemptError(
                 RequestAttemptError::NonfinishedPagingState,
             ));
@@ -2176,7 +2180,7 @@ impl Session {
                     RetryDecision::DontRetry => break 'nodes_in_plan,
 
                     RetryDecision::IgnoreWriteError => {
-                        return Some(Ok((RunRequestResult::IgnoredWriteError, coordinator)))
+                        return Some(Ok((RunRequestResult::IgnoredWriteError, coordinator)));
                     }
                 };
             }
@@ -2284,7 +2288,7 @@ impl Session {
                 Some((_, Ok(SchemaNodeResult::BrokenConnection(e)))) => {
                     return Err(SchemaAgreementError::RequestError(
                         RequestAttemptError::BrokenConnectionError(e.clone()),
-                    ))
+                    ));
                 }
                 Some((_, Err(e))) => return Err(e.clone()),
                 None => return Err(SchemaAgreementError::RequiredHostAbsent(required_node)),

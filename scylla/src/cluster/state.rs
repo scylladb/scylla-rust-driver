@@ -3,9 +3,9 @@ use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
-use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use crate::routing::locator::ReplicaLocator;
-use crate::routing::partitioner::{calculate_token_for_partition_key, PartitionerName};
+use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
+use crate::routing::partitioner::{PartitionerName, calculate_token_for_partition_key};
 use crate::routing::{Shard, Token};
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
@@ -427,9 +427,15 @@ impl ClusterState {
             let tablet = match Tablet::from_raw_tablet(raw_tablet, replica_translator) {
                 Ok(t) => t,
                 Err((t, f)) => {
-                    debug!("Nodes ({}) that are replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} not present in current ClusterState.known_peers. \
+                    debug!(
+                        "Nodes ({}) that are replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} not present in current ClusterState.known_peers. \
                        Skipping these replicas until topology refresh",
-                       f.iter().safe_format(", "), table.ks_name(), table.table_name(), t.range().0.value(), t.range().1.value());
+                        f.iter().safe_format(", "),
+                        table.ks_name(),
+                        table.table_name(),
+                        t.range().0.value(),
+                        t.range().1.value()
+                    );
                     t
                 }
             };

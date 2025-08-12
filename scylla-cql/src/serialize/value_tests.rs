@@ -1,3 +1,4 @@
+use crate::SerializeValue;
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
 use crate::serialize::value::{
     BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
@@ -11,7 +12,6 @@ use crate::value::{
     Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
     MaybeUnset, Unset,
 };
-use crate::SerializeValue;
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -206,8 +206,8 @@ fn test_arc_errors() {
 #[cfg(feature = "bigdecimal-04")]
 #[test]
 fn test_native_errors_bigdecimal_04() {
-    use bigdecimal_04::num_bigint::BigInt;
     use bigdecimal_04::BigDecimal;
+    use bigdecimal_04::num_bigint::BigInt;
 
     // Value overflow (type out of representable range)
     let v = BigDecimal::new(BigInt::from(123), 1i64 << 40);
