@@ -1242,6 +1242,13 @@ struct TestUdtWithNoFieldsUnordered {}
 #[scylla(crate = crate, flavor = "enforce_order")]
 struct TestUdtWithNoFieldsOrdered {}
 
+// If deserialize is never called, rust warns that the struct is never constructed.
+#[allow(unreachable_code, dead_code)]
+fn dummy_deserialize_udts() {
+    let _ = deserialize::<TestUdtWithNoFieldsUnordered>(todo!(), todo!()).unwrap();
+    let _ = deserialize::<TestUdtWithNoFieldsOrdered>(todo!(), todo!()).unwrap();
+}
+
 #[test]
 fn test_udt_loose_ordering() {
     #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
