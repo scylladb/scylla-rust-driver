@@ -147,3 +147,7 @@ unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(cpp_rust_unstable)',
     'cfg(ccm_tests)',
 ] }
+
+[lints.clippy]
+# Needless lifetimes are often written for documentation purposes.
+needless_lifetimes = "allow"
