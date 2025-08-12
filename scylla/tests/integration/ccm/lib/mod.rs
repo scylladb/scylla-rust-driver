@@ -4,9 +4,7 @@ mod ip_allocator;
 mod logged_cmd;
 pub(crate) mod node;
 
-use std::future::Future;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::LazyLock;
 
 use cluster::Cluster;
@@ -57,11 +55,10 @@ static ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
     ccm_root_dir
 });
 
-pub(crate) async fn run_ccm_test<C, T, Fut>(make_cluster_options: C, test_body: T)
+pub(crate) async fn run_ccm_test<C, T>(make_cluster_options: C, test_body: T)
 where
     C: FnOnce() -> ClusterOptions,
-    T: FnOnce(Arc<tokio::sync::Mutex<Cluster>>) -> Fut,
-    Fut: Future<Output = ()>,
+    T: AsyncFnOnce(&mut Cluster) -> (),
 {
     run_ccm_test_with_configuration(
         make_cluster_options,
@@ -93,16 +90,14 @@ where
 ///
 /// run_ccm_test_with_configuration(ClusterOptions::default, configure_cluster, test).await;
 /// ```
-pub(crate) async fn run_ccm_test_with_configuration<C, Conf, ConfFut, T, TFut>(
+pub(crate) async fn run_ccm_test_with_configuration<C, Conf, T>(
     make_cluster_options: C,
     configure: Conf,
     test_body: T,
 ) where
     C: FnOnce() -> ClusterOptions,
-    Conf: FnOnce(Cluster) -> ConfFut,
-    ConfFut: Future<Output = Cluster>,
-    T: FnOnce(Arc<tokio::sync::Mutex<Cluster>>) -> TFut,
-    TFut: Future<Output = ()>,
+    Conf: AsyncFnOnce(Cluster) -> Cluster,
+    T: AsyncFnOnce(&mut Cluster) -> (),
 {
     let cluster_options = make_cluster_options();
     let mut cluster = Cluster::new(cluster_options)
@@ -112,16 +107,16 @@ pub(crate) async fn run_ccm_test_with_configuration<C, Conf, ConfFut, T, TFut>(
     cluster = configure(cluster).await;
     cluster.start(None).await.expect("failed to start cluster");
 
-    struct ClusterWrapper(Arc<tokio::sync::Mutex<Cluster>>);
+    struct ClusterWrapper(Cluster);
     impl Drop for ClusterWrapper {
         fn drop(&mut self) {
             if std::thread::panicking() && *TEST_KEEP_CLUSTER_ON_FAILURE {
                 println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
-                self.0.blocking_lock().set_keep_on_drop(true);
+                self.0.set_keep_on_drop(true);
             }
         }
     }
-    let wrapper = ClusterWrapper(Arc::new(tokio::sync::Mutex::new(cluster)));
-    test_body(Arc::clone(&wrapper.0)).await;
+    let mut wrapper = ClusterWrapper(cluster);
+    test_body(&mut wrapper.0).await;
     std::mem::drop(wrapper);
 }
