@@ -122,14 +122,12 @@ jobs:
         toolchain: ${{ env.rust_min }}
     - name: Print Rust version
       run: rustc --version
-    - name: Use MSRV Cargo.lock
-      run: mv Cargo.lock.msrv Cargo.lock
     - name: MSRV cargo check with features
-      run: cargo check --all-targets --all-features --locked
+      run: cargo check --all-targets --all-features
     - name: MSRV cargo check without features
-      run: cargo check --all-targets --locked -p scylla
+      run: cargo check --all-targets -p scylla
     - name: MSRV cargo check scylla-cql
-      run: cargo check --all-targets --locked -p scylla-cql
+      run: cargo check --all-targets -p scylla-cql
 
   # Tests that docstrings generate docs without warnings
   cargo_docs:
