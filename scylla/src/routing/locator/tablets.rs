@@ -498,9 +498,7 @@ impl TabletsInfo {
 
         let query_key = TableSpecQueryKey { table_spec };
 
-        let table_tablets = self.tablets.get(&query_key);
-
-        table_tablets
+        self.tablets.get(&query_key)
     }
 
     pub(crate) fn add_tablet(&mut self, table_spec: TableSpec<'static>, tablet: Tablet) {
