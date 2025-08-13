@@ -224,7 +224,15 @@ where
                 stmt
             };
 
-            if self.max_capacity == self.cache.len() {
+            // This loop was added to prevent a race condition (+ memory leak).
+            // When 2 threads enter this because cache is full, they may remove the same element,
+            // but add different ones. Then we get cache overflow.
+            // If we don't have a loop here, then this overflow would never disappear during typical
+            // operation of caching session.
+            // The loop has downsides: it could evict more entries than strictly necessary, or starve
+            // some thread for a bit. If this becomes a problem then maybe we should research how
+            // some more robust caching crates are implemented?
+            while self.max_capacity <= self.cache.len() {
                 // Cache is full, remove the first entry
                 // Don't hold a reference into the map (that's why the to_string() is called)
                 // This is because the documentation of the remove fn tells us that it may deadlock
