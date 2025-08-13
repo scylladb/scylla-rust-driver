@@ -1,8 +1,8 @@
 use crate::frame::response::result::NativeType;
 use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
+use crate::serialize::RowWriter;
 use crate::serialize::batch::{BatchValues, BatchValuesIterator};
 use crate::serialize::row::RowSerializationContext;
-use crate::serialize::RowWriter;
 
 use assert_matches::assert_matches;
 use bytes::BufMut;
@@ -66,7 +66,9 @@ fn slice_batch_values() {
         let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(
             request,
-            vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
+            vec![
+                0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5
+            ]
         );
     }
 
@@ -114,7 +116,9 @@ fn vec_batch_values() {
         let request = serialize_batch_value_iterator(&mut iter, cols);
         assert_eq!(
             request,
-            vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
+            vec![
+                0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5
+            ]
         );
     }
 

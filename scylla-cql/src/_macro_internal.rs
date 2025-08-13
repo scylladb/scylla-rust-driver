@@ -2,19 +2,19 @@ pub use crate::frame::response::result::{ColumnSpec, ColumnType};
 pub use crate::{DeserializeRow, DeserializeValue, SerializeRow, SerializeValue};
 
 pub use crate::deserialize::row::{
-    deser_error_replace_rust_name as row_deser_error_replace_rust_name,
-    mk_deser_err as mk_row_deser_err, mk_typck_err as mk_row_typck_err,
     BuiltinDeserializationError as BuiltinRowDeserializationError,
     BuiltinDeserializationErrorKind as BuiltinRowDeserializationErrorKind,
     BuiltinTypeCheckErrorKind as DeserBuiltinRowTypeCheckErrorKind, ColumnIterator, DeserializeRow,
+    deser_error_replace_rust_name as row_deser_error_replace_rust_name,
+    mk_deser_err as mk_row_deser_err, mk_typck_err as mk_row_typck_err,
 };
 pub use crate::deserialize::value::{
-    deser_error_replace_rust_name as value_deser_error_replace_rust_name,
-    mk_deser_err as mk_value_deser_err, mk_typck_err as mk_value_typck_err,
     BuiltinDeserializationError as BuiltinTypeDeserializationError,
     BuiltinDeserializationErrorKind as BuiltinTypeDeserializationErrorKind,
     BuiltinTypeCheckErrorKind as DeserBuiltinTypeTypeCheckErrorKind, DeserializeValue,
     UdtDeserializationErrorKind, UdtIterator, UdtTypeCheckErrorKind as DeserUdtTypeCheckErrorKind,
+    deser_error_replace_rust_name as value_deser_error_replace_rust_name,
+    mk_deser_err as mk_value_deser_err, mk_typck_err as mk_value_typck_err,
 };
 pub use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 pub use crate::serialize::row::{
@@ -121,13 +121,13 @@ pub mod ser {
         use crate::{
             frame::response::result::ColumnSpec,
             serialize::{
+                RowWriter, SerializationError,
                 row::{
-                    mk_ser_err, BuiltinSerializationErrorKind, BuiltinTypeCheckErrorKind,
-                    RowSerializationContext,
+                    BuiltinSerializationErrorKind, BuiltinTypeCheckErrorKind,
+                    RowSerializationContext, mk_ser_err,
                 },
                 value::SerializeValue,
                 writers::WrittenCellProof,
-                RowWriter, SerializationError,
             },
         };
 

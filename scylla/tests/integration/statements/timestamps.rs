@@ -7,13 +7,13 @@ use rand::random;
 use scylla::{
     policies::timestamp_generator::TimestampGenerator,
     statement::{
-        batch::{Batch, BatchType},
         Statement,
+        batch::{Batch, BatchType},
     },
 };
 
 use crate::utils::{
-    create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, setup_tracing, unique_keyspace_name,
 };
 
 #[tokio::test]
@@ -190,11 +190,13 @@ async fn test_timestamp_generator() {
 
     {
         let timestamps_locked = timestamps.lock().unwrap();
-        assert!(query_rows_result
-            .rows::<(i32, i32, i64)>()
-            .unwrap()
-            .map(|row_result| row_result.unwrap())
-            .all(|(_a, _b, writetime)| timestamps_locked.contains(&writetime)));
+        assert!(
+            query_rows_result
+                .rows::<(i32, i32, i64)>()
+                .unwrap()
+                .map(|row_result| row_result.unwrap())
+                .all(|(_a, _b, writetime)| timestamps_locked.contains(&writetime))
+        );
     }
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();

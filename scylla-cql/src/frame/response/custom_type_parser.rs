@@ -112,7 +112,7 @@ impl<'result> CustomTypeParser<'result> {
             _ => {
                 return Err(CustomTypeParseError::UnknownSimpleCustomTypeName(
                     name.into(),
-                ))
+                ));
             }
         };
         Ok(ColumnType::Native(native))

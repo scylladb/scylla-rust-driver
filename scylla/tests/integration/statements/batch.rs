@@ -1,6 +1,6 @@
 use crate::utils::{
-    create_new_session_builder, scylla_supports_tablets, setup_tracing, unique_keyspace_name,
-    PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
+    unique_keyspace_name,
 };
 use assert_matches::assert_matches;
 use scylla::client::session::Session;
@@ -248,7 +248,9 @@ async fn test_batch_lwts() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    let mut create_ks = format!("CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}");
+    let mut create_ks = format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
+    );
     if scylla_supports_tablets(&session).await {
         create_ks += " and TABLETS = { 'enabled': false}";
     }
@@ -573,7 +575,9 @@ async fn test_counter_batch() {
 
     // Need to disable tablets in this test because they don't support counters yet.
     // (https://github.com/scylladb/scylladb/commit/c70f321c6f581357afdf3fd8b4fe8e5c5bb9736e).
-    let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}");
+    let mut create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    );
     if scylla_supports_tablets(&session).await {
         create_ks += " AND TABLETS = {'enabled': false}"
     }

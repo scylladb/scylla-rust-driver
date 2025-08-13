@@ -334,6 +334,32 @@ macro_rules! test_crate {
             #[scylla(default_when_null)]
             d: ::core::primitive::i32,
         }
+
+        // If deserialize is never called, rust warns that the struct is never constructed.
+        #[allow(unreachable_code, dead_code)]
+        fn dummy_deserialize() {
+            use _scylla::deserialize::value::DeserializeValue;
+            use _scylla::deserialize::row::DeserializeRow;
+            use ::std::todo;
+            #[allow(clippy::diverging_sub_expression)]
+            fn deserialize_value<'x, T: DeserializeValue<'x, 'x>>() {
+                let _ = <T as DeserializeValue<'x, 'x>>::deserialize(todo!(), todo!());
+            }
+            #[allow(clippy::diverging_sub_expression)]
+            fn deserialize_row<'x, T: DeserializeRow<'x, 'x>>() {
+                let _ = <T as DeserializeRow<'x, 'x>>::deserialize(todo!());
+            }
+            deserialize_value::<TestStructByName>();
+            deserialize_value::<TestStructByNameStrict>();
+            deserialize_value::<TestStructOrdered>();
+            deserialize_value::<TestStructOrderedStrict>();
+            deserialize_value::<TestStructOrderedSkipped>();
+            deserialize_value::<TestStructOrderedStrictSkipped>();
+            deserialize_value::<TestStructOrderedStrictSkipped>();
+            // For some reson, TestRowByName doesn't trigger the warning.
+            deserialize_row::<TestRowByOrder>();
+            deserialize_row::<TestRowByOrderSkipped>();
+        }
     };
 }
 

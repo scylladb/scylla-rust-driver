@@ -477,7 +477,7 @@ impl Metrics {
     fn percentiles(
         h: &Histogram,
         percentiles: &[f64],
-    ) -> Result<impl Iterator<Item = u64>, MetricsError> {
+    ) -> Result<impl Iterator<Item = u64> + use<>, MetricsError> {
         let res = h.percentiles(percentiles);
 
         match res {

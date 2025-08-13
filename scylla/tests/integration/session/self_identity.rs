@@ -1,7 +1,7 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
+use scylla::client::SelfIdentity;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::client::SelfIdentity;
 use scylla_cql::frame::request::options;
 use scylla_cql::frame::types;
 use scylla_proxy::{

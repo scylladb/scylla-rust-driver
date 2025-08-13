@@ -8,8 +8,8 @@ use tokio::sync::mpsc;
 use crate::setup_tracing;
 
 use crate::{
-    frame::{FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode},
     TargetShard,
+    frame::{FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode},
 };
 use scylla_cql::frame::response::error::DbError;
 
@@ -104,9 +104,7 @@ impl Condition {
                     })
                 })
                 .unwrap_or(false),
-            Condition::RandomWithProbability(probability) => {
-                rand::rng().random_bool(*probability)
-            }
+            Condition::RandomWithProbability(probability) => rand::rng().random_bool(*probability),
 
             Condition::TrueForLimitedTimes(times) => {
                 let val = *times > 0;
@@ -114,9 +112,9 @@ impl Condition {
                     *times -= 1;
                 }
                 val
-            },
+            }
 
-            Condition::ConnectionRegisteredAnyEvent => ctx.connection_has_events
+            Condition::ConnectionRegisteredAnyEvent => ctx.connection_has_events,
         }
     }
 
@@ -438,8 +436,8 @@ impl RequestReaction {
 pub mod example_db_errors {
     use bytes::Bytes;
     use scylla_cql::{
-        frame::response::error::{DbError, WriteType},
         Consistency,
+        frame::response::error::{DbError, WriteType},
     };
 
     pub fn syntax_error() -> DbError {

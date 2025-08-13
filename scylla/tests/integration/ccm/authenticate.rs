@@ -4,11 +4,10 @@ use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use scylla::authentication::{AuthenticatorProvider, AuthenticatorSession};
 use scylla::errors::AuthError;
-use tokio::sync::Mutex;
 
 use crate::ccm::lib::cluster::{Cluster, ClusterOptions};
-use crate::ccm::lib::{run_ccm_test_with_configuration, CLUSTER_VERSION};
-use crate::utils::{setup_tracing, unique_keyspace_name, PerformDDL};
+use crate::ccm::lib::{CLUSTER_VERSION, run_ccm_test_with_configuration};
+use crate::utils::{PerformDDL, setup_tracing, unique_keyspace_name};
 
 fn cluster_1_node() -> ClusterOptions {
     ClusterOptions {
@@ -19,14 +18,13 @@ fn cluster_1_node() -> ClusterOptions {
     }
 }
 
-async fn run_ccm_auth_test_cluster_one_node<T, TFut>(test: T)
+async fn run_ccm_auth_test_cluster_one_node<T>(test: T)
 where
-    T: FnOnce(Arc<Mutex<Cluster>>) -> TFut,
-    TFut: std::future::Future<Output = ()>,
+    T: AsyncFnOnce(&mut Cluster) -> (),
 {
     run_ccm_test_with_configuration(
         cluster_1_node,
-        |mut cluster| async move {
+        |mut cluster: Cluster| async move {
             cluster
                 .enable_password_authentication()
                 .await
@@ -42,9 +40,7 @@ where
 #[cfg_attr(not(ccm_tests), ignore)]
 async fn authenticate_superuser_cluster_one_node() {
     setup_tracing();
-    async fn test(cluster: Arc<Mutex<Cluster>>) {
-        let cluster = cluster.lock().await;
-
+    async fn test(cluster: &mut Cluster) {
         tracing::info!(
             "Connecting to {:?} with cassandra superuser...",
             cluster.nodes().get_contact_endpoints().await
@@ -107,9 +103,7 @@ impl AuthenticatorProvider for CustomAuthenticatorProvider {
 #[cfg_attr(not(ccm_tests), ignore)]
 async fn custom_authentication_cluster_one_node() {
     setup_tracing();
-    async fn test(cluster: Arc<Mutex<Cluster>>) {
-        let cluster = cluster.lock().await;
-
+    async fn test(cluster: &mut Cluster) {
         tracing::info!(
             "Connecting to {:?} with custom authenticator as cassandra superuser...",
             cluster.nodes().get_contact_endpoints().await

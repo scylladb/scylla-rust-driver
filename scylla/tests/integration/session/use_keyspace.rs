@@ -4,7 +4,7 @@ use scylla::{
 };
 
 use crate::utils::{
-    create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, setup_tracing, unique_keyspace_name,
 };
 
 #[tokio::test]
@@ -50,10 +50,12 @@ async fn test_use_keyspace() {
     assert_eq!(rows, vec!["test1".to_string(), "test2".to_string()]);
 
     // Test that trying to use nonexisting keyspace fails
-    assert!(session
-        .use_keyspace("this_keyspace_does_not_exist_at_all", false)
-        .await
-        .is_err());
+    assert!(
+        session
+            .use_keyspace("this_keyspace_does_not_exist_at_all", false)
+            .await
+            .is_err()
+    );
 
     // Test that invalid keyspaces get rejected
     assert!(matches!(
@@ -223,15 +225,19 @@ async fn test_raw_use_keyspace() {
     assert_eq!(rows, vec!["raw_test".to_string()]);
 
     // Check if case sensitivity is correctly detected
-    assert!(session
-        .query_unpaged(format!("use    \"{}\"    ;", ks.to_uppercase()), &[])
-        .await
-        .is_err());
+    assert!(
+        session
+            .query_unpaged(format!("use    \"{}\"    ;", ks.to_uppercase()), &[])
+            .await
+            .is_err()
+    );
 
-    assert!(session
-        .query_unpaged(format!("use    {}    ;", ks.to_uppercase()), &[])
-        .await
-        .is_ok());
+    assert!(
+        session
+            .query_unpaged(format!("use    {}    ;", ks.to_uppercase()), &[])
+            .await
+            .is_ok()
+    );
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

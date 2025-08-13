@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::value::Row;

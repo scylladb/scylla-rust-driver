@@ -49,7 +49,7 @@ impl<'a> RowSerializationContext<'a> {
 
     /// Returns column/bind marker specifications for given query.
     #[inline]
-    pub fn columns(&self) -> &'a [ColumnSpec] {
+    pub fn columns(&self) -> &'a [ColumnSpec<'_>] {
         self.columns
     }
 }
@@ -186,7 +186,7 @@ macro_rules! impl_serialize_row_for_map {
                             BuiltinTypeCheckErrorKind::ValueMissingForColumn {
                                 name: col.name().to_owned(),
                             },
-                        ))
+                        ));
                     }
                     Some(v) => {
                         $crate::_macro_internal::ser::row::serialize_column::<Self>(
@@ -408,8 +408,14 @@ pub enum BuiltinTypeCheckErrorKind {
 impl Display for BuiltinTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuiltinTypeCheckErrorKind::WrongColumnCount { rust_cols, cql_cols } => {
-                write!(f, "wrong column count: the statement operates on {cql_cols} columns, but the given rust type provides {rust_cols}")
+            BuiltinTypeCheckErrorKind::WrongColumnCount {
+                rust_cols,
+                cql_cols,
+            } => {
+                write!(
+                    f,
+                    "wrong column count: the statement operates on {cql_cols} columns, but the given rust type provides {rust_cols}"
+                )
             }
             BuiltinTypeCheckErrorKind::NoColumnWithName { name } => {
                 write!(
@@ -423,7 +429,10 @@ impl Display for BuiltinTypeCheckErrorKind {
                     "value for column {name} was not provided, but the query requires it"
                 )
             }
-            BuiltinTypeCheckErrorKind::ColumnNameMismatch { rust_column_name, db_column_name } => write!(
+            BuiltinTypeCheckErrorKind::ColumnNameMismatch {
+                rust_column_name,
+                db_column_name,
+            } => write!(
                 f,
                 "expected column with name {db_column_name} at given position, but the Rust field name is {rust_column_name}"
             ),
@@ -530,7 +539,7 @@ impl SerializedValues {
 
     /// Returns an iterator over the values serialized into the object so far.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = RawValue> {
+    pub fn iter(&self) -> impl Iterator<Item = RawValue<'_>> {
         SerializedValuesIterator {
             serialized_values: &self.serialized_values,
         }

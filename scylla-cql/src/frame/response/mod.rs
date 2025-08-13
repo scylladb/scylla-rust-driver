@@ -12,9 +12,9 @@ use std::sync::Arc;
 pub use error::Error;
 pub use supported::Supported;
 
+use crate::frame::TryFromPrimitiveError;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::response::result::ResultMetadata;
-use crate::frame::TryFromPrimitiveError;
 
 use super::frame_errors::CqlResponseParseError;
 
@@ -35,7 +35,7 @@ pub enum CqlResponseKind {
 
     ///  Indicates that the server requires authentication, and which authentication
     /// mechanism to use.
-
+    ///
     /// The authentication is SASL based and thus consists of a number of server
     /// challenges (AUTH_CHALLENGE) followed by client responses (AUTH_RESPONSE).
     /// The initial exchange is however bootstrapped by an initial client response.

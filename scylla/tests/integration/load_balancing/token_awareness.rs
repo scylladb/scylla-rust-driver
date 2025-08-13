@@ -1,6 +1,6 @@
 use crate::utils::{
-    create_new_session_builder, scylla_supports_tablets, setup_tracing, unique_keyspace_name,
-    PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
+    unique_keyspace_name,
 };
 
 #[tokio::test]

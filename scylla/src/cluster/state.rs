@@ -3,9 +3,9 @@ use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
-use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use crate::routing::locator::ReplicaLocator;
-use crate::routing::partitioner::{calculate_token_for_partition_key, PartitionerName};
+use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
+use crate::routing::partitioner::{PartitionerName, calculate_token_for_partition_key};
 use crate::routing::{Shard, Token};
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
@@ -56,17 +56,19 @@ impl std::fmt::Debug for ClusterStateNeatDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cluster_state = &self.0;
 
+        let ring_printer = {
+            struct RingSizePrinter(usize);
+            impl std::fmt::Debug for RingSizePrinter {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    write!(f, "<size={}>", self.0)
+                }
+            }
+            RingSizePrinter(cluster_state.locator.ring().len())
+        };
+
         f.debug_struct("ClusterState")
             .field("known_peers", &cluster_state.known_peers)
-            .field("ring", {
-                struct RingSizePrinter(usize);
-                impl std::fmt::Debug for RingSizePrinter {
-                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                        write!(f, "<size={}>", self.0)
-                    }
-                }
-                &RingSizePrinter(cluster_state.locator.ring().len())
-            })
+            .field("ring", &ring_printer)
             .field("keyspaces", &cluster_state.keyspaces.keys())
             .finish_non_exhaustive()
     }
@@ -289,7 +291,7 @@ impl ClusterState {
         &self,
         table_spec: &TableSpec,
         token: Token,
-    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> + Clone {
+    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> + Clone + use<'_> {
         let keyspace = self.keyspaces.get(table_spec.ks_name());
         let strategy = keyspace
             .map(|k| &k.strategy)
@@ -330,7 +332,7 @@ impl ClusterState {
     pub(crate) fn iter_working_connections_per_node(
         &self,
     ) -> Result<
-        impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>>)> + '_,
+        impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>> + use<>)> + '_,
         ConnectionPoolError,
     > {
         // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
@@ -425,9 +427,15 @@ impl ClusterState {
             let tablet = match Tablet::from_raw_tablet(raw_tablet, replica_translator) {
                 Ok(t) => t,
                 Err((t, f)) => {
-                    debug!("Nodes ({}) that are replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} not present in current ClusterState.known_peers. \
+                    debug!(
+                        "Nodes ({}) that are replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} not present in current ClusterState.known_peers. \
                        Skipping these replicas until topology refresh",
-                       f.iter().safe_format(", "), table.ks_name(), table.table_name(), t.range().0.value(), t.range().1.value());
+                        f.iter().safe_format(", "),
+                        table.ks_name(),
+                        table.table_name(),
+                        t.range().0.value(),
+                        t.range().1.value()
+                    );
                     t
                 }
             };

@@ -1,8 +1,8 @@
 use crate::ccm::lib::node::NodeOptions;
 
-use super::cli_wrapper::cluster::Ccm;
 use super::cli_wrapper::DBType;
 use super::cli_wrapper::NodeStartOptions;
+use super::cli_wrapper::cluster::Ccm;
 use super::ip_allocator::NetPrefix;
 use super::logged_cmd::LoggedCmd;
 use super::node::{Node, NodeId, NodeStatus};

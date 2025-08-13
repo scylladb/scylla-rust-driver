@@ -115,10 +115,10 @@ pub mod value {
 pub mod frame {
     //! Abstractions of the CQL wire protocol.
 
-    pub use scylla_cql::frame::{frame_errors, Authenticator, Compression};
+    pub use scylla_cql::frame::{Authenticator, Compression, frame_errors};
     pub(crate) use scylla_cql::frame::{
-        parse_response_body_extensions, protocol_features, read_response_frame, request,
-        server_event_type, FrameParams, SerializedRequest,
+        FrameParams, SerializedRequest, parse_response_body_extensions, protocol_features,
+        read_response_frame, request, server_event_type,
     };
 
     pub mod types {
@@ -264,8 +264,8 @@ pub(crate) use utils::test_utils;
 pub mod internal_testing {
     use scylla_cql::serialize::row::SerializedValues;
 
-    use crate::routing::partitioner::PartitionerName;
     use crate::routing::Token;
+    use crate::routing::partitioner::PartitionerName;
     use crate::statement::prepared::TokenCalculationError;
 
     pub fn calculate_token_for_partition_key(

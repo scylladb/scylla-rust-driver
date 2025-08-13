@@ -154,7 +154,9 @@ fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::
             let udt_field_name = field.udt_field_name();
             if let Some(other_field) = used_names.get(&udt_field_name) {
                 let other_field_ident = other_field.ident.as_ref().unwrap();
-                let msg = format!("the UDT field name `{udt_field_name}` used by this struct field is already used by field `{other_field_ident}`");
+                let msg = format!(
+                    "the UDT field name `{udt_field_name}` used by this struct field is already used by field `{other_field_ident}`"
+                );
                 let err = darling::Error::custom(msg).with_span(&field.ident);
                 errors.push(err);
             } else {

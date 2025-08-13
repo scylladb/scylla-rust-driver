@@ -7,13 +7,13 @@ use bytes::Bytes;
 use thiserror::Error;
 
 use crate::{
-    frame::request::{query, RequestOpcode, SerializableRequest},
+    frame::request::{RequestOpcode, SerializableRequest, query},
     frame::types,
 };
 
 use super::{
-    query::{QueryParameters, QueryParametersSerializationError},
     DeserializableRequest, RequestDeserializationError,
+    query::{QueryParameters, QueryParametersSerializationError},
 };
 
 /// CQL protocol-level representation of an `EXECUTE` request,

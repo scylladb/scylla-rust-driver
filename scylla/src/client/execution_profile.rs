@@ -165,7 +165,7 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
-use scylla_cql::{frame::types::SerialConsistency, Consistency};
+use scylla_cql::{Consistency, frame::types::SerialConsistency};
 
 use crate::policies::load_balancing::LoadBalancingPolicy;
 use crate::policies::retry::RetryPolicy;
@@ -176,8 +176,8 @@ pub(crate) mod defaults {
     use crate::policies::load_balancing::{self, LoadBalancingPolicy};
     use crate::policies::retry::{DefaultRetryPolicy, RetryPolicy};
     use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
-    use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
+    use scylla_cql::frame::types::SerialConsistency;
     use std::sync::Arc;
     use std::time::Duration;
     pub(crate) fn consistency() -> Consistency {
@@ -507,12 +507,12 @@ pub struct ExecutionProfileHandle(Arc<(ArcSwap<ExecutionProfileInner>, Option<St
 
 impl ExecutionProfileHandle {
     pub(crate) fn access(&self) -> Arc<ExecutionProfileInner> {
-        self.0 .0.load_full()
+        self.0.0.load_full()
     }
 
     /// Creates a builder having all options set to the same as set in the ExecutionProfile pointed by this handle.
     pub fn pointee_to_builder(&self) -> ExecutionProfileBuilder {
-        self.0 .0.load().to_builder()
+        self.0.0.load().to_builder()
     }
 
     /// Returns execution profile pointed by this handle.
@@ -523,6 +523,6 @@ impl ExecutionProfileHandle {
     /// Makes the handle point to a new execution profile.
     /// All entities (statements/Session) holding this handle will reflect the change.
     pub fn map_to_another_profile(&mut self, profile: ExecutionProfile) {
-        self.0 .0.store(profile.0)
+        self.0.0.store(profile.0)
     }
 }

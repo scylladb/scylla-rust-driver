@@ -35,8 +35,8 @@ pub use scylla_cql::frame::frame_errors::{
     FrameHeaderParseError,
 };
 pub use scylla_cql::frame::request::CqlRequestKind;
-pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
 pub use scylla_cql::frame::response::CqlResponseKind;
+pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
 pub use scylla_cql::serialize::SerializationError;
 
 /// Error that occurred during request execution
@@ -104,7 +104,9 @@ pub enum PrepareError {
     ConnectionPoolError(#[from] ConnectionPoolError),
 
     /// Failed to prepare statement on every connection from the pool.
-    #[error("Preparation failed on every connection from the selected pool. First attempt error: {first_attempt}")]
+    #[error(
+        "Preparation failed on every connection from the selected pool. First attempt error: {first_attempt}"
+    )]
     AllAttemptsFailed {
         /// Error that the first attempt failed with.
         first_attempt: RequestAttemptError,
@@ -172,7 +174,9 @@ pub enum UseKeyspaceError {
     RequestError(#[from] RequestAttemptError),
 
     /// Keyspace name mismatch.
-    #[error("Keyspace name mismatch; expected: {expected_keyspace_name_lowercase}, received: {result_keyspace_name_lowercase}")]
+    #[error(
+        "Keyspace name mismatch; expected: {expected_keyspace_name_lowercase}, received: {result_keyspace_name_lowercase}"
+    )]
     KeyspaceNameMismatch {
         /// Expected keyspace name, in lowercase.
         expected_keyspace_name_lowercase: String,
@@ -464,11 +468,15 @@ pub enum BadQuery {
     SerializationError(#[from] SerializationError),
 
     /// Serialized values are too long to compute partition key.
-    #[error("Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}")]
+    #[error(
+        "Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}"
+    )]
     ValuesTooLongForKey(usize, usize),
 
     /// Too many statements in the batch statement.
-    #[error("Number of statements in Batch Statement supplied is {0} which has exceeded the max value of 65,535")]
+    #[error(
+        "Number of statements in Batch Statement supplied is {0} which has exceeded the max value of 65,535"
+    )]
     TooManyQueriesInBatchStatement(usize),
 }
 
@@ -481,11 +489,15 @@ pub enum BadKeyspaceName {
     Empty,
 
     /// Keyspace name too long, must be up to 48 characters
-    #[error("Keyspace name too long, must be up to 48 characters, found {1} characters. Bad keyspace name: '{0}'")]
+    #[error(
+        "Keyspace name too long, must be up to 48 characters, found {1} characters. Bad keyspace name: '{0}'"
+    )]
     TooLong(String, usize),
 
     /// Illegal character - only alphanumeric and underscores allowed.
-    #[error("Illegal character found: '{1}', only alphanumeric and underscores allowed. Bad keyspace name: '{0}'")]
+    #[error(
+        "Illegal character found: '{1}', only alphanumeric and underscores allowed. Bad keyspace name: '{0}'"
+    )]
     IllegalCharacter(String, char),
 }
 
@@ -661,7 +673,9 @@ pub enum ConnectionSetupRequestErrorKind {
     /// User did not provide authentication while the cluster requires it.
     /// See [`SessionBuilder::user`](crate::client::session_builder::SessionBuilder::user)
     /// and/or [`SessionBuilder::authenticator_provider`](crate::client::session_builder::SessionBuilder::authenticator_provider).
-    #[error("Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials or SessionBuilder::authenticator_provider to provide custom authenticator")]
+    #[error(
+        "Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials or SessionBuilder::authenticator_provider to provide custom authenticator"
+    )]
     MissingAuthentication,
 }
 
@@ -773,7 +787,9 @@ pub enum CqlEventHandlingError {
 
     /// Driver failed to send event data between the internal tasks.
     /// It implies that connection was broken for some reason.
-    #[error("Failed to send event info via channel. The channel is probably closed, which is caused by connection being broken")]
+    #[error(
+        "Failed to send event info via channel. The channel is probably closed, which is caused by connection being broken"
+    )]
     SendError,
 }
 
@@ -791,11 +807,11 @@ pub enum CqlEventHandlingError {
 pub enum RequestError {
     /// Load balancing policy returned an empty plan.
     #[error(
-            "Load balancing policy returned an empty plan.\
+        "Load balancing policy returned an empty plan.\
             First thing to investigate should be the logic of custom LBP implementation.\
             If you think that your LBP implementation is correct, or you make use of `DefaultPolicy`,\
             then this is most probably a driver bug!"
-        )]
+    )]
     EmptyPlan,
 
     /// Selected node's connection pool is in invalid state.
@@ -900,7 +916,9 @@ pub enum RequestAttemptError {
     RepreparedIdMissingInBatch,
 
     /// A result with nonfinished paging state received for unpaged query.
-    #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
+    #[error(
+        "Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug."
+    )]
     NonfinishedPagingState,
 }
 

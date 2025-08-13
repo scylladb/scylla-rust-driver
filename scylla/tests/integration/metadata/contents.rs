@@ -7,8 +7,8 @@ use scylla::{
 };
 
 use crate::utils::{
-    create_new_session_builder, scylla_supports_tablets, setup_tracing, unique_keyspace_name,
-    PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
+    unique_keyspace_name,
 };
 
 fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType<'_>> {
@@ -453,7 +453,9 @@ async fn test_views_in_schema_info() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}");
+    let mut create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    );
     // Materialized views + tablets are not supported in Scylla 2025.1.
     if scylla_supports_tablets(&session).await {
         create_ks += " and TABLETS = { 'enabled': false}";

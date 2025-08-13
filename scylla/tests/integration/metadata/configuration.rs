@@ -2,8 +2,8 @@
 //! iff ScyllaDB is the target node (else ignores the custom timeout).
 
 use crate::utils::{
-    create_new_session_builder, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
-    PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, setup_tracing, test_with_3_node_cluster,
+    unique_keyspace_name,
 };
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -18,8 +18,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::error::TryRecvError;
 use tracing::info;
 
 // By default, custom metadata request timeout is set to 2 seconds.
@@ -341,14 +341,18 @@ async fn test_keyspaces_to_fetch() {
             .unwrap();
     }
     session_default.await_schema_agreement().await.unwrap();
-    assert!(session_default
-        .get_cluster_state()
-        .get_keyspace(&ks1)
-        .is_some());
-    assert!(session_default
-        .get_cluster_state()
-        .get_keyspace(&ks2)
-        .is_some());
+    assert!(
+        session_default
+            .get_cluster_state()
+            .get_keyspace(&ks1)
+            .is_some()
+    );
+    assert!(
+        session_default
+            .get_cluster_state()
+            .get_keyspace(&ks2)
+            .is_some()
+    );
 
     let session1 = create_new_session_builder()
         .keyspaces_to_fetch([&ks1])

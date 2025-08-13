@@ -1,5 +1,5 @@
-use futures::future::try_join_all;
 use futures::Future;
+use futures::future::try_join_all;
 use itertools::Either;
 use scylla::client::caching_session::CachingSession;
 use scylla::client::execution_profile::ExecutionProfile;
@@ -24,13 +24,13 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::process::Command;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{error, warn};
+use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Layer;
 use uuid::Uuid;
 
 use scylla_proxy::{Node, Proxy, ProxyError, RunningProxy, ShardAwareness};
@@ -274,10 +274,15 @@ impl RetrySession for SchemaQueriesRetrySession {
                 // In this case we really should do something about it in the
                 // core, because it is absurd for DDL queries to fail this often.
                 if self.count >= 10 {
-                    error!("Received TENTH(!) group 0 concurrent modification error during DDL. Please fix Scylla Core.");
+                    error!(
+                        "Received TENTH(!) group 0 concurrent modification error during DDL. Please fix Scylla Core."
+                    );
                     RetryDecision::DontRetry
                 } else {
-                    warn!("Received group 0 concurrent modification error during DDL. Performing retry #{}.", self.count);
+                    warn!(
+                        "Received group 0 concurrent modification error during DDL. Performing retry #{}.",
+                        self.count
+                    );
                     RetryDecision::RetrySameTarget(None)
                 }
             }

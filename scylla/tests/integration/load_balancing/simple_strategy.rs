@@ -1,4 +1,4 @@
-use crate::utils::{create_new_session_builder, unique_keyspace_name, PerformDDL as _};
+use crate::utils::{PerformDDL as _, create_new_session_builder, unique_keyspace_name};
 
 /// It's recommended to use NetworkTopologyStrategy everywhere, so most tests use only NetworkTopologyStrategy.
 /// We still support SimpleStrategy, so to make sure that SimpleStrategy works correctly this test runs

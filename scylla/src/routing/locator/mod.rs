@@ -17,7 +17,7 @@ pub(crate) mod tablets;
 pub(crate) mod test;
 mod token_ring;
 
-use rand::{seq::IteratorRandom, Rng};
+use rand::{Rng, seq::IteratorRandom};
 use scylla_cql::frame::response::result::TableSpec;
 pub use token_ring::TokenRing;
 
@@ -28,7 +28,7 @@ use crate::cluster::{Node, NodeRef};
 use crate::routing::{Shard, Token};
 use itertools::Itertools;
 use precomputed_replicas::PrecomputedReplicas;
-use replicas::{ReplicasArray, EMPTY_REPLICAS};
+use replicas::{EMPTY_REPLICAS, ReplicasArray};
 use replication_info::ReplicationInfo;
 use std::{
     cmp,
@@ -175,7 +175,10 @@ impl ReplicaLocator {
                     }
                 }
                 Strategy::Other { name, .. } => {
-                    debug!("Unknown strategy ({}), falling back to SimpleStrategy with replication_factor = 1", name)
+                    debug!(
+                        "Unknown strategy ({}), falling back to SimpleStrategy with replication_factor = 1",
+                        name
+                    )
                 }
                 _ => (),
             }
@@ -848,7 +851,7 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{routing::locator::test::*, routing::Token, test_utils::setup_tracing};
+    use crate::{routing::Token, routing::locator::test::*, test_utils::setup_tracing};
 
     #[tokio::test]
     async fn test_replicas_ordered() {

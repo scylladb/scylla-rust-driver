@@ -1,10 +1,10 @@
 use super::tls::{TlsConfig, TlsProvider};
 use crate::authentication::AuthenticatorProvider;
-use crate::client::pager::{NextRowError, QueryPager};
 use crate::client::Compression;
 use crate::client::SelfIdentity;
-use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
+use crate::client::pager::{NextRowError, QueryPager};
 use crate::cluster::NodeAddr;
+use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
@@ -13,11 +13,10 @@ use crate::errors::{
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
-    self,
-    request::{self, batch, execute, query, register, SerializableRequest},
-    response::{event::Event, result, Response, ResponseOpcode},
+    self, FrameParams, SerializedRequest,
+    request::{self, SerializableRequest, batch, execute, query, register},
+    response::{Response, ResponseOpcode, event::Event, result},
     server_event_type::EventType,
-    FrameParams, SerializedRequest,
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
@@ -32,13 +31,13 @@ use crate::statement::prepared::PreparedStatement;
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
-use futures::{future::RemoteHandle, FutureExt};
+use futures::{FutureExt, future::RemoteHandle};
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
-use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::request::CqlRequestKind;
+use scylla_cql::frame::request::options::{self, Options};
+use scylla_cql::frame::response::Error;
 use scylla_cql::frame::response::authenticate::Authenticate;
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
-use scylla_cql::frame::response::Error;
 use scylla_cql::frame::response::{self, error};
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
@@ -50,15 +49,15 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU64;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use std::{
     cmp::Ordering,
     net::{Ipv4Addr, Ipv6Addr},
 };
-use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter, split};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
@@ -552,12 +551,12 @@ impl Connection {
                 Response::Ready => NonErrorStartupResponse::Ready,
                 Response::Authenticate(auth) => NonErrorStartupResponse::Authenticate(auth),
                 Response::Error(Error { error, reason }) => {
-                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)));
                 }
                 _ => {
                     return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
                         r.response.to_response_kind(),
-                    )))
+                    )));
                 }
             },
             Err(e) => match e {
@@ -567,18 +566,18 @@ impl Connection {
                     // Parsing of READY response cannot fail, since its body is empty.
                     // Remaining valid responses are AUTHENTICATE and ERROR.
                     CqlResponseParseError::CqlAuthenticateParseError(e) => {
-                        return Err(err(e.into()))
+                        return Err(err(e.into()));
                     }
                     CqlResponseParseError::CqlErrorParseError(e) => return Err(err(e.into())),
                     _ => {
                         return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
                             e.to_response_kind(),
-                        )))
+                        )));
                     }
                 },
                 InternalRequestError::BrokenConnection(e) => return Err(err(e.into())),
                 InternalRequestError::UnableToAllocStreamId => {
-                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId));
                 }
             },
         };
@@ -600,12 +599,12 @@ impl Connection {
             Ok(r) => match r.response {
                 Response::Supported(supported) => supported,
                 Response::Error(Error { error, reason }) => {
-                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)));
                 }
                 _ => {
                     return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
                         r.response.to_response_kind(),
-                    )))
+                    )));
                 }
             },
             Err(e) => match e {
@@ -617,12 +616,12 @@ impl Connection {
                     _ => {
                         return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
                             e.to_response_kind(),
-                        )))
+                        )));
                     }
                 },
                 InternalRequestError::BrokenConnection(e) => return Err(err(e.into())),
                 InternalRequestError::UnableToAllocStreamId => {
-                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId));
                 }
             },
         };
@@ -775,12 +774,12 @@ impl Connection {
                     NonErrorAuthResponse::AuthChallenge(auth_challenge)
                 }
                 Response::Error(Error { error, reason }) => {
-                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)));
                 }
                 _ => {
                     return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
                         r.response.to_response_kind(),
-                    )))
+                    )));
                 }
             },
             Err(e) => match e {
@@ -788,21 +787,21 @@ impl Connection {
                 InternalRequestError::BodyExtensionsParseError(e) => return Err(err(e.into())),
                 InternalRequestError::CqlResponseParseError(e) => match e {
                     CqlResponseParseError::CqlAuthSuccessParseError(e) => {
-                        return Err(err(e.into()))
+                        return Err(err(e.into()));
                     }
                     CqlResponseParseError::CqlAuthChallengeParseError(e) => {
-                        return Err(err(e.into()))
+                        return Err(err(e.into()));
                     }
                     CqlResponseParseError::CqlErrorParseError(e) => return Err(err(e.into())),
                     _ => {
                         return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
                             e.to_response_kind(),
-                        )))
+                        )));
                     }
                 },
                 InternalRequestError::BrokenConnection(e) => return Err(err(e.into())),
                 InternalRequestError::UnableToAllocStreamId => {
-                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId));
                 }
             },
         };
@@ -855,7 +854,7 @@ impl Connection {
             self.config
                 .timestamp_generator
                 .as_ref()
-                .map(|gen| gen.next_timestamp())
+                .map(|generator| generator.next_timestamp())
         };
         let timestamp = statement.get_timestamp().or_else(get_timestamp_from_gen);
 
@@ -912,7 +911,7 @@ impl Connection {
             self.config
                 .timestamp_generator
                 .as_ref()
-                .map(|gen| gen.next_timestamp())
+                .map(|generator| generator.next_timestamp())
         };
         let timestamp = prepared_statement
             .get_timestamp()
@@ -958,7 +957,10 @@ impl Connection {
                 error: DbError::Unprepared { statement_id },
                 ..
             }) => {
-                debug!("Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
+                debug!(
+                    "Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}",
+                    statement_id
+                );
                 // Repreparation of a statement is needed
                 self.reprepare(prepared_statement.get_statement(), prepared_statement)
                     .await?;
@@ -1047,7 +1049,7 @@ impl Connection {
             self.config
                 .timestamp_generator
                 .as_ref()
-                .map(|gen| gen.next_timestamp())
+                .map(|generator| generator.next_timestamp())
         };
         let timestamp = batch.get_timestamp().or_else(get_timestamp_from_gen);
 
@@ -1069,7 +1071,10 @@ impl Connection {
             return match query_response.response {
                 Response::Error(err) => match err.error {
                     DbError::Unprepared { statement_id } => {
-                        debug!("Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
+                        debug!(
+                            "Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}",
+                            statement_id
+                        );
                         let prepared_statement = batch.statements.iter().find_map(|s| match s {
                             BatchStatement::PreparedStatement(s) if *s.get_id() == statement_id => {
                                 Some(s)
@@ -1740,7 +1745,7 @@ impl Connection {
                     _ => {
                         return Err(CqlEventHandlingError::UnexpectedResponse(
                             e.to_response_kind(),
-                        ))
+                        ));
                     }
                 },
             },
@@ -1874,7 +1879,8 @@ pub(crate) async fn open_connection(
         Err(e) => {
             tracing::error!(
                 "[{}] Error while parsing sharding information: {}. Proceeding with no sharding info.",
-                addr, e
+                addr,
+                e
             );
             None
         }
@@ -2040,9 +2046,9 @@ impl OrphanageTracker {
         self.by_orphaning_times
             .range(..(minimal_age, i16::MAX))
             .count() // This has linear time complexity, but in terms of
-                     // the number of old orphans. Healthy connection - one
-                     // that does not have old orphaned stream ids, will
-                     // calculate this function quickly.
+        // the number of old orphans. Healthy connection - one
+        // that does not have old orphaned stream ids, will
+        // calculate this function quickly.
     }
 }
 
@@ -2214,7 +2220,7 @@ impl VerifiedKeyspaceName {
                     return Err(BadKeyspaceName::IllegalCharacter(
                         keyspace_name.to_string(),
                         character,
-                    ))
+                    ));
                 }
             };
         }
@@ -2238,12 +2244,12 @@ mod tests {
     use tokio::select;
     use tokio::sync::mpsc;
 
-    use super::{open_connection, HostConnectionConfig};
+    use super::{HostConnectionConfig, open_connection};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
     use crate::statement::unprepared::Statement;
     use crate::test_utils::setup_tracing;
-    use crate::utils::test_utils::{resolve_hostname, unique_keyspace_name, PerformDDL};
+    use crate::utils::test_utils::{PerformDDL, resolve_hostname, unique_keyspace_name};
     use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
     use std::net::SocketAddr;

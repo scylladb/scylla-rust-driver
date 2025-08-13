@@ -6,8 +6,8 @@ mod proxy;
 pub type TargetShard = u16;
 
 pub use actions::{
-    example_db_errors, Action, Condition, Reaction, RequestReaction, RequestRule, ResponseReaction,
-    ResponseRule,
+    Action, Condition, Reaction, RequestReaction, RequestRule, ResponseReaction, ResponseRule,
+    example_db_errors,
 };
 pub use errors::{DoorkeeperError, ProxyError, WorkerError};
 pub use frame::{RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode};
@@ -17,9 +17,9 @@ pub use proxy::get_exclusive_local_address;
 
 #[cfg(test)]
 pub(crate) fn setup_tracing() {
+    use tracing_subscriber::Layer;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
-    use tracing_subscriber::Layer;
 
     let testing_layer = tracing_subscriber::fmt::layer()
         .with_test_writer()

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::{collections::HashMap, io};
 
 use async_trait::async_trait;
-use scylla_cql::{frame::types::SerialConsistency, Consistency};
+use scylla_cql::{Consistency, frame::types::SerialConsistency};
 use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
@@ -90,8 +90,10 @@ impl CloudConfig {
         proxy_address: SocketAddr,
     ) -> Result<Option<TlsConfig>, TlsError> {
         let Some(datacenter) = dc.and_then(|dc| self.get_datacenters().get(dc)) else {
-            warn!("Datacenter {:?} of node {:?} with addr {} not described in cloud config. Proceeding without setting SNI for the node, which will most probably result in nonworking connections,.",
-                   dc, host_id, proxy_address);
+            warn!(
+                "Datacenter {:?} of node {:?} with addr {} not described in cloud config. Proceeding without setting SNI for the node, which will most probably result in nonworking connections,.",
+                dc, host_id, proxy_address
+            );
             // FIXME: Consider returning error here.
             return Ok(None);
         };
@@ -125,7 +127,8 @@ impl AddressTranslator for CloudConfig {
         } = *untranslated_peer;
 
         let Some(dc) = datacenter.as_deref() else {
-            warn!( // FIXME: perhaps error! would fit here better?
+            warn!(
+                // FIXME: perhaps error! would fit here better?
                 "Datacenter for node {} is empty in the Metadata fetched from the Cloud cluster; ; therefore address \
                     broadcast by the node was left as address to open connection to.",
                 host_id
@@ -135,7 +138,8 @@ impl AddressTranslator for CloudConfig {
         };
 
         let Some(dc_config) = self.get_datacenters().get(dc) else {
-            warn!( // FIXME: perhaps error! would fit here better?
+            warn!(
+                // FIXME: perhaps error! would fit here better?
                 "Datacenter {} that node {} resides in not found in the Cloud config; ; therefore address \
                     broadcast by the node was left as address to open connection to.",
                 dc, host_id
@@ -360,8 +364,8 @@ pub(crate) struct Context {
 
 mod deserialize {
     use super::{CloudConfigError, CloudTlsProvider, TlsCert, TlsError, TlsInfo};
-    use base64::{engine::general_purpose, Engine as _};
-    use scylla_cql::{frame::types::SerialConsistency, Consistency};
+    use base64::{Engine as _, engine::general_purpose};
+    use scylla_cql::{Consistency, frame::types::SerialConsistency};
     use std::{collections::HashMap, fs::File, io::Read, path::Path};
 
     use serde::Deserialize;
@@ -781,17 +785,17 @@ mod deserialize {
 
     #[cfg(test)]
     mod tests {
-        use crate::cloud::config::deserialize::Parameters;
-        use crate::cloud::config::TlsInfo;
         use crate::cloud::CloudTlsProvider;
+        use crate::cloud::config::TlsInfo;
+        use crate::cloud::config::deserialize::Parameters;
         use crate::test_utils::setup_tracing;
 
         use super::super::CloudConfig;
         use super::RawCloudConfig;
         use assert_matches::assert_matches;
-        use base64::{engine::general_purpose, Engine as _};
-        use scylla_cql::frame::types::SerialConsistency;
+        use base64::{Engine as _, engine::general_purpose};
         use scylla_cql::Consistency;
+        use scylla_cql::frame::types::SerialConsistency;
 
         impl Clone for super::Datacenter {
             fn clone(&self) -> Self {

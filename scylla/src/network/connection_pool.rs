@@ -1,6 +1,6 @@
 use super::connection::{
-    open_connection, open_connection_to_shard_aware_port, Connection, ConnectionConfig,
-    ErrorReceiver, HostConnectionConfig, VerifiedKeyspaceName,
+    Connection, ConnectionConfig, ErrorReceiver, HostConnectionConfig, VerifiedKeyspaceName,
+    open_connection, open_connection_to_shard_aware_port,
 };
 
 use crate::errors::{
@@ -17,7 +17,7 @@ use crate::cluster::NodeAddr;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
 use arc_swap::ArcSwap;
-use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
+use futures::{Future, FutureExt, StreamExt, future::RemoteHandle, stream::FuturesUnordered};
 use rand::Rng;
 use std::convert::TryInto;
 use std::num::NonZeroUsize;
@@ -26,7 +26,7 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
 
-use tokio::sync::{broadcast, mpsc, Notify};
+use tokio::sync::{Notify, broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 
 /// The target size of a per-node connection pool.
@@ -1195,7 +1195,7 @@ struct OpenedConnectionEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::super::connection::{open_connection_to_shard_aware_port, HostConnectionConfig};
+    use super::super::connection::{HostConnectionConfig, open_connection_to_shard_aware_port};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
     use crate::routing::{ShardCount, Sharder};

@@ -1191,12 +1191,12 @@ impl Default for SessionBuilder {
 
 #[cfg(test)]
 mod tests {
-    use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
+    use scylla_cql::frame::types::SerialConsistency;
 
     use super::super::Compression;
     use super::SessionBuilder;
-    use crate::client::execution_profile::{defaults, ExecutionProfile};
+    use crate::client::execution_profile::{ExecutionProfile, defaults};
     use crate::cluster::node::KnownNode;
     use crate::test_utils::setup_tracing;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};

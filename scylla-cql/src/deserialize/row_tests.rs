@@ -3,7 +3,7 @@ use bytes::Bytes;
 use scylla_macros::DeserializeRow;
 
 use crate::deserialize::row::BuiltinDeserializationErrorKind;
-use crate::deserialize::{value, DeserializationError, FrameSlice};
+use crate::deserialize::{DeserializationError, FrameSlice, value};
 use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
 
 use super::super::tests::{serialize_cells, spec};
@@ -91,6 +91,13 @@ struct TestUdtWithNoFieldsUnordered {}
 #[derive(DeserializeRow)]
 #[scylla(crate = crate, flavor = "enforce_order")]
 struct TestUdtWithNoFieldsOrdered {}
+
+// If deserialize is never called, rust warns that the struct is never constructed.
+#[allow(unreachable_code, dead_code)]
+fn dummy_deserialize_udts() {
+    let _ = deserialize::<TestUdtWithNoFieldsUnordered>(todo!(), todo!()).unwrap();
+    let _ = deserialize::<TestUdtWithNoFieldsOrdered>(todo!(), todo!()).unwrap();
+}
 
 #[test]
 fn test_struct_deserialization_loose_ordering() {
@@ -386,7 +393,7 @@ fn test_tuple_errors() {
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
         assert_matches!(
             &err.kind,
-            super::super::value::BuiltinTypeCheckErrorKind::MismatchedType {
+            &super::super::value::BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Native(NativeType::BigInt)]
             }
         );

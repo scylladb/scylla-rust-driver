@@ -13,8 +13,8 @@ pub use super::request::{
     startup::StartupSerializationError,
 };
 
-use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
+use super::response::CqlResponseKind;
 use crate::utils::parse::ParseErrorCause;
 use thiserror::Error;
 
