@@ -702,7 +702,7 @@ impl QueryPager {
     /// It only allows deserializing owned types, because [Stream] is not lending.
     /// Begins with performing type check.
     #[inline]
-    pub fn rows_stream<RowT: 'static + for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>>(
+    pub fn rows_stream<RowT: for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>>(
         self,
     ) -> Result<TypedRowStream<RowT>, TypeCheckError> {
         TypedRowStream::<RowT>::new(self)
@@ -1038,7 +1038,7 @@ impl QueryPager {
 ///
 /// Implements [Stream], but only permits deserialization of owned types.
 /// To use [Stream] API (only accessible for owned types), use [QueryPager::rows_stream].
-pub struct TypedRowStream<RowT: 'static> {
+pub struct TypedRowStream<RowT> {
     raw_row_lending_stream: QueryPager,
     _phantom: std::marker::PhantomData<RowT>,
 }
