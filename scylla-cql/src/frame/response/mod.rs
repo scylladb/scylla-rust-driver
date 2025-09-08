@@ -35,7 +35,7 @@ pub enum CqlResponseKind {
 
     ///  Indicates that the server requires authentication, and which authentication
     /// mechanism to use.
-
+    ///
     /// The authentication is SASL based and thus consists of a number of server
     /// challenges (AUTH_CHALLENGE) followed by client responses (AUTH_RESPONSE).
     /// The initial exchange is however bootstrapped by an initial client response.

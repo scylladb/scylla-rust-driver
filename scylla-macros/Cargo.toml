@@ -2,7 +2,7 @@
 name = "scylla-macros"
 version = "1.3.1"
 edition = "2021"
-rust-version = "1.81"
+rust-version = "1.85"
 description = "proc macros for the ScyllaDB async CQL driver"
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"

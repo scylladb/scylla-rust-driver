@@ -86,7 +86,7 @@ features will only be developed for the latest major version.
 
 ## Supported Rust Versions
 
-Our driver's minimum supported Rust version (MSRV) is 1.82.0.
+Our driver's minimum supported Rust version (MSRV) is 1.85.0.
 Changes to MSRV can only happen in major and minor relases, but not in patch releases.
 We will not bump MSRV to a Rust version that was released less than 6 months ago.
 

@@ -13,7 +13,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: full
-  rust_min: 1.82.0 # <- Update this when bumping up MSRV
+  rust_min: 1.85.0 # <- Update this when bumping up MSRV
 
 jobs:
   static_checks:

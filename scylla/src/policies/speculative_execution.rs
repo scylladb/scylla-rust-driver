@@ -248,13 +248,15 @@ mod tests {
                 let future = {
                     let fiber_idx = counter;
                     async move {
-                        if fiber_idx < 4 {
-                            tokio::time::sleep(Duration::from_secs(5)).await;
-                            IGNORABLE_ERROR.clone()
-                        } else if fiber_idx == 4 {
-                            None
-                        } else {
-                            panic!("Too many speculative executions - expected 4");
+                        match fiber_idx.cmp(&4) {
+                            std::cmp::Ordering::Less => {
+                                tokio::time::sleep(Duration::from_secs(5)).await;
+                                IGNORABLE_ERROR.clone()
+                            }
+                            std::cmp::Ordering::Equal => None,
+                            std::cmp::Ordering::Greater => {
+                                panic!("Too many speculative executions - expected 4")
+                            }
                         }
                     }
                 };
@@ -297,13 +299,15 @@ mod tests {
                 let future = {
                     let fiber_idx = counter;
                     async move {
-                        if fiber_idx < 4 {
-                            tokio::time::sleep(Duration::from_secs(5)).await;
-                            IGNORABLE_ERROR.clone()
-                        } else if fiber_idx == 4 {
-                            None
-                        } else {
-                            panic!("Too many speculative executions - expected 4");
+                        match fiber_idx.cmp(&4) {
+                            std::cmp::Ordering::Less => {
+                                tokio::time::sleep(Duration::from_secs(5)).await;
+                                IGNORABLE_ERROR.clone()
+                            }
+                            std::cmp::Ordering::Equal => None,
+                            std::cmp::Ordering::Greater => {
+                                panic!("Too many speculative executions - expected 4")
+                            }
                         }
                     }
                 };
