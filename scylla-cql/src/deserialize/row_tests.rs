@@ -92,6 +92,15 @@ struct TestUdtWithNoFieldsUnordered {}
 #[scylla(crate = crate, flavor = "enforce_order")]
 struct TestUdtWithNoFieldsOrdered {}
 
+// If deserialize is never called, rust warns that the struct is never constructed.
+// We don't want to `expect(dead_code)` on struct definitions, because that could silence
+// some warnings that this test is supposed to prevent.
+#[expect(unreachable_code, dead_code)]
+fn dummy_deserialize_udts() {
+    let _ = deserialize::<TestUdtWithNoFieldsUnordered>(todo!(), todo!()).unwrap();
+    let _ = deserialize::<TestUdtWithNoFieldsOrdered>(todo!(), todo!()).unwrap();
+}
+
 #[test]
 fn test_struct_deserialization_loose_ordering() {
     #[derive(DeserializeRow, PartialEq, Eq, Debug)]

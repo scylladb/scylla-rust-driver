@@ -276,7 +276,7 @@ impl PreparedStatement {
     }
 
     /// Return keyspace name and table name this statement is operating on.
-    pub fn get_table_spec(&self) -> Option<&TableSpec> {
+    pub fn get_table_spec(&self) -> Option<&TableSpec<'_>> {
         self.get_prepared_metadata()
             .col_specs
             .first()

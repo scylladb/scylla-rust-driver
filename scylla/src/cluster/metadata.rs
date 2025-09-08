@@ -1947,7 +1947,7 @@ fn parse_native_type(p: ParserState) -> ParseResult<(NativeType, ParserState)> {
     Ok((typ, p))
 }
 
-fn parse_user_defined_type(p: ParserState) -> ParseResult<(&str, ParserState)> {
+fn parse_user_defined_type(p: ParserState<'_>) -> ParseResult<(&str, ParserState<'_>)> {
     // Java identifiers allow letters, underscores and dollar signs at any position
     // and digits in non-first position. Dots are accepted here because the names
     // are usually fully qualified.

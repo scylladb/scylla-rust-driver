@@ -35,7 +35,7 @@ impl Coordinator {
 
     /// The node that served as coordinator of the request.
     #[inline]
-    pub fn node(&self) -> NodeRef {
+    pub fn node(&self) -> NodeRef<'_> {
         &self.node
     }
 
