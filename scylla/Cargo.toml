@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = []
 openssl-010 = ["dep:tokio-openssl", "dep:openssl"]
 rustls-023 = ["dep:tokio-rustls", "dep:rustls"]
+serde = ["scylla-cql/serde"]
 unstable-cloud = [
     "scylla-cql/serde",
     "dep:serde_yaml",
