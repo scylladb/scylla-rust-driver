@@ -25,6 +25,19 @@ use tracing::info;
 // By default, custom metadata request timeout is set to 2 seconds.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 
+fn map_fedback_message<'a, T, F: Fn(RequestFrame) -> T + 'a>(
+    rx: &'a mut UnboundedReceiver<(RequestFrame, Option<u16>)>,
+    f: F,
+) -> impl Iterator<Item = T> + use<'a, T, F> {
+    std::iter::from_fn(move || match rx.try_recv() {
+        Ok((frame, _)) => Some(f(frame)),
+        Err(TryRecvError::Disconnected) => {
+            panic!("feedback tx disconnected unexpectedly")
+        }
+        Err(TryRecvError::Empty) => None,
+    })
+}
+
 #[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
 #[ntest::timeout(20000)]
@@ -130,19 +143,6 @@ async fn test_custom_metadata_timeouts() {
                 // Turn off rules, so that no races are possible about some messages fed
                 // to the feedback channel after we have already cleared it.
                 running_proxy.turn_off_rules();
-
-                fn map_fedback_message<'a, T>(
-                    rx: &'a mut UnboundedReceiver<(RequestFrame, Option<u16>)>,
-                    f: impl Fn(RequestFrame) -> T + 'a,
-                ) -> impl Iterator<Item = T> + 'a {
-                    std::iter::from_fn(move || match rx.try_recv() {
-                        Ok((frame, _)) => Some(f(frame)),
-                        Err(TryRecvError::Disconnected) => {
-                            panic!("feedback tx disconnected unexpectedly")
-                        }
-                        Err(TryRecvError::Empty) => None,
-                    })
-                }
 
                 let n_fedback =
                     map_fedback_message(feedback_rx, |frame| check(frame, connected_to_scylladb))

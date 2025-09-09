@@ -172,7 +172,7 @@ fn partition_key_displayer<
     PkIter: Iterator<Item = (&'ps [u8], &'ps ColumnSpec<'spec>)> + 'res + Clone,
 >(
     mut pk_values_iter: PkIter,
-) -> impl Display + 'res + use<'res, PkIter> {
+) -> impl Display + use<'res, PkIter> {
     std::iter::from_fn(move || {
         pk_values_iter
             .next()

@@ -606,7 +606,9 @@ impl<'ps> PartitionKey<'ps> {
         Ok(Self { pk_values })
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = PartitionKeyValue<'ps>> + Clone + '_ {
+    pub(crate) fn iter(
+        &self,
+    ) -> impl Iterator<Item = PartitionKeyValue<'ps>> + Clone + use<'ps, '_> {
         self.pk_values.iter().flatten().copied()
     }
 

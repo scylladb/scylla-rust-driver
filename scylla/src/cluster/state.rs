@@ -332,7 +332,7 @@ impl ClusterState {
     pub(crate) fn iter_working_connections_per_node(
         &self,
     ) -> Result<
-        impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>> + use<>)> + '_,
+        impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>> + use<>)> + use<'_>,
         ConnectionPoolError,
     > {
         // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
@@ -375,7 +375,7 @@ impl ClusterState {
     /// Returns nonempty iterator of working connections to all shards.
     pub(crate) fn iter_working_connections_to_shards(
         &self,
-    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, ConnectionPoolError> {
+    ) -> Result<impl Iterator<Item = Arc<Connection>> + use<'_>, ConnectionPoolError> {
         self.iter_working_connections_per_node()
             .map(|outer_iter| outer_iter.flat_map(|(_, inner_iter)| inner_iter))
     }
@@ -383,7 +383,7 @@ impl ClusterState {
     /// Returns nonempty iterator of working connections to all nodes.
     pub(crate) fn iter_working_connections_to_nodes(
         &self,
-    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, ConnectionPoolError> {
+    ) -> Result<impl Iterator<Item = Arc<Connection>> + use<'_>, ConnectionPoolError> {
         // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
         assert!(!self.known_peers.is_empty());
         let nodes_iter = self.known_peers.values();

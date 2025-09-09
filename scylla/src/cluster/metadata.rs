@@ -981,7 +981,7 @@ impl ControlConnection {
         &'a self,
         query_str: &'a str,
         keyspaces_to_fetch: &'a [String],
-    ) -> impl Stream<Item = Result<R, MetadataFetchErrorKind>> + 'a
+    ) -> impl Stream<Item = Result<R, MetadataFetchErrorKind>> + use<'a, R>
     where
         R: DeserializeOwnedRow + 'static,
     {
