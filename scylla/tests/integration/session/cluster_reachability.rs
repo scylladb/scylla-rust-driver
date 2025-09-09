@@ -4,8 +4,8 @@ use scylla::client::session::Session;
 use scylla::serialize::row::SerializeRow;
 
 use crate::utils::{
-    create_new_session_builder, execute_prepared_statement_everywhere, setup_tracing,
-    unique_keyspace_name, PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, execute_prepared_statement_everywhere,
+    setup_tracing, unique_keyspace_name,
 };
 
 /// Tests that all nodes are reachable and can serve requests.

@@ -6,9 +6,9 @@ use scylla_cql::frame::response::result::{
     ColumnSpec, PartitionKeyIndex, ResultMetadata, TableSpec,
 };
 use scylla_cql::frame::types::RawValue;
-use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use scylla_cql::serialize::SerializationError;
-use smallvec::{smallvec, SmallVec};
+use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
+use smallvec::{SmallVec, smallvec};
 use std::convert::TryInto;
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,8 +24,8 @@ use crate::observability::history::HistoryListener;
 use crate::policies::load_balancing::LoadBalancingPolicy;
 use crate::policies::retry::RetryPolicy;
 use crate::response::query_result::ColumnSpecs;
-use crate::routing::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 use crate::routing::Token;
+use crate::routing::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 
 /// Represents a statement prepared on the server.
 ///
@@ -606,7 +606,9 @@ impl<'ps> PartitionKey<'ps> {
         Ok(Self { pk_values })
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = PartitionKeyValue<'ps>> + Clone + '_ {
+    pub(crate) fn iter(
+        &self,
+    ) -> impl Iterator<Item = PartitionKeyValue<'ps>> + Clone + use<'ps, '_> {
         self.pk_values.iter().flatten().copied()
     }
 

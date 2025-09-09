@@ -129,7 +129,7 @@ impl ReplicationInfo {
         token: Token,
         datacenter_name: &str,
         replication_factor: usize,
-    ) -> impl Iterator<Item = &'a Arc<Node>> {
+    ) -> impl Iterator<Item = &'a Arc<Node>> + use<'a> {
         let dc_lb_data: &DatacenterNodes = self
             .datacenters
             .get(datacenter_name)
@@ -205,10 +205,10 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        routing::locator::test::{
-            create_ring, mock_metadata_for_token_aware_tests, A, B, C, D, E, F, G,
-        },
         routing::Token,
+        routing::locator::test::{
+            A, B, C, D, E, F, G, create_ring, mock_metadata_for_token_aware_tests,
+        },
         test_utils::setup_tracing,
     };
 

@@ -9,9 +9,9 @@ use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::value::deser_cql_value;
 use std::borrow::Borrow;
 use std::fmt::Display;
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use tracing::trace_span;
 
 pub(crate) struct RequestSpan {
@@ -165,9 +165,14 @@ impl Drop for RequestSpan {
     }
 }
 
-fn partition_key_displayer<'ps, 'res, 'spec: 'ps>(
-    mut pk_values_iter: impl Iterator<Item = (&'ps [u8], &'ps ColumnSpec<'spec>)> + 'res + Clone,
-) -> impl Display + 'res {
+fn partition_key_displayer<
+    'ps,
+    'res,
+    'spec: 'ps,
+    PkIter: Iterator<Item = (&'ps [u8], &'ps ColumnSpec<'spec>)> + 'res + Clone,
+>(
+    mut pk_values_iter: PkIter,
+) -> impl Display + use<'res, PkIter> {
     std::iter::from_fn(move || {
         pk_values_iter
             .next()

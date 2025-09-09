@@ -3,12 +3,12 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::statement::prepared::PreparedStatement;
 use std::io::Write;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::sync::Barrier;
 
-use stats_alloc::{Stats, StatsAlloc, INSTRUMENTED_SYSTEM};
+use stats_alloc::{INSTRUMENTED_SYSTEM, Stats, StatsAlloc};
 use std::alloc::System;
 
 use clap::{Parser, ValueEnum};

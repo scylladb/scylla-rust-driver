@@ -1,6 +1,6 @@
 use crate::utils::{
-    create_new_session_builder, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
-    PerformDDL as _,
+    PerformDDL as _, create_new_session_builder, setup_tracing, test_with_3_node_cluster,
+    unique_keyspace_name,
 };
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;

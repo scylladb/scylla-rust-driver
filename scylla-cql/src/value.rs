@@ -7,12 +7,12 @@ use std::result::Result as StdResult;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::deserialize::value::DeserializeValue;
-use crate::deserialize::value::{
-    mk_deser_err, BuiltinDeserializationErrorKind, MapIterator, UdtIterator, VectorIterator,
-};
 use crate::deserialize::DeserializationError;
 use crate::deserialize::FrameSlice;
+use crate::deserialize::value::DeserializeValue;
+use crate::deserialize::value::{
+    BuiltinDeserializationErrorKind, MapIterator, UdtIterator, VectorIterator, mk_deser_err,
+};
 use crate::frame::response::result::{CollectionType, ColumnType};
 use crate::frame::types;
 use crate::utils::safe_format::IteratorSafeFormatExt;

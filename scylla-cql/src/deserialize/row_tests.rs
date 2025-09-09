@@ -3,7 +3,7 @@ use bytes::Bytes;
 use scylla_macros::DeserializeRow;
 
 use crate::deserialize::row::BuiltinDeserializationErrorKind;
-use crate::deserialize::{value, DeserializationError, FrameSlice};
+use crate::deserialize::{DeserializationError, FrameSlice, value};
 use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
 
 use super::super::tests::{serialize_cells, spec};
@@ -395,7 +395,7 @@ fn test_tuple_errors() {
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
         assert_matches!(
             &err.kind,
-            super::super::value::BuiltinTypeCheckErrorKind::MismatchedType {
+            &super::super::value::BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Native(NativeType::BigInt)]
             }
         );

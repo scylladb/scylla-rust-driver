@@ -11,7 +11,7 @@ use crate::{
     routing::{Shard, Token},
 };
 use itertools::{Either, Itertools};
-use rand::{prelude::SliceRandom, rng, Rng};
+use rand::{Rng, prelude::SliceRandom, rng};
 use rand_pcg::Pcg32;
 use scylla_cql::frame::response::result::TableSpec;
 use std::hash::{Hash, Hasher};
@@ -175,7 +175,8 @@ impl LoadBalancingPolicy for DefaultPolicy {
                     Strategy::SimpleStrategy { .. }
                 )
             {
-                warn!("\
+                warn!(
+                    "\
 Combining SimpleStrategy with preferred_datacenter set to Some and disabled datacenter failover may lead to empty query plans for some tokens.\
 It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
 how many replicas there are in each datacenter (you probably want at least 1 to avoid empty plans while preferring that datacenter), \
@@ -673,15 +674,15 @@ impl DefaultPolicy {
     /// Respects requested replica order, i.e. if requested, returns replicas ordered
     /// deterministically (i.e. by token ring order or by tablet definition order),
     /// else returns replicas in arbitrary order.
-    fn filtered_replicas<'a>(
+    fn filtered_replicas<'a, PredicateT: Fn(NodeRef<'a>, Shard) -> bool + 'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
+        predicate: PredicateT,
         cluster: &'a ClusterState,
         order: ReplicaOrder,
         table_spec: &TableSpec,
-    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> + use<'a, PredicateT> {
         let predicate = Self::make_sharded_rack_predicate(predicate, replica_location);
 
         let replica_iter = match order {
@@ -808,8 +809,8 @@ impl DefaultPolicy {
         let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster, table_spec);
 
         if let Some(fixed) = self.fixed_seed {
-            let mut gen = Pcg32::new(fixed, 0);
-            replica_set.choose_filtered(&mut gen, |(node, shard)| predicate(node, *shard))
+            let mut generator = Pcg32::new(fixed, 0);
+            replica_set.choose_filtered(&mut generator, |(node, shard)| predicate(node, *shard))
         } else {
             replica_set.choose_filtered(&mut rng(), |(node, shard)| predicate(node, *shard))
         }
@@ -819,15 +820,15 @@ impl DefaultPolicy {
     /// by provided location criteria and predicate.
     /// By default, the replicas are shuffled.
     /// For LWTs, though, the replicas are instead returned in a deterministic order.
-    fn maybe_shuffled_replicas<'a>(
+    fn maybe_shuffled_replicas<'a, PredicateT: Fn(NodeRef<'a>, Shard) -> bool + 'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
+        predicate: PredicateT,
         cluster: &'a ClusterState,
         statement_type: StatementType,
         table_spec: &TableSpec,
-    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> + use<'a, PredicateT> {
         let order = match statement_type {
             StatementType::Lwt => ReplicaOrder::Deterministic,
             StatementType::NonLwt => ReplicaOrder::Arbitrary,
@@ -882,15 +883,15 @@ impl DefaultPolicy {
     }
 
     /// Wraps a given iterator by shuffling its contents.
-    fn shuffle<'a>(
+    fn shuffle<'a, IterT: Iterator<Item = (NodeRef<'a>, Shard)>>(
         &self,
-        iter: impl Iterator<Item = (NodeRef<'a>, Shard)>,
-    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
+        iter: IterT,
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> + use<'a, IterT> {
         let mut vec: Vec<(NodeRef<'_>, Shard)> = iter.collect();
 
         if let Some(fixed) = self.fixed_seed {
-            let mut gen = Pcg32::new(fixed, 0);
-            vec.shuffle(&mut gen);
+            let mut generator = Pcg32::new(fixed, 0);
+            vec.shuffle(&mut generator);
         } else {
             vec.shuffle(&mut rng());
         }
@@ -1147,23 +1148,23 @@ impl<'a> TokenWithStrategy<'a> {
 mod tests {
     use std::collections::HashMap;
 
-    use scylla_cql::{frame::types::SerialConsistency, Consistency};
+    use scylla_cql::{Consistency, frame::types::SerialConsistency};
     use tracing::info;
 
     use self::framework::{
-        get_plan_and_collect_node_identifiers, mock_cluster_state_for_token_unaware_tests,
-        ExpectedGroups, ExpectedGroupsBuilder,
+        ExpectedGroups, ExpectedGroupsBuilder, get_plan_and_collect_node_identifiers,
+        mock_cluster_state_for_token_unaware_tests,
     };
     use crate::policies::host_filter::HostFilter;
     use crate::routing::locator::tablets::TabletsInfo;
     use crate::routing::locator::test::{
-        id_to_invalid_addr, mock_metadata_for_token_aware_tests, TABLE_NTS_RF_2, TABLE_NTS_RF_3,
-        TABLE_SS_RF_2,
+        TABLE_NTS_RF_2, TABLE_NTS_RF_3, TABLE_SS_RF_2, id_to_invalid_addr,
+        mock_metadata_for_token_aware_tests,
     };
     use crate::{
         cluster::ClusterState,
         policies::load_balancing::{
-            default::tests::framework::mock_cluster_state_for_token_aware_tests, Plan, RoutingInfo,
+            Plan, RoutingInfo, default::tests::framework::mock_cluster_state_for_token_aware_tests,
         },
         routing::Token,
         test_utils::setup_tracing,
@@ -1181,8 +1182,8 @@ mod tests {
 
         use crate::{
             cluster::{
-                metadata::{Metadata, Peer},
                 ClusterState,
+                metadata::{Metadata, Peer},
             },
             policies::load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             routing::Token,
@@ -2567,7 +2568,7 @@ mod tests {
 }
 
 mod latency_awareness {
-    use futures::{future::RemoteHandle, FutureExt};
+    use futures::{FutureExt, future::RemoteHandle};
     use itertools::Either;
     use tokio::time::{Duration, Instant};
     use tracing::{trace, warn};
@@ -2581,8 +2582,8 @@ mod latency_awareness {
         collections::HashMap,
         ops::Deref,
         sync::{
-            atomic::{AtomicU64, Ordering},
             Arc, RwLock,
+            atomic::{AtomicU64, Ordering},
         },
     };
 
@@ -2766,7 +2767,7 @@ mod latency_awareness {
             }
         }
 
-        pub(super) fn generate_predicate(&self) -> impl Fn(&Node) -> bool {
+        pub(super) fn generate_predicate(&self) -> impl Fn(&Node) -> bool + use<> {
             let last_min_latency = self.last_min_latency.clone();
             let node_avgs = self.node_avgs.clone();
             let exclusion_threshold = self.exclusion_threshold;
@@ -2785,10 +2786,10 @@ mod latency_awareness {
             }
         }
 
-        pub(super) fn wrap<'a>(
+        pub(super) fn wrap<'a, FallbackPlanT: Iterator<Item = (NodeRef<'a>, Option<Shard>)>>(
             &self,
-            fallback: impl Iterator<Item = (NodeRef<'a>, Option<Shard>)>,
-        ) -> impl Iterator<Item = (NodeRef<'a>, Option<Shard>)> {
+            fallback: FallbackPlanT,
+        ) -> impl Iterator<Item = (NodeRef<'a>, Option<Shard>)> + use<'a, FallbackPlanT> {
             let min_avg_latency = match self.last_min_latency.load() {
                 Some(min_avg) => min_avg,
                 None => return Either::Left(fallback), // noop, as no latency data has been collected yet
@@ -3131,8 +3132,8 @@ mod latency_awareness {
         use scylla_cql::Consistency;
 
         use super::{
-            super::tests::{framework::*, EMPTY_ROUTING_INFO},
             super::DefaultPolicy,
+            super::tests::{EMPTY_ROUTING_INFO, framework::*},
             *,
         };
 
@@ -3141,13 +3142,13 @@ mod latency_awareness {
             cluster::NodeAddr,
             policies::load_balancing::default::NodeLocationPreference,
             policies::load_balancing::{
-                default::tests::test_default_policy_with_given_cluster_and_routing_info,
                 RoutingInfo,
+                default::tests::test_default_policy_with_given_cluster_and_routing_info,
             },
-            routing::locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
-            routing::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
             routing::Shard,
             routing::Token,
+            routing::locator::test::{A, B, C, D, E, F, G, id_to_invalid_addr},
+            routing::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
             test_utils::setup_tracing,
         };
         use tokio::time::Instant;
@@ -3526,8 +3527,8 @@ mod latency_awareness {
         }
 
         #[tokio::test]
-        async fn latency_aware_default_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses(
-        ) {
+        async fn latency_aware_default_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses()
+         {
             setup_tracing();
 
             let (policy, updater) = latency_aware_default_policy_with_explicit_updater();

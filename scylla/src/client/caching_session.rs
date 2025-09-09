@@ -439,7 +439,7 @@ mod tests {
     use crate::statement::prepared::PreparedStatement;
     use crate::statement::unprepared::Statement;
     use crate::test_utils::{
-        create_new_session_builder, scylla_supports_tablets, setup_tracing, PerformDDL,
+        PerformDDL, create_new_session_builder, scylla_supports_tablets, setup_tracing,
     };
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::value::Row;

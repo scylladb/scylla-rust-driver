@@ -128,7 +128,7 @@ where
 /// Generates T: Default constraints for those fields that need it.
 fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
     fields: &[Field],
-) -> impl Iterator<Item = syn::WherePredicate> + '_ {
+) -> impl Iterator<Item = syn::WherePredicate> + use<'_, Field> {
     fields.iter().filter(|f| f.needs_default()).map(|f| {
         let t = f.deserialize_target();
         parse_quote!(#t: ::std::default::Default)
@@ -147,7 +147,7 @@ fn generate_lifetime_constraints_for_impl<'a>(
     generics: &'a syn::Generics,
     trait_full_name: syn::Path,
     constraint_lifetime: &'a syn::Lifetime,
-) -> impl Iterator<Item = syn::WherePredicate> + 'a {
+) -> impl Iterator<Item = syn::WherePredicate> + use<'a> {
     // Constrain the new lifetime with the existing lifetime parameters
     //     'lifetime: 'a + 'b + 'c ...
     let mut lifetimes = generics.lifetimes().map(|l| &l.lifetime).peekable();

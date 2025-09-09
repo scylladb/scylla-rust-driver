@@ -28,7 +28,7 @@ impl<'a> ReplicasArray<'a> {
         }
     }
 
-    pub(crate) fn iter<'s>(&'s self) -> impl Iterator<Item = NodeRef<'a>> + 's {
+    pub(crate) fn iter<'s>(&'s self) -> impl Iterator<Item = NodeRef<'a>> + use<'a, 's> {
         match self {
             ReplicasArray::Borrowed(slice) => Either::Left(slice.iter()),
             ReplicasArray::Owned(vec) => Either::Right(vec.iter().copied()),

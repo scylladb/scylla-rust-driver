@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use crate::utils::{
-    execute_prepared_statement_everywhere, execute_unprepared_statement_everywhere,
+    PerformDDL, execute_prepared_statement_everywhere, execute_unprepared_statement_everywhere,
     scylla_supports_tablets, setup_tracing, supports_feature, test_with_3_node_cluster,
-    unique_keyspace_name, PerformDDL,
+    unique_keyspace_name,
 };
 
-use futures::future::try_join_all;
 use futures::TryStreamExt;
+use futures::future::try_join_all;
 use itertools::Itertools;
 use scylla::client::session::Session;
 use scylla::cluster::Node;

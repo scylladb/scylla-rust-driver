@@ -9,8 +9,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
 use crate::utils::{
-    create_new_session_builder, scylla_supports_tablets, setup_tracing, unique_keyspace_name,
-    DeserializeOwnedValue, PerformDDL,
+    DeserializeOwnedValue, PerformDDL, create_new_session_builder, scylla_supports_tablets,
+    setup_tracing, unique_keyspace_name,
 };
 
 // Used to prepare a table for test

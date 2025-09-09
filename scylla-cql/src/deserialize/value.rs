@@ -15,7 +15,7 @@ use std::fmt::Display;
 
 use thiserror::Error;
 
-use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
+use super::{DeserializationError, FrameSlice, TypeCheckError, make_error_replace_rust_name};
 use crate::frame::frame_errors::LowLevelDeserializationError;
 use crate::frame::response::result::CollectionType;
 use crate::frame::response::result::UserDefinedType;
@@ -23,8 +23,8 @@ use crate::frame::response::result::{ColumnType, NativeType};
 use crate::frame::types;
 use crate::value::CqlVarintBorrowed;
 use crate::value::{
-    deser_cql_value, Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime,
-    CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
+    Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
+    CqlTimeuuid, CqlValue, CqlVarint, deser_cql_value,
 };
 
 /// A type that can be deserialized from a column value inside a row that was
@@ -1890,12 +1890,12 @@ impl Display for SetOrListTypeCheckErrorKind {
 #[non_exhaustive]
 pub enum VectorTypeCheckErrorKind {
     /// The CQL type is not a vector.
-    #[error(
-        "the CQL type the Rust type was attempted to be type checked against was not a vector"
-    )]
+    #[error("the CQL type the Rust type was attempted to be type checked against was not a vector")]
     NotVector,
     /// Incompatible element types.
-    #[error("the vector element types between the CQL type and the Rust type failed to type check against each other: {0}")]
+    #[error(
+        "the vector element types between the CQL type and the Rust type failed to type check against each other: {0}"
+    )]
     ElementTypeCheckFailed(TypeCheckError),
 }
 
@@ -1971,7 +1971,7 @@ impl Display for TupleTypeCheckErrorKind {
             TupleTypeCheckErrorKind::FieldTypeCheckFailed { position, err } => write!(
                 f,
                 "the CQL type and the Rust type of the tuple field {position} failed to type check against each other: {err}"
-            )
+            ),
         }
     }
 }
@@ -2038,9 +2038,16 @@ impl Display for UdtTypeCheckErrorKind {
                 "the CQL type the Rust type was attempted to be type checked against is not a UDT"
             ),
             UdtTypeCheckErrorKind::ValuesMissingForUdtFields { field_names } => {
-                write!(f, "the fields {field_names:?} are missing from the DB data but are required by the Rust type")
-            },
-            UdtTypeCheckErrorKind::FieldNameMismatch { rust_field_name, db_field_name, position } => write!(
+                write!(
+                    f,
+                    "the fields {field_names:?} are missing from the DB data but are required by the Rust type"
+                )
+            }
+            UdtTypeCheckErrorKind::FieldNameMismatch {
+                rust_field_name,
+                db_field_name,
+                position,
+            } => write!(
                 f,
                 "expected field with name {db_field_name} at position {position}, but the Rust field name is {rust_field_name}"
             ),
@@ -2052,7 +2059,10 @@ impl Display for UdtTypeCheckErrorKind {
                 f,
                 "field {field_name} occurs more than once in CQL UDT type"
             ),
-            UdtTypeCheckErrorKind::TooFewFields { required_fields, present_fields } => write!(
+            UdtTypeCheckErrorKind::TooFewFields {
+                required_fields,
+                present_fields,
+            } => write!(
                 f,
                 "fewer fields present in the UDT than required by the Rust type: UDT has {present_fields:?}, Rust type requires {required_fields:?}",
             ),
@@ -2156,16 +2166,22 @@ pub enum BuiltinDeserializationErrorKind {
 impl Display for BuiltinDeserializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuiltinDeserializationErrorKind::BadDate { date_field, err } => write!(f, "malformed {date_field} during 'date' deserialization: {err}"),
-            BuiltinDeserializationErrorKind::BadDecimalScale(err) => write!(f, "malformed decimal's scale: {err}"),
-            BuiltinDeserializationErrorKind::RawCqlBytesReadError(err) => write!(f, "failed to read raw cql value bytes: {err}"),
+            BuiltinDeserializationErrorKind::BadDate { date_field, err } => write!(
+                f,
+                "malformed {date_field} during 'date' deserialization: {err}"
+            ),
+            BuiltinDeserializationErrorKind::BadDecimalScale(err) => {
+                write!(f, "malformed decimal's scale: {err}")
+            }
+            BuiltinDeserializationErrorKind::RawCqlBytesReadError(err) => {
+                write!(f, "failed to read raw cql value bytes: {err}")
+            }
             BuiltinDeserializationErrorKind::ExpectedNonNull => {
                 f.write_str("expected a non-null value, got null")
             }
-            BuiltinDeserializationErrorKind::ByteLengthMismatch { expected, got } => write!(
-                f,
-                "the CQL type requires {expected} bytes, but got {got}",
-            ),
+            BuiltinDeserializationErrorKind::ByteLengthMismatch { expected, got } => {
+                write!(f, "the CQL type requires {expected} bytes, but got {got}",)
+            }
             BuiltinDeserializationErrorKind::ExpectedAscii => {
                 f.write_str("expected a valid ASCII string")
             }

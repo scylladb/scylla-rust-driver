@@ -12,11 +12,11 @@ use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancing
 use scylla::response::query_result::QueryResult;
 use scylla::response::{Coordinator, PagingState};
 use scylla::routing::Shard;
-use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use scylla::statement::Statement;
+use scylla::statement::batch::{Batch, BatchStatement, BatchType};
 use uuid::Uuid;
 
-use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
+use crate::utils::{PerformDDL, create_new_session_builder, setup_tracing, unique_keyspace_name};
 
 #[tokio::test]
 async fn test_enforce_request_coordinator() {

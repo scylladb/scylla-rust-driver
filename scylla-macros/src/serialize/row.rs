@@ -111,13 +111,13 @@ pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::Ite
     };
     ctx.validate(&input.ident)?;
 
-    let gen: Box<dyn Generator> = match ctx.attributes.flavor {
+    let generator: Box<dyn Generator> = match ctx.attributes.flavor {
         Flavor::MatchByName => Box::new(ColumnSortingGenerator { ctx: &ctx }),
         Flavor::EnforceOrder => Box::new(ColumnOrderedGenerator { ctx: &ctx }),
     };
 
-    let serialize_item = gen.generate_serialize();
-    let is_empty_item = gen.generate_is_empty();
+    let serialize_item = generator.generate_serialize();
+    let is_empty_item = generator.generate_is_empty();
 
     let res = parse_quote! {
         #[automatically_derived]
@@ -174,7 +174,9 @@ impl Context {
             let column_name = field.column_name();
             if let Some(other_field) = used_names.get(&column_name) {
                 let other_field_ident = &other_field.ident;
-                let msg = format!("the column / bind marker name `{column_name}` used by this struct field is already used by field `{other_field_ident}`");
+                let msg = format!(
+                    "the column / bind marker name `{column_name}` used by this struct field is already used by field `{other_field_ident}`"
+                );
                 let err = darling::Error::custom(msg).with_span(&field.ident);
                 errors.push(err);
             } else {

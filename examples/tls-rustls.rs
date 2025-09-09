@@ -3,7 +3,7 @@ use std::{env, sync::Arc};
 use anyhow::Result;
 use futures::TryStreamExt as _;
 
-use rustls::pki_types::{pem::PemObject, CertificateDer};
+use rustls::pki_types::{CertificateDer, pem::PemObject};
 use scylla::client::{session::Session, session_builder::SessionBuilder};
 
 // How to run scylla instance with TLS:

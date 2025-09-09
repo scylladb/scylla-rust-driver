@@ -308,10 +308,10 @@ pub(crate) mod batch_values {
     /// that `statement` holds the first prepared statement of the batch (if
     /// there is one), and that it will be used later to serialize the values.
     #[allow(clippy::result_large_err)]
-    pub(crate) fn peek_first_token<'bv>(
-        values: impl BatchValues + 'bv,
+    pub(crate) fn peek_first_token<'bv, ValuesT: BatchValues + 'bv>(
+        values: ValuesT,
         statement: Option<&BatchStatement>,
-    ) -> Result<(Option<Token>, impl BatchValues + 'bv), ExecutionError> {
+    ) -> Result<(Option<Token>, impl BatchValues + use<'bv, ValuesT>), ExecutionError> {
         let mut values_iter = values.batch_values_iter();
         let (token, first_values) = match statement {
             Some(BatchStatement::PreparedStatement(ps)) => {

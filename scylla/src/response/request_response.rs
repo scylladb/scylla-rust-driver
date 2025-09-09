@@ -9,10 +9,10 @@ use uuid::Uuid;
 
 use crate::errors::RequestAttemptError;
 use crate::frame::response::{self, result};
-use crate::response::query_result::QueryResult;
 use crate::response::Coordinator;
-use crate::statement::prepared::PreparedStatement;
+use crate::response::query_result::QueryResult;
 use crate::statement::Statement;
+use crate::statement::prepared::PreparedStatement;
 
 pub(crate) struct QueryResponse {
     pub(crate) response: Response,
@@ -73,7 +73,7 @@ impl NonErrorQueryResponse {
             _ => {
                 return Err(RequestAttemptError::UnexpectedResponse(
                     response.to_response_kind(),
-                ))
+                ));
             }
         };
 

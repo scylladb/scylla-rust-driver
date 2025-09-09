@@ -1,10 +1,7 @@
-use std::sync::Arc;
-
 use crate::ccm::lib::cluster::{Cluster, ClusterOptions};
-use crate::ccm::lib::{run_ccm_test, CLUSTER_VERSION};
+use crate::ccm::lib::{CLUSTER_VERSION, run_ccm_test};
 use crate::utils::setup_tracing;
 
-use tokio::sync::Mutex;
 use tracing::debug;
 
 fn cluster_1_node() -> ClusterOptions {
@@ -20,8 +17,7 @@ fn cluster_1_node() -> ClusterOptions {
 #[cfg_attr(not(ccm_tests), ignore)]
 async fn test_cluster_lifecycle1() {
     setup_tracing();
-    async fn test(cluster: Arc<Mutex<Cluster>>) {
-        let cluster = cluster.lock().await;
+    async fn test(cluster: &mut Cluster) {
         let session = cluster.make_session_builder().await.build().await.unwrap();
 
         let rows = session

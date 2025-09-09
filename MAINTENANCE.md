@@ -132,7 +132,6 @@ Commits that update `scylla-proxy` / `scylla-macros` / `scylla-cql` change:
 - `version` field in relevant `Cargo.toml`
 - Version number in crates that depend on given crate (so a commit bumping `scylla-macros` will also change version of
 `scylla-macros` in `scylla` and `scylla-cql` crates).
-- Version number of the crate in `Cargo.lock.msrv`
 
 Additionally the last commit (which bumps `scylla` crate version) changes:
 - `docs/pyproject.toml` and `docs/source/conf.py`, as described in "Documentation" section.

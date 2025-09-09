@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use super::tablets::TabletsInfo;
 use super::{ReplicaLocator, ReplicaSet};
-use crate::cluster::metadata::{Keyspace, Metadata, Peer, Strategy};
 use crate::cluster::Node;
+use crate::cluster::metadata::{Keyspace, Metadata, Peer, Strategy};
 use crate::cluster::{NodeAddr, NodeRef};
 use crate::network::PoolConfig;
 use crate::routing::Token;
@@ -177,7 +177,7 @@ fn assert_replica_set_equal_to(nodes: ReplicaSet<'_>, ids: &[u16]) {
     assert_same_node_ids(nodes.into_iter().map(|(node, _shard)| node), ids)
 }
 
-pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, Arc<Node>)> {
+pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, Arc<Node>)> + use<> {
     let pool_config: PoolConfig = Default::default();
     let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
 

@@ -642,7 +642,7 @@ fn serialize_cql_value<'b>(
                     return Err(mk_typck_err::<CqlValue>(
                         typ,
                         TupleTypeCheckErrorKind::NotTuple,
-                    ))
+                    ));
                 }
             };
             serialize_tuple_like(typ, fields.iter(), t.iter(), writer)
@@ -1484,7 +1484,9 @@ pub enum UdtTypeCheckErrorKind {
 impl Display for UdtTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            UdtTypeCheckErrorKind::NotUdt => f.write_str("the CQL type the Rust type was attempted to be type checked against is not a UDT"),
+            UdtTypeCheckErrorKind::NotUdt => f.write_str(
+                "the CQL type the Rust type was attempted to be type checked against is not a UDT",
+            ),
             UdtTypeCheckErrorKind::NameMismatch {
                 keyspace,
                 type_name,
@@ -1493,13 +1495,19 @@ impl Display for UdtTypeCheckErrorKind {
                 "the Rust UDT name does not match the actual CQL UDT name ({keyspace}.{type_name})"
             ),
             UdtTypeCheckErrorKind::ValueMissingForUdtField { field_name } => {
-                write!(f, "the field {field_name} is missing in the Rust data but is required by the CQL UDT type")
+                write!(
+                    f,
+                    "the field {field_name} is missing in the Rust data but is required by the CQL UDT type"
+                )
             }
             UdtTypeCheckErrorKind::NoSuchFieldInUdt { field_name } => write!(
                 f,
                 "the field {field_name} that is present in the Rust data is not present in the CQL type"
             ),
-            UdtTypeCheckErrorKind::FieldNameMismatch { rust_field_name, db_field_name } => write!(
+            UdtTypeCheckErrorKind::FieldNameMismatch {
+                rust_field_name,
+                db_field_name,
+            } => write!(
                 f,
                 "expected field with name {db_field_name} at given position, but the Rust field name is {rust_field_name}"
             ),

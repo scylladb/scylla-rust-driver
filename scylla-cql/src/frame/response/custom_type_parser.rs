@@ -112,7 +112,7 @@ impl<'result> CustomTypeParser<'result> {
             _ => {
                 return Err(CustomTypeParseError::UnknownSimpleCustomTypeName(
                     name.into(),
-                ))
+                ));
             }
         };
         Ok(ColumnType::Native(native))
@@ -121,7 +121,7 @@ impl<'result> CustomTypeParser<'result> {
     fn get_type_parameters(
         &mut self,
     ) -> Result<
-        impl Iterator<Item = Result<ColumnType<'result>, CustomTypeParseError>> + '_,
+        impl Iterator<Item = Result<ColumnType<'result>, CustomTypeParseError>> + use<'result, '_>,
         CustomTypeParseError,
     > {
         if self.parser.is_at_eof() {

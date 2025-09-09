@@ -1,7 +1,7 @@
 use crate::actions::{EvaluationContext, RequestRule, ResponseRule};
 use crate::errors::{DoorkeeperError, ProxyError, WorkerError};
 use crate::frame::{
-    self, read_response_frame, write_frame, FrameOpcode, FrameParams, RequestFrame, ResponseFrame,
+    self, FrameOpcode, FrameParams, RequestFrame, ResponseFrame, read_response_frame, write_frame,
 };
 use crate::{RequestOpcode, TargetShard};
 use bytes::Bytes;
@@ -877,9 +877,9 @@ mod compression {
         CqlRequestSerializationError, FrameBodyExtensionsParseError,
     };
     use scylla_cql::frame::request::{
-        options, DeserializableRequest as _, RequestDeserializationError, Startup,
+        DeserializableRequest as _, RequestDeserializationError, Startup, options,
     };
-    use scylla_cql::frame::{compress_append, decompress, flag, Compression};
+    use scylla_cql::frame::{Compression, compress_append, decompress, flag};
     use tracing::{error, warn};
 
     #[derive(Debug, thiserror::Error)]
@@ -1319,7 +1319,7 @@ impl ProxyWorker {
                                     connection_close_signaler.clone();
                                 let drop_action = async move {
                                     if let Some(ref delay) = drop_connection_action {
-                                        if let Some(ref time) = delay {
+                                        if let Some(time) = delay {
                                             tokio::time::sleep(*time).await;
                                         }
                                         // close connection.
@@ -1425,7 +1425,7 @@ impl ProxyWorker {
                                     connection_close_signaler.clone();
                                 let drop_action = async move {
                                     if let Some(ref delay) = drop_connection_action {
-                                        if let Some(ref time) = delay {
+                                        if let Some(time) = delay {
                                             tokio::time::sleep(*time).await;
                                         }
                                         // close connection.
@@ -1479,10 +1479,10 @@ mod tests {
     use super::compression::no_compression;
     use super::*;
     use crate::errors::ReadFrameError;
-    use crate::frame::{read_frame, read_request_frame, FrameType};
+    use crate::frame::{FrameType, read_frame, read_request_frame};
     use crate::proxy::compression::with_compression;
     use crate::{
-        setup_tracing, Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction,
+        Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction, setup_tracing,
     };
     use assert_matches::assert_matches;
     use bytes::{BufMut, BytesMut};
@@ -1491,7 +1491,7 @@ mod tests {
     use scylla_cql::frame::request::options;
     use scylla_cql::frame::request::{SerializableRequest as _, Startup};
     use scylla_cql::frame::types::write_string_multimap;
-    use scylla_cql::frame::{flag, Compression};
+    use scylla_cql::frame::{Compression, flag};
     use std::collections::HashMap;
     use std::mem;
     use std::str::FromStr;

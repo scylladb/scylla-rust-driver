@@ -1,7 +1,7 @@
 [package]
 name = "scylla"
 version = "1.3.1"
-edition = "2021"
+edition = "2024"
 rust-version = "1.85"
 description = "Async CQL driver for Rust, optimized for Scylla, fully compatible with Apache Cassandra™"
 repository = "https://github.com/scylladb/scylla-rust-driver"
@@ -147,7 +147,3 @@ unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(cpp_rust_unstable)',
     'cfg(ccm_tests)',
 ] }
-
-[lints.clippy]
-# Needless lifetimes are often written for documentation purposes.
-needless_lifetimes = "allow"

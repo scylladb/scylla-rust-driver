@@ -58,7 +58,7 @@ impl<'slice, 'spec> ColumnSpecs<'slice, 'spec> {
     /// Returns iterator over specification of columns returned from the database,
     /// ordered by column order in the response.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = &'slice ColumnSpec<'spec>> {
+    pub fn iter(&self) -> impl Iterator<Item = &'slice ColumnSpec<'spec>> + use<'slice, 'spec> {
         self.specs.iter()
     }
 }

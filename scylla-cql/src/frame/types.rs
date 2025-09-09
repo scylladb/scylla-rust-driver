@@ -1,7 +1,7 @@
 //! CQL binary protocol in-wire types.
 
-use super::frame_errors::LowLevelDeserializationError;
 use super::TryFromPrimitiveError;
+use super::frame_errors::LowLevelDeserializationError;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::Bytes;
 #[cfg(test)]
