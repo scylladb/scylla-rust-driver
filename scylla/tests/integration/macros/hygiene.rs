@@ -242,6 +242,24 @@ macro_rules! test_crate {
             g: ::core::primitive::i32,
         }
 
+         // Test attributes for value struct with ordered flavor
+        #[derive(
+            _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
+        )]
+        #[scylla(crate = _scylla, flavor = "enforce_order")]
+        #[scylla(allow_missing)]
+        struct TestStructOrderedAllowedMissing {
+            a: ::core::primitive::i32,
+            b: ::core::primitive::i32,
+            #[scylla(default_when_null)]
+            c: ::core::primitive::i32,
+            #[scylla(skip)]
+            d: ::core::primitive::i32,
+            #[scylla(rename = "f")]
+            e: ::core::primitive::i32,
+            g: ::core::primitive::i32,
+        }
+
         // Test attributes for value struct with strict ordered flavor
         #[derive(
             _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
@@ -314,6 +332,24 @@ macro_rules! test_crate {
             c: ::core::primitive::i32,
             #[scylla(default_when_null)]
             d: ::core::primitive::i32,
+            #[scylla(allow_missing)]
+            e: ::core::primitive::i32,
+        }
+        // Test attributes for row struct with name flavor
+        #[derive(
+            _scylla::DeserializeRow, _scylla::SerializeRow, PartialEq, Debug,
+        )]
+        #[scylla(crate = _scylla)]
+        #[scylla(allow_missing)]
+        struct TestRowByNameWithMissing {
+            #[scylla(skip)]
+            a: ::core::primitive::i32,
+            #[scylla(rename = "f")]
+            b: ::core::primitive::i32,
+            c: ::core::primitive::i32,
+            #[scylla(default_when_null)]
+            d: ::core::primitive::i32,
+            e: ::core::primitive::i32,
         }
 
         // Test attributes for row struct with ordered flavor
