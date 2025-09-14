@@ -29,7 +29,7 @@ jobs:
     # could do us a lot of harm. This is also the reason that there are
     # 2 jobs - it's so that it's not possible to take over a job that
     # has permissions.
-    permissions: {} 
+    permissions: {}
     timeout-minutes: 30
     # This is to prevent a situation, when job A triggered by push 1 finishes
     # after job B triggered by push 2. That could result in incorrectly assigning
@@ -58,9 +58,10 @@ jobs:
     - name: Setup rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Install semver-checks
-      uses: taiki-e/install-action@v2
-      with:
-        tool: cargo-semver-checks
+    # This is a temporary workaround because current cargo-semver-checks doesn't work with this repo,
+    # and needs a fix. After the bug is fixed, we should revert to using taiki-e/install-action.
+    # See: https://github.com/obi1kenobi/cargo-semver-checks/issues/1379
+      run: cargo install --git https://github.com/Lorak-mmk/cargo-semver-checks.git cargo-semver-checks --branch main
     - name: Verify the API compatibilty with PR base
       id: semver-pr-check
       run: |
