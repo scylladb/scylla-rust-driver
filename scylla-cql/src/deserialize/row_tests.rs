@@ -114,6 +114,8 @@ fn test_struct_deserialization_loose_ordering() {
         d: i32,
         #[scylla(default_when_null)]
         e: &'a str,
+        #[scylla(allow_missing)]
+        f: &'a str,
     }
 
     // Original order of columns
@@ -133,6 +135,7 @@ fn test_struct_deserialization_loose_ordering() {
             c: String::new(),
             d: 0,
             e: "def",
+            f: "",
         }
     );
 
@@ -153,6 +156,7 @@ fn test_struct_deserialization_loose_ordering() {
             c: String::new(),
             d: 0,
             e: "",
+            f: "",
         }
     );
 
@@ -169,6 +173,90 @@ fn test_struct_deserialization_loose_ordering() {
         spec("b", ColumnType::Native(NativeType::Int)),
     ];
     MyRow::type_check(specs).unwrap_err();
+
+    // Wrong column type
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Int)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+    ];
+    MyRow::type_check(specs).unwrap_err();
+}
+
+#[test]
+fn test_struct_deserialization_loose_ordering_allow_missing() {
+    #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+    #[scylla(crate = "crate")]
+    #[scylla(allow_missing)]
+    struct MyRow<'a> {
+        a: &'a str,
+        b: Option<i32>,
+        #[scylla(skip)]
+        c: String,
+        #[scylla(default_when_null)]
+        d: i32,
+        #[scylla(default_when_null)]
+        e: &'a str,
+        f: &'a str,
+        g: &'a str,
+    }
+
+    // Original order of columns
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+        spec("d", ColumnType::Native(NativeType::Int)),
+        spec("e", ColumnType::Native(NativeType::Text)),
+    ];
+    let byts = serialize_cells([val_str("abc"), val_int(123), None, val_str("def")]);
+    let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+    assert_eq!(
+        row,
+        MyRow {
+            a: "abc",
+            b: Some(123),
+            c: String::new(),
+            d: 0,
+            e: "def",
+            f: "",
+            g: "",
+        }
+    );
+
+    // Different order of columns - should still work
+    let specs = &[
+        spec("e", ColumnType::Native(NativeType::Text)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+        spec("d", ColumnType::Native(NativeType::Int)),
+        spec("a", ColumnType::Native(NativeType::Text)),
+    ];
+    let byts = serialize_cells([None, val_int(123), None, val_str("abc")]);
+    let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+    assert_eq!(
+        row,
+        MyRow {
+            a: "abc",
+            b: Some(123),
+            c: String::new(),
+            d: 0,
+            e: "",
+            f: "",
+            g: "",
+        }
+    );
+
+    // Missing column
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("e", ColumnType::Native(NativeType::Text)),
+    ];
+    MyRow::type_check(specs).unwrap();
+
+    // Missing both default_when_null column
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+    ];
+    MyRow::type_check(specs).unwrap();
 
     // Wrong column type
     let specs = &[
