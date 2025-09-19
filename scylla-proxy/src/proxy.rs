@@ -1061,7 +1061,7 @@ impl ProxyWorker {
 
     async fn receiver_from_driver(
         self,
-        mut read_half: (impl AsyncRead + Unpin),
+        mut read_half: impl AsyncRead + Unpin,
         request_processor_tx: mpsc::UnboundedSender<RequestFrame>,
         compression: CompressionReader,
     ) {
@@ -1096,7 +1096,7 @@ impl ProxyWorker {
 
     async fn receiver_from_cluster(
         self,
-        mut read_half: (impl AsyncRead + Unpin),
+        mut read_half: impl AsyncRead + Unpin,
         response_processor_tx: mpsc::UnboundedSender<ResponseFrame>,
         compression: CompressionReader,
     ) {
@@ -1133,7 +1133,7 @@ impl ProxyWorker {
 
     async fn sender_to_driver(
         self,
-        mut write_half: (impl AsyncWrite + Unpin),
+        mut write_half: impl AsyncWrite + Unpin,
         mut responses_rx: mpsc::UnboundedReceiver<ResponseFrame>,
         mut connection_close_notifier: ConnectionCloseNotifier,
         mut terminate_notifier: TerminateNotifier,
@@ -1180,7 +1180,7 @@ impl ProxyWorker {
 
     async fn sender_to_cluster(
         self,
-        mut write_half: (impl AsyncWrite + Unpin),
+        mut write_half: impl AsyncWrite + Unpin,
         mut requests_rx: mpsc::UnboundedReceiver<RequestFrame>,
         mut connection_close_notifier: ConnectionCloseNotifier,
         mut terminate_notifier: TerminateNotifier,

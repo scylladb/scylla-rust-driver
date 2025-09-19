@@ -3,6 +3,7 @@ edition = "2024"
 name = "examples"
 publish = false
 version = "0.0.0"
+rust-version = "1.85"
 
 [dev-dependencies]
 anyhow = "1.0.33"

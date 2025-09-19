@@ -631,7 +631,7 @@ impl DeserializeUnorderedGenerator<'_> {
         let field_idents = fields.iter().map(|f| f.ident.as_ref().unwrap());
         let nonskipped_field_names = fields
             .iter()
-            .filter(|&f| (!f.skip))
+            .filter(|&f| !f.skip)
             .map(|f| f.cql_name_literal());
 
         let field_finalizers = fields.iter().map(|f| self.generate_finalize_field(f));

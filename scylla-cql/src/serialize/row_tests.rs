@@ -225,6 +225,7 @@ fn test_map_errors() {
 // etc. that usually pop up when generating code for empty structs.
 #[derive(SerializeRow)]
 #[scylla(crate = crate)]
+#[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.90
 struct TestRowWithNoColumns {}
 
 #[derive(SerializeRow, Debug, PartialEq, Eq, Default)]

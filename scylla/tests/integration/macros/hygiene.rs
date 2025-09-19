@@ -302,10 +302,7 @@ macro_rules! test_crate {
             _scylla::DeserializeRow, _scylla::SerializeRow, PartialEq, Debug,
         )]
         #[scylla(crate = _scylla)]
-        // We would like to have this `expect(dead_code)`, but it does not work for
-        // SerializeRow with by-name flavor. See https://github.com/scylladb/scylla-rust-driver/issues/1429
-        // After fixing the above issue, we can add allow(dead_code)
-        // After also bumping MSRV to 1.89+ we can add expect(dead_code).
+        #[allow(dead_code)] // TODO: Change to expect after bumping MSRV to 1.90
         struct TestRowByName {
             #[scylla(skip)]
             a: ::core::primitive::i32,
