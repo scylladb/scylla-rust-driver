@@ -98,18 +98,18 @@ pub struct PreparedStatement {
     /// Tracing IDs of all queries used to prepare this statement.
     pub prepare_tracing_ids: Vec<Uuid>,
 
-    id: Bytes,
     shared: Arc<PreparedStatementSharedData>,
     page_size: PageSize,
     partitioner_name: PartitionerName,
-    is_confirmed_lwt: bool,
 }
 
 #[derive(Debug)]
 struct PreparedStatementSharedData {
+    id: Bytes,
     metadata: PreparedMetadata,
     result_metadata: Arc<ResultMetadata<'static>>,
     statement: String,
+    is_confirmed_lwt: bool,
 }
 
 impl Clone for PreparedStatement {
@@ -117,11 +117,9 @@ impl Clone for PreparedStatement {
         Self {
             config: self.config.clone(),
             prepare_tracing_ids: Vec::new(),
-            id: self.id.clone(),
             shared: self.shared.clone(),
             page_size: self.page_size,
             partitioner_name: self.partitioner_name.clone(),
-            is_confirmed_lwt: self.is_confirmed_lwt,
         }
     }
 }
@@ -137,23 +135,23 @@ impl PreparedStatement {
         config: StatementConfig,
     ) -> Self {
         Self {
-            id,
             shared: Arc::new(PreparedStatementSharedData {
+                id,
                 metadata,
                 result_metadata,
                 statement,
+                is_confirmed_lwt: is_lwt,
             }),
             prepare_tracing_ids: Vec::new(),
             page_size,
-            config,
             partitioner_name: Default::default(),
-            is_confirmed_lwt: is_lwt,
+            config,
         }
     }
 
     /// Retrieves the ID of this prepared statement.
     pub fn get_id(&self) -> &Bytes {
-        &self.id
+        &self.shared.id
     }
 
     /// Retrieves the statement string of this prepared statement.
@@ -200,7 +198,7 @@ impl PreparedStatement {
     /// Note: this a Scylla-specific optimisation. Therefore, the result
     /// will be always false for Cassandra.
     pub fn is_confirmed_lwt(&self) -> bool {
-        self.is_confirmed_lwt
+        self.shared.is_confirmed_lwt
     }
 
     /// Computes the partition key of the target table from given values —
