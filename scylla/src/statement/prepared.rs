@@ -96,6 +96,7 @@ use crate::routing::partitioner::{Partitioner, PartitionerHasher, PartitionerNam
 pub struct PreparedStatement {
     pub(crate) config: StatementConfig,
     /// Tracing IDs of all queries used to prepare this statement.
+    // TODO(2.0): Unpub this, move this to PreparedStatementSharedData, and expose a getter.
     pub prepare_tracing_ids: Vec<Uuid>,
 
     shared: Arc<PreparedStatementSharedData>,
