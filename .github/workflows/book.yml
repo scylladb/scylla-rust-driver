@@ -31,6 +31,11 @@ jobs:
       with:
         # We can't use cache here, or mdbook will complain about multiple candidates for dependency.
         cache: false
+    # This is a workaround for https://github.com/actions-rust-lang/setup-rust-toolchain/issues/79
+    # and https://github.com/rust-lang/mdBook/issues/2501
+    # When either mdbook or setup-rust-toolchain fix the issue, we can remove this.
+    - name: Set default toolchain globally
+      run: rustup default stable
     - name: Install mdbook
       uses: taiki-e/install-action@v2
       with:
