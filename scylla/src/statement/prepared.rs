@@ -571,6 +571,16 @@ impl PreparedStatement {
         let ctx = RowSerializationContext::from_prepared(self.get_prepared_metadata());
         SerializedValues::from_serializable(&ctx, values)
     }
+
+    pub(crate) fn make_unconfigured_handle(&self) -> UnconfiguredPreparedStatement {
+        UnconfiguredPreparedStatement {
+            id: self.get_id().clone(),
+            is_confirmed_lwt: self.is_confirmed_lwt(),
+            metadata: self.get_prepared_metadata().clone(),
+            result_metadata: self.get_result_metadata().clone(),
+            partitioner_name: self.get_partitioner_name().clone(),
+        }
+    }
 }
 
 /// Contains just the parts of a prepared statement that were returned
@@ -604,19 +614,6 @@ impl UnconfiguredPreparedStatement {
         );
         stmt.set_partitioner_name(self.partitioner_name.clone());
         stmt
-    }
-}
-
-// Later I'll turn it into a method on PreparedStatement
-impl From<&PreparedStatement> for UnconfiguredPreparedStatement {
-    fn from(prepared: &PreparedStatement) -> Self {
-        UnconfiguredPreparedStatement {
-            id: prepared.get_id().clone(),
-            is_confirmed_lwt: prepared.is_confirmed_lwt(),
-            metadata: prepared.get_prepared_metadata().clone(),
-            result_metadata: prepared.get_result_metadata().clone(),
-            partitioner_name: prepared.get_partitioner_name().clone(),
-        }
     }
 }
 

@@ -220,7 +220,7 @@ where
                 }
             }
 
-            let raw = <UnconfiguredPreparedStatement as From<&PreparedStatement>>::from(&prepared);
+            let raw = prepared.make_unconfigured_handle();
             self.cache.insert(query_contents, raw);
 
             Ok(prepared)
