@@ -580,10 +580,12 @@ impl PreparedStatement {
     }
 }
 
-/// Contains just the parts of a prepared statement that were returned
-/// from the database. All remaining parts (query string, page size,
-/// consistency, etc.) are taken from the Query passed
-/// to the `CachingSession::execute` family of methods.
+/// This is a [PreparedStatement] without parts that are available to be configured
+/// on an unprepared [Statement]. It is intended to be used in [CachingSession] cache,
+/// as a type safety measue: it first needs to be configured with config taken from
+/// statement provided by the user.
+/// It contains partitioner_name field. It is configurable on prepared statement,
+/// but not on unprepared statement, so we need to keep it.
 #[derive(Debug)]
 pub(crate) struct UnconfiguredPreparedStatement {
     shared: Arc<PreparedStatementSharedData>,
