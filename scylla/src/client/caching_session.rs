@@ -8,6 +8,7 @@ use crate::routing::partitioner::PartitionerName;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::PreparedStatement;
 use crate::statement::unprepared::Statement;
+use crate::statement::{PageSize, StatementConfig};
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
@@ -33,6 +34,40 @@ struct RawPreparedStatementData {
     metadata: PreparedMetadata,
     result_metadata: Arc<ResultMetadata<'static>>,
     partitioner_name: PartitionerName,
+}
+
+impl RawPreparedStatementData {
+    pub(crate) fn make_configured_handle(
+        &self,
+        config: StatementConfig,
+        page_size: PageSize,
+        query: String,
+    ) -> PreparedStatement {
+        let mut stmt = PreparedStatement::new(
+            self.id.clone(),
+            self.is_confirmed_lwt,
+            self.metadata.clone(),
+            self.result_metadata.clone(),
+            query,
+            page_size,
+            config,
+        );
+        stmt.set_partitioner_name(self.partitioner_name.clone());
+        stmt
+    }
+}
+
+// Later I'll turn it into a method on PreparedStatement
+impl From<&PreparedStatement> for RawPreparedStatementData {
+    fn from(prepared: &PreparedStatement) -> Self {
+        RawPreparedStatementData {
+            id: prepared.get_id().clone(),
+            is_confirmed_lwt: prepared.is_confirmed_lwt(),
+            metadata: prepared.get_prepared_metadata().clone(),
+            result_metadata: prepared.get_result_metadata().clone(),
+            partitioner_name: prepared.get_partitioner_name().clone(),
+        }
+    }
 }
 
 /// Provides auto caching while executing queries
@@ -204,16 +239,7 @@ where
 
         if let Some(raw) = self.cache.get(&query.contents) {
             let page_size = query.get_validated_page_size();
-            let mut stmt = PreparedStatement::new(
-                raw.id.clone(),
-                raw.is_confirmed_lwt,
-                raw.metadata.clone(),
-                raw.result_metadata.clone(),
-                query.contents,
-                page_size,
-                query.config,
-            );
-            stmt.set_partitioner_name(raw.partitioner_name.clone());
+            let mut stmt = raw.make_configured_handle(query.config, page_size, query.contents);
             stmt.set_use_cached_result_metadata(self.use_cached_metadata);
             Ok(stmt)
         } else {
@@ -245,13 +271,7 @@ where
                 }
             }
 
-            let raw = RawPreparedStatementData {
-                id: prepared.get_id().clone(),
-                is_confirmed_lwt: prepared.is_confirmed_lwt(),
-                metadata: prepared.get_prepared_metadata().clone(),
-                result_metadata: prepared.get_result_metadata().clone(),
-                partitioner_name: prepared.get_partitioner_name().clone(),
-            };
+            let raw = <RawPreparedStatementData as From<&PreparedStatement>>::from(&prepared);
             self.cache.insert(query_contents, raw);
 
             Ok(prepared)
