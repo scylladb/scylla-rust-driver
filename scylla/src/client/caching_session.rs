@@ -188,7 +188,7 @@ where
 
         if let Some(raw) = self.cache.get(&query.contents) {
             let page_size = query.get_validated_page_size();
-            let mut stmt = raw.make_configured_handle(query.config, page_size, query.contents);
+            let mut stmt = raw.make_configured_handle(query.config, page_size);
             stmt.set_use_cached_result_metadata(self.use_cached_metadata);
             Ok(stmt)
         } else {

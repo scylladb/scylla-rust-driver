@@ -579,6 +579,7 @@ impl PreparedStatement {
             metadata: self.get_prepared_metadata().clone(),
             result_metadata: self.get_result_metadata().clone(),
             partitioner_name: self.get_partitioner_name().clone(),
+            statement: self.get_statement().to_owned(),
         }
     }
 }
@@ -593,6 +594,7 @@ pub(crate) struct UnconfiguredPreparedStatement {
     is_confirmed_lwt: bool,
     metadata: PreparedMetadata,
     result_metadata: Arc<ResultMetadata<'static>>,
+    statement: String,
     partitioner_name: PartitionerName,
 }
 
@@ -601,14 +603,13 @@ impl UnconfiguredPreparedStatement {
         &self,
         config: StatementConfig,
         page_size: PageSize,
-        query: String,
     ) -> PreparedStatement {
         let mut stmt = PreparedStatement::new(
             self.id.clone(),
             self.is_confirmed_lwt,
             self.metadata.clone(),
             self.result_metadata.clone(),
-            query,
+            self.statement.clone(),
             page_size,
             config,
         );
