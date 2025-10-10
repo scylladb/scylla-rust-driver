@@ -191,7 +191,7 @@ impl Clone for PreparedStatement {
 }
 
 impl PreparedStatement {
-    pub(crate) fn new(
+    fn new(
         id: Bytes,
         is_lwt: bool,
         metadata: PreparedMetadata,
