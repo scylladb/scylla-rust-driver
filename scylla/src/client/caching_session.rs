@@ -5,7 +5,7 @@ use crate::errors::{ExecutionError, PagerExecutionError, PrepareError};
 use crate::response::query_result::QueryResult;
 use crate::response::{PagingState, PagingStateResponse};
 use crate::statement::batch::{Batch, BatchStatement};
-use crate::statement::prepared::{PreparedStatement, RawPreparedStatementData};
+use crate::statement::prepared::{PreparedStatement, UnconfiguredPreparedStatement};
 use crate::statement::unprepared::Statement;
 use dashmap::DashMap;
 use futures::future::try_join_all;
@@ -29,7 +29,7 @@ where
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
     max_capacity: usize,
-    cache: DashMap<String, RawPreparedStatementData, S>,
+    cache: DashMap<String, UnconfiguredPreparedStatement, S>,
     use_cached_metadata: bool,
 }
 
@@ -220,7 +220,7 @@ where
                 }
             }
 
-            let raw = <RawPreparedStatementData as From<&PreparedStatement>>::from(&prepared);
+            let raw = <UnconfiguredPreparedStatement as From<&PreparedStatement>>::from(&prepared);
             self.cache.insert(query_contents, raw);
 
             Ok(prepared)

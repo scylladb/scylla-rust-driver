@@ -578,7 +578,7 @@ impl PreparedStatement {
 /// consistency, etc.) are taken from the Query passed
 /// to the `CachingSession::execute` family of methods.
 #[derive(Debug)]
-pub(crate) struct RawPreparedStatementData {
+pub(crate) struct UnconfiguredPreparedStatement {
     id: Bytes,
     is_confirmed_lwt: bool,
     metadata: PreparedMetadata,
@@ -586,7 +586,7 @@ pub(crate) struct RawPreparedStatementData {
     partitioner_name: PartitionerName,
 }
 
-impl RawPreparedStatementData {
+impl UnconfiguredPreparedStatement {
     pub(crate) fn make_configured_handle(
         &self,
         config: StatementConfig,
@@ -608,9 +608,9 @@ impl RawPreparedStatementData {
 }
 
 // Later I'll turn it into a method on PreparedStatement
-impl From<&PreparedStatement> for RawPreparedStatementData {
+impl From<&PreparedStatement> for UnconfiguredPreparedStatement {
     fn from(prepared: &PreparedStatement) -> Self {
-        RawPreparedStatementData {
+        UnconfiguredPreparedStatement {
             id: prepared.get_id().clone(),
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
             metadata: prepared.get_prepared_metadata().clone(),
