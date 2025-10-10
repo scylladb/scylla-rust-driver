@@ -574,12 +574,8 @@ impl PreparedStatement {
 
     pub(crate) fn make_unconfigured_handle(&self) -> UnconfiguredPreparedStatement {
         UnconfiguredPreparedStatement {
-            id: self.get_id().clone(),
-            is_confirmed_lwt: self.is_confirmed_lwt(),
-            metadata: self.get_prepared_metadata().clone(),
-            result_metadata: self.get_result_metadata().clone(),
+            shared: Arc::clone(&self.shared),
             partitioner_name: self.get_partitioner_name().clone(),
-            statement: self.get_statement().to_owned(),
         }
     }
 }
@@ -590,11 +586,7 @@ impl PreparedStatement {
 /// to the `CachingSession::execute` family of methods.
 #[derive(Debug)]
 pub(crate) struct UnconfiguredPreparedStatement {
-    id: Bytes,
-    is_confirmed_lwt: bool,
-    metadata: PreparedMetadata,
-    result_metadata: Arc<ResultMetadata<'static>>,
-    statement: String,
+    shared: Arc<PreparedStatementSharedData>,
     partitioner_name: PartitionerName,
 }
 
@@ -604,17 +596,13 @@ impl UnconfiguredPreparedStatement {
         config: StatementConfig,
         page_size: PageSize,
     ) -> PreparedStatement {
-        let mut stmt = PreparedStatement::new(
-            self.id.clone(),
-            self.is_confirmed_lwt,
-            self.metadata.clone(),
-            self.result_metadata.clone(),
-            self.statement.clone(),
+        PreparedStatement {
+            shared: Arc::clone(&self.shared),
+            prepare_tracing_ids: Vec::new(),
             page_size,
+            partitioner_name: self.partitioner_name.clone(),
             config,
-        );
-        stmt.set_partitioner_name(self.partitioner_name.clone());
-        stmt
+        }
     }
 }
 
