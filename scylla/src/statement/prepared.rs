@@ -32,6 +32,19 @@ use crate::statement::Statement;
 ///
 /// Kept separate for performance reasons, because constructing
 /// [PreparedStatement] involves allocations.
+///
+/// # Lifecycle of prepared statement
+///
+/// When PREPARE request is issued, RawPreparedStatement is returned,
+/// and later converted to PreparedStatement.
+/// PreparedStatement can be cloned. Clone is a new handle to the same
+/// underlying shared data - if the result metadata is updated, it is
+/// updated for all clones.
+/// PreparedStatement can be turned into UnconfiguredPreparedStatement.
+/// Similarly to clone, unconfigured statement is also a handle to the
+/// same shared data.
+/// UnconfiguredPreparedStatement can be used to create new PreparedStatement
+/// objects. Those are also handles to the same shared data.
 pub(crate) struct RawPreparedStatement<'statement> {
     statement: &'statement Statement,
     prepared_response: result::Prepared,
