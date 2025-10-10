@@ -565,6 +565,53 @@ impl PreparedStatement {
     }
 }
 
+/// Contains just the parts of a prepared statement that were returned
+/// from the database. All remaining parts (query string, page size,
+/// consistency, etc.) are taken from the Query passed
+/// to the `CachingSession::execute` family of methods.
+#[derive(Debug)]
+pub(crate) struct RawPreparedStatementData {
+    id: Bytes,
+    is_confirmed_lwt: bool,
+    metadata: PreparedMetadata,
+    result_metadata: Arc<ResultMetadata<'static>>,
+    partitioner_name: PartitionerName,
+}
+
+impl RawPreparedStatementData {
+    pub(crate) fn make_configured_handle(
+        &self,
+        config: StatementConfig,
+        page_size: PageSize,
+        query: String,
+    ) -> PreparedStatement {
+        let mut stmt = PreparedStatement::new(
+            self.id.clone(),
+            self.is_confirmed_lwt,
+            self.metadata.clone(),
+            self.result_metadata.clone(),
+            query,
+            page_size,
+            config,
+        );
+        stmt.set_partitioner_name(self.partitioner_name.clone());
+        stmt
+    }
+}
+
+// Later I'll turn it into a method on PreparedStatement
+impl From<&PreparedStatement> for RawPreparedStatementData {
+    fn from(prepared: &PreparedStatement) -> Self {
+        RawPreparedStatementData {
+            id: prepared.get_id().clone(),
+            is_confirmed_lwt: prepared.is_confirmed_lwt(),
+            metadata: prepared.get_prepared_metadata().clone(),
+            result_metadata: prepared.get_result_metadata().clone(),
+            partitioner_name: prepared.get_partitioner_name().clone(),
+        }
+    }
+}
+
 /// Error when extracting partition key from bound values.
 #[derive(Clone, Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
