@@ -33,10 +33,10 @@ use crate::statement::Statement;
 /// Kept separate for performance reasons, because constructing
 /// [PreparedStatement] involves allocations.
 pub(crate) struct RawPreparedStatement<'statement> {
-    pub(crate) statement: &'statement Statement,
-    pub(crate) prepared_response: result::Prepared,
-    pub(crate) is_lwt: bool,
-    pub(crate) tracing_id: Option<Uuid>,
+    statement: &'statement Statement,
+    prepared_response: result::Prepared,
+    is_lwt: bool,
+    tracing_id: Option<Uuid>,
 }
 
 impl<'statement> RawPreparedStatement<'statement> {
@@ -52,6 +52,14 @@ impl<'statement> RawPreparedStatement<'statement> {
             is_lwt,
             tracing_id,
         }
+    }
+
+    pub(crate) fn get_id(&self) -> &Bytes {
+        &self.prepared_response.id
+    }
+
+    pub(crate) fn tracing_id(&self) -> Option<Uuid> {
+        self.tracing_id
     }
 }
 

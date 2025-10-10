@@ -1341,12 +1341,12 @@ impl Session {
 
         // Validate prepared ids equality.
         for another_raw_prepared in raw_prepared_statements_results_iter.flatten() {
-            if prepared.get_id() != &another_raw_prepared.prepared_response.id {
+            if prepared.get_id() != another_raw_prepared.get_id() {
                 tracing::error!(
                     "Got differing ids upon statement preparation: statement \"{}\", id1: {:?}, id2: {:?}",
                     prepared.get_statement(),
                     prepared.get_id(),
-                    another_raw_prepared.prepared_response.id
+                    another_raw_prepared.get_id()
                 );
                 return Err(PrepareError::PreparedStatementIdsMismatch);
             }
@@ -1354,7 +1354,7 @@ impl Session {
             // Collect all tracing ids from prepare() queries in the final result
             prepared
                 .prepare_tracing_ids
-                .extend(another_raw_prepared.tracing_id);
+                .extend(another_raw_prepared.tracing_id());
         }
 
         // This is the first preparation that succeeded.
