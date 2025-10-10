@@ -108,7 +108,7 @@ pub struct PreparedStatement {
 struct PreparedStatementSharedData {
     id: Bytes,
     metadata: PreparedMetadata,
-    result_metadata: Arc<ResultMetadata<'static>>,
+    initial_result_metadata: Arc<ResultMetadata<'static>>,
     statement: String,
     is_confirmed_lwt: bool,
 }
@@ -139,7 +139,7 @@ impl PreparedStatement {
             shared: Arc::new(PreparedStatementSharedData {
                 id,
                 metadata,
-                result_metadata,
+                initial_result_metadata: result_metadata,
                 statement,
                 is_confirmed_lwt: is_lwt,
             }),
@@ -430,12 +430,12 @@ impl PreparedStatement {
 
     /// Access metadata about the result of prepared statement returned by the database
     pub(crate) fn get_result_metadata(&self) -> &Arc<ResultMetadata<'static>> {
-        &self.shared.result_metadata
+        &self.shared.initial_result_metadata
     }
 
     /// Access column specifications of the result set returned after the execution of this statement
     pub fn get_result_set_col_specs(&self) -> ColumnSpecs<'_, 'static> {
-        ColumnSpecs::new(self.shared.result_metadata.col_specs())
+        ColumnSpecs::new(self.shared.initial_result_metadata.col_specs())
     }
 
     /// Get the name of the partitioner used for this statement.
