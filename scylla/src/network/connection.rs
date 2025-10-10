@@ -21,13 +21,11 @@ use crate::frame::{
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::QueryResult;
-use crate::response::{
-    NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse, RawPreparedStatement,
-};
+use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse};
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
 use crate::statement::batch::{Batch, BatchStatement};
-use crate::statement::prepared::PreparedStatement;
+use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;

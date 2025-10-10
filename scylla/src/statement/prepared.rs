@@ -18,7 +18,7 @@ use uuid::Uuid;
 use super::{PageSize, StatementConfig};
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::errors::{BadQuery, ExecutionError};
-use crate::frame::response::result::PreparedMetadata;
+use crate::frame::response::result::{self, PreparedMetadata};
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::observability::history::HistoryListener;
 use crate::policies::load_balancing::LoadBalancingPolicy;
@@ -26,6 +26,63 @@ use crate::policies::retry::RetryPolicy;
 use crate::response::query_result::ColumnSpecs;
 use crate::routing::Token;
 use crate::routing::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
+use crate::statement::Statement;
+
+/// Parts which are needed to construct [PreparedStatement].
+///
+/// Kept separate for performance reasons, because constructing
+/// [PreparedStatement] involves allocations.
+pub(crate) struct RawPreparedStatement<'statement> {
+    pub(crate) statement: &'statement Statement,
+    pub(crate) prepared_response: result::Prepared,
+    pub(crate) is_lwt: bool,
+    pub(crate) tracing_id: Option<Uuid>,
+}
+
+impl<'statement> RawPreparedStatement<'statement> {
+    pub(crate) fn new(
+        statement: &'statement Statement,
+        prepared_response: result::Prepared,
+        is_lwt: bool,
+        tracing_id: Option<Uuid>,
+    ) -> Self {
+        Self {
+            statement,
+            prepared_response,
+            is_lwt,
+            tracing_id,
+        }
+    }
+}
+
+/// Constructs the fully-fledged [PreparedStatement].
+///
+/// This involves allocations.
+impl RawPreparedStatement<'_> {
+    pub(crate) fn into_prepared_statement(self) -> PreparedStatement {
+        let Self {
+            statement,
+            prepared_response,
+            is_lwt,
+            tracing_id,
+        } = self;
+        let mut prepared_statement = PreparedStatement::new(
+            prepared_response.id,
+            is_lwt,
+            prepared_response.prepared_metadata,
+            Arc::new(prepared_response.result_metadata),
+            statement.contents.clone(),
+            statement.get_validated_page_size(),
+            statement.config.clone(),
+        );
+
+        if let Some(tracing_id) = tracing_id {
+            prepared_statement.prepare_tracing_ids.push(tracing_id);
+        }
+
+        prepared_statement
+    }
+}
 
 /// Represents a statement prepared on the server.
 ///
