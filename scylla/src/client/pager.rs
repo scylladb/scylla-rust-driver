@@ -144,7 +144,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     page_query: QueryFunc,
 
     load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
-    statement_info: RoutingInfo<'a>,
+    routing_info: RoutingInfo<'a>,
     query_is_idempotent: bool,
     query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,
@@ -170,7 +170,7 @@ where
     // Contract: this function MUST send at least one item through self.sender
     async fn work(mut self, cluster_state: Arc<ClusterState>) -> PageSendAttemptedProof {
         let load_balancer = Arc::clone(&self.load_balancing_policy);
-        let statement_info = self.statement_info.clone();
+        let statement_info = self.routing_info.clone();
         let query_plan =
             load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_state);
 
@@ -359,7 +359,7 @@ where
                 self.log_attempt_success();
                 self.log_request_success();
                 self.load_balancing_policy
-                    .on_request_success(&self.statement_info, elapsed, node);
+                    .on_request_success(&self.routing_info, elapsed, node);
 
                 request_span.record_raw_rows_fields(&rows);
 
@@ -396,7 +396,7 @@ where
                 #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
                 self.load_balancing_policy.on_request_failure(
-                    &self.statement_info,
+                    &self.routing_info,
                     elapsed,
                     node,
                     &err,
@@ -424,7 +424,7 @@ where
                 let err =
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
                 self.load_balancing_policy.on_request_failure(
-                    &self.statement_info,
+                    &self.routing_info,
                     elapsed,
                     node,
                     &err,
@@ -786,7 +786,7 @@ If you are using this API, you are probably doing something wrong."
             let worker = PagerWorker {
                 sender: sender.into(),
                 page_query,
-                statement_info: routing_info,
+                routing_info,
                 query_is_idempotent: statement.config.is_idempotent,
                 query_consistency: consistency,
                 load_balancing_policy,
@@ -914,7 +914,7 @@ If you are using this API, you are probably doing something wrong."
             let worker = PagerWorker {
                 sender: sender.into(),
                 page_query,
-                statement_info,
+                routing_info: statement_info,
                 query_is_idempotent: config.prepared.config.is_idempotent,
                 query_consistency: consistency,
                 load_balancing_policy,
