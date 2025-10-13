@@ -2146,7 +2146,7 @@ impl Session {
                 };
 
                 // Use retry policy to decide what to do next
-                let query_info = RequestInfo {
+                let request_info = RequestInfo {
                     error: &request_error,
                     is_idempotent: context.is_idempotent,
                     consistency: context
@@ -2154,7 +2154,7 @@ impl Session {
                         .unwrap_or(execution_profile.consistency),
                 };
 
-                let retry_decision = context.retry_session.decide_should_retry(query_info);
+                let retry_decision = context.retry_session.decide_should_retry(request_info);
                 trace!(
                     parent: &span,
                     retry_decision = ?retry_decision
