@@ -18,7 +18,7 @@ use uuid::Uuid;
 use super::{PageSize, StatementConfig};
 use crate::client::execution_profile::ExecutionProfileHandle;
 use crate::errors::{BadQuery, ExecutionError};
-use crate::frame::response::result::PreparedMetadata;
+use crate::frame::response::result::{self, PreparedMetadata};
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::observability::history::HistoryListener;
 use crate::policies::load_balancing::LoadBalancingPolicy;
@@ -26,6 +26,84 @@ use crate::policies::retry::RetryPolicy;
 use crate::response::query_result::ColumnSpecs;
 use crate::routing::Token;
 use crate::routing::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
+use crate::statement::Statement;
+
+/// Parts which are needed to construct [PreparedStatement].
+///
+/// Kept separate for performance reasons, because constructing
+/// [PreparedStatement] involves allocations.
+///
+/// # Lifecycle of prepared statement
+///
+/// When PREPARE request is issued, RawPreparedStatement is returned,
+/// and later converted to PreparedStatement.
+/// PreparedStatement can be cloned. Clone is a new handle to the same
+/// underlying shared data - if the result metadata is updated, it is
+/// updated for all clones.
+/// PreparedStatement can be turned into UnconfiguredPreparedStatement.
+/// Similarly to clone, unconfigured statement is also a handle to the
+/// same shared data.
+/// UnconfiguredPreparedStatement can be used to create new PreparedStatement
+/// objects. Those are also handles to the same shared data.
+pub(crate) struct RawPreparedStatement<'statement> {
+    statement: &'statement Statement,
+    prepared_response: result::Prepared,
+    is_lwt: bool,
+    tracing_id: Option<Uuid>,
+}
+
+impl<'statement> RawPreparedStatement<'statement> {
+    pub(crate) fn new(
+        statement: &'statement Statement,
+        prepared_response: result::Prepared,
+        is_lwt: bool,
+        tracing_id: Option<Uuid>,
+    ) -> Self {
+        Self {
+            statement,
+            prepared_response,
+            is_lwt,
+            tracing_id,
+        }
+    }
+
+    pub(crate) fn get_id(&self) -> &Bytes {
+        &self.prepared_response.id
+    }
+
+    pub(crate) fn tracing_id(&self) -> Option<Uuid> {
+        self.tracing_id
+    }
+}
+
+/// Constructs the fully-fledged [PreparedStatement].
+///
+/// This involves allocations.
+impl RawPreparedStatement<'_> {
+    pub(crate) fn into_prepared_statement(self) -> PreparedStatement {
+        let Self {
+            statement,
+            prepared_response,
+            is_lwt,
+            tracing_id,
+        } = self;
+        let mut prepared_statement = PreparedStatement::new(
+            prepared_response.id,
+            is_lwt,
+            prepared_response.prepared_metadata,
+            Arc::new(prepared_response.result_metadata),
+            statement.contents.clone(),
+            statement.get_validated_page_size(),
+            statement.config.clone(),
+        );
+
+        if let Some(tracing_id) = tracing_id {
+            prepared_statement.prepare_tracing_ids.push(tracing_id);
+        }
+
+        prepared_statement
+    }
+}
 
 /// Represents a statement prepared on the server.
 ///
@@ -108,7 +186,7 @@ pub struct PreparedStatement {
 struct PreparedStatementSharedData {
     id: Bytes,
     metadata: PreparedMetadata,
-    result_metadata: Arc<ResultMetadata<'static>>,
+    initial_result_metadata: Arc<ResultMetadata<'static>>,
     statement: String,
     is_confirmed_lwt: bool,
 }
@@ -126,7 +204,7 @@ impl Clone for PreparedStatement {
 }
 
 impl PreparedStatement {
-    pub(crate) fn new(
+    fn new(
         id: Bytes,
         is_lwt: bool,
         metadata: PreparedMetadata,
@@ -139,7 +217,7 @@ impl PreparedStatement {
             shared: Arc::new(PreparedStatementSharedData {
                 id,
                 metadata,
-                result_metadata,
+                initial_result_metadata: result_metadata,
                 statement,
                 is_confirmed_lwt: is_lwt,
             }),
@@ -430,12 +508,12 @@ impl PreparedStatement {
 
     /// Access metadata about the result of prepared statement returned by the database
     pub(crate) fn get_result_metadata(&self) -> &Arc<ResultMetadata<'static>> {
-        &self.shared.result_metadata
+        &self.shared.initial_result_metadata
     }
 
     /// Access column specifications of the result set returned after the execution of this statement
     pub fn get_result_set_col_specs(&self) -> ColumnSpecs<'_, 'static> {
-        ColumnSpecs::new(self.shared.result_metadata.col_specs())
+        ColumnSpecs::new(self.shared.initial_result_metadata.col_specs())
     }
 
     /// Get the name of the partitioner used for this statement.
@@ -505,6 +583,41 @@ impl PreparedStatement {
     ) -> Result<SerializedValues, SerializationError> {
         let ctx = RowSerializationContext::from_prepared(self.get_prepared_metadata());
         SerializedValues::from_serializable(&ctx, values)
+    }
+
+    pub(crate) fn make_unconfigured_handle(&self) -> UnconfiguredPreparedStatement {
+        UnconfiguredPreparedStatement {
+            shared: Arc::clone(&self.shared),
+            partitioner_name: self.get_partitioner_name().clone(),
+        }
+    }
+}
+
+/// This is a [PreparedStatement] without parts that are available to be configured
+/// on an unprepared [Statement]. It is intended to be used in [CachingSession] cache,
+/// as a type safety measue: it first needs to be configured with config taken from
+/// statement provided by the user.
+/// It contains partitioner_name field. It is configurable on prepared statement,
+/// but not on unprepared statement, so we need to keep it.
+#[derive(Debug)]
+pub(crate) struct UnconfiguredPreparedStatement {
+    shared: Arc<PreparedStatementSharedData>,
+    partitioner_name: PartitionerName,
+}
+
+impl UnconfiguredPreparedStatement {
+    pub(crate) fn make_configured_handle(
+        &self,
+        config: StatementConfig,
+        page_size: PageSize,
+    ) -> PreparedStatement {
+        PreparedStatement {
+            shared: Arc::clone(&self.shared),
+            prepare_tracing_ids: Vec::new(),
+            page_size,
+            partitioner_name: self.partitioner_name.clone(),
+            config,
+        }
     }
 }
 

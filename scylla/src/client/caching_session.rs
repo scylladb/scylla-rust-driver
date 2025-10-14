@@ -4,14 +4,11 @@
 use crate::errors::{ExecutionError, PagerExecutionError, PrepareError};
 use crate::response::query_result::QueryResult;
 use crate::response::{PagingState, PagingStateResponse};
-use crate::routing::partitioner::PartitionerName;
 use crate::statement::batch::{Batch, BatchStatement};
-use crate::statement::prepared::PreparedStatement;
+use crate::statement::prepared::{PreparedStatement, UnconfiguredPreparedStatement};
 use crate::statement::unprepared::Statement;
-use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
-use scylla_cql::frame::response::result::{PreparedMetadata, ResultMetadata};
 use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::SerializeRow;
 use std::collections::hash_map::RandomState;
@@ -21,19 +18,6 @@ use std::sync::Arc;
 
 use crate::client::pager::QueryPager;
 use crate::client::session::Session;
-
-/// Contains just the parts of a prepared statement that were returned
-/// from the database. All remaining parts (query string, page size,
-/// consistency, etc.) are taken from the Query passed
-/// to the `CachingSession::execute` family of methods.
-#[derive(Debug)]
-struct RawPreparedStatementData {
-    id: Bytes,
-    is_confirmed_lwt: bool,
-    metadata: PreparedMetadata,
-    result_metadata: Arc<ResultMetadata<'static>>,
-    partitioner_name: PartitionerName,
-}
 
 /// Provides auto caching while executing queries
 pub struct CachingSession<S = RandomState>
@@ -45,7 +29,7 @@ where
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
     max_capacity: usize,
-    cache: DashMap<String, RawPreparedStatementData, S>,
+    cache: DashMap<String, UnconfiguredPreparedStatement, S>,
     use_cached_metadata: bool,
 }
 
@@ -204,16 +188,7 @@ where
 
         if let Some(raw) = self.cache.get(&query.contents) {
             let page_size = query.get_validated_page_size();
-            let mut stmt = PreparedStatement::new(
-                raw.id.clone(),
-                raw.is_confirmed_lwt,
-                raw.metadata.clone(),
-                raw.result_metadata.clone(),
-                query.contents,
-                page_size,
-                query.config,
-            );
-            stmt.set_partitioner_name(raw.partitioner_name.clone());
+            let mut stmt = raw.make_configured_handle(query.config, page_size);
             stmt.set_use_cached_result_metadata(self.use_cached_metadata);
             Ok(stmt)
         } else {
@@ -245,13 +220,7 @@ where
                 }
             }
 
-            let raw = RawPreparedStatementData {
-                id: prepared.get_id().clone(),
-                is_confirmed_lwt: prepared.is_confirmed_lwt(),
-                metadata: prepared.get_prepared_metadata().clone(),
-                result_metadata: prepared.get_result_metadata().clone(),
-                partitioner_name: prepared.get_partitioner_name().clone(),
-            };
+            let raw = prepared.make_unconfigured_handle();
             self.cache.insert(query_contents, raw);
 
             Ok(prepared)

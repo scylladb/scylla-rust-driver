@@ -21,13 +21,11 @@ use crate::frame::{
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::QueryResult;
-use crate::response::{
-    NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse, RawPreparedStatement,
-};
+use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse};
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
 use crate::statement::batch::{Batch, BatchStatement};
-use crate::statement::prepared::PreparedStatement;
+use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
@@ -688,13 +686,13 @@ impl Connection {
         previous_prepared: &PreparedStatement,
     ) -> Result<(), RequestAttemptError> {
         let reprepare_query: Statement = query.into();
-        let prepared_response = self.prepare_raw(&reprepare_query).await?.prepared_response;
+        let raw_prepared = self.prepare_raw(&reprepare_query).await?;
 
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
-        if prepared_response.id != previous_prepared.get_id() {
+        if raw_prepared.get_id() != previous_prepared.get_id() {
             Err(RequestAttemptError::RepreparedIdChanged {
-                reprepared_id: prepared_response.id.into(),
+                reprepared_id: raw_prepared.get_id().clone().into(),
                 statement: reprepare_query.contents,
                 expected_id: previous_prepared.get_id().clone().into(),
             })
