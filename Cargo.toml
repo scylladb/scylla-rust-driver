@@ -8,3 +8,7 @@ members = [
     "utils",
 ]
 resolver = "3"
+
+[workspace.metadata.cargo-semver-checks.lints]
+# We don't consider it a major change, so downgrade from deny
+type_method_marked_deprecated = { level = "warn" }
