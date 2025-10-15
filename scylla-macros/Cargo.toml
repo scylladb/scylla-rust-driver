@@ -29,3 +29,6 @@ missing-docs = "warn"
 [dev-dependencies]
 scylla = { path = "../scylla" }
 scylla-cql = { path = "../scylla-cql" }
+
+[package.metadata.cargo-semver-checks.lints]
+workspace = true

@@ -93,3 +93,6 @@ full-serialization = [
 [lints.rust]
 unnameable_types = "warn"
 unreachable_pub = "warn"
+
+[package.metadata.cargo-semver-checks.lints]
+workspace = true
