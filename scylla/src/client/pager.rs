@@ -615,36 +615,40 @@ pub struct QueryPager {
 impl QueryPager {
     /// Returns the next item (`ColumnIterator`) from the stream.
     ///
-    /// This can be used with `type_check() for manual deserialization - see example below.
+    /// Because pages may have different result metadata, each one needs to be type-checked before deserialization.
+    /// The bool returned in second element of the tuple indicates whether the page was fresh or not.
+    /// This allows user to then perform the type check for fresh pages.
     ///
     /// This is not a part of the `Stream` interface because the returned iterator
     /// borrows from self.
     ///
     /// This is cancel-safe.
-    async fn next(&mut self) -> Option<Result<ColumnIterator<'_, '_>, NextRowError>> {
+    async fn next(&mut self) -> Option<Result<(ColumnIterator<'_, '_>, bool), NextRowError>> {
         let res = std::future::poll_fn(|cx| Pin::new(&mut *self).poll_fill_page(cx)).await;
-        match res {
-            Some(Ok(())) => {}
+        let fresh_page = match res {
+            Some(Ok(f)) => f,
             Some(Err(err)) => return Some(Err(err)),
             None => return None,
-        }
+        };
 
         // We are guaranteed here to have a non-empty page, so unwrap
         Some(
             self.current_page
                 .next()
                 .unwrap()
-                .map_err(NextRowError::RowDeserializationError),
+                .map_err(NextRowError::RowDeserializationError)
+                .map(|x| (x, fresh_page)),
         )
     }
 
     /// Tries to acquire a non-empty page, if current page is exhausted.
+    /// Boolean value in `Some(Ok(r))` is true if a new page was fetched.
     fn poll_fill_page(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<(), NextRowError>>> {
+    ) -> Poll<Option<Result<bool, NextRowError>>> {
         if !self.is_current_page_exhausted() {
-            return Poll::Ready(Some(Ok(())));
+            return Poll::Ready(Some(Ok(false)));
         }
         ready_some_ok!(self.as_mut().poll_next_page(cx));
         if self.is_current_page_exhausted() {
@@ -653,7 +657,7 @@ impl QueryPager {
             cx.waker().wake_by_ref();
             Poll::Pending
         } else {
-            Poll::Ready(Some(Ok(())))
+            Poll::Ready(Some(Ok(true)))
         }
     }
 
@@ -1040,6 +1044,7 @@ impl QueryPager {
 /// To use [Stream] API (only accessible for owned types), use [QueryPager::rows_stream].
 pub struct TypedRowStream<RowT> {
     raw_row_lending_stream: QueryPager,
+    current_page_typechecked: bool,
     _phantom: std::marker::PhantomData<RowT>,
 }
 
@@ -1061,10 +1066,12 @@ where
     RowT: for<'frame, 'metadata> DeserializeRow<'frame, 'metadata>,
 {
     fn new(raw_stream: QueryPager) -> Result<Self, TypeCheckError> {
+        #[allow(deprecated)] // In TypedRowStream we take care to type check each page.
         raw_stream.type_check::<RowT>()?;
 
         Ok(Self {
             raw_row_lending_stream: raw_stream,
+            current_page_typechecked: true,
             _phantom: Default::default(),
         })
     }
@@ -1101,8 +1108,18 @@ where
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let next_fut = async {
-            self.raw_row_lending_stream.next().await.map(|res| {
-                res.and_then(|column_iterator| {
+            let real_self: &mut Self = &mut self; // Self is Unpin, and this lets us perform partial borrows.
+            real_self.raw_row_lending_stream.next().await.map(|res| {
+                res.and_then(|(column_iterator, fresh_page)| {
+                    if fresh_page {
+                        real_self.current_page_typechecked = false;
+                    }
+                    if !real_self.current_page_typechecked {
+                        column_iterator.type_check::<RowT>().map_err(|e| {
+                            NextRowError::NextPageError(NextPageError::TypeCheckError(e))
+                        })?;
+                        real_self.current_page_typechecked = true;
+                    }
                     <RowT as DeserializeRow>::deserialize(column_iterator)
                         .map_err(NextRowError::RowDeserializationError)
                 })
@@ -1130,6 +1147,10 @@ pub enum NextPageError {
     /// Failed to deserialize result metadata associated with next page response.
     #[error("Failed to deserialize result metadata associated with next page response: {0}")]
     ResultMetadataParseError(#[from] ResultMetadataAndRowsCountParseError),
+
+    /// Failed to type check a received page.
+    #[error("Failed to type check a received page: {0}")]
+    TypeCheckError(#[from] TypeCheckError),
 }
 
 /// An error returned by async iterator API.
