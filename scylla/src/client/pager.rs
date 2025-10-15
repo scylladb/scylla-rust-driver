@@ -695,6 +695,12 @@ impl QueryPager {
     /// This is automatically called upon transforming [QueryPager] into [TypedRowStream].
     // Can be used with `next()` for manual deserialization.
     #[inline]
+    #[deprecated(
+        since = "1.4.0",
+        note = "Type check should be performed for each page, which is not possible with public API.
+Also, the only thing user can do (rows_stream) will take care of type check anyway.
+If you are using this API, you are probably doing something wrong."
+    )]
     pub fn type_check<'frame, 'metadata, RowT: DeserializeRow<'frame, 'metadata>>(
         &self,
     ) -> Result<(), TypeCheckError> {
