@@ -536,7 +536,17 @@ impl PreparedStatement {
         self.shared.current_result_metadata.store(new_metadata);
     }
 
-    /// Access column specifications of the result set returned after the execution of this statement
+    /// Access column specifications of the result set returned after the preparation of this statement
+    ///
+    /// In 1.4.0, result metadata became mutable to allow us to update it when server
+    /// sends a new one (which happens in CQLv5, or CQLv4 with Scylla's metadata id extension). This method can't
+    /// be changed to support it because of Copy bound on ColumnSpecs. This method now uses metadata initially sent
+    /// by the server, which may be different than the one currently used. Please use get_current_result_set_col_specs instead."
+    // TODO(2.0): Remove this
+    #[deprecated(
+        since = "1.4.0",
+        note = "This method may return outdated metadata. Use get_current_result_set_col_specs() instead."
+    )]
     pub fn get_result_set_col_specs(&self) -> ColumnSpecs<'_, 'static> {
         ColumnSpecs::new(self.shared.initial_result_metadata.col_specs())
     }
