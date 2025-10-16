@@ -930,14 +930,14 @@ impl Connection {
 
         let cached_metadata = prepared_statement
             .get_use_cached_result_metadata()
-            .then(|| prepared_statement.get_result_metadata());
+            .then(|| prepared_statement.get_current_result_metadata());
 
         let query_response = self
             .send_request(
                 &execute_frame,
                 true,
                 prepared_statement.config.tracing,
-                cached_metadata,
+                cached_metadata.as_ref(),
             )
             .await?;
 
@@ -967,7 +967,7 @@ impl Connection {
                         &execute_frame,
                         true,
                         prepared_statement.config.tracing,
-                        cached_metadata,
+                        cached_metadata.as_ref(),
                     )
                     .await?;
 
