@@ -54,6 +54,14 @@ impl<'frame, 'metadata> ColumnIterator<'frame, 'metadata> {
     pub fn columns_remaining(&self) -> usize {
         self.specs.len()
     }
+
+    /// Performs a type check (see [DeserializeRow::type_check]) on remaining columns.
+    #[inline]
+    pub fn type_check<RowT: DeserializeRow<'frame, 'metadata>>(
+        &self,
+    ) -> Result<(), TypeCheckError> {
+        <RowT as DeserializeRow<'frame, 'metadata>>::type_check(self.specs.as_slice())
+    }
 }
 
 impl<'frame, 'metadata> Iterator for ColumnIterator<'frame, 'metadata> {
