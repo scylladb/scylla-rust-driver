@@ -541,6 +541,13 @@ impl PreparedStatement {
         ColumnSpecs::new(self.shared.initial_result_metadata.col_specs())
     }
 
+    /// Access column specifications of the result set returned after the execution of this statement
+    pub fn get_current_result_set_col_specs(&self) -> ColumnSpecsGuard {
+        ColumnSpecsGuard {
+            result: self.shared.current_result_metadata.load(),
+        }
+    }
+
     /// Get the name of the partitioner used for this statement.
     pub fn get_partitioner_name(&self) -> &PartitionerName {
         &self.partitioner_name
