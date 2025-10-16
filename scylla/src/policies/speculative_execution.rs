@@ -108,11 +108,13 @@ fn can_be_ignored<ResT>(result: &Result<ResT, RequestError>) -> bool {
         // automatically fall under `_` pattern when they are introduced.
         #[deny(clippy::wildcard_enum_match_arm)]
         Err(e) => match e {
-            // This error should not appear it. Anyway, if it possibly could
+            // This error should not appear here. Anyway, if it possibly could
             // in the future, it should not be ignored.
             RequestError::EmptyPlan => false,
 
             // Request execution timed out.
+            // This error should not appear here. Anyway, if it possibly could
+            // in the future, it should not be ignored.
             RequestError::RequestTimeout(_) => false,
 
             // Can try on another node.

@@ -59,77 +59,113 @@ impl RetrySession for DefaultRetrySession {
         if request_info.consistency.is_serial() {
             return RetryDecision::DontRetry;
         };
+        // Do not remove this lint!
+        // It's there for a reason - we don't want new variants
+        // automatically fall under `_` pattern when they are introduced.
+        #[deny(clippy::wildcard_enum_match_arm)]
         match request_info.error {
-            // Basic errors - there are some problems on this node
-            // Retry on a different one if possible
-            RequestAttemptError::BrokenConnectionError(_)
-            | RequestAttemptError::DbError(DbError::Overloaded, _)
-            | RequestAttemptError::DbError(DbError::ServerError, _)
-            | RequestAttemptError::DbError(DbError::TruncateError, _) => {
+            // With connection broken, we don't know if request was executed.
+            RequestAttemptError::BrokenConnectionError(_) => {
                 if request_info.is_idempotent {
                     RetryDecision::RetryNextTarget(None)
                 } else {
                     RetryDecision::DontRetry
                 }
             }
-            // Unavailable - the current node believes that not enough nodes
-            // are alive to satisfy specified consistency requirements.
-            // Maybe this node has network problems - try a different one.
-            // Perform at most one retry - it's unlikely that two nodes
-            // have network problems at the same time
-            RequestAttemptError::DbError(DbError::Unavailable { .. }, _) => {
-                if !self.was_unavailable_retry {
-                    self.was_unavailable_retry = true;
-                    RetryDecision::RetryNextTarget(None)
-                } else {
-                    RetryDecision::DontRetry
+            // DbErrors
+            RequestAttemptError::DbError(db_error, _) => {
+                // Do not remove this lint!
+                // It's there for a reason - we don't want new variants
+                // automatically fall under `_` pattern when they are introduced.
+                #[deny(clippy::wildcard_enum_match_arm)]
+                match db_error {
+                    // Basic errors - there are some problems on this node
+                    // Retry on a different one if possible
+                    DbError::Overloaded | DbError::ServerError | DbError::TruncateError => {
+                        if request_info.is_idempotent {
+                            RetryDecision::RetryNextTarget(None)
+                        } else {
+                            RetryDecision::DontRetry
+                        }
+                    }
+                    // Unavailable - the current node believes that not enough nodes
+                    // are alive to satisfy specified consistency requirements.
+                    // Maybe this node has network problems - try a different one.
+                    // Perform at most one retry - it's unlikely that two nodes
+                    // have network problems at the same time
+                    DbError::Unavailable { .. } => {
+                        if !self.was_unavailable_retry {
+                            self.was_unavailable_retry = true;
+                            RetryDecision::RetryNextTarget(None)
+                        } else {
+                            RetryDecision::DontRetry
+                        }
+                    }
+                    // ReadTimeout - coordinator didn't receive enough replies in time.
+                    // Retry at most once and only if there were actually enough replies
+                    // to satisfy consistency but they were all just checksums (data_present == false).
+                    // This happens when the coordinator picked replicas that were overloaded/dying.
+                    // Retried request should have some useful response because the node will detect
+                    // that these replicas are dead.
+                    DbError::ReadTimeout {
+                        received,
+                        required,
+                        data_present,
+                        ..
+                    } => {
+                        if !self.was_read_timeout_retry && received >= required && !*data_present {
+                            self.was_read_timeout_retry = true;
+                            RetryDecision::RetrySameTarget(None)
+                        } else {
+                            RetryDecision::DontRetry
+                        }
+                    }
+                    // Write timeout - coordinator didn't receive enough replies in time.
+                    // Retry at most once and only for BatchLog write.
+                    // Coordinator probably didn't detect the nodes as dead.
+                    // By the time we retry they should be detected as dead.
+                    DbError::WriteTimeout { write_type, .. } => {
+                        if !self.was_write_timeout_retry
+                            && request_info.is_idempotent
+                            && *write_type == WriteType::BatchLog
+                        {
+                            self.was_write_timeout_retry = true;
+                            RetryDecision::RetrySameTarget(None)
+                        } else {
+                            RetryDecision::DontRetry
+                        }
+                    }
+                    // The node is still bootstrapping it can't execute the request, we should try another one
+                    DbError::IsBootstrapping => RetryDecision::RetryNextTarget(None),
+                    // In all other cases propagate the error to the user
+                    DbError::SyntaxError
+                    | DbError::Invalid
+                    | DbError::AlreadyExists { .. }
+                    | DbError::FunctionFailure { .. }
+                    | DbError::AuthenticationError
+                    | DbError::Unauthorized
+                    | DbError::ConfigError
+                    | DbError::ReadFailure { .. }
+                    | DbError::WriteFailure { .. }
+                    | DbError::Unprepared { .. }
+                    | DbError::ProtocolError
+                    | DbError::RateLimitReached { .. }
+                    | DbError::Other(_)
+                    | _ => RetryDecision::DontRetry,
                 }
-            }
-            // ReadTimeout - coordinator didn't receive enough replies in time.
-            // Retry at most once and only if there were actually enough replies
-            // to satisfy consistency but they were all just checksums (data_present == false).
-            // This happens when the coordinator picked replicas that were overloaded/dying.
-            // Retried request should have some useful response because the node will detect
-            // that these replicas are dead.
-            RequestAttemptError::DbError(
-                DbError::ReadTimeout {
-                    received,
-                    required,
-                    data_present,
-                    ..
-                },
-                _,
-            ) => {
-                if !self.was_read_timeout_retry && received >= required && !*data_present {
-                    self.was_read_timeout_retry = true;
-                    RetryDecision::RetrySameTarget(None)
-                } else {
-                    RetryDecision::DontRetry
-                }
-            }
-            // Write timeout - coordinator didn't receive enough replies in time.
-            // Retry at most once and only for BatchLog write.
-            // Coordinator probably didn't detect the nodes as dead.
-            // By the time we retry they should be detected as dead.
-            RequestAttemptError::DbError(DbError::WriteTimeout { write_type, .. }, _) => {
-                if !self.was_write_timeout_retry
-                    && request_info.is_idempotent
-                    && *write_type == WriteType::BatchLog
-                {
-                    self.was_write_timeout_retry = true;
-                    RetryDecision::RetrySameTarget(None)
-                } else {
-                    RetryDecision::DontRetry
-                }
-            }
-            // The node is still bootstrapping it can't execute the request, we should try another one
-            RequestAttemptError::DbError(DbError::IsBootstrapping, _) => {
-                RetryDecision::RetryNextTarget(None)
             }
             // Connection to the contacted node is overloaded, try another one
             RequestAttemptError::UnableToAllocStreamId => RetryDecision::RetryNextTarget(None),
             // In all other cases propagate the error to the user
-            _ => RetryDecision::DontRetry,
+            RequestAttemptError::BodyExtensionsParseError(_)
+            | RequestAttemptError::CqlErrorParseError(_)
+            | RequestAttemptError::CqlRequestSerialization(_)
+            | RequestAttemptError::CqlResultParseError(_)
+            | RequestAttemptError::NonfinishedPagingState
+            | RequestAttemptError::RepreparedIdChanged { .. }
+            | RequestAttemptError::RepreparedIdMissingInBatch
+            | RequestAttemptError::SerializationError(_)
+            | RequestAttemptError::UnexpectedResponse(_) => RetryDecision::DontRetry,
         }
     }
 
