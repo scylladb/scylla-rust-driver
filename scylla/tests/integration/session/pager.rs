@@ -149,3 +149,67 @@ async fn test_iter_methods_with_modification_statements() {
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
+
+#[tokio::test]
+async fn test_iter_methods_when_altering_table() {
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
+    session
+        .ddl(format!(
+            "CREATE TABLE IF NOT EXISTS {ks}.t (a int, b int, d int, primary key (a, b))"
+        ))
+        .await
+        .unwrap();
+
+    let insert_stmt = session
+        .prepare(format!("INSERT INTO {ks}.t (a, b, d) VALUES (?, ?, ?)"))
+        .await
+        .unwrap();
+    // First lets insert some data
+    for a in 0..10 {
+        for b in 0..10 {
+            session
+                .execute_unpaged(&insert_stmt, (a, b, 1337))
+                .await
+                .unwrap();
+        }
+    }
+
+    let mut select_stmt = session
+        .prepare(format!("SELECT * FROM {ks}.t",))
+        .await
+        .unwrap();
+    select_stmt.set_page_size(10);
+    select_stmt.set_use_cached_result_metadata(false);
+    let pager = session.execute_iter(select_stmt, &[]).await.unwrap();
+    let mut stream = pager.rows_stream::<(i32, i32, Option<i32>)>().unwrap();
+
+    // Let's fetch a few pages, but not all.
+    for _ in 0..50 {
+        let _row = stream.next().await.unwrap().unwrap();
+    }
+
+    session
+        .query_unpaged(format!("ALTER TABLE {ks}.t ADD c text"), &())
+        .await
+        .unwrap();
+
+    // With the bug, the code panics!
+    // At some point, requests will return pages with new schema.
+    // It contains new column, and the new schema was not type checked.
+    // DeserializeRow::deserialize impl will panic because invariants that should
+    // be enforce by type check are violated.
+    let _err = loop {
+        match stream.next().await {
+            None => panic!("No error. Expected typecheck error."),
+            Some(Ok(_row)) => continue,
+            Some(Err(e)) => break e,
+        }
+    };
+
+    // TODO(after fixing the bug): Check the error type.
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
