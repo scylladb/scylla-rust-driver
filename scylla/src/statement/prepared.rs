@@ -1,6 +1,7 @@
 //! Defines the [`PreparedStatement`] type, which represents a statement
 //! that has been prepared in advance on the server.
 
+use arc_swap::{ArcSwap, Guard};
 use bytes::{Bytes, BytesMut};
 use scylla_cql::frame::response::result::{
     ColumnSpec, PartitionKeyIndex, ResultMetadata, TableSpec,
@@ -187,6 +188,7 @@ struct PreparedStatementSharedData {
     id: Bytes,
     metadata: PreparedMetadata,
     initial_result_metadata: Arc<ResultMetadata<'static>>,
+    current_result_metadata: ArcSwap<ResultMetadata<'static>>,
     statement: String,
     is_confirmed_lwt: bool,
 }
@@ -200,6 +202,18 @@ impl Clone for PreparedStatement {
             page_size: self.page_size,
             partitioner_name: self.partitioner_name.clone(),
         }
+    }
+}
+
+/// Stores a snapshot of current result metadata column specs.
+pub struct ColumnSpecsGuard {
+    result: Guard<Arc<ResultMetadata<'static>>>,
+}
+
+impl ColumnSpecsGuard {
+    /// Retrieves current result metadata column specs.
+    pub fn get(&self) -> ColumnSpecs<'_, 'static> {
+        ColumnSpecs::new(self.result.col_specs())
     }
 }
 
@@ -217,7 +231,8 @@ impl PreparedStatement {
             shared: Arc::new(PreparedStatementSharedData {
                 id,
                 metadata,
-                initial_result_metadata: result_metadata,
+                initial_result_metadata: Arc::clone(&result_metadata),
+                current_result_metadata: ArcSwap::from(result_metadata),
                 statement,
                 is_confirmed_lwt: is_lwt,
             }),
@@ -507,13 +522,40 @@ impl PreparedStatement {
     }
 
     /// Access metadata about the result of prepared statement returned by the database
-    pub(crate) fn get_result_metadata(&self) -> &Arc<ResultMetadata<'static>> {
-        &self.shared.initial_result_metadata
+    pub(crate) fn get_current_result_metadata(&self) -> Arc<ResultMetadata<'static>> {
+        self.shared.current_result_metadata.load_full()
+    }
+
+    /// Update metadata about the result of prepared statement.
+    // Will be used when we implement support for metadata id extension.
+    #[allow(dead_code)]
+    pub(crate) fn update_current_result_metadata(
+        &self,
+        new_metadata: Arc<ResultMetadata<'static>>,
+    ) {
+        self.shared.current_result_metadata.store(new_metadata);
+    }
+
+    /// Access column specifications of the result set returned after the preparation of this statement
+    ///
+    /// In 1.4.0, result metadata became mutable to allow us to update it when server
+    /// sends a new one (which happens in CQLv5, or CQLv4 with Scylla's metadata id extension). This method can't
+    /// be changed to support it because of Copy bound on ColumnSpecs. This method now uses metadata initially sent
+    /// by the server, which may be different than the one currently used. Please use get_current_result_set_col_specs instead."
+    // TODO(2.0): Remove this
+    #[deprecated(
+        since = "1.4.0",
+        note = "This method may return outdated metadata. Use get_current_result_set_col_specs() instead."
+    )]
+    pub fn get_result_set_col_specs(&self) -> ColumnSpecs<'_, 'static> {
+        ColumnSpecs::new(self.shared.initial_result_metadata.col_specs())
     }
 
     /// Access column specifications of the result set returned after the execution of this statement
-    pub fn get_result_set_col_specs(&self) -> ColumnSpecs<'_, 'static> {
-        ColumnSpecs::new(self.shared.initial_result_metadata.col_specs())
+    pub fn get_current_result_set_col_specs(&self) -> ColumnSpecsGuard {
+        ColumnSpecsGuard {
+            result: self.shared.current_result_metadata.load(),
+        }
     }
 
     /// Get the name of the partitioner used for this statement.

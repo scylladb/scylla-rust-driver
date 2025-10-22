@@ -474,7 +474,8 @@ async fn test_prepared_statement_col_specs() {
     ];
     assert_eq!(variable_col_specs, expected_variable_col_specs);
 
-    let result_set_col_specs = prepared.get_result_set_col_specs().as_slice();
+    let col_specs_guard = prepared.get_current_result_set_col_specs();
+    let result_set_col_specs = col_specs_guard.get().as_slice();
     let expected_result_set_col_specs = &[
         spec("k1", ColumnType::Native(NativeType::Int)),
         spec("k2", ColumnType::Native(NativeType::Varint)),
