@@ -29,7 +29,8 @@ pub struct RawColumn<'frame, 'metadata> {
 /// Iterates over columns of a single row.
 #[derive(Clone, Debug)]
 pub struct ColumnIterator<'frame, 'metadata> {
-    specs: std::iter::Enumerate<std::slice::Iter<'metadata, ColumnSpec<'metadata>>>,
+    index: std::ops::RangeFrom<usize>,
+    specs: std::slice::Iter<'metadata, ColumnSpec<'metadata>>,
     slice: FrameSlice<'frame>,
 }
 
@@ -41,7 +42,8 @@ impl<'frame, 'metadata> ColumnIterator<'frame, 'metadata> {
     #[inline]
     pub fn new(specs: &'metadata [ColumnSpec<'metadata>], slice: FrameSlice<'frame>) -> Self {
         Self {
-            specs: specs.iter().enumerate(),
+            index: 0usize..,
+            specs: specs.iter(),
             slice,
         }
     }
@@ -52,6 +54,14 @@ impl<'frame, 'metadata> ColumnIterator<'frame, 'metadata> {
     pub fn columns_remaining(&self) -> usize {
         self.specs.len()
     }
+
+    /// Performs a type check (see [DeserializeRow::type_check]) on remaining columns.
+    #[inline]
+    pub fn type_check<RowT: DeserializeRow<'frame, 'metadata>>(
+        &self,
+    ) -> Result<(), TypeCheckError> {
+        <RowT as DeserializeRow<'frame, 'metadata>>::type_check(self.specs.as_slice())
+    }
 }
 
 impl<'frame, 'metadata> Iterator for ColumnIterator<'frame, 'metadata> {
@@ -59,7 +69,11 @@ impl<'frame, 'metadata> Iterator for ColumnIterator<'frame, 'metadata> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let (column_index, spec) = self.specs.next()?;
+        let spec = self.specs.next()?;
+        let column_index = self
+            .index
+            .next()
+            .expect("RangeFrom<usize> iterator exhausted: this indicates usize overflow (more than usize::MAX columns), which should be impossible in practice");
         Some(
             self.slice
                 .read_cql_bytes()
