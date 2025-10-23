@@ -45,6 +45,8 @@ pub struct ProtocolFeatures {
 
     /// Whether the server supports tablets routing v1.
     pub tablets_v1_supported: bool,
+    /// Does the server supports sending metadata id (introduced in CQL v5) for CQL v4.
+    pub scylla_metadata_id_supported: bool,
 }
 
 // TODO: Log information about options which failed to parse
@@ -58,6 +60,7 @@ impl ProtocolFeatures {
                 supported,
             ),
             tablets_v1_supported: Self::check_tablets_routing_v1_support(supported),
+            scylla_metadata_id_supported: false,
         }
     }
 
