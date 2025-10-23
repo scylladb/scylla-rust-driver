@@ -11,6 +11,7 @@ use crate::frame::frame_errors::{
     ResultMetadataParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
     TableSpecParseError,
 };
+use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types;
@@ -1009,6 +1010,7 @@ fn deser_col_specs_owned<'frame>(
 
 fn deser_result_metadata(
     buf: &mut &[u8],
+    _features: &ProtocolFeatures,
 ) -> StdResult<(ResultMetadata<'static>, PagingStateResponse), ResultMetadataParseError> {
     let flags = types::read_int(buf)
         .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
@@ -1048,6 +1050,7 @@ impl RawMetadataAndRawRows {
     fn deserialize(
         frame: &mut FrameSlice,
         cached_metadata: Option<Arc<ResultMetadata<'static>>>,
+        _features: &ProtocolFeatures,
     ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
         let flags = types::read_int(frame.as_slice_mut())
             .map_err(|err| RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into()))?;
@@ -1216,10 +1219,11 @@ fn deser_prepared_metadata(
 fn deser_rows(
     buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+    features: &ProtocolFeatures,
 ) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RawRowsAndPagingStateResponseParseError>
 {
     let mut frame_slice = FrameSlice::new(&buf_bytes);
-    RawMetadataAndRawRows::deserialize(&mut frame_slice, cached_metadata.cloned())
+    RawMetadataAndRawRows::deserialize(&mut frame_slice, cached_metadata.cloned(), features)
 }
 
 fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {
@@ -1228,15 +1232,18 @@ fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspacePars
     Ok(SetKeyspace { keyspace_name })
 }
 
-fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, PreparedParseError> {
+fn deser_prepared(
+    buf: &mut &[u8],
+    features: &ProtocolFeatures,
+) -> StdResult<Prepared, PreparedParseError> {
     let id = types::read_short_bytes(buf)
         .map_err(PreparedParseError::IdParseError)?
         .to_owned()
         .into();
     let prepared_metadata =
         deser_prepared_metadata(buf).map_err(PreparedParseError::PreparedMetadataParseError)?;
-    let (result_metadata, paging_state_response) =
-        deser_result_metadata(buf).map_err(PreparedParseError::ResultMetadataParseError)?;
+    let (result_metadata, paging_state_response) = deser_result_metadata(buf, features)
+        .map_err(PreparedParseError::ResultMetadataParseError)?;
     if let PagingStateResponse::HasMorePages { state } = paging_state_response {
         return Err(PreparedParseError::NonZeroPagingState(
             state
@@ -1262,9 +1269,10 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
 /// Deserializes a CQL `RESULT` response from the provided buffer.
 ///
 /// Reuses cached metadata if provided, otherwise deserializes it.
-pub fn deserialize(
+pub fn deserialize_with_features(
     buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+    features: &ProtocolFeatures,
 ) -> StdResult<Result, CqlResultParseError> {
     let buf = &mut &*buf_bytes;
     use self::Result::*;
@@ -1273,13 +1281,30 @@ pub fn deserialize(
             .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
         {
             0x0001 => Void,
-            0x0002 => Rows(deser_rows(buf_bytes.slice_ref(buf), cached_metadata)?),
+            0x0002 => Rows(deser_rows(
+                buf_bytes.slice_ref(buf),
+                cached_metadata,
+                features,
+            )?),
             0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
-            0x0004 => Prepared(deser_prepared(buf)?),
+            0x0004 => Prepared(deser_prepared(buf, features)?),
             0x0005 => SchemaChange(deser_schema_change(buf)?),
             id => return Err(CqlResultParseError::UnknownResultId(id)),
         },
     )
+}
+
+/// Deserializes a CQL `RESULT` response from the provided buffer.
+///
+/// Reuses cached metadata if provided, otherwise deserializes it.
+/// Does not take into account protocol features, so for example will
+/// fail on frames containing result metadata ids.
+#[deprecated(since = "1.14.0", note = "Use `deserialize_with_features` instead")]
+pub fn deserialize(
+    buf_bytes: Bytes,
+    cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
+) -> StdResult<Result, CqlResultParseError> {
+    deserialize_with_features(buf_bytes, cached_metadata, &ProtocolFeatures::default())
 }
 
 // This is not #[cfg(test)], because it is used by scylla crate.
@@ -1490,10 +1515,12 @@ mod test_utils {
                 buf.freeze()
             };
 
-            let (raw_rows, _paging_state_response) =
-                Self::deserialize(&mut FrameSlice::new(&raw_result_rows), cached_metadata).expect(
-                    "Ill-formed serialized metadata for tests - likely bug in serialization code",
-                );
+            let (raw_rows, _paging_state_response) = Self::deserialize(
+                &mut FrameSlice::new(&raw_result_rows),
+                cached_metadata,
+                &ProtocolFeatures::default(),
+            )
+            .expect("Ill-formed serialized metadata for tests - likely bug in serialization code");
 
             Ok(raw_rows)
         }
