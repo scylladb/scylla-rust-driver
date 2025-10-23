@@ -407,16 +407,67 @@ impl<'frame> ColumnSpec<'frame> {
     }
 }
 
+pub mod cow_bytes {
+    use bytes::Bytes;
+
+    /// Represents a byte slice that can be either borrowed or owned.
+    /// We can't use FrameSlice, because it doesn't have owned variant,
+    /// and also `types::` functions operate on raw slices.
+    //TODO: Consider using FrameSlice here (requires significant refactor).
+    #[derive(Debug, Clone, Eq)]
+    #[non_exhaustive]
+    pub enum CowBytes<'a> {
+        Borrowed(&'a [u8]),
+        Owned(Bytes),
+    }
+
+    impl PartialEq<CowBytes<'_>> for CowBytes<'_> {
+        fn eq(&self, other: &CowBytes<'_>) -> bool {
+            self.as_ref() == other.as_ref()
+        }
+    }
+
+    impl<'a> From<&'a [u8]> for CowBytes<'a> {
+        fn from(bytes: &'a [u8]) -> Self {
+            CowBytes::Borrowed(bytes)
+        }
+    }
+
+    impl CowBytes<'_> {
+        pub(crate) fn into_owned(self) -> CowBytes<'static> {
+            match self {
+                CowBytes::Borrowed(bytes) => CowBytes::Owned(Bytes::copy_from_slice(bytes)),
+                CowBytes::Owned(bytes) => CowBytes::Owned(bytes),
+            }
+        }
+    }
+
+    impl AsRef<[u8]> for CowBytes<'_> {
+        fn as_ref(&self) -> &[u8] {
+            match self {
+                CowBytes::Borrowed(bytes) => bytes,
+                CowBytes::Owned(bytes) => bytes,
+            }
+        }
+    }
+}
+
 /// Metadata of a result set.
 ///
 /// Includes the number of columns and their specifications.
 #[derive(Debug, Clone)]
 pub struct ResultMetadata<'a> {
+    id: Option<cow_bytes::CowBytes<'a>>,
     col_count: usize,
     col_specs: Vec<ColumnSpec<'a>>,
 }
 
 impl<'a> ResultMetadata<'a> {
+    /// Retrieves the ID of the result set.
+    pub fn id(&self) -> Option<&[u8]> {
+        self.id.as_ref().map(|id| id.as_ref())
+    }
+
     /// Retrieves the number of columns in the result set.
     #[inline]
     pub fn col_count(&self) -> usize {
@@ -436,6 +487,7 @@ impl<'a> ResultMetadata<'a> {
     #[inline]
     pub fn mock_empty() -> Self {
         Self {
+            id: None,
             col_count: 0,
             col_specs: Vec::new(),
         }
@@ -514,6 +566,7 @@ pub struct RawMetadataAndRawRows {
     col_count: usize,
     global_tables_spec: bool,
     no_metadata: bool,
+    metadata_changed: bool,
 
     /// The remaining part of the RESULT frame.
     raw_metadata_and_rows: Bytes,
@@ -537,6 +590,7 @@ impl RawMetadataAndRawRows {
             col_count: 0,
             global_tables_spec: false,
             no_metadata: false,
+            metadata_changed: false,
             raw_metadata_and_rows,
             cached_metadata: None,
         }
@@ -546,6 +600,11 @@ impl RawMetadataAndRawRows {
     #[inline]
     pub fn metadata_and_rows_bytes_size(&self) -> usize {
         self.raw_metadata_and_rows.len()
+    }
+
+    #[inline]
+    pub fn metadata_changed(&self) -> bool {
+        self.metadata_changed
     }
 }
 
@@ -1010,13 +1069,18 @@ fn deser_col_specs_owned<'frame>(
 
 fn deser_result_metadata(
     buf: &mut &[u8],
-    _features: &ProtocolFeatures,
+    features: &ProtocolFeatures,
 ) -> StdResult<(ResultMetadata<'static>, PagingStateResponse), ResultMetadataParseError> {
     let flags = types::read_int(buf)
         .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
     let global_tables_spec = flags & 0x0001 != 0;
     let has_more_pages = flags & 0x0002 != 0;
     let no_metadata = flags & 0x0004 != 0;
+    let metadata_changed = features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
+
+    if metadata_changed && no_metadata {
+        return Err(ResultMetadataParseError::IdPresentForEmptyMetadata);
+    }
 
     let col_count =
         types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
@@ -1026,6 +1090,13 @@ fn deser_result_metadata(
         .transpose()?;
 
     let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
+
+    let new_metadata_id = metadata_changed
+        .then(|| {
+            types::read_short_bytes(buf).map_err(ResultMetadataParseError::NewMetadataIdParseError)
+        })
+        .transpose()?
+        .map(|x| cow_bytes::CowBytes::from(x).into_owned());
 
     let col_specs = if no_metadata {
         vec![]
@@ -1038,6 +1109,7 @@ fn deser_result_metadata(
     };
 
     let metadata = ResultMetadata {
+        id: new_metadata_id,
         col_count,
         col_specs,
     };
@@ -1050,13 +1122,18 @@ impl RawMetadataAndRawRows {
     fn deserialize(
         frame: &mut FrameSlice,
         cached_metadata: Option<Arc<ResultMetadata<'static>>>,
-        _features: &ProtocolFeatures,
+        features: &ProtocolFeatures,
     ) -> StdResult<(Self, PagingStateResponse), RawRowsAndPagingStateResponseParseError> {
         let flags = types::read_int(frame.as_slice_mut())
             .map_err(|err| RawRowsAndPagingStateResponseParseError::FlagsParseError(err.into()))?;
         let global_tables_spec = flags & 0x0001 != 0;
         let has_more_pages = flags & 0x0002 != 0;
         let no_metadata = flags & 0x0004 != 0;
+        let metadata_changed = features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
+
+        if metadata_changed && no_metadata {
+            return Err(RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata);
+        }
 
         let col_count = types::read_int_length(frame.as_slice_mut())
             .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
@@ -1074,6 +1151,7 @@ impl RawMetadataAndRawRows {
             col_count,
             global_tables_spec,
             no_metadata,
+            metadata_changed,
             raw_metadata_and_rows: frame.to_bytes(),
             cached_metadata,
         };
@@ -1095,11 +1173,19 @@ impl RawMetadataAndRawRows {
     fn metadata_deserializer(
         col_count: usize,
         global_tables_spec: bool,
+        metadata_changed: bool,
     ) -> impl for<'frame> FnOnce(
         &mut &'frame [u8],
     ) -> StdResult<ResultMetadata<'frame>, ResultMetadataParseError> {
         move |buf| {
             let server_metadata = {
+                let new_metadata_id = metadata_changed
+                    .then(|| {
+                        types::read_short_bytes(buf)
+                            .map_err(ResultMetadataParseError::NewMetadataIdParseError)
+                    })
+                    .transpose()?
+                    .map(cow_bytes::CowBytes::Borrowed);
                 let global_table_spec = global_tables_spec
                     .then(|| deser_table_spec(buf))
                     .transpose()?;
@@ -1107,6 +1193,7 @@ impl RawMetadataAndRawRows {
                 let col_specs = deser_col_specs_borrowed(buf, global_table_spec, col_count)?;
 
                 ResultMetadata {
+                    id: new_metadata_id,
                     col_count,
                     col_specs,
                 }
@@ -1155,7 +1242,7 @@ impl RawMetadataAndRawRows {
                 let (metadata_container, raw_rows_with_count) =
                     self_borrowed_metadata::SelfBorrowedMetadataContainer::make_deserialized_metadata(
                         self.raw_metadata_and_rows,
-                        Self::metadata_deserializer(self.col_count, self.global_tables_spec),
+                        Self::metadata_deserializer(self.col_count, self.global_tables_spec, self.metadata_changed),
                     )?;
                 (
                     ResultMetadataHolder::SelfBorrowed(metadata_container),
@@ -1240,10 +1327,22 @@ fn deser_prepared(
         .map_err(PreparedParseError::IdParseError)?
         .to_owned()
         .into();
+    let result_metadata_id = features
+        .scylla_metadata_id_supported
+        .then(|| {
+            let id = types::read_short_bytes(buf)
+                .map_err(PreparedParseError::ResultMetadataIdParseError)?;
+            Ok(id)
+        })
+        .transpose()?
+        .map(|x| cow_bytes::CowBytes::from(x).into_owned());
+
     let prepared_metadata =
         deser_prepared_metadata(buf).map_err(PreparedParseError::PreparedMetadataParseError)?;
-    let (result_metadata, paging_state_response) = deser_result_metadata(buf, features)
+    let (mut result_metadata, paging_state_response) = deser_result_metadata(buf, features)
         .map_err(PreparedParseError::ResultMetadataParseError)?;
+    // It makes more sense to use the field from prepared, rather than from result metadata stored in prepared.
+    result_metadata.id = result_metadata_id;
     if let PagingStateResponse::HasMorePages { state } = paging_state_response {
         return Err(PreparedParseError::NonZeroPagingState(
             state
@@ -1442,6 +1541,7 @@ mod test_utils {
         #[doc(hidden)]
         pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec<'a>>) -> Self {
             Self {
+                id: None,
                 col_count,
                 col_specs,
             }
