@@ -1340,17 +1340,26 @@ macro_rules! impl_tuple {
                 let mut v = ensure_not_null_frame_slice::<Self>(typ, v)?;
                 let ret = (
                     $(
-                        v.read_cql_bytes()
-                            .map_err(|err| DeserializationError::new(err))
-                            .and_then(|cql_bytes| <$Ti>::deserialize($idf, cql_bytes))
-                            .map_err(|err| mk_deser_err::<Self>(
-                                typ,
-                                TupleDeserializationErrorKind::FieldDeserializationFailed {
-                                    position: $idx,
-                                    err,
-                                }
-                            )
-                        )?,
+                        {
+                            let cql_bytes = if v.is_empty() {
+                                // Special case: if there are no bytes left to read, consider the tuple element as null.
+                                // This is needed to handle tuples with less elements than expected
+                                // (see https://github.com/scylladb/scylla-rust-driver/issues/1452 for context).
+                                None
+                            } else {
+                                v.read_cql_bytes().map_err(|err| DeserializationError::new(err))?
+                            };
+
+                            <$Ti>::deserialize($idf, cql_bytes)
+                                .map_err(|err| mk_deser_err::<Self>(
+                                    typ,
+                                    TupleDeserializationErrorKind::FieldDeserializationFailed {
+                                        position: $idx,
+                                        err,
+                                    }
+                                )
+                            )?
+                        },
                     )*
                 );
                 Ok(ret)
