@@ -999,14 +999,51 @@ If you are using this API, you are probably doing something wrong."
         worker_task: impl Future<Output = PageSendAttemptedProof> + Send + 'static,
         mut receiver: mpsc::Receiver<Result<ReceivedPage, NextPageError>>,
     ) -> Result<Self, NextPageError> {
-        tokio::task::spawn(worker_task);
+        let worker_handle = tokio::task::spawn(worker_task);
 
-        // This unwrap is safe because:
-        // - The future returned by worker.work sends at least one item
-        //   to the channel (the PageSendAttemptedProof helps enforce this)
-        // - That future is polled in a tokio::task which isn't going to be
-        //   cancelled
-        let page_received = receiver.recv().await.unwrap()?;
+        let Some(page_received_res) = receiver.recv().await else {
+            // - The future returned by worker.work sends at least one item
+            //   to the channel (the PageSendAttemptedProof helps enforce this);
+            // - That future is polled in a tokio::task which isn't going to be
+            //   cancelled, **unless** the runtime is being shut down.
+            // - Another way for the worker task to terminate without sending
+            //   anything could be panic.
+            // Therefore, there are two possible reasons for recv() to return None:
+            // 1. The runtime is being shut down.
+            // 2. The worker task panicked.
+            //
+            // Both cases are handled below, and in both cases we do not return
+            // from this function, but rather either propagate the panic,
+            // or hang indefinitely to avoid returning from here during runtime shutdown.
+            let worker_result = worker_handle.await;
+            match worker_result {
+                Ok(_send_attempted_proof) => {
+                    unreachable!(
+                        "Worker task completed without sending any page, despite having returned proof of having sent some"
+                    )
+                }
+                Err(join_error) => {
+                    let is_cancelled = join_error.is_cancelled();
+                    if let Ok(panic_payload) = join_error.try_into_panic() {
+                        // Worker task panicked. Propagate the panic.
+                        std::panic::resume_unwind(panic_payload);
+                    } else {
+                        // This is not a panic, so it must be runtime shutdown.
+                        assert!(
+                            is_cancelled,
+                            "PagerWorker task join error is neither a panic nor cancellation, which should be impossible"
+                        );
+                        // Let's await a never-ending future to avoid returning from here.
+                        // But before, let's emit a message to indicate that we're in such a situation.
+                        tracing::info!(
+                            "Runtime is being shut down while QueryPager is being constructed; hanging the future indefinitely"
+                        );
+                        return futures::future::pending().await;
+                    }
+                }
+            }
+        };
+        let page_received = page_received_res?;
         let raw_rows_with_deserialized_metadata = page_received.rows.deserialize_metadata()?;
 
         Ok(Self {
