@@ -1001,12 +1001,28 @@ If you are using this API, you are probably doing something wrong."
     ) -> Result<Self, NextPageError> {
         tokio::task::spawn(worker_task);
 
-        // This unwrap is safe because:
-        // - The future returned by worker.work sends at least one item
-        //   to the channel (the PageSendAttemptedProof helps enforce this)
-        // - That future is polled in a tokio::task which isn't going to be
-        //   cancelled
-        let page_received = receiver.recv().await.unwrap()?;
+        let page_received = receiver.recv().await.unwrap_or_else(|| {
+            // - The future returned by worker.work sends at least one item
+            //   to the channel (the PageSendAttemptedProof helps enforce this);
+            // - That future is polled in a tokio::task which isn't going to be
+            //   canceled, **unless** the runtime is being shut down.
+            // Therefore, the only reason for recv() to return None is
+            // that the runtime is being shut down. In that case,
+            // we return an empty page to allow for graceful handling
+            // of the situation.
+            //
+            // Alternatively, we could return a new NextPageError variant
+            // indicating that the runtime is being shut down, but that
+            // seems like an overkill - this variant would be very special
+            // and pollute the API. Returning an empty page should be sufficient,
+            // as if someone is trying to shut down the runtime, they probably
+            // don't care about the results anyway.
+            Ok(ReceivedPage {
+                rows: RawMetadataAndRawRows::mock_empty(),
+                tracing_id: None,
+                request_coordinator: None,
+            })
+        })?;
         let raw_rows_with_deserialized_metadata = page_received.rows.deserialize_metadata()?;
 
         Ok(Self {
