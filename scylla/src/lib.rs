@@ -1,5 +1,5 @@
-//! Async Rust driver for the [Scylla](https://scylladb.com) database written in Rust.
-//! Although optimized for Scylla, the driver is also compatible with [Apache Cassandra®](https://cassandra.apache.org/).
+//! Async Rust driver for the [ScyllaDB](https://scylladb.com) database written in Rust.
+//! Although optimized for ScyllaDB, the driver is also compatible with [Apache Cassandra®](https://cassandra.apache.org/).
 //!
 //! # Documentation book
 //! The best source to learn about this driver is the [documentation book](https://rust-driver.docs.scylladb.com/).\
@@ -8,7 +8,7 @@
 //! # Other documentation
 //! * [Documentation book](https://rust-driver.docs.scylladb.com/)
 //! * [Examples](https://github.com/scylladb/scylla-rust-driver/tree/main/examples)
-//! * [Scylla documentation](https://docs.scylladb.com)
+//! * [ScyllaDB documentation](https://docs.scylladb.com)
 //! * [Cassandra® documentation](https://cassandra.apache.org/doc/latest/)
 //!
 //! # Driver overview
