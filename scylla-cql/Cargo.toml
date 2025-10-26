@@ -13,6 +13,22 @@ license = "MIT OR Apache-2.0"
 [package.metadata."docs.rs"]
 all-features = true
 
+[features]
+secrecy-08 = ["dep:secrecy-08"]
+time-03 = ["dep:time-03"]
+chrono-04 = []
+num-bigint-03 = ["dep:num-bigint-03"]
+num-bigint-04 = ["dep:num-bigint-04"]
+bigdecimal-04 = ["dep:bigdecimal-04"]
+full-serialization = [
+    "chrono-04",
+    "time-03",
+    "secrecy-08",
+    "num-bigint-03",
+    "num-bigint-04",
+    "bigdecimal-04",
+]
+
 [dependencies]
 ###########################
 # Main, public dependencies
@@ -73,22 +89,6 @@ uuid = { version = "1.0", features = ["v4"] }
 [[bench]]
 name = "benchmark"
 harness = false
-
-[features]
-secrecy-08 = ["dep:secrecy-08"]
-time-03 = ["dep:time-03"]
-chrono-04 = []
-num-bigint-03 = ["dep:num-bigint-03"]
-num-bigint-04 = ["dep:num-bigint-04"]
-bigdecimal-04 = ["dep:bigdecimal-04"]
-full-serialization = [
-    "chrono-04",
-    "time-03",
-    "secrecy-08",
-    "num-bigint-03",
-    "num-bigint-04",
-    "bigdecimal-04",
-]
 
 [lints.rust]
 unnameable_types = "warn"
