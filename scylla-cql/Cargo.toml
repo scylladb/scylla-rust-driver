@@ -6,7 +6,7 @@ rust-version = "1.85"
 description = "CQL data types and primitives, for interacting with ScyllaDB."
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
-keywords = ["database", "scylla", "cql", "cassandra"]
+keywords = ["database", "scylla", "scylladb", "cql", "cassandra"]
 categories = ["database"]
 license = "MIT OR Apache-2.0"
 
