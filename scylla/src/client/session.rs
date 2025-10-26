@@ -2031,7 +2031,14 @@ impl Session {
                 |_: tokio::time::error::Elapsed| {
                     #[cfg(feature = "metrics")]
                     self.metrics.inc_request_timeouts();
-                    Err(RequestError::RequestTimeout(timeout))
+
+                    let timeout_error = RequestError::RequestTimeout(timeout);
+                    trace!(
+                        parent: request_span.span(),
+                        error = %timeout_error,
+                        "Request timed out"
+                    );
+                    Err(timeout_error)
                 },
             ),
             None => runner.await,
