@@ -14,12 +14,19 @@ license = "MIT OR Apache-2.0"
 all-features = true
 
 [features]
+# Enables support for CQL ser/de of Secrecy type from secrecy 0.8 crate.
 secrecy-08 = ["dep:secrecy-08"]
+# Enables support for CQL ser/de of time/date types from time 0.3 crate.
 time-03 = ["dep:time-03"]
+# Enables support for CQL ser/de of time/date types from chrono 0.4 crate.
 chrono-04 = []
+# Enables support for CQL ser/de of arbitrary length integer types from num-bigint 0.3 crate.
 num-bigint-03 = ["dep:num-bigint-03"]
+# Enables support for CQL ser/de of arbitrary length integer types from num-bigint 0.4 crate.
 num-bigint-04 = ["dep:num-bigint-04"]
+# Enables support for CQL ser/de of arbitrary precision decimal types from bigdecimal 0.4 crate.
 bigdecimal-04 = ["dep:bigdecimal-04"]
+# Enables support for CQL ser/de of all supported external types.
 full-serialization = [
     "chrono-04",
     "time-03",
