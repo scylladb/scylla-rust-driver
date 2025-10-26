@@ -1397,7 +1397,7 @@ impl ProxyWorker {
         event_registered_flag: Arc<AtomicBool>,
     ) {
         let shard = self.shard;
-        self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
+        self.run_until_interrupted("response_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match responses_rx.recv().await {
                     Some(response) => {
@@ -1410,7 +1410,7 @@ impl ProxyWorker {
                         let mut guard = response_rules.lock().unwrap();
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
                             if response_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {} ({})).", i, DisplayableRealAddrOption(real_addr), driver_addr, DisplayableShard(shard));
+                                info!("Applying rule no={} to response ({} -> {} ({})).", i, DisplayableRealAddrOption(real_addr), driver_addr, DisplayableShard(shard));
                                 debug!("-> Applied rule: {:?}", response_rule);
                                 debug!("-> To response: {:?}", ctx.opcode);
                                 trace!("{:?}", response);
