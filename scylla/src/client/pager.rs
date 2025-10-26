@@ -8,6 +8,7 @@ use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use futures::Stream;
 use scylla_cql::Consistency;
@@ -148,6 +149,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     query_is_idempotent: bool,
     query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,
+    timeout: Option<Duration>,
     #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
 
@@ -178,6 +180,8 @@ where
         let mut current_consistency: Consistency = self.query_consistency;
 
         self.log_request_start();
+        let start_instant = tokio::time::Instant::now();
+        let mut timeout_instant = self.timeout.map(|t| start_instant + t);
 
         'nodes_in_plan: for (node, shard) in query_plan {
             let span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
@@ -208,26 +212,49 @@ where
                     Coordinator::new(node, node.sharder().is_some().then_some(shard), &connection);
 
                 // Query pages until an error occurs
-                let queries_result: Result<PageSendAttemptedProof, RequestAttemptError> = self
-                    .query_pages(&connection, current_consistency, node, coordinator.clone())
+                let queries_result: Result<
+                    Result<PageSendAttemptedProof, RequestAttemptError>,
+                    RequestTimeoutError,
+                > = self
+                    .query_pages(
+                        &connection,
+                        current_consistency,
+                        node,
+                        coordinator.clone(),
+                        timeout_instant.as_mut(),
+                    )
                     .instrument(span.clone())
                     .await;
 
                 let request_error: RequestAttemptError = match queries_result {
-                    Ok(proof) => {
+                    Ok(Ok(proof)) => {
                         trace!(parent: &span, "Request succeeded");
                         // query_pages returned Ok, so we are guaranteed
                         // that it attempted to send at least one page
                         // through self.sender and we can safely return now.
                         return proof;
                     }
-                    Err(error) => {
+                    Ok(Err(error)) => {
                         trace!(
                             parent: &span,
                             error = %error,
                             "Request failed"
                         );
                         error
+                    }
+                    Err(RequestTimeoutError(timeout)) => {
+                        let request_error = RequestError::RequestTimeout(timeout);
+                        self.log_request_error(&request_error);
+                        trace!(
+                            parent: &span,
+                            error = %request_error,
+                            "Request timed out"
+                        );
+                        let (proof, _) = self
+                            .sender
+                            .send(Err(NextPageError::RequestFailure(request_error)))
+                            .await;
+                        return proof;
                     }
                 };
 
@@ -269,7 +296,7 @@ where
                         // Although we are in an awkward situation (_iter
                         // interface isn't meant for sending writes),
                         // we must attempt to send something because
-                        // the iterator expects it.
+                        // QueryPager expects it.
                         let (proof, _) = self
                             .sender
                             .send_empty_page(None, Some(coordinator.clone()))
@@ -299,7 +326,8 @@ where
         consistency: Consistency,
         node: NodeRef<'_>,
         coordinator: Coordinator,
-    ) -> Result<PageSendAttemptedProof, RequestAttemptError> {
+        mut timeout_instant: Option<&mut tokio::time::Instant>,
+    ) -> Result<Result<PageSendAttemptedProof, RequestAttemptError>, RequestTimeoutError> {
         loop {
             let request_span = (self.span_creator)();
             match self
@@ -309,12 +337,31 @@ where
                     node,
                     coordinator.clone(),
                     &request_span,
+                    timeout_instant.as_ref().map(|instant| **instant),
                 )
                 .instrument(request_span.span().clone())
-                .await?
+                .await
             {
-                ControlFlow::Break(proof) => return Ok(proof),
-                ControlFlow::Continue(_) => {}
+                Ok(Ok(ControlFlow::Break(proof))) => {
+                    // Successfully queried the last remaining page.
+                    return Ok(Ok(proof));
+                }
+
+                Ok(Ok(ControlFlow::Continue(()))) => {
+                    // Successfully queried one page, and there are more to fetch.
+                    // Reset the timeout_instant for the next page fetch.
+                    if let Some(timeout) = self.timeout
+                        && let Some(ref mut instant) = timeout_instant
+                    {
+                        **instant = tokio::time::Instant::now() + timeout;
+                    }
+                }
+                Ok(Err(request_attempt_error)) => {
+                    return Ok(Err(request_attempt_error));
+                }
+                Err(request_timeout_error) => {
+                    return Err(request_timeout_error);
+                }
             }
         }
     }
@@ -326,7 +373,11 @@ where
         node: NodeRef<'_>,
         coordinator: Coordinator,
         request_span: &RequestSpan,
-    ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, RequestAttemptError> {
+        timeout_instant: Option<tokio::time::Instant>,
+    ) -> Result<
+        Result<ControlFlow<PageSendAttemptedProof, ()>, RequestAttemptError>,
+        RequestTimeoutError,
+    > {
         #[cfg(feature = "metrics")]
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
@@ -338,10 +389,26 @@ where
         );
         self.log_attempt_start(connect_address);
 
-        let query_response =
+        let runner = async {
             (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
                 .await
-                .and_then(QueryResponse::into_non_error_query_response);
+                .and_then(QueryResponse::into_non_error_query_response)
+        };
+        let query_response = match (self.timeout, timeout_instant) {
+            (Some(timeout), Some(instant)) => {
+                match tokio::time::timeout_at(instant, runner).await {
+                Ok(res) => res,
+                Err(_) /* tokio::time::error::Elapsed */ => {
+                    #[cfg(feature = "metrics")]
+                    self.metrics.inc_request_timeouts();
+                    return Err(RequestTimeoutError(timeout));
+                }
+            }
+            }
+
+            (None, None) => runner.await,
+            _ => unreachable!("timeout_instant must be Some iff self.timeout is Some"),
+        };
 
         let elapsed = query_start.elapsed();
 
@@ -375,7 +442,7 @@ where
                 let (proof, res) = self.sender.send(Ok(received_page)).await;
                 if res.is_err() {
                     // channel was closed, QueryPager was dropped - should shutdown
-                    return Ok(ControlFlow::Break(proof));
+                    return Ok(Ok(ControlFlow::Break(proof)));
                 }
 
                 match paging_state_response.into_paging_control_flow() {
@@ -384,7 +451,7 @@ where
                     }
                     ControlFlow::Break(()) => {
                         // Reached the last query, shutdown
-                        return Ok(ControlFlow::Break(proof));
+                        return Ok(Ok(ControlFlow::Break(proof)));
                     }
                 }
 
@@ -392,7 +459,7 @@ where
                 self.retry_session.reset();
                 self.log_request_start();
 
-                Ok(ControlFlow::Continue(()))
+                Ok(Ok(ControlFlow::Continue(())))
             }
             Err(err) => {
                 #[cfg(feature = "metrics")]
@@ -403,7 +470,7 @@ where
                     node,
                     &err,
                 );
-                Err(err)
+                Ok(Err(err))
             }
             Ok(NonErrorQueryResponse {
                 response: NonErrorResponseWithDeserializedMetadata::Result(_),
@@ -418,7 +485,7 @@ where
                     .sender
                     .send_empty_page(tracing_id, Some(coordinator))
                     .await;
-                Ok(ControlFlow::Break(proof))
+                Ok(Ok(ControlFlow::Break(proof)))
             }
             Ok(response) => {
                 #[cfg(feature = "metrics")]
@@ -431,7 +498,7 @@ where
                     node,
                     &err,
                 );
-                Err(err)
+                Ok(Err(err))
             }
         }
     }
@@ -735,6 +802,10 @@ If you are using this API, you are probably doing something wrong."
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
+        let timeout = statement
+            .get_request_timeout()
+            .or(execution_profile.request_timeout);
+
         let page_size = statement.get_validated_page_size();
 
         let routing_info = RoutingInfo {
@@ -791,6 +862,7 @@ If you are using this API, you are probably doing something wrong."
                 query_consistency: consistency,
                 load_balancing_policy,
                 retry_session,
+                timeout,
                 #[cfg(feature = "metrics")]
                 metrics,
                 paging_state: PagingState::start(),
@@ -822,6 +894,11 @@ If you are using this API, you are probably doing something wrong."
             .config
             .serial_consistency
             .unwrap_or(config.execution_profile.serial_consistency);
+
+        let timeout = config
+            .prepared
+            .get_request_timeout()
+            .or(config.execution_profile.request_timeout);
 
         let page_size = config.prepared.get_validated_page_size();
 
@@ -919,6 +996,7 @@ If you are using this API, you are probably doing something wrong."
                 query_consistency: consistency,
                 load_balancing_policy,
                 retry_session,
+                timeout,
                 #[cfg(feature = "metrics")]
                 metrics: config.metrics,
                 paging_state: PagingState::start(),
@@ -1173,6 +1251,14 @@ where
         Poll::Ready(Some(Ok(value)))
     }
 }
+
+/// Failed to run a request within a provided client timeout.
+#[derive(Error, Debug, Clone)]
+#[error(
+    "Request execution exceeded a client timeout of {}ms",
+    std::time::Duration::as_millis(.0)
+)]
+struct RequestTimeoutError(std::time::Duration);
 
 /// An error returned that occurred during next page fetch.
 #[derive(Error, Debug, Clone)]
