@@ -91,6 +91,11 @@
 //! # }
 //! ```
 //! See the [book](https://rust-driver.docs.scylladb.com/stable/statements/result.html) for more receiving methods.
+//!
+//! # Feature flags
+//! The driver has several optional features that can be enabled or disabled in `Cargo.toml`.
+//! Refer to [scylla/Cargo.toml](https://docs.rs/crate/scylla/latest/source/Cargo.toml.orig)
+//! for the list of available features and their descriptions.
 
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
