@@ -3,7 +3,7 @@
 //!
 //! # Documentation book
 //! The best source to learn about this driver is the [documentation book](https://rust-driver.docs.scylladb.com/).\
-//! This page contains mainly API documentation
+//! This page contains mainly API documentation.
 //!
 //! # Other documentation
 //! * [Documentation book](https://rust-driver.docs.scylladb.com/)
@@ -13,7 +13,7 @@
 //!
 //! # Driver overview
 //! ### Connecting
-//! All driver activity revolves around the [Session](crate::client::session::Session)\
+//! All driver activity revolves around the [Session](crate::client::session::Session).\
 //! `Session` is created by specifying a few known nodes and connecting to them:
 //!
 //! ```rust,no_run
@@ -44,7 +44,7 @@
 //! * [Prepared paged](crate::client::session::Session::execute_iter)
 //! * [Batch](crate::client::session::Session::batch)
 //!
-//! To specify options for a single query create the query object and configure it:
+//! To specify options for a single query, create the corresponding object and configure it:
 //! * For simple: [`Statement`](crate::statement::unprepared::Statement)
 //! * For prepared: [`PreparedStatement`](crate::statement::prepared::PreparedStatement)
 //! * For batch: [`Batch`](crate::statement::batch::Batch)
@@ -74,7 +74,7 @@
 //! # use std::error::Error;
 //! # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 //!
-//! // Read rows containing an int and text
+//! // Read rows containing an int and text.
 //! // Keep in mind that all results come in one response (no paging is done!),
 //! // so the memory footprint and latency may be huge!
 //! // To prevent that, use `Session::query_iter` or `Session::query_single_page`.
@@ -90,7 +90,7 @@
 //! # Ok(())
 //! # }
 //! ```
-//! See the [book](https://rust-driver.docs.scylladb.com/stable/statements/result.html) for more receiving methods
+//! See the [book](https://rust-driver.docs.scylladb.com/stable/statements/result.html) for more receiving methods.
 
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
