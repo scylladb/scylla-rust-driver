@@ -1460,9 +1460,9 @@ mod test_utils {
     }
 
     impl DeserializedMetadataAndRawRows {
+        #[doc(hidden)]
         #[inline]
-        #[cfg(test)]
-        pub(crate) fn new_for_test(
+        pub fn new_for_test(
             metadata: ResultMetadata<'static>,
             rows_count: usize,
             raw_rows: Bytes,
