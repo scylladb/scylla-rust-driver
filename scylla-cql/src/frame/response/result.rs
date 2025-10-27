@@ -666,6 +666,7 @@ pub struct DeserializedMetadataAndRawRows {
     metadata: ResultMetadataHolder,
     rows_count: usize,
     raw_rows: Bytes,
+    raw_metadata_and_rows_bytes_size: usize,
 }
 
 impl DeserializedMetadataAndRawRows {
@@ -695,6 +696,12 @@ impl DeserializedMetadataAndRawRows {
         self.raw_rows.len()
     }
 
+    /// Returns the serialized size of the raw metadata and raw rows.
+    #[inline]
+    pub fn metadata_and_rows_bytes_size(&self) -> usize {
+        self.raw_metadata_and_rows_bytes_size
+    }
+
     /// Creates an empty [DeserializedMetadataAndRawRows].
     // Preferred to implementing Default, because users shouldn't be encouraged to create
     // empty DeserializedMetadataAndRawRows.
@@ -706,6 +713,7 @@ impl DeserializedMetadataAndRawRows {
             ),
             rows_count: 0,
             raw_rows: Bytes::new(),
+            raw_metadata_and_rows_bytes_size: 0,
         }
     }
 
@@ -1070,6 +1078,7 @@ impl RawMetadataAndRawRows {
     pub fn deserialize_metadata(
         self,
     ) -> StdResult<DeserializedMetadataAndRawRows, ResultMetadataAndRowsCountParseError> {
+        let raw_metadata_and_rows_bytes_size = self.metadata_and_rows_bytes_size();
         let (metadata_deserialized, row_count_and_raw_rows) = match self.cached_metadata {
             Some(cached) if self.no_metadata => {
                 // Server sent no metadata, but we have metadata cached. This means that we asked the server
@@ -1120,6 +1129,7 @@ impl RawMetadataAndRawRows {
             metadata: metadata_deserialized,
             rows_count,
             raw_rows: frame_slice.to_bytes(),
+            raw_metadata_and_rows_bytes_size,
         })
     }
 }
@@ -1461,6 +1471,7 @@ mod test_utils {
                 metadata: ResultMetadataHolder::SharedCached(Arc::new(metadata)),
                 rows_count,
                 raw_rows,
+                raw_metadata_and_rows_bytes_size: 0,
             }
         }
     }
