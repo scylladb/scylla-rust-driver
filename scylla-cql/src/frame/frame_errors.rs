@@ -235,6 +235,8 @@ pub enum CqlResultParseError {
     PreparedParseError(#[from] PreparedParseError),
     #[error("RESULT:Rows response deserialization failed: {0}")]
     RawRowsParseError(#[from] RawRowsAndPagingStateResponseParseError),
+    #[error("RESULT:Rows result metadata response deserialization failed: {0}")]
+    ResultMetadataParseError(#[from] ResultMetadataAndRowsCountParseError),
 }
 
 #[non_exhaustive]
