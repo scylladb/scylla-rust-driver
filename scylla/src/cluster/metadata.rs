@@ -612,10 +612,14 @@ impl MetadataReader {
                 self.handle_unaccepted_host_in_control_connection(metadata);
                 debug!("Fetched new metadata");
             }
-            Err(error) => error!(
-                error = %error,
-                "Could not fetch metadata"
-            ),
+            Err(error) => {
+                let target = self.control_connection_endpoint.address().into_inner();
+                error!(
+                    error = %error,
+                    target = %target,
+                    "Could not fetch metadata"
+                )
+            }
         }
 
         result
