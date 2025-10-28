@@ -21,6 +21,7 @@ use super::{
 /// CQL protocol-level representation of an `EXECUTE` request,
 /// used to execute a single prepared statement.
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[deprecated(since = "1.4.0", note = "Use ExecuteV2 instead")]
 pub struct Execute<'a> {
     /// ID of the prepared statement to execute.
     pub id: Bytes,
@@ -29,6 +30,7 @@ pub struct Execute<'a> {
     pub parameters: query::QueryParameters<'a>,
 }
 
+#[expect(deprecated)]
 impl SerializableRequest for Execute<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Execute;
 
@@ -45,6 +47,7 @@ impl SerializableRequest for Execute<'_> {
     }
 }
 
+#[expect(deprecated)]
 impl DeserializableRequest for Execute<'_> {
     fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let id = types::read_short_bytes(buf)?.to_vec().into();
