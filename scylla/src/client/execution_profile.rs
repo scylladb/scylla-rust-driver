@@ -240,7 +240,8 @@ pub struct ExecutionProfileBuilder {
 }
 
 impl ExecutionProfileBuilder {
-    /// Changes client-side timeout.
+    /// Changes client-side timeout for executing statements.
+    /// If set to None, the driver will wait indefinitely for a response from the server.
     /// The default is 30 seconds.
     ///
     /// # Example
