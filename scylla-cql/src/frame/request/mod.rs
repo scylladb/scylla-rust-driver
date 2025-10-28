@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use crate::Consistency;
 use crate::frame::protocol_features::ProtocolFeatures;
+use crate::frame::request::execute::ExecuteV2;
 use crate::serialize::row::SerializedValues;
 use bytes::Bytes;
 
@@ -247,6 +248,65 @@ impl Request<'_> {
             Request::Query(q) => Some(q.parameters.serial_consistency),
             Request::Execute(e) => Some(e.parameters.serial_consistency),
             Request::Batch(b) => Some(b.serial_consistency),
+            #[expect(unreachable_patterns)] // until other opcodes are supported
+            _ => None,
+        }
+    }
+}
+
+/// A CQL request that can be sent to the server.
+#[non_exhaustive] // TODO: add remaining request types
+pub enum RequestV2<'r> {
+    /// QUERY request, used to execute a single unprepared statement.
+    Query(Query<'r>),
+    /// EXECUTE request, used to execute a single prepared statement.
+    Execute(ExecuteV2<'r>),
+    /// BATCH request, used to execute a batch of (prepared, unprepared, or mix of both)
+    /// statements.
+    Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
+}
+
+impl RequestV2<'_> {
+    /// Deserializes the request from the provided buffer.
+    pub fn deserialize(
+        buf: &mut &[u8],
+        opcode: RequestOpcode,
+        features: &ProtocolFeatures,
+    ) -> Result<Self, RequestDeserializationError> {
+        match opcode {
+            RequestOpcode::Query => {
+                Query::deserialize_with_features(buf, features).map(Self::Query)
+            }
+            RequestOpcode::Execute => {
+                ExecuteV2::deserialize_with_features(buf, features).map(Self::Execute)
+            }
+            RequestOpcode::Batch => {
+                Batch::deserialize_with_features(buf, features).map(Self::Batch)
+            }
+            _ => unimplemented!(
+                "Deserialization of opcode {:?} is not yet supported",
+                opcode
+            ),
+        }
+    }
+
+    /// Retrieves consistency from request frame, if present.
+    pub fn get_consistency(&self) -> Option<Consistency> {
+        match self {
+            Self::Query(q) => Some(q.parameters.consistency),
+            Self::Execute(e) => Some(e.parameters.consistency),
+            Self::Batch(b) => Some(b.consistency),
+            #[expect(unreachable_patterns)] // until other opcodes are supported
+            _ => None,
+        }
+    }
+
+    /// Retrieves serial consistency from request frame.
+    pub fn get_serial_consistency(&self) -> Option<Option<SerialConsistency>> {
+        match self {
+            Self::Query(q) => Some(q.parameters.serial_consistency),
+            Self::Execute(e) => Some(e.parameters.serial_consistency),
+            Self::Batch(b) => Some(b.serial_consistency),
             #[expect(unreachable_patterns)] // until other opcodes are supported
             _ => None,
         }
