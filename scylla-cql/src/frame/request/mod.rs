@@ -13,6 +13,7 @@ use batch::BatchTypeParseError;
 use thiserror::Error;
 
 use crate::Consistency;
+use crate::frame::protocol_features::ProtocolFeatures;
 use crate::serialize::row::SerializedValues;
 use bytes::Bytes;
 
@@ -169,6 +170,13 @@ pub trait SerializableRequest {
 pub trait DeserializableRequest: SerializableRequest + Sized {
     /// Deserializes the request from the provided buffer.
     fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError>;
+
+    fn deserialize_with_features(
+        buf: &mut &[u8],
+        #[allow(unused_variables)] features: &ProtocolFeatures,
+    ) -> Result<Self, RequestDeserializationError> {
+        Self::deserialize(buf)
+    }
 }
 
 /// An error type returned by [`DeserializableRequest::deserialize`].
