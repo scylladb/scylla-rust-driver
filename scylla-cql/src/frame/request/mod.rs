@@ -20,6 +20,7 @@ use bytes::Bytes;
 
 pub use auth_response::AuthResponse;
 pub use batch::Batch;
+#[expect(deprecated)]
 pub use execute::Execute;
 pub use options::Options;
 pub use prepare::Prepare;
@@ -204,16 +205,22 @@ pub enum RequestDeserializationError {
 
 /// A CQL request that can be sent to the server.
 #[non_exhaustive] // TODO: add remaining request types
+#[deprecated(
+    since = "1.4.0",
+    note = "Does not support Scylla metadata id extension. Use RequestV2 instead."
+)]
 pub enum Request<'r> {
     /// QUERY request, used to execute a single unprepared statement.
     Query(Query<'r>),
     /// EXECUTE request, used to execute a single prepared statement.
+    #[expect(deprecated)]
     Execute(Execute<'r>),
     /// BATCH request, used to execute a batch of (prepared, unprepared, or mix of both)
     /// statements.
     Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
 }
 
+#[expect(deprecated)]
 impl Request<'_> {
     /// Deserializes the request from the provided buffer.
     pub fn deserialize(
@@ -323,6 +330,7 @@ mod tests {
     use crate::Consistency;
     use crate::frame::protocol_features::ProtocolFeatures;
     use crate::frame::request::batch::{Batch, BatchStatement, BatchType};
+    #[expect(deprecated)]
     use crate::frame::request::execute::Execute;
     use crate::frame::request::execute::ExecuteV2;
     use crate::frame::request::query::{Query, QueryParameters};
@@ -380,6 +388,8 @@ mod tests {
                 Cow::Owned(vals)
             },
         };
+
+        #[expect(deprecated)]
         let execute = Execute {
             id,
             parameters: parameters.clone(),
@@ -388,6 +398,7 @@ mod tests {
             let mut buf = Vec::new();
             execute.serialize(&mut buf).unwrap();
 
+            #[expect(deprecated)]
             let execute_deserialized = Execute::deserialize(&mut &buf[..]).unwrap();
             assert_eq!(&execute_deserialized, &execute);
         }
