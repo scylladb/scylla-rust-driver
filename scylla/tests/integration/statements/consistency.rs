@@ -297,20 +297,20 @@ async fn consistency_is_correctly_set_in_cql_requests() {
                 .keepalive_interval(Duration::from_secs(10000))
                 .address_translator(translation_map.clone());
 
-            async fn check_consistencies(
-                consistency: Consistency,
-                serial_consistency: Option<SerialConsistency>,
-                mut request_rx: UnboundedReceiver<(RequestFrame, Option<TargetShard>)>,
-            ) -> UnboundedReceiver<(RequestFrame, Option<TargetShard>)> {
-                let (request_frame, _shard) = request_rx.recv().await.unwrap();
-                let deserialized_request = request_frame.deserialize().unwrap();
-                assert_eq!(deserialized_request.get_consistency().unwrap(), consistency);
-                assert_eq!(
-                    deserialized_request.get_serial_consistency().unwrap(),
-                    serial_consistency
-                );
-                request_rx
-            }
+            let check_consistencies =
+                async |consistency: Consistency,
+                       serial_consistency: Option<SerialConsistency>,
+                       mut request_rx: UnboundedReceiver<(RequestFrame, Option<TargetShard>)>|
+                       -> UnboundedReceiver<(RequestFrame, Option<TargetShard>)> {
+                    let (request_frame, _shard) = request_rx.recv().await.unwrap();
+                    let deserialized_request = request_frame.deserialize().unwrap();
+                    assert_eq!(deserialized_request.get_consistency().unwrap(), consistency);
+                    assert_eq!(
+                        deserialized_request.get_serial_consistency().unwrap(),
+                        serial_consistency
+                    );
+                    request_rx
+                };
 
             check_for_all_consistencies_and_setting_options(
                 session_builder,
