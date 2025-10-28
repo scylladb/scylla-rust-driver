@@ -259,22 +259,17 @@ mod tests {
 
     use bytes::Bytes;
 
-    use crate::serialize::row::SerializedValues;
-    use crate::{
-        Consistency,
-        frame::{
-            request::{
-                DeserializableRequest, SerializableRequest,
-                batch::{Batch, BatchStatement, BatchType},
-                execute::Execute,
-                query::{Query, QueryParameters},
-            },
-            response::result::{ColumnType, NativeType},
-            types::{self, SerialConsistency},
-        },
-    };
-
     use super::query::PagingState;
+    use crate::Consistency;
+    use crate::frame::protocol_features::ProtocolFeatures;
+    use crate::frame::request::batch::{Batch, BatchStatement, BatchType};
+    use crate::frame::request::execute::Execute;
+    use crate::frame::request::execute::ExecuteV2;
+    use crate::frame::request::query::{Query, QueryParameters};
+    use crate::frame::request::{DeserializableRequest, SerializableRequest};
+    use crate::frame::response::result::{ColumnType, NativeType};
+    use crate::frame::types::{self, SerialConsistency};
+    use crate::serialize::row::SerializedValues;
 
     #[test]
     fn request_ser_de_identity() {
@@ -307,7 +302,7 @@ mod tests {
             assert_eq!(&query_deserialized, &query);
         }
 
-        // Execute
+        // Legacy Execute
         let id: Bytes = vec![2, 4, 5, 2, 6, 7, 3, 1].into();
         let parameters = QueryParameters {
             consistency: Consistency::Any,
@@ -325,7 +320,10 @@ mod tests {
                 Cow::Owned(vals)
             },
         };
-        let execute = Execute { id, parameters };
+        let execute = Execute {
+            id,
+            parameters: parameters.clone(),
+        };
         {
             let mut buf = Vec::new();
             execute.serialize(&mut buf).unwrap();
@@ -334,13 +332,34 @@ mod tests {
             assert_eq!(&execute_deserialized, &execute);
         }
 
+        // New Execute
+        let id = [2, 4, 5, 2, 6, 7, 3, 1].as_slice().into();
+        let result_metadata_id = Some([2, 4, 5, 2, 6, 7, 3, 1].as_slice().into());
+        let execute_with_id = ExecuteV2 {
+            id,
+            result_metadata_id,
+            parameters,
+        };
+        {
+            let mut buf = Vec::new();
+            execute_with_id.serialize(&mut buf).unwrap();
+
+            let features = ProtocolFeatures {
+                scylla_metadata_id_supported: true,
+                ..Default::default()
+            };
+            let execute_deserialized =
+                ExecuteV2::deserialize_with_features(&mut &buf[..], &features).unwrap();
+            assert_eq!(&execute_deserialized, &execute_with_id);
+        }
+
         // Batch
         let statements = vec![
             BatchStatement::Query {
                 text: query.contents,
             },
             BatchStatement::Prepared {
-                id: Cow::Borrowed(&execute.id),
+                id: Cow::Borrowed(execute_with_id.id.as_ref()),
             },
         ];
         let batch = Batch {
