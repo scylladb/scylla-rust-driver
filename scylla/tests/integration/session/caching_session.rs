@@ -34,12 +34,13 @@ async fn test_caching_session_metadata_cache() {
                 node.change_request_rules(Some(vec![prepared_request_feedback_rule.clone()]));
             }
 
-            async fn verify_statement_metadata(
-                session: &CachingSession,
-                statement: &str,
-                should_have_metadata: bool,
-                feedback: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
-            ) {
+            let verify_statement_metadata = async |session: &CachingSession,
+                                                   statement: &str,
+                                                   should_have_metadata: bool,
+                                                   feedback: &mut mpsc::UnboundedReceiver<(
+                RequestFrame,
+                Option<u16>,
+            )>| {
                 let _result = session.execute_unpaged(statement, ()).await.unwrap();
                 let (req_frame, _) = feedback.recv().await.unwrap();
                 let _ = feedback.try_recv().unwrap_err(); // There should be only one frame.
@@ -49,7 +50,7 @@ async fn test_caching_session_metadata_cache() {
                 };
                 let has_metadata = !parameters.skip_metadata;
                 assert_eq!(has_metadata, should_have_metadata);
-            }
+            };
 
             const REQUEST: &str = "SELECT * FROM system.local WHERE key = 'local'";
 
