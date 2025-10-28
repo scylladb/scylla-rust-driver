@@ -67,7 +67,7 @@ impl DeserializableRequest for Query<'_> {
 }
 
 /// Various parameters controlling the execution of the statement.
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq, Clone))]
 pub struct QueryParameters<'a> {
     /// Consistency level for the query.
     pub consistency: types::Consistency,
