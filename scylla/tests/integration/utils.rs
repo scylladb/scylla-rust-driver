@@ -4,12 +4,13 @@ use itertools::Either;
 use scylla::client::caching_session::CachingSession;
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
-use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
+use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilder, SessionBuilderKind};
 use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
 use scylla::cluster::metadata::ColumnType;
 use scylla::deserialize::value::DeserializeValue;
 use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
+use scylla::policies::host_filter::AllowListHostFilter;
 use scylla::policies::load_balancing::{
     FallbackPlan, LoadBalancingPolicy, NodeIdentifier, RoutingInfo, SingleTargetLoadBalancingPolicy,
 };
@@ -20,8 +21,11 @@ use scylla::serialize::row::SerializeRow;
 use scylla::serialize::value::SerializeValue;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
+use scylla_cql::frame::protocol_features::ProtocolFeatures;
+use scylla_cql::frame::request::{DeserializableRequest, Startup};
+use scylla_cql::frame::response::Supported;
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::env;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::process::Command;
@@ -29,13 +33,18 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{env, iter};
+use tokio::sync::mpsc;
 use tracing::{error, warn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use uuid::Uuid;
 
-use scylla_proxy::{Node, Proxy, ProxyError, RunningProxy, ShardAwareness};
+use scylla_proxy::{
+    Condition, Node, Proxy, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule,
+    ResponseOpcode, ResponseReaction, ResponseRule, RunningProxy, ShardAwareness,
+};
 
 pub(crate) fn setup_tracing() {
     let testing_layer = tracing_subscriber::fmt::layer()
@@ -478,4 +487,68 @@ impl<'typ, T> SerializeValueWithFakeType<'typ, T> {
     pub(crate) fn new(value: T, fake_type: ColumnType<'typ>) -> Self {
         Self { fake_type, value }
     }
+}
+
+// Reads the hashmap of supported connection features from given endpoint.
+// It is implemented using proxy, and session configured to be cheap to create.
+// Better alternative would be to use scylla-cql to manually create a single connection
+// and send OPTIONS request. If performance becomes a problem, we can do this.
+#[expect(dead_code)]
+pub(crate) async fn fetch_negotiated_features(server: Option<String>) -> ProtocolFeatures {
+    let real1_uri =
+        server.unwrap_or(env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string()));
+    let proxy1_uri = format!("{}:9042", scylla_proxy::get_exclusive_local_address());
+    let real1_addr = SocketAddr::from_str(real1_uri.as_str()).unwrap();
+    let proxy1_addr = SocketAddr::from_str(proxy1_uri.as_str()).unwrap();
+
+    let proxy = Proxy::new([(proxy1_addr, real1_addr)].map(|(proxy_addr, real_addr)| {
+        Node::builder()
+            .real_address(real_addr)
+            .proxy_address(proxy_addr)
+            .shard_awareness(ShardAwareness::Unaware)
+            .build()
+    }));
+
+    let translation_map = proxy.translation_map();
+    let mut running_proxy = proxy.run().await.unwrap();
+
+    let (startup_feedback_tx, mut startup_feedback_rx) = mpsc::unbounded_channel();
+    let (supported_feedback_tx, mut supported_feedback_rx) = mpsc::unbounded_channel();
+    running_proxy.running_nodes[0].change_request_rules(Some(vec![RequestRule(
+        Condition::RequestOpcode(RequestOpcode::Startup),
+        RequestReaction::noop().with_feedback_when_performed(startup_feedback_tx),
+    )]));
+    running_proxy.running_nodes[0].change_response_rules(Some(vec![ResponseRule(
+        Condition::ResponseOpcode(ResponseOpcode::Supported),
+        ResponseReaction::noop().with_feedback_when_performed(supported_feedback_tx),
+    )]));
+
+    let _session = SessionBuilder::new()
+        .address_translator(Arc::new(translation_map))
+        // The way I understand it, contact point will always be Untranslatable, which is
+        // always accepted by the AllowListHostFilter, so we don't need to create the allowlist.
+        .host_filter(Arc::new(
+            AllowListHostFilter::new(iter::empty::<&str>()).unwrap(),
+        ))
+        .disallow_shard_aware_port(true)
+        .fetch_schema_metadata(false)
+        .keyspaces_to_fetch(std::iter::empty::<String>())
+        .known_node(proxy1_uri)
+        .build()
+        .await;
+
+    let supported_frame = supported_feedback_rx.recv().await.unwrap().0;
+    let mut supported = Supported::deserialize(&mut &*supported_frame.body)
+        .unwrap()
+        .options;
+    let startup_frame = startup_feedback_rx.recv().await.unwrap().0;
+    let startup = Startup::deserialize(&mut &*startup_frame.body)
+        .unwrap()
+        .options;
+    // We only want to return negotiated features.
+    supported.retain(|key, _| startup.contains_key(&Cow::Borrowed(key.as_str())));
+
+    running_proxy.finish().await.unwrap();
+
+    ProtocolFeatures::parse_from_supported(&supported)
 }
