@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use scylla::client::caching_session::{CachingSession, CachingSessionBuilder};
 use scylla::client::session_builder::SessionBuilder;
-use scylla_cql::frame::request::Execute;
-use scylla_cql::frame::request::Request;
+use scylla_cql::frame::request::RequestV2;
+use scylla_cql::frame::request::execute::ExecuteV2;
 use scylla_proxy::Condition;
 use scylla_proxy::ProxyError;
 use scylla_proxy::Reaction;
@@ -46,7 +46,7 @@ async fn test_caching_session_metadata_cache() {
                 let (req_frame, _) = feedback.recv().await.unwrap();
                 let _ = feedback.try_recv().unwrap_err(); // There should be only one frame.
                 let request = req_frame.deserialize(&features).unwrap();
-                let Request::Execute(Execute { parameters, .. }) = request else {
+                let RequestV2::Execute(ExecuteV2 { parameters, .. }) = request else {
                     panic!("Unexpected request type");
                 };
                 let has_metadata = !parameters.skip_metadata;

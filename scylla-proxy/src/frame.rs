@@ -4,7 +4,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use scylla_cql::frame::frame_errors::FrameHeaderParseError;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 pub use scylla_cql::frame::request::RequestOpcode;
-use scylla_cql::frame::request::{Request, RequestDeserializationError};
+use scylla_cql::frame::request::{RequestDeserializationError, RequestV2};
 pub use scylla_cql::frame::response::ResponseOpcode;
 use scylla_cql::frame::{response::error::DbError, types};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -76,9 +76,9 @@ impl RequestFrame {
 
     pub fn deserialize(
         &self,
-        _features: &ProtocolFeatures,
-    ) -> Result<Request<'_>, RequestDeserializationError> {
-        Request::deserialize(&mut &self.body[..], self.opcode)
+        features: &ProtocolFeatures,
+    ) -> Result<RequestV2<'_>, RequestDeserializationError> {
+        RequestV2::deserialize(&mut &self.body[..], self.opcode, features)
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
