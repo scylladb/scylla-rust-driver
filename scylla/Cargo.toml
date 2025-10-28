@@ -3,10 +3,10 @@ name = "scylla"
 version = "1.3.1"
 edition = "2024"
 rust-version = "1.85"
-description = "Async CQL driver for Rust, optimized for Scylla, fully compatible with Apache Cassandra™"
+description = "Async CQL driver for Rust, optimized for ScyllaDB, fully compatible with Apache Cassandra™"
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
-keywords = ["database", "scylla", "cql", "cassandra"]
+keywords = ["database", "scylla", "scylladb", "cql", "cassandra"]
 categories = ["database"]
 license = "MIT OR Apache-2.0"
 
@@ -16,8 +16,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
+# Enables TLS support via OpenSSL 0.10.
 openssl-010 = ["dep:tokio-openssl", "dep:openssl"]
+# Enables TLS support via rustls 0.23.
 rustls-023 = ["dep:tokio-rustls", "dep:rustls"]
+# Enables features required to work with Scylla Serverless Cloud.
 unstable-cloud = [
     "scylla-cql/serde",
     "dep:serde_yaml",
@@ -25,12 +28,19 @@ unstable-cloud = [
     "dep:url",
     "dep:base64",
 ]
+# Enables support for CQL ser/de of Secrecy type from secrecy 0.8 crate.
 secrecy-08 = ["scylla-cql/secrecy-08"]
+# Enables support for CQL ser/de of time/date types from chrono 0.4 crate.
 chrono-04 = ["scylla-cql/chrono-04"]
+# Enables support for CQL ser/de of time/date types from time 0.3 crate.
 time-03 = ["scylla-cql/time-03"]
+# Enables support for CQL ser/de of arbitrary length integer types from num-bigint 0.3 crate.
 num-bigint-03 = ["scylla-cql/num-bigint-03"]
+# Enables support for CQL ser/de of arbitrary length integer types from num-bigint 0.4 crate.
 num-bigint-04 = ["scylla-cql/num-bigint-04"]
+# Enables support for CQL ser/de of arbitrary precision decimal types from bigdecimal 0.4 crate.
 bigdecimal-04 = ["scylla-cql/bigdecimal-04"]
+# Enables support for CQL ser/de of all supported external types.
 full-serialization = [
     "chrono-04",
     "time-03",
@@ -39,7 +49,9 @@ full-serialization = [
     "num-bigint-04",
     "bigdecimal-04",
 ]
+# Enables collection of internal driver metrics.
 metrics = ["dep:histogram"]
+# Opts-in to various unstable testing features.
 unstable-testing = []
 
 [dependencies]
@@ -56,7 +68,7 @@ tokio = { version = "1.40", features = [
     "macros",
 ] }
 tracing = "0.1.36"
-# Appears in various places of our public API
+# Appears in various places of our public API.
 bytes = "1.0.1"
 # Used for representing tracing ids and host ids.
 uuid = { version = "1.0", features = ["v4"] }

@@ -3,10 +3,10 @@ name = "scylla-proxy"
 version = "0.0.4"
 edition = "2024"
 rust-version = "1.85"
-description = "Proxy layer between Scylla driver and cluster that enables testing Scylla drivers' behaviour in unfavourable conditions"
+description = "Proxy layer between ScyllaDB driver and cluster that enables testing ScyllaDB drivers' behaviour in unfavourable conditions"
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
-keywords = ["database", "scylla", "cql", "cassandra"]
+keywords = ["database", "scylla", "scylladb", "cql", "cassandra"]
 categories = ["database"]
 license = "MIT OR Apache-2.0"
 

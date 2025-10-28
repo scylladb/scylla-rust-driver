@@ -64,6 +64,11 @@ The driver supports the following:
 
 For planned future improvements, see our [Milestones].
 
+### Feature flags
+The driver has several optional features that can be enabled or disabled in `Cargo.toml`.
+Refer to [scylla/Cargo.toml](https://docs.rs/crate/scylla/latest/source/Cargo.toml.orig)
+for the list of available features and their descriptions.
+
 ## Getting Help
 
 We invite you to discuss any issues and ask questions on the [ScyllaDB Forum] and the `#rust-driver` channel on [ScyllaDB Slack].
