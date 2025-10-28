@@ -7,6 +7,7 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use scylla::cluster::ClusterState;
 use scylla::cluster::NodeRef;
+use scylla::cluster::metadata::ColumnType;
 use scylla::deserialize::value::DeserializeValue;
 use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
 use scylla::policies::load_balancing::{
@@ -16,6 +17,7 @@ use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySess
 use scylla::response::query_result::QueryResult;
 use scylla::routing::Shard;
 use scylla::serialize::row::SerializeRow;
+use scylla::serialize::value::SerializeValue;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 use std::collections::HashMap;
@@ -454,4 +456,26 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
         session.query_unpaged(statement, values).await
     })
     .await
+}
+
+pub(crate) struct SerializeValueWithFakeType<'typ, T> {
+    fake_type: ColumnType<'typ>,
+    value: T,
+}
+
+impl<T: SerializeValue> SerializeValue for SerializeValueWithFakeType<'_, T> {
+    fn serialize<'b>(
+        &self,
+        _typ: &ColumnType,
+        writer: scylla_cql::serialize::CellWriter<'b>,
+    ) -> Result<scylla::serialize::writers::WrittenCellProof<'b>, scylla::errors::SerializationError>
+    {
+        <T as SerializeValue>::serialize(&self.value, &self.fake_type, writer)
+    }
+}
+
+impl<'typ, T> SerializeValueWithFakeType<'typ, T> {
+    pub(crate) fn new(value: T, fake_type: ColumnType<'typ>) -> Self {
+        Self { fake_type, value }
+    }
 }
