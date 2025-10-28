@@ -933,6 +933,30 @@ impl Connection {
         }
     }
 
+    fn get_result_id<'metadata>(
+        cached_metadata: &'metadata Option<Arc<ResultMetadata<'static>>>,
+        has_metadata_extension: bool,
+    ) -> Option<&'metadata [u8]> {
+        // The condition is basically equivalent to `has_metadata_extension`, but to get the
+        // metadata ouf of Option we need to do the match anyway. Why not just `if let`?
+        // Because if the extension is enabled, then we have to send the id.
+        // If the logic above is changed, and we have the extension, but no cached metadata,
+        // it would result in protocol error, so let's assert.
+        assert!(!has_metadata_extension || cached_metadata.is_some()); // has_metadata_extension -> cached_metadata.is_some()
+        match (cached_metadata.as_ref(), has_metadata_extension) {
+            // In the first branch we know that metadata extension is enabled, and we have extracted cached metadata.
+            // Can we `unwrap()` the id? I think not, because I see one scenario where it can be None.
+            // Statement may have been prepared on connection that does not have the extension (think:
+            // cluster during upgrade, with mixed versions), and then used on this connection.
+            // What to do in this case? We have to send some id, because it is not optional in the protocol,
+            // so let's send empty id.
+            (Some(metadata), true) => Some(metadata.id().unwrap_or(&[])),
+            (Some(_), false) => None,
+            (None, true) => unreachable!("metadata extension enabled, but no cached metadata."),
+            (None, false) => None,
+        }
+    }
+
     pub(crate) async fn execute_raw_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
@@ -952,23 +976,31 @@ impl Connection {
             .get_timestamp()
             .or_else(get_timestamp_from_gen);
 
+        let has_metadata_extension = self.features.protocol_features.scylla_metadata_id_supported;
+
+        // If the metadata id extension is supported, there is no point in not caching metadata,
+        // so we ignore the setting on prepared statement.
+        let skip_metadata =
+            prepared_statement.get_use_cached_result_metadata() || has_metadata_extension;
+
+        let cached_metadata =
+            skip_metadata.then(|| prepared_statement.get_current_result_metadata());
+
+        let result_id = Self::get_result_id(&cached_metadata, has_metadata_extension);
+
         let execute_frame = execute::ExecuteV2 {
             id: prepared_statement.get_id().as_ref().into(),
-            result_metadata_id: None,
+            result_metadata_id: result_id.map(Into::into),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
                 values: Cow::Borrowed(values),
                 page_size: page_size.map(Into::into),
                 timestamp,
-                skip_metadata: prepared_statement.get_use_cached_result_metadata(),
+                skip_metadata,
                 paging_state,
             },
         };
-
-        let cached_metadata = prepared_statement
-            .get_use_cached_result_metadata()
-            .then(|| prepared_statement.get_current_result_metadata());
 
         let query_response = self
             .send_request(
@@ -1002,9 +1034,16 @@ impl Connection {
                 // Repreparation of a statement is needed
                 self.reprepare(prepared_statement.get_statement(), prepared_statement)
                     .await?;
+                // Metadata may have changed in reprepare, or in some concurrent execution
+                let cached_metadata =
+                    skip_metadata.then(|| prepared_statement.get_current_result_metadata());
+                let result_id = Self::get_result_id(&cached_metadata, has_metadata_extension);
                 let new_response = self
                     .send_request(
-                        &execute_frame,
+                        &execute::ExecuteV2 {
+                            result_metadata_id: result_id.map(Into::into),
+                            ..execute_frame
+                        },
                         true,
                         prepared_statement.config.tracing,
                         cached_metadata.as_ref(),
