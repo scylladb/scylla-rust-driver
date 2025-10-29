@@ -445,7 +445,7 @@ impl<'a> ResultMetadata<'a> {
 /// of `ResultMetadata`:
 /// 1. owning it in a borrowed form, self-borrowed from the RESULT:Rows frame;
 /// 2. sharing ownership of metadata cached in PreparedStatement.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ResultMetadataHolder {
     /// [ResultMetadata] that is self-borrowed from the RESULT:Rows frame.
     SelfBorrowed(SelfBorrowedMetadataContainer),
@@ -661,11 +661,12 @@ use super::custom_type_parser::CustomTypeParser;
 /// RESULT:Rows response, in partially serialized form.
 ///
 /// Paging state and metadata are deserialized, rows remain serialized.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DeserializedMetadataAndRawRows {
     metadata: ResultMetadataHolder,
     rows_count: usize,
     raw_rows: Bytes,
+    raw_metadata_and_rows_bytes_size: usize,
 }
 
 impl DeserializedMetadataAndRawRows {
@@ -695,6 +696,12 @@ impl DeserializedMetadataAndRawRows {
         self.raw_rows.len()
     }
 
+    /// Returns the serialized size of the raw metadata and raw rows.
+    #[inline]
+    pub fn metadata_and_rows_bytes_size(&self) -> usize {
+        self.raw_metadata_and_rows_bytes_size
+    }
+
     /// Creates an empty [DeserializedMetadataAndRawRows].
     // Preferred to implementing Default, because users shouldn't be encouraged to create
     // empty DeserializedMetadataAndRawRows.
@@ -706,6 +713,7 @@ impl DeserializedMetadataAndRawRows {
             ),
             rows_count: 0,
             raw_rows: Bytes::new(),
+            raw_metadata_and_rows_bytes_size: 0,
         }
     }
 
@@ -741,6 +749,47 @@ pub enum Result {
     Void,
     /// A result with metadata and rows.
     Rows((RawMetadataAndRawRows, PagingStateResponse)),
+    /// A result indicating that a keyspace was set as an effect
+    /// of the executed request.
+    SetKeyspace(SetKeyspace),
+    /// A result indicating that a statement was prepared
+    /// as an effect of the `PREPARE` request.
+    Prepared(Prepared),
+    /// A result indicating that a schema change occurred
+    /// as an effect of the executed request.
+    SchemaChange(SchemaChange),
+}
+
+impl Result {
+    pub fn deserialize_metadata(
+        self,
+    ) -> StdResult<ResultWithDeserializedMetadata, ResultMetadataAndRowsCountParseError> {
+        let res = match self {
+            Result::Void => ResultWithDeserializedMetadata::Void,
+            Result::Rows((metadata, paging_state)) => ResultWithDeserializedMetadata::Rows((
+                metadata.deserialize_metadata()?,
+                paging_state,
+            )),
+            Result::SetKeyspace(set_keyspace) => {
+                ResultWithDeserializedMetadata::SetKeyspace(set_keyspace)
+            }
+            Result::Prepared(prepared) => ResultWithDeserializedMetadata::Prepared(prepared),
+            Result::SchemaChange(schema_change) => {
+                ResultWithDeserializedMetadata::SchemaChange(schema_change)
+            }
+        };
+
+        Ok(res)
+    }
+}
+
+/// Represents the result of a CQL `RESULT` response.
+#[derive(Debug)]
+pub enum ResultWithDeserializedMetadata {
+    /// A result with no associated data.
+    Void,
+    /// A result with metadata and rows.
+    Rows((DeserializedMetadataAndRawRows, PagingStateResponse)),
     /// A result indicating that a keyspace was set as an effect
     /// of the executed request.
     SetKeyspace(SetKeyspace),
@@ -1070,6 +1119,7 @@ impl RawMetadataAndRawRows {
     pub fn deserialize_metadata(
         self,
     ) -> StdResult<DeserializedMetadataAndRawRows, ResultMetadataAndRowsCountParseError> {
+        let raw_metadata_and_rows_bytes_size = self.metadata_and_rows_bytes_size();
         let (metadata_deserialized, row_count_and_raw_rows) = match self.cached_metadata {
             Some(cached) if self.no_metadata => {
                 // Server sent no metadata, but we have metadata cached. This means that we asked the server
@@ -1120,6 +1170,7 @@ impl RawMetadataAndRawRows {
             metadata: metadata_deserialized,
             rows_count,
             raw_rows: frame_slice.to_bytes(),
+            raw_metadata_and_rows_bytes_size,
         })
     }
 }
@@ -1450,9 +1501,9 @@ mod test_utils {
     }
 
     impl DeserializedMetadataAndRawRows {
+        #[doc(hidden)]
         #[inline]
-        #[cfg(test)]
-        pub(crate) fn new_for_test(
+        pub fn new_for_test(
             metadata: ResultMetadata<'static>,
             rows_count: usize,
             raw_rows: Bytes,
@@ -1461,6 +1512,7 @@ mod test_utils {
                 metadata: ResultMetadataHolder::SharedCached(Arc::new(metadata)),
                 rows_count,
                 raw_rows,
+                raw_metadata_and_rows_bytes_size: 0,
             }
         }
     }

@@ -10,9 +10,7 @@ use scylla_cql::deserialize::result::TypedRowIterator;
 use scylla_cql::deserialize::row::DeserializeRow;
 use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
 use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
-use scylla_cql::frame::response::result::{
-    ColumnSpec, DeserializedMetadataAndRawRows, RawMetadataAndRawRows,
-};
+use scylla_cql::frame::response::result::{ColumnSpec, DeserializedMetadataAndRawRows};
 
 use crate::response::Coordinator;
 
@@ -77,7 +75,7 @@ pub struct QueryResult {
     /// If user gets a `QueryResult` with `request_coordinator` set to `None`,
     /// this is a bug.
     request_coordinator: Option<Coordinator>,
-    raw_metadata_and_rows: Option<RawMetadataAndRawRows>,
+    deserialized_metadata_and_rows: Option<DeserializedMetadataAndRawRows>,
     tracing_id: Option<Uuid>,
     warnings: Vec<String>,
 }
@@ -85,13 +83,13 @@ pub struct QueryResult {
 impl QueryResult {
     pub(crate) fn new(
         request_coordinator: Coordinator,
-        raw_rows: Option<RawMetadataAndRawRows>,
+        raw_rows: Option<DeserializedMetadataAndRawRows>,
         tracing_id: Option<Uuid>,
         warnings: Vec<String>,
     ) -> Self {
         Self {
             request_coordinator: Some(request_coordinator),
-            raw_metadata_and_rows: raw_rows,
+            deserialized_metadata_and_rows: raw_rows,
             tracing_id,
             warnings,
         }
@@ -106,13 +104,13 @@ impl QueryResult {
     /// However, [QueryResult::request_coordinator] panics if [Coordinator] stored is [None].
     /// Therefore, extra care must be taken not to leak such [QueryResult] to the user.
     pub(crate) fn new_with_unknown_coordinator(
-        raw_rows: Option<RawMetadataAndRawRows>,
+        raw_rows: Option<DeserializedMetadataAndRawRows>,
         tracing_id: Option<Uuid>,
         warnings: Vec<String>,
     ) -> Self {
         Self {
             request_coordinator: None,
-            raw_metadata_and_rows: raw_rows,
+            deserialized_metadata_and_rows: raw_rows,
             tracing_id,
             warnings,
         }
@@ -123,14 +121,14 @@ impl QueryResult {
     pub(crate) fn mock_empty(request_coordinator: Coordinator) -> Self {
         Self {
             request_coordinator: Some(request_coordinator),
-            raw_metadata_and_rows: None,
+            deserialized_metadata_and_rows: None,
             tracing_id: None,
             warnings: Vec::new(),
         }
     }
 
-    pub(crate) fn raw_metadata_and_rows(&self) -> Option<&RawMetadataAndRawRows> {
-        self.raw_metadata_and_rows.as_ref()
+    pub(crate) fn deserialized_metadata_and_rows(&self) -> Option<&DeserializedMetadataAndRawRows> {
+        self.deserialized_metadata_and_rows.as_ref()
     }
 
     /// The node+shard that served the request.
@@ -156,7 +154,7 @@ impl QueryResult {
     /// Returns a bool indicating the current response is of Rows type.
     #[inline]
     pub fn is_rows(&self) -> bool {
-        self.raw_metadata_and_rows.is_some()
+        self.deserialized_metadata_and_rows.is_some()
     }
 
     /// Returns `Ok` for a request's result that shouldn't contain any rows.\
@@ -164,7 +162,7 @@ impl QueryResult {
     /// Opposite of [QueryResult::into_rows_result].
     #[inline]
     pub fn result_not_rows(&self) -> Result<(), ResultNotRowsError> {
-        match &self.raw_metadata_and_rows {
+        match &self.deserialized_metadata_and_rows {
             Some(_) => Err(ResultNotRowsError),
             None => Ok(()),
         }
@@ -213,14 +211,13 @@ impl QueryResult {
     // `allow(clippy::result_large_err)` is fine. `QueryRowsResult` is larger than `IntoRowsResultError`.
     #[allow(clippy::result_large_err)]
     pub fn into_rows_result(self) -> Result<QueryRowsResult, IntoRowsResultError> {
-        let Some(raw_metadata_and_rows) = self.raw_metadata_and_rows else {
+        let Some(raw_rows_with_metadata) = self.deserialized_metadata_and_rows else {
             return Err(IntoRowsResultError::ResultNotRows(self));
         };
         let tracing_id = self.tracing_id;
         let warnings = self.warnings;
         let request_coordinator = self.request_coordinator;
 
-        let raw_rows_with_metadata = raw_metadata_and_rows.deserialize_metadata()?;
         Ok(QueryRowsResult {
             request_coordinator,
             raw_rows_with_metadata,
@@ -526,7 +523,7 @@ mod tests {
             ResultMetadata::new_for_test(cols, column_spec_infinite_iter().take(cols).collect())
         }
 
-        fn sample_raw_rows(cols: usize, rows: usize) -> RawMetadataAndRawRows {
+        fn sample_raw_rows(cols: usize, rows: usize) -> DeserializedMetadataAndRawRows {
             let metadata = sample_result_metadata(cols);
 
             static STRING: &[u8] = "MOCK".as_bytes();
@@ -539,14 +536,17 @@ mod tests {
                 _ => unreachable!(),
             });
             let bytes = serialize_cells(cells.map(Some));
-            RawMetadataAndRawRows::new_for_test(None, Some(metadata), false, rows, &bytes).unwrap()
+            DeserializedMetadataAndRawRows::new_for_test(metadata, rows, bytes)
         }
 
         // Used to trigger DeserializationError.
-        fn sample_raw_rows_invalid_bytes(cols: usize, rows: usize) -> RawMetadataAndRawRows {
+        fn sample_raw_rows_invalid_bytes(
+            cols: usize,
+            rows: usize,
+        ) -> DeserializedMetadataAndRawRows {
             let metadata = sample_result_metadata(cols);
 
-            RawMetadataAndRawRows::new_for_test(None, Some(metadata), false, rows, &[]).unwrap()
+            DeserializedMetadataAndRawRows::new_for_test(metadata, rows, Bytes::new())
         }
 
         // Check tracing ID
@@ -581,8 +581,7 @@ mod tests {
             {
                 let n = 5;
                 let metadata = sample_result_metadata(n);
-                let rr = RawMetadataAndRawRows::new_for_test(None, Some(metadata), false, 0, &[])
-                    .unwrap();
+                let rr = DeserializedMetadataAndRawRows::new_for_test(metadata, 0, Bytes::new());
                 let rqr = QueryResult::new_with_unknown_coordinator(Some(rr), None, Vec::new());
                 let qr = rqr.into_rows_result().unwrap();
                 let column_specs = qr.column_specs();

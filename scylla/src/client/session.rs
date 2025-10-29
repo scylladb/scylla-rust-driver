@@ -45,7 +45,7 @@ use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use scylla_cql::frame::response::NonErrorResponse;
+use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
 use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
 use std::borrow::Borrow;
@@ -1136,7 +1136,9 @@ impl Session {
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
-                response: NonErrorResponse::Result(result::Result::Void),
+                response: NonErrorResponseWithDeserializedMetadata::Result(
+                    result::ResultWithDeserializedMetadata::Void,
+                ),
                 tracing_id: None,
                 warnings: Vec::new(),
             },
@@ -1512,7 +1514,9 @@ impl Session {
 
         let response = match run_request_result {
             RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
-                response: NonErrorResponse::Result(result::Result::Void),
+                response: NonErrorResponseWithDeserializedMetadata::Result(
+                    result::ResultWithDeserializedMetadata::Void,
+                ),
                 tracing_id: None,
                 warnings: Vec::new(),
             },

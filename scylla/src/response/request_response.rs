@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use bytes::Bytes;
 use scylla_cql::frame::request::query::PagingStateResponse;
-use scylla_cql::frame::response::{NonErrorResponse, Response};
+use scylla_cql::frame::response::{
+    NonErrorResponseWithDeserializedMetadata, ResponseWithDeserializedMetadata,
+};
 use tracing::error;
 use uuid::Uuid;
 
@@ -12,7 +14,7 @@ use crate::response::Coordinator;
 use crate::response::query_result::QueryResult;
 
 pub(crate) struct QueryResponse {
-    pub(crate) response: Response,
+    pub(crate) response: ResponseWithDeserializedMetadata,
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Vec<String>,
     // This is not exposed to user (yet?)
@@ -21,7 +23,7 @@ pub(crate) struct QueryResponse {
 
 // A QueryResponse in which response can not be Response::Error
 pub(crate) struct NonErrorQueryResponse {
-    pub(crate) response: NonErrorResponse,
+    pub(crate) response: NonErrorResponseWithDeserializedMetadata,
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Vec<String>,
 }
@@ -41,14 +43,18 @@ impl QueryResponse {
 impl NonErrorQueryResponse {
     pub(crate) fn as_set_keyspace(&self) -> Option<&result::SetKeyspace> {
         match &self.response {
-            NonErrorResponse::Result(result::Result::SetKeyspace(sk)) => Some(sk),
+            NonErrorResponseWithDeserializedMetadata::Result(
+                result::ResultWithDeserializedMetadata::SetKeyspace(sk),
+            ) => Some(sk),
             _ => None,
         }
     }
 
     pub(crate) fn as_schema_change(&self) -> Option<&result::SchemaChange> {
         match &self.response {
-            NonErrorResponse::Result(result::Result::SchemaChange(sc)) => Some(sc),
+            NonErrorResponseWithDeserializedMetadata::Result(
+                result::ResultWithDeserializedMetadata::SchemaChange(sc),
+            ) => Some(sc),
             _ => None,
         }
     }
@@ -63,10 +69,12 @@ impl NonErrorQueryResponse {
             warnings,
         } = self;
         let (raw_rows, paging_state_response) = match response {
-            NonErrorResponse::Result(result::Result::Rows((rs, paging_state_response))) => {
-                (Some(rs), paging_state_response)
+            NonErrorResponseWithDeserializedMetadata::Result(
+                result::ResultWithDeserializedMetadata::Rows((rs, paging_state_response)),
+            ) => (Some(rs), paging_state_response),
+            NonErrorResponseWithDeserializedMetadata::Result(_) => {
+                (None, PagingStateResponse::NoMorePages)
             }
-            NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages),
             _ => {
                 return Err(RequestAttemptError::UnexpectedResponse(
                     response.to_response_kind(),

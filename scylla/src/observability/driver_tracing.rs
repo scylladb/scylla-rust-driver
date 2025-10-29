@@ -4,8 +4,7 @@ use crate::response::query_result::QueryResult;
 use crate::routing::{Shard, Token};
 use crate::utils::safe_format::IteratorSafeFormatExt;
 use itertools::Either;
-use scylla_cql::frame::response::result::ColumnSpec;
-use scylla_cql::frame::response::result::RawMetadataAndRawRows;
+use scylla_cql::frame::response::result::{ColumnSpec, DeserializedMetadataAndRawRows};
 use scylla_cql::value::deser_cql_value;
 use std::borrow::Borrow;
 use std::fmt::Display;
@@ -108,14 +107,14 @@ impl RequestSpan {
         }
     }
 
-    pub(crate) fn record_raw_rows_fields(&self, raw_rows: &RawMetadataAndRawRows) {
+    pub(crate) fn record_raw_rows_fields(&self, raw_rows: &DeserializedMetadataAndRawRows) {
         self.span
             .record("raw_result_size", raw_rows.metadata_and_rows_bytes_size());
     }
 
     pub(crate) fn record_result_fields(&self, query_result: &QueryResult) {
-        if let Some(raw_metadata_and_rows) = query_result.raw_metadata_and_rows() {
-            self.record_raw_rows_fields(raw_metadata_and_rows);
+        if let Some(raw_rows) = query_result.deserialized_metadata_and_rows() {
+            self.record_raw_rows_fields(raw_rows);
         }
     }
 

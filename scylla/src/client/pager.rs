@@ -16,8 +16,8 @@ use scylla_cql::deserialize::row::{ColumnIterator, DeserializeRow};
 use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
 use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::request::query::PagingState;
-use scylla_cql::frame::response::NonErrorResponse;
-use scylla_cql::frame::response::result::RawMetadataAndRawRows;
+use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
+use scylla_cql::frame::response::result::DeserializedMetadataAndRawRows;
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::serialize::row::SerializedValues;
 use std::result::Result;
@@ -58,7 +58,7 @@ macro_rules! ready_some_ok {
 }
 
 struct ReceivedPage {
-    rows: RawMetadataAndRawRows,
+    rows: DeserializedMetadataAndRawRows,
     tracing_id: Option<Uuid>,
     request_coordinator: Option<Coordinator>,
 }
@@ -75,7 +75,7 @@ pub(crate) struct PreparedPagerConfig {
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_channel_sender {
-    use scylla_cql::frame::response::result::RawMetadataAndRawRows;
+    use scylla_cql::frame::response::result::DeserializedMetadataAndRawRows;
     use std::marker::PhantomData;
     use tokio::sync::mpsc;
     use uuid::Uuid;
@@ -119,7 +119,7 @@ mod checked_channel_sender {
             Result<(), mpsc::error::SendError<ResultPage>>,
         ) {
             let empty_page = ReceivedPage {
-                rows: RawMetadataAndRawRows::mock_empty(),
+                rows: DeserializedMetadataAndRawRows::mock_empty(),
                 tracing_id,
                 request_coordinator,
             };
@@ -350,7 +350,9 @@ where
         match query_response {
             Ok(NonErrorQueryResponse {
                 response:
-                    NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))),
+                    NonErrorResponseWithDeserializedMetadata::Result(
+                        result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
+                    ),
                 tracing_id,
                 ..
             }) => {
@@ -404,7 +406,7 @@ where
                 Err(err)
             }
             Ok(NonErrorQueryResponse {
-                response: NonErrorResponse::Result(_),
+                response: NonErrorResponseWithDeserializedMetadata::Result(_),
                 tracing_id,
                 ..
             }) => {
@@ -549,7 +551,9 @@ where
             let result = (self.fetcher)(paging_state).await?;
             let response = result.into_non_error_query_response()?;
             match response.response {
-                NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => {
+                NonErrorResponseWithDeserializedMetadata::Result(
+                    result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
+                ) => {
                     let (proof, send_result) = self
                         .sender
                         .send(Ok(ReceivedPage {
@@ -574,7 +578,7 @@ where
                         }
                     }
                 }
-                NonErrorResponse::Result(_) => {
+                NonErrorResponseWithDeserializedMetadata::Result(_) => {
                     // We have most probably sent a modification statement (e.g. INSERT or UPDATE),
                     // so let's return an empty iterator as suggested in #631.
 
@@ -674,11 +678,7 @@ impl QueryPager {
 
         let received_page = ready_some_ok!(Pin::new(&mut s.page_receiver).poll_recv(cx));
 
-        let raw_rows_with_deserialized_metadata =
-            received_page.rows.deserialize_metadata().map_err(|err| {
-                NextRowError::NextPageError(NextPageError::ResultMetadataParseError(err))
-            })?;
-        s.current_page = RawRowLendingIterator::new(raw_rows_with_deserialized_metadata);
+        s.current_page = RawRowLendingIterator::new(received_page.rows);
 
         if let Some(tracing_id) = received_page.tracing_id {
             s.tracing_ids.push(tracing_id);
@@ -1044,10 +1044,9 @@ If you are using this API, you are probably doing something wrong."
             }
         };
         let page_received = page_received_res?;
-        let raw_rows_with_deserialized_metadata = page_received.rows.deserialize_metadata()?;
 
         Ok(Self {
-            current_page: RawRowLendingIterator::new(raw_rows_with_deserialized_metadata),
+            current_page: RawRowLendingIterator::new(page_received.rows),
             page_receiver: receiver,
             tracing_ids: if let Some(tracing_id) = page_received.tracing_id {
                 vec![tracing_id]

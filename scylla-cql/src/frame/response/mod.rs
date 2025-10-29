@@ -13,6 +13,7 @@ pub use error::Error;
 pub use supported::Supported;
 
 use crate::frame::TryFromPrimitiveError;
+use crate::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::response::result::ResultMetadata;
 
@@ -208,6 +209,28 @@ impl Response {
         Ok(response)
     }
 
+    pub fn deserialize_metadata(
+        self,
+    ) -> Result<ResponseWithDeserializedMetadata, ResultMetadataAndRowsCountParseError> {
+        let result = match self {
+            Self::Error(e) => ResponseWithDeserializedMetadata::Error(e),
+            Self::Ready => ResponseWithDeserializedMetadata::Ready,
+            Self::Result(res) => {
+                ResponseWithDeserializedMetadata::Result(res.deserialize_metadata()?)
+            }
+            Self::Authenticate(auth) => ResponseWithDeserializedMetadata::Authenticate(auth),
+            Self::AuthSuccess(auth_succ) => {
+                ResponseWithDeserializedMetadata::AuthSuccess(auth_succ)
+            }
+            Self::AuthChallenge(auth_chal) => {
+                ResponseWithDeserializedMetadata::AuthChallenge(auth_chal)
+            }
+            Self::Supported(sup) => ResponseWithDeserializedMetadata::Supported(sup),
+            Self::Event(eve) => ResponseWithDeserializedMetadata::Event(eve),
+        };
+        Ok(result)
+    }
+
     /// Converts this response into a `NonErrorResponse`, returning an error if it is an `Error` response.
     pub fn into_non_error_response(self) -> Result<NonErrorResponse, error::Error> {
         let non_error_response = match self {
@@ -219,6 +242,68 @@ impl Response {
             Response::AuthChallenge(auth_chal) => NonErrorResponse::AuthChallenge(auth_chal),
             Response::Supported(sup) => NonErrorResponse::Supported(sup),
             Response::Event(eve) => NonErrorResponse::Event(eve),
+        };
+
+        Ok(non_error_response)
+    }
+}
+
+/// A CQL response that has been received from the server.
+#[derive(Debug)]
+pub enum ResponseWithDeserializedMetadata {
+    /// ERROR response, returned by the server when an error occurs.
+    Error(Error),
+    /// READY response, indicating that the server is ready to process requests,
+    /// typically after a connection is established.
+    Ready,
+    /// RESULT response, containing the result of a statement execution.
+    Result(result::ResultWithDeserializedMetadata),
+    /// AUTHENTICATE response, indicating that the server requires authentication.
+    Authenticate(authenticate::Authenticate),
+    /// AUTH_SUCCESS response, indicating that the authentication was successful.
+    AuthSuccess(authenticate::AuthSuccess),
+    /// AUTH_CHALLENGE response, indicating that the server requires further authentication.
+    AuthChallenge(authenticate::AuthChallenge),
+    /// SUPPORTED response, containing the features supported by the server.
+    Supported(Supported),
+    /// EVENT response, containing an event that occurred on the server.
+    Event(event::Event),
+}
+
+impl ResponseWithDeserializedMetadata {
+    /// Returns the kind of this response.
+    pub fn to_response_kind(&self) -> CqlResponseKind {
+        match self {
+            Self::Error(_) => CqlResponseKind::Error,
+            Self::Ready => CqlResponseKind::Ready,
+            Self::Result(_) => CqlResponseKind::Result,
+            Self::Authenticate(_) => CqlResponseKind::Authenticate,
+            Self::AuthSuccess(_) => CqlResponseKind::AuthSuccess,
+            Self::AuthChallenge(_) => CqlResponseKind::AuthChallenge,
+            Self::Supported(_) => CqlResponseKind::Supported,
+            Self::Event(_) => CqlResponseKind::Event,
+        }
+    }
+
+    /// Converts this response into a `NonErrorResponse`, returning an error if it is an `Error` response.
+    pub fn into_non_error_response(
+        self,
+    ) -> Result<NonErrorResponseWithDeserializedMetadata, error::Error> {
+        let non_error_response = match self {
+            Self::Error(e) => return Err(e),
+            Self::Ready => NonErrorResponseWithDeserializedMetadata::Ready,
+            Self::Result(res) => NonErrorResponseWithDeserializedMetadata::Result(res),
+            Self::Authenticate(auth) => {
+                NonErrorResponseWithDeserializedMetadata::Authenticate(auth)
+            }
+            Self::AuthSuccess(auth_succ) => {
+                NonErrorResponseWithDeserializedMetadata::AuthSuccess(auth_succ)
+            }
+            Self::AuthChallenge(auth_chal) => {
+                NonErrorResponseWithDeserializedMetadata::AuthChallenge(auth_chal)
+            }
+            Self::Supported(sup) => NonErrorResponseWithDeserializedMetadata::Supported(sup),
+            Self::Event(eve) => NonErrorResponseWithDeserializedMetadata::Event(eve),
         };
 
         Ok(non_error_response)
@@ -257,6 +342,44 @@ impl NonErrorResponse {
             NonErrorResponse::AuthChallenge(_) => CqlResponseKind::AuthChallenge,
             NonErrorResponse::Supported(_) => CqlResponseKind::Supported,
             NonErrorResponse::Event(_) => CqlResponseKind::Event,
+        }
+    }
+}
+
+/// A CQL response that has been received from the server, excluding error responses.
+/// This is used to handle responses that are not errors, allowing for easier processing
+/// of valid responses without need to handle error case any later.
+/// The difference from [NonErrorResponse] is that Result::Rows variant holds [result::DeserializedMetadataAndRawRows]
+/// instead of [result::RawMetadataAndRawRows].
+#[derive(Debug)]
+pub enum NonErrorResponseWithDeserializedMetadata {
+    /// See [`Response::Ready`].
+    Ready,
+    /// See [`Response::Result`].
+    Result(result::ResultWithDeserializedMetadata),
+    /// See [`Response::Authenticate`].
+    Authenticate(authenticate::Authenticate),
+    /// See [`Response::AuthSuccess`].
+    AuthSuccess(authenticate::AuthSuccess),
+    /// See [`Response::AuthChallenge`].
+    AuthChallenge(authenticate::AuthChallenge),
+    /// See [`Response::Supported`].
+    Supported(Supported),
+    /// See [`Response::Event`].
+    Event(event::Event),
+}
+
+impl NonErrorResponseWithDeserializedMetadata {
+    /// Returns the kind of this non-error response.
+    pub fn to_response_kind(&self) -> CqlResponseKind {
+        match self {
+            Self::Ready => CqlResponseKind::Ready,
+            Self::Result(_) => CqlResponseKind::Result,
+            Self::Authenticate(_) => CqlResponseKind::Authenticate,
+            Self::AuthSuccess(_) => CqlResponseKind::AuthSuccess,
+            Self::AuthChallenge(_) => CqlResponseKind::AuthChallenge,
+            Self::Supported(_) => CqlResponseKind::Supported,
+            Self::Event(_) => CqlResponseKind::Event,
         }
     }
 }
