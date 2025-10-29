@@ -1,6 +1,6 @@
 use crate::utils::{
-    DeserializeOwnedValue, PerformDDL, create_new_session_builder, setup_tracing,
-    unique_keyspace_name,
+    DeserializeOwnedValue, PerformDDL, SerializeValueWithFakeType, create_new_session_builder,
+    setup_tracing, unique_keyspace_name,
 };
 use scylla::cluster::metadata::NativeType;
 use scylla::deserialize::value::DeserializeValue;
@@ -247,6 +247,95 @@ async fn test_cql_tuple() {
         Some(CqlValue::Text("cql_value_text".to_string())),
     ]);
     insert_and_select(&session, table_name, &tuple_cql_value, &tuple_cql_value).await;
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
+}
+
+// Cassandra does not support altering column types starting with version 3.0.11 and 3.10.
+// See https://stackoverflow.com/a/76926622 for explanation.
+#[cfg_attr(cassandra_tests, ignore)]
+#[tokio::test]
+async fn test_alter_column_add_field_to_tuple() {
+    setup_tracing();
+    let session: Session = connect().await;
+
+    let table_name: &str = "test_cql_tuple_alter_tab";
+    create_table(&session, table_name, "tuple<int, int>").await;
+
+    let tuple1: (i32, i32) = (1, 2);
+    session
+        .query_unpaged(
+            format!("INSERT INTO {table_name} (p, val) VALUES (0, ?)"),
+            &(tuple1,),
+        )
+        .await
+        .unwrap();
+
+    // Add a field to the tuple. Existing rows will still have 2 fields in the tuple.
+    session
+        .query_unpaged(
+            format!("ALTER TABLE {table_name} ALTER val TYPE tuple<int, int, text>"),
+            &(),
+        )
+        .await
+        .unwrap();
+
+    // Select a tuple - ScyllaDB will send 2-element tuple.
+    // Driver should return the third element as null.
+    let selected_value: (Option<i32>, Option<i32>, Option<String>) = session
+        .query_unpaged(format!("SELECT val FROM {table_name} WHERE p = 0"), ())
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .single_row::<((Option<i32>, Option<i32>, Option<String>),)>()
+        .unwrap()
+        .0;
+
+    assert!(selected_value.2.is_none());
+
+    session
+        .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_cql_tuple_db_repr_shorter_than_metadata() {
+    use ColumnType::*;
+    use NativeType::*;
+
+    setup_tracing();
+    let session: Session = connect().await;
+
+    {
+        let table_name: &str = "test_cql_shorter_tuple_tab";
+        create_table(
+            &session,
+            table_name,
+            "tuple<tuple<int, text, int>, int, tuple<int>>",
+        )
+        .await;
+
+        // We craft a tuple that is shorter in DB representation than in metadata,
+        // and also contains another nested tuple with the same property.
+        // In order to do that, we use SerializeValueWithFakeType to lie about the type
+        // the value is being serialized to, so that tuple serialization logic does not complain.
+        let inner_tuple: (i32, String) = (1, "Ala".to_owned());
+        let inner_tuple_ser =
+            SerializeValueWithFakeType::new(inner_tuple, Tuple(vec![Native(Int), Native(Text)]));
+        let tuple: (SerializeValueWithFakeType<_>, i32) = (inner_tuple_ser, 2);
+        let tuple_ser = SerializeValueWithFakeType::new(
+            tuple,
+            Tuple(vec![Tuple(vec![Native(Int), Native(Text)]), Native(Int)]),
+        );
+        // The expected deserialized tuple has None for the missing elements.
+        let tuple_deser = ((1, "Ala".to_owned(), None::<i32>), 2, None::<(i32,)>);
+        insert_and_select(&session, table_name, &tuple_ser, &tuple_deser).await;
+    }
 
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
