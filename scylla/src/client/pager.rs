@@ -641,8 +641,10 @@ where
     async fn do_work(&mut self) -> Result<PageSendAttemptedProof, RequestAttemptError> {
         let mut paging_state = PagingState::start();
         loop {
-            let result = (self.fetcher)(paging_state).await?;
-            let response = result.into_non_error_query_response()?;
+            let response = (self.fetcher)(paging_state)
+                .await
+                .and_then(QueryResponse::into_non_error_query_response)?;
+
             match response.response {
                 NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => {
                     let (proof, send_result) = self
