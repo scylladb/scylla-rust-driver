@@ -34,7 +34,9 @@ use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::CqlRequestKind;
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::response::authenticate::Authenticate;
-use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
+use scylla_cql::frame::response::result::{
+    ResultMetadata, ResultWithDeserializedMetadata, TableSpec,
+};
 use scylla_cql::frame::response::{self, error};
 use scylla_cql::frame::response::{Error, ResponseWithDeserializedMetadata};
 use scylla_cql::frame::types::SerialConsistency;
@@ -900,6 +902,30 @@ impl Connection {
         .await
     }
 
+    fn handle_result_metadata_new_id(
+        prepared_statement: &PreparedStatement,
+        query_response: &QueryResponse,
+    ) {
+        if let ResponseWithDeserializedMetadata::Result(ResultWithDeserializedMetadata::Rows(
+            rows_result,
+        )) = &query_response.response
+        {
+            if rows_result.0.metadata().id().is_some()
+                && rows_result.0.metadata().id()
+                    != prepared_statement.get_current_result_metadata().id()
+            {
+                // Metadata in response is either cached metadata extracted from statement, or a new extracted from response.
+                // If the id differs from the one in prepared statement, I see 2 possibilities:
+                // 1. Metadata changed, and was already updated on PreparedStatement by another execution.
+                // 2. Metadata changed, and was not yet updated on PreparedStatement.
+                // We could distinguish those two cases by checking id on cached_metadata, but it is not necessary,
+                // because in both cases we should, or at least may, update the metadata on PreparedStatement.
+                let metadata = rows_result.0.metadata().clone().into_owned();
+                prepared_statement.update_current_result_metadata(Arc::new(metadata));
+            }
+        }
+    }
+
     pub(crate) async fn execute_raw_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
@@ -955,6 +981,8 @@ impl Connection {
             }
         }
 
+        Self::handle_result_metadata_new_id(prepared_statement, &query_response);
+
         match &query_response.response {
             ResponseWithDeserializedMetadata::Error(frame::response::Error {
                 error: DbError::Unprepared { statement_id },
@@ -984,6 +1012,8 @@ impl Connection {
                         );
                     }
                 }
+
+                Self::handle_result_metadata_new_id(prepared_statement, &new_response);
 
                 Ok(new_response)
             }
