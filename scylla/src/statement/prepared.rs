@@ -75,6 +75,10 @@ impl<'statement> RawPreparedStatement<'statement> {
     pub(crate) fn tracing_id(&self) -> Option<Uuid> {
         self.tracing_id
     }
+
+    pub(crate) fn into_response(self) -> result::Prepared {
+        self.prepared_response
+    }
 }
 
 /// Constructs the fully-fledged [PreparedStatement].

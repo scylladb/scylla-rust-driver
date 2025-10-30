@@ -697,14 +697,21 @@ impl Connection {
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
         if raw_prepared.get_id() != previous_prepared.get_id() {
-            Err(RequestAttemptError::RepreparedIdChanged {
+            return Err(RequestAttemptError::RepreparedIdChanged {
                 reprepared_id: raw_prepared.get_id().clone().into(),
                 statement: reprepare_query.contents,
                 expected_id: previous_prepared.get_id().clone().into(),
-            })
-        } else {
-            Ok(())
+            });
         }
+
+        let response = raw_prepared.into_response();
+        if response.result_metadata.id().is_some()
+            && previous_prepared.get_current_result_metadata().id() != response.result_metadata.id()
+        {
+            previous_prepared.update_current_result_metadata(Arc::new(response.result_metadata));
+        }
+
+        Ok(())
     }
 
     async fn perform_authenticate(
