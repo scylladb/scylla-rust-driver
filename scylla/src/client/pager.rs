@@ -8,6 +8,7 @@ use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use futures::Stream;
 use scylla_cql::Consistency;
@@ -618,6 +619,7 @@ where
 struct SingleConnectionPagerWorker<Fetcher> {
     sender: ProvingSender<Result<ReceivedPage, NextPageError>>,
     fetcher: Fetcher,
+    timeout: Option<Duration>,
 }
 
 impl<Fetcher, FetchFut> SingleConnectionPagerWorker<Fetcher>
@@ -627,8 +629,8 @@ where
 {
     async fn work(mut self) -> PageSendAttemptedProof {
         match self.do_work().await {
-            Ok(proof) => proof,
-            Err(err) => {
+            Ok(Ok(proof)) => proof,
+            Ok(Err(err)) => {
                 let (proof, _) = self
                     .sender
                     .send(Err(NextPageError::RequestFailure(
@@ -637,15 +639,46 @@ where
                     .await;
                 proof
             }
+            Err(RequestTimeoutError(timeout)) => {
+                let (proof, _) = self
+                    .sender
+                    .send(Err(NextPageError::RequestFailure(
+                        RequestError::RequestTimeout(timeout),
+                    )))
+                    .await;
+                proof
+            }
         }
     }
 
-    async fn do_work(&mut self) -> Result<PageSendAttemptedProof, RequestAttemptError> {
+    async fn do_work(
+        &mut self,
+    ) -> Result<Result<PageSendAttemptedProof, RequestAttemptError>, RequestTimeoutError> {
         let mut paging_state = PagingState::start();
         loop {
-            let response = (self.fetcher)(paging_state)
-                .await
-                .and_then(QueryResponse::into_non_error_query_response)?;
+            let runner = async {
+                (self.fetcher)(paging_state)
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response)
+            };
+            let response_res = match self.timeout {
+                Some(timeout) => {
+                    match tokio::time::timeout(timeout, runner).await {
+                        Ok(res) => res,
+                        Err(_) /* tokio::time::error::Elapsed */ => {
+                            return Err(RequestTimeoutError(timeout));
+                        }
+                    }
+                }
+
+                None => runner.await,
+            };
+            let response = match response_res {
+                Ok(resp) => resp,
+                Err(err) => {
+                    return Ok(Err(err));
+                }
+            };
 
             match response.response {
                 NonErrorResponseWithDeserializedMetadata::Result(
@@ -662,7 +695,7 @@ where
 
                     if send_result.is_err() {
                         // channel was closed, QueryPager was dropped - should shutdown
-                        return Ok(proof);
+                        return Ok(Ok(proof));
                     }
 
                     match paging_state_response.into_paging_control_flow() {
@@ -671,7 +704,7 @@ where
                         }
                         ControlFlow::Break(()) => {
                             // Reached the last query, shutdown
-                            return Ok(proof);
+                            return Ok(Ok(proof));
                         }
                     }
                 }
@@ -681,12 +714,12 @@ where
 
                     // We must attempt to send something because the iterator expects it.
                     let (proof, _) = self.sender.send_empty_page(response.tracing_id, None).await;
-                    return Ok(proof);
+                    return Ok(Ok(proof));
                 }
                 _ => {
-                    return Err(RequestAttemptError::UnexpectedResponse(
+                    return Ok(Err(RequestAttemptError::UnexpectedResponse(
                         response.response.to_response_kind(),
-                    ));
+                    )));
                 }
             }
         }
@@ -1054,6 +1087,12 @@ If you are using this API, you are probably doing something wrong."
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
 
         let page_size = query.get_validated_page_size();
+        let timeout = query.get_request_timeout().or_else(|| {
+            query
+                .get_execution_profile_handle()?
+                .access()
+                .request_timeout
+        });
 
         let worker_task = async move {
             let worker = SingleConnectionPagerWorker {
@@ -1067,6 +1106,7 @@ If you are using this API, you are probably doing something wrong."
                         paging_state,
                     )
                 },
+                timeout,
             };
             worker.work().await
         };
@@ -1084,6 +1124,12 @@ If you are using this API, you are probably doing something wrong."
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
 
         let page_size = prepared.get_validated_page_size();
+        let timeout = prepared.get_request_timeout().or_else(|| {
+            prepared
+                .get_execution_profile_handle()?
+                .access()
+                .request_timeout
+        });
 
         let worker_task = async move {
             let worker = SingleConnectionPagerWorker {
@@ -1098,6 +1144,7 @@ If you are using this API, you are probably doing something wrong."
                         paging_state,
                     )
                 },
+                timeout,
             };
             worker.work().await
         };
