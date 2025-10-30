@@ -20,6 +20,7 @@ use crate::utils::{fetch_negotiated_features, test_with_3_node_cluster};
 #[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_caching_session_metadata_cache() {
     let features = fetch_negotiated_features(None).await;
+    let has_metadata_extension = features.scylla_metadata_id_supported;
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
@@ -42,6 +43,7 @@ async fn test_caching_session_metadata_cache() {
                 RequestFrame,
                 Option<u16>,
             )>| {
+                let should_have_metadata = should_have_metadata && !has_metadata_extension;
                 let _result = session.execute_unpaged(statement, ()).await.unwrap();
                 let (req_frame, _) = feedback.recv().await.unwrap();
                 let _ = feedback.try_recv().unwrap_err(); // There should be only one frame.
