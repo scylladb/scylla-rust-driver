@@ -493,7 +493,6 @@ impl<'typ, T> SerializeValueWithFakeType<'typ, T> {
 // It is implemented using proxy, and session configured to be cheap to create.
 // Better alternative would be to use scylla-cql to manually create a single connection
 // and send OPTIONS request. If performance becomes a problem, we can do this.
-#[expect(dead_code)]
 pub(crate) async fn fetch_negotiated_features(server: Option<String>) -> ProtocolFeatures {
     let real1_uri =
         server.unwrap_or(env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string()));

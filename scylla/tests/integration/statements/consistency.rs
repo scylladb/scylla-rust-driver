@@ -1,4 +1,7 @@
-use crate::utils::{PerformDDL, setup_tracing, test_with_3_node_cluster, unique_keyspace_name};
+use crate::utils::{
+    PerformDDL, fetch_negotiated_features, setup_tracing, test_with_3_node_cluster,
+    unique_keyspace_name,
+};
 use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::client::session::Session;
@@ -256,6 +259,7 @@ async fn check_for_all_consistencies_and_setting_options<
 #[cfg_attr(scylla_cloud_tests, ignore)]
 async fn consistency_is_correctly_set_in_cql_requests() {
     setup_tracing();
+    let features = fetch_negotiated_features(None).await;
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
@@ -303,7 +307,7 @@ async fn consistency_is_correctly_set_in_cql_requests() {
                        mut request_rx: UnboundedReceiver<(RequestFrame, Option<TargetShard>)>|
                        -> UnboundedReceiver<(RequestFrame, Option<TargetShard>)> {
                     let (request_frame, _shard) = request_rx.recv().await.unwrap();
-                    let deserialized_request = request_frame.deserialize().unwrap();
+                    let deserialized_request = request_frame.deserialize(&features).unwrap();
                     assert_eq!(deserialized_request.get_consistency().unwrap(), consistency);
                     assert_eq!(
                         deserialized_request.get_serial_consistency().unwrap(),
