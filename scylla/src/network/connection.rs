@@ -919,8 +919,9 @@ impl Connection {
             .get_timestamp()
             .or_else(get_timestamp_from_gen);
 
-        let execute_frame = execute::Execute {
-            id: prepared_statement.get_id().to_owned(),
+        let execute_frame = execute::ExecuteV2 {
+            id: prepared_statement.get_id().as_ref().into(),
+            result_metadata_id: None,
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
