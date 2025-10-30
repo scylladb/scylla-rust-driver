@@ -405,6 +405,14 @@ impl<'frame> ColumnSpec<'frame> {
     pub fn typ(&self) -> &ColumnType<'frame> {
         &self.typ
     }
+
+    pub fn into_owned(self) -> ColumnSpec<'static> {
+        ColumnSpec::owned(
+            self.name.into_owned(),
+            self.typ.into_owned(),
+            self.table_spec.into_owned(),
+        )
+    }
 }
 
 pub mod cow_bytes {
@@ -492,6 +500,18 @@ impl<'a> ResultMetadata<'a> {
             col_specs: Vec::new(),
         }
     }
+
+    pub fn into_owned(self) -> ResultMetadata<'static> {
+        ResultMetadata {
+            id: self.id.map(|id| id.into_owned()),
+            col_count: self.col_count,
+            col_specs: self
+                .col_specs
+                .into_iter()
+                .map(|spec| spec.into_owned())
+                .collect(),
+        }
+    }
 }
 
 /// Versatile container for [ResultMetadata]. Allows 2 types of ownership
@@ -517,6 +537,13 @@ impl ResultMetadataHolder {
         match self {
             ResultMetadataHolder::SelfBorrowed(c) => c.metadata(),
             ResultMetadataHolder::SharedCached(s) => s,
+        }
+    }
+
+    pub fn make_owned_arced(&self) -> Arc<ResultMetadata<'static>> {
+        match self {
+            Self::SelfBorrowed(container) => Arc::new(container.metadata().clone().into_owned()),
+            Self::SharedCached(metadata) => Arc::clone(metadata),
         }
     }
 
