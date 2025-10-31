@@ -11,4 +11,18 @@ resolver = "3"
 
 [workspace.metadata.cargo-semver-checks.lints]
 # We don't consider it a major change, so downgrade from deny
+enum_struct_variant_field_marked_deprecated = { level = "warn" }
+enum_tuple_variant_field_marked_deprecated = { level = "warn" }
+enum_variant_marked_deprecated = { level = "warn" }
+function_marked_deprecated = { level = "warn" }
+global_value_marked_deprecated = { level = "warn" }
+macro_marked_deprecated = { level = "warn" }
+proc_macro_marked_deprecated = { level = "warn" }
+struct_field_marked_deprecated = { level = "warn" }
+trait_associated_const_marked_deprecated = { level = "warn" }
+trait_associated_type_marked_deprecated = { level = "warn" }
+trait_marked_deprecated = { level = "warn" }
+trait_method_marked_deprecated = { level = "warn" }
+type_associated_const_marked_deprecated = { level = "warn" }
+type_marked_deprecated = { level = "warn" }
 type_method_marked_deprecated = { level = "warn" }
