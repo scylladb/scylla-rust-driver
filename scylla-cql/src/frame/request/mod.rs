@@ -171,12 +171,16 @@ pub trait SerializableRequest {
 /// but very useful for testing (e.g. asserting that the sent requests have proper parameters set).
 pub trait DeserializableRequest: SerializableRequest + Sized {
     /// Deserializes the request from the provided buffer.
+    /// Use [DeserializableRequest::deserialize_with_features] instead, because some frame types
+    /// require knowing protocol features for correct deserialization.
+    #[deprecated(since = "1.4.0", note = "Use deserialize_with_features instead")]
     fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError>;
 
     fn deserialize_with_features(
         buf: &mut &[u8],
         #[allow(unused_variables)] features: &ProtocolFeatures,
     ) -> Result<Self, RequestDeserializationError> {
+        #[expect(deprecated)]
         Self::deserialize(buf)
     }
 }
@@ -366,7 +370,8 @@ mod tests {
             let mut buf = Vec::new();
             query.serialize(&mut buf).unwrap();
 
-            let query_deserialized = Query::deserialize(&mut &buf[..]).unwrap();
+            let query_deserialized =
+                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&query_deserialized, &query);
         }
 
@@ -399,7 +404,8 @@ mod tests {
             execute.serialize(&mut buf).unwrap();
 
             #[expect(deprecated)]
-            let execute_deserialized = Execute::deserialize(&mut &buf[..]).unwrap();
+            let execute_deserialized =
+                Execute::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&execute_deserialized, &execute);
         }
 
@@ -450,7 +456,8 @@ mod tests {
             let mut buf = Vec::new();
             batch.serialize(&mut buf).unwrap();
 
-            let batch_deserialized = Batch::deserialize(&mut &buf[..]).unwrap();
+            let batch_deserialized =
+                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&batch_deserialized, &batch);
         }
     }
@@ -478,7 +485,8 @@ mod tests {
             query.serialize(&mut buf).unwrap();
 
             // Sanity check: query deserializes to the equivalent.
-            let query_deserialized = Query::deserialize(&mut &buf[..]).unwrap();
+            let query_deserialized =
+                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&query_deserialized.contents, &query.contents);
             assert_eq!(&query_deserialized.parameters, &query.parameters);
 
@@ -501,7 +509,8 @@ mod tests {
 
             // Unknown flag should lead to frame rejection, as unknown flags can be new protocol extensions
             // leading to different semantics.
-            let _parse_error = Query::deserialize(&mut &buf[..]).unwrap_err();
+            let _parse_error =
+                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap_err();
         }
 
         // Batch
@@ -522,7 +531,8 @@ mod tests {
             batch.serialize(&mut buf).unwrap();
 
             // Sanity check: batch deserializes to the equivalent.
-            let batch_deserialized = Batch::deserialize(&mut &buf[..]).unwrap();
+            let batch_deserialized =
+                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(batch, batch_deserialized);
 
             // Now modify flags by adding an unknown one.
@@ -534,7 +544,8 @@ mod tests {
 
             // Unknown flag should lead to frame rejection, as unknown flags can be new protocol extensions
             // leading to different semantics.
-            let _parse_error = Batch::deserialize(&mut &buf[..]).unwrap_err();
+            let _parse_error =
+                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap_err();
         }
     }
 }

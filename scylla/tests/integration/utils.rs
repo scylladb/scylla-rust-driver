@@ -541,9 +541,10 @@ pub(crate) async fn fetch_negotiated_features(server: Option<String>) -> Protoco
         .unwrap()
         .options;
     let startup_frame = startup_feedback_rx.recv().await.unwrap().0;
-    let startup = Startup::deserialize(&mut &*startup_frame.body)
-        .unwrap()
-        .options;
+    let startup =
+        Startup::deserialize_with_features(&mut &*startup_frame.body, &Default::default())
+            .unwrap()
+            .options;
     // We only want to return negotiated features.
     supported.retain(|key, _| startup.contains_key(&Cow::Borrowed(key.as_str())));
 
