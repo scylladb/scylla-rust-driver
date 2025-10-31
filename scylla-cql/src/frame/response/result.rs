@@ -14,7 +14,7 @@ use crate::frame::frame_errors::{
 use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types;
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -1229,11 +1229,10 @@ fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspacePars
 }
 
 fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, PreparedParseError> {
-    let id_len = types::read_short(buf)
-        .map_err(|err| PreparedParseError::IdLengthParseError(err.into()))?
-        as usize;
-    let id: Bytes = buf[0..id_len].to_owned().into();
-    buf.advance(id_len);
+    let id = types::read_short_bytes(buf)
+        .map_err(PreparedParseError::IdParseError)?
+        .to_owned()
+        .into();
     let prepared_metadata =
         deser_prepared_metadata(buf).map_err(PreparedParseError::PreparedMetadataParseError)?;
     let (result_metadata, paging_state_response) =

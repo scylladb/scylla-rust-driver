@@ -3,10 +3,10 @@
 use super::TryFromPrimitiveError;
 use super::frame_errors::LowLevelDeserializationError;
 use byteorder::{BigEndian, ReadBytesExt};
+use bytes::BufMut;
 use bytes::Bytes;
 #[cfg(test)]
 use bytes::BytesMut;
-use bytes::{Buf, BufMut};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
@@ -603,14 +603,12 @@ pub fn read_inet(buf: &mut &[u8]) -> Result<SocketAddr, LowLevelDeserializationE
     let len = buf.read_u8()?;
     let ip_addr = match len {
         4 => {
-            let ret = IpAddr::from(<[u8; 4]>::try_from(&buf[0..4])?);
-            buf.advance(4);
-            ret
+            let ip_bytes = read_raw_bytes(4, buf)?;
+            IpAddr::from(<[u8; 4]>::try_from(ip_bytes)?)
         }
         16 => {
-            let ret = IpAddr::from(<[u8; 16]>::try_from(&buf[0..16])?);
-            buf.advance(16);
-            ret
+            let ip_bytes = read_raw_bytes(16, buf)?;
+            IpAddr::from(<[u8; 16]>::try_from(ip_bytes)?)
         }
         v => return Err(LowLevelDeserializationError::InvalidInetLength(v)),
     };
