@@ -913,7 +913,7 @@ mod compression {
             &self,
             mut body: &[u8],
         ) -> Result<Option<Compression>, RequestDeserializationError> {
-            let startup = Startup::deserialize(&mut body)?;
+            let startup = Startup::deserialize_with_features(&mut body, &Default::default())?;
             let maybe_compression = startup.options.get(options::COMPRESSION);
             let maybe_compression = maybe_compression.and_then(|compression| {
                 compression

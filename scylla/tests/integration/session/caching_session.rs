@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use scylla::client::caching_session::{CachingSession, CachingSessionBuilder};
 use scylla::client::session_builder::SessionBuilder;
-use scylla_cql::frame::request::Execute;
-use scylla_cql::frame::request::Request;
+use scylla_cql::frame::request::RequestV2;
+use scylla_cql::frame::request::execute::ExecuteV2;
 use scylla_proxy::Condition;
 use scylla_proxy::ProxyError;
 use scylla_proxy::Reaction;
@@ -14,11 +14,13 @@ use scylla_proxy::RequestRule;
 use scylla_proxy::WorkerError;
 use tokio::sync::mpsc;
 
-use crate::utils::test_with_3_node_cluster;
+use crate::utils::{fetch_negotiated_features, test_with_3_node_cluster};
 
 #[tokio::test]
 #[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_caching_session_metadata_cache() {
+    let features = fetch_negotiated_features(None).await;
+    let has_metadata_extension = features.scylla_metadata_id_supported;
     let res = test_with_3_node_cluster(
         scylla_proxy::ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
@@ -34,22 +36,24 @@ async fn test_caching_session_metadata_cache() {
                 node.change_request_rules(Some(vec![prepared_request_feedback_rule.clone()]));
             }
 
-            async fn verify_statement_metadata(
-                session: &CachingSession,
-                statement: &str,
-                should_have_metadata: bool,
-                feedback: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
-            ) {
+            let verify_statement_metadata = async |session: &CachingSession,
+                                                   statement: &str,
+                                                   should_have_metadata: bool,
+                                                   feedback: &mut mpsc::UnboundedReceiver<(
+                RequestFrame,
+                Option<u16>,
+            )>| {
+                let should_have_metadata = should_have_metadata && !has_metadata_extension;
                 let _result = session.execute_unpaged(statement, ()).await.unwrap();
                 let (req_frame, _) = feedback.recv().await.unwrap();
                 let _ = feedback.try_recv().unwrap_err(); // There should be only one frame.
-                let request = req_frame.deserialize().unwrap();
-                let Request::Execute(Execute { parameters, .. }) = request else {
+                let request = req_frame.deserialize(&features).unwrap();
+                let RequestV2::Execute(ExecuteV2 { parameters, .. }) = request else {
                     panic!("Unexpected request type");
                 };
                 let has_metadata = !parameters.skip_metadata;
                 assert_eq!(has_metadata, should_have_metadata);
-            }
+            };
 
             const REQUEST: &str = "SELECT * FROM system.local WHERE key = 'local'";
 

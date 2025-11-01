@@ -13,11 +13,14 @@ use batch::BatchTypeParseError;
 use thiserror::Error;
 
 use crate::Consistency;
+use crate::frame::protocol_features::ProtocolFeatures;
+use crate::frame::request::execute::ExecuteV2;
 use crate::serialize::row::SerializedValues;
 use bytes::Bytes;
 
 pub use auth_response::AuthResponse;
 pub use batch::Batch;
+#[expect(deprecated)]
 pub use execute::Execute;
 pub use options::Options;
 pub use prepare::Prepare;
@@ -168,7 +171,18 @@ pub trait SerializableRequest {
 /// but very useful for testing (e.g. asserting that the sent requests have proper parameters set).
 pub trait DeserializableRequest: SerializableRequest + Sized {
     /// Deserializes the request from the provided buffer.
+    /// Use [DeserializableRequest::deserialize_with_features] instead, because some frame types
+    /// require knowing protocol features for correct deserialization.
+    #[deprecated(since = "1.4.0", note = "Use deserialize_with_features instead")]
     fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError>;
+
+    fn deserialize_with_features(
+        buf: &mut &[u8],
+        #[allow(unused_variables)] features: &ProtocolFeatures,
+    ) -> Result<Self, RequestDeserializationError> {
+        #[expect(deprecated)]
+        Self::deserialize(buf)
+    }
 }
 
 /// An error type returned by [`DeserializableRequest::deserialize`].
@@ -195,16 +209,22 @@ pub enum RequestDeserializationError {
 
 /// A CQL request that can be sent to the server.
 #[non_exhaustive] // TODO: add remaining request types
+#[deprecated(
+    since = "1.4.0",
+    note = "Does not support Scylla metadata id extension. Use RequestV2 instead."
+)]
 pub enum Request<'r> {
     /// QUERY request, used to execute a single unprepared statement.
     Query(Query<'r>),
     /// EXECUTE request, used to execute a single prepared statement.
+    #[expect(deprecated)]
     Execute(Execute<'r>),
     /// BATCH request, used to execute a batch of (prepared, unprepared, or mix of both)
     /// statements.
     Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
 }
 
+#[expect(deprecated)]
 impl Request<'_> {
     /// Deserializes the request from the provided buffer.
     pub fn deserialize(
@@ -245,28 +265,83 @@ impl Request<'_> {
     }
 }
 
+/// A CQL request that can be sent to the server.
+#[non_exhaustive] // TODO: add remaining request types
+pub enum RequestV2<'r> {
+    /// QUERY request, used to execute a single unprepared statement.
+    Query(Query<'r>),
+    /// EXECUTE request, used to execute a single prepared statement.
+    Execute(ExecuteV2<'r>),
+    /// BATCH request, used to execute a batch of (prepared, unprepared, or mix of both)
+    /// statements.
+    Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
+}
+
+impl RequestV2<'_> {
+    /// Deserializes the request from the provided buffer.
+    pub fn deserialize(
+        buf: &mut &[u8],
+        opcode: RequestOpcode,
+        features: &ProtocolFeatures,
+    ) -> Result<Self, RequestDeserializationError> {
+        match opcode {
+            RequestOpcode::Query => {
+                Query::deserialize_with_features(buf, features).map(Self::Query)
+            }
+            RequestOpcode::Execute => {
+                ExecuteV2::deserialize_with_features(buf, features).map(Self::Execute)
+            }
+            RequestOpcode::Batch => {
+                Batch::deserialize_with_features(buf, features).map(Self::Batch)
+            }
+            _ => unimplemented!(
+                "Deserialization of opcode {:?} is not yet supported",
+                opcode
+            ),
+        }
+    }
+
+    /// Retrieves consistency from request frame, if present.
+    pub fn get_consistency(&self) -> Option<Consistency> {
+        match self {
+            Self::Query(q) => Some(q.parameters.consistency),
+            Self::Execute(e) => Some(e.parameters.consistency),
+            Self::Batch(b) => Some(b.consistency),
+            #[expect(unreachable_patterns)] // until other opcodes are supported
+            _ => None,
+        }
+    }
+
+    /// Retrieves serial consistency from request frame.
+    pub fn get_serial_consistency(&self) -> Option<Option<SerialConsistency>> {
+        match self {
+            Self::Query(q) => Some(q.parameters.serial_consistency),
+            Self::Execute(e) => Some(e.parameters.serial_consistency),
+            Self::Batch(b) => Some(b.serial_consistency),
+            #[expect(unreachable_patterns)] // until other opcodes are supported
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{borrow::Cow, ops::Deref};
 
     use bytes::Bytes;
 
-    use crate::serialize::row::SerializedValues;
-    use crate::{
-        Consistency,
-        frame::{
-            request::{
-                DeserializableRequest, SerializableRequest,
-                batch::{Batch, BatchStatement, BatchType},
-                execute::Execute,
-                query::{Query, QueryParameters},
-            },
-            response::result::{ColumnType, NativeType},
-            types::{self, SerialConsistency},
-        },
-    };
-
     use super::query::PagingState;
+    use crate::Consistency;
+    use crate::frame::protocol_features::ProtocolFeatures;
+    use crate::frame::request::batch::{Batch, BatchStatement, BatchType};
+    #[expect(deprecated)]
+    use crate::frame::request::execute::Execute;
+    use crate::frame::request::execute::ExecuteV2;
+    use crate::frame::request::query::{Query, QueryParameters};
+    use crate::frame::request::{DeserializableRequest, SerializableRequest};
+    use crate::frame::response::result::{ColumnType, NativeType};
+    use crate::frame::types::{self, SerialConsistency};
+    use crate::serialize::row::SerializedValues;
 
     #[test]
     fn request_ser_de_identity() {
@@ -295,11 +370,12 @@ mod tests {
             let mut buf = Vec::new();
             query.serialize(&mut buf).unwrap();
 
-            let query_deserialized = Query::deserialize(&mut &buf[..]).unwrap();
+            let query_deserialized =
+                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&query_deserialized, &query);
         }
 
-        // Execute
+        // Legacy Execute
         let id: Bytes = vec![2, 4, 5, 2, 6, 7, 3, 1].into();
         let parameters = QueryParameters {
             consistency: Consistency::Any,
@@ -317,13 +393,41 @@ mod tests {
                 Cow::Owned(vals)
             },
         };
-        let execute = Execute { id, parameters };
+
+        #[expect(deprecated)]
+        let execute = Execute {
+            id,
+            parameters: parameters.clone(),
+        };
         {
             let mut buf = Vec::new();
             execute.serialize(&mut buf).unwrap();
 
-            let execute_deserialized = Execute::deserialize(&mut &buf[..]).unwrap();
+            #[expect(deprecated)]
+            let execute_deserialized =
+                Execute::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&execute_deserialized, &execute);
+        }
+
+        // New Execute
+        let id = [2, 4, 5, 2, 6, 7, 3, 1].as_slice().into();
+        let result_metadata_id = Some([2, 4, 5, 2, 6, 7, 3, 1].as_slice().into());
+        let execute_with_id = ExecuteV2 {
+            id,
+            result_metadata_id,
+            parameters,
+        };
+        {
+            let mut buf = Vec::new();
+            execute_with_id.serialize(&mut buf).unwrap();
+
+            let features = ProtocolFeatures {
+                scylla_metadata_id_supported: true,
+                ..Default::default()
+            };
+            let execute_deserialized =
+                ExecuteV2::deserialize_with_features(&mut &buf[..], &features).unwrap();
+            assert_eq!(&execute_deserialized, &execute_with_id);
         }
 
         // Batch
@@ -332,7 +436,7 @@ mod tests {
                 text: query.contents,
             },
             BatchStatement::Prepared {
-                id: Cow::Borrowed(&execute.id),
+                id: Cow::Borrowed(execute_with_id.id.as_ref()),
             },
         ];
         let batch = Batch {
@@ -352,7 +456,8 @@ mod tests {
             let mut buf = Vec::new();
             batch.serialize(&mut buf).unwrap();
 
-            let batch_deserialized = Batch::deserialize(&mut &buf[..]).unwrap();
+            let batch_deserialized =
+                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&batch_deserialized, &batch);
         }
     }
@@ -380,7 +485,8 @@ mod tests {
             query.serialize(&mut buf).unwrap();
 
             // Sanity check: query deserializes to the equivalent.
-            let query_deserialized = Query::deserialize(&mut &buf[..]).unwrap();
+            let query_deserialized =
+                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(&query_deserialized.contents, &query.contents);
             assert_eq!(&query_deserialized.parameters, &query.parameters);
 
@@ -403,7 +509,8 @@ mod tests {
 
             // Unknown flag should lead to frame rejection, as unknown flags can be new protocol extensions
             // leading to different semantics.
-            let _parse_error = Query::deserialize(&mut &buf[..]).unwrap_err();
+            let _parse_error =
+                Query::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap_err();
         }
 
         // Batch
@@ -424,7 +531,8 @@ mod tests {
             batch.serialize(&mut buf).unwrap();
 
             // Sanity check: batch deserializes to the equivalent.
-            let batch_deserialized = Batch::deserialize(&mut &buf[..]).unwrap();
+            let batch_deserialized =
+                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap();
             assert_eq!(batch, batch_deserialized);
 
             // Now modify flags by adding an unknown one.
@@ -436,7 +544,8 @@ mod tests {
 
             // Unknown flag should lead to frame rejection, as unknown flags can be new protocol extensions
             // leading to different semantics.
-            let _parse_error = Batch::deserialize(&mut &buf[..]).unwrap_err();
+            let _parse_error =
+                Batch::deserialize_with_features(&mut &buf[..], &Default::default()).unwrap_err();
         }
     }
 }

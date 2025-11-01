@@ -24,8 +24,8 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
-    test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL as _, create_new_session_builder, fetch_negotiated_features,
+    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
 };
 
 #[tokio::test]
@@ -501,6 +501,7 @@ async fn test_skip_result_metadata() {
     const NO_METADATA_FLAG: i32 = 0x0004;
 
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
+        let features = fetch_negotiated_features(Some(proxy_uris[0].clone())).await;
         // DB preparation phase
         let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
@@ -554,8 +555,10 @@ async fn test_skip_result_metadata() {
         }
 
         // Verify that server sends metadata when driver doesn't send SKIP_METADATA flag.
+        // If the result metadata extension is enabled, then driver ignores the setting on PreparedStatement
+        // and always sends the SKIP_METADATA flag, so NO_METADATA should be present iff extension is enabled.
         prepared.set_use_cached_result_metadata(false);
-        test_with_flags_predicate(&session, &prepared, &mut rx, |flags| flags & NO_METADATA_FLAG == 0).await;
+        test_with_flags_predicate(&session, &prepared, &mut rx, |flags| (flags & NO_METADATA_FLAG != 0) == features.scylla_metadata_id_supported).await;
 
         // Verify that server doesn't send metadata when driver sends SKIP_METADATA flag.
         prepared.set_use_cached_result_metadata(true);

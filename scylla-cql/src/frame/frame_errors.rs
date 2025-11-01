@@ -307,6 +307,8 @@ pub enum ClusterChangeEventParseError {
 pub enum PreparedParseError {
     #[error("Malformed prepared statement's id length: {0}")]
     IdLengthParseError(LowLevelDeserializationError),
+    #[error("Malformed prepared statement's result metadata id: {0}")]
+    ResultMetadataIdParseError(LowLevelDeserializationError),
     #[error("Invalid result metadata: {0}")]
     ResultMetadataParseError(ResultMetadataParseError),
     #[error("Invalid prepared metadata: {0}")]
@@ -323,9 +325,7 @@ pub enum PreparedParseError {
 /// - paging state response
 #[non_exhaustive]
 #[derive(Debug, Error, Clone)]
-// Check triggers because all variants end with "ParseError".
 // TODO(2.0): Remove the "ParseError" postfix from variants.
-#[expect(clippy::enum_variant_names)]
 pub enum RawRowsAndPagingStateResponseParseError {
     /// Failed to parse metadata flags.
     #[error("Malformed metadata flags: {0}")]
@@ -338,6 +338,9 @@ pub enum RawRowsAndPagingStateResponseParseError {
     /// Failed to parse paging state response.
     #[error("Malformed paging state: {0}")]
     PagingStateParseError(LowLevelDeserializationError),
+
+    #[error("Metadata_changed and No_metadata flags are both present")]
+    IdPresentForEmptyMetadata,
 }
 
 /// An error type returned when deserialization
@@ -391,9 +394,7 @@ pub enum ResultMetadataAndRowsCountParseError {
 /// of result metadata failed.
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
-// Check triggers because all variants end with "ParseError".
 // TODO(2.0): Remove the "ParseError" postfix from variants.
-#[expect(clippy::enum_variant_names)]
 pub enum ResultMetadataParseError {
     /// Failed to parse metadata flags.
     #[error("Malformed metadata flags: {0}")]
@@ -407,6 +408,10 @@ pub enum ResultMetadataParseError {
     #[error("Malformed paging state: {0}")]
     PagingStateParseError(LowLevelDeserializationError),
 
+    /// Failed to parse new metadata id
+    #[error("Malformed new metadata id: {0}")]
+    NewMetadataIdParseError(LowLevelDeserializationError),
+
     /// Failed to parse global table spec.
     #[error("Invalid global table spec: {0}")]
     GlobalTableSpecParseError(#[from] TableSpecParseError),
@@ -414,6 +419,9 @@ pub enum ResultMetadataParseError {
     /// Failed to parse column spec.
     #[error("Invalid column spec: {0}")]
     ColumnSpecParseError(#[from] ColumnSpecParseError),
+
+    #[error("Metadata_changed and No_metadata flags are both present")]
+    IdPresentForEmptyMetadata,
 }
 
 /// An error type returned when deserialization
