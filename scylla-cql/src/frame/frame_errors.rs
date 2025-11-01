@@ -307,6 +307,8 @@ pub enum ClusterChangeEventParseError {
 pub enum PreparedParseError {
     #[error("Malformed prepared statement's id length: {0}")]
     IdLengthParseError(LowLevelDeserializationError),
+    #[error("Malformed prepared statement's id: {0}")]
+    IdParseError(LowLevelDeserializationError),
     #[error("Invalid result metadata: {0}")]
     ResultMetadataParseError(ResultMetadataParseError),
     #[error("Invalid prepared metadata: {0}")]
