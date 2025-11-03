@@ -583,6 +583,13 @@ pub struct PreparedMetadata {
     pub col_specs: Vec<ColumnSpec<'static>>,
 }
 
+#[derive(Debug, Clone)]
+enum MetadataPresence {
+    NoMetadata,
+    JustMetadata,
+    MetadataWithNewId,
+}
+
 /// RESULT:Rows response, in partially serialized form.
 ///
 /// Flags and paging state are deserialized, remaining part of metadata
@@ -592,8 +599,7 @@ pub struct RawMetadataAndRawRows {
     // Already deserialized part of metadata:
     col_count: usize,
     global_tables_spec: bool,
-    no_metadata: bool,
-    metadata_changed: bool,
+    metadata_presence: MetadataPresence,
 
     /// The remaining part of the RESULT frame.
     raw_metadata_and_rows: Bytes,
@@ -616,8 +622,7 @@ impl RawMetadataAndRawRows {
         Self {
             col_count: 0,
             global_tables_spec: false,
-            no_metadata: false,
-            metadata_changed: false,
+            metadata_presence: MetadataPresence::JustMetadata,
             raw_metadata_and_rows,
             cached_metadata: None,
         }
@@ -631,7 +636,11 @@ impl RawMetadataAndRawRows {
 
     #[inline]
     pub fn metadata_changed(&self) -> bool {
-        self.metadata_changed
+        matches!(self.metadata_presence, MetadataPresence::MetadataWithNewId)
+    }
+
+    fn no_metadata(&self) -> bool {
+        matches!(self.metadata_presence, MetadataPresence::NoMetadata)
     }
 }
 
@@ -1158,9 +1167,14 @@ impl RawMetadataAndRawRows {
         let no_metadata = flags & 0x0004 != 0;
         let metadata_changed = features.scylla_metadata_id_supported && (flags & 0x0008 != 0);
 
-        if metadata_changed && no_metadata {
-            return Err(RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata);
-        }
+        let metadata_presense = match (no_metadata, metadata_changed) {
+            (true, true) => {
+                return Err(RawRowsAndPagingStateResponseParseError::IdPresentForEmptyMetadata);
+            }
+            (true, false) => MetadataPresence::NoMetadata,
+            (false, true) => MetadataPresence::MetadataWithNewId,
+            (false, false) => MetadataPresence::JustMetadata,
+        };
 
         let col_count = types::read_int_length(frame.as_slice_mut())
             .map_err(RawRowsAndPagingStateResponseParseError::ColumnCountParseError)?;
@@ -1177,8 +1191,7 @@ impl RawMetadataAndRawRows {
         let raw_rows = Self {
             col_count,
             global_tables_spec,
-            no_metadata,
-            metadata_changed,
+            metadata_presence: metadata_presense,
             raw_metadata_and_rows: frame.to_bytes(),
             cached_metadata,
         };
@@ -1238,7 +1251,7 @@ impl RawMetadataAndRawRows {
     ) -> StdResult<DeserializedMetadataAndRawRows, ResultMetadataAndRowsCountParseError> {
         let raw_metadata_and_rows_bytes_size = self.metadata_and_rows_bytes_size();
         let (metadata_deserialized, row_count_and_raw_rows) = match self.cached_metadata {
-            Some(cached) if self.no_metadata => {
+            Some(cached) if self.no_metadata() => {
                 // Server sent no metadata, but we have metadata cached. This means that we asked the server
                 // not to send metadata in the response as an optimization. We use cached metadata instead.
                 (
@@ -1246,7 +1259,7 @@ impl RawMetadataAndRawRows {
                     self.raw_metadata_and_rows,
                 )
             }
-            None if self.no_metadata => {
+            None if self.no_metadata() => {
                 // Server sent no metadata and we have no metadata cached. Having no metadata cached,
                 // we wouldn't have asked the server for skipping metadata. Therefore, this is most probably
                 // not a SELECT, because in such case the server would send empty metadata both in Prepared
@@ -1266,10 +1279,11 @@ impl RawMetadataAndRawRows {
                 // Also, we simply need to advance the buffer pointer past metadata, and this requires
                 // parsing metadata.
 
+                let metadata_changed = self.metadata_changed();
                 let (metadata_container, raw_rows_with_count) =
                     self_borrowed_metadata::SelfBorrowedMetadataContainer::make_deserialized_metadata(
                         self.raw_metadata_and_rows,
-                        Self::metadata_deserializer(self.col_count, self.global_tables_spec, self.metadata_changed),
+                        Self::metadata_deserializer(self.col_count, self.global_tables_spec, metadata_changed),
                     )?;
                 (
                     ResultMetadataHolder::SelfBorrowed(metadata_container),
