@@ -305,8 +305,11 @@ pub enum ClusterChangeEventParseError {
 #[non_exhaustive]
 #[derive(Debug, Error, Clone)]
 pub enum PreparedParseError {
+    // TODO(2.0): This variant is unused, and should be removed.
     #[error("Malformed prepared statement's id length: {0}")]
     IdLengthParseError(LowLevelDeserializationError),
+    #[error("Malformed prepared statement's id: {0}")]
+    IdParseError(LowLevelDeserializationError),
     #[error("Invalid result metadata: {0}")]
     ResultMetadataParseError(ResultMetadataParseError),
     #[error("Invalid prepared metadata: {0}")]
