@@ -49,6 +49,18 @@ impl UntranslatedPeer<'_> {
     pub fn rack(&self) -> Option<&str> {
         self.rack
     }
+
+    /// Creates a new untranslated peer. Intended to be used only in nodejs-rs driver only.
+    /// This specific constructor is intended for unit tests only.
+    #[cfg(nodejs_rs_unstable)]
+    pub fn new(address: SocketAddr) -> Self {
+        UntranslatedPeer {
+            host_id: Uuid::nil(),
+            untranslated_address: address,
+            datacenter: None,
+            rack: None,
+        }
+    }
 }
 
 /// Translates IP addresses received from ScyllaDB nodes into locally reachable addresses.
