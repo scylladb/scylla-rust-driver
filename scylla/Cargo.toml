@@ -157,6 +157,7 @@ unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(scylla_cloud_tests)',
     'cfg(cassandra_tests)',
     'cfg(cpp_rust_unstable)',
+    'cfg(nodejs_rs_unstable)',
     'cfg(ccm_tests)',
 ] }
 
