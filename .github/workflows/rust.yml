@@ -50,6 +50,10 @@ jobs:
     - name: Cargo check with cpp_rust_unstable cfg
       run: RUSTFLAGS="--cfg cpp_rust_unstable -Dwarnings" cargo clippy --all-targets --all-features
 
+# nodejs_rs_unstable special cfg
+    - name: Cargo check with nodejs_rs_unstable cfg
+      run: RUSTFLAGS="--cfg nodejs_rs_unstable -Dwarnings" cargo clippy --all-targets --all-features
+
 # Features checks.
     # No features.
     - name: Cargo check without features
