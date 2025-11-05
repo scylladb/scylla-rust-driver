@@ -639,7 +639,7 @@ impl RawMetadataAndRawRows {
         matches!(self.metadata_presence, MetadataPresence::MetadataWithNewId)
     }
 
-    fn no_metadata(&self) -> bool {
+    pub fn no_metadata(&self) -> bool {
         matches!(self.metadata_presence, MetadataPresence::NoMetadata)
     }
 }
