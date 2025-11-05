@@ -196,6 +196,9 @@ pub trait Reaction: Sized {
         f: Arc<dyn Fn(Self::Incoming) -> Self::Returning + Send + Sync>,
     ) -> Self;
 
+    /// Pass the frame to the adressee, but modify it first.
+    fn transform_frame(f: Arc<dyn Fn(Self::Incoming) -> Self::Incoming + Send + Sync>) -> Self;
+
     /// Drops the frame AND drops the connection with both the driver and the cluster.
     fn drop_connection() -> Self;
 
@@ -334,6 +337,18 @@ impl Reaction for RequestReaction {
                 delay: Some(time),
                 msg_processor: Some(f),
             }),
+            drop_connection: None,
+            feedback_channel: None,
+        }
+    }
+
+    fn transform_frame(f: Arc<dyn Fn(Self::Incoming) -> Self::Incoming + Send + Sync>) -> Self {
+        RequestReaction {
+            to_addressee: Some(Action {
+                delay: None,
+                msg_processor: Some(f),
+            }),
+            to_sender: None,
             drop_connection: None,
             feedback_channel: None,
         }
@@ -683,6 +698,18 @@ impl Reaction for ResponseReaction {
                 delay: Some(time),
                 msg_processor: Some(f),
             }),
+            drop_connection: None,
+            feedback_channel: None,
+        }
+    }
+
+    fn transform_frame(f: Arc<dyn Fn(Self::Incoming) -> Self::Incoming + Send + Sync>) -> Self {
+        ResponseReaction {
+            to_addressee: Some(Action {
+                delay: None,
+                msg_processor: Some(f),
+            }),
+            to_sender: None,
             drop_connection: None,
             feedback_channel: None,
         }

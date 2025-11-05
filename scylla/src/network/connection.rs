@@ -34,7 +34,9 @@ use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::CqlRequestKind;
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::response::authenticate::Authenticate;
-use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
+use scylla_cql::frame::response::result::{
+    ResultMetadata, ResultWithDeserializedMetadata, TableSpec,
+};
 use scylla_cql::frame::response::{self, error};
 use scylla_cql::frame::response::{Error, ResponseWithDeserializedMetadata};
 use scylla_cql::frame::types::SerialConsistency;
@@ -695,14 +697,21 @@ impl Connection {
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
         if raw_prepared.get_id() != previous_prepared.get_id() {
-            Err(RequestAttemptError::RepreparedIdChanged {
+            return Err(RequestAttemptError::RepreparedIdChanged {
                 reprepared_id: raw_prepared.get_id().clone().into(),
                 statement: reprepare_query.contents,
                 expected_id: previous_prepared.get_id().clone().into(),
-            })
-        } else {
-            Ok(())
+            });
         }
+
+        let response = raw_prepared.into_response();
+        if response.result_metadata.id().is_some()
+            && previous_prepared.get_current_result_metadata().id() != response.result_metadata.id()
+        {
+            previous_prepared.update_current_result_metadata(Arc::new(response.result_metadata));
+        }
+
+        Ok(())
     }
 
     async fn perform_authenticate(
@@ -900,6 +909,51 @@ impl Connection {
         .await
     }
 
+    fn handle_result_metadata_new_id(
+        prepared_statement: &PreparedStatement,
+        query_response: &QueryResponse,
+    ) {
+        if let ResponseWithDeserializedMetadata::Result(ResultWithDeserializedMetadata::Rows(
+            rows_result,
+        )) = &query_response.response
+        {
+            if rows_result.0.metadata().id().is_some()
+                && rows_result.0.metadata().id()
+                    != prepared_statement.get_current_result_metadata().id()
+            {
+                // Metadata in response is either cached metadata extracted from statement, or a new extracted from response.
+                // If the id differs from the one in prepared statement, I see 2 possibilities:
+                // 1. Metadata changed, and was already updated on PreparedStatement by another execution.
+                // 2. Metadata changed, and was not yet updated on PreparedStatement.
+                // We could distinguish those two cases by checking id on cached_metadata, but it is not necessary,
+                // because in both cases we should, or at least may, update the metadata on PreparedStatement.
+                let metadata = rows_result.0.metadata().clone().into_owned();
+                prepared_statement.update_current_result_metadata(Arc::new(metadata));
+            }
+        }
+    }
+
+    fn get_result_id<'metadata>(
+        cached_metadata: &'metadata Option<Arc<ResultMetadata<'static>>>,
+        has_metadata_extension: bool,
+    ) -> Option<&'metadata [u8]> {
+        // We want to send result metadata id if, and only if, metadata extension is enabled.
+        // The logic in the caller of this function forces `cached_metadata` to be `Some`. in that case.
+        // Here we need to extract metadata from Option, so we need to handle the case where it is None.
+        // and extension is enabled. The only way to handle it is a panic, because it is a clear bug in the driver.
+        match (cached_metadata.as_ref(), has_metadata_extension) {
+            // In the first branch we know that metadata extension is enabled, and we have extracted cached metadata.
+            // Can we `unwrap()` the id? I think not, because I see one scenario where it can be None.
+            // Statement may have been prepared on connection that does not have the extension (think:
+            // cluster during upgrade, with mixed versions), and then used on this connection.
+            // What to do in this case? We have to send some id, because it is not optional in the protocol,
+            // so let's send empty id.
+            (Some(metadata), true) => Some(metadata.id().unwrap_or(&[])),
+            (_, false) => None,
+            (None, true) => unreachable!("metadata extension enabled, but no cached metadata."),
+        }
+    }
+
     pub(crate) async fn execute_raw_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
@@ -919,22 +973,31 @@ impl Connection {
             .get_timestamp()
             .or_else(get_timestamp_from_gen);
 
-        let execute_frame = execute::Execute {
-            id: prepared_statement.get_id().to_owned(),
+        let has_metadata_extension = self.features.protocol_features.scylla_metadata_id_supported;
+
+        // If the metadata id extension is supported, there is no point in not caching metadata,
+        // so we ignore the setting on prepared statement.
+        let skip_metadata =
+            prepared_statement.get_use_cached_result_metadata() || has_metadata_extension;
+
+        let cached_metadata =
+            skip_metadata.then(|| prepared_statement.get_current_result_metadata());
+
+        let result_id = Self::get_result_id(&cached_metadata, has_metadata_extension);
+
+        let execute_frame = execute::ExecuteV2 {
+            id: prepared_statement.get_id().as_ref().into(),
+            result_metadata_id: result_id.map(Into::into),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
                 values: Cow::Borrowed(values),
                 page_size: page_size.map(Into::into),
                 timestamp,
-                skip_metadata: prepared_statement.get_use_cached_result_metadata(),
+                skip_metadata,
                 paging_state,
             },
         };
-
-        let cached_metadata = prepared_statement
-            .get_use_cached_result_metadata()
-            .then(|| prepared_statement.get_current_result_metadata());
 
         let query_response = self
             .send_request(
@@ -954,6 +1017,8 @@ impl Connection {
             }
         }
 
+        Self::handle_result_metadata_new_id(prepared_statement, &query_response);
+
         match &query_response.response {
             ResponseWithDeserializedMetadata::Error(frame::response::Error {
                 error: DbError::Unprepared { statement_id },
@@ -966,9 +1031,16 @@ impl Connection {
                 // Repreparation of a statement is needed
                 self.reprepare(prepared_statement.get_statement(), prepared_statement)
                     .await?;
+                // Metadata may have changed in reprepare, or in some concurrent execution
+                let cached_metadata =
+                    skip_metadata.then(|| prepared_statement.get_current_result_metadata());
+                let result_id = Self::get_result_id(&cached_metadata, has_metadata_extension);
                 let new_response = self
                     .send_request(
-                        &execute_frame,
+                        &execute::ExecuteV2 {
+                            result_metadata_id: result_id.map(Into::into),
+                            ..execute_frame
+                        },
                         true,
                         prepared_statement.config.tracing,
                         cached_metadata.as_ref(),
@@ -983,6 +1055,8 @@ impl Connection {
                         );
                     }
                 }
+
+                Self::handle_result_metadata_new_id(prepared_statement, &new_response);
 
                 Ok(new_response)
             }

@@ -4,6 +4,7 @@ mod coordinator;
 mod execution_profiles;
 mod named_bind_markers;
 mod prepared;
+mod prepared_metadata_extension;
 mod request_timeout;
 mod timestamps;
 mod transparent_reprepare;

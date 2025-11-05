@@ -13,6 +13,7 @@ pub const SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION: &str = "SCYLLA_LWT_ADD_METADAT
 /// which entry is a bit mask for the frame flags used to mark LWT frames.
 pub const LWT_OPTIMIZATION_META_BIT_MASK_KEY: &str = "LWT_OPTIMIZATION_META_BIT_MASK";
 const TABLETS_ROUTING_V1_KEY: &str = "TABLETS_ROUTING_V1";
+const SCYLLA_USE_METADATA_ID_KEY: &str = "SCYLLA_USE_METADATA_ID";
 
 /// Which protocol extensions are supported by the server.
 ///
@@ -45,6 +46,9 @@ pub struct ProtocolFeatures {
 
     /// Whether the server supports tablets routing v1.
     pub tablets_v1_supported: bool,
+
+    /// Does the server supports sending metadata id (introduced in CQL v5) for CQL v4.
+    pub scylla_metadata_id_supported: bool,
 }
 
 // TODO: Log information about options which failed to parse
@@ -58,6 +62,7 @@ impl ProtocolFeatures {
                 supported,
             ),
             tablets_v1_supported: Self::check_tablets_routing_v1_support(supported),
+            scylla_metadata_id_supported: Self::check_scylla_metadata_id_support(supported),
         }
     }
 
@@ -80,6 +85,10 @@ impl ProtocolFeatures {
         supported.contains_key(TABLETS_ROUTING_V1_KEY)
     }
 
+    fn check_scylla_metadata_id_support(supported: &HashMap<String, Vec<String>>) -> bool {
+        supported.contains_key(SCYLLA_USE_METADATA_ID_KEY)
+    }
+
     // Looks up a field which starts with `key=` and returns the rest
     fn get_cql_extension_field<'a>(vals: &'a [String], key: &str) -> Option<&'a str> {
         vals.iter()
@@ -100,6 +109,10 @@ impl ProtocolFeatures {
 
         if self.tablets_v1_supported {
             options.insert(Cow::Borrowed(TABLETS_ROUTING_V1_KEY), Cow::Borrowed(""));
+        }
+
+        if self.scylla_metadata_id_supported {
+            options.insert(Cow::Borrowed(SCYLLA_USE_METADATA_ID_KEY), Cow::Borrowed(""));
         }
     }
 

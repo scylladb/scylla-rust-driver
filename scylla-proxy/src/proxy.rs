@@ -398,6 +398,19 @@ impl RunningNode {
         *self.request_rules.lock().unwrap() = rules.unwrap_or_default();
     }
 
+    /// Adds new request rules to the end of the list (so with lowest priority)
+    pub fn append_request_rules(&mut self, mut rules: Vec<RequestRule>) {
+        self.request_rules.lock().unwrap().append(&mut rules);
+    }
+
+    /// Adds new request rules to the beginning of the list (so with highest priority)
+    pub fn prepend_request_rules(&mut self, rules: Vec<RequestRule>) {
+        let mut new_rules = rules;
+        let mut old_rules_guard = self.request_rules.lock().unwrap();
+        new_rules.append(&mut *old_rules_guard);
+        *old_rules_guard = new_rules;
+    }
+
     /// Replaces the previous response rules with the new ones.
     pub fn change_response_rules(&mut self, rules: Option<Vec<ResponseRule>>) {
         *self
@@ -406,6 +419,29 @@ impl RunningNode {
             .expect("No response rules on a simulated node!")
             .lock()
             .unwrap() = rules.unwrap_or_default();
+    }
+
+    /// Adds new response rules to the end of the list (so with lowest priority)
+    pub fn append_response_rules(&mut self, mut rules: Vec<ResponseRule>) {
+        self.response_rules
+            .as_ref()
+            .expect("No response rules on a simulated node!")
+            .lock()
+            .unwrap()
+            .append(&mut rules);
+    }
+
+    /// Adds new response rules to the beginning of the list (so with highest priority)
+    pub fn prepend_response_rules(&mut self, rules: Vec<ResponseRule>) {
+        let mut old_rules_guard = self
+            .response_rules
+            .as_ref()
+            .expect("No response rules on a simulated node!")
+            .lock()
+            .unwrap();
+        let mut new_rules = rules;
+        new_rules.append(&mut *old_rules_guard);
+        *old_rules_guard = new_rules;
     }
 }
 
@@ -913,7 +949,7 @@ mod compression {
             &self,
             mut body: &[u8],
         ) -> Result<Option<Compression>, RequestDeserializationError> {
-            let startup = Startup::deserialize(&mut body)?;
+            let startup = Startup::deserialize_with_features(&mut body, &Default::default())?;
             let maybe_compression = startup.options.get(options::COMPRESSION);
             let maybe_compression = maybe_compression.and_then(|compression| {
                 compression

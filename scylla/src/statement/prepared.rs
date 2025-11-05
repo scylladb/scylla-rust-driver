@@ -75,6 +75,10 @@ impl<'statement> RawPreparedStatement<'statement> {
     pub(crate) fn tracing_id(&self) -> Option<Uuid> {
         self.tracing_id
     }
+
+    pub(crate) fn into_response(self) -> result::Prepared {
+        self.prepared_response
+    }
 }
 
 /// Constructs the fully-fledged [PreparedStatement].
@@ -145,32 +149,55 @@ impl RawPreparedStatement<'_> {
 /// see the mention about altering schema below.
 ///
 /// # Altering schema
-/// If for some reason you decided to alter the part of schema that corresponds to given prepared
-/// statement, then the corresponding statement (and its copies obtained via [`PreparedStatement::clone`]) should
-/// be dropped. The statement should be prepared again.
 ///
-/// There are two reasons for this:
+/// PreparedStatement contains two types of metadata that are dependent on the schema:
+/// - Prepared metadata, which contains information about bind variables (names, types, pk indices).
+/// - Result metadata, which contains information about columns produced by executing the statement.
+///
+/// ## Prepared metadata
+///
+/// Prepared metadata is currently immutable in the driver, because there is no mechanism
+/// in CQL protocol (v4 or v5) to update it. The most typical reason for it to become stale
+/// is when one of bind markers is UDT, and you add a field to this UDT. If you then try
+/// to insert a value containing this new field, driver will return an error. You will need to drop
+/// the statement and prepare it again. Note that inserting UDT values not containing the new field
+/// will continue to work.
+/// More obscure way to make prepared metadata stale is to drop a column (that is one of bind markers)
+/// and re-add it with a different type.
+/// This is not allowed by Cassandra, but is by Scylla.
+///
+/// ## Result metadata
+///
+/// Result metadata is mutable in the driver. CQLv4 provides no reliable way to update it, but CQLv5 does.
+/// When executing a statement in CQLv5 driver sends ID of result metadata. If server detects that ID is stale,
+/// it will send new metadata.
+/// CQLv5 is not currently supported by the driver, but there is a Scylla protocol extension,
+/// supported by the driver, that backports this mechanism to CQLv4.
+///
+/// For DB implementations that don't support the extension (Cassandra, older versions of Scylla),
+/// you can use [`PreparedStatement::set_use_cached_result_metadata`] to decide if metadata
+/// should be sent with each response (performance penalty), or if the local metadata should be used.
+/// Rust Driver errs on the safe side here, so the option is disabled by default.
+/// Note that if you enable this option, and result metadata changes on server side, you risk various
+/// errors during deserialization, including but not limited to, silent data corruption.
+///
+/// Most common scenario where result metadata changes, is when you use `SELECT *` queries. Any
+/// column added to the table will result in incompatible data being returned. Other scenarios include
+/// adding / renaming UDT fields and changing type of a column.
+///
+/// For DB implementations supporting the extension, [`PreparedStatement::set_use_cached_result_metadata`]
+/// is ignored, and driver will always use cached metadata, because it is safe and more efficient.
 ///
 /// ### CQL v4 protocol limitations
-/// The driver only supports CQL version 4.
+///
+/// Why is the protocol-level support even needed? Why is it not enough to just reprepare
+/// the statement after server drops it, and update local metadatas then?
+/// It is because of multi-client scenarios.
 ///
 /// In multi-client scenario, only the first client which reprepares the statement
 /// will receive the updated metadata from the server.
-/// The rest of the clients will still hold on the outdated metadata.
-/// In version 4 of CQL protocol there is currently no way for the server to notify other
-/// clients about prepared statement's metadata update.
-///
-/// ### Client-side metadata immutability
-/// The decision was made to keep client-side metadata immutable.
-/// Mainly because of the CQLv4 limitations mentioned above. This means
-/// that metadata is not updated during statement repreparation.
-/// This raises two issues:
-/// * bound values serialization errors - since [`PreparedMetadata`] is not updated
-/// * result deserialization errors - when [`PreparedStatement::set_use_cached_result_metadata`] is enabled,
-///   since [`ResultMetadata`] is not updated
-///
-/// So, to mitigate those issues, drop the outdated [`PreparedStatement`] manually
-/// and prepare it again against the new schema.
+/// The rest of the clients will still hold on the outdated metadata, and not even notice
+/// that statement was invalidated at some point.
 #[derive(Debug)]
 pub struct PreparedStatement {
     pub(crate) config: StatementConfig,
@@ -464,7 +491,8 @@ impl PreparedStatement {
     /// after statement preparation and will use it
     /// to deserialize the results of statement execution.
     ///
-    /// This option is false by default.
+    /// This option is false by default for DBs that don't support result metadata id extension.
+    /// For DBs that do (modern Scylla), this option is ignored, and cached result metadata is always used.
     pub fn set_use_cached_result_metadata(&mut self, use_cached_metadata: bool) {
         self.config.skip_result_metadata = use_cached_metadata;
     }
