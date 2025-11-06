@@ -1,22 +1,33 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use assert_matches::assert_matches;
 use futures::{StreamExt as _, TryStreamExt as _};
-use scylla::errors::{NextPageError, NextRowError};
 use scylla::{
     client::execution_profile::ExecutionProfile,
     policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession},
     statement::Statement,
     value::Row,
 };
+use scylla::{
+    client::{session::Session, session_builder::SessionBuilder},
+    errors::{NextPageError, NextRowError, PagerExecutionError, RequestError},
+};
 use scylla_cql::Consistency;
+use scylla_proxy::{
+    Condition, ProxyError, Reaction as _, RequestOpcode, RequestReaction, RequestRule, WorkerError,
+    example_db_errors,
+};
+use tracing::info;
 
 use crate::utils::{
     PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
-    unique_keyspace_name,
+    test_with_3_node_cluster, unique_keyspace_name,
 };
 
 // Reproduces the problem with execute_iter mentioned in #608.
@@ -219,4 +230,180 @@ async fn test_iter_methods_when_altering_table() {
     );
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+#[tokio::test]
+#[cfg_attr(scylla_cloud_tests, ignore)]
+async fn test_pager_timeouts() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        scylla_proxy::ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            /* Prepare phase */
+            let ks = unique_keyspace_name();
+
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .build()
+                .await
+                .unwrap();
+
+            session
+            .ddl(format!(
+                "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+            ))
+            .await
+            .unwrap();
+            session.use_keyspace(ks.clone(), true).await.unwrap();
+
+            session
+                .ddl("CREATE TABLE IF NOT EXISTS t (a int PRIMARY KEY)")
+                .await
+                .unwrap();
+
+            for i in 0..5 {
+                session
+                    .query_unpaged("INSERT INTO t (a) VALUES (?)", (i,))
+                    .await
+                    .unwrap();
+            }
+
+            let mut prepared = session.prepare("SELECT a FROM t").await.unwrap();
+            // Important to have multiple pages.
+            prepared.set_page_size(1);
+            // Important for retries to fire.
+            prepared.set_is_idempotent(true);
+
+            /* Test phase */
+
+            // Case 1: the first page fetch times out.
+            {
+                let timeout = Duration::from_millis(10);
+                prepared.set_request_timeout(Some(timeout));
+
+                running_proxy.running_nodes.iter_mut().for_each(|node| {
+                    node.change_request_rules(Some(vec![
+                        RequestRule(
+                            Condition::RequestOpcode(RequestOpcode::Execute)
+                                .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
+                            RequestReaction::delay(timeout + Duration::from_millis(10))
+                        )
+                    ]));
+                });
+
+                let pager_err = session.execute_iter(prepared.clone(), ()).await.unwrap_err();
+                let PagerExecutionError::NextPageError(NextPageError::RequestFailure(
+                    RequestError::RequestTimeout(got_timeout),
+                )) = pager_err
+                else {
+                    panic!("Expected RequestTimeout error, got: {:?}", pager_err);
+                };
+                assert_eq!(got_timeout, timeout);
+                info!("Case 1 passed.");
+            }
+
+            // Case 2: the second page fetch times out.
+            {
+                let timeout = Duration::from_millis(100);
+                prepared.set_request_timeout(Some(timeout));
+
+                running_proxy.running_nodes.iter_mut().for_each(|node| {
+                    node.change_request_rules(Some(vec![
+                        // Pass one frame, then delay all subsequent ones.
+                        RequestRule(
+                            Condition::RequestOpcode(RequestOpcode::Execute)
+                                .and(Condition::not(Condition::ConnectionRegisteredAnyEvent))
+                                .and(Condition::TrueForLimitedTimes(1)),
+                            RequestReaction::noop()
+                        ),
+                        RequestRule(
+                            Condition::RequestOpcode(RequestOpcode::Execute)
+                                .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
+                            RequestReaction::delay(timeout + Duration::from_millis(10))
+                        )
+                    ]));
+                });
+
+                let mut row_stream = session
+                    .execute_iter(prepared.clone(), ())
+                    .await
+                    .unwrap()
+                    .rows_stream::<(i32,)>()
+                    .unwrap();
+
+                // Observation that is not critical to the test, but good to note:
+                // at this point, at most two pages have been fetched:
+                // - the first page, fetched eagerly by execute_iter;
+                // - possibly the second page, fetched lazily by rows_stream;
+                // - no more pages may have been fetched yet, because the second page would be
+                //   stuck on channel.send(), waiting for us to consume the first row.
+
+                // First page (1 row) must have been fetched successfully.
+                let (_a,) = row_stream.next().await.unwrap().unwrap();
+
+                // The second page fetch must time out.
+                let row_err = row_stream.next().await.unwrap().unwrap_err();
+                let NextRowError::NextPageError(NextPageError::RequestFailure(
+                    RequestError::RequestTimeout(got_timeout),
+                )) = row_err
+                else {
+                    panic!("Expected RequestTimeout error, got: {:?}", row_err);
+                };
+                assert_eq!(got_timeout, timeout);
+                info!("Case 2 passed.");
+            }
+
+            // Case 3: retries' cumulative duration exceed the timeout.
+            {
+                // Here, each retry will be delayed by 20ms.
+                // With a 50ms timeout, this means that after 3 retries (60ms total delay),
+                // the timeout will be exceeded.
+                let per_retry_delay = Duration::from_millis(20);
+                let timeout = Duration::from_millis(50);
+
+                // Set timeout through the execution profile.
+                {
+                    let profile = ExecutionProfile::builder().request_timeout(Some(timeout)).build();
+                    let handle = profile.into_handle();
+                    prepared.set_execution_profile_handle(Some(handle));
+                    prepared.set_request_timeout(None);
+                }
+
+                running_proxy.running_nodes.iter_mut().for_each(|node| {
+                    node.change_request_rules(Some(vec![
+                        RequestRule(
+                            Condition::RequestOpcode(RequestOpcode::Execute)
+                                .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
+                            RequestReaction::forge_with_error_lazy_delay(
+                                Box::new(example_db_errors::overloaded),
+                                Some(per_retry_delay))
+                        )
+                    ]));
+                });
+
+                let pager_err = session.execute_iter(prepared, ()).await.unwrap_err();
+                let PagerExecutionError::NextPageError(NextPageError::RequestFailure(
+                    RequestError::RequestTimeout(got_timeout),
+                )) = pager_err
+                else {
+                    panic!("Expected RequestTimeout error, got: {:?}", pager_err);
+                };
+                assert_eq!(got_timeout, timeout);
+                info!("Case 3 passed.");
+            }
+
+            /* Teardown */
+            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+
+            running_proxy
+        },
+    ).await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
 }
