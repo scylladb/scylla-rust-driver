@@ -1,6 +1,6 @@
 [package]
 name = "scylla"
-version = "1.4.0"
+version = "1.4.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Async CQL driver for Rust, optimized for ScyllaDB, fully compatible with Apache Cassandra™"
