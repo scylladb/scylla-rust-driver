@@ -97,7 +97,7 @@
 //! Refer to [scylla/Cargo.toml](https://docs.rs/crate/scylla/latest/source/Cargo.toml.orig)
 //! for the list of available features and their descriptions.
 
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[doc(hidden)]
 pub mod _macro_internal {
