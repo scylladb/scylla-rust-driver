@@ -142,3 +142,20 @@ jobs:
       uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Compile docs
       run: RUSTDOCFLAGS=-Dwarnings cargo doc
+
+  docs_rs:
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust Nightly
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-docs-rs
+      - run: cargo docs-rs -p scylla
+      - run: cargo docs-rs -p scylla-cql
+      - run: cargo docs-rs -p scylla-macros
