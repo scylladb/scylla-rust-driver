@@ -595,8 +595,7 @@ impl TypeCheckUnorderedGenerator<'_> {
             let visited_flag = Self::visited_flag_variable(field);
             let typ = field.deserialize_target();
             let cql_name_literal = field.cql_name_literal();
-            let decrement_if_required: Option<syn::Stmt> = field
-                .is_required()
+            let decrement_if_required: Option<syn::Stmt> = field.is_required()
                 .then(|| parse_quote! {remaining_required_cql_fields -= 1;});
 
             parse_quote! {
@@ -662,6 +661,7 @@ impl TypeCheckUnorderedGenerator<'_> {
             .filter(|f| !f.skip)
             .map(|f| f.cql_name_literal());
         let required_cql_field_count = rust_fields.iter().filter(|f| f.is_required()).count();
+
         let required_cql_field_count_lit =
             syn::LitInt::new(&required_cql_field_count.to_string(), Span::call_site());
         let extract_cql_fields_expr = self.0.generate_extract_fields_from_type(parse_quote!(typ));
