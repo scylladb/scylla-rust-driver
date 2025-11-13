@@ -4,7 +4,13 @@ This feature is available only under the crate feature `metrics`.
 
 During operation the driver collects various metrics.
 
-They can be accessed at any moment using `Session::get_metrics()`
+They can be accessed at any moment using `Session::get_metrics()`.
+
+Please note that those are driver-side metrics, not server-side.
+This means that latencies reported here will be different, because they also include
+the round trip time of a request and driver-side processing.
+
+If you need server-side metrics, please look into Scylla Monitoring Stack.
 
 ### Collected metrics:
 * Query latencies
@@ -31,8 +37,8 @@ println!("Errors occurred: {}", metrics.get_errors_num());
 println!("Iter errors occurred: {}", metrics.get_errors_iter_num());
 println!("Average latency: {}", metrics.get_latency_avg_ms()?);
 println!(
-    "99.9 latency percentile: {}",
-    metrics.get_latency_percentile_ms(99.9)?
+    "99 latency percentile: {}",
+    metrics.get_latency_percentile_ms(99.0)?
 );
 
 let snapshot = metrics.get_snapshot()?;
