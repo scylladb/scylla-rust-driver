@@ -31,8 +31,8 @@ println!("Errors occurred: {}", metrics.get_errors_num());
 println!("Iter errors occurred: {}", metrics.get_errors_iter_num());
 println!("Average latency: {}", metrics.get_latency_avg_ms()?);
 println!(
-    "99.9 latency percentile: {}",
-    metrics.get_latency_percentile_ms(99.9)?
+    "99 latency percentile: {}",
+    metrics.get_latency_percentile_ms(99.0)?
 );
 
 let snapshot = metrics.get_snapshot()?;
