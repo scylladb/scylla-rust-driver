@@ -2221,21 +2221,34 @@ impl Session {
         &self,
         required_node: Option<Uuid>,
     ) -> Result<Uuid, SchemaAgreementError> {
+        // None: no finished attempt recorded
+        // Some(Ok(())): Last attempt successful, without agreement
+        // Some(Err(_)): Last attempt failed
+        let mut last_agreement_failure: Option<Result<(), SchemaAgreementError>> = None;
         timeout(self.schema_agreement_timeout, async {
             loop {
                 tokio::time::sleep(self.schema_agreement_interval).await;
-                if let Some(agreed_version) = self
+                let result = self
                     .check_schema_agreement_with_required_node(required_node)
-                    .await?
-                {
-                    return Ok(agreed_version);
+                    .await;
+                match result {
+                    Ok(Some(agreed_version)) => return agreed_version,
+                    Ok(None) => last_agreement_failure = Some(Ok(())),
+                    Err(err) => last_agreement_failure = Some(Err(err)),
                 }
             }
         })
         .await
-        .unwrap_or(Err(SchemaAgreementError::Timeout(
-            self.schema_agreement_timeout,
-        )))
+        .map_err(|_| {
+            match last_agreement_failure {
+                // There were no finished attempts - the only error we can return is Timeout.
+                None => SchemaAgreementError::Timeout(self.schema_agreement_timeout),
+                // If the last finished attempt resulted in an error, this error will be more informative than Timeout.
+                Some(Err(err)) => err,
+                // This is the canonical case for timeout - last attempt finished successfully, but without agreement.
+                Some(Ok(())) => SchemaAgreementError::Timeout(self.schema_agreement_timeout),
+            }
+        })
     }
 
     /// Checks if all reachable nodes have the same schema version.
