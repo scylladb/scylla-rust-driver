@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use assert_matches::assert_matches;
+use scylla::client::PoolSize;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::errors::{ExecutionError, RequestAttemptError, SchemaAgreementError};
+use scylla::errors::{DbError, ExecutionError, RequestAttemptError, SchemaAgreementError};
 use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 use scylla::response::query_result::QueryResult;
 use scylla::statement::Statement;
@@ -11,6 +12,7 @@ use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, RunningProxy,
     ShardAwareness, WorkerError,
 };
+use tracing::info;
 
 use crate::utils::{
     calculate_proxy_host_ids, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
@@ -144,6 +146,85 @@ async fn test_schema_await_with_unreachable_node() {
                 )
                 .await;
                 assert_matches!(result, Ok(_))
+            }
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
+
+// Verifies that schema agreement process works correctly even if the first check fails.
+#[tokio::test]
+#[cfg_attr(scylla_cloud_tests, ignore)]
+async fn test_schema_await_with_transient_failure() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            // DB preparation phase
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map.clone()))
+                // Important in order to have a predictable amount of connections after session creation.
+                // Shard connections are created asynchronously, so it's hard to predict how many will be opened
+                // already when we check schema agreement.
+                .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
+                .build()
+                .await
+                .unwrap();
+
+            let node_rules = Some(vec![RequestRule(
+                Condition::not(Condition::ConnectionRegisteredAnyEvent)
+                    .and(Condition::RequestOpcode(RequestOpcode::Query))
+                    .and(Condition::BodyContainsCaseSensitive(Box::new(
+                        *b"system.local",
+                    )))
+                    .and(Condition::TrueForLimitedTimes(1)),
+                // Use error that would prevent DefaultRetryPolicy from retrying.
+                // I don't think it is used for those queries, but it's additional future-proofing
+                // for the test.
+                RequestReaction::forge_with_error(DbError::SyntaxError),
+            )]);
+
+            // First, a sanity check for proxy rules.
+            // If for each node first request fails (and subsequent requests succeed),
+            // then first schema agreement check should return error, and second should succeed.
+            // Note that this is only true because we configured the session with 1-connection-per-node.
+            info!("Starting phase 1 - sanity check");
+            {
+                running_proxy
+                    .running_nodes
+                    .iter_mut()
+                    .for_each(|node| node.change_request_rules(node_rules.clone()));
+
+                // The important check: first call should error out, second one should succeed.
+                session.check_schema_agreement().await.unwrap_err();
+                session.check_schema_agreement().await.unwrap();
+
+                running_proxy
+                    .running_nodes
+                    .iter_mut()
+                    .for_each(|node| node.change_request_rules(Some(vec![])));
+            }
+
+            // Now let's check that awaiting schema agreement doesn't bail on error.
+            // I'll use the same proxy rules as before, so first check will error out.
+            info!("Starting phase 2 - main test");
+            {
+                running_proxy
+                    .running_nodes
+                    .iter_mut()
+                    .for_each(|node| node.change_request_rules(node_rules.clone()));
+
+                session.await_schema_agreement().await.unwrap();
             }
 
             running_proxy
