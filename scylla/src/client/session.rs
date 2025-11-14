@@ -2203,39 +2203,10 @@ impl Session {
     /// Awaits schema agreement among all reachable nodes.
     ///
     /// Issues an agreement check each `Session::schema_agreement_interval`.
-    /// Loops indefinitely until the agreement is reached.
-    ///
-    /// If `required_node` is Some, only returns Ok if this node successfully
-    /// returned its schema version during the agreement process.
-    async fn await_schema_agreement_indefinitely(
-        &self,
-        required_node: Option<Uuid>,
-    ) -> Result<Uuid, SchemaAgreementError> {
-        loop {
-            tokio::time::sleep(self.schema_agreement_interval).await;
-            if let Some(agreed_version) = self
-                .check_schema_agreement_with_required_node(required_node)
-                .await?
-            {
-                return Ok(agreed_version);
-            }
-        }
-    }
-
-    /// Awaits schema agreement among all reachable nodes.
-    ///
-    /// Issues an agreement check each `Session::schema_agreement_interval`.
     /// If agreement is not reached in `Session::schema_agreement_timeout`,
     /// `SchemaAgreementError::Timeout` is returned.
     pub async fn await_schema_agreement(&self) -> Result<Uuid, SchemaAgreementError> {
-        timeout(
-            self.schema_agreement_timeout,
-            self.await_schema_agreement_indefinitely(None),
-        )
-        .await
-        .unwrap_or(Err(SchemaAgreementError::Timeout(
-            self.schema_agreement_timeout,
-        )))
+        self.await_schema_agreement_with_required_node(None).await
     }
 
     /// Awaits schema agreement among all reachable nodes.
@@ -2250,10 +2221,17 @@ impl Session {
         &self,
         required_node: Option<Uuid>,
     ) -> Result<Uuid, SchemaAgreementError> {
-        timeout(
-            self.schema_agreement_timeout,
-            self.await_schema_agreement_indefinitely(required_node),
-        )
+        timeout(self.schema_agreement_timeout, async {
+            loop {
+                tokio::time::sleep(self.schema_agreement_interval).await;
+                if let Some(agreed_version) = self
+                    .check_schema_agreement_with_required_node(required_node)
+                    .await?
+                {
+                    return Ok(agreed_version);
+                }
+            }
+        })
         .await
         .unwrap_or(Err(SchemaAgreementError::Timeout(
             self.schema_agreement_timeout,
