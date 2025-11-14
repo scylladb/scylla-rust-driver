@@ -27,7 +27,7 @@ Database types and their Rust equivalents:
 * `Timestamp` <----> `value::CqlTimestamp`, `chrono::DateTime<Utc>`, `time::OffsetDateTime`
 * `Duration` <----> `value::CqlDuration`
 * `Decimal` <----> `value::CqlDecimal`, `value::CqlDecimalBorrowed`, `bigdecimal::BigDecimal`
-* `Varint` <----> `value::CqlVarint`, `num_bigint::BigInt` (v0.3 and v0.4)
+* `Varint` <----> `value::CqlVarint`, `value::CqlVarintBorrowed`, `num_bigint::BigInt` (v0.3 and v0.4)
 * `List` <----> `Vec<T>`
 * `Set` <----> `Vec<T>`
 * `Map` <----> `std::collections::HashMap<K, V>`
