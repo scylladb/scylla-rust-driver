@@ -48,6 +48,7 @@ async fn run_some_ddl_with_unreachable_node(
 
     // Cleanup
     running_proxy.running_nodes[paused].change_request_rules(Some(vec![]));
+    session.await_schema_agreement().await.unwrap();
     session
         .query_unpaged(format!("DROP KEYSPACE {ks}"), &[])
         .await
