@@ -3,7 +3,7 @@
 The driver maps database data types to matching Rust types
 to achieve seamless sending and receiving of CQL values.
 
-See the following chapters for examples on how to send and receive each data type.
+See the following chapters for examples on how to send and receive each data type. Please note that using some of those types requires enabling respective feature flags. Details are available in chapters for such data types.
 
 See [Statement values](../statements/values.md) for more information about sending values along with statements.\
 See [Query result](../statements/result.md) for more information about retrieving values from queries
@@ -26,8 +26,8 @@ Database types and their Rust equivalents:
 * `Time` <----> `value::CqlTime`, `chrono::NaiveTime`, `time::Time`
 * `Timestamp` <----> `value::CqlTimestamp`, `chrono::DateTime<Utc>`, `time::OffsetDateTime`
 * `Duration` <----> `value::CqlDuration`
-* `Decimal` <----> `value::CqlDecimal`, `bigdecimal::Decimal`
-* `Varint` <----> `value::CqlVarint`, `num_bigint::BigInt` (v0.3 and v0.4)
+* `Decimal` <----> `value::CqlDecimal`, `value::CqlDecimalBorrowed`, `bigdecimal::BigDecimal`
+* `Varint` <----> `value::CqlVarint`, `value::CqlVarintBorrowed`, `num_bigint::BigInt` (v0.3 and v0.4)
 * `List` <----> `Vec<T>`
 * `Set` <----> `Vec<T>`
 * `Map` <----> `std::collections::HashMap<K, V>`
