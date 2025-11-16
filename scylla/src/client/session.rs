@@ -2227,7 +2227,6 @@ impl Session {
         let mut last_agreement_failure: Option<Result<(), SchemaAgreementError>> = None;
         timeout(self.schema_agreement_timeout, async {
             loop {
-                tokio::time::sleep(self.schema_agreement_interval).await;
                 let result = self
                     .check_schema_agreement_with_required_node(required_node)
                     .await;
@@ -2236,6 +2235,7 @@ impl Session {
                     Ok(None) => last_agreement_failure = Some(Ok(())),
                     Err(err) => last_agreement_failure = Some(Err(err)),
                 }
+                tokio::time::sleep(self.schema_agreement_interval).await;
             }
         })
         .await
