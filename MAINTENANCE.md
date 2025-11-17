@@ -188,6 +188,7 @@ Description of this PR should consist of just release notes. **NOTE: Preferably 
     - Content of the post should just be release notes.
     - Click "Create Topic"
     - Posts in "Release notes" section often need additional confirmation. You can write to current forum admin to expedite this.
+15. Post a PR to https://github.com/scylladb/scylladb-docs-homepage that updates `docs/versioning/driver-support.rst` with currently supported versions of the driver.
 
 You're done!
 
