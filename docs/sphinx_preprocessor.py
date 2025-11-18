@@ -62,7 +62,7 @@ if __name__ == '__main__':
     # load both the context and the book representations from stdin
     context, book = json.load(sys.stdin)
 
-    for section in book['sections']:
+    for section in book['items']:
         process_section(section)
 
     # we are done with the book's modification, we can just print it to stdout

@@ -3,7 +3,6 @@ title = "ScyllaDB Rust Driver"
 description = "Documentation for ScyllaDB Rust Driver"
 authors = []
 language = "en"
-multilingual = false
 src = "source"
 
 [rust]
