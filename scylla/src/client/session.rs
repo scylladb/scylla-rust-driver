@@ -45,12 +45,14 @@ use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
 use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
+use scylla_cql::frame::response::error::DbError;
 use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
 use std::borrow::Borrow;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::OnceCell;
@@ -2255,6 +2257,92 @@ impl Session {
         self.await_schema_agreement_with_required_node(None).await
     }
 
+    /// Decides if an error should result in await_schema_agreement stopping immediately,
+    /// or if it's fine to try again (after schema agreement interval).
+    /// The errors that should stop immediately are non-transient ones, for which
+    /// there is little or no hope that a retry will succeed.
+    fn classify_schema_check_error(error: &SchemaAgreementError) -> ControlFlow<()> {
+        let classify_attempt_error = |request_attempt_error: &RequestAttemptError| {
+            #[deny(clippy::wildcard_enum_match_arm)]
+            match request_attempt_error {
+                // It may be possible to recover from those errors.
+                RequestAttemptError::UnableToAllocStreamId
+                | RequestAttemptError::BrokenConnectionError(_)
+                | RequestAttemptError::BodyExtensionsParseError(_)
+                | RequestAttemptError::CqlResultParseError(_)
+                | RequestAttemptError::CqlErrorParseError(_) => ControlFlow::Continue(()),
+
+                // Those errors should not happen, but if they did, something is
+                // really wrong. Let's return early.
+                RequestAttemptError::SerializationError(_)
+                | RequestAttemptError::CqlRequestSerialization(_)
+                | RequestAttemptError::UnexpectedResponse(_)
+                | RequestAttemptError::RepreparedIdChanged { .. }
+                | RequestAttemptError::RepreparedIdMissingInBatch
+                | RequestAttemptError::NonfinishedPagingState => ControlFlow::Break(()),
+
+                #[deny(clippy::wildcard_enum_match_arm)]
+                RequestAttemptError::DbError(db_error, _) => match db_error {
+                    // Those errors should not happen, but if they did, something is
+                    // really wrong. Let's return early.
+                    DbError::SyntaxError
+                    | DbError::Invalid
+                    | DbError::AlreadyExists { .. }
+                    | DbError::FunctionFailure { .. }
+                    | DbError::AuthenticationError
+                    | DbError::Unauthorized
+                    | DbError::ConfigError
+                    | DbError::TruncateError
+                    | DbError::ProtocolError => ControlFlow::Break(()),
+
+                    // Those errors likely won't go away on retry
+                    DbError::Unavailable { .. }
+                    | DbError::ReadFailure { .. }
+                    | DbError::WriteFailure { .. }
+                    | DbError::ServerError
+                    | DbError::Other(_) => ControlFlow::Break(()),
+
+                    DbError::Overloaded
+                    | DbError::ReadTimeout { .. }
+                    | DbError::WriteTimeout { .. }
+                    | DbError::Unprepared { .. }
+                    | DbError::RateLimitReached { .. }
+                    | DbError::IsBootstrapping
+                    | _ => ControlFlow::Continue(()),
+                },
+            }
+        };
+        #[deny(clippy::wildcard_enum_match_arm)]
+        match error {
+            // Unexpected format (type, row count, frame type etc) or deserialization error of response.
+            // It should not happen, but if it did it indicates a serious issue.
+            SchemaAgreementError::SingleRowError(_)
+            | SchemaAgreementError::TracesEventsIntoRowsResultError(_) => ControlFlow::Break(()),
+
+            // Should not be possible - we create this error only after returning here.
+            // Let's not panic, but log a warning so that it gets noticed.
+            SchemaAgreementError::Timeout(_) => {
+                error!("Unexpected schema agreement error type: {}", error);
+                ControlFlow::Break(())
+            }
+
+            // Definitely a transient error.
+            SchemaAgreementError::ConnectionPoolError(_)
+            | SchemaAgreementError::RequiredHostAbsent(_) => ControlFlow::Continue(()),
+
+            SchemaAgreementError::RequestError(request_attempt_error) => {
+                classify_attempt_error(request_attempt_error)
+            }
+            SchemaAgreementError::PrepareError(err) => match err {
+                PrepareError::ConnectionPoolError(_) => ControlFlow::Continue(()),
+                PrepareError::AllAttemptsFailed { first_attempt } => {
+                    classify_attempt_error(first_attempt)
+                }
+                PrepareError::PreparedStatementIdsMismatch => ControlFlow::Break(()),
+            },
+        }
+    }
+
     /// Awaits schema agreement among all reachable nodes.
     ///
     /// Issues an agreement check each `Session::schema_agreement_interval`.
@@ -2271,30 +2359,50 @@ impl Session {
         // Some(Ok(())): Last attempt successful, without agreement
         // Some(Err(_)): Last attempt failed
         let mut last_agreement_failure: Option<Result<(), SchemaAgreementError>> = None;
-        timeout(self.schema_agreement_timeout, async {
+        // The future passed to timeout returns either Ok(Uuid) if agreement was
+        // reached, or Err(SchemaAgreementError) if there was an error that should
+        // stop the waiting before timeout.
+        let agreement_result = timeout(self.schema_agreement_timeout, async {
             loop {
                 let result = self
                     .check_schema_agreement_with_required_node(required_node)
                     .await;
                 match result {
-                    Ok(Some(agreed_version)) => return agreed_version,
+                    Ok(Some(agreed_version)) => return Ok(agreed_version),
                     Ok(None) => last_agreement_failure = Some(Ok(())),
-                    Err(err) => last_agreement_failure = Some(Err(err)),
+                    Err(err) => {
+                        let decision = Self::classify_schema_check_error(&err);
+                        match decision {
+                            ControlFlow::Continue(_) => {
+                                last_agreement_failure = Some(Err(err));
+                            }
+                            ControlFlow::Break(_) => return Err(err),
+                        }
+                    }
                 }
                 tokio::time::sleep(self.schema_agreement_interval).await;
             }
         })
-        .await
-        .map_err(|_| {
-            match last_agreement_failure {
-                // There were no finished attempts - the only error we can return is Timeout.
-                None => SchemaAgreementError::Timeout(self.schema_agreement_timeout),
-                // If the last finished attempt resulted in an error, this error will be more informative than Timeout.
-                Some(Err(err)) => err,
-                // This is the canonical case for timeout - last attempt finished successfully, but without agreement.
-                Some(Ok(())) => SchemaAgreementError::Timeout(self.schema_agreement_timeout),
+        .await;
+        match agreement_result {
+            Err(_timeout) => {
+                // Timeout occurred. Either all attempts returned possibly-transient errors,
+                // or just did not reach agreement in time.
+                let effective_error = match last_agreement_failure {
+                    // There were no finished attempts - the only error we can return is Timeout.
+                    None => SchemaAgreementError::Timeout(self.schema_agreement_timeout),
+                    // If the last finished attempt resulted in an error, this error will be more informative than Timeout.
+                    Some(Err(err)) => err,
+                    // This is the canonical case for timeout - last attempt finished successfully, but without agreement.
+                    Some(Ok(())) => SchemaAgreementError::Timeout(self.schema_agreement_timeout),
+                };
+                Err(effective_error)
             }
-        })
+            // Agreement encountered a non-transient error, we must return it.
+            Ok(Err(inner_error)) => Err(inner_error),
+            // Agreement successful
+            Ok(Ok(uuid)) => Ok(uuid),
+        }
     }
 
     /// Checks if all reachable nodes have the same schema version.
