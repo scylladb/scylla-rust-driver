@@ -191,7 +191,7 @@ async fn test_schema_await_with_transient_failure() {
                 // Use error that would prevent DefaultRetryPolicy from retrying.
                 // I don't think it is used for those queries, but it's additional future-proofing
                 // for the test.
-                RequestReaction::forge_with_error(DbError::SyntaxError),
+                RequestReaction::forge_with_error(DbError::Overloaded),
             )]);
 
             // First, a sanity check for proxy rules.
