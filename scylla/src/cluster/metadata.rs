@@ -1011,9 +1011,8 @@ impl ControlConnection {
                 let mut query = Statement::new(query_str);
                 query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
-                let prepared = conn.prepare(query).await?;
-                let serialized_values = prepared.serialize_values(&keyspaces)?;
-                conn.execute_iter(prepared, serialized_values)
+                let bound = conn.prepare(query).await?.into_bind(&keyspaces)?;
+                conn.execute_iter(bound)
                     .await
                     .map_err(MetadataFetchErrorKind::NextRowError)
             }
