@@ -80,6 +80,8 @@ async fn test_schema_await_with_unreachable_node() {
             let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &session);
 
             {
+                tracing::info!("Sub test 1");
+
                 // Case 1: Paused node is a coordinator for DDL.
                 // DDL needs to fail.
                 let result = run_some_ddl_with_unreachable_node(
@@ -100,6 +102,8 @@ async fn test_schema_await_with_unreachable_node() {
             }
 
             {
+                tracing::info!("Sub test 1");
+
                 // Case 2: Paused node is NOT a coordinator for DDL.
                 // DDL should succeed, because auto schema agreement only needs available nodes to agree.
                 let result = run_some_ddl_with_unreachable_node(
@@ -113,6 +117,8 @@ async fn test_schema_await_with_unreachable_node() {
             }
 
             {
+                tracing::info!("Sub test 1");
+
                 // Case 3: Paused node is a coordinator for DDL, and is used by control connection.
                 // It is the same as case 1, but paused node is also control connection.
                 // DDL needs to fail.
@@ -134,6 +140,8 @@ async fn test_schema_await_with_unreachable_node() {
             }
 
             {
+                tracing::info!("Sub test 1");
+
                 // Case 4: Paused node is NOT a coordinator for DDL, but is used by control connection.
                 // It is the same as case 2, but paused node is also control connection.
                 // DDL should succeed, because auto schema agreement only needs available nodes to agree,
