@@ -324,6 +324,7 @@ impl Cluster {
 
     pub(crate) fn set_keep_on_drop(&mut self, value: bool) {
         self.opts.keep_on_drop = value;
+        self.tmp_dir_guard.disable_cleanup(value);
     }
 
     // Only for use in destructor - that is why it takes `&mut`.
