@@ -14,8 +14,9 @@ use futures::FutureExt;
 use ip_allocator::IpAllocator;
 use tracing::info;
 
-pub(crate) static CLUSTER_VERSION: LazyLock<String> =
-    LazyLock::new(|| std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:6.2.2".to_string()));
+pub(crate) static CLUSTER_VERSION: LazyLock<String> = LazyLock::new(|| {
+    std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:2025.3.3".to_string())
+});
 
 static TEST_KEEP_CLUSTER_ON_FAILURE: LazyLock<bool> = LazyLock::new(|| {
     std::env::var("TEST_KEEP_CLUSTER_ON_FAILURE")
@@ -70,6 +71,13 @@ where
     .await
 }
 
+fn mark_cluster_as_failed(cluster: &mut Cluster) {
+    if *TEST_KEEP_CLUSTER_ON_FAILURE {
+        println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
+        cluster.set_keep_on_drop(true);
+    }
+}
+
 /// Run a CCM test with a custom configuration logic before the cluster starts.
 ///
 /// ### Example
@@ -105,9 +113,17 @@ pub(crate) async fn run_ccm_test_with_configuration<C, Conf, T>(
     let mut cluster = Cluster::new(cluster_options)
         .await
         .expect("Failed to create cluster");
-    cluster.init().await.expect("failed to initialize cluster");
+    cluster
+        .init()
+        .await
+        .inspect_err(|_| mark_cluster_as_failed(&mut cluster))
+        .expect("failed to initialize cluster");
     cluster = configure(cluster).await;
-    cluster.start(None).await.expect("failed to start cluster");
+    cluster
+        .start(None)
+        .await
+        .inspect_err(|_| mark_cluster_as_failed(&mut cluster))
+        .expect("failed to start cluster");
 
     let result = AssertUnwindSafe(test_body(&mut cluster))
         .catch_unwind()
@@ -115,10 +131,7 @@ pub(crate) async fn run_ccm_test_with_configuration<C, Conf, T>(
     match result {
         Ok(()) => (),
         Err(err) => {
-            if *TEST_KEEP_CLUSTER_ON_FAILURE {
-                println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
-                cluster.set_keep_on_drop(true);
-            }
+            mark_cluster_as_failed(&mut cluster);
             std::panic::resume_unwind(err);
         }
     }

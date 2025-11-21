@@ -9,3 +9,4 @@ Cargo.lock
 /docs/_source
 .idea
 .idea/workspace.xml
+scylla/ccm_data/

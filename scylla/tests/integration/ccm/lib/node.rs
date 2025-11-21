@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 
 use anyhow::Error;
 
@@ -61,14 +62,17 @@ pub(crate) struct Node {
     status: NodeStatus,
     opts: NodeOptions,
     ccm_cmd: NodeCcm,
+    node_dir: PathBuf,
 }
 
 impl Node {
-    pub(super) fn new(opts: NodeOptions, ccm_cmd: NodeCcm) -> Self {
+    pub(super) fn new(opts: NodeOptions, ccm_cmd: NodeCcm, cluster_dir: &Path) -> Self {
+        let node_dir = cluster_dir.join(format!("node{}", opts.id));
         Node {
             opts,
             status: NodeStatus::Stopped,
             ccm_cmd,
+            node_dir,
         }
     }
 
@@ -122,7 +126,10 @@ impl Node {
     ///   certificate: db.cert
     ///   keyfile: db.key
     /// ```
-    #[expect(dead_code)]
+    #[cfg_attr(
+        any(not(feature = "openssl-010"), not(feature = "rustls-023")),
+        expect(dead_code)
+    )]
     pub(crate) async fn updateconf<K, V>(
         &mut self,
         key_values: impl IntoIterator<Item = (K, V)>,
@@ -178,5 +185,13 @@ impl Node {
     #[expect(dead_code)]
     pub(crate) fn status(self) -> NodeStatus {
         self.status
+    }
+
+    #[cfg_attr(
+        any(not(feature = "openssl-010"), not(feature = "rustls-023")),
+        expect(dead_code)
+    )]
+    pub(crate) fn node_dir(&self) -> &Path {
+        &self.node_dir
     }
 }
