@@ -376,7 +376,8 @@ mod deserialize;
 /// If set, the generated implementation will not verify the column names at
 /// all. Because it only works with `enforce_order`, it will deserialize first
 /// column into the first field, second column into the second field and so on.
-/// It will still still verify that the column types and field types match.
+/// It will still verify that the column types and field types match.
+///
 ///
 /// ## Field attributes
 ///
@@ -395,6 +396,11 @@ mod deserialize;
 /// By default, the generated implementation will try to match the Rust field
 /// to a column with the same name. This attribute allows to match to a column
 /// with provided name.
+///
+/// #[scylla(allow_missing)]
+///
+/// if set, implementation will not fail if some columns are missing.
+/// Instead, it will initialize the field with `Default::default()`.
 #[proc_macro_derive(DeserializeRow, attributes(scylla))]
 pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
     match deserialize::row::deserialize_row_derive(tokens_input) {
@@ -500,6 +506,7 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 /// UDT fields anywhere.
 /// If more strictness is desired, this flag makes sure that no excess fields
 /// are present and forces error in case there are some.
+///
 ///
 /// ## Field attributes
 ///
