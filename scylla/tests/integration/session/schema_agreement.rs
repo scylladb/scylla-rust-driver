@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use assert_matches::assert_matches;
 use scylla::client::PoolSize;
@@ -73,6 +74,10 @@ async fn test_schema_await_with_unreachable_node() {
             let session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map.clone()))
+                // Let's try more often to prevent timeouts.
+                .schema_agreement_interval(Duration::from_millis(30))
+                // And also not make the test too long.
+                .schema_agreement_timeout(Duration::from_millis(600))
                 .build()
                 .await
                 .unwrap();
@@ -185,6 +190,10 @@ async fn test_schema_await_with_transient_failure() {
                 // Shard connections are created asynchronously, so it's hard to predict how many will be opened
                 // already when we check schema agreement.
                 .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
+                // Let's try more often to prevent timeouts.
+                .schema_agreement_interval(Duration::from_millis(30))
+                // And also not make the test too long.
+                .schema_agreement_timeout(Duration::from_millis(300))
                 .build()
                 .await
                 .unwrap();
