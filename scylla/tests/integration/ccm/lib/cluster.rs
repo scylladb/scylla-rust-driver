@@ -16,6 +16,7 @@ use tempfile::TempDir;
 use tokio::fs::metadata;
 use tracing::info;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub(crate) const DEFAULT_MEMORY: u32 = 512;
@@ -106,7 +107,6 @@ impl NodeList {
 pub(crate) struct Cluster {
     ccm_cmd: Ccm,
     // Needs to be held, because it removes the dir when dropped
-    #[expect(dead_code)]
     tmp_dir_guard: TempDir,
     nodes: NodeList,
     opts: ClusterOptions,
@@ -287,7 +287,11 @@ impl Cluster {
 
     fn append_node(&mut self, node_options: NodeOptions) -> &mut Node {
         let node_name = node_options.name();
-        let node = Node::new(node_options, self.ccm_cmd.for_node(node_name));
+        let node = Node::new(
+            node_options,
+            self.ccm_cmd.for_node(node_name),
+            &self.cluster_dir(),
+        );
 
         self.nodes.push(node);
         self.nodes.0.last_mut().unwrap()
@@ -361,5 +365,9 @@ impl Cluster {
     #[expect(dead_code)]
     pub(crate) fn nodes_mut(&mut self) -> &mut NodeList {
         &mut self.nodes
+    }
+
+    pub(crate) fn cluster_dir(&self) -> PathBuf {
+        self.tmp_dir_guard.path().join(&self.opts.name)
     }
 }

@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 
 use anyhow::Error;
 
@@ -61,14 +62,17 @@ pub(crate) struct Node {
     status: NodeStatus,
     opts: NodeOptions,
     ccm_cmd: NodeCcm,
+    node_dir: PathBuf,
 }
 
 impl Node {
-    pub(super) fn new(opts: NodeOptions, ccm_cmd: NodeCcm) -> Self {
+    pub(super) fn new(opts: NodeOptions, ccm_cmd: NodeCcm, cluster_dir: &Path) -> Self {
+        let node_dir = cluster_dir.join(format!("node{}", opts.id));
         Node {
             opts,
             status: NodeStatus::Stopped,
             ccm_cmd,
+            node_dir,
         }
     }
 
@@ -178,5 +182,10 @@ impl Node {
     #[expect(dead_code)]
     pub(crate) fn status(self) -> NodeStatus {
         self.status
+    }
+
+    #[expect(dead_code)]
+    pub(crate) fn node_dir(&self) -> &Path {
+        &self.node_dir
     }
 }
