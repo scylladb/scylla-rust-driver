@@ -106,9 +106,17 @@ pub(crate) async fn run_ccm_test_with_configuration<C, Conf, T>(
     let mut cluster = Cluster::new(cluster_options)
         .await
         .expect("Failed to create cluster");
-    cluster.init().await.expect("failed to initialize cluster");
+    cluster
+        .init()
+        .await
+        .inspect_err(|_| cluster.mark_as_failed())
+        .expect("failed to initialize cluster");
     cluster = configure(cluster).await;
-    cluster.start(None).await.expect("failed to start cluster");
+    cluster
+        .start(None)
+        .await
+        .inspect_err(|_| cluster.mark_as_failed())
+        .expect("failed to start cluster");
 
     let result = AssertUnwindSafe(test_body(&mut cluster))
         .catch_unwind()
@@ -116,10 +124,7 @@ pub(crate) async fn run_ccm_test_with_configuration<C, Conf, T>(
     match result {
         Ok(()) => (),
         Err(err) => {
-            if *TEST_KEEP_CLUSTER_ON_FAILURE {
-                println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
-                cluster.set_keep_on_drop(true);
-            }
+            cluster.mark_as_failed();
             std::panic::resume_unwind(err);
         }
     }

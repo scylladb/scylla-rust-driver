@@ -1,3 +1,4 @@
+use crate::ccm::lib::TEST_KEEP_CLUSTER_ON_FAILURE;
 use crate::ccm::lib::node::NodeOptions;
 
 use super::cli_wrapper::DBType;
@@ -320,6 +321,13 @@ impl Cluster {
 
     pub(crate) fn set_keep_on_drop(&mut self, value: bool) {
         self.opts.keep_on_drop = value;
+    }
+
+    pub(crate) fn mark_as_failed(&mut self) {
+        if *TEST_KEEP_CLUSTER_ON_FAILURE {
+            println!("Test failed, keep cluster alive, TEST_KEEP_CLUSTER_ON_FAILURE=true");
+            self.set_keep_on_drop(true);
+        }
     }
 
     // Only for use in destructor - that is why it takes `&mut`.
