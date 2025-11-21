@@ -14,8 +14,9 @@ use futures::FutureExt;
 use ip_allocator::IpAllocator;
 use tracing::info;
 
-pub(crate) static CLUSTER_VERSION: LazyLock<String> =
-    LazyLock::new(|| std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:6.2.2".to_string()));
+pub(crate) static CLUSTER_VERSION: LazyLock<String> = LazyLock::new(|| {
+    std::env::var("SCYLLA_TEST_CLUSTER").unwrap_or("release:2025.3.3".to_string())
+});
 
 static TEST_KEEP_CLUSTER_ON_FAILURE: LazyLock<bool> = LazyLock::new(|| {
     std::env::var("TEST_KEEP_CLUSTER_ON_FAILURE")
