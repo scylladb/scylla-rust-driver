@@ -102,6 +102,11 @@ impl NodeList {
     pub(crate) async fn get_contact_endpoints(&self) -> Vec<String> {
         self.iter().map(|node| node.contact_endpoint()).collect()
     }
+
+    #[expect(dead_code)]
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 pub(crate) struct Cluster {
