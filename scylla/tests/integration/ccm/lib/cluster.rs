@@ -103,7 +103,10 @@ impl NodeList {
         self.iter().map(|node| node.contact_endpoint()).collect()
     }
 
-    #[expect(dead_code)]
+    #[cfg_attr(
+        any(not(feature = "openssl-010"), not(feature = "rustls-023")),
+        expect(dead_code)
+    )]
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
@@ -368,7 +371,10 @@ impl Cluster {
         &self.nodes
     }
 
-    #[expect(dead_code)]
+    #[cfg_attr(
+        any(not(feature = "openssl-010"), not(feature = "rustls-023")),
+        expect(dead_code)
+    )]
     pub(crate) fn nodes_mut(&mut self) -> &mut NodeList {
         &mut self.nodes
     }

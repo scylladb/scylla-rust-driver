@@ -126,7 +126,10 @@ impl Node {
     ///   certificate: db.cert
     ///   keyfile: db.key
     /// ```
-    #[expect(dead_code)]
+    #[cfg_attr(
+        any(not(feature = "openssl-010"), not(feature = "rustls-023")),
+        expect(dead_code)
+    )]
     pub(crate) async fn updateconf<K, V>(
         &mut self,
         key_values: impl IntoIterator<Item = (K, V)>,
@@ -184,7 +187,10 @@ impl Node {
         self.status
     }
 
-    #[expect(dead_code)]
+    #[cfg_attr(
+        any(not(feature = "openssl-010"), not(feature = "rustls-023")),
+        expect(dead_code)
+    )]
     pub(crate) fn node_dir(&self) -> &Path {
         &self.node_dir
     }
