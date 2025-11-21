@@ -256,21 +256,20 @@ async fn test_pager_timeouts() {
             ))
             .await
             .unwrap();
-            session.use_keyspace(ks.clone(), true).await.unwrap();
 
             session
-                .ddl("CREATE TABLE IF NOT EXISTS t (a int PRIMARY KEY)")
+                .ddl(format!("CREATE TABLE IF NOT EXISTS {ks}.t (a int PRIMARY KEY)"))
                 .await
                 .unwrap();
 
             for i in 0..5 {
                 session
-                    .query_unpaged("INSERT INTO t (a) VALUES (?)", (i,))
+                    .query_unpaged(format!("INSERT INTO {ks}.t (a) VALUES (?)"), (i,))
                     .await
                     .unwrap();
             }
 
-            let mut prepared = session.prepare("SELECT a FROM t").await.unwrap();
+            let mut prepared = session.prepare(format!("SELECT a FROM {ks}.t")).await.unwrap();
             // Important to have multiple pages.
             prepared.set_page_size(1);
             // Important for retries to fire.
@@ -306,7 +305,7 @@ async fn test_pager_timeouts() {
 
             // Case 2: the second page fetch times out.
             {
-                let timeout = Duration::from_millis(100);
+                let timeout = Duration::from_millis(200);
                 prepared.set_request_timeout(Some(timeout));
 
                 running_proxy.running_nodes.iter_mut().for_each(|node| {
@@ -321,7 +320,7 @@ async fn test_pager_timeouts() {
                         RequestRule(
                             Condition::RequestOpcode(RequestOpcode::Execute)
                                 .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
-                            RequestReaction::delay(timeout + Duration::from_millis(10))
+                            RequestReaction::delay(timeout + Duration::from_millis(100))
                         )
                     ]));
                 });
