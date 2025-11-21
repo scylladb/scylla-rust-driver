@@ -256,21 +256,20 @@ async fn test_pager_timeouts() {
             ))
             .await
             .unwrap();
-            session.use_keyspace(ks.clone(), true).await.unwrap();
 
             session
-                .ddl("CREATE TABLE IF NOT EXISTS t (a int PRIMARY KEY)")
+                .ddl(format!("CREATE TABLE IF NOT EXISTS {ks}.t (a int PRIMARY KEY)"))
                 .await
                 .unwrap();
 
             for i in 0..5 {
                 session
-                    .query_unpaged("INSERT INTO t (a) VALUES (?)", (i,))
+                    .query_unpaged(format!("INSERT INTO {ks}.t (a) VALUES (?)"), (i,))
                     .await
                     .unwrap();
             }
 
-            let mut prepared = session.prepare("SELECT a FROM t").await.unwrap();
+            let mut prepared = session.prepare(format!("SELECT a FROM {ks}.t")).await.unwrap();
             // Important to have multiple pages.
             prepared.set_page_size(1);
             // Important for retries to fire.
