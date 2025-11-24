@@ -114,9 +114,11 @@ fn test_struct_deserialization_loose_ordering() {
         d: i32,
         #[scylla(default_when_null)]
         e: &'a str,
+        #[scylla(allow_missing)]
+        f: &'a str,
     }
 
-    // Original order of columns
+    // Original order of columns without field f
     let specs = &[
         spec("a", ColumnType::Native(NativeType::Text)),
         spec("b", ColumnType::Native(NativeType::Int)),
@@ -133,17 +135,19 @@ fn test_struct_deserialization_loose_ordering() {
             c: String::new(),
             d: 0,
             e: "def",
+            f: "",
         }
     );
 
-    // Different order of columns - should still work
+    // Different order of columns with field f - should still work with
     let specs = &[
         spec("e", ColumnType::Native(NativeType::Text)),
         spec("b", ColumnType::Native(NativeType::Int)),
         spec("d", ColumnType::Native(NativeType::Int)),
+        spec("f", ColumnType::Native(NativeType::Text)),
         spec("a", ColumnType::Native(NativeType::Text)),
     ];
-    let byts = serialize_cells([None, val_int(123), None, val_str("abc")]);
+    let byts = serialize_cells([None, val_int(123), None, val_str("efg"), val_str("abc")]);
     let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
     assert_eq!(
         row,
@@ -153,6 +157,7 @@ fn test_struct_deserialization_loose_ordering() {
             c: String::new(),
             d: 0,
             e: "",
+            f: "efg",
         }
     );
 
@@ -189,11 +194,13 @@ fn test_struct_deserialization_strict_ordering() {
         c: String,
         #[scylla(default_when_null)]
         d: i32,
+        #[scylla(allow_missing)]
+        f: i32,
         #[scylla(default_when_null)]
         e: &'a str,
     }
 
-    // Correct order of columns
+    // Correct order of columns without field f
     let specs = &[
         spec("a", ColumnType::Native(NativeType::Text)),
         spec("b", ColumnType::Native(NativeType::Int)),
@@ -210,6 +217,35 @@ fn test_struct_deserialization_strict_ordering() {
             c: String::new(),
             d: 0,
             e: "def",
+            f: 0,
+        }
+    );
+
+    // Correct order of columns with field f
+    let specs = &[
+        spec("a", ColumnType::Native(NativeType::Text)),
+        spec("b", ColumnType::Native(NativeType::Int)),
+        spec("d", ColumnType::Native(NativeType::Int)),
+        spec("f", ColumnType::Native(NativeType::Int)),
+        spec("e", ColumnType::Native(NativeType::Text)),
+    ];
+    let byts = serialize_cells([
+        val_str("abc"),
+        val_int(123),
+        None,
+        val_int(234),
+        val_str("def"),
+    ]);
+    let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+    assert_eq!(
+        row,
+        MyRow {
+            a: "abc",
+            b: Some(123),
+            c: String::new(),
+            d: 0,
+            e: "def",
+            f: 234,
         }
     );
 
