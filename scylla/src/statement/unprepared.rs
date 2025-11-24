@@ -1,11 +1,25 @@
 //! Defines the [`Statement`] type, which represents an unprepared CQL statement.
 
+use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
+use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
+use scylla_cql::serialize::row::SerializeRow;
+use tracing::Instrument;
+
+use super::execute::ExecutePageable;
 use super::{PageSize, StatementConfig};
-use crate::client::execution_profile::ExecutionProfileHandle;
+use crate::client::execution_profile::{ExecutionProfileHandle, ExecutionProfileInner};
+use crate::client::session::{RunRequestResult, Session};
+use crate::errors::ExecutionError;
+use crate::frame::response::result;
 use crate::frame::types::{Consistency, SerialConsistency};
+use crate::network::Connection;
+use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::HistoryListener;
 use crate::policies::load_balancing::LoadBalancingPolicy;
+use crate::policies::load_balancing::RoutingInfo;
 use crate::policies::retry::RetryPolicy;
+use crate::response::query_result::QueryResult;
+use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -213,5 +227,107 @@ impl From<String> for Statement {
 impl<'a> From<&'a str> for Statement {
     fn from(s: &'a str) -> Statement {
         Statement::new(s.to_owned())
+    }
+}
+impl<V: SerializeRow> ExecutePageable for (&Statement, V) {
+    async fn execute_pageable<const SINGLE_PAGE: bool>(
+        &self,
+        session: &Session,
+        paging_state: PagingState,
+    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
+        let (statement, values) = self;
+        let page_size = if SINGLE_PAGE {
+            Some(statement.get_validated_page_size())
+        } else {
+            None
+        };
+
+        let execution_profile = statement
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| session.get_default_execution_profile_handle())
+            .access();
+
+        let statement_info = RoutingInfo {
+            consistency: statement
+                .config
+                .consistency
+                .unwrap_or(execution_profile.consistency),
+            serial_consistency: statement
+                .config
+                .serial_consistency
+                .unwrap_or(execution_profile.serial_consistency),
+            ..Default::default()
+        };
+
+        let span = RequestSpan::new_query(&statement.contents);
+        let span_ref = &span;
+        let (run_request_result, coordinator): (
+            RunRequestResult<NonErrorQueryResponse>,
+            Coordinator,
+        ) = session
+            .run_request(
+                statement_info,
+                &statement.config,
+                execution_profile,
+                |connection: Arc<Connection>,
+                 consistency: Consistency,
+                 execution_profile: &ExecutionProfileInner| {
+                    let serial_consistency = statement
+                        .config
+                        .serial_consistency
+                        .unwrap_or(execution_profile.serial_consistency);
+                    // Needed to avoid moving into async move block
+                    let paging_state_ref = &paging_state;
+                    async move {
+                        if values.is_empty() {
+                            span_ref.record_request_size(0);
+                            connection
+                                .query_raw_with_consistency(
+                                    statement,
+                                    consistency,
+                                    serial_consistency,
+                                    page_size,
+                                    paging_state_ref.clone(),
+                                )
+                                .await
+                                .and_then(QueryResponse::into_non_error_query_response)
+                        } else {
+                            let statement =
+                                connection.prepare(statement).await?.into_bind(values)?;
+                            span_ref.record_request_size(statement.values.buffer_size());
+                            connection
+                                .execute_raw_with_consistency(
+                                    &statement,
+                                    consistency,
+                                    serial_consistency,
+                                    page_size,
+                                    paging_state_ref.clone(),
+                                )
+                                .await
+                                .and_then(QueryResponse::into_non_error_query_response)
+                        }
+                    }
+                },
+                &span,
+            )
+            .instrument(span.span().clone())
+            .await?;
+
+        let response = match run_request_result {
+            RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
+                response: NonErrorResponseWithDeserializedMetadata::Result(
+                    result::ResultWithDeserializedMetadata::Void,
+                ),
+                tracing_id: None,
+                warnings: Vec::new(),
+            },
+            RunRequestResult::Completed(response) => response,
+        };
+
+        let (result, paging_state_response) =
+            response.into_query_result_and_paging_state(coordinator)?;
+        span.record_result_fields(&result);
+
+        Ok((result, paging_state_response))
     }
 }
