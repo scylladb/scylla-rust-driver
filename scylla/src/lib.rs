@@ -247,8 +247,6 @@ pub mod deserialize {
 
 pub mod authentication;
 pub mod client;
-#[cfg(feature = "unstable-cloud")]
-pub mod cloud;
 
 pub mod cluster;
 pub mod errors;

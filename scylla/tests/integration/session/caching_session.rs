@@ -17,7 +17,6 @@ use tokio::sync::mpsc;
 use crate::utils::{fetch_negotiated_features, test_with_3_node_cluster};
 
 #[tokio::test]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_caching_session_metadata_cache() {
     let features = fetch_negotiated_features(None).await;
     let has_metadata_extension = features.scylla_metadata_id_supported;

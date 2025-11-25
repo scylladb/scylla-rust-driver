@@ -1,4 +1,5 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
+use crate::cluster::KnownNode;
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::Event;
 use crate::network::{PoolConfig, VerifiedKeyspaceName};
@@ -17,7 +18,6 @@ use std::time::Duration;
 use tracing::debug;
 
 use super::metadata::MetadataReader;
-use super::node::InternalKnownNode;
 use super::state::{ClusterState, ClusterStateNeatDebug};
 
 /// Cluster manages up to date information and connections to database nodes.
@@ -99,7 +99,7 @@ struct UseKeyspaceRequest {
 impl Cluster {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
-        known_nodes: Vec<InternalKnownNode>,
+        known_nodes: Vec<KnownNode>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,

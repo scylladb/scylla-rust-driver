@@ -5,11 +5,7 @@ use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, Executi
 use super::pager::{PreparedPagerConfig, QueryPager};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
-#[cfg(feature = "unstable-cloud")]
-use crate::cloud::CloudConfig;
-#[cfg(feature = "unstable-cloud")]
-use crate::cluster::node::CloudEndpoint;
-use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
+use crate::cluster::node::{KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
     BadQuery, BrokenConnectionError, ExecutionError, MetadataError, NewSessionError,
@@ -55,8 +51,6 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
-#[cfg(feature = "unstable-cloud")]
-use tracing::warn;
 use tracing::{Instrument, debug, error, trace, trace_span};
 use uuid::Uuid;
 
@@ -270,10 +264,6 @@ pub struct SessionConfig {
     /// re-establishing the control connection.
     pub host_filter: Option<Arc<dyn HostFilter>>,
 
-    /// If the driver is to connect to ScyllaCloud, there is a config for it.
-    #[cfg(feature = "unstable-cloud")]
-    pub cloud_config: Option<Arc<CloudConfig>>,
-
     /// If true, the driver will inject a delay controlled by [`SessionConfig::write_coalescing_delay`]
     /// before flushing data to the socket.
     /// This gives the driver an opportunity to collect more write requests
@@ -360,8 +350,6 @@ impl SessionConfig {
             address_translator: None,
             host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
-            #[cfg(feature = "unstable-cloud")]
-            cloud_config: None,
             enable_write_coalescing: true,
             write_coalescing_delay: WriteCoalescingDelay::SmallNondeterministic,
             tracing_info_fetch_attempts: NonZeroU32::new(10).unwrap(),
@@ -860,31 +848,6 @@ impl Session {
     pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
         let known_nodes = config.known_nodes;
 
-        #[cfg(feature = "unstable-cloud")]
-        let cloud_known_nodes: Option<Vec<InternalKnownNode>> =
-            if let Some(ref cloud_config) = config.cloud_config {
-                let cloud_servers = cloud_config
-                    .get_datacenters()
-                    .iter()
-                    .map(|(dc_name, dc_data)| {
-                        InternalKnownNode::CloudEndpoint(CloudEndpoint {
-                            hostname: dc_data.get_server().to_owned(),
-                            datacenter: dc_name.clone(),
-                        })
-                    })
-                    .collect();
-                Some(cloud_servers)
-            } else {
-                None
-            };
-
-        #[cfg(not(feature = "unstable-cloud"))]
-        let cloud_known_nodes: Option<Vec<InternalKnownNode>> = None;
-
-        #[allow(clippy::unnecessary_literal_unwrap)]
-        let known_nodes = cloud_known_nodes
-            .unwrap_or_else(|| known_nodes.into_iter().map(|node| node.into()).collect());
-
         // Ensure there is at least one known node
         if known_nodes.is_empty() {
             return Err(NewSessionError::EmptyKnownNodesList);
@@ -892,48 +855,14 @@ impl Session {
 
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
 
-        #[allow(unused_labels)] // Triggers when `cloud` feature is disabled.
-        let address_translator = 'translator: {
-            #[cfg(feature = "unstable-cloud")]
-            if let Some(translator) = config.cloud_config.clone() {
-                if config.address_translator.is_some() {
-                    // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom AddressTranslator.
-                    warn!(
-                        "Overriding user-provided AddressTranslator with Scylla Cloud AddressTranslator due \
-                            to CloudConfig being provided. This is certainly an API misuse - Cloud \
-                            may not be combined with user's own AddressTranslator."
-                    )
-                }
-
-                break 'translator Some(translator as Arc<dyn AddressTranslator>);
-            }
-
-            config.address_translator
-        };
-
-        let tls_provider = 'provider: {
-            #[cfg(feature = "unstable-cloud")]
-            if let Some(cloud_config) = config.cloud_config {
-                if config.tls_context.is_some() {
-                    // This can only happen if the user builds SessionConfig by hand, as SessionBuilder in cloud mode prevents setting custom TlsContext.
-                    warn!(
-                        "Overriding user-provided TlsContext with Scylla Cloud TlsContext due \
-                            to CloudConfig being provided. This is certainly an API misuse - Cloud \
-                            may not be combined with user's own TLS config."
-                    )
-                }
-
-                let provider = TlsProvider::new_cloud(cloud_config);
-                break 'provider Some(provider);
-            }
-            if let Some(tls_context) = config.tls_context {
-                // To silence warnings when TlsContext is an empty enum (tls features are disabled).
-                // In such case, TlsProvider is uninhabited.
-                #[allow(unused_variables)]
-                let provider = TlsProvider::new_with_global_context(tls_context);
-                #[allow(unreachable_code)]
-                break 'provider Some(provider);
-            }
+        let tls_provider = if let Some(tls_context) = config.tls_context {
+            // To silence warnings when TlsContext is an empty enum (tls features are disabled).
+            // In such case, TlsProvider is uninhabited.
+            #[allow(unused_variables)]
+            let provider = TlsProvider::new_with_global_context(tls_context);
+            #[allow(unreachable_code)]
+            Some(provider)
+        } else {
             None
         };
 
@@ -949,7 +878,7 @@ impl Session {
             connect_timeout: config.connect_timeout,
             event_sender: None,
             default_consistency: Default::default(),
-            address_translator,
+            address_translator: config.address_translator,
             write_coalescing_delay: config
                 .enable_write_coalescing
                 .then_some(config.write_coalescing_delay),

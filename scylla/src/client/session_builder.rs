@@ -1,14 +1,10 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
-#[cfg(feature = "unstable-cloud")]
-use super::execution_profile::ExecutionProfile;
 use super::execution_profile::ExecutionProfileHandle;
 use super::session::{Session, SessionConfig};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 use crate::client::session::TlsContext;
-#[cfg(feature = "unstable-cloud")]
-use crate::cloud::{CloudConfig, CloudConfigError, CloudTlsProvider};
 use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
@@ -19,8 +15,6 @@ use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
-#[cfg(feature = "unstable-cloud")]
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
@@ -33,7 +27,9 @@ mod sealed {
 }
 /// Kind of the session builder, used to distinguish between
 /// builders that create regular sessions and those that create custom
-/// sessions, such as cloud sessions.
+/// sessions. Currently, there are no such custom session builders,
+/// but we may introduce some in the future. In the past, we had a `CloudSessionBuilder`
+/// used to connect to Scylla Cloud Serverless.
 /// This is used to conditionally enable different sets of methods
 /// on the session builder based on its kind.
 pub trait SessionBuilderKind: sealed::Sealed + Clone {}
@@ -47,25 +43,10 @@ impl SessionBuilderKind for DefaultMode {}
 /// Builder for regular sessions.
 pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
 
-/// Session builder kind for creating cloud sessions.
-#[cfg(feature = "unstable-cloud")]
-#[derive(Clone)]
-pub enum CloudMode {}
-#[cfg(feature = "unstable-cloud")]
-impl sealed::Sealed for CloudMode {}
-#[cfg(feature = "unstable-cloud")]
-impl SessionBuilderKind for CloudMode {}
-
-/// Builder for sessions that connect to Scylla Cloud.
-#[cfg(feature = "unstable-cloud")]
-pub type CloudSessionBuilder = GenericSessionBuilder<CloudMode>;
-
 /// Used to conveniently configure new Session instances.
 ///
 /// Most likely you will want to use [`SessionBuilder`]
-/// (for building regular session). If you want to build a session
-/// that connects to Scylla Cloud, you will want to use
-/// `CloudSessionBuilder`.
+/// (for building regular session).
 ///
 /// # Example
 ///
@@ -89,9 +70,12 @@ pub struct GenericSessionBuilder<Kind: SessionBuilderKind> {
     kind: PhantomData<Kind>,
 }
 
-// NOTE: this `impl` block contains configuration options specific for **non-Cloud** [`Session`].
-// This means that if an option fits both non-Cloud and Cloud `Session`s, it should NOT be put
-// here, but rather in `impl<K> GenericSessionBuilder<K>` block.
+// NOTE: this `impl` block contains configuration options specific for default mode.
+// This includes: list of contact points, address translation, and TLS configuration.
+// Alternative ways to connect to the cluster, like legacy Scylla Cloud Serverless, or
+// AWS Private Link (if we introduce it in the future), may internally utilize address translation,
+// or TLS configuration (for example for SNI). We don't want users to be able to create invalid
+// configuration, so such options should not be available for those builder types.
 impl GenericSessionBuilder<DefaultMode> {
     /// Creates new SessionBuilder with default configuration
     /// # Default configuration
@@ -379,44 +363,8 @@ impl GenericSessionBuilder<DefaultMode> {
     }
 }
 
-// NOTE: this `impl` block contains configuration options specific for **Cloud** [`Session`].
-// This means that if an option fits both non-Cloud and Cloud `Session`s, it should NOT be put
-// here, but rather in `impl<K> GenericSessionBuilder<K>` block.
-#[cfg(feature = "unstable-cloud")]
-impl CloudSessionBuilder {
-    /// Creates a new SessionBuilder with default configuration, based
-    /// on the provided [`CloudConfig`].
-    pub fn from_config(cloud_config: CloudConfig) -> Self {
-        let mut config = SessionConfig::new();
-        let mut exec_profile_builder = ExecutionProfile::builder();
-        if let Some(default_consistency) = cloud_config.get_default_consistency() {
-            exec_profile_builder = exec_profile_builder.consistency(default_consistency);
-        }
-        if let Some(default_serial_consistency) = cloud_config.get_default_serial_consistency() {
-            exec_profile_builder =
-                exec_profile_builder.serial_consistency(Some(default_serial_consistency));
-        }
-        config.default_execution_profile_handle = exec_profile_builder.build().into_handle();
-        config.cloud_config = Some(Arc::new(cloud_config));
-        CloudSessionBuilder {
-            config,
-            kind: PhantomData,
-        }
-    }
-
-    /// Creates a new SessionBuilder with default configuration,
-    /// based on provided path to Scylla Cloud Config yaml.
-    pub fn new(
-        cloud_config: impl AsRef<Path>,
-        tls_provider: CloudTlsProvider,
-    ) -> Result<Self, CloudConfigError> {
-        let cloud_config = CloudConfig::read_from_yaml(cloud_config, tls_provider)?;
-        Ok(Self::from_config(cloud_config))
-    }
-}
-
-// This block contains configuration options that make sense both for Cloud and non-Cloud
-// `Session`s. If an option fit only one of them, it should be put in a specialised block.
+// This block contains configuration options that make sense both for any `Session` type.
+// If an option fit only some of them, it should be put in a specialised block.
 impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Sets the local ip address all TCP sockets are bound to.
     ///

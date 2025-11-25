@@ -4,8 +4,6 @@
 //!
 //! ┌─←─ TlsContext (openssl::SslContext / rustls::ClientConfig)
 //! │
-//! ├─←─ CloudConfig (powered by either TLS backend)
-//! │
 //! │ gets wrapped in
 //! │
 //! ↳TlsProvider (same for all connections)
@@ -17,31 +15,24 @@
 //!     │ produces
 //!     │
 //!     ↳Tls (wrapper over TCP stream which adds encryption)
+//!
+//! Currently it is not strictly necessary to have both `TlsContext` and `TlsProvider`.
+//! The reason for having both is historical. It is about the old Scylla Cloud Serverless, which
+//! used SNI proxy to allow driver to connect to the nodes. `TlsProvider` used to have `CloudConfig` variant,
+//! which stored both TLS context and cloud configuration. This would be then transformed into `TlsConfig`,
+//! which had additional field for SNI hostname.
+//! We could remove `TlsProvider`, and maybe even `TlsConfig`, but for now we kept it - it may be useful in the future,
+//! for example if we wanted to support more elastic hostname verification.
 
 use std::io;
-#[cfg(feature = "unstable-cloud")]
-use std::sync::Arc;
-
-#[cfg(feature = "unstable-cloud")]
-use tracing::warn;
-#[cfg(feature = "unstable-cloud")]
-use uuid::Uuid;
 
 use crate::client::session::TlsContext;
-#[cfg(feature = "unstable-cloud")]
-use crate::cloud::CloudConfig;
-#[cfg(feature = "unstable-cloud")]
-use crate::cluster::metadata::PeerEndpoint;
 use crate::cluster::metadata::UntranslatedEndpoint;
-#[cfg(feature = "unstable-cloud")]
-use crate::cluster::node::ResolvedContactPoint;
 
 /// Abstraction capable of producing [TlsConfig] for connections on-demand.
 #[derive(Clone)] // Cheaply clonable (reference-counted)
 pub(crate) enum TlsProvider {
     GlobalContext(TlsContext),
-    #[cfg(feature = "unstable-cloud")]
-    ScyllaCloud(Arc<CloudConfig>),
 }
 
 impl TlsProvider {
@@ -50,48 +41,16 @@ impl TlsProvider {
         Self::GlobalContext(context)
     }
 
-    /// Used in the cloud case.
-    #[cfg(feature = "unstable-cloud")]
-    pub(crate) fn new_cloud(cloud_config: Arc<CloudConfig>) -> Self {
-        Self::ScyllaCloud(cloud_config)
-    }
-
     /// Produces a [TlsConfig] that is specific for the given endpoint.
     pub(crate) fn make_tls_config(
         &self,
-        // Currently, this is only used for cloud; but it makes abstract sense to pass endpoint here
+        // This was only used for serverless cloud; but it makes abstract sense to pass endpoint here
         // also for non-cloud cases, so let's just allow(unused).
-        #[allow(unused)] endpoint: &UntranslatedEndpoint,
+        #[expect(unused)] endpoint: &UntranslatedEndpoint,
     ) -> Option<TlsConfig> {
         match self {
             TlsProvider::GlobalContext(context) => {
                 Some(TlsConfig::new_with_global_context(context.clone()))
-            }
-            #[cfg(feature = "unstable-cloud")]
-            TlsProvider::ScyllaCloud(cloud_config) => {
-                let (host_id, address, dc) = match *endpoint {
-                    UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
-                        address,
-                        ref datacenter,
-                    }) => (None, address, datacenter.as_deref()), // FIXME: Pass DC in ContactPoint
-                    UntranslatedEndpoint::Peer(PeerEndpoint {
-                        host_id,
-                        address,
-                        ref datacenter,
-                        ..
-                    }) => (Some(host_id), address.into_inner(), datacenter.as_deref()),
-                };
-
-                cloud_config.make_tls_config_for_scylla_cloud_host(host_id, dc, address)
-                    .inspect_err(|err| {
-                        warn!(
-                            "TlsProvider for SNI connection to Scylla Cloud node {{ host_id={:?}, dc={:?} at {} }} could not be set up: {}\n Proceeding with attempting probably nonworking connection",
-                            host_id,
-                            dc,
-                            address,
-                            err
-                        );
-                    }).ok().flatten()
             }
         }
     }
@@ -99,15 +58,10 @@ impl TlsProvider {
 
 /// Encapsulates TLS-regarding configuration that is specific for a particular endpoint.
 ///
-/// Both use cases are supported:
-/// 1. User-provided global TlsContext. Then, the global TlsContext is simply cloned here.
-/// 2. Serverless Cloud. Then the TlsContext is customized for the given endpoint,
-///    and its SNI information is stored alongside.
+/// Currently we don't need any host-specific parameters, but that may change in the future.
 #[derive(Clone)]
 pub(crate) struct TlsConfig {
     context: TlsContext,
-    #[cfg(feature = "unstable-cloud")]
-    sni: Option<String>,
 }
 
 /// An abstraction over connection's TLS layer which holds its state and configuration.
@@ -117,8 +71,6 @@ pub(crate) enum Tls {
     #[cfg(feature = "rustls-023")]
     Rustls023 {
         connector: tokio_rustls::TlsConnector,
-        #[cfg(feature = "unstable-cloud")]
-        sni: Option<rustls::pki_types::ServerName<'static>>,
     },
 }
 
@@ -161,29 +113,7 @@ impl From<TlsError> for io::Error {
 impl TlsConfig {
     /// Used in case when the user provided their own TlsContext to be used in all connections.
     pub(crate) fn new_with_global_context(context: TlsContext) -> Self {
-        Self {
-            context,
-            #[cfg(feature = "unstable-cloud")]
-            sni: None,
-        }
-    }
-
-    /// Used in case of Serverless Cloud connections.
-    #[cfg(feature = "unstable-cloud")]
-    pub(crate) fn new_for_sni(
-        context: TlsContext,
-        domain_name: &str,
-        host_id: Option<Uuid>,
-    ) -> Self {
-        Self {
-            context,
-            #[cfg(feature = "unstable-cloud")]
-            sni: Some(if let Some(host_id) = host_id {
-                format!("{host_id}.{domain_name}")
-            } else {
-                domain_name.into()
-            }),
-        }
+        Self { context }
     }
 
     /// Produces a new Tls object that is able to wrap a TCP stream.
@@ -193,28 +123,13 @@ impl TlsConfig {
             TlsContext::OpenSsl010(ref context) => {
                 #[allow(unused_mut)]
                 let mut ssl = openssl::ssl::Ssl::new(context)?;
-                #[cfg(feature = "unstable-cloud")]
-                if let Some(sni) = self.sni.as_ref() {
-                    ssl.set_hostname(sni)?;
-                }
                 Ok(Tls::OpenSsl010(ssl))
             }
             #[cfg(feature = "rustls-023")]
             TlsContext::Rustls023(ref config) => {
                 let connector = tokio_rustls::TlsConnector::from(config.clone());
-                #[cfg(feature = "unstable-cloud")]
-                let sni = self
-                    .sni
-                    .as_deref()
-                    .map(rustls::pki_types::ServerName::try_from)
-                    .transpose()?
-                    .map(|s| s.to_owned());
 
-                Ok(Tls::Rustls023 {
-                    connector,
-                    #[cfg(feature = "unstable-cloud")]
-                    sni,
-                })
+                Ok(Tls::Rustls023 { connector })
             }
         }
     }

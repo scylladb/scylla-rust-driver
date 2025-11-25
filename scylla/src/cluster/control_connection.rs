@@ -237,7 +237,6 @@ mod tests {
             let (conn, _error_receiver) = open_connection(
                 &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address: proxy_addr,
-                    datacenter: None,
                 }),
                 None,
                 &Default::default(),

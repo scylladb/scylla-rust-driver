@@ -491,7 +491,6 @@ async fn test_prepared_statement_col_specs() {
 
 #[tokio::test]
 #[ntest::timeout(20000)]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_skip_result_metadata() {
     use scylla::client::session::Session;
     use scylla::client::session_builder::SessionBuilder;
@@ -718,7 +717,6 @@ fn assert_preparation_attempted_on_all_shards(
 /// 4. All three nodes disabled once (simulation of only part of shards broken) -> preparation succeeds,
 ///     and we assert that all shards were attempted.
 ///
-#[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
 #[ntest::timeout(30000)]
 async fn test_preparation_logic() {

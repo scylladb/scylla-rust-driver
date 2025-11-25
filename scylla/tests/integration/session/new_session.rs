@@ -8,7 +8,6 @@ use scylla::client::session_builder::SessionBuilder;
 use scylla::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
 use tokio::net::TcpListener;
 
-#[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
 async fn proceed_if_only_some_hostnames_are_invalid() {
     setup_tracing();
@@ -29,7 +28,6 @@ async fn proceed_if_only_some_hostnames_are_invalid() {
         .unwrap();
 }
 
-#[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
 async fn all_hostnames_invalid() {
     setup_tracing();

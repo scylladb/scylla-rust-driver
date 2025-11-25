@@ -233,7 +233,6 @@ async fn test_iter_methods_when_altering_table() {
 }
 
 #[tokio::test]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_pager_timeouts() {
     setup_tracing();
 

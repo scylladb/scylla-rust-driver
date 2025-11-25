@@ -271,41 +271,10 @@ pub enum KnownNode {
     Address(SocketAddr),
 }
 
-/// Describes a database server known on `Session` startup.
-/// It is similar to [KnownNode] but includes also `CloudEndpoint` variant,
-/// which is created by the driver if session is configured to connect to
-/// serverless cluster.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) enum InternalKnownNode {
-    Hostname(String),
-    Address(SocketAddr),
-    #[cfg(feature = "unstable-cloud")]
-    CloudEndpoint(CloudEndpoint),
-}
-
-impl From<KnownNode> for InternalKnownNode {
-    fn from(value: KnownNode) -> Self {
-        match value {
-            KnownNode::Hostname(s) => InternalKnownNode::Hostname(s),
-            KnownNode::Address(s) => InternalKnownNode::Address(s),
-        }
-    }
-}
-
-/// Describes a database server in the serverless Scylla Cloud.
-#[cfg(feature = "unstable-cloud")]
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) struct CloudEndpoint {
-    pub(crate) hostname: String,
-    pub(crate) datacenter: String,
-}
-
 /// Describes a database server known on Session startup, with already resolved address.
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
-    #[cfg_attr(not(feature = "unstable-cloud"), expect(unused))]
-    pub(crate) datacenter: Option<String>,
 }
 
 // Resolve the given hostname using a DNS lookup if necessary.
@@ -333,45 +302,34 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::E
 /// In case of a hostname, resolves it using a DNS lookup.
 /// In case of a plain IP address, parses it and uses straight.
 pub(crate) async fn resolve_contact_points(
-    known_nodes: &[InternalKnownNode],
+    known_nodes: &[KnownNode],
 ) -> (Vec<ResolvedContactPoint>, Vec<String>) {
     // Find IP addresses of all known nodes passed in the config
     let mut initial_peers: Vec<ResolvedContactPoint> = Vec::with_capacity(known_nodes.len());
 
-    let mut to_resolve: Vec<(&String, Option<String>)> = Vec::new();
+    let mut to_resolve: Vec<&String> = Vec::new();
     let mut hostnames: Vec<String> = Vec::new();
 
     for node in known_nodes.iter() {
         match node {
-            InternalKnownNode::Hostname(hostname) => {
-                to_resolve.push((hostname, None));
+            KnownNode::Hostname(hostname) => {
+                to_resolve.push(hostname);
                 hostnames.push(hostname.clone());
             }
-            InternalKnownNode::Address(address) => initial_peers.push(ResolvedContactPoint {
-                address: *address,
-                datacenter: None,
-            }),
-            #[cfg(feature = "unstable-cloud")]
-            InternalKnownNode::CloudEndpoint(CloudEndpoint {
-                hostname,
-                datacenter,
-            }) => to_resolve.push((hostname, Some(datacenter.clone()))),
+            KnownNode::Address(address) => {
+                initial_peers.push(ResolvedContactPoint { address: *address })
+            }
         };
     }
-    let resolve_futures = to_resolve
-        .into_iter()
-        .map(|(hostname, datacenter)| async move {
-            match resolve_hostname(hostname).await {
-                Ok(address) => Some(ResolvedContactPoint {
-                    address,
-                    datacenter,
-                }),
-                Err(e) => {
-                    warn!("Hostname resolution failed for {}: {}", hostname, &e);
-                    None
-                }
+    let resolve_futures = to_resolve.into_iter().map(|hostname| async move {
+        match resolve_hostname(hostname).await {
+            Ok(address) => Some(ResolvedContactPoint { address }),
+            Err(e) => {
+                warn!("Hostname resolution failed for {}: {}", hostname, &e);
+                None
             }
-        });
+        }
+    });
     let resolved: Vec<_> = futures::future::join_all(resolve_futures).await;
     initial_peers.extend(resolved.into_iter().flatten());
 
