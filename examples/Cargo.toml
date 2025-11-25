@@ -14,7 +14,6 @@ rustyline-derive = "0.11"
 scylla = { path = "../scylla", features = [
     "openssl-010",
     "rustls-023",
-    "unstable-cloud",
     "chrono-04",
     "time-03",
     "num-bigint-03",
@@ -122,14 +121,6 @@ path = "allocations.rs"
 [[example]]
 name = "query_history"
 path = "query_history.rs"
-
-[[example]]
-name = "cloud-openssl"
-path = "cloud-openssl.rs"
-
-[[example]]
-name = "cloud-rustls"
-path = "cloud-rustls.rs"
 
 [[example]]
 name = "tls-openssl"

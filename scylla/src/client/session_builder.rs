@@ -1,14 +1,10 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
-#[cfg(feature = "unstable-cloud")]
-use super::execution_profile::ExecutionProfile;
 use super::execution_profile::ExecutionProfileHandle;
 use super::session::{Session, SessionConfig};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 use crate::client::session::TlsContext;
-#[cfg(feature = "unstable-cloud")]
-use crate::cloud::{CloudConfig, CloudConfigError, CloudTlsProvider};
 use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
@@ -19,8 +15,6 @@ use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
-#[cfg(feature = "unstable-cloud")]
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
@@ -46,19 +40,6 @@ impl SessionBuilderKind for DefaultMode {}
 
 /// Builder for regular sessions.
 pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
-
-/// Session builder kind for creating cloud sessions.
-#[cfg(feature = "unstable-cloud")]
-#[derive(Clone)]
-pub enum CloudMode {}
-#[cfg(feature = "unstable-cloud")]
-impl sealed::Sealed for CloudMode {}
-#[cfg(feature = "unstable-cloud")]
-impl SessionBuilderKind for CloudMode {}
-
-/// Builder for sessions that connect to Scylla Cloud.
-#[cfg(feature = "unstable-cloud")]
-pub type CloudSessionBuilder = GenericSessionBuilder<CloudMode>;
 
 /// Used to conveniently configure new Session instances.
 ///
@@ -376,42 +357,6 @@ impl GenericSessionBuilder<DefaultMode> {
     pub fn tls_context(mut self, tls_context: Option<impl Into<TlsContext>>) -> Self {
         self.config.tls_context = tls_context.map(|t| t.into());
         self
-    }
-}
-
-// NOTE: this `impl` block contains configuration options specific for **Cloud** [`Session`].
-// This means that if an option fits both non-Cloud and Cloud `Session`s, it should NOT be put
-// here, but rather in `impl<K> GenericSessionBuilder<K>` block.
-#[cfg(feature = "unstable-cloud")]
-impl CloudSessionBuilder {
-    /// Creates a new SessionBuilder with default configuration, based
-    /// on the provided [`CloudConfig`].
-    pub fn from_config(cloud_config: CloudConfig) -> Self {
-        let mut config = SessionConfig::new();
-        let mut exec_profile_builder = ExecutionProfile::builder();
-        if let Some(default_consistency) = cloud_config.get_default_consistency() {
-            exec_profile_builder = exec_profile_builder.consistency(default_consistency);
-        }
-        if let Some(default_serial_consistency) = cloud_config.get_default_serial_consistency() {
-            exec_profile_builder =
-                exec_profile_builder.serial_consistency(Some(default_serial_consistency));
-        }
-        config.default_execution_profile_handle = exec_profile_builder.build().into_handle();
-        config.cloud_config = Some(Arc::new(cloud_config));
-        CloudSessionBuilder {
-            config,
-            kind: PhantomData,
-        }
-    }
-
-    /// Creates a new SessionBuilder with default configuration,
-    /// based on provided path to Scylla Cloud Config yaml.
-    pub fn new(
-        cloud_config: impl AsRef<Path>,
-        tls_provider: CloudTlsProvider,
-    ) -> Result<Self, CloudConfigError> {
-        let cloud_config = CloudConfig::read_from_yaml(cloud_config, tls_provider)?;
-        Ok(Self::from_config(cloud_config))
     }
 }
 

@@ -256,7 +256,6 @@ async fn check_for_all_consistencies_and_setting_options<
 //  in the CQL request frame.
 #[tokio::test]
 #[ntest::timeout(60000)]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn consistency_is_correctly_set_in_cql_requests() {
     setup_tracing();
     let features = fetch_negotiated_features(None).await;
@@ -410,7 +409,6 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
 // in the RoutingInfo that is exposed to the load balancer.
 #[tokio::test]
 #[ntest::timeout(60000)]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn consistency_is_correctly_set_in_routing_info() {
     setup_tracing();
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
@@ -469,7 +467,6 @@ async fn consistency_is_correctly_set_in_routing_info() {
 // Before, Consistency did not contain serial variants, so it used to be impossible.
 #[tokio::test]
 #[ntest::timeout(60000)]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn consistency_allows_for_paxos_selects() {
     setup_tracing();
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());

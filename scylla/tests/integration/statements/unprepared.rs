@@ -120,7 +120,6 @@ async fn test_unprepared_statement() {
 
 #[tokio::test]
 #[ntest::timeout(30000)]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_prepare_query_with_values() {
     setup_tracing();
     // unprepared query with non empty values should be prepared
@@ -174,7 +173,6 @@ async fn test_prepare_query_with_values() {
 
 #[tokio::test]
 #[ntest::timeout(30000)]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_query_with_no_values() {
     setup_tracing();
     // unprepared query with empty values should not be prepared

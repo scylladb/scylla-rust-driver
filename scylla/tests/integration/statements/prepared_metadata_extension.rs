@@ -282,7 +282,6 @@ async fn perform_test_for_proxy(
 // updated after executing the request.
 #[tokio::test]
 #[ntest::timeout(10000)]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_basic_metadata_update() {
     setup_tracing();
 
@@ -320,7 +319,6 @@ async fn test_basic_metadata_update() {
 // everything works.
 #[tokio::test]
 #[ntest::timeout(10000)]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_mixed_cluster() {
     use Condition::*;
     setup_tracing();

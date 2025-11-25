@@ -15,7 +15,6 @@ use scylla_proxy::{
 
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
 
-#[cfg_attr(scylla_cloud_tests, ignore)]
 #[tokio::test]
 async fn test_request_timeout() {
     setup_tracing();

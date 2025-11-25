@@ -62,7 +62,6 @@ async fn run_some_ddl_with_unreachable_node(
 // Verifies that auto schema agreement (performed after receiving response of DDL request) works correctly
 // when a node is paused.
 #[tokio::test]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_schema_await_with_unreachable_node() {
     setup_tracing();
 
@@ -162,7 +161,6 @@ async fn test_schema_await_with_unreachable_node() {
 
 // Verifies that schema agreement process works correctly even if the first check fails.
 #[tokio::test]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn test_schema_await_with_transient_failure() {
     setup_tracing();
 

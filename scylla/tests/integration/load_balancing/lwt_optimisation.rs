@@ -17,7 +17,6 @@ use scylla_proxy::{
 
 #[tokio::test]
 #[ntest::timeout(20000)]
-#[cfg_attr(scylla_cloud_tests, ignore)]
 async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optimally() {
     use scylla::client::session_builder::SessionBuilder;
 

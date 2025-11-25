@@ -93,30 +93,11 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
 // connect to localhost.
 pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilderKind> {
     let session_builder = {
-        #[cfg(not(scylla_cloud_tests))]
-        {
-            use crate::client::session_builder::SessionBuilder;
+        use crate::client::session_builder::SessionBuilder;
 
-            let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-            SessionBuilder::new().known_node(uri)
-        }
-
-        #[cfg(scylla_cloud_tests)]
-        {
-            use crate::client::session_builder::CloudSessionBuilder;
-            use std::path::Path;
-
-            std::env::var("CLOUD_CONFIG_PATH")
-                .map(|config_path| {
-                    CloudSessionBuilder::new(
-                        Path::new(&config_path),
-                        crate::cloud::CloudTlsProvider::OpenSsl010,
-                    )
-                })
-                .expect("Failed to initialize CloudSessionBuilder")
-                .expect("CLOUD_CONFIG_PATH environment variable is missing")
-        }
+        SessionBuilder::new().known_node(uri)
     };
 
     // The reason why we enable so long waiting for TracingInfo is... Cassandra. (Yes, again.)

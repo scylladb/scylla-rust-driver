@@ -279,8 +279,6 @@ pub enum KnownNode {
 pub(crate) enum InternalKnownNode {
     Hostname(String),
     Address(SocketAddr),
-    #[cfg(feature = "unstable-cloud")]
-    CloudEndpoint(CloudEndpoint),
 }
 
 impl From<KnownNode> for InternalKnownNode {
@@ -292,20 +290,10 @@ impl From<KnownNode> for InternalKnownNode {
     }
 }
 
-/// Describes a database server in the serverless Scylla Cloud.
-#[cfg(feature = "unstable-cloud")]
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) struct CloudEndpoint {
-    pub(crate) hostname: String,
-    pub(crate) datacenter: String,
-}
-
 /// Describes a database server known on Session startup, with already resolved address.
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
-    #[cfg_attr(not(feature = "unstable-cloud"), expect(unused))]
-    pub(crate) datacenter: Option<String>,
 }
 
 // Resolve the given hostname using a DNS lookup if necessary.
@@ -347,31 +335,20 @@ pub(crate) async fn resolve_contact_points(
                 to_resolve.push((hostname, None));
                 hostnames.push(hostname.clone());
             }
-            InternalKnownNode::Address(address) => initial_peers.push(ResolvedContactPoint {
-                address: *address,
-                datacenter: None,
-            }),
-            #[cfg(feature = "unstable-cloud")]
-            InternalKnownNode::CloudEndpoint(CloudEndpoint {
-                hostname,
-                datacenter,
-            }) => to_resolve.push((hostname, Some(datacenter.clone()))),
+            InternalKnownNode::Address(address) => {
+                initial_peers.push(ResolvedContactPoint { address: *address })
+            }
         };
     }
-    let resolve_futures = to_resolve
-        .into_iter()
-        .map(|(hostname, datacenter)| async move {
-            match resolve_hostname(hostname).await {
-                Ok(address) => Some(ResolvedContactPoint {
-                    address,
-                    datacenter,
-                }),
-                Err(e) => {
-                    warn!("Hostname resolution failed for {}: {}", hostname, &e);
-                    None
-                }
+    let resolve_futures = to_resolve.into_iter().map(|(hostname, _)| async move {
+        match resolve_hostname(hostname).await {
+            Ok(address) => Some(ResolvedContactPoint { address }),
+            Err(e) => {
+                warn!("Hostname resolution failed for {}: {}", hostname, &e);
+                None
             }
-        });
+        }
+    });
     let resolved: Vec<_> = futures::future::join_all(resolve_futures).await;
     initial_peers.extend(resolved.into_iter().flatten());
 

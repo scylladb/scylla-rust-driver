@@ -1206,7 +1206,6 @@ mod tests {
     // Port collision should occur
     // If they are not handled this test will most likely fail
     #[tokio::test]
-    #[cfg_attr(scylla_cloud_tests, ignore)]
     async fn many_connections() {
         setup_tracing();
         let connections_number = 512;
@@ -1232,7 +1231,6 @@ mod tests {
 
         let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
             address: connect_address,
-            datacenter: None,
         });
 
         // Open the connections

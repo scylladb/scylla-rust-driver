@@ -1446,16 +1446,8 @@ impl Connection {
                     .await);
                 }
                 #[cfg(feature = "rustls-023")]
-                crate::network::tls::Tls::Rustls023 {
-                    connector,
-                    #[cfg(feature = "unstable-cloud")]
-                    sni,
-                } => {
+                crate::network::tls::Tls::Rustls023 { connector } => {
                     use rustls::pki_types::ServerName;
-                    #[cfg(feature = "unstable-cloud")]
-                    let server_name =
-                        sni.unwrap_or_else(|| ServerName::IpAddress(node_address.into()));
-                    #[cfg(not(feature = "unstable-cloud"))]
                     let server_name = ServerName::IpAddress(node_address.into());
                     let stream = connector.connect(server_name, stream).await?;
                     return Ok(spawn_router_and_get_handle(
@@ -2346,7 +2338,6 @@ mod tests {
     ///    Then use query_iter with page_size set to 7 to select all 100 rows.
     /// 3. INSERT query_iter should work and not return any rows.
     #[tokio::test]
-    #[cfg_attr(scylla_cloud_tests, ignore)]
     async fn connection_query_iter_test() {
         use crate::client::session_builder::SessionBuilder;
 
@@ -2355,10 +2346,7 @@ mod tests {
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
         let (connection, _) = super::open_connection(
-            &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
-                address: addr,
-                datacenter: None,
-            }),
+            &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address: addr }),
             None,
             &HostConnectionConfig::default(),
         )
@@ -2455,7 +2443,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(scylla_cloud_tests, ignore)]
     async fn test_coalescing() {
         use std::num::NonZeroU64;
 
@@ -2490,10 +2477,7 @@ mod tests {
 
         let subtest = |write_coalescing_delay: Option<WriteCoalescingDelay>, ks: String| async move {
             let (connection, _) = super::open_connection(
-                &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
-                    address: addr,
-                    datacenter: None,
-                }),
+                &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address: addr }),
                 None,
                 &HostConnectionConfig {
                     write_coalescing_delay,
@@ -2643,7 +2627,6 @@ mod tests {
         // We must interrupt the driver's full connection opening, because our proxy does not interact further after Startup.
         let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
             address: proxy_addr,
-            datacenter: None,
         });
         let (startup_without_lwt_optimisation, _shard) = select! {
             _ = open_connection(&endpoint, None, &config) => unreachable!(),
@@ -2677,7 +2660,6 @@ mod tests {
 
     #[tokio::test]
     #[ntest::timeout(20000)]
-    #[cfg_attr(scylla_cloud_tests, ignore)]
     async fn connection_is_closed_on_no_response_to_keepalives() {
         use crate::errors::BrokenConnectionErrorKind;
 
@@ -2715,7 +2697,6 @@ mod tests {
         let (conn, mut error_receiver) = open_connection(
             &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: proxy_addr,
-                datacenter: None,
             }),
             None,
             &config,
