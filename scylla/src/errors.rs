@@ -576,6 +576,24 @@ impl ConnectionError {
     }
 }
 
+/// Error returned from custom implementations of [AddressTranslator](crate::policies::address_translator::AddressTranslator)
+#[derive(Debug, Clone, Error)]
+#[error("Custom translation error: {0}")]
+pub struct CustomTranslationError(Arc<dyn Error + Send + Sync>);
+
+impl CustomTranslationError {
+    /// Constructs a new `CustomTranslationError`.
+    #[inline]
+    pub fn new(err: impl Error + Send + Sync + 'static) -> CustomTranslationError {
+        CustomTranslationError(Arc::new(err))
+    }
+
+    /// Retrieve an error reason by downcasting to specific type.
+    pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
+        self.0.downcast_ref()
+    }
+}
+
 /// Error caused by failed address translation done before establishing connection
 #[non_exhaustive]
 #[derive(Debug, Clone, Error)]
@@ -596,6 +614,10 @@ pub enum TranslationError {
     /// An I/O error occurred during address translation.
     #[error("An I/O error occurred during address translation: {0}")]
     IoError(Arc<std::io::Error>),
+
+    /// Custom error, for example from user-implemented policy.
+    #[error(transparent)]
+    Custom(#[from] CustomTranslationError),
 }
 
 /// An error that occurred during connection setup request execution.
