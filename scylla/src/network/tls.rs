@@ -4,8 +4,6 @@
 //!
 //! ┌─←─ TlsContext (openssl::SslContext / rustls::ClientConfig)
 //! │
-//! ├─←─ CloudConfig (powered by either TLS backend)
-//! │
 //! │ gets wrapped in
 //! │
 //! ↳TlsProvider (same for all connections)
@@ -17,6 +15,14 @@
 //!     │ produces
 //!     │
 //!     ↳Tls (wrapper over TCP stream which adds encryption)
+//!
+//! Currently it is not strictly necessary to have both `TlsContext` and `TlsProvider`.
+//! The reason for having both is historical. It is about the old Scylla Cloud Serverless, which
+//! used SNI proxy to allow driver to connect to the nodes. `TlsProvider` used to have `CloudConfig` variant,
+//! which stored both TLS context and cloud configuration. This would be then transformed into `TlsConfig`,
+//! which had additional field for SNI hostname.
+//! We could remove `TlsProvider`, and maybe even `TlsConfig`, but for now we kept it - it may be useful in the future,
+//! for example if we wanted to support more elastic hostname verification.
 
 use std::io;
 
@@ -38,9 +44,9 @@ impl TlsProvider {
     /// Produces a [TlsConfig] that is specific for the given endpoint.
     pub(crate) fn make_tls_config(
         &self,
-        // Currently, this is only used for cloud; but it makes abstract sense to pass endpoint here
+        // This was only used for serverless cloud; but it makes abstract sense to pass endpoint here
         // also for non-cloud cases, so let's just allow(unused).
-        #[allow(unused)] endpoint: &UntranslatedEndpoint,
+        #[expect(unused)] endpoint: &UntranslatedEndpoint,
     ) -> Option<TlsConfig> {
         match self {
             TlsProvider::GlobalContext(context) => {
@@ -52,10 +58,7 @@ impl TlsProvider {
 
 /// Encapsulates TLS-regarding configuration that is specific for a particular endpoint.
 ///
-/// Both use cases are supported:
-/// 1. User-provided global TlsContext. Then, the global TlsContext is simply cloned here.
-/// 2. Serverless Cloud. Then the TlsContext is customized for the given endpoint,
-///    and its SNI information is stored alongside.
+/// Currently we don't need any host-specific parameters, but that may change in the future.
 #[derive(Clone)]
 pub(crate) struct TlsConfig {
     context: TlsContext,
