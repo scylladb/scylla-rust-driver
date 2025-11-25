@@ -15,6 +15,7 @@ When the policy is datacenter-aware, you can configure whether to allow datacent
 - `is_token_aware`: `true`
 - `permit_dc_failover`: `false`
 - `latency_awareness`: `None`
+- `enable_replica_shuffle`: `true`
 
 You can use the builder methods to configure the desired settings and create a
 `DefaultPolicy` instance:
