@@ -97,8 +97,8 @@ enum PickedReplica<'a> {
 /// The default load balancing policy.
 ///
 /// It can be configured to be datacenter-aware, rack-aware and token-aware.
-/// Datacenter failover (sending query to a node from a remote datacenter)
-/// for queries with non local consistency mode is also supported.
+/// When the policy is datacenter-aware, you can configure whether to allow datacenter failover
+/// (sending query to a node from a remote datacenter).
 ///
 /// Latency awareness is available, although **not recommended**:
 /// the penalisation mechanism it involves may interact badly with other
@@ -1071,8 +1071,7 @@ impl DefaultPolicyBuilder {
     ///
     /// Datacenter failover can be enabled in `DefaultPolicy` setting this flag.
     /// When it is set, the policy will prefer to return alive remote replicas
-    /// if datacenter failover is permitted and possible due to consistency
-    /// constraints.
+    /// if datacenter failover is permitted.
     pub fn permit_dc_failover(mut self, permit: bool) -> Self {
         self.permit_dc_failover = permit;
         self

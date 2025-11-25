@@ -1,8 +1,9 @@
 # DefaultPolicy
 
 `DefaultPolicy` is the default load balancing policy in ScyllaDB Rust Driver. It
-can be configured to be datacenter-aware and token-aware. Datacenter failover
-for queries with non-local consistency mode is also supported.
+can be configured to be datacenter-aware, rack-aware and token-aware.
+When the policy is datacenter-aware, you can configure whether to allow datacenter failover
+(sending query to a node from a remote datacenter).
 
 ## Creating a DefaultPolicy
 
@@ -70,8 +71,7 @@ if the local nodes are unavailable.
 
 Datacenter failover can be enabled in `DefaultPolicy` by `permit_dc_failover`
 setting in the builder. When this flag is set, the policy will prefer to return
-alive remote replicas if datacenter failover is permitted and possible due to
-consistency constraints.
+alive remote replicas if datacenter failover is permitted.
 
 #### Token awareness
 
