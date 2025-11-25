@@ -27,7 +27,9 @@ mod sealed {
 }
 /// Kind of the session builder, used to distinguish between
 /// builders that create regular sessions and those that create custom
-/// sessions, such as cloud sessions.
+/// sessions. Currently, there are no such custom session builders,
+/// but we may introduce some in the future. In the past, we had a `CloudSessionBuilder`
+/// used to connect to Scylla Cloud Serverless.
 /// This is used to conditionally enable different sets of methods
 /// on the session builder based on its kind.
 pub trait SessionBuilderKind: sealed::Sealed + Clone {}
@@ -44,9 +46,7 @@ pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
 /// Used to conveniently configure new Session instances.
 ///
 /// Most likely you will want to use [`SessionBuilder`]
-/// (for building regular session). If you want to build a session
-/// that connects to Scylla Cloud, you will want to use
-/// `CloudSessionBuilder`.
+/// (for building regular session).
 ///
 /// # Example
 ///
@@ -70,9 +70,12 @@ pub struct GenericSessionBuilder<Kind: SessionBuilderKind> {
     kind: PhantomData<Kind>,
 }
 
-// NOTE: this `impl` block contains configuration options specific for **non-Cloud** [`Session`].
-// This means that if an option fits both non-Cloud and Cloud `Session`s, it should NOT be put
-// here, but rather in `impl<K> GenericSessionBuilder<K>` block.
+// NOTE: this `impl` block contains configuration options specific for default mode.
+// This includes: list of contact points, address translation, and TLS configuration.
+// Alternative ways to connect to the cluster, like legacy Scylla Cloud Serverless, or
+// AWS Private Link (if we introduce it in the future), may internally utilize address translation,
+// or TLS configuration (for example for SNI). We don't want users to be able to create invalid
+// configuration, so such options should not be available for those builder types.
 impl GenericSessionBuilder<DefaultMode> {
     /// Creates new SessionBuilder with default configuration
     /// # Default configuration
@@ -360,8 +363,8 @@ impl GenericSessionBuilder<DefaultMode> {
     }
 }
 
-// This block contains configuration options that make sense both for Cloud and non-Cloud
-// `Session`s. If an option fit only one of them, it should be put in a specialised block.
+// This block contains configuration options that make sense both for any `Session` type.
+// If an option fit only some of them, it should be put in a specialised block.
 impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Sets the local ip address all TCP sockets are bound to.
     ///
