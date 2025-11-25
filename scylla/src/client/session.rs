@@ -5,7 +5,7 @@ use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, Executi
 use super::pager::{PreparedPagerConfig, QueryPager};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
-use crate::cluster::node::{InternalKnownNode, KnownNode, NodeRef};
+use crate::cluster::node::{KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
     BadQuery, BrokenConnectionError, ExecutionError, MetadataError, NewSessionError,
@@ -846,11 +846,7 @@ impl Session {
     /// # }
     /// ```
     pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
-        let known_nodes: Vec<InternalKnownNode> = config
-            .known_nodes
-            .into_iter()
-            .map(|node| node.into())
-            .collect();
+        let known_nodes = config.known_nodes;
 
         // Ensure there is at least one known node
         if known_nodes.is_empty() {

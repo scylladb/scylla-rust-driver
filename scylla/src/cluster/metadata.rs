@@ -18,6 +18,7 @@
 
 use crate::DeserializeRow;
 use crate::client::pager::{NextPageError, NextRowError, QueryPager};
+use crate::cluster::KnownNode;
 use crate::cluster::node::resolve_contact_points;
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
@@ -53,7 +54,7 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use crate::cluster::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
+use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 use crate::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError, RequestError,
     TablesMetadataError, UdtMetadataError,
@@ -104,7 +105,7 @@ pub(crate) struct MetadataReader {
 
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
-    initial_known_nodes: Vec<InternalKnownNode>,
+    initial_known_nodes: Vec<KnownNode>,
 
     // When a control connection breaks, the PoolRefiller of its pool uses the requester
     // to signal ClusterWorker that an immediate metadata refresh is advisable.
@@ -475,7 +476,7 @@ impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
-        initial_known_nodes: Vec<InternalKnownNode>,
+        initial_known_nodes: Vec<KnownNode>,
         control_connection_repair_requester: broadcast::Sender<()>,
         mut connection_config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
