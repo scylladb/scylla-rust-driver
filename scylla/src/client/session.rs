@@ -253,6 +253,10 @@ pub struct SessionConfig {
     /// It is true by default but can be disabled if successive schema-altering statements should be performed.
     pub refresh_metadata_on_auto_schema_agreement: bool,
 
+    /// DNS hostname resolution timeout.
+    /// If `None`, the driver will wait for hostname resolution indefinitely.
+    pub hostname_resolution_timeout: Option<Duration>,
+
     /// The address translator is used to translate addresses received from ScyllaDB nodes
     /// (either with cluster metadata or with an event) to addresses that can be used to
     /// actually connect to those nodes. This may be needed e.g. when there is NAT
@@ -337,6 +341,7 @@ impl SessionConfig {
             tls_context: None,
             authenticator: None,
             connect_timeout: Duration::from_secs(5),
+            hostname_resolution_timeout: Some(Duration::from_secs(5)),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
             timestamp_generator: None,
@@ -903,6 +908,7 @@ impl Session {
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
             config.metadata_request_serverside_timeout,
+            config.hostname_resolution_timeout,
             config.host_filter,
             config.cluster_metadata_refresh_interval,
             tablet_receiver,

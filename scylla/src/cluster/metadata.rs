@@ -93,6 +93,7 @@ pub(crate) enum SingleKeyspaceMetadataError {
 pub(crate) struct MetadataReader {
     control_connection_pool_config: PoolConfig,
     request_serverside_timeout: Option<Duration>,
+    hostname_resolution_timeout: Option<Duration>,
 
     control_connection_endpoint: UntranslatedEndpoint,
     control_connection: NodeConnectionPool,
@@ -477,6 +478,7 @@ impl MetadataReader {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         initial_known_nodes: Vec<KnownNode>,
+        hostname_resolution_timeout: Option<Duration>,
         control_connection_repair_requester: broadcast::Sender<()>,
         mut connection_config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
@@ -487,7 +489,7 @@ impl MetadataReader {
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Result<Self, NewSessionError> {
         let (initial_peers, resolved_hostnames) =
-            resolve_contact_points(&initial_known_nodes).await;
+            resolve_contact_points(&initial_known_nodes, hostname_resolution_timeout).await;
         // Ensure there is at least one resolved node
         if initial_peers.is_empty() {
             return Err(NewSessionError::FailedToResolveAnyHostname(
@@ -531,6 +533,7 @@ impl MetadataReader {
             control_connection_endpoint,
             control_connection,
             request_serverside_timeout,
+            hostname_resolution_timeout,
             known_peers: initial_peers
                 .into_iter()
                 .map(UntranslatedEndpoint::ContactPoint)
@@ -590,8 +593,11 @@ impl MetadataReader {
                 warn!(
                     "Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points."
                 );
-                let (initial_peers, _hostnames) =
-                    resolve_contact_points(&self.initial_known_nodes).await;
+                let (initial_peers, _hostnames) = resolve_contact_points(
+                    &self.initial_known_nodes,
+                    self.hostname_resolution_timeout,
+                )
+                .await;
                 result = self
                     .retry_fetch_metadata_on_nodes(
                         initial,

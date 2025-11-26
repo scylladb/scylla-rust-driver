@@ -876,6 +876,29 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
+    /// Changes DNS hostname resolution timeout.
+    /// The default is 5 seconds.
+    /// Using `None` disables the timeout.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .hostname_resolution_timeout(Some(Duration::from_secs(10)))
+    ///     .build() // Turns SessionBuilder into Session
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn hostname_resolution_timeout(mut self, duration: Option<Duration>) -> Self {
+        self.config.hostname_resolution_timeout = duration;
+        self
+    }
+
     /// Sets the host filter. The host filter decides whether any connections
     /// should be opened to the node or not. The driver will also avoid
     /// those nodes when re-establishing the control connection.
