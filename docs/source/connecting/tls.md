@@ -59,6 +59,9 @@ and a rustls
 can be automatically converted to a `TlsContext` when passing to
 `SessionBuilder`.
 
+**_NOTE:_** Recommended API in `openssl` crate is `SslConnector`, because it has safer defaults. Please use it, and then call `into_context()` to
+get `SslContext` instance you can pass to the driver.
+
 For example, if database certificate is in the file `ca.crt`:
 ```rust
 # extern crate scylla;
