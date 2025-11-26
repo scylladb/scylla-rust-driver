@@ -1427,7 +1427,10 @@ impl Connection {
             #[allow(unreachable_code)]
             match tls_config.new_tls()? {
                 #[cfg(feature = "openssl-010")]
-                crate::network::tls::Tls::OpenSsl010(ssl) => {
+                crate::network::tls::Tls::OpenSsl010(mut ssl) => {
+                    ssl.param_mut()
+                        .set_ip(node_address)
+                        .map_err(crate::network::tls::TlsError::OpenSsl010)?;
                     let mut stream = tokio_openssl::SslStream::new(ssl, stream)
                         .map_err(crate::network::tls::TlsError::OpenSsl010)?;
                     std::pin::Pin::new(&mut stream)
