@@ -268,6 +268,10 @@ pub struct SessionConfig {
     /// re-establishing the control connection.
     pub host_filter: Option<Arc<dyn HostFilter>>,
 
+    // #[cfg(cpp_rust_unstable)]
+    /// Optional listener for host events (ADD, REMOVE, UP, DOWN).
+    pub host_listener: Option<Arc<dyn crate::policies::host_listener::HostListener>>,
+
     /// If true, the driver will inject a delay controlled by [`SessionConfig::write_coalescing_delay`]
     /// before flushing data to the socket.
     /// This gives the driver an opportunity to collect more write requests
@@ -354,6 +358,7 @@ impl SessionConfig {
             schema_agreement_automatic_waiting: true,
             address_translator: None,
             host_filter: None,
+            host_listener: None,
             refresh_metadata_on_auto_schema_agreement: true,
             enable_write_coalescing: true,
             write_coalescing_delay: WriteCoalescingDelay::SmallNondeterministic,
