@@ -248,13 +248,17 @@ impl ClusterWorker {
             tokio::pin!(sleep_future);
 
             tokio::select! {
-                _ = sleep_future => {},
-                recv_res = self.refresh_channel.recv() => {
-                    match recv_res {
+                _sleep_finished = sleep_future => {
+                    // Time to do periodic refresh.
+                },
+
+                maybe_refresh_request = self.refresh_channel.recv() => {
+                    match maybe_refresh_request {
                         Some(request) => cur_request = Some(request),
                         None => return, // If refresh_channel was closed then cluster was dropped, we can stop working
                     }
                 }
+
                 tablets_count = self.tablets_channel.recv_many(&mut tablets, TABLET_CHANNEL_SIZE) => {
                     tracing::trace!("Performing tablets update - received {} tablets", tablets_count);
                     if tablets_count == 0 {
@@ -286,9 +290,11 @@ impl ClusterWorker {
 
                     continue;
                 }
-                recv_res = self.server_events_channel.recv() => {
-                    if let Some(event) = recv_res {
+
+                maybe_cql_event = self.server_events_channel.recv() => {
+                    if let Some(event) = maybe_cql_event {
                         debug!("Received server event: {:?}", event);
+
                         match event {
                             Event::TopologyChange(_) => (), // Refresh immediately
                             Event::StatusChange(_status) => {
@@ -311,8 +317,9 @@ impl ClusterWorker {
                         return;
                     }
                 }
-                recv_res = self.use_keyspace_channel.recv() => {
-                    match recv_res {
+
+                maybe_use_keyspace_request = self.use_keyspace_channel.recv() => {
+                    match maybe_use_keyspace_request {
                         Some(request) => {
                             self.used_keyspace = Some(request.keyspace_name.clone());
 
@@ -325,8 +332,9 @@ impl ClusterWorker {
 
                     continue; // Don't go to refreshing, wait for the next event
                 }
-                recv_res = self.control_connection_repair_channel.recv() => {
-                    match recv_res {
+
+                maybe_control_connection_failed = self.control_connection_repair_channel.recv() => {
+                    match maybe_control_connection_failed {
                         Ok(()) => {
                             // The control connection was broken. Acknowledge that and start attempting to reconnect.
                             // The first reconnect attempt will be immediate (by attempting metadata refresh below),
