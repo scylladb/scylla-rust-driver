@@ -1187,6 +1187,16 @@ struct OpenedConnectionEvent {
     keyspace_name: Option<VerifiedKeyspaceName>,
 }
 
+/// Signals that connectivity to a node has changed.
+#[derive(Debug)]
+pub(crate) enum ConnectivityChangeEvent {
+    /// A new connection to the node was established, while there were no working connections.
+    Established { address: NodeAddr },
+
+    /// The last working connection to the node was lost.
+    Lost { address: NodeAddr },
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::connection::{HostConnectionConfig, open_connection_to_shard_aware_port};
