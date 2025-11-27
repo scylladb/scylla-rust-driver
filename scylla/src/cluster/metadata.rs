@@ -781,6 +781,7 @@ impl MetadataReader {
             endpoint,
             pool_config,
             None,
+            None,
             refresh_requester,
             #[cfg(feature = "metrics")]
             metrics,

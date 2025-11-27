@@ -1,5 +1,5 @@
 use crate::errors::{ClusterStateTokenError, ConnectionPoolError};
-use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
+use crate::network::{Connection, ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
@@ -14,6 +14,7 @@ use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -90,6 +91,7 @@ impl ClusterState {
         known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
+        connectivity_events_sender: &mpsc::UnboundedSender<ConnectivityChangeEvent>,
         mut tablets: TabletsInfo,
         old_keyspaces: &HashMap<String, Keyspace>,
         #[cfg(feature = "metrics")] metrics: &Arc<Metrics>,
@@ -125,6 +127,7 @@ impl ClusterState {
                     Arc::new(Node::new(
                         peer_endpoint,
                         pool_config,
+                        connectivity_events_sender.clone(),
                         used_keyspace.clone(),
                         is_enabled,
                         #[cfg(feature = "metrics")]

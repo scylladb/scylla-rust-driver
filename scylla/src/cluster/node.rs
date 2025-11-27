@@ -5,8 +5,8 @@ use tracing::warn;
 use uuid::Uuid;
 
 use crate::errors::{ConnectionPoolError, UseKeyspaceError};
-use crate::network::Connection;
 use crate::network::VerifiedKeyspaceName;
+use crate::network::{Connection, ConnectivityChangeEvent};
 use crate::network::{NodeConnectionPool, PoolConfig};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
@@ -116,6 +116,7 @@ impl Node {
     pub(crate) fn new(
         peer: PeerEndpoint,
         pool_config: &PoolConfig,
+        connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
         keyspace_name: Option<VerifiedKeyspaceName>,
         enabled: bool,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
@@ -131,6 +132,7 @@ impl Node {
             NodeConnectionPool::new(
                 UntranslatedEndpoint::Peer(peer),
                 pool_config,
+                Some((host_id, connectivity_events_sender)),
                 keyspace_name,
                 pool_empty_notifier,
                 #[cfg(feature = "metrics")]

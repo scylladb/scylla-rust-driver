@@ -1394,6 +1394,7 @@ mod tests {
 
         // based on locator mock cluster
         pub(crate) async fn mock_cluster_state_for_token_aware_tests() -> ClusterState {
+            let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
             let metadata = mock_metadata_for_token_aware_tests();
             let state = ClusterState::new(
                 metadata,
@@ -1401,6 +1402,7 @@ mod tests {
                 &HashMap::new(),
                 &None,
                 None,
+                &connectivity_events_sender,
                 TabletsInfo::new(),
                 &HashMap::new(),
                 #[cfg(feature = "metrics")]
@@ -1434,12 +1436,14 @@ mod tests {
                 keyspaces: HashMap::new(),
             };
 
+            let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
             let state = ClusterState::new(
                 info,
                 &Default::default(),
                 &HashMap::new(),
                 &None,
                 None,
+                &connectivity_events_sender,
                 TabletsInfo::new(),
                 &HashMap::new(),
                 #[cfg(feature = "metrics")]
@@ -2491,6 +2495,7 @@ mod tests {
             );
         }
 
+        let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();
         let cluster_with_disabled_node_f = ClusterState::new(
             mock_metadata_for_token_aware_tests(),
             &Default::default(),
@@ -2506,6 +2511,7 @@ mod tests {
 
                 Some(&FHostFilter)
             },
+            &connectivity_events_sender,
             TabletsInfo::new(),
             &HashMap::new(),
             #[cfg(feature = "metrics")]

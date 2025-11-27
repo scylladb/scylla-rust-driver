@@ -25,6 +25,7 @@ use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
+use uuid::Uuid;
 
 use tokio::sync::{Notify, mpsc};
 use tracing::{debug, error, trace, warn};
@@ -206,6 +207,7 @@ impl NodeConnectionPool {
     pub(crate) fn new(
         endpoint: UntranslatedEndpoint,
         pool_config: &PoolConfig,
+        connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_empty_notifier: mpsc::Sender<()>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
@@ -220,6 +222,7 @@ impl NodeConnectionPool {
         let refiller = PoolRefiller::new(
             arced_endpoint.clone(),
             host_pool_config,
+            connectivity_events_sender,
             current_keyspace,
             pool_updated_notify.clone(),
             pool_empty_notifier,
@@ -467,6 +470,9 @@ struct PoolRefiller {
     // Following information identify the pool and do not change
     pool_config: HostPoolConfig,
 
+    /// If set, used to send connectivity change events about node with given host_id.
+    connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
+
     // Following information is subject to updates on topology refresh
     endpoint: Arc<RwLock<UntranslatedEndpoint>>,
 
@@ -530,6 +536,7 @@ impl PoolRefiller {
     pub(crate) fn new(
         endpoint: Arc<RwLock<UntranslatedEndpoint>>,
         pool_config: HostPoolConfig,
+        connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
         pool_empty_notifier: mpsc::Sender<()>,
@@ -543,6 +550,7 @@ impl PoolRefiller {
         Self {
             endpoint,
             pool_config,
+            connectivity_events_sender,
 
             shard_aware_port: None,
             sharder: None,
@@ -993,11 +1001,75 @@ impl PoolRefiller {
             Arc::new(MaybePoolConnections::Ready(new_conns))
         };
 
-        // Make the connection list available
-        self.shared_conns.store(new_conns);
+        // Make the connection list available.
+        let old_conns = self.shared_conns.swap(new_conns);
 
-        // Notify potential waiters
+        // Notify potential waiters.
         self.pool_updated_notify.notify_waiters();
+
+        // Emit transition events.
+        self.emit_events(old_conns.as_ref());
+    }
+
+    /// Emits connectivity change events if the pool transitioned
+    /// between empty and non-empty states,
+    /// provided that connectivity notifier is configured.
+    fn emit_events(&self, old_conns: &MaybePoolConnections) {
+        let Some((host_id, ref connectivity_notifier)) = self.connectivity_events_sender else {
+            // No notifier configured, nothing to do.
+            return;
+        };
+
+        // This is used to notify the ClusterWorker about host reachability
+        // in case of non-control connection pool.
+
+        let maybe_event = match (old_conns, !self.is_empty()) {
+            (MaybePoolConnections::Initializing, true)
+            | (MaybePoolConnections::Broken(_), true) => {
+                // There was no connectivity before, now there are some connections.
+                Some(ConnectivityChangeEvent::Established { host_id })
+            }
+            (MaybePoolConnections::Ready(_), false) => {
+                // There was connectivity before, now there are no connections.
+                Some(ConnectivityChangeEvent::Lost { host_id })
+            }
+            (MaybePoolConnections::Broken(_), false) => {
+                // Already broken, no transition.
+                None
+            }
+            (MaybePoolConnections::Ready(_), true) => {
+                // Already ready, no transition.
+                None
+            }
+            (MaybePoolConnections::Initializing, false) => {
+                // Initially we optimistically assumed the node was alive,
+                // now we have a hint that it is not.
+                Some(ConnectivityChangeEvent::Lost { host_id })
+            }
+        };
+
+        let Some(event) = maybe_event else {
+            // No transition, nothing to do.
+            return;
+        };
+        let endpoint = self.endpoint_description();
+        match event {
+            ConnectivityChangeEvent::Established { .. } => {
+                debug!(
+                    "[{} - {}] Connection pool is no longer empty, notifying listeners",
+                    host_id, endpoint,
+                );
+            }
+            ConnectivityChangeEvent::Lost { .. } => {
+                debug!(
+                    "[{} - {}] Connection pool is now empty, notifying listeners",
+                    host_id, endpoint,
+                );
+            }
+        }
+
+        // Ignore failure to send. If there are no listeners, it's fine.
+        let _ = connectivity_notifier.send(event);
     }
 
     // Removes given connection from the pool. It looks both into active
@@ -1185,6 +1257,26 @@ struct OpenedConnectionEvent {
     result: Result<(Connection, ErrorReceiver), ConnectionError>,
     requested_shard: Option<Shard>,
     keyspace_name: Option<VerifiedKeyspaceName>,
+}
+
+/// Signals that connectivity to a node has changed.
+#[derive(Debug)]
+pub(crate) enum ConnectivityChangeEvent {
+    /// A new connection to the node was established, while there were no working connections.
+    Established { host_id: Uuid },
+
+    /// The last working connection to the node was lost.
+    Lost { host_id: Uuid },
+}
+impl ConnectivityChangeEvent {
+    /// Returns the host ID associated with this event.
+    #[expect(dead_code)]
+    pub(crate) fn host_id(&self) -> Uuid {
+        match *self {
+            ConnectivityChangeEvent::Established { host_id }
+            | ConnectivityChangeEvent::Lost { host_id } => host_id,
+        }
+    }
 }
 
 #[cfg(test)]
