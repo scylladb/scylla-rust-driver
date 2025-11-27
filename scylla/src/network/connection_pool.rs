@@ -26,7 +26,7 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
 
-use tokio::sync::{Notify, broadcast, mpsc};
+use tokio::sync::{Notify, mpsc};
 use tracing::{debug, error, trace, warn};
 
 /// The target size of a per-node connection pool.
@@ -207,7 +207,7 @@ impl NodeConnectionPool {
         endpoint: UntranslatedEndpoint,
         pool_config: &PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
-        pool_empty_notifier: broadcast::Sender<()>,
+        pool_empty_notifier: mpsc::Sender<()>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
@@ -514,7 +514,7 @@ struct PoolRefiller {
     pool_updated_notify: Arc<Notify>,
 
     // Signaled when the connection pool becomes empty
-    pool_empty_notifier: broadcast::Sender<()>,
+    pool_empty_notifier: mpsc::Sender<()>,
 
     #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
@@ -532,7 +532,7 @@ impl PoolRefiller {
         pool_config: HostPoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
-        pool_empty_notifier: broadcast::Sender<()>,
+        pool_empty_notifier: mpsc::Sender<()>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
@@ -1039,9 +1039,13 @@ impl PoolRefiller {
                 self.conns[shard_id].len(),
                 self.active_connection_count(),
             );
+
             if self.is_empty() {
-                let _ = self.pool_empty_notifier.send(());
+                // This is used to notify the ClusterWorker that the control connection has died.
+                // `try_send()` is OK here because if the channel is full, the notification is already pending.
+                let _ = self.pool_empty_notifier.try_send(());
             }
+
             self.update_shared_conns(Some(last_error));
             return;
         }

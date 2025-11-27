@@ -50,7 +50,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -110,7 +110,7 @@ pub(crate) struct MetadataReader {
 
     // When a control connection breaks, the PoolRefiller of its pool uses the requester
     // to signal ClusterWorker that an immediate metadata refresh is advisable.
-    control_connection_repair_requester: broadcast::Sender<()>,
+    control_connection_repair_requester: mpsc::Sender<()>,
 
     #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
@@ -479,7 +479,7 @@ impl MetadataReader {
     pub(crate) async fn new(
         initial_known_nodes: Vec<KnownNode>,
         hostname_resolution_timeout: Option<Duration>,
-        control_connection_repair_requester: broadcast::Sender<()>,
+        control_connection_repair_requester: tokio::sync::mpsc::Sender<()>,
         mut connection_config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
@@ -774,7 +774,7 @@ impl MetadataReader {
     fn make_control_connection_pool(
         endpoint: UntranslatedEndpoint,
         pool_config: &PoolConfig,
-        refresh_requester: broadcast::Sender<()>,
+        refresh_requester: mpsc::Sender<()>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> NodeConnectionPool {
         NodeConnectionPool::new(
