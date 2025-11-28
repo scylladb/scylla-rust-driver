@@ -101,6 +101,9 @@ harness = false
 [lints.rust]
 unnameable_types = "warn"
 unreachable_pub = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(nodejs_rs_unstable)',
+] }
 
 [package.metadata.cargo-semver-checks.lints]
 workspace = true

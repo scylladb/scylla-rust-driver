@@ -405,6 +405,13 @@ impl QueryRowsResult {
             request_coordinator,
         )
     }
+
+    /// Allows to obtain reference to `DeserializedMetadataAndRawRows`, without the need for owned object deconstruction.
+    /// Intended to be used only in nodejs-rs driver only.
+    #[cfg(nodejs_rs_unstable)]
+    pub fn raw_rows_with_metadata(&self) -> &DeserializedMetadataAndRawRows {
+        &self.raw_rows_with_metadata
+    }
 }
 
 /// An error returned by [`QueryResult::into_rows_result`]
