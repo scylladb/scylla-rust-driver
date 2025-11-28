@@ -10,3 +10,4 @@ Cargo.lock
 .idea
 .idea/workspace.xml
 scylla/ccm_data/
+.DS_Store
