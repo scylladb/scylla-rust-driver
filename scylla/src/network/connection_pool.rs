@@ -685,14 +685,13 @@ impl PoolRefiller {
     // Futures which open the connections are pushed to the `ready_connections`
     // FuturesUnordered structure, and their results are processed in the main loop.
     fn start_filling(&mut self) {
+        let endpoint = self.endpoint_description();
+
         if self.is_empty() {
             // If the pool is empty, it might mean that the node is not alive.
             // It is more likely than not that the next connection attempt will
             // fail, so there is no use in opening more than one connection now.
-            trace!(
-                "[{}] Will open the first connection to the node",
-                self.endpoint_description()
-            );
+            trace!("[{}] Will open the first connection to the node", endpoint,);
             self.start_opening_connection(None);
             return;
         }
@@ -708,9 +707,7 @@ impl PoolRefiller {
                     }
                     trace!(
                         "[{}] Will open {} connections to shard {}",
-                        self.endpoint_description(),
-                        to_open_count,
-                        shard_id,
+                        endpoint, to_open_count, shard_id,
                     );
                     for _ in 0..to_open_count {
                         self.start_opening_connection(Some(shard_id as Shard));
@@ -738,8 +735,7 @@ impl PoolRefiller {
         // connecting later.
         trace!(
             "[{}] Will open {} non-shard-aware connections",
-            self.endpoint_description(),
-            to_open_count,
+            endpoint, to_open_count,
         );
         for _ in 0..to_open_count {
             self.start_opening_connection(None);
@@ -748,6 +744,7 @@ impl PoolRefiller {
 
     // Handles a newly opened connection and decides what to do with it.
     fn handle_ready_connection(&mut self, evt: OpenedConnectionEvent) {
+        let endpoint = self.endpoint_description();
         match evt.result {
             Err(err) => {
                 if evt.requested_shard.is_some() {
@@ -764,8 +761,7 @@ impl PoolRefiller {
                     // and does not cause any errors.
                     debug!(
                         "[{}] Failed to open connection to the shard-aware port: {:?}, will retry with regular port",
-                        self.endpoint_description(),
-                        err,
+                        endpoint, err,
                     );
                     self.start_opening_connection(None);
                 } else {
@@ -775,8 +771,7 @@ impl PoolRefiller {
                     self.had_error_since_last_refill = true;
                     debug!(
                         "[{}] Failed to open connection to the non-shard-aware port: {:?}",
-                        self.endpoint_description(),
-                        err,
+                        endpoint, err,
                     );
 
                     // If all connection attempts in this fill attempt failed
@@ -797,7 +792,7 @@ impl PoolRefiller {
                 if self.shard_aware_port != connection.get_shard_aware_port() {
                     debug!(
                         "[{}] Updating shard aware port: {:?}",
-                        self.endpoint_description(),
+                        endpoint,
                         connection.get_shard_aware_port(),
                     );
                     self.shard_aware_port = connection.get_shard_aware_port();
@@ -836,7 +831,7 @@ impl PoolRefiller {
                     let conn = Arc::new(connection);
                     trace!(
                         "[{}] Adding connection {:p} to shard {} pool, now there are {} for the shard, total {}",
-                        self.endpoint_description(),
+                        endpoint,
                         Arc::as_ptr(&conn),
                         shard_id,
                         self.conns[shard_id].len() + 1,
@@ -857,8 +852,7 @@ impl PoolRefiller {
                     // immediately with a non-shard-aware port here.
                     debug!(
                         "[{}] Excess shard-aware port connection for shard {}; will retry with non-shard-aware port",
-                        self.endpoint_description(),
-                        shard_id,
+                        endpoint, shard_id,
                     );
 
                     self.start_opening_connection(None);
@@ -871,7 +865,7 @@ impl PoolRefiller {
                     let conn = Arc::new(connection);
                     trace!(
                         "[{}] Storing excess connection {:p} for shard {}",
-                        self.endpoint_description(),
+                        endpoint,
                         Arc::as_ptr(&conn),
                         shard_id,
                     );
@@ -884,8 +878,7 @@ impl PoolRefiller {
                     if self.excess_connections.len() > excess_connection_limit {
                         debug!(
                             "[{}] Excess connection pool exceeded limit of {} connections - clearing",
-                            self.endpoint_description(),
-                            excess_connection_limit,
+                            endpoint, excess_connection_limit,
                         );
                         self.excess_connections.clear();
                     }
@@ -1012,6 +1005,8 @@ impl PoolRefiller {
     fn remove_connection(&mut self, connection: Arc<Connection>, last_error: ConnectionError) {
         let ptr = Arc::as_ptr(&connection);
 
+        let endpoint = self.endpoint_description();
+
         let maybe_remove_in_vec = |v: &mut Vec<Arc<Connection>>| -> bool {
             let maybe_idx = v
                 .iter()
@@ -1038,7 +1033,7 @@ impl PoolRefiller {
         if shard_id < self.conns.len() && maybe_remove_in_vec(&mut self.conns[shard_id]) {
             trace!(
                 "[{}] Connection {:p} removed from shard {} pool, now there is {} for the shard, total {}",
-                self.endpoint_description(),
+                endpoint,
                 ptr,
                 shard_id,
                 self.conns[shard_id].len(),
@@ -1055,17 +1050,12 @@ impl PoolRefiller {
         if maybe_remove_in_vec(&mut self.excess_connections) {
             trace!(
                 "[{}] Connection {:p} removed from excess connection pool",
-                self.endpoint_description(),
-                ptr,
+                endpoint, ptr,
             );
             return;
         }
 
-        trace!(
-            "[{}] Connection {:p} was already removed",
-            self.endpoint_description(),
-            ptr,
-        );
+        trace!("[{}] Connection {:p} was already removed", endpoint, ptr,);
     }
 
     // Sets current keyspace for available connections.
