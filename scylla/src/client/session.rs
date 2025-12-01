@@ -915,6 +915,7 @@ impl Session {
             config.metadata_request_serverside_timeout,
             config.hostname_resolution_timeout,
             config.host_filter,
+            config.host_listener,
             config.cluster_metadata_refresh_interval,
             tablet_receiver,
             #[cfg(feature = "metrics")]
