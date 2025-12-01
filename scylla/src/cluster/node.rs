@@ -15,7 +15,6 @@ use crate::routing::{Shard, Sharder};
 
 use std::fmt::Display;
 use std::net::IpAddr;
-#[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::{
@@ -98,6 +97,12 @@ pub struct Node {
     /// If the node is filtered out by the host filter, this will be [None].
     pool: Option<NodeConnectionPool>,
 
+    /// Indicates whether the node is marked as up by the driver.
+    /// This is independent of whether the node is enabled (i.e., has a connection pool).
+    /// Changes to this marker are made by the `ClusterWorker` once it gets notified
+    /// by `NodeConnectionPool` about losing or establishing connectivity to the node.
+    up_marker: AtomicBool,
+
     // In unit tests Node objects are mocked, and don't have real connection
     // pools. We want DefaultPolicy to use is_connected to filter out nodes,
     // but it would mean that all nodes would be filtered out in unit tests.
@@ -110,6 +115,31 @@ pub struct Node {
 
 /// A way that Nodes are often passed and accessed in the driver's code.
 pub type NodeRef<'a> = &'a Arc<Node>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NodeConnectivityStatus {
+    Connected,
+    Unreachable,
+}
+
+impl From<bool> for NodeConnectivityStatus {
+    fn from(value: bool) -> Self {
+        if value {
+            NodeConnectivityStatus::Connected
+        } else {
+            NodeConnectivityStatus::Unreachable
+        }
+    }
+}
+
+impl From<NodeConnectivityStatus> for bool {
+    fn from(value: NodeConnectivityStatus) -> bool {
+        match value {
+            NodeConnectivityStatus::Connected => true,
+            NodeConnectivityStatus::Unreachable => false,
+        }
+    }
+}
 
 impl Node {
     /// Creates a new node which starts connecting in the background.
@@ -144,6 +174,7 @@ impl Node {
             datacenter,
             rack,
             pool,
+            up_marker: AtomicBool::new(true),
             #[cfg(test)]
             enabled_as_connected: AtomicBool::new(false),
         }
@@ -151,7 +182,7 @@ impl Node {
 
     /// Recreates a Node after it changes its IP, preserving the pool.
     ///
-    /// All settings except address are inherited from `node`.
+    /// All settings except address and up marker are inherited from `node`.
     /// The underlying pool is preserved and notified about the IP change.
     /// # Arguments
     ///
@@ -168,6 +199,7 @@ impl Node {
             rack: node.rack.clone(),
             host_id: node.host_id,
             pool: node.pool.clone(),
+            up_marker: AtomicBool::new(true),
             #[cfg(test)]
             enabled_as_connected: AtomicBool::new(node.enabled_as_connected.load(Ordering::SeqCst)),
         }
@@ -211,6 +243,19 @@ impl Node {
     /// no connections will be opened.
     pub fn is_enabled(&self) -> bool {
         self.pool.is_some()
+    }
+
+    /// Swaps the up marker of the node, returning the previous value.
+    ///
+    /// This is expected to be **exclusively** used by `ClusterWorker`,
+    /// so no concurrent access will take place.
+    pub(crate) fn swap_up_marker(
+        &self,
+        new_status: NodeConnectivityStatus,
+    ) -> NodeConnectivityStatus {
+        self.up_marker
+            .swap(new_status.into(), Ordering::Relaxed)
+            .into()
     }
 
     pub(crate) async fn use_keyspace(
@@ -395,6 +440,7 @@ mod tests {
                 datacenter,
                 rack,
                 pool: None,
+                up_marker: AtomicBool::new(true),
                 enabled_as_connected: AtomicBool::new(false),
             }
         }

@@ -1,12 +1,13 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::KnownNode;
+use crate::cluster::node::NodeConnectivityStatus;
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::Event;
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
-use crate::policies::host_listener::HostListener;
+use crate::policies::host_listener::{HostEvent, HostEventContext, HostListener};
 use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
 
 use arc_swap::ArcSwap;
@@ -346,7 +347,7 @@ impl ClusterWorker {
                     };
                     debug!("Received connectivity event: {:?}", event);
 
-                    // TODO: handle connectivity change event.
+                    self.handle_connectivity_change_event(&event);
 
                     continue; // Don't go to refreshing.
                 }
@@ -453,6 +454,45 @@ impl ClusterWorker {
 
     fn update_cluster_state(&mut self, new_cluster_state: Arc<ClusterState>) {
         self.cluster_state.store(new_cluster_state);
+    }
+
+    fn handle_connectivity_change_event(&self, event: &ConnectivityChangeEvent) {
+        let state = self.cluster_state.load();
+
+        let (new_status, address) = match event {
+            ConnectivityChangeEvent::Established { address } => {
+                (NodeConnectivityStatus::Connected, *address)
+            }
+
+            ConnectivityChangeEvent::Lost { address } => {
+                (NodeConnectivityStatus::Unreachable, *address)
+            }
+        };
+
+        let node = state.all_nodes.iter().find(|node| node.address == address);
+
+        if let Some(node) = node {
+            let prev_status = node.swap_up_marker(new_status);
+
+            if let Some(host_listener) = self.host_listener.as_deref() {
+                let ctx = HostEventContext {
+                    host_id: node.host_id,
+                    addr: node.address.into_inner(),
+                };
+
+                match (prev_status, new_status) {
+                    (NodeConnectivityStatus::Connected, NodeConnectivityStatus::Unreachable) => {
+                        debug!("Node is no longer reachable: {}", node.address);
+                        host_listener.on_event(&ctx, &HostEvent::Down);
+                    }
+                    (NodeConnectivityStatus::Unreachable, NodeConnectivityStatus::Connected) => {
+                        debug!("Node is now reachable again: {}", node.address);
+                        host_listener.on_event(&ctx, &HostEvent::Up);
+                    }
+                    _ => { /* No status change */ }
+                }
+            }
+        }
     }
 }
 
