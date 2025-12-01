@@ -902,6 +902,7 @@ impl Session {
             connection_config,
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
+            connectivity_events_sender: None, // This will be set by `Cluster::new`.
         };
 
         #[cfg(feature = "metrics")]

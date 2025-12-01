@@ -2,7 +2,7 @@ use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::KnownNode;
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::Event;
-use crate::network::{PoolConfig, VerifiedKeyspaceName};
+use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
@@ -64,6 +64,9 @@ struct ClusterWorker {
     // Channel used to receive server events
     server_events_channel: tokio::sync::mpsc::Receiver<Event>,
 
+    // Channel used to receive signals that node is no longer reachable or became reachable.
+    connectivity_events_channel: tokio::sync::mpsc::UnboundedReceiver<ConnectivityChangeEvent>,
+
     // Channel used to receive signals that control connection is broken
     control_connection_repair_channel: tokio::sync::mpsc::Receiver<()>,
 
@@ -104,7 +107,7 @@ impl Cluster {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         known_nodes: Vec<KnownNode>,
-        pool_config: PoolConfig,
+        mut pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         metadata_request_serverside_timeout: Option<Duration>,
@@ -118,8 +121,17 @@ impl Cluster {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
         let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
+        // This is unbounded, because there is possibility that many events will be sent quickly,
+        // for example when driver is connected to a large cluster and it loses network connectivity.
+        //
+        // If the channel were bounded, then we would either block PoolRefillers (if we decide to send blockingly)
+        // or drop events (if we decide to do so if the channel is full). Both options are bad.
+        let (connectivity_events_sender, connectivity_events_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
         let (control_connection_repair_sender, control_connection_repair_receiver) =
             tokio::sync::mpsc::channel(32);
+
+        pool_config.connectivity_events_sender = Some(connectivity_events_sender);
 
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
@@ -161,6 +173,7 @@ impl Cluster {
 
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
+            connectivity_events_channel: connectivity_events_receiver,
             control_connection_repair_channel: control_connection_repair_receiver,
             tablets_channel: tablet_receiver,
 
@@ -322,6 +335,20 @@ impl ClusterWorker {
                         // so we can probably stop working too
                         return;
                     }
+                }
+
+                maybe_connectivity_event = self.connectivity_events_channel.recv() => {
+                    let Some(event) = maybe_connectivity_event else {
+                        // connectivity_events_channel should never be closed while ClusterWorker is alive,
+                        // because ClusterWorker owns the other end of the channel.
+                        // However, if it is closed, we can't do anything useful, so just stop working.
+                        return;
+                    };
+                    debug!("Received connectivity event: {:?}", event);
+
+                    // TODO: handle connectivity change event.
+
+                    continue; // Don't go to refreshing.
                 }
 
                 maybe_use_keyspace_request = self.use_keyspace_channel.recv() => {

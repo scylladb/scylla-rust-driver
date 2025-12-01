@@ -518,6 +518,11 @@ impl MetadataReader {
             // The shard-aware port won't be used with PerHost pool size anyway,
             // so explicitly disable it here
             can_use_shard_aware_port: false,
+
+            // No need for connectivity events for the control connection.
+            // Control connection has a dedicated notification mechanism
+            // (`control_connection_repair_requester`), which is handled in ClusterWorker separately.
+            connectivity_events_sender: None,
         };
 
         let control_connection = Self::make_control_connection_pool(

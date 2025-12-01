@@ -58,6 +58,7 @@ pub(crate) struct PoolConfig {
     pub(crate) connection_config: ConnectionConfig,
     pub(crate) pool_size: PoolSize,
     pub(crate) can_use_shard_aware_port: bool,
+    pub(crate) connectivity_events_sender: Option<mpsc::UnboundedSender<ConnectivityChangeEvent>>,
 }
 
 #[cfg(test)]
@@ -67,6 +68,7 @@ impl Default for PoolConfig {
             connection_config: Default::default(),
             pool_size: Default::default(),
             can_use_shard_aware_port: true,
+            connectivity_events_sender: None,
         }
     }
 }
@@ -77,6 +79,7 @@ impl PoolConfig {
             connection_config: self.connection_config.to_host_connection_config(endpoint),
             pool_size: self.pool_size,
             can_use_shard_aware_port: self.can_use_shard_aware_port,
+            connectivity_events_sender: self.connectivity_events_sender.clone(),
         }
     }
 }
@@ -86,6 +89,7 @@ struct HostPoolConfig {
     pub(crate) connection_config: HostConnectionConfig,
     pub(crate) pool_size: PoolSize,
     pub(crate) can_use_shard_aware_port: bool,
+    pub(crate) connectivity_events_sender: Option<mpsc::UnboundedSender<ConnectivityChangeEvent>>,
 }
 
 #[cfg(test)]
@@ -95,6 +99,7 @@ impl Default for HostPoolConfig {
             connection_config: Default::default(),
             pool_size: Default::default(),
             can_use_shard_aware_port: true,
+            connectivity_events_sender: None,
         }
     }
 }
@@ -816,6 +821,23 @@ impl PoolRefiller {
                     }
                 }
 
+                // At this point, the connection is ready to be put into the pool.
+                // This also means that we have at least one working connection.
+                if let Some(ref connectivity_notifier) = self.pool_config.connectivity_events_sender
+                    && self.is_empty()
+                {
+                    // If we didn't have any connectivity with the host previously, we can now
+                    // notify that the host is alive again.
+                    debug!(
+                        "[{}] Connection pool is no longer empty, notifying listeners",
+                        endpoint,
+                    );
+
+                    // Ignore failure to send. If there are no listeners, it's fine.
+                    let event = ConnectivityChangeEvent::Established { address: endpoint };
+                    let _ = connectivity_notifier.send(event);
+                }
+
                 // Decide if the connection can be accepted, according to
                 // the pool filling strategy
                 let can_be_accepted = match self.pool_config.pool_size {
@@ -978,6 +1000,22 @@ impl PoolRefiller {
     // being empty.
     fn update_shared_conns(&mut self, last_error: Option<ConnectionError>) {
         let new_conns = if self.is_empty() {
+            let endpoint = self.endpoint_description();
+
+            // This is used to notify the ClusterWorker that the host is now considered down,
+            // in case of non-control connection pool.
+            if let Some(ref connectivity_notifier) = self.pool_config.connectivity_events_sender {
+                // We can now notify that the host is down.
+                debug!(
+                    "[{}] Connection pool is now empty, notifying listeners",
+                    endpoint,
+                );
+
+                // Ignore failure to send. If there are no listeners, it's fine.
+                let event = ConnectivityChangeEvent::Lost { address: endpoint };
+                let _ = connectivity_notifier.send(event);
+            }
+
             Arc::new(MaybePoolConnections::Broken(last_error.unwrap()))
         } else {
             let new_conns = if let Some(sharder) = self.sharder.as_ref() {
