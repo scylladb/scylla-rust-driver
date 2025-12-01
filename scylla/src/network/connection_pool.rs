@@ -1270,7 +1270,6 @@ pub(crate) enum ConnectivityChangeEvent {
 }
 impl ConnectivityChangeEvent {
     /// Returns the host ID associated with this event.
-    #[expect(dead_code)]
     pub(crate) fn host_id(&self) -> Uuid {
         match *self {
             ConnectivityChangeEvent::Established { host_id }

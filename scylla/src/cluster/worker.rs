@@ -16,7 +16,7 @@ use scylla_cql::frame::response::result::TableSpec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
 use super::metadata::MetadataReader;
@@ -54,7 +54,6 @@ impl std::fmt::Debug for ClusterNeatDebug<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NodeConnectivityStatus {
     Connected,
-    #[expect(dead_code)]
     Unreachable,
 }
 
@@ -378,7 +377,7 @@ impl ClusterWorker {
                     };
                     debug!("Received connectivity event: {:?}", event);
 
-                    // TODO: handle connectivity change event.
+                    self.handle_connectivity_change_event(&event);
 
                     continue; // Don't go to refreshing.
                 }
@@ -687,6 +686,54 @@ impl ClusterWorker {
             host_listener.on_event(&ctx, &HostEvent::Added);
             host_listener.on_event(&ctx, &HostEvent::Up);
         }
+    }
+
+    /// Handles connectivity change events received from connection pools.
+    ///
+    /// When a node becomes unreachable or reachable again, notifies the [HostListener]
+    /// about the change, if a host listener is configured. Otherwise, if the node status
+    /// has not changed, does nothing.
+    fn handle_connectivity_change_event(&mut self, event: &ConnectivityChangeEvent) {
+        let host_id = event.host_id();
+        let cluster_state = self.cluster_state.load();
+
+        let (Some(node), Some(connectivity)) = (
+            cluster_state.known_peers.get(&host_id),
+            self.node_status.get_mut(&host_id),
+        ) else {
+            trace!("Received connectivity change event for unknown host_id: {host_id}");
+            return;
+        };
+
+        let addr = node.address.into_inner();
+        let maybe_event: Option<HostEvent> = match (*connectivity, event) {
+            (NodeConnectivityStatus::Connected, ConnectivityChangeEvent::Lost { .. }) => {
+                debug!("Node is no longer reachable: {}", addr);
+                *connectivity = NodeConnectivityStatus::Unreachable;
+                Some(HostEvent::Down)
+            }
+            (NodeConnectivityStatus::Unreachable, ConnectivityChangeEvent::Established { .. }) => {
+                debug!("Node is now reachable again: {}", addr);
+                *connectivity = NodeConnectivityStatus::Connected;
+                Some(HostEvent::Up)
+            }
+            _ => {
+                /* No status change */
+                None
+            }
+        };
+
+        let Some(host_listener) = self.host_listener.as_deref() else {
+            // No host listener configured, nothing to do.
+            return;
+        };
+        let Some(event) = maybe_event else {
+            // No event to signal, nothing to do.
+            return;
+        };
+
+        let ctx = HostEventContext { host_id, addr };
+        host_listener.on_event(&ctx, &event);
     }
 }
 
