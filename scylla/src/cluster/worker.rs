@@ -1,6 +1,6 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
-use crate::cluster::KnownNode;
 use crate::cluster::node::NodeConnectivityStatus;
+use crate::cluster::{KnownNode, Node, NodeRef};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::Event;
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
@@ -15,9 +15,10 @@ use futures::future::join_all;
 use futures::{FutureExt, future::RemoteHandle};
 use scylla_cql::frame::response::result::TableSpec;
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, info};
 
 use super::metadata::MetadataReader;
 use super::state::{ClusterState, ClusterStateNeatDebug};
@@ -163,6 +164,11 @@ impl Cluster {
         )
         .await;
         cluster_state.wait_until_all_pools_are_initialized().await;
+
+        for node in cluster_state.all_nodes.iter() {
+            ClusterWorker::handle_node_added(host_listener.as_deref(), node);
+        }
+
         let cluster_state: Arc<ArcSwap<ClusterState>> =
             Arc::new(ArcSwap::from(Arc::new(cluster_state)));
 
@@ -443,6 +449,8 @@ impl ClusterWorker {
             .await,
         );
 
+        self.handle_topology_changes(&cluster_state, &new_cluster_state);
+
         new_cluster_state
             .wait_until_all_pools_are_initialized()
             .await;
@@ -454,6 +462,131 @@ impl ClusterWorker {
 
     fn update_cluster_state(&mut self, new_cluster_state: Arc<ClusterState>) {
         self.cluster_state.store(new_cluster_state);
+    }
+
+    fn handle_topology_changes(
+        &self,
+        old_cluster_state: &ClusterState,
+        new_cluster_state: &ClusterState,
+    ) {
+        /// Wrapper around NodeRef that implements Eq by comparing only node's SocketAddr.
+        ///
+        /// Useful to determine added/removed nodes between two `ClusterState`s,
+        /// because the host listener mechanism identifies nodes by their SocketAddr only.
+        #[derive(Eq)]
+        struct NodeByAddress<'a>(NodeRef<'a>);
+
+        impl std::hash::Hash for NodeByAddress<'_> {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                self.0.address.into_inner().hash(state);
+            }
+        }
+
+        impl PartialEq for NodeByAddress<'_> {
+            fn eq(&self, other: &Self) -> bool {
+                // We must compare only by SocketAddr and ignore NodeAddr variant, because otherwise
+                // the following sequence of events could be issued when node 127.0.0.1 is removed
+                // and control connection is moved to 127.0.0.2, resulting in NodeAddr variant change
+                // from `Translatable(127.0.0.2)` to `Untranslatable(127.0.0.2)`:
+                //
+                // ```
+                // Host 127.0.0.1 is DOWN
+                // Host 127.0.0.2 is DOWN
+                // Host 127.0.0.2 has been REMOVED
+                // Host 127.0.0.1 has been REMOVED
+                // Host 127.0.0.2 has been ADDED
+                // Host 127.0.0.2 is UP
+                // ```
+                self.0.address.into_inner() == other.0.address.into_inner()
+            }
+        }
+        impl Deref for NodeByAddress<'_> {
+            type Target = Node;
+
+            fn deref(&self) -> &Self::Target {
+                self.0
+            }
+        }
+
+        // Clippy can't check that in Eq and Hash impls we don't actually use any field with interior mutability
+        // (in Node only `NodeConnectionPool` is such, holding an RwLock inside).
+        // https://rust-lang.github.io/rust-clippy/master/index.html#mutable_key_type
+        #[expect(clippy::mutable_key_type)]
+        let old_nodes: std::collections::HashSet<NodeByAddress> = old_cluster_state
+            .all_nodes
+            .iter()
+            .map(NodeByAddress)
+            .collect();
+        // Clippy can't check that in Eq and Hash impls we don't actually use any field with interior mutability
+        // (in Node only `NodeConnectionPool` is such, holding an RwLock inside).
+        // https://rust-lang.github.io/rust-clippy/master/index.html#mutable_key_type
+        #[expect(clippy::mutable_key_type)]
+        let new_nodes: std::collections::HashSet<NodeByAddress> = new_cluster_state
+            .all_nodes
+            .iter()
+            .map(NodeByAddress)
+            .collect();
+
+        let added_nodes = new_nodes.difference(&old_nodes);
+        let removed_nodes = old_nodes.difference(&new_nodes);
+
+        for node in removed_nodes {
+            Self::handle_node_removed(self.host_listener.as_deref(), node);
+        }
+
+        for node in added_nodes {
+            Self::handle_node_added(self.host_listener.as_deref(), node);
+        }
+    }
+
+    fn handle_node_added(host_listener: Option<&dyn HostListener>, node: &Node) {
+        info!("Node added to cluster: {}", node.address);
+
+        // Notify listener about nodes in the cluster.
+        if let Some(host_listener) = host_listener {
+            let ctx = HostEventContext {
+                host_id: node.host_id,
+                addr: node.address.into_inner(),
+            };
+
+            // First signal ADDED event.
+            host_listener.on_event(&ctx, &HostEvent::Added);
+
+            // Then signal UP event.
+            let prev_up_marker = node.swap_up_marker(NodeConnectivityStatus::Connected);
+            match prev_up_marker {
+                NodeConnectivityStatus::Unreachable => {
+                    unreachable!("Initially added nodes must be set as Connected first!")
+                }
+                NodeConnectivityStatus::Connected => {
+                    host_listener.on_event(&ctx, &HostEvent::Up);
+                }
+            }
+        }
+    }
+
+    fn handle_node_removed(host_listener: Option<&dyn HostListener>, node: &Node) {
+        info!("Node removed from cluster: {}", node.address);
+
+        // Notify listener about node removal.
+        if let Some(host_listener) = host_listener {
+            let ctx = HostEventContext {
+                host_id: node.host_id,
+                addr: node.address.into_inner(),
+            };
+
+            // First signal DOWN event, if needed.
+            let prev_up_marker = node.swap_up_marker(NodeConnectivityStatus::Unreachable);
+            match prev_up_marker {
+                NodeConnectivityStatus::Connected => {
+                    host_listener.on_event(&ctx, &HostEvent::Down);
+                }
+                NodeConnectivityStatus::Unreachable => { /* No need to signal anything */ }
+            }
+
+            // Then signal REMOVED event.
+            host_listener.on_event(&ctx, &HostEvent::Removed);
+        }
     }
 
     fn handle_connectivity_change_event(&self, event: &ConnectivityChangeEvent) {
