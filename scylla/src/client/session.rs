@@ -916,6 +916,17 @@ impl Session {
         #[cfg(feature = "metrics")]
         let metrics = Arc::new(Metrics::new());
 
+        let host_listener = {
+            #[cfg(all(scylla_unstable, feature = "unstable-host-listener"))]
+            {
+                config.host_listener
+            }
+            #[cfg(not(all(scylla_unstable, feature = "unstable-host-listener")))]
+            {
+                None
+            }
+        };
+
         let cluster = Cluster::new(
             known_nodes,
             pool_config,
@@ -924,6 +935,7 @@ impl Session {
             config.metadata_request_serverside_timeout,
             config.hostname_resolution_timeout,
             config.host_filter,
+            host_listener,
             config.cluster_metadata_refresh_interval,
             tablet_receiver,
             #[cfg(feature = "metrics")]

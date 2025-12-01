@@ -6,6 +6,7 @@ use crate::network::{PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
+use crate::policies::host_listener::HostListener;
 use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
 
 use arc_swap::ArcSwap;
@@ -77,6 +78,10 @@ struct ClusterWorker {
     // connections
     host_filter: Option<Arc<dyn HostFilter>>,
 
+    // The host listener allows to listen for topology and node status changes.
+    #[expect(dead_code)]
+    host_listener: Option<Arc<dyn HostListener>>,
+
     // This value determines how frequently the cluster
     // worker will refresh the cluster metadata
     cluster_metadata_refresh_interval: Duration,
@@ -106,6 +111,7 @@ impl Cluster {
         metadata_request_serverside_timeout: Option<Duration>,
         hostname_resolution_timeout: Option<Duration>,
         host_filter: Option<Arc<dyn HostFilter>>,
+        host_listener: Option<Arc<dyn HostListener>>,
         cluster_metadata_refresh_interval: Duration,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
@@ -163,6 +169,7 @@ impl Cluster {
             used_keyspace: None,
 
             host_filter,
+            host_listener,
             cluster_metadata_refresh_interval,
 
             #[cfg(feature = "metrics")]
