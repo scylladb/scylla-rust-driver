@@ -1,12 +1,12 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
-use crate::cluster::KnownNode;
+use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::Event;
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
-use crate::policies::host_listener::HostListener;
+use crate::policies::host_listener::{HostEvent, HostEventContext, HostListener};
 use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
 
 use arc_swap::ArcSwap;
@@ -16,7 +16,8 @@ use scylla_cql::frame::response::result::TableSpec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, error, info};
+use uuid::Uuid;
 
 use super::metadata::MetadataReader;
 use super::state::{ClusterState, ClusterStateNeatDebug};
@@ -46,10 +47,27 @@ impl std::fmt::Debug for ClusterNeatDebug<'_> {
     }
 }
 
+/// Used to track node status changes, i.e. whether a node is reachable or not.
+///
+/// Mainly used to deduplicate [ConnectivityChangeEvent]s received from `PoolRefiller`
+/// before notifying [HostListener] about node status changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeConnectivityStatus {
+    Connected,
+    #[expect(dead_code)]
+    Unreachable,
+}
+
 // Works in the background to keep the cluster updated
 struct ClusterWorker {
     // Cluster state to keep updated:
     cluster_state: Arc<ArcSwap<ClusterState>>,
+
+    /// Node status map.
+    ///
+    /// Maps host_id to connectivity status.
+    /// Used to track node status in order to deduplicate HostListener events.
+    node_status: HashMap<Uuid, NodeConnectivityStatus>,
 
     // Cluster connections
     metadata_reader: MetadataReader,
@@ -84,7 +102,6 @@ struct ClusterWorker {
     host_filter: Option<Arc<dyn HostFilter>>,
 
     // The host listener allows to listen for topology and node status changes.
-    #[expect(dead_code)]
     host_listener: Option<Arc<dyn HostListener>>,
 
     // This value determines how frequently the cluster
@@ -149,13 +166,21 @@ impl Cluster {
         )
         .await?;
 
+        let mut node_status = HashMap::new();
+
         let metadata = metadata_reader.read_metadata(true).await?;
         let cluster_state = ClusterState::new(
             metadata,
             &pool_config,
             &HashMap::new(),
-            // TODO: implement actual handling of topology changes.
-            &mut |_, _| (),
+            &mut |old_nodes, new_nodes| {
+                ClusterWorker::handle_topology_changes(
+                    old_nodes,
+                    new_nodes,
+                    host_listener.as_deref(),
+                    &mut node_status,
+                )
+            },
             &None,
             host_filter.as_deref(),
             &connectivity_events_sender,
@@ -166,11 +191,13 @@ impl Cluster {
         )
         .await;
         cluster_state.wait_until_all_pools_are_initialized().await;
+
         let cluster_state: Arc<ArcSwap<ClusterState>> =
             Arc::new(ArcSwap::from(Arc::new(cluster_state)));
 
         let worker = ClusterWorker {
             cluster_state: cluster_state.clone(),
+            node_status,
 
             metadata_reader,
             pool_config,
@@ -437,8 +464,14 @@ impl ClusterWorker {
                 metadata,
                 &self.pool_config,
                 &cluster_state.known_peers,
-                // TODO: implement actual handling of topology changes.
-                &mut |_, _| (),
+                &mut |old_nodes, new_nodes| {
+                    ClusterWorker::handle_topology_changes(
+                        old_nodes,
+                        new_nodes,
+                        self.host_listener.as_deref(),
+                        &mut self.node_status,
+                    )
+                },
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
                 &self.connectivity_events_sender,
@@ -461,6 +494,199 @@ impl ClusterWorker {
 
     fn update_cluster_state(&mut self, new_cluster_state: Arc<ClusterState>) {
         self.cluster_state.store(new_cluster_state);
+    }
+
+    /// Handle node addition/removal/address changes.
+    ///
+    /// Emit respective events to the [HostListener], if configured.
+    fn handle_topology_changes(
+        known_peers: &HashMap<Uuid, Arc<Node>>,
+        new_known_peers: &HashMap<Uuid, Arc<Node>>,
+        host_listener: Option<&dyn HostListener>,
+        node_status: &mut HashMap<Uuid, NodeConnectivityStatus>,
+    ) {
+        // Nodes that were previously in the cluster but are not present anymore.
+        let removed_nodes =
+            hash_map_difference(known_peers, new_known_peers).filter(|(_host_id, node)| {
+                // If a host filter is configured, we only consider nodes that passed the filter
+                // as removed. Nodes that were filtered out are not considered part of the cluster,
+                // so their removal is not signaled.
+                node.is_enabled()
+            });
+        // Nodes that weren't previously in the cluster but are present now.
+        let added_nodes =
+            hash_map_difference(new_known_peers, known_peers).filter(|(_host_id, node)| {
+                // If a host filter is configured, we only consider nodes that passed the filter
+                // as added. Nodes that were filtered out are not considered part of the cluster,
+                // so their addition is not signaled.
+                node.is_enabled()
+            });
+        // Nodes that were present in both old and new cluster state, but have changed address.
+        let nodes_with_changed_address = known_peers
+            .iter()
+            .filter(|(_host_id, old_node)| {
+                // If a host filter is configured, we only consider nodes that passed the filter
+                // as candidates for address change notification. Nodes that were filtered out
+                // are not considered part of the cluster, so their address changes are not signaled.
+                old_node.is_enabled()
+            })
+            .filter_map(|(host_id, old_node)| {
+                new_known_peers
+                    .get(host_id)
+                    // We only consider nodes with changed SocketAddr. If only NodeAddr variant changed
+                    // (which happens mainly when control connection moves from one node to another),
+                    // we don't notify the host listener about that, as it operates on SocketAddr only.
+                    //
+                    // We must compare only by SocketAddr and ignore NodeAddr variant, because otherwise
+                    // the following sequence of events could be issued when node 127.0.0.1 is removed
+                    // and control connection is moved to 127.0.0.2, resulting in NodeAddr variant change
+                    // from `Translatable(127.0.0.2)` to `Untranslatable(127.0.0.2)`:
+                    //
+                    // ```
+                    // Host 127.0.0.1 is DOWN
+                    // Host 127.0.0.2 is DOWN
+                    // Host 127.0.0.2 has been REMOVED
+                    // Host 127.0.0.1 has been REMOVED
+                    // Host 127.0.0.2 has been ADDED
+                    // Host 127.0.0.2 is UP
+                    // ```
+                    .filter(|new_node| {
+                        old_node.address.into_inner() != new_node.address.into_inner()
+                    })
+                    .map(|new_node| (old_node, new_node))
+            });
+
+        // Handle node removal.
+        for (host_id, node) in removed_nodes {
+            info!(
+                "Node removed from cluster: {} - {}",
+                node.host_id, node.address,
+            );
+
+            let Some(connectivity) = node_status.remove(host_id) else {
+                error!(
+                    "BUG: Inconsistent node status: missing entry for removed node {} - {}",
+                    node.host_id, node.address
+                );
+                continue;
+            };
+
+            let ctx = HostEventContext {
+                host_id: node.host_id,
+                addr: node.address.into_inner(),
+            };
+            // Notify listener about node removal.
+            let Some(host_listener) = host_listener else {
+                // No listener configured, nothing to do.
+                continue;
+            };
+
+            // First signal DOWN event, if needed.
+            match connectivity {
+                NodeConnectivityStatus::Connected => {
+                    host_listener.on_event(&ctx, &HostEvent::Down);
+                }
+                NodeConnectivityStatus::Unreachable => { /* No need to signal anything */ }
+            }
+
+            // Then signal REMOVED event.
+            host_listener.on_event(&ctx, &HostEvent::Removed);
+        }
+
+        // Handle node address changes.
+        for (old_node, new_node) in nodes_with_changed_address {
+            info!(
+                "Node address changed in cluster: {} - {} -> {}",
+                old_node.host_id, old_node.address, new_node.address,
+            );
+
+            // Update node address in node_status map.
+            let Some(connectivity) = node_status.get_mut(&old_node.host_id) else {
+                error!(
+                    "BUG: Inconsistent node status: missing entry for node with changed address {} - {}",
+                    new_node.host_id, new_node.address
+                );
+                // If the entry is missing, we skip notifying the host listener about the address change,
+                // to avoid emitting inconsistent events.
+                continue;
+            };
+
+            // Notify listener about node address change.
+            let Some(host_listener) = host_listener else {
+                // No listener configured, nothing to do.
+                continue;
+            };
+
+            // We need to make sure that this event is only signaled when the node is DOWN.
+            // Otherwise, we need to first emit DOWN event, then ADDRESS_CHANGED event, then UP event.
+
+            if *connectivity == NodeConnectivityStatus::Connected {
+                // First signal DOWN event.
+                let down_ctx = HostEventContext {
+                    host_id: new_node.host_id,
+                    addr: old_node.address.into_inner(),
+                };
+                host_listener.on_event(&down_ctx, &HostEvent::Down);
+            }
+
+            let ctx = HostEventContext {
+                host_id: new_node.host_id,
+                // We need to decide which address to send in the context - old or new.
+                // I decided to send the new address, as it is more useful - after the address change
+                // the driver will use the new address to connect to the node.
+                // Both addresses are sent in the AddressChanged event itself.
+                addr: new_node.address.into_inner(),
+            };
+            // Signal ADDRESS_CHANGED event.
+            host_listener.on_event(
+                &ctx,
+                &HostEvent::AddressChanged {
+                    old_address: old_node.address.into_inner(),
+                    new_address: new_node.address.into_inner(),
+                },
+            );
+
+            if *connectivity == NodeConnectivityStatus::Connected {
+                // We first signaled artificial DOWN event, so now we must signal UP event.
+                let up_ctx = HostEventContext {
+                    host_id: new_node.host_id,
+                    addr: new_node.address.into_inner(),
+                };
+                host_listener.on_event(&up_ctx, &HostEvent::Up);
+            }
+        }
+
+        // Handle node addition.
+        for (&host_id, node) in added_nodes {
+            info!("Node added to cluster: {} - {}", node.host_id, node.address,);
+
+            // Update node_status map.
+            // New nodes are always initially marked as Connected.
+            let prev = node_status.insert(host_id, NodeConnectivityStatus::Connected);
+            if prev.is_some() {
+                error!(
+                    "BUG: Inconsistent node status: entry for newly added node {} - {} already existed",
+                    node.host_id, node.address
+                );
+                // If the entry already existed, we skip notifying the host listener about the addition,
+                // to avoid duplicate events.
+                continue;
+            }
+
+            // Notify listener about new nodes in the cluster.
+            let Some(host_listener) = host_listener else {
+                continue;
+            };
+
+            let ctx = HostEventContext {
+                host_id: node.host_id,
+                addr: node.address.into_inner(),
+            };
+
+            // First signal ADDED event.
+            host_listener.on_event(&ctx, &HostEvent::Added);
+            host_listener.on_event(&ctx, &HostEvent::Up);
+        }
     }
 }
 
@@ -498,4 +724,17 @@ pub(crate) fn use_keyspace_result(
 
     // We can unwrap conn_broken_error because use_keyspace_results must be nonempty
     Err(broken_conn_error.unwrap())
+}
+
+/// Computes the difference between two hash maps, analogous to set difference.
+fn hash_map_difference<'present, 'absent, K, V>(
+    present_here: &'present HashMap<K, V>,
+    absent_here: &'absent HashMap<K, V>,
+) -> impl Iterator<Item = (&'present K, &'present V)> + use<'present, 'absent, K, V>
+where
+    K: std::hash::Hash + Eq,
+{
+    present_here
+        .iter()
+        .filter(|(k, _v)| !absent_here.contains_key(k))
 }
