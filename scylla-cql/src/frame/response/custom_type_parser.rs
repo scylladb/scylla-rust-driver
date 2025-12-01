@@ -7,7 +7,6 @@ use crate::frame::frame_errors::CustomTypeParseError;
 use crate::utils::parse::ParseResult;
 use crate::utils::parse::ParserState;
 use itertools::Either;
-use itertools::Itertools as _;
 use std::borrow::Cow;
 use std::char;
 use std::sync::Arc;
@@ -244,18 +243,18 @@ impl<'result> CustomTypeParser<'result> {
             parser: self.parser,
         };
 
-        self.get_type_parameters()?
-            .collect_array::<N>()
-            .ok_or_else(|| {
-                // unwrap(): get_type_parameters() already worked above, so it will work here as well.
+        // FIXME: Rewrite using std::iter::FromIterator::collect_array after it is stabilized.
+        // See rust-lang/rust#149266
+        itertools::Itertools::collect_array::<N>(self.get_type_parameters()?).ok_or_else(|| {
+            // unwrap(): get_type_parameters() already worked above, so it will work here as well.
 
-                let actual_parameter_count = backup.get_type_parameters().unwrap().count();
+            let actual_parameter_count = backup.get_type_parameters().unwrap().count();
 
-                CustomTypeParseError::InvalidParameterCount {
-                    actual: actual_parameter_count,
-                    expected: N,
-                }
-            })
+            CustomTypeParseError::InvalidParameterCount {
+                actual: actual_parameter_count,
+                expected: N,
+            }
+        })
     }
 
     fn get_complex_abstract_type(
