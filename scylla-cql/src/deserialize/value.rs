@@ -742,11 +742,11 @@ where
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
             ColumnType::Collection {
-                frozen: false,
+                frozen: _,
                 typ: CollectionType::List(el_t),
             }
             | ColumnType::Collection {
-                frozen: false,
+                frozen: _,
                 typ: CollectionType::Set(el_t),
             } => <T as DeserializeValue<'frame, 'metadata>>::type_check(el_t).map_err(|err| {
                 mk_typck_err::<Self>(
@@ -769,11 +769,11 @@ where
     ) -> Result<Self, DeserializationError> {
         let elem_typ = match typ {
             ColumnType::Collection {
-                frozen: false,
+                frozen: _,
                 typ: CollectionType::List(elem_typ),
             }
             | ColumnType::Collection {
-                frozen: false,
+                frozen: _,
                 typ: CollectionType::Set(elem_typ),
             } => elem_typ,
             _ => {
@@ -880,7 +880,7 @@ where
         // Deserializing List straight to BTreeSet would be lossy.
         match typ {
             ColumnType::Collection {
-                frozen: false,
+                frozen: _,
                 typ: CollectionType::Set(_),
             } => ListlikeIterator::<'frame, 'metadata, T>::type_check(typ)
                 .map_err(typck_error_replace_rust_name::<Self>),
@@ -911,7 +911,7 @@ where
         // Deserializing List straight to HashSet would be lossy.
         match typ {
             ColumnType::Collection {
-                frozen: false,
+                frozen: _,
                 typ: CollectionType::Set(_),
             } => ListlikeIterator::<'frame, 'metadata, T>::type_check(typ)
                 .map_err(typck_error_replace_rust_name::<Self>),
@@ -1163,7 +1163,7 @@ where
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         match typ {
             ColumnType::Collection {
-                frozen: false,
+                frozen: _,
                 typ: CollectionType::Map(k_t, v_t),
             } => {
                 <K as DeserializeValue<'frame, 'metadata>>::type_check(k_t).map_err(|err| {
@@ -1184,7 +1184,7 @@ where
     ) -> Result<Self, DeserializationError> {
         let (k_typ, v_typ) = match typ {
             ColumnType::Collection {
-                frozen: false,
+                frozen: _,
                 typ: CollectionType::Map(k_t, v_t),
             } => (k_t, v_t),
             _ => {
