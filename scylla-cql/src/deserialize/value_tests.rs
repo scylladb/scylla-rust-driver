@@ -862,7 +862,7 @@ fn test_null_and_empty() {
     );
     assert_ser_de_identity(
         &ColumnType::Collection {
-            frozen: false,
+            frozen: true, // Regression test case for frozen=true (#1499).
             typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Ascii))),
         },
         &None::<Vec<&str>>,
