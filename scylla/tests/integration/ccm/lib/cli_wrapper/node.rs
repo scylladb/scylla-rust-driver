@@ -227,3 +227,32 @@ impl NodeRemove<'_> {
             .await
     }
 }
+
+///
+/// ccm <node> decommission
+///
+pub(crate) struct NodeDecommission<'ccm> {
+    ccm: &'ccm mut NodeCcm,
+}
+
+impl NodeCcm {
+    pub(crate) fn node_decommission(&mut self) -> NodeDecommission<'_> {
+        NodeDecommission { ccm: self }
+    }
+}
+
+impl NodeDecommission<'_> {
+    pub(crate) async fn run(self) -> Result<ExitStatus, anyhow::Error> {
+        let args = &[
+            self.ccm.node_name.as_str(),
+            "decommission",
+            "--config-dir",
+            self.ccm.config_dir.as_str(),
+        ];
+
+        self.ccm
+            .cmd
+            .run_command("ccm", args, RunOptions::new())
+            .await
+    }
+}

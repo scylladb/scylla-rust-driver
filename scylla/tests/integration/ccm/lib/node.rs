@@ -55,6 +55,7 @@ impl NodeOptions {
 pub(crate) enum NodeStatus {
     Stopped,
     Started,
+    Decommissioned,
     Deleted,
 }
 
@@ -165,6 +166,16 @@ impl Node {
     pub(crate) async fn stop(&mut self, opts: Option<NodeStopOptions>) -> Result<(), Error> {
         self.ccm_cmd.node_stop().wait_options(opts).run().await?;
         self.set_status(NodeStatus::Stopped);
+        Ok(())
+    }
+
+    #[expect(dead_code)]
+    pub(crate) async fn decommission(&mut self) -> Result<(), Error> {
+        if self.status == NodeStatus::Deleted || self.status == NodeStatus::Decommissioned {
+            return Ok(());
+        }
+        self.ccm_cmd.node_decommission().run().await?;
+        self.set_status(NodeStatus::Decommissioned);
         Ok(())
     }
 
