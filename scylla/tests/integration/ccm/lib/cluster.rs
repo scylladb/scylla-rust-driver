@@ -86,12 +86,12 @@ impl NodeList {
     }
 
     #[expect(dead_code)]
-    pub(crate) async fn get_by_id(&self, id: NodeId) -> Option<&Node> {
+    pub(crate) fn get_by_id(&self, id: NodeId) -> Option<&Node> {
         self.iter().find(|node| node.id() == id)
     }
 
     #[expect(dead_code)]
-    pub(crate) async fn get_mut_by_id(&mut self, id: NodeId) -> Option<&mut Node> {
+    pub(crate) fn get_mut_by_id(&mut self, id: NodeId) -> Option<&mut Node> {
         self.iter_mut().find(|node| node.id() == id)
     }
 
@@ -99,7 +99,7 @@ impl NodeList {
         NodeList(Vec::new())
     }
 
-    pub(crate) async fn get_contact_endpoints(&self) -> Vec<String> {
+    pub(crate) fn get_contact_endpoints(&self) -> Vec<String> {
         self.iter().map(|node| node.contact_endpoint()).collect()
     }
 
@@ -363,7 +363,7 @@ impl Cluster {
     }
 
     pub(crate) async fn make_session_builder(&self) -> SessionBuilder {
-        let endpoints = self.nodes.get_contact_endpoints().await;
+        let endpoints = self.nodes.get_contact_endpoints();
         SessionBuilder::new().known_nodes(endpoints)
     }
 

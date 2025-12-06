@@ -43,7 +43,7 @@ async fn authenticate_superuser_cluster_one_node() {
     async fn test(cluster: &mut Cluster) {
         tracing::info!(
             "Connecting to {:?} with cassandra superuser...",
-            cluster.nodes().get_contact_endpoints().await
+            cluster.nodes().get_contact_endpoints()
         );
 
         let session = cluster
@@ -106,7 +106,7 @@ async fn custom_authentication_cluster_one_node() {
     async fn test(cluster: &mut Cluster) {
         tracing::info!(
             "Connecting to {:?} with custom authenticator as cassandra superuser...",
-            cluster.nodes().get_contact_endpoints().await
+            cluster.nodes().get_contact_endpoints()
         );
 
         let session = cluster
