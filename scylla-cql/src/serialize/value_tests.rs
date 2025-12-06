@@ -237,7 +237,7 @@ fn test_set_or_list_errors() {
     // Such an array is also created instantaneously.
     let v = &[Unset; 1 << 33] as &[Unset];
     let typ = ColumnType::Collection {
-        frozen: false,
+        frozen: true, // Regression test for frozen=true case (#1499).
         typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
     };
     let err = do_serialize_err(v, &typ);

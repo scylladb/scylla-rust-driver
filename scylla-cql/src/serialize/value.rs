@@ -883,11 +883,11 @@ fn serialize_sequence<'t, 'b, T: SerializeValue + 't>(
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
     let elt = match typ {
         ColumnType::Collection {
-            frozen: false,
+            frozen: _,
             typ: CollectionType::List(elt),
         }
         | ColumnType::Collection {
-            frozen: false,
+            frozen: _,
             typ: CollectionType::Set(elt),
         } => elt,
         _ => {
@@ -1029,7 +1029,7 @@ fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
     let (ktyp, vtyp) = match typ {
         ColumnType::Collection {
-            frozen: false,
+            frozen: _,
             typ: CollectionType::Map(k, v),
         } => (k, v),
         _ => {
