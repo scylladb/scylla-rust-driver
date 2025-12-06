@@ -802,7 +802,11 @@ impl Session {
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
-        self.do_execute_iter(prepared.into(), values).await
+        let prepared = prepared.into();
+        let serialized_values = prepared.serialize_values(&values)?;
+
+        self.execute_iter_nongeneric(prepared, serialized_values)
+            .await
     }
 
     /// Execute a batch statement\
@@ -1575,13 +1579,24 @@ impl Session {
         Ok((result, paging_state_response))
     }
 
-    async fn do_execute_iter(
+    /// Does the same as [`Session::execute_iter`], but without generics.
+    /// This is to reduce code bloat.
+    ///
+    /// Additionally, this function accepts only `SerializedValues`,
+    /// so the caller is responsible for serializing the values beforehand.
+    /// This:
+    /// - on one hand introduces a risk of misusing the API (passing values
+    ///   that don't match the prepared statement) - therefore this API
+    ///   must not be leaked to end users;
+    /// - on the other hand allows manual preserialization of values, which
+    ///   we need in wrapper drivers (e.g. C#-RS Driver) - for them we expose
+    ///   a dedicated API endpoint using this function, conditionally compiled
+    ///   if special compile flag is passed.
+    async fn execute_iter_nongeneric(
         &self,
         prepared: PreparedStatement,
-        values: impl SerializeRow,
+        values: SerializedValues,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-
         let execution_profile = prepared
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -1589,7 +1604,7 @@ impl Session {
 
         QueryPager::new_for_prepared_statement(PreparedPagerConfig {
             prepared,
-            values: serialized_values,
+            values,
             execution_profile,
             cluster_state: self.cluster.get_state(),
             #[cfg(feature = "metrics")]
