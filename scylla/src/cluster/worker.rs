@@ -1,11 +1,13 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
-use crate::cluster::KnownNode;
+use crate::cluster::node::NodeConnectivityStatus;
+use crate::cluster::{KnownNode, Node, NodeRef};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::Event;
-use crate::network::{PoolConfig, VerifiedKeyspaceName};
+use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
+use crate::policies::host_listener::{HostEvent, HostEventContext, HostListener};
 use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
 
 use arc_swap::ArcSwap;
@@ -13,9 +15,10 @@ use futures::future::join_all;
 use futures::{FutureExt, future::RemoteHandle};
 use scylla_cql::frame::response::result::TableSpec;
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, info};
 
 use super::metadata::MetadataReader;
 use super::state::{ClusterState, ClusterStateNeatDebug};
@@ -63,8 +66,11 @@ struct ClusterWorker {
     // Channel used to receive server events
     server_events_channel: tokio::sync::mpsc::Receiver<Event>,
 
+    // Channel used to receive signals that node is no longer reachable or became reachable.
+    connectivity_events_channel: tokio::sync::mpsc::UnboundedReceiver<ConnectivityChangeEvent>,
+
     // Channel used to receive signals that control connection is broken
-    control_connection_repair_channel: tokio::sync::broadcast::Receiver<()>,
+    control_connection_repair_channel: tokio::sync::mpsc::Receiver<()>,
 
     // Channel used to receive info about new tablets from custom payload in responses
     // sent by server.
@@ -76,6 +82,9 @@ struct ClusterWorker {
     // The host filter determines towards which nodes we should open
     // connections
     host_filter: Option<Arc<dyn HostFilter>>,
+
+    // The host listener allows to listen for topology and node status changes.
+    host_listener: Option<Arc<dyn HostListener>>,
 
     // This value determines how frequently the cluster
     // worker will refresh the cluster metadata
@@ -100,12 +109,13 @@ impl Cluster {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         known_nodes: Vec<KnownNode>,
-        pool_config: PoolConfig,
+        mut pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         metadata_request_serverside_timeout: Option<Duration>,
         hostname_resolution_timeout: Option<Duration>,
         host_filter: Option<Arc<dyn HostFilter>>,
+        host_listener: Option<Arc<dyn HostListener>>,
         cluster_metadata_refresh_interval: Duration,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
@@ -113,8 +123,17 @@ impl Cluster {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
         let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
+        // This is unbounded, because there is possibility that many events will be sent quickly,
+        // for example when driver is connected to a large cluster and it loses network connectivity.
+        //
+        // If the channel were bounded, then we would either block PoolRefillers (if we decide to send blockingly)
+        // or drop events (if we decide to do so if the channel is full). Both options are bad.
+        let (connectivity_events_sender, connectivity_events_receiver) =
+            tokio::sync::mpsc::unbounded_channel();
         let (control_connection_repair_sender, control_connection_repair_receiver) =
-            tokio::sync::broadcast::channel(32);
+            tokio::sync::mpsc::channel(32);
+
+        pool_config.connectivity_events_sender = Some(connectivity_events_sender);
 
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
@@ -145,6 +164,11 @@ impl Cluster {
         )
         .await;
         cluster_state.wait_until_all_pools_are_initialized().await;
+
+        for node in cluster_state.all_nodes.iter() {
+            ClusterWorker::handle_node_added(host_listener.as_deref(), node);
+        }
+
         let cluster_state: Arc<ArcSwap<ClusterState>> =
             Arc::new(ArcSwap::from(Arc::new(cluster_state)));
 
@@ -156,6 +180,7 @@ impl Cluster {
 
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
+            connectivity_events_channel: connectivity_events_receiver,
             control_connection_repair_channel: control_connection_repair_receiver,
             tablets_channel: tablet_receiver,
 
@@ -163,6 +188,7 @@ impl Cluster {
             used_keyspace: None,
 
             host_filter,
+            host_listener,
             cluster_metadata_refresh_interval,
 
             #[cfg(feature = "metrics")]
@@ -248,13 +274,17 @@ impl ClusterWorker {
             tokio::pin!(sleep_future);
 
             tokio::select! {
-                _ = sleep_future => {},
-                recv_res = self.refresh_channel.recv() => {
-                    match recv_res {
+                _sleep_finished = sleep_future => {
+                    // Time to do periodic refresh.
+                },
+
+                maybe_refresh_request = self.refresh_channel.recv() => {
+                    match maybe_refresh_request {
                         Some(request) => cur_request = Some(request),
                         None => return, // If refresh_channel was closed then cluster was dropped, we can stop working
                     }
                 }
+
                 tablets_count = self.tablets_channel.recv_many(&mut tablets, TABLET_CHANNEL_SIZE) => {
                     tracing::trace!("Performing tablets update - received {} tablets", tablets_count);
                     if tablets_count == 0 {
@@ -286,9 +316,11 @@ impl ClusterWorker {
 
                     continue;
                 }
-                recv_res = self.server_events_channel.recv() => {
-                    if let Some(event) = recv_res {
+
+                maybe_cql_event = self.server_events_channel.recv() => {
+                    if let Some(event) = maybe_cql_event {
                         debug!("Received server event: {:?}", event);
+
                         match event {
                             Event::TopologyChange(_) => (), // Refresh immediately
                             Event::StatusChange(_status) => {
@@ -311,8 +343,23 @@ impl ClusterWorker {
                         return;
                     }
                 }
-                recv_res = self.use_keyspace_channel.recv() => {
-                    match recv_res {
+
+                maybe_connectivity_event = self.connectivity_events_channel.recv() => {
+                    let Some(event) = maybe_connectivity_event else {
+                        // connectivity_events_channel should never be closed while ClusterWorker is alive,
+                        // because ClusterWorker owns the other end of the channel.
+                        // However, if it is closed, we can't do anything useful, so just stop working.
+                        return;
+                    };
+                    debug!("Received connectivity event: {:?}", event);
+
+                    self.handle_connectivity_change_event(&event);
+
+                    continue; // Don't go to refreshing.
+                }
+
+                maybe_use_keyspace_request = self.use_keyspace_channel.recv() => {
+                    match maybe_use_keyspace_request {
                         Some(request) => {
                             self.used_keyspace = Some(request.keyspace_name.clone());
 
@@ -325,20 +372,16 @@ impl ClusterWorker {
 
                     continue; // Don't go to refreshing, wait for the next event
                 }
-                recv_res = self.control_connection_repair_channel.recv() => {
-                    match recv_res {
-                        Ok(()) => {
+
+                maybe_control_connection_failed = self.control_connection_repair_channel.recv() => {
+                    match maybe_control_connection_failed {
+                        Some(()) => {
                             // The control connection was broken. Acknowledge that and start attempting to reconnect.
                             // The first reconnect attempt will be immediate (by attempting metadata refresh below),
                             // and if it does not succeed, then `control_connection_works` will be set to `false`,
                             // so subsequent attempts will be issued every second.
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                            // This is very unlikely; we would have to have a lot of concurrent
-                            // control connections opened and broken at the same time.
-                            // The best we can do is ignoring this.
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        None => {
                             // If control_connection_repair_channel was closed then MetadataReader was dropped,
                             // we can stop working.
                             return;
@@ -406,6 +449,8 @@ impl ClusterWorker {
             .await,
         );
 
+        self.handle_topology_changes(&cluster_state, &new_cluster_state);
+
         new_cluster_state
             .wait_until_all_pools_are_initialized()
             .await;
@@ -417,6 +462,170 @@ impl ClusterWorker {
 
     fn update_cluster_state(&mut self, new_cluster_state: Arc<ClusterState>) {
         self.cluster_state.store(new_cluster_state);
+    }
+
+    fn handle_topology_changes(
+        &self,
+        old_cluster_state: &ClusterState,
+        new_cluster_state: &ClusterState,
+    ) {
+        /// Wrapper around NodeRef that implements Eq by comparing only node's SocketAddr.
+        ///
+        /// Useful to determine added/removed nodes between two `ClusterState`s,
+        /// because the host listener mechanism identifies nodes by their SocketAddr only.
+        #[derive(Eq)]
+        struct NodeByAddress<'a>(NodeRef<'a>);
+
+        impl std::hash::Hash for NodeByAddress<'_> {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                self.0.address.into_inner().hash(state);
+            }
+        }
+
+        impl PartialEq for NodeByAddress<'_> {
+            fn eq(&self, other: &Self) -> bool {
+                // We must compare only by SocketAddr and ignore NodeAddr variant, because otherwise
+                // the following sequence of events could be issued when node 127.0.0.1 is removed
+                // and control connection is moved to 127.0.0.2, resulting in NodeAddr variant change
+                // from `Translatable(127.0.0.2)` to `Untranslatable(127.0.0.2)`:
+                //
+                // ```
+                // Host 127.0.0.1 is DOWN
+                // Host 127.0.0.2 is DOWN
+                // Host 127.0.0.2 has been REMOVED
+                // Host 127.0.0.1 has been REMOVED
+                // Host 127.0.0.2 has been ADDED
+                // Host 127.0.0.2 is UP
+                // ```
+                self.0.address.into_inner() == other.0.address.into_inner()
+            }
+        }
+        impl Deref for NodeByAddress<'_> {
+            type Target = Node;
+
+            fn deref(&self) -> &Self::Target {
+                self.0
+            }
+        }
+
+        // Clippy can't check that in Eq and Hash impls we don't actually use any field with interior mutability
+        // (in Node only `NodeConnectionPool` is such, holding an RwLock inside).
+        // https://rust-lang.github.io/rust-clippy/master/index.html#mutable_key_type
+        #[expect(clippy::mutable_key_type)]
+        let old_nodes: std::collections::HashSet<NodeByAddress> = old_cluster_state
+            .all_nodes
+            .iter()
+            .map(NodeByAddress)
+            .collect();
+        // Clippy can't check that in Eq and Hash impls we don't actually use any field with interior mutability
+        // (in Node only `NodeConnectionPool` is such, holding an RwLock inside).
+        // https://rust-lang.github.io/rust-clippy/master/index.html#mutable_key_type
+        #[expect(clippy::mutable_key_type)]
+        let new_nodes: std::collections::HashSet<NodeByAddress> = new_cluster_state
+            .all_nodes
+            .iter()
+            .map(NodeByAddress)
+            .collect();
+
+        let added_nodes = new_nodes.difference(&old_nodes);
+        let removed_nodes = old_nodes.difference(&new_nodes);
+
+        for node in removed_nodes {
+            Self::handle_node_removed(self.host_listener.as_deref(), node);
+        }
+
+        for node in added_nodes {
+            Self::handle_node_added(self.host_listener.as_deref(), node);
+        }
+    }
+
+    fn handle_node_added(host_listener: Option<&dyn HostListener>, node: &Node) {
+        info!("Node added to cluster: {}", node.address);
+
+        // Notify listener about nodes in the cluster.
+        if let Some(host_listener) = host_listener {
+            let ctx = HostEventContext {
+                host_id: node.host_id,
+                addr: node.address.into_inner(),
+            };
+
+            // First signal ADDED event.
+            host_listener.on_event(&ctx, &HostEvent::Added);
+
+            // Then signal UP event.
+            let prev_up_marker = node.swap_up_marker(NodeConnectivityStatus::Connected);
+            match prev_up_marker {
+                NodeConnectivityStatus::Unreachable => {
+                    unreachable!("Initially added nodes must be set as Connected first!")
+                }
+                NodeConnectivityStatus::Connected => {
+                    host_listener.on_event(&ctx, &HostEvent::Up);
+                }
+            }
+        }
+    }
+
+    fn handle_node_removed(host_listener: Option<&dyn HostListener>, node: &Node) {
+        info!("Node removed from cluster: {}", node.address);
+
+        // Notify listener about node removal.
+        if let Some(host_listener) = host_listener {
+            let ctx = HostEventContext {
+                host_id: node.host_id,
+                addr: node.address.into_inner(),
+            };
+
+            // First signal DOWN event, if needed.
+            let prev_up_marker = node.swap_up_marker(NodeConnectivityStatus::Unreachable);
+            match prev_up_marker {
+                NodeConnectivityStatus::Connected => {
+                    host_listener.on_event(&ctx, &HostEvent::Down);
+                }
+                NodeConnectivityStatus::Unreachable => { /* No need to signal anything */ }
+            }
+
+            // Then signal REMOVED event.
+            host_listener.on_event(&ctx, &HostEvent::Removed);
+        }
+    }
+
+    fn handle_connectivity_change_event(&self, event: &ConnectivityChangeEvent) {
+        let state = self.cluster_state.load();
+
+        let (new_status, address) = match event {
+            ConnectivityChangeEvent::Established { address } => {
+                (NodeConnectivityStatus::Connected, *address)
+            }
+
+            ConnectivityChangeEvent::Lost { address } => {
+                (NodeConnectivityStatus::Unreachable, *address)
+            }
+        };
+
+        let node = state.all_nodes.iter().find(|node| node.address == address);
+
+        if let Some(node) = node {
+            let prev_status = node.swap_up_marker(new_status);
+
+            if let Some(host_listener) = self.host_listener.as_deref() {
+                let ctx = HostEventContext {
+                    host_id: node.host_id,
+                    addr: node.address.into_inner(),
+                };
+
+                match (prev_status, new_status) {
+                    (NodeConnectivityStatus::Connected, NodeConnectivityStatus::Unreachable) => {
+                        debug!("Node is no longer reachable: {}", node.address);
+                        host_listener.on_event(&ctx, &HostEvent::Down);
+                    }
+                    (NodeConnectivityStatus::Unreachable, NodeConnectivityStatus::Connected) => {
+                        debug!("Node is now reachable again: {}", node.address);
+                        host_listener.on_event(&ctx, &HostEvent::Up);
+                    }
+                    _ => { /* No status change */ }
+                }
+            }
+        }
     }
 }
 

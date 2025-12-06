@@ -17,6 +17,8 @@
 
 pub mod address_translator;
 pub mod host_filter;
+// #[cfg(cpp_rust_unstable)]
+pub mod host_listener;
 pub mod load_balancing;
 pub mod retry;
 pub mod speculative_execution;
