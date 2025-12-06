@@ -1815,6 +1815,26 @@ impl Session {
         .await
     }
 
+    /// This is essentially the same as `execute_iter_nongeneric`, but it is *public* and only available
+    /// when the `unstable-csharp-rs` feature is enabled.
+    /// Rationale: I don't know a way to make a function conditionally public,
+    /// based on a compile-time flag, so I added a new wrapper function
+    /// that is conditionally compiled and is public.
+    ///
+    /// This function is intended to be used by the C#-RS Driver, and it's potentially a footgun:
+    /// if a user passes `SerializedValues` that don't match the prepared statement,
+    /// the driver will misbehave (potentially leading to data corruption).
+    /// Therefore, this function must not be exposed to end users of this Rust driver.
+    #[cfg(all(scylla_unstable, feature = "unstable-csharp-rs"))]
+    #[inline]
+    pub async fn execute_iter_preserialized(
+        &self,
+        prepared: PreparedStatement,
+        values: SerializedValues,
+    ) -> Result<QueryPager, PagerExecutionError> {
+        self.execute_iter_nongeneric(prepared, values).await
+    }
+
     /// Prepares all statements within the batch and returns a new batch where every
     /// statement is prepared.
     ///
