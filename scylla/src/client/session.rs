@@ -1275,12 +1275,12 @@ impl Session {
         statement: Statement,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let execution_profile = statement
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
-
         if values.is_empty() {
+            let execution_profile = statement
+                .get_execution_profile_handle()
+                .unwrap_or_else(|| self.get_default_execution_profile_handle())
+                .access();
+
             QueryPager::new_for_query(
                 statement,
                 execution_profile,
@@ -1296,16 +1296,7 @@ impl Session {
             // we fully prepare a statement beforehand.
             let prepared = self.prepare_nongeneric(&statement).await?;
             let values = prepared.serialize_values(&values)?;
-            QueryPager::new_for_prepared_statement(PreparedPagerConfig {
-                prepared,
-                values,
-                execution_profile,
-                cluster_state: self.cluster.get_state(),
-                #[cfg(feature = "metrics")]
-                metrics: Arc::clone(&self.metrics),
-            })
-            .await
-            .map_err(PagerExecutionError::NextPageError)
+            self.execute_iter_nongeneric(prepared, values).await
         }
     }
 
