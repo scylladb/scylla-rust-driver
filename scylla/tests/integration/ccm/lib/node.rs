@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Error;
 
 use super::cli_wrapper::node::NodeCcm;
-use super::cli_wrapper::{DBType, NodeStartOptions, NodeStopOptions};
+pub(crate) use super::cli_wrapper::{DBType, NodeStartOptions, NodeStopOptions};
 use super::cluster::ClusterOptions;
 use super::ip_allocator::NetPrefix;
 
