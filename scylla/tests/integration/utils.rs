@@ -450,7 +450,13 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
 
 /// Checks that the session is connected to a cluster with expected number of nodes,
 /// that all nodes are connected (UP) and that a simple query can be executed everywhere.
-#[cfg(all(feature = "openssl-010", feature = "rustls-023"))]
+#[cfg_attr(
+    not(any(
+        all(scylla_unstable, feature = "unstable-host-listener"),
+        all(feature = "openssl-010", feature = "rustls-023")
+    )),
+    expect(dead_code)
+)]
 pub(crate) async fn check_session_works_and_fully_connected(
     expected_nodes: usize,
     session: &Session,
