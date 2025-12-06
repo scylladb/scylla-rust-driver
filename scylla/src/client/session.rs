@@ -1276,20 +1276,7 @@ impl Session {
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
         if values.is_empty() {
-            let execution_profile = statement
-                .get_execution_profile_handle()
-                .unwrap_or_else(|| self.get_default_execution_profile_handle())
-                .access();
-
-            QueryPager::new_for_query(
-                statement,
-                execution_profile,
-                self.cluster.get_state(),
-                #[cfg(feature = "metrics")]
-                Arc::clone(&self.metrics),
-            )
-            .await
-            .map_err(PagerExecutionError::NextPageError)
+            self.do_query_iter_without_values(statement).await
         } else {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
@@ -1298,6 +1285,27 @@ impl Session {
             let values = prepared.serialize_values(&values)?;
             self.execute_iter_nongeneric(prepared, values).await
         }
+    }
+
+    /// `Session::query_iter` specialization for empty values.
+    async fn do_query_iter_without_values(
+        &self,
+        statement: Statement,
+    ) -> Result<QueryPager, PagerExecutionError> {
+        let execution_profile = statement
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        QueryPager::new_for_query(
+            statement,
+            execution_profile,
+            self.cluster.get_state(),
+            #[cfg(feature = "metrics")]
+            Arc::clone(&self.metrics),
+        )
+        .await
+        .map_err(PagerExecutionError::NextPageError)
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
