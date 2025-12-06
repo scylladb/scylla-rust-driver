@@ -675,7 +675,19 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
-        self.do_execute_unpaged(prepared, values).await
+        let serialized_values = prepared.serialize_values(&values)?;
+        let (result, paging_state) = self
+            .execute(prepared, &serialized_values, None, PagingState::start())
+            .await?;
+        if !paging_state.finished() {
+            error!(
+                "Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug."
+            );
+            return Err(ExecutionError::LastAttemptError(
+                RequestAttemptError::NonfinishedPagingState,
+            ));
+        }
+        Ok(result)
     }
 
     /// Executes a prepared statement, restricting results to single page.
@@ -740,7 +752,9 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.do_execute_single_page(prepared, values, paging_state)
+        let serialized_values = prepared.serialize_values(&values)?;
+        let page_size = prepared.get_validated_page_size();
+        self.execute(prepared, &serialized_values, Some(page_size), paging_state)
             .await
     }
 
@@ -841,7 +855,95 @@ impl Session {
         batch: &Batch,
         values: impl BatchValues,
     ) -> Result<QueryResult, ExecutionError> {
-        self.do_batch(batch, values).await
+        // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
+        // If users batch statements by shard, they will be rewarded with full shard awareness
+
+        // check to ensure that we don't send a batch statement with more than u16::MAX queries
+        let batch_statements_length = batch.statements.len();
+        if batch_statements_length > u16::MAX as usize {
+            return Err(ExecutionError::BadQuery(
+                BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
+            ));
+        }
+
+        let execution_profile = batch
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        let consistency = batch
+            .config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+
+        let serial_consistency = batch
+            .config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+
+        let (first_value_token, values) =
+            batch_values::peek_first_token(values, batch.statements.first())?;
+        let values_ref = &values;
+
+        let table_spec =
+            if let Some(BatchStatement::PreparedStatement(ps)) = batch.statements.first() {
+                ps.get_table_spec()
+            } else {
+                None
+            };
+
+        let statement_info = RoutingInfo {
+            consistency,
+            serial_consistency,
+            token: first_value_token,
+            table: table_spec,
+            is_confirmed_lwt: false,
+        };
+
+        let span = RequestSpan::new_batch();
+
+        let (run_request_result, coordinator): (
+            RunRequestResult<NonErrorQueryResponse>,
+            Coordinator,
+        ) = self
+            .run_request(
+                statement_info,
+                &batch.config,
+                execution_profile,
+                |connection: Arc<Connection>,
+                 consistency: Consistency,
+                 execution_profile: &ExecutionProfileInner| {
+                    let serial_consistency = batch
+                        .config
+                        .serial_consistency
+                        .unwrap_or(execution_profile.serial_consistency);
+                    async move {
+                        connection
+                            .batch_with_consistency(
+                                batch,
+                                values_ref,
+                                consistency,
+                                serial_consistency,
+                            )
+                            .await
+                            .and_then(QueryResponse::into_non_error_query_response)
+                    }
+                },
+                &span,
+            )
+            .instrument(span.span().clone())
+            .await?;
+
+        let result = match run_request_result {
+            RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(coordinator),
+            RunRequestResult::Completed(non_error_query_response) => {
+                let result = non_error_query_response.into_query_result(coordinator)?;
+                span.record_result_fields(&result);
+                result
+            }
+        };
+
+        Ok(result)
     }
 
     /// Estabilishes a CQL session with the database
@@ -1359,38 +1461,6 @@ impl Session {
             .as_deref()
     }
 
-    async fn do_execute_unpaged(
-        &self,
-        prepared: &PreparedStatement,
-        values: impl SerializeRow,
-    ) -> Result<QueryResult, ExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-        let (result, paging_state) = self
-            .execute(prepared, &serialized_values, None, PagingState::start())
-            .await?;
-        if !paging_state.finished() {
-            error!(
-                "Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug."
-            );
-            return Err(ExecutionError::LastAttemptError(
-                RequestAttemptError::NonfinishedPagingState,
-            ));
-        }
-        Ok(result)
-    }
-
-    async fn do_execute_single_page(
-        &self,
-        prepared: &PreparedStatement,
-        values: impl SerializeRow,
-        paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-        let page_size = prepared.get_validated_page_size();
-        self.execute(prepared, &serialized_values, Some(page_size), paging_state)
-            .await
-    }
-
     /// Sends a prepared request to the database, optionally continuing from a saved point.
     ///
     /// This is now an internal method only.
@@ -1527,102 +1597,6 @@ impl Session {
         })
         .await
         .map_err(PagerExecutionError::NextPageError)
-    }
-
-    async fn do_batch(
-        &self,
-        batch: &Batch,
-        values: impl BatchValues,
-    ) -> Result<QueryResult, ExecutionError> {
-        // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
-        // If users batch statements by shard, they will be rewarded with full shard awareness
-
-        // check to ensure that we don't send a batch statement with more than u16::MAX queries
-        let batch_statements_length = batch.statements.len();
-        if batch_statements_length > u16::MAX as usize {
-            return Err(ExecutionError::BadQuery(
-                BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
-            ));
-        }
-
-        let execution_profile = batch
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
-
-        let consistency = batch
-            .config
-            .consistency
-            .unwrap_or(execution_profile.consistency);
-
-        let serial_consistency = batch
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
-
-        let (first_value_token, values) =
-            batch_values::peek_first_token(values, batch.statements.first())?;
-        let values_ref = &values;
-
-        let table_spec =
-            if let Some(BatchStatement::PreparedStatement(ps)) = batch.statements.first() {
-                ps.get_table_spec()
-            } else {
-                None
-            };
-
-        let statement_info = RoutingInfo {
-            consistency,
-            serial_consistency,
-            token: first_value_token,
-            table: table_spec,
-            is_confirmed_lwt: false,
-        };
-
-        let span = RequestSpan::new_batch();
-
-        let (run_request_result, coordinator): (
-            RunRequestResult<NonErrorQueryResponse>,
-            Coordinator,
-        ) = self
-            .run_request(
-                statement_info,
-                &batch.config,
-                execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = batch
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
-                    async move {
-                        connection
-                            .batch_with_consistency(
-                                batch,
-                                values_ref,
-                                consistency,
-                                serial_consistency,
-                            )
-                            .await
-                            .and_then(QueryResponse::into_non_error_query_response)
-                    }
-                },
-                &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
-
-        let result = match run_request_result {
-            RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(coordinator),
-            RunRequestResult::Completed(non_error_query_response) => {
-                let result = non_error_query_response.into_query_result(coordinator)?;
-                span.record_result_fields(&result);
-                result
-            }
-        };
-
-        Ok(result)
     }
 
     /// Prepares all statements within the batch and returns a new batch where every
