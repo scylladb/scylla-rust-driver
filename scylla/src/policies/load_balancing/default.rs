@@ -1400,6 +1400,7 @@ mod tests {
                 metadata,
                 &Default::default(),
                 &HashMap::new(),
+                &mut |_, _| (),
                 &None,
                 None,
                 &connectivity_events_sender,
@@ -1441,6 +1442,7 @@ mod tests {
                 info,
                 &Default::default(),
                 &HashMap::new(),
+                &mut |_, _| (),
                 &None,
                 None,
                 &connectivity_events_sender,
@@ -2500,6 +2502,7 @@ mod tests {
             mock_metadata_for_token_aware_tests(),
             &Default::default(),
             &HashMap::new(),
+            &mut |_, _| (),
             &None,
             {
                 struct FHostFilter;

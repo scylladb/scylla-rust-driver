@@ -154,6 +154,8 @@ impl Cluster {
             metadata,
             &pool_config,
             &HashMap::new(),
+            // TODO: implement actual handling of topology changes.
+            &mut |_, _| (),
             &None,
             host_filter.as_deref(),
             &connectivity_events_sender,
@@ -435,6 +437,8 @@ impl ClusterWorker {
                 metadata,
                 &self.pool_config,
                 &cluster_state.known_peers,
+                // TODO: implement actual handling of topology changes.
+                &mut |_, _| (),
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
                 &self.connectivity_events_sender,

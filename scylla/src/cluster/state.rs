@@ -85,10 +85,17 @@ impl ClusterState {
     /// Creates new ClusterState using information about topology held in `metadata`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
     #[allow(clippy::too_many_arguments)]
+    // This allow(clippy::type_complexity) is here because I can't satisfy borrow checker while
+    // having the closure type be a type alias.
+    #[allow(clippy::type_complexity)]
     pub(crate) async fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,
         known_peers: &HashMap<Uuid, Arc<Node>>,
+        // Takes old and new known_peers maps as arguments.
+        handle_topology_changes: &mut (
+                 dyn FnMut(&HashMap<Uuid, Arc<Node>>, &HashMap<Uuid, Arc<Node>>) + Send + Sync
+             ),
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
         connectivity_events_sender: &mpsc::UnboundedSender<ConnectivityChangeEvent>,
@@ -143,6 +150,8 @@ impl ClusterState {
             }
         }
 
+        handle_topology_changes(known_peers, &new_known_peers);
+
         let keyspaces: HashMap<String, Keyspace> = metadata
             .keyspaces
             .into_iter()
@@ -169,6 +178,7 @@ impl ClusterState {
             })
             .collect();
 
+        // Tablets maintenance.
         {
             let removed_nodes = {
                 let mut removed_nodes = HashSet::new();
