@@ -20,6 +20,7 @@ workspace = true
 unnameable_types = "warn"
 unreachable_pub = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(scylla_unstable)',
     'cfg(nodejs_rs_unstable)',
 ] }
 

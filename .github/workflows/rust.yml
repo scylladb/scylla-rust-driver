@@ -11,7 +11,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings
+  RUSTFLAGS: -Dwarnings --cfg scylla_unstable
   RUST_BACKTRACE: full
   rust_min: 1.85.0 # <- Update this when bumping up MSRV
 
@@ -46,13 +46,23 @@ jobs:
     - name: Clippy scylla-cql
       run: cargo clippy --all-targets -p scylla-cql --features "full-serialization"
 
+# No scylla_unstable flag with features
+    - name: Cargo check without scylla_unstable
+      run: RUSTFLAGS="-Dwarnings" cargo clippy --all-features --tests --examples # No benches, because they require unstable features.
+
+# No scylla_unstable flag without features
+    - name: Cargo check without scylla_unstable and features
+      # If we pass --tests or --examples here, feature unification turns on some features anyway,
+      # so we only check the main target.
+      run: RUSTFLAGS="-Dwarnings" cargo clippy -p scylla
+
 # cpp-rust-driver special cfg
     - name: Cargo check with cpp_rust_unstable cfg
-      run: RUSTFLAGS="--cfg cpp_rust_unstable -Dwarnings" cargo clippy --all-targets --all-features
+      run: RUSTFLAGS="${RUSTFLAGS} --cfg cpp_rust_unstable -Dwarnings" cargo clippy --all-targets --all-features
 
 # nodejs_rs_unstable special cfg
     - name: Cargo check with nodejs_rs_unstable cfg
-      run: RUSTFLAGS="--cfg nodejs_rs_unstable -Dwarnings" cargo clippy --all-targets --all-features
+      run: RUSTFLAGS="${RUSTFLAGS} --cfg nodejs_rs_unstable -Dwarnings" cargo clippy --all-targets --all-features
 
 # Features checks.
     # No features.
