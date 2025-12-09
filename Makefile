@@ -50,11 +50,11 @@ test: up
 	SCYLLA_URI=172.42.0.2:9042 \
 	 SCYLLA_URI2=172.42.0.3:9042 \
 	 SCYLLA_URI3=172.42.0.4:9042 \
-	 cargo test
+	 cargo test --all-features
 
 .PHONY: ccm-test
 ccm-test:
-	RUSTFLAGS="${RUSTFLAGS} --cfg ccm_tests" cargo test --test integration ccm
+	RUSTFLAGS="${RUSTFLAGS} --cfg ccm_tests" cargo test --all-features --test integration ccm
 
 .PHONY: dockerized-test
 dockerized-test: up
