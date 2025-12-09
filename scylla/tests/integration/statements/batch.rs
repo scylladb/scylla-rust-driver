@@ -82,6 +82,7 @@ async fn batch_statements_and_values_mismatch_detected() {
 }
 
 #[tokio::test]
+#[cfg_attr(cassandra_tests, ignore)]
 async fn test_large_batch_statements() {
     setup_tracing();
     let mut session = create_new_session_builder().build().await.unwrap();

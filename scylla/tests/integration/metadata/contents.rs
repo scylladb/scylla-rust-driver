@@ -447,6 +447,7 @@ async fn test_table_partitioner_in_metadata() {
 }
 
 #[tokio::test]
+#[cfg_attr(cassandra_tests, ignore)]
 async fn test_views_in_schema_info() {
     let _ = tracing_subscriber::fmt::try_init();
 
