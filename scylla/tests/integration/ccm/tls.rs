@@ -12,14 +12,14 @@ use rcgen::{
 };
 use rustls::ClientConfig;
 use rustls::pki_types::PrivatePkcs8KeyDer;
-use scylla::client::session::{Session, TlsContext};
+use scylla::client::session::TlsContext;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
 use crate::ccm::lib::cluster::{Cluster, ClusterOptions};
 use crate::ccm::lib::node::Node;
 use crate::ccm::lib::{CLUSTER_VERSION, run_ccm_test_with_configuration};
-use crate::utils::{execute_unprepared_statement_everywhere, setup_tracing};
+use crate::utils::{check_session_works_and_fully_connected, setup_tracing};
 
 fn cluster_3_nodes() -> ClusterOptions {
     ClusterOptions {
@@ -129,33 +129,6 @@ async fn run_ccm_tls_test(
         async |cluster: &mut Cluster| test(&ca, cluster).await,
     )
     .await
-}
-
-async fn check_session_works_and_fully_connected(expected_nodes: usize, session: &Session) {
-    let state = session.get_cluster_state();
-    assert_eq!(state.get_nodes_info().len(), expected_nodes);
-    assert!(
-        state
-            .get_nodes_info()
-            .iter()
-            .inspect(|node| {
-                tracing::debug!(
-                    "Node {}, address: {}, connected: {}",
-                    node.host_id,
-                    node.address,
-                    node.is_connected()
-                )
-            })
-            .all(|node| node.is_connected())
-    );
-    execute_unprepared_statement_everywhere(
-        session,
-        &state,
-        &"SELECT * FROM system.local WHERE key='local'".into(),
-        &(),
-    )
-    .await
-    .unwrap();
 }
 
 fn build_openssl_ca_store(ca: &CertifiedIssuer<'_, KeyPair>) -> X509Store {
