@@ -14,6 +14,25 @@ license = "MIT OR Apache-2.0"
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[package.metadata.cargo-semver-checks.lints]
+workspace = true
+
+[lints.rust]
+unnameable_types = "warn"
+unreachable_pub = "warn"
+missing-docs = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(cassandra_tests)',
+    'cfg(cpp_rust_unstable)',
+    'cfg(nodejs_rs_unstable)',
+    'cfg(ccm_tests)',
+] }
+
+[[bench]]
+name = "benchmark"
+harness = false
+required-features = ["unstable-testing"]
+
 [features]
 default = []
 # Enables TLS support via OpenSSL 0.10.
@@ -128,23 +147,3 @@ time = "0.3"
 anyhow = "1.0.98"
 tempfile = "3.19"
 rcgen = "0.14"
-
-
-[[bench]]
-name = "benchmark"
-harness = false
-required-features = ["unstable-testing"]
-
-[lints.rust]
-unnameable_types = "warn"
-unreachable_pub = "warn"
-missing-docs = "warn"
-unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(cassandra_tests)',
-    'cfg(cpp_rust_unstable)',
-    'cfg(nodejs_rs_unstable)',
-    'cfg(ccm_tests)',
-] }
-
-[package.metadata.cargo-semver-checks.lints]
-workspace = true
