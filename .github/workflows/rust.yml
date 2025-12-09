@@ -86,7 +86,8 @@ jobs:
       run: cargo check --all-targets -p scylla --features "openssl-010"
     - name: Cargo check with rustls-x feature
       run: cargo check --all-targets -p scylla --features "rustls-023"
-    # (openssl-x, rustls-x) is checked in tls.yml.
+    - name: Cargo check with rustls-x and openssl-x features
+      run: cargo check --all-targets -p scylla --features "rustls-023" --features "openssl-010"
 
   tests:
     runs-on: ubuntu-latest
