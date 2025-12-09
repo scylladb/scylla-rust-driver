@@ -22,7 +22,7 @@
 
 use darling::{FromMeta, ToTokens};
 use proc_macro::TokenStream;
-
+pub(crate) mod enum_attrs;
 mod parser;
 
 // Flavor of serialization/deserialization macros ({De,S}erialize{Value,Row}).
@@ -85,6 +85,23 @@ mod serialize;
 ///     a: i32,
 ///     b: Option<String>,
 ///     // No "c" field - it is not mandatory by default for all fields to be present
+/// }
+/// ```
+///
+/// # C-style Enums
+///
+/// You can derive `SerializeValue` for C-style enums (enums with only unit variants)
+/// to serialize them as integers. The macro reads the standard `#[repr(TYPE)]` attribute
+/// to determine the integer type.
+///
+/// ```rust
+/// # use scylla::SerializeValue;
+/// #[derive(SerializeValue, Clone, Copy)]
+/// #[repr(i32)]
+/// enum Color {
+///     Red = 0,
+///     Green = 1,
+///     Blue = 2,
 /// }
 /// ```
 ///
@@ -430,6 +447,26 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 ///     a: i32,
 ///     b: Option<String>,
 ///     c: &'a [u8],
+/// }
+/// ```
+///
+/// # C-style Enums
+///
+/// You can derive `DeserializeValue` for C-style enums to deserialize them from integers.
+/// The macro will verify that the value from the database matches one of the enum variants.
+/// The macro reads the standard `#[repr(TYPE)]` attribute to determine the integer type.
+/// **Note:** The derive macro currently only supports explicit integer literals as discriminants
+/// (e.g., `Variant = 1`). Complex constant expressions (e.g., `Variant = 1 << 3`)
+/// or references to constants (e.g., `Variant = MY_CONST`) are not supported.
+///
+/// ```rust
+/// # use scylla::DeserializeValue;
+/// #[derive(DeserializeValue, Clone, Copy, Debug, PartialEq)]
+/// #[scylla(crate = "scylla_cql")]
+/// #[repr(i16)]
+/// enum ErrorCode {
+///     NotFound = 404,
+///     ServerBug = 500,
 /// }
 /// ```
 ///

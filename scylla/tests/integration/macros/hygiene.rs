@@ -185,6 +185,39 @@ macro_rules! test_crate {
             };
         }
 
+        #[test]
+        fn test_enum_ser_deser() {
+            use crate::utils::setup_tracing;
+            use ::bytes::Bytes;
+            use ::std::assert_eq;
+            use ::std::vec::Vec;
+            use _scylla::deserialize::value::DeserializeValue;
+            use _scylla::deserialize::FrameSlice;
+            use _scylla::frame::response::result::{ColumnType, NativeType};
+            use _scylla::serialize::value::SerializeValue;
+            use _scylla::serialize::writers::CellWriter;
+
+            setup_tracing();
+
+            let val = TestEnum::A;
+            let typ = ColumnType::Native(NativeType::Int);
+
+            let mut buf = Vec::new();
+            let writer = CellWriter::new(&mut buf);
+            SerializeValue::serialize(&val, &typ, writer).unwrap();
+
+            let expected = 1i32.to_be_bytes();
+            assert_eq!(buf, expected);
+
+            assert!(<TestEnum as DeserializeValue>::type_check(&typ).is_ok());
+
+            let bytes_buf = Bytes::copy_from_slice(&buf);
+            let slice = FrameSlice::new(&bytes_buf).read_cql_bytes().unwrap();
+            let deserialized = <TestEnum as DeserializeValue>::deserialize(&typ, slice).unwrap();
+
+            assert_eq!(deserialized, val);
+        }
+
         // Test attributes for value struct with name flavor
         #[derive(
             _scylla::DeserializeValue, _scylla::SerializeValue, PartialEq, Debug,
@@ -342,6 +375,21 @@ macro_rules! test_crate {
             c: ::core::primitive::i32,
             #[scylla(default_when_null)]
             d: ::core::primitive::i32,
+        }
+
+        #[derive(
+            _scylla::DeserializeValue,
+            _scylla::SerializeValue,
+            PartialEq,
+            Debug,
+            Clone,
+            Copy,
+        )]
+        #[scylla(crate = _scylla)]
+        #[repr(i32)]
+        enum TestEnum {
+            A = 1,
+            B = 2,
         }
     };
 }
