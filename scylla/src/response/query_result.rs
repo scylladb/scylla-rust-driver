@@ -382,7 +382,7 @@ impl QueryRowsResult {
 
     /// Deconstructs the `QueryRowsResult` into its components, which can be used by the caller
     /// directly. Intended for use in CPP-Rust Driver only.
-    #[cfg(cpp_rust_unstable)]
+    #[cfg(all(scylla_unstable, feature = "unstable-cpp-rs"))]
     pub fn into_inner(
         self,
     ) -> (

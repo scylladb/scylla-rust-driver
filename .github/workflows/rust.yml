@@ -56,10 +56,6 @@ jobs:
       # so we only check the main target.
       run: RUSTFLAGS="-Dwarnings" cargo clippy -p scylla
 
-# cpp-rust-driver special cfg
-    - name: Cargo check with cpp_rust_unstable cfg
-      run: RUSTFLAGS="${RUSTFLAGS} --cfg cpp_rust_unstable -Dwarnings" cargo clippy --all-targets --all-features
-
 # nodejs_rs_unstable special cfg
     - name: Cargo check with nodejs_rs_unstable cfg
       run: RUSTFLAGS="${RUSTFLAGS} --cfg nodejs_rs_unstable -Dwarnings" cargo clippy --all-targets --all-features
@@ -98,6 +94,11 @@ jobs:
       run: cargo check --all-targets -p scylla --features "rustls-023"
     - name: Cargo check with rustls-x and openssl-x features
       run: cargo check --all-targets -p scylla --features "rustls-023" --features "openssl-010"
+
+  # unstable-cpp-rs feature.
+    - name: Cargo check with unstable-cpp-rs feature
+      run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-cpp-rs"
+
 
   tests:
     runs-on: ubuntu-latest

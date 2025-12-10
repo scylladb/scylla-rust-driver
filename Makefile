@@ -6,7 +6,7 @@ export RUSTFLAGS
 all: test
 
 .PHONY: static
-static: fmt-check check check-without-features check-without-unstable check-without-unstable-and-features check-all-features clippy clippy-all-features clippy-cpp-rust
+static: fmt-check check check-without-features check-without-unstable check-without-unstable-and-features check-all-features clippy clippy-all-features
 
 .PHONY: ci
 ci: static test
@@ -53,10 +53,6 @@ clippy:
 .PHONY: clippy-all-features
 clippy-all-features:
 	RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --all-features
-
-.PHONY: clippy-cpp-rust
-clippy-cpp-rust:
-	RUSTFLAGS="${RUSTFLAGS} --cfg cpp_rust_unstable -Dwarnings" cargo clippy --all-targets --all-features
 
 
 .PHONY: test

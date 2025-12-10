@@ -24,7 +24,6 @@ missing-docs = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(scylla_unstable)',
     'cfg(cassandra_tests)',
-    'cfg(cpp_rust_unstable)',
     'cfg(nodejs_rs_unstable)',
     'cfg(ccm_tests)',
 ] }
@@ -67,6 +66,8 @@ metrics = ["dep:histogram"]
 ### UNSTABLE FEATURES ###
 # Opts-in to various unstable testing features.
 unstable-testing = []
+# Enables features for use in CPP-RS Driver.
+unstable-cpp-rs = []
 
 
 [dependencies]
