@@ -63,8 +63,11 @@ full-serialization = [
 ]
 # Enables collection of internal driver metrics.
 metrics = ["dep:histogram"]
+
+### UNSTABLE FEATURES ###
 # Opts-in to various unstable testing features.
 unstable-testing = []
+
 
 [dependencies]
 ###########################
