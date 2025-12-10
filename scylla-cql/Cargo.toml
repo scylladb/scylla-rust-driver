@@ -21,7 +21,6 @@ unnameable_types = "warn"
 unreachable_pub = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(scylla_unstable)',
-    'cfg(nodejs_rs_unstable)',
 ] }
 
 [[bench]]
@@ -50,6 +49,11 @@ full-serialization = [
     "num-bigint-04",
     "bigdecimal-04",
 ]
+
+### UNSTABLE FEATURES ###
+# Enables features for use in Node.js-RS Driver.
+unstable-nodejs-rs = []
+
 
 [dependencies]
 ###########################

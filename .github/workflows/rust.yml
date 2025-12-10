@@ -56,10 +56,6 @@ jobs:
       # so we only check the main target.
       run: RUSTFLAGS="-Dwarnings" cargo clippy -p scylla
 
-# nodejs_rs_unstable special cfg
-    - name: Cargo check with nodejs_rs_unstable cfg
-      run: RUSTFLAGS="${RUSTFLAGS} --cfg nodejs_rs_unstable -Dwarnings" cargo clippy --all-targets --all-features
-
 # Features checks.
     # No features.
     - name: Cargo check without features
@@ -98,6 +94,10 @@ jobs:
   # unstable-cpp-rs feature.
     - name: Cargo check with unstable-cpp-rs feature
       run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-cpp-rs"
+
+  # unstable-nodejs-rs feature.
+    - name: Cargo check with nodejs-rs feature
+      run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-nodejs-rs"
 
 
   tests:

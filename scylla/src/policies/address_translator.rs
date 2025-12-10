@@ -52,7 +52,7 @@ impl UntranslatedPeer<'_> {
 
     /// Creates a new untranslated peer. Intended to be used only in nodejs-rs driver only.
     /// This specific constructor is intended for unit tests only.
-    #[cfg(nodejs_rs_unstable)]
+    #[cfg(all(scylla_unstable, feature = "unstable-nodejs-rs"))]
     pub fn new(address: SocketAddr) -> Self {
         UntranslatedPeer {
             host_id: Uuid::nil(),
