@@ -11,7 +11,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings
+  RUSTFLAGS: -Dwarnings --cfg scylla_unstable
   RUST_BACKTRACE: full
   rust_min: 1.85.0 # <- Update this when bumping up MSRV
 
@@ -46,13 +46,15 @@ jobs:
     - name: Clippy scylla-cql
       run: cargo clippy --all-targets -p scylla-cql --features "full-serialization"
 
-# cpp-rust-driver special cfg
-    - name: Cargo check with cpp_rust_unstable cfg
-      run: RUSTFLAGS="--cfg cpp_rust_unstable -Dwarnings" cargo clippy --all-targets --all-features
+# No scylla_unstable flag with features
+    - name: Cargo check without scylla_unstable
+      run: RUSTFLAGS="-Dwarnings" cargo clippy --all-features --tests --examples # No benches, because they require unstable features.
 
-# nodejs_rs_unstable special cfg
-    - name: Cargo check with nodejs_rs_unstable cfg
-      run: RUSTFLAGS="--cfg nodejs_rs_unstable -Dwarnings" cargo clippy --all-targets --all-features
+# No scylla_unstable flag without features
+    - name: Cargo check without scylla_unstable and features
+      # If we pass --tests or --examples here, feature unification turns on some features anyway,
+      # so we only check the main target.
+      run: RUSTFLAGS="-Dwarnings" cargo clippy -p scylla
 
 # Features checks.
     # No features.
@@ -86,7 +88,17 @@ jobs:
       run: cargo check --all-targets -p scylla --features "openssl-010"
     - name: Cargo check with rustls-x feature
       run: cargo check --all-targets -p scylla --features "rustls-023"
-    # (openssl-x, rustls-x) is checked in tls.yml.
+    - name: Cargo check with rustls-x and openssl-x features
+      run: cargo check --all-targets -p scylla --features "rustls-023" --features "openssl-010"
+
+  # unstable-cpp-rs feature.
+    - name: Cargo check with unstable-cpp-rs feature
+      run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-cpp-rs"
+
+  # unstable-nodejs-rs feature.
+    - name: Cargo check with nodejs-rs feature
+      run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-nodejs-rs"
+
 
   tests:
     runs-on: ubuntu-latest
@@ -103,7 +115,7 @@ jobs:
       run: rustc --version
     - name: Run tests
       run: |
-        RUST_LOG=trace SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --features "full-serialization"
+        RUST_LOG=trace SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --all-features
     - name: Check for stale test keyspaces
       run: SCYLLA_URI=172.42.0.2:9042 cargo run --bin find_stale_test_keyspaces
     - name: Stop the cluster

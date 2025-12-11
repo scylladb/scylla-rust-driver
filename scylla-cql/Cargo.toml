@@ -13,6 +13,20 @@ license = "MIT OR Apache-2.0"
 [package.metadata."docs.rs"]
 all-features = true
 
+[package.metadata.cargo-semver-checks.lints]
+workspace = true
+
+[lints.rust]
+unnameable_types = "warn"
+unreachable_pub = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(scylla_unstable)',
+] }
+
+[[bench]]
+name = "benchmark"
+harness = false
+
 [features]
 # Enables support for CQL ser/de of Secrecy type from secrecy 0.8 crate.
 secrecy-08 = ["dep:secrecy-08"]
@@ -35,6 +49,11 @@ full-serialization = [
     "num-bigint-04",
     "bigdecimal-04",
 ]
+
+### UNSTABLE FEATURES ###
+# Enables features for use in Node.js-RS Driver.
+unstable-nodejs-rs = []
+
 
 [dependencies]
 ###########################
@@ -93,17 +112,3 @@ criterion = "0.6"
 # Use large-dates feature to test potential edge cases
 time-03 = { package = "time", version = "0.3.21", features = ["large-dates"] }
 uuid = { version = "1.0", features = ["v4"] }
-
-[[bench]]
-name = "benchmark"
-harness = false
-
-[lints.rust]
-unnameable_types = "warn"
-unreachable_pub = "warn"
-unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(nodejs_rs_unstable)',
-] }
-
-[package.metadata.cargo-semver-checks.lints]
-workspace = true

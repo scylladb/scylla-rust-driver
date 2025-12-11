@@ -382,7 +382,7 @@ impl QueryRowsResult {
 
     /// Deconstructs the `QueryRowsResult` into its components, which can be used by the caller
     /// directly. Intended for use in CPP-Rust Driver only.
-    #[cfg(cpp_rust_unstable)]
+    #[cfg(all(scylla_unstable, feature = "unstable-cpp-rs"))]
     pub fn into_inner(
         self,
     ) -> (
@@ -408,7 +408,7 @@ impl QueryRowsResult {
 
     /// Allows to obtain reference to `DeserializedMetadataAndRawRows`, without the need for owned object deconstruction.
     /// Intended to be used only in nodejs-rs driver only.
-    #[cfg(nodejs_rs_unstable)]
+    #[cfg(all(scylla_unstable, feature = "unstable-nodejs-rs"))]
     pub fn raw_rows_with_metadata(&self) -> &DeserializedMetadataAndRawRows {
         &self.raw_rows_with_metadata
     }

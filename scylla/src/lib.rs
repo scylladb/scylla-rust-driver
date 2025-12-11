@@ -142,7 +142,7 @@ pub mod frame {
             //!
             //! Contains lower-level types that are used to represent the result of a query.
 
-            #[cfg(cpp_rust_unstable)]
+            #[cfg(all(scylla_unstable, feature = "unstable-cpp-rs"))]
             pub use scylla_cql::frame::response::result::DeserializedMetadataAndRawRows;
 
             pub(crate) use scylla_cql::frame::response::result::*;
@@ -262,7 +262,7 @@ pub(crate) mod utils;
 #[cfg(test)]
 pub(crate) use utils::test_utils;
 
-#[cfg(feature = "unstable-testing")]
+#[cfg(all(scylla_unstable, feature = "unstable-testing"))]
 #[doc(hidden)]
 pub mod internal_testing {
     use scylla_cql::serialize::row::SerializedValues;
