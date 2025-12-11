@@ -358,7 +358,14 @@ impl GenericSessionBuilder<DefaultMode> {
 "#
     )]
     pub fn tls_context(mut self, tls_context: Option<impl Into<TlsContext>>) -> Self {
-        self.config.tls_context = tls_context.map(|t| t.into());
+        #[cfg_attr(
+            not(any(feature = "openssl-010", feature = "rustls-023")),
+            // TODO: make this expect() once MSRV is 1.92+.
+            allow(unreachable_code)
+        )]
+        {
+            self.config.tls_context = tls_context.map(|t| t.into());
+        }
         self
     }
 }

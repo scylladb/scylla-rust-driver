@@ -863,9 +863,17 @@ impl Session {
         let tls_provider = if let Some(tls_context) = config.tls_context {
             // To silence warnings when TlsContext is an empty enum (tls features are disabled).
             // In such case, TlsProvider is uninhabited.
-            #[allow(unused_variables)]
+            #[cfg_attr(
+                not(any(feature = "openssl-010", feature = "rustls-023")),
+                // TODO: make this expect() once MSRV is 1.92+.
+                allow(unreachable_code, unused_variables)
+            )]
             let provider = TlsProvider::new_with_global_context(tls_context);
-            #[allow(unreachable_code)]
+            #[cfg_attr(
+                not(any(feature = "openssl-010", feature = "rustls-023")),
+                // TODO: remove this once MSRV is 1.92+.
+                allow(unreachable_code)
+            )]
             Some(provider)
         } else {
             None
