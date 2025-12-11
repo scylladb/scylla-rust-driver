@@ -23,6 +23,7 @@ use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
+use crate::policies::reconnect::ExponentialReconnectPolicy;
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
@@ -911,6 +912,7 @@ impl Session {
             connection_config,
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
+            reconnect_policy: Arc::new(ExponentialReconnectPolicy::new()),
         };
 
         #[cfg(feature = "metrics")]

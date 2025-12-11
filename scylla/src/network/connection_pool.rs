@@ -6,9 +6,9 @@ use super::connection::{
 use crate::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, UseKeyspaceError,
 };
-use crate::policies::reconnect::{
-    ExponentialReconnectPolicy, ReconnectPolicy, ReconnectPolicySession,
-};
+#[cfg(test)]
+use crate::policies::reconnect::ExponentialReconnectPolicy;
+use crate::policies::reconnect::{ReconnectPolicy, ReconnectPolicySession};
 use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
@@ -61,6 +61,7 @@ pub(crate) struct PoolConfig {
     pub(crate) connection_config: ConnectionConfig,
     pub(crate) pool_size: PoolSize,
     pub(crate) can_use_shard_aware_port: bool,
+    pub(crate) reconnect_policy: Arc<dyn ReconnectPolicy>,
 }
 
 #[cfg(test)]
@@ -70,17 +71,23 @@ impl Default for PoolConfig {
             connection_config: Default::default(),
             pool_size: Default::default(),
             can_use_shard_aware_port: true,
+            reconnect_policy: Arc::new(ExponentialReconnectPolicy::new()),
         }
     }
 }
 
 impl PoolConfig {
-    fn to_host_pool_config(&self, endpoint: &UntranslatedEndpoint) -> HostPoolConfig {
-        HostPoolConfig {
+    fn to_host_pool_config(
+        &self,
+        endpoint: &UntranslatedEndpoint,
+    ) -> (HostPoolConfig, Box<dyn ReconnectPolicySession>) {
+        let host_reconnect_policy = self.reconnect_policy.new_session();
+        let host_pool_config = HostPoolConfig {
             connection_config: self.connection_config.to_host_connection_config(endpoint),
             pool_size: self.pool_size,
             can_use_shard_aware_port: self.can_use_shard_aware_port,
-        }
+        };
+        (host_pool_config, host_reconnect_policy)
     }
 }
 
@@ -217,7 +224,7 @@ impl NodeConnectionPool {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
 
-        let host_pool_config = pool_config.to_host_pool_config(&endpoint);
+        let (host_pool_config, host_reconnect_policy) = pool_config.to_host_pool_config(&endpoint);
 
         let arced_endpoint = Arc::new(RwLock::new(endpoint));
 
@@ -230,6 +237,7 @@ impl NodeConnectionPool {
             pool_empty_notifier,
             #[cfg(feature = "metrics")]
             metrics,
+            host_reconnect_policy,
         );
 
         let conns = refiller.get_shared_connections();
@@ -502,6 +510,8 @@ struct UseKeyspaceRequest {
 }
 
 impl PoolRefiller {
+    #[allow(clippy::too_many_arguments)] // Not always triggered, because of the metrics, so
+    // I can't use `expect`.
     pub(crate) fn new(
         endpoint: Arc<RwLock<UntranslatedEndpoint>>,
         pool_config: HostPoolConfig,
@@ -510,6 +520,7 @@ impl PoolRefiller {
         pool_updated_notify: Arc<Notify>,
         pool_empty_notifier: mpsc::Sender<()>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        reconnect_policy: Box<dyn ReconnectPolicySession>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
         // and assume that the node is a Cassandra node
@@ -528,7 +539,7 @@ impl PoolRefiller {
             conns,
 
             had_error_since_last_refill: false,
-            refill_delay_strategy: ExponentialReconnectPolicy::new().new_session(),
+            refill_delay_strategy: reconnect_policy,
 
             ready_connections: FuturesUnordered::new(),
             connection_errors: FuturesUnordered::new(),
