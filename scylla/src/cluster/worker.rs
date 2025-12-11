@@ -162,6 +162,7 @@ impl Cluster {
             &host_filter,
             #[cfg(feature = "metrics")]
             Arc::clone(&metrics),
+            Arc::clone(&pool_config.reconnect_policy),
         )
         .await?;
 
