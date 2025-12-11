@@ -6,6 +6,9 @@ use super::connection::{
 use crate::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, UseKeyspaceError,
 };
+use crate::policies::reconnect::{
+    ExponentialReconnectPolicy, ReconnectPolicy, ReconnectPolicySession,
+};
 use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
@@ -24,7 +27,6 @@ use std::num::NonZeroUsize;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
-use std::time::Duration;
 use uuid::Uuid;
 
 use tokio::sync::{Notify, mpsc};
@@ -433,39 +435,6 @@ impl NodeConnectionPool {
 
 const EXCESS_CONNECTION_BOUND_PER_SHARD_MULTIPLIER: usize = 10;
 
-// TODO: Make it configurable through a policy (issue #184)
-const MIN_FILL_BACKOFF: Duration = Duration::from_millis(50);
-const MAX_FILL_BACKOFF: Duration = Duration::from_secs(10);
-const FILL_BACKOFF_MULTIPLIER: u32 = 2;
-
-// A simple exponential strategy for pool fill backoffs.
-struct RefillDelayStrategy {
-    current_delay: Duration,
-}
-
-impl RefillDelayStrategy {
-    fn new() -> Self {
-        Self {
-            current_delay: MIN_FILL_BACKOFF,
-        }
-    }
-
-    fn get_delay(&self) -> Duration {
-        self.current_delay
-    }
-
-    fn on_successful_fill(&mut self) {
-        self.current_delay = MIN_FILL_BACKOFF;
-    }
-
-    fn on_fill_error(&mut self) {
-        self.current_delay = std::cmp::min(
-            MAX_FILL_BACKOFF,
-            self.current_delay * FILL_BACKOFF_MULTIPLIER,
-        );
-    }
-}
-
 struct PoolRefiller {
     // Following information identify the pool and do not change
     pool_config: HostPoolConfig,
@@ -488,7 +457,7 @@ struct PoolRefiller {
     // set to false when refilling starts.
     had_error_since_last_refill: bool,
 
-    refill_delay_strategy: RefillDelayStrategy,
+    refill_delay_strategy: Box<dyn ReconnectPolicySession>,
 
     // Receives information about connections becoming ready, i.e. newly connected
     // or after its keyspace was correctly set.
@@ -559,7 +528,7 @@ impl PoolRefiller {
             conns,
 
             had_error_since_last_refill: false,
-            refill_delay_strategy: RefillDelayStrategy::new(),
+            refill_delay_strategy: ExponentialReconnectPolicy::new().new_session(),
 
             ready_connections: FuturesUnordered::new(),
             connection_errors: FuturesUnordered::new(),

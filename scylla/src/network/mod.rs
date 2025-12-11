@@ -16,5 +16,4 @@ mod connection_pool;
 pub use connection::WriteCoalescingDelay;
 pub use connection_pool::PoolSize;
 pub(crate) use connection_pool::{ConnectivityChangeEvent, NodeConnectionPool, PoolConfig};
-
 pub(crate) mod tls;
