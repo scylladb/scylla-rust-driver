@@ -52,7 +52,10 @@ impl NodeStartOptions {
     /// - `--wait-for-binary-proto`
     ///
     /// The `--no-wait` option is not enabled.
-    #[expect(dead_code)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        expect(dead_code)
+    )]
     pub(crate) fn new() -> Self {
         Self::default()
     }
@@ -65,14 +68,20 @@ impl NodeStartOptions {
     }
 
     /// Enables or disables the `--wait-other-notice` ccm option.
-    #[expect(dead_code)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        expect(dead_code)
+    )]
     pub(crate) fn wait_other_notice(mut self, wait_other_notice: bool) -> Self {
         self.wait_other_notice = wait_other_notice;
         self
     }
 
     /// Enables or disables the `--wait-for-binary-proto` ccm option.
-    #[expect(dead_code)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        expect(dead_code)
+    )]
     pub(crate) fn wait_for_binary_proto(mut self, wait_for_binary_proto: bool) -> Self {
         self.wait_for_binary_proto = wait_for_binary_proto;
         self

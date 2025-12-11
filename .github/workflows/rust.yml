@@ -96,8 +96,12 @@ jobs:
       run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-cpp-rs"
 
   # unstable-nodejs-rs feature.
-    - name: Cargo check with nodejs-rs feature
+    - name: Cargo check with unstable-nodejs-rs feature
       run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-nodejs-rs"
+
+  # unstable-host-listener feature.
+    - name: Cargo check with unstable-host-listener  feature
+      run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-host-listener"
 
 
   tests:

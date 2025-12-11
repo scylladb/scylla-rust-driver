@@ -17,6 +17,10 @@
 
 pub mod address_translator;
 pub mod host_filter;
+#[cfg(all(scylla_unstable, feature = "unstable-host-listener"))]
+pub mod host_listener;
+#[cfg(not(all(scylla_unstable, feature = "unstable-host-listener")))]
+pub(crate) mod host_listener;
 pub mod load_balancing;
 pub mod retry;
 pub mod speculative_execution;

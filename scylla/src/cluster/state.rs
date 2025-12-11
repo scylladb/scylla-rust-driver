@@ -1,5 +1,5 @@
 use crate::errors::{ClusterStateTokenError, ConnectionPoolError};
-use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
+use crate::network::{Connection, ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
@@ -14,6 +14,7 @@ use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -84,12 +85,20 @@ impl ClusterState {
     /// Creates new ClusterState using information about topology held in `metadata`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
     #[allow(clippy::too_many_arguments)]
+    // This allow(clippy::type_complexity) is here because I can't satisfy borrow checker while
+    // having the closure type be a type alias.
+    #[allow(clippy::type_complexity)]
     pub(crate) async fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,
         known_peers: &HashMap<Uuid, Arc<Node>>,
+        // Takes old and new known_peers maps as arguments.
+        handle_topology_changes: &mut (
+                 dyn FnMut(&HashMap<Uuid, Arc<Node>>, &HashMap<Uuid, Arc<Node>>) + Send + Sync
+             ),
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
+        connectivity_events_sender: &mpsc::UnboundedSender<ConnectivityChangeEvent>,
         mut tablets: TabletsInfo,
         old_keyspaces: &HashMap<String, Keyspace>,
         #[cfg(feature = "metrics")] metrics: &Arc<Metrics>,
@@ -125,6 +134,7 @@ impl ClusterState {
                     Arc::new(Node::new(
                         peer_endpoint,
                         pool_config,
+                        connectivity_events_sender.clone(),
                         used_keyspace.clone(),
                         is_enabled,
                         #[cfg(feature = "metrics")]
@@ -139,6 +149,8 @@ impl ClusterState {
                 ring.push((token, Arc::clone(&node)));
             }
         }
+
+        handle_topology_changes(known_peers, &new_known_peers);
 
         let keyspaces: HashMap<String, Keyspace> = metadata
             .keyspaces
@@ -166,6 +178,7 @@ impl ClusterState {
             })
             .collect();
 
+        // Tablets maintenance.
         {
             let removed_nodes = {
                 let mut removed_nodes = HashSet::new();

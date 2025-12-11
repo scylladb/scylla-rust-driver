@@ -149,7 +149,10 @@ impl Node {
 
     /// This method starts the node. User can provide optional [`NodeStartOptions`] to control the behavior of the node start.
     /// If `None` is provided, the default options are used (see the implementation of Default for [`NodeStartOptions`]).
-    #[expect(dead_code)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        expect(dead_code)
+    )]
     pub(crate) async fn start(&mut self, opts: Option<NodeStartOptions>) -> Result<(), Error> {
         self.ccm_cmd
             .node_start()
@@ -162,14 +165,20 @@ impl Node {
         Ok(())
     }
 
-    #[expect(dead_code)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        expect(dead_code)
+    )]
     pub(crate) async fn stop(&mut self, opts: Option<NodeStopOptions>) -> Result<(), Error> {
         self.ccm_cmd.node_stop().wait_options(opts).run().await?;
         self.set_status(NodeStatus::Stopped);
         Ok(())
     }
 
-    #[expect(dead_code)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        expect(dead_code)
+    )]
     pub(crate) async fn decommission(&mut self) -> Result<(), Error> {
         if self.status == NodeStatus::Deleted || self.status == NodeStatus::Decommissioned {
             return Ok(());
@@ -179,7 +188,10 @@ impl Node {
         Ok(())
     }
 
-    #[expect(dead_code)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        expect(dead_code)
+    )]
     pub(crate) async fn delete(&mut self) -> Result<(), Error> {
         if self.status == NodeStatus::Deleted {
             return Ok(());

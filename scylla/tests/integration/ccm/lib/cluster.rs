@@ -90,7 +90,10 @@ impl NodeList {
         self.iter().find(|node| node.id() == id)
     }
 
-    #[expect(dead_code)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        expect(dead_code)
+    )]
     pub(crate) fn get_mut_by_id(&mut self, id: NodeId) -> Option<&mut Node> {
         self.iter_mut().find(|node| node.id() == id)
     }
@@ -104,7 +107,10 @@ impl NodeList {
     }
 
     #[cfg_attr(
-        any(not(feature = "openssl-010"), not(feature = "rustls-023")),
+        not(any(
+            all(scylla_unstable, feature = "unstable-host-listener"),
+            all(feature = "openssl-010", feature = "rustls-023")
+        )),
         expect(dead_code)
     )]
     pub(crate) fn len(&self) -> usize {
@@ -305,7 +311,10 @@ impl Cluster {
         self.nodes.0.last_mut().unwrap()
     }
 
-    #[expect(dead_code)]
+    #[cfg_attr(
+        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        expect(dead_code)
+    )]
     pub(crate) async fn add_node(
         &mut self,
         datacenter_id: Option<u16>,
@@ -372,7 +381,10 @@ impl Cluster {
     }
 
     #[cfg_attr(
-        any(not(feature = "openssl-010"), not(feature = "rustls-023")),
+        not(any(
+            all(scylla_unstable, feature = "unstable-host-listener"),
+            all(feature = "openssl-010", feature = "rustls-023")
+        )),
         expect(dead_code)
     )]
     pub(crate) fn nodes_mut(&mut self) -> &mut NodeList {

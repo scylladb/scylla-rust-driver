@@ -448,6 +448,45 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
     .await
 }
 
+/// Checks that the session is connected to a cluster with expected number of nodes,
+/// that all nodes are connected (UP) and that a simple query can be executed everywhere.
+#[cfg_attr(
+    not(any(
+        all(scylla_unstable, feature = "unstable-host-listener"),
+        all(feature = "openssl-010", feature = "rustls-023")
+    )),
+    expect(dead_code)
+)]
+pub(crate) async fn check_session_works_and_fully_connected(
+    expected_nodes: usize,
+    session: &Session,
+) {
+    let state = session.get_cluster_state();
+    assert_eq!(state.get_nodes_info().len(), expected_nodes);
+    assert!(
+        state
+            .get_nodes_info()
+            .iter()
+            .inspect(|node| {
+                tracing::debug!(
+                    "Node {}, address: {}, connected: {}",
+                    node.host_id,
+                    node.address,
+                    node.is_connected()
+                )
+            })
+            .all(|node| node.is_connected())
+    );
+    execute_unprepared_statement_everywhere(
+        session,
+        &state,
+        &"SELECT * FROM system.local WHERE key='local'".into(),
+        &(),
+    )
+    .await
+    .unwrap();
+}
+
 pub(crate) struct SerializeValueWithFakeType<'typ, T> {
     fake_type: ColumnType<'typ>,
     value: T,

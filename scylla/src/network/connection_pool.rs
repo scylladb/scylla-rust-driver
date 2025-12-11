@@ -25,8 +25,9 @@ use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
+use uuid::Uuid;
 
-use tokio::sync::{Notify, broadcast, mpsc};
+use tokio::sync::{Notify, mpsc};
 use tracing::{debug, error, trace, warn};
 
 /// The target size of a per-node connection pool.
@@ -206,8 +207,9 @@ impl NodeConnectionPool {
     pub(crate) fn new(
         endpoint: UntranslatedEndpoint,
         pool_config: &PoolConfig,
+        connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
         current_keyspace: Option<VerifiedKeyspaceName>,
-        pool_empty_notifier: broadcast::Sender<()>,
+        pool_empty_notifier: mpsc::Sender<()>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
@@ -220,6 +222,7 @@ impl NodeConnectionPool {
         let refiller = PoolRefiller::new(
             arced_endpoint.clone(),
             host_pool_config,
+            connectivity_events_sender,
             current_keyspace,
             pool_updated_notify.clone(),
             pool_empty_notifier,
@@ -467,6 +470,9 @@ struct PoolRefiller {
     // Following information identify the pool and do not change
     pool_config: HostPoolConfig,
 
+    /// If set, used to send connectivity change events about node with given host_id.
+    connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
+
     // Following information is subject to updates on topology refresh
     endpoint: Arc<RwLock<UntranslatedEndpoint>>,
 
@@ -514,7 +520,7 @@ struct PoolRefiller {
     pool_updated_notify: Arc<Notify>,
 
     // Signaled when the connection pool becomes empty
-    pool_empty_notifier: broadcast::Sender<()>,
+    pool_empty_notifier: mpsc::Sender<()>,
 
     #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
@@ -530,9 +536,10 @@ impl PoolRefiller {
     pub(crate) fn new(
         endpoint: Arc<RwLock<UntranslatedEndpoint>>,
         pool_config: HostPoolConfig,
+        connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
-        pool_empty_notifier: broadcast::Sender<()>,
+        pool_empty_notifier: mpsc::Sender<()>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
@@ -543,6 +550,7 @@ impl PoolRefiller {
         Self {
             endpoint,
             pool_config,
+            connectivity_events_sender,
 
             shard_aware_port: None,
             sharder: None,
@@ -685,14 +693,13 @@ impl PoolRefiller {
     // Futures which open the connections are pushed to the `ready_connections`
     // FuturesUnordered structure, and their results are processed in the main loop.
     fn start_filling(&mut self) {
+        let endpoint = self.endpoint_description();
+
         if self.is_empty() {
             // If the pool is empty, it might mean that the node is not alive.
             // It is more likely than not that the next connection attempt will
             // fail, so there is no use in opening more than one connection now.
-            trace!(
-                "[{}] Will open the first connection to the node",
-                self.endpoint_description()
-            );
+            trace!("[{}] Will open the first connection to the node", endpoint,);
             self.start_opening_connection(None);
             return;
         }
@@ -708,9 +715,7 @@ impl PoolRefiller {
                     }
                     trace!(
                         "[{}] Will open {} connections to shard {}",
-                        self.endpoint_description(),
-                        to_open_count,
-                        shard_id,
+                        endpoint, to_open_count, shard_id,
                     );
                     for _ in 0..to_open_count {
                         self.start_opening_connection(Some(shard_id as Shard));
@@ -738,8 +743,7 @@ impl PoolRefiller {
         // connecting later.
         trace!(
             "[{}] Will open {} non-shard-aware connections",
-            self.endpoint_description(),
-            to_open_count,
+            endpoint, to_open_count,
         );
         for _ in 0..to_open_count {
             self.start_opening_connection(None);
@@ -748,6 +752,7 @@ impl PoolRefiller {
 
     // Handles a newly opened connection and decides what to do with it.
     fn handle_ready_connection(&mut self, evt: OpenedConnectionEvent) {
+        let endpoint = self.endpoint_description();
         match evt.result {
             Err(err) => {
                 if evt.requested_shard.is_some() {
@@ -764,8 +769,7 @@ impl PoolRefiller {
                     // and does not cause any errors.
                     debug!(
                         "[{}] Failed to open connection to the shard-aware port: {:?}, will retry with regular port",
-                        self.endpoint_description(),
-                        err,
+                        endpoint, err,
                     );
                     self.start_opening_connection(None);
                 } else {
@@ -775,8 +779,7 @@ impl PoolRefiller {
                     self.had_error_since_last_refill = true;
                     debug!(
                         "[{}] Failed to open connection to the non-shard-aware port: {:?}",
-                        self.endpoint_description(),
-                        err,
+                        endpoint, err,
                     );
 
                     // If all connection attempts in this fill attempt failed
@@ -797,7 +800,7 @@ impl PoolRefiller {
                 if self.shard_aware_port != connection.get_shard_aware_port() {
                     debug!(
                         "[{}] Updating shard aware port: {:?}",
-                        self.endpoint_description(),
+                        endpoint,
                         connection.get_shard_aware_port(),
                     );
                     self.shard_aware_port = connection.get_shard_aware_port();
@@ -836,7 +839,7 @@ impl PoolRefiller {
                     let conn = Arc::new(connection);
                     trace!(
                         "[{}] Adding connection {:p} to shard {} pool, now there are {} for the shard, total {}",
-                        self.endpoint_description(),
+                        endpoint,
                         Arc::as_ptr(&conn),
                         shard_id,
                         self.conns[shard_id].len() + 1,
@@ -857,8 +860,7 @@ impl PoolRefiller {
                     // immediately with a non-shard-aware port here.
                     debug!(
                         "[{}] Excess shard-aware port connection for shard {}; will retry with non-shard-aware port",
-                        self.endpoint_description(),
-                        shard_id,
+                        endpoint, shard_id,
                     );
 
                     self.start_opening_connection(None);
@@ -871,7 +873,7 @@ impl PoolRefiller {
                     let conn = Arc::new(connection);
                     trace!(
                         "[{}] Storing excess connection {:p} for shard {}",
-                        self.endpoint_description(),
+                        endpoint,
                         Arc::as_ptr(&conn),
                         shard_id,
                     );
@@ -884,8 +886,7 @@ impl PoolRefiller {
                     if self.excess_connections.len() > excess_connection_limit {
                         debug!(
                             "[{}] Excess connection pool exceeded limit of {} connections - clearing",
-                            self.endpoint_description(),
-                            excess_connection_limit,
+                            endpoint, excess_connection_limit,
                         );
                         self.excess_connections.clear();
                     }
@@ -1000,17 +1001,83 @@ impl PoolRefiller {
             Arc::new(MaybePoolConnections::Ready(new_conns))
         };
 
-        // Make the connection list available
-        self.shared_conns.store(new_conns);
+        // Make the connection list available.
+        let old_conns = self.shared_conns.swap(new_conns);
 
-        // Notify potential waiters
+        // Notify potential waiters.
         self.pool_updated_notify.notify_waiters();
+
+        // Emit transition events.
+        self.emit_events(old_conns.as_ref());
+    }
+
+    /// Emits connectivity change events if the pool transitioned
+    /// between empty and non-empty states,
+    /// provided that connectivity notifier is configured.
+    fn emit_events(&self, old_conns: &MaybePoolConnections) {
+        let Some((host_id, ref connectivity_notifier)) = self.connectivity_events_sender else {
+            // No notifier configured, nothing to do.
+            return;
+        };
+
+        // This is used to notify the ClusterWorker about host reachability
+        // in case of non-control connection pool.
+
+        let maybe_event = match (old_conns, !self.is_empty()) {
+            (MaybePoolConnections::Initializing, true)
+            | (MaybePoolConnections::Broken(_), true) => {
+                // There was no connectivity before, now there are some connections.
+                Some(ConnectivityChangeEvent::Established { host_id })
+            }
+            (MaybePoolConnections::Ready(_), false) => {
+                // There was connectivity before, now there are no connections.
+                Some(ConnectivityChangeEvent::Lost { host_id })
+            }
+            (MaybePoolConnections::Broken(_), false) => {
+                // Already broken, no transition.
+                None
+            }
+            (MaybePoolConnections::Ready(_), true) => {
+                // Already ready, no transition.
+                None
+            }
+            (MaybePoolConnections::Initializing, false) => {
+                // Initially we optimistically assumed the node was alive,
+                // now we have a hint that it is not.
+                Some(ConnectivityChangeEvent::Lost { host_id })
+            }
+        };
+
+        let Some(event) = maybe_event else {
+            // No transition, nothing to do.
+            return;
+        };
+        let endpoint = self.endpoint_description();
+        match event {
+            ConnectivityChangeEvent::Established { .. } => {
+                debug!(
+                    "[{} - {}] Connection pool is no longer empty, notifying listeners",
+                    host_id, endpoint,
+                );
+            }
+            ConnectivityChangeEvent::Lost { .. } => {
+                debug!(
+                    "[{} - {}] Connection pool is now empty, notifying listeners",
+                    host_id, endpoint,
+                );
+            }
+        }
+
+        // Ignore failure to send. If there are no listeners, it's fine.
+        let _ = connectivity_notifier.send(event);
     }
 
     // Removes given connection from the pool. It looks both into active
     // connections and excess connections.
     fn remove_connection(&mut self, connection: Arc<Connection>, last_error: ConnectionError) {
         let ptr = Arc::as_ptr(&connection);
+
+        let endpoint = self.endpoint_description();
 
         let maybe_remove_in_vec = |v: &mut Vec<Arc<Connection>>| -> bool {
             let maybe_idx = v
@@ -1038,15 +1105,19 @@ impl PoolRefiller {
         if shard_id < self.conns.len() && maybe_remove_in_vec(&mut self.conns[shard_id]) {
             trace!(
                 "[{}] Connection {:p} removed from shard {} pool, now there is {} for the shard, total {}",
-                self.endpoint_description(),
+                endpoint,
                 ptr,
                 shard_id,
                 self.conns[shard_id].len(),
                 self.active_connection_count(),
             );
+
             if self.is_empty() {
-                let _ = self.pool_empty_notifier.send(());
+                // This is used to notify the ClusterWorker that the control connection has died.
+                // `try_send()` is OK here because if the channel is full, the notification is already pending.
+                let _ = self.pool_empty_notifier.try_send(());
             }
+
             self.update_shared_conns(Some(last_error));
             return;
         }
@@ -1055,17 +1126,12 @@ impl PoolRefiller {
         if maybe_remove_in_vec(&mut self.excess_connections) {
             trace!(
                 "[{}] Connection {:p} removed from excess connection pool",
-                self.endpoint_description(),
-                ptr,
+                endpoint, ptr,
             );
             return;
         }
 
-        trace!(
-            "[{}] Connection {:p} was already removed",
-            self.endpoint_description(),
-            ptr,
-        );
+        trace!("[{}] Connection {:p} was already removed", endpoint, ptr,);
     }
 
     // Sets current keyspace for available connections.
@@ -1191,6 +1257,25 @@ struct OpenedConnectionEvent {
     result: Result<(Connection, ErrorReceiver), ConnectionError>,
     requested_shard: Option<Shard>,
     keyspace_name: Option<VerifiedKeyspaceName>,
+}
+
+/// Signals that connectivity to a node has changed.
+#[derive(Debug)]
+pub(crate) enum ConnectivityChangeEvent {
+    /// A new connection to the node was established, while there were no working connections.
+    Established { host_id: Uuid },
+
+    /// The last working connection to the node was lost.
+    Lost { host_id: Uuid },
+}
+impl ConnectivityChangeEvent {
+    /// Returns the host ID associated with this event.
+    pub(crate) fn host_id(&self) -> Uuid {
+        match *self {
+            ConnectivityChangeEvent::Established { host_id }
+            | ConnectivityChangeEvent::Lost { host_id } => host_id,
+        }
+    }
 }
 
 #[cfg(test)]
