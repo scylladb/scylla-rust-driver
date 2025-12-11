@@ -128,6 +128,7 @@ impl TlsConfig {
             TlsContext::OpenSsl010(ref context) => {
                 #[allow(unused_mut)]
                 let mut ssl = openssl::ssl::Ssl::new(context)?;
+                ssl.set_connect_state();
                 Ok(Tls::OpenSsl010(ssl))
             }
             #[cfg(feature = "rustls-023")]
