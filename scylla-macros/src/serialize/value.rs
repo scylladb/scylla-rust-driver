@@ -30,6 +30,9 @@ struct Attributes {
     // the DB will interpret them as NULLs anyway.
     #[darling(default)]
     forbid_excess_udt_fields: bool,
+
+    #[darling(default)]
+    transparent: bool,
 }
 
 impl Attributes {
@@ -95,13 +98,17 @@ pub(crate) fn derive_serialize_value(
     tokens_input: TokenStream,
 ) -> Result<syn::ItemImpl, syn::Error> {
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
-    let struct_name = input.ident.clone();
-    let named_fields = crate::parser::parse_named_fields(&input, "SerializeValue")?;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let attributes = Attributes::from_attributes(&input.attrs)?;
 
+    if attributes.transparent {
+        return derive_transparent(&input, &attributes);
+    }
+
+    let struct_name = input.ident.clone();
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let crate_path = attributes.crate_path();
     let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
+    let named_fields = crate::parser::parse_named_fields(&input, "SerializeValue")?;
 
     let fields = named_fields
         .named
@@ -134,6 +141,94 @@ pub(crate) fn derive_serialize_value(
         }
     };
     Ok(res)
+}
+
+fn derive_transparent(
+    input: &syn::DeriveInput,
+    attributes: &Attributes,
+) -> Result<syn::ItemImpl, syn::Error> {
+    let struct_name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let crate_path = attributes.crate_path();
+    let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
+
+    match &input.data {
+        syn::Data::Struct(data) => {
+            let field = match get_exactly_one(&data.fields) {
+                Some(f) => f,
+                None => {
+                    return Err(syn::Error::new_spanned(
+                        &data.fields,
+                        "#[scylla(transparent)] requires exactly one field",
+                    ));
+                }
+            };
+
+            let field_accessor = match &field.ident {
+                Some(ident) => quote::quote! { #ident },
+                None => quote::quote! { 0 },
+            };
+
+            Ok(parse_quote! {
+                #[automatically_derived]
+                impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
+                    fn serialize<'b>(
+                        &self,
+                        typ: &#crate_path::ColumnType,
+                        writer: #crate_path::CellWriter<'b>,
+                    ) -> ::std::result::Result<#crate_path::WrittenCellProof<'b>, #crate_path::SerializationError> {
+                        #crate_path::SerializeValue::serialize(&self.#field_accessor, typ, writer)
+                    }
+                }
+            })
+        }
+        syn::Data::Enum(data) => {
+            let variant = match get_exactly_one(&data.variants) {
+                Some(v) => v,
+                None => {
+                    return Err(syn::Error::new_spanned(
+                        &data.variants,
+                        "#[scylla(transparent)] enums requires exactly one variant",
+                    ));
+                }
+            };
+
+            let field = match get_exactly_one(&variant.fields) {
+                Some(f) => f,
+                None => {
+                    return Err(syn::Error::new_spanned(
+                        variant,
+                        "#[scylla(transparent)] enum variant must have exactly one field",
+                    ));
+                }
+            };
+
+            let variant_ident = &variant.ident;
+            let pattern_match = match &field.ident {
+                Some(field_name) => quote::quote! { Self::#variant_ident { #field_name: inner } },
+                None => quote::quote! { Self::#variant_ident(inner) },
+            };
+
+            Ok(parse_quote! {
+                #[automatically_derived]
+                impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
+                    fn serialize<'b>(
+                        &self,
+                        typ: &#crate_path::ColumnType,
+                        writer: #crate_path::CellWriter<'b>,
+                    ) -> ::std::result::Result<#crate_path::WrittenCellProof<'b>, #crate_path::SerializationError> {
+                        match self {
+                            #pattern_match => #crate_path::SerializeValue::serialize(inner, typ, writer)
+                        }
+                    }
+                }
+            })
+        }
+        _ => Err(syn::Error::new_spanned(
+            input,
+            "#[scylla(transparent)] not supported for unions",
+        )),
+    }
 }
 
 impl Context {
@@ -563,4 +658,16 @@ impl Generator for FieldOrderedGenerator<'_> {
             }
         }
     }
+}
+
+fn get_exactly_one<I>(iter: I) -> Option<I::Item>
+where
+    I: IntoIterator,
+{
+    let mut iter = iter.into_iter();
+    let item = iter.next()?;
+    if iter.next().is_some() {
+        return None;
+    }
+    Some(item)
 }
