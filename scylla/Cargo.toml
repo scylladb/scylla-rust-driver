@@ -71,6 +71,8 @@ unstable-cpp-rs = []
 unstable-nodejs-rs = ["scylla-cql/unstable-nodejs-rs"]
 # Enables HostListener experimental support.
 unstable-host-listener = []
+# Enables unstable reconnection policy configuration.
+unstable-reconnect-policy = []
 
 
 [dependencies]

@@ -29,6 +29,7 @@ use crate::network::{ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize}
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
+use crate::policies::reconnect::ReconnectPolicy;
 use crate::routing::Token;
 use crate::statement::unprepared::Statement;
 use crate::utils::safe_format::IteratorSafeFormatExt;
@@ -487,6 +488,7 @@ impl MetadataReader {
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        reconnect_policy: Arc<dyn ReconnectPolicy>,
     ) -> Result<Self, NewSessionError> {
         let (initial_peers, resolved_hostnames) =
             resolve_contact_points(&initial_known_nodes, hostname_resolution_timeout).await;
@@ -518,6 +520,7 @@ impl MetadataReader {
             // The shard-aware port won't be used with PerHost pool size anyway,
             // so explicitly disable it here
             can_use_shard_aware_port: false,
+            reconnect_policy,
         };
 
         let control_connection = Self::make_control_connection_pool(

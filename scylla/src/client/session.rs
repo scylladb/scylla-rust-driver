@@ -23,6 +23,9 @@ use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::load_balancing::{self, RoutingInfo};
+use crate::policies::reconnect::ExponentialReconnectPolicy;
+#[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
+use crate::policies::reconnect::ReconnectPolicy;
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
@@ -216,6 +219,11 @@ pub struct SessionConfig {
     /// Generally, this options is best left as default (false).
     pub disallow_shard_aware_port: bool,
 
+    /// Policy that determines how long the connection pool waits between attempts
+    /// to fill connections to given host.
+    #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
+    pub reconnect_policy: Arc<dyn ReconnectPolicy>,
+
     ///  Timestamp generator used for generating timestamps on the client-side
     ///  If None, server-side timestamps are used.
     pub timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
@@ -348,6 +356,8 @@ impl SessionConfig {
             hostname_resolution_timeout: Some(Duration::from_secs(5)),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
+            #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
+            reconnect_policy: Arc::new(ExponentialReconnectPolicy::new()),
             timestamp_generator: None,
             keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
@@ -911,6 +921,10 @@ impl Session {
             connection_config,
             pool_size: config.connection_pool_size,
             can_use_shard_aware_port: !config.disallow_shard_aware_port,
+            #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
+            reconnect_policy: config.reconnect_policy,
+            #[cfg(not(all(scylla_unstable, feature = "unstable-reconnect-policy")))]
+            reconnect_policy: Arc::new(ExponentialReconnectPolicy::new()),
         };
 
         #[cfg(feature = "metrics")]

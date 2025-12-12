@@ -102,6 +102,9 @@ jobs:
   # unstable-host-listener feature.
     - name: Cargo check with unstable-host-listener  feature
       run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-host-listener"
+  # unstable-reconnect-policy feature.
+    - name: Cargo check with unstable-reconnect-policy feature
+      run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-reconnect-policy"
 
 
   tests:

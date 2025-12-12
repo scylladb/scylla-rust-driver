@@ -6,6 +6,9 @@ use super::connection::{
 use crate::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, UseKeyspaceError,
 };
+#[cfg(test)]
+use crate::policies::reconnect::ExponentialReconnectPolicy;
+use crate::policies::reconnect::{ReconnectPolicy, ReconnectPolicySession};
 use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
@@ -24,7 +27,6 @@ use std::num::NonZeroUsize;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
-use std::time::Duration;
 use uuid::Uuid;
 
 use tokio::sync::{Notify, mpsc};
@@ -59,6 +61,7 @@ pub(crate) struct PoolConfig {
     pub(crate) connection_config: ConnectionConfig,
     pub(crate) pool_size: PoolSize,
     pub(crate) can_use_shard_aware_port: bool,
+    pub(crate) reconnect_policy: Arc<dyn ReconnectPolicy>,
 }
 
 #[cfg(test)]
@@ -68,17 +71,23 @@ impl Default for PoolConfig {
             connection_config: Default::default(),
             pool_size: Default::default(),
             can_use_shard_aware_port: true,
+            reconnect_policy: Arc::new(ExponentialReconnectPolicy::new()),
         }
     }
 }
 
 impl PoolConfig {
-    fn to_host_pool_config(&self, endpoint: &UntranslatedEndpoint) -> HostPoolConfig {
-        HostPoolConfig {
+    fn to_host_pool_config(
+        &self,
+        endpoint: &UntranslatedEndpoint,
+    ) -> (HostPoolConfig, Box<dyn ReconnectPolicySession>) {
+        let host_reconnect_policy = self.reconnect_policy.new_session();
+        let host_pool_config = HostPoolConfig {
             connection_config: self.connection_config.to_host_connection_config(endpoint),
             pool_size: self.pool_size,
             can_use_shard_aware_port: self.can_use_shard_aware_port,
-        }
+        };
+        (host_pool_config, host_reconnect_policy)
     }
 }
 
@@ -215,7 +224,7 @@ impl NodeConnectionPool {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
 
-        let host_pool_config = pool_config.to_host_pool_config(&endpoint);
+        let (host_pool_config, host_reconnect_policy) = pool_config.to_host_pool_config(&endpoint);
 
         let arced_endpoint = Arc::new(RwLock::new(endpoint));
 
@@ -228,6 +237,7 @@ impl NodeConnectionPool {
             pool_empty_notifier,
             #[cfg(feature = "metrics")]
             metrics,
+            host_reconnect_policy,
         );
 
         let conns = refiller.get_shared_connections();
@@ -433,39 +443,6 @@ impl NodeConnectionPool {
 
 const EXCESS_CONNECTION_BOUND_PER_SHARD_MULTIPLIER: usize = 10;
 
-// TODO: Make it configurable through a policy (issue #184)
-const MIN_FILL_BACKOFF: Duration = Duration::from_millis(50);
-const MAX_FILL_BACKOFF: Duration = Duration::from_secs(10);
-const FILL_BACKOFF_MULTIPLIER: u32 = 2;
-
-// A simple exponential strategy for pool fill backoffs.
-struct RefillDelayStrategy {
-    current_delay: Duration,
-}
-
-impl RefillDelayStrategy {
-    fn new() -> Self {
-        Self {
-            current_delay: MIN_FILL_BACKOFF,
-        }
-    }
-
-    fn get_delay(&self) -> Duration {
-        self.current_delay
-    }
-
-    fn on_successful_fill(&mut self) {
-        self.current_delay = MIN_FILL_BACKOFF;
-    }
-
-    fn on_fill_error(&mut self) {
-        self.current_delay = std::cmp::min(
-            MAX_FILL_BACKOFF,
-            self.current_delay * FILL_BACKOFF_MULTIPLIER,
-        );
-    }
-}
-
 struct PoolRefiller {
     // Following information identify the pool and do not change
     pool_config: HostPoolConfig,
@@ -488,7 +465,7 @@ struct PoolRefiller {
     // set to false when refilling starts.
     had_error_since_last_refill: bool,
 
-    refill_delay_strategy: RefillDelayStrategy,
+    refill_delay_strategy: Box<dyn ReconnectPolicySession>,
 
     // Receives information about connections becoming ready, i.e. newly connected
     // or after its keyspace was correctly set.
@@ -533,6 +510,8 @@ struct UseKeyspaceRequest {
 }
 
 impl PoolRefiller {
+    #[allow(clippy::too_many_arguments)] // Not always triggered, because of the metrics, so
+    // I can't use `expect`.
     pub(crate) fn new(
         endpoint: Arc<RwLock<UntranslatedEndpoint>>,
         pool_config: HostPoolConfig,
@@ -541,6 +520,7 @@ impl PoolRefiller {
         pool_updated_notify: Arc<Notify>,
         pool_empty_notifier: mpsc::Sender<()>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        reconnect_policy: Box<dyn ReconnectPolicySession>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
         // and assume that the node is a Cassandra node
@@ -559,7 +539,7 @@ impl PoolRefiller {
             conns,
 
             had_error_since_last_refill: false,
-            refill_delay_strategy: RefillDelayStrategy::new(),
+            refill_delay_strategy: reconnect_policy,
 
             ready_connections: FuturesUnordered::new(),
             connection_errors: FuturesUnordered::new(),
