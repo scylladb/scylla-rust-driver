@@ -113,3 +113,39 @@ impl ReconnectPolicy for ExponentialReconnectPolicy {
         })
     }
 }
+
+/// Constant reconnect policy.
+/// This policy always returns the same delay.
+#[derive(Debug, Clone)]
+pub struct ConstantReconnectPolicy {
+    delay: Duration,
+}
+
+#[cfg_attr(
+    not(all(scylla_unstable, feature = "unstable-reconnect-policy")),
+    expect(dead_code)
+)]
+impl ConstantReconnectPolicy {
+    /// Creates a new constant reconnect policy with the given delay.
+    pub fn new(duration: Duration) -> Self {
+        Self { delay: duration }
+    }
+}
+
+impl ReconnectPolicy for ConstantReconnectPolicy {
+    fn new_session(&self) -> Box<dyn ReconnectPolicySession> {
+        Box::new(self.clone())
+    }
+}
+
+// ConstantReconnectPolicy doesn't have any mutable state,
+// so we can avoid having another struct for per-host policy.
+impl ReconnectPolicySession for ConstantReconnectPolicy {
+    fn get_delay(&self) -> Duration {
+        self.delay
+    }
+
+    fn on_successful_fill(&mut self) {}
+
+    fn on_fill_error(&mut self) {}
+}
