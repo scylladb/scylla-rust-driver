@@ -31,6 +31,9 @@ struct StructAttrs {
     // they will be ignored. With true, an error will be raised.
     #[darling(default)]
     forbid_excess_udt_fields: bool,
+
+    #[darling(default)]
+    transparent: bool,
 }
 
 impl DeserializeCommonStructAttrs for StructAttrs {
@@ -82,7 +85,12 @@ impl DeserializeCommonFieldAttrs for Field {
 pub(crate) fn deserialize_value_derive(
     tokens_input: TokenStream,
 ) -> Result<syn::ItemImpl, syn::Error> {
-    let input = syn::parse(tokens_input)?;
+    let input: syn::DeriveInput = syn::parse(tokens_input)?;
+
+    let attrs = StructAttrs::from_attributes(&input.attrs)?;
+    if attrs.transparent {
+        return derive_transparent(&input, &attrs);
+    }
 
     let implemented_trait: syn::Path = parse_quote!(DeserializeValue);
     let implemented_trait_name = implemented_trait
@@ -103,6 +111,94 @@ pub(crate) fn deserialize_value_derive(
     ];
 
     Ok(s.generate_impl(implemented_trait, items))
+}
+
+fn derive_transparent(
+    input: &syn::DeriveInput,
+    attrs: &StructAttrs,
+) -> Result<syn::ItemImpl, syn::Error> {
+    let crate_path = <StructAttrs as DeserializeCommonStructAttrs>::macro_internal_path(attrs);
+    let struct_name = &input.ident;
+    let (_, ty_generics, where_clause) = input.generics.split_for_impl();
+    let impl_generics_params = &input.generics.params;
+
+    let (frame_lifetime, metadata_lifetime) =
+        super::generate_pair_of_unique_lifetimes_for_impl(&input.generics);
+
+    let predicates = super::generate_lifetime_constraints_for_impl(
+        &input.generics,
+        parse_quote!(DeserializeValue),
+        &frame_lifetime,
+    );
+
+    let (inner_type, constructor) = match &input.data {
+        syn::Data::Struct(data) => {
+            if data.fields.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    &data.fields,
+                    "#[scylla(transparent)] requires exactly one field",
+                ));
+            }
+            let field = data.fields.iter().next().unwrap();
+            let ctor = match &field.ident {
+                Some(ident) => quote::quote! { |inner| Self { #ident: inner } },
+                None => quote::quote! { |inner| Self(inner) },
+            };
+            (&field.ty, ctor)
+        }
+        syn::Data::Enum(data) => {
+            if data.variants.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    input,
+                    "#[scylla(transparent)] enum requires exactly one variant",
+                ));
+            }
+            let variant = data.variants.iter().next().unwrap();
+            if variant.fields.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    "#[scylla(transparent)] enum variant requires exactly one field",
+                ));
+            }
+            let field = variant.fields.iter().next().unwrap();
+            let v_ident = &variant.ident;
+            let ctor = match &field.ident {
+                Some(ident) => quote::quote! { |inner| Self::#v_ident { #ident: inner } },
+                None => quote::quote! { |inner| Self::#v_ident(inner) },
+            };
+            (&field.ty, ctor)
+        }
+        _ => {
+            return Err(syn::Error::new_spanned(
+                input,
+                "#[scylla(transparent)] not supported for unions",
+            ));
+        }
+    };
+
+    Ok(parse_quote! {
+        #[automatically_derived]
+        impl<#frame_lifetime, #metadata_lifetime, #impl_generics_params> #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
+        where #(#predicates),* #where_clause
+        {
+            fn type_check(
+                typ: &#crate_path::ColumnType,
+            ) -> ::std::result::Result<(), #crate_path::TypeCheckError> {
+                <#inner_type as #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(typ)
+            }
+
+            fn deserialize(
+                typ: &#metadata_lifetime #crate_path::ColumnType<#metadata_lifetime>,
+                v: ::std::option::Option<#crate_path::FrameSlice<#frame_lifetime>>,
+            ) -> ::std::result::Result<Self, #crate_path::DeserializationError> {
+                let inner = <#inner_type as #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(typ, v)
+                    .map_err(#crate_path::value_deser_error_replace_rust_name::<Self>)?;
+
+                let constructor = #constructor;
+                ::std::result::Result::Ok(constructor(inner))
+            }
+        }
+    })
 }
 
 fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::Error> {
