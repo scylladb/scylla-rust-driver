@@ -5,6 +5,7 @@ use proc_macro::TokenStream;
 use syn::parse_quote;
 
 use crate::Flavor;
+use crate::enum_attrs::EnumAttrs;
 
 #[derive(FromAttributes)]
 #[darling(attributes(scylla))]
@@ -33,26 +34,6 @@ struct Attributes {
 }
 
 impl Attributes {
-    fn crate_path(&self) -> syn::Path {
-        self.crate_path
-            .as_ref()
-            .map(|p| parse_quote!(#p::_macro_internal))
-            .unwrap_or_else(|| parse_quote!(::scylla::_macro_internal))
-    }
-}
-
-#[derive(FromAttributes)]
-#[darling(attributes(scylla))]
-struct EnumAttrs {
-    #[darling(rename = "crate")]
-    crate_path: Option<syn::Path>,
-
-    // Allows the user to specify the target type, e.g., "i32", "i8"
-    #[darling(default)]
-    repr: Option<String>,
-}
-
-impl EnumAttrs {
     fn crate_path(&self) -> syn::Path {
         self.crate_path
             .as_ref()
@@ -162,14 +143,21 @@ pub(crate) fn derive_serialize_value(
 
 fn derive_serialize_value_enum(
     input: &syn::DeriveInput,
-    data: &syn::DataEnum,
+    data_enum: &syn::DataEnum,
 ) -> Result<syn::ItemImpl, syn::Error> {
     let attrs = EnumAttrs::from_attributes(&input.attrs)?;
     let crate_path = attrs.crate_path();
     let struct_name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    for variant in &data.variants {
+    if data_enum.variants.is_empty() {
+        return Err(syn::Error::new_spanned(
+            input,
+            "SerializeValue cannot be derived for enums with no variants",
+        ));
+    }
+
+    for variant in &data_enum.variants {
         if !variant.fields.is_empty() {
             return Err(syn::Error::new_spanned(
                 variant,
@@ -178,16 +166,34 @@ fn derive_serialize_value_enum(
         }
     }
 
+    let has_repr = input.attrs.iter().any(|attr| attr.path().is_ident("repr"));
+    if !has_repr {
+        return Err(syn::Error::new_spanned(
+            input,
+            "SerializeValue for enums requires a #[repr(...)] attribute (e.g., #[repr(i32)]) to ensure the memory layout matches the database representation.",
+        ));
+    }
+
     let repr_type_str = attrs.repr.as_deref().unwrap_or("i32");
     let repr_type: syn::Type = syn::parse_str(repr_type_str).map_err(|_| {
-        syn::Error::new_spanned(input, format!("Invalid type for repr: {}", repr_type_str))
+        syn::Error::new_spanned(
+            input,
+            format!(
+                "Invalid type for repr: {}. Valid repr types include: i8, i16, i32, i64.",
+                repr_type_str
+            ),
+        )
     })?;
 
     let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
 
     let res = parse_quote! {
         #[automatically_derived]
-        impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
+        impl #impl_generics #implemented_trait for #struct_name #ty_generics
+        where
+            #struct_name #ty_generics: ::std::marker::Copy,
+            #where_clause
+        {
             fn serialize<'b>(
                 &self,
                 typ: &#crate_path::ColumnType,

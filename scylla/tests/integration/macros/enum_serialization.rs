@@ -60,6 +60,7 @@ where
 
 #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
 #[scylla(repr = "i32")]
+#[repr(i32)]
 enum DefaultInt {
     A = 0,
     B = 1,
@@ -68,6 +69,7 @@ enum DefaultInt {
 
 #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
 #[scylla(repr = "i8")]
+#[repr(i8)]
 enum TinyEnum {
     Small = 10,
     Max = 127,
@@ -75,12 +77,14 @@ enum TinyEnum {
 
 #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
 #[scylla(repr = "i16")]
+#[repr(i16)]
 enum SmallEnum {
     Kilo = 1000,
     BigKilo = 30000,
 }
 
 #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
+#[repr(i64)]
 #[scylla(repr = "i64")]
 enum BigEnum {
     Big = 5_000_000_000,
@@ -88,10 +92,28 @@ enum BigEnum {
 
 #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
 #[scylla(repr = "i32")]
+#[repr(i32)]
 enum Gaps {
     First = 1,
     Jump = 5,
     FarAway = 99,
+}
+
+#[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
+#[scylla(repr = "i32")]
+#[repr(i32)]
+enum NegativeEnum {
+    MinusOne = -1,
+    MinusHundred = -100,
+}
+
+#[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
+#[scylla(repr = "i32")]
+#[repr(i32)]
+enum ImplicitEnum {
+    First,
+    Second,
+    Third,
 }
 
 // --- TESTS ---
@@ -175,5 +197,43 @@ fn test_type_check_mismatch() {
     assert!(
         check.is_err(),
         "Should return TypeCheck error (Int vs Text)"
+    );
+}
+
+#[test]
+fn test_negative_discriminants() {
+    let typ = ColumnType::Native(NativeType::Int);
+
+    // -1 in two's complement 32-bit: [FF, FF, FF, FF]
+    assert_round_trip(NegativeEnum::MinusOne, typ.clone(), &(-1i32).to_be_bytes());
+
+    // -100
+    assert_round_trip(
+        NegativeEnum::MinusHundred,
+        typ.clone(),
+        &(-100i32).to_be_bytes(),
+    );
+}
+
+#[test]
+fn test_implicit_discriminants() {
+    let typ = ColumnType::Native(NativeType::Int);
+
+    // Should behave like 0, 1, 2
+    assert_round_trip(ImplicitEnum::First, typ.clone(), &0i32.to_be_bytes());
+    assert_round_trip(ImplicitEnum::Second, typ.clone(), &1i32.to_be_bytes());
+    assert_round_trip(ImplicitEnum::Third, typ.clone(), &2i32.to_be_bytes());
+}
+
+#[test]
+fn test_null_handling() {
+    let typ = ColumnType::Native(NativeType::Int);
+
+    // Attempting to deserialize a NULL (None) into a raw Enum (not Option<Enum>)
+    // should result in an error.
+    let result = <DefaultInt as DeserializeValueTrait>::deserialize(&typ, None);
+    assert!(
+        result.is_err(),
+        "Deserializing NULL into non-Option enum should fail"
     );
 }

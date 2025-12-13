@@ -6,6 +6,7 @@ use proc_macro2::Span;
 use syn::{ext::IdentExt, parse_quote};
 
 use crate::Flavor;
+use crate::enum_attrs::EnumAttrs;
 
 use super::{DeserializeCommonFieldAttrs, DeserializeCommonStructAttrs};
 
@@ -37,17 +38,6 @@ impl DeserializeCommonStructAttrs for StructAttrs {
     fn crate_path(&self) -> Option<&syn::Path> {
         self.crate_path.as_ref()
     }
-}
-
-#[derive(FromAttributes)]
-#[darling(attributes(scylla))]
-struct EnumAttrs {
-    #[darling(rename = "crate")]
-    crate_path: Option<syn::Path>,
-
-    // Target representation type, e.g., "i32"
-    #[darling(default)]
-    repr: Option<String>,
 }
 
 impl DeserializeCommonStructAttrs for EnumAttrs {
@@ -141,11 +131,24 @@ fn deserialize_value_derive_enum(
 
     let repr_type_str = attrs.repr.as_deref().unwrap_or("i32");
     let repr_type: syn::Type = syn::parse_str(repr_type_str).map_err(|_| {
-        syn::Error::new_spanned(input, format!("Invalid type for repr: {}", repr_type_str))
+        syn::Error::new_spanned(
+            input,
+            format!(
+                "Invalid type for repr: '{}'. Valid options include: i8, i16, i32, i64.",
+                repr_type_str
+            ),
+        )
     })?;
 
     let mut match_arms = Vec::new();
-    let mut current_discriminant: i128 = 0;
+    let mut current_discriminant: i64 = 0;
+
+    if data_enum.variants.is_empty() {
+        return Err(syn::Error::new_spanned(
+            input,
+            "DeserializeValue cannot be derived for enums with no variants",
+        ));
+    }
 
     for variant in &data_enum.variants {
         if !variant.fields.is_empty() {
@@ -162,12 +165,61 @@ fn deserialize_value_derive_enum(
             }) = expr
             {
                 current_discriminant = lit_int.base10_parse()?;
+            } else if let syn::Expr::Unary(syn::ExprUnary {
+                op: syn::UnOp::Neg(_),
+                expr: operand,
+                ..
+            }) = expr
+            {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Int(lit_int),
+                    ..
+                }) = &**operand
+                {
+                    let val: i64 = lit_int.base10_parse()?;
+                    current_discriminant = -val;
+                } else {
+                    return Err(syn::Error::new_spanned(
+                        expr,
+                        "Only integer literals (positive or negative) are supported as enum discriminants.",
+                    ));
+                }
             } else {
                 return Err(syn::Error::new_spanned(
                     expr,
                     "Only integer literals are supported as enum discriminants.",
                 ));
             }
+        }
+
+        match repr_type_str {
+            "i8" => {
+                if current_discriminant < i8::MIN as i64 || current_discriminant > i8::MAX as i64 {
+                    return Err(syn::Error::new_spanned(
+                        variant,
+                        "Discriminant value out of range for i8",
+                    ));
+                }
+            }
+            "i16" => {
+                if current_discriminant < i16::MIN as i64 || current_discriminant > i16::MAX as i64
+                {
+                    return Err(syn::Error::new_spanned(
+                        variant,
+                        "Discriminant value out of range for i16",
+                    ));
+                }
+            }
+            "i32" => {
+                if current_discriminant < i32::MIN as i64 || current_discriminant > i32::MAX as i64
+                {
+                    return Err(syn::Error::new_spanned(
+                        variant,
+                        "Discriminant value out of range for i32",
+                    ));
+                }
+            }
+            _ => {}
         }
 
         let variant_ident = &variant.ident;
@@ -196,7 +248,7 @@ fn deserialize_value_derive_enum(
     let res = parse_quote! {
         #[automatically_derived]
         impl<#frame_lifetime, #metadata_lifetime, #impl_generics> #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
-        where #(#predicates),* #where_clause
+        where #repr_type: ::std::fmt::Debug + ::std::marker::Copy, #(#predicates),* #where_clause
         {
             fn type_check(
                 typ: &#crate_path::ColumnType,

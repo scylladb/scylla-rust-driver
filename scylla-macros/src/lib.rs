@@ -22,7 +22,7 @@
 
 use darling::{FromMeta, ToTokens};
 use proc_macro::TokenStream;
-
+pub(crate) mod enum_attrs;
 mod parser;
 
 // Flavor of serialization/deserialization macros ({De,S}erialize{Value,Row}).
@@ -88,6 +88,23 @@ mod serialize;
 /// }
 /// ```
 ///
+/// # C-style Enums
+///
+/// You can derive `SerializeValue` for C-style enums (enums with only unit variants)
+/// to serialize them as integers. Use `#[scylla(repr = "TYPE")]` to specify the target integer type.
+///
+/// ```rust
+/// # use scylla::SerializeValue;
+/// #[derive(SerializeValue)]
+/// #[scylla(repr = "i32")]
+/// #[repr(i32)]
+/// enum Color {
+///     Red = 0,
+///     Green = 1,
+///     Blue = 2,
+/// }
+/// ```
+///
 /// # Struct attributes
 ///
 /// `#[scylla(flavor = "flavor_name")]`
@@ -142,6 +159,10 @@ mod serialize;
 ///
 /// Forces Rust struct to have all the fields present in UDT, otherwise
 /// serialization fails.
+///
+/// `#[scylla(repr = "type")]`
+///
+/// **Enums only.** Specifies the underlying integer type for C-style enums (e.g., "i8", "i32").
 ///
 /// # Field attributes
 ///
@@ -433,6 +454,27 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// # C-style Enums
+///
+/// You can derive `DeserializeValue` for C-style enums to deserialize them from integers.
+/// The macro will verify that the value from the database matches one of the enum variants.
+/// Use `#[scylla(repr = "TYPE")]` to specify the source integer type.
+/// **Note:** The derive macro currently only supports explicit integer literals as discriminants
+/// (e.g., `Variant = 1`). Complex constant expressions (e.g., `Variant = 1 << 3`)
+/// or references to constants (e.g., `Variant = MY_CONST`) are not supported.
+///
+/// ```rust
+/// # use scylla::DeserializeValue;
+/// #[derive(DeserializeValue)]
+/// #[scylla(crate = "scylla_cql")]
+/// #[scylla(repr = "i16")]
+/// #[repr(i16)]
+/// enum ErrorCode {
+///     NotFound = 404,
+///     ServerBug = 500,
+/// }
+/// ```
+///
 /// # Attributes
 ///
 /// The macro supports a number of attributes that customize the generated
@@ -500,6 +542,11 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 /// UDT fields anywhere.
 /// If more strictness is desired, this flag makes sure that no excess fields
 /// are present and forces error in case there are some.
+///
+/// `#[scylla(repr = "type")]`
+///
+/// **Enums only.** Specifies the underlying integer type for C-style enums.
+/// If the database contains a value that does not match any variant, deserialization fails.
 ///
 /// ## Field attributes
 ///
