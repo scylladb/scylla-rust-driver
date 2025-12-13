@@ -39,6 +39,23 @@ impl DeserializeCommonStructAttrs for StructAttrs {
     }
 }
 
+#[derive(FromAttributes)]
+#[darling(attributes(scylla))]
+struct EnumAttrs {
+    #[darling(rename = "crate")]
+    crate_path: Option<syn::Path>,
+
+    // Target representation type, e.g., "i32"
+    #[darling(default)]
+    repr: Option<String>,
+}
+
+impl DeserializeCommonStructAttrs for EnumAttrs {
+    fn crate_path(&self) -> Option<&syn::Path> {
+        self.crate_path.as_ref()
+    }
+}
+
 #[derive(FromField)]
 #[darling(attributes(scylla))]
 struct Field {
@@ -83,26 +100,133 @@ pub(crate) fn deserialize_value_derive(
     tokens_input: TokenStream,
 ) -> Result<syn::ItemImpl, syn::Error> {
     let input = syn::parse(tokens_input)?;
+    let input: syn::DeriveInput = input;
 
-    let implemented_trait: syn::Path = parse_quote!(DeserializeValue);
-    let implemented_trait_name = implemented_trait
-        .segments
-        .last()
-        .unwrap()
-        .ident
-        .unraw()
-        .to_string();
-    let constraining_trait = implemented_trait.clone();
-    let s = StructDesc::new(&input, &implemented_trait_name, constraining_trait)?;
+    match &input.data {
+        syn::Data::Enum(data_enum) => deserialize_value_derive_enum(&input, data_enum),
+        syn::Data::Struct(_) => {
+            let implemented_trait: syn::Path = parse_quote!(DeserializeValue);
+            let implemented_trait_name = implemented_trait
+                .segments
+                .last()
+                .unwrap()
+                .ident
+                .unraw()
+                .to_string();
+            let constraining_trait = implemented_trait.clone();
+            let s = StructDesc::new(&input, &implemented_trait_name, constraining_trait)?;
 
-    validate_attrs(&s.attrs, s.fields())?;
+            validate_attrs(&s.attrs, s.fields())?;
 
-    let items = [
-        s.generate_type_check_method().into(),
-        s.generate_deserialize_method().into(),
-    ];
+            let items = [
+                s.generate_type_check_method().into(),
+                s.generate_deserialize_method().into(),
+            ];
 
-    Ok(s.generate_impl(implemented_trait, items))
+            Ok(s.generate_impl(implemented_trait, items))
+        }
+        syn::Data::Union(_) => Err(syn::Error::new_spanned(
+            input,
+            "DeserializeValue cannot be derived for unions",
+        )),
+    }
+}
+
+fn deserialize_value_derive_enum(
+    input: &syn::DeriveInput,
+    data_enum: &syn::DataEnum,
+) -> Result<syn::ItemImpl, syn::Error> {
+    let attrs = EnumAttrs::from_attributes(&input.attrs)?;
+    let crate_path = <EnumAttrs as DeserializeCommonStructAttrs>::macro_internal_path(&attrs);
+
+    let repr_type_str = attrs.repr.as_deref().unwrap_or("i32");
+    let repr_type: syn::Type = syn::parse_str(repr_type_str).map_err(|_| {
+        syn::Error::new_spanned(input, format!("Invalid type for repr: {}", repr_type_str))
+    })?;
+
+    let mut match_arms = Vec::new();
+    let mut current_discriminant: i128 = 0;
+
+    for variant in &data_enum.variants {
+        if !variant.fields.is_empty() {
+            return Err(syn::Error::new_spanned(
+                variant,
+                "DeserializeValue can only be derived for enums with unit variants.",
+            ));
+        }
+
+        if let Some((_, expr)) = &variant.discriminant {
+            if let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Int(lit_int),
+                ..
+            }) = expr
+            {
+                current_discriminant = lit_int.base10_parse()?;
+            } else {
+                return Err(syn::Error::new_spanned(
+                    expr,
+                    "Only integer literals are supported as enum discriminants.",
+                ));
+            }
+        }
+
+        let variant_ident = &variant.ident;
+        let disc_lit = syn::LitInt::new(&current_discriminant.to_string(), variant_ident.span());
+
+        match_arms.push(quote::quote! {
+            #disc_lit => ::std::result::Result::Ok(Self::#variant_ident),
+        });
+
+        current_discriminant += 1;
+    }
+
+    let (_, ty_generics, where_clause) = input.generics.split_for_impl();
+    let impl_generics = &input.generics.params;
+    let struct_name = &input.ident;
+
+    let (frame_lifetime, metadata_lifetime) =
+        super::generate_pair_of_unique_lifetimes_for_impl(&input.generics);
+
+    let predicates = super::generate_lifetime_constraints_for_impl(
+        &input.generics,
+        parse_quote!(DeserializeValue),
+        &frame_lifetime,
+    );
+
+    let res = parse_quote! {
+        #[automatically_derived]
+        impl<#frame_lifetime, #metadata_lifetime, #impl_generics> #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
+        where #(#predicates),* #where_clause
+        {
+            fn type_check(
+                typ: &#crate_path::ColumnType,
+            ) -> ::std::result::Result<(), #crate_path::TypeCheckError> {
+                <#repr_type as #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(typ)
+            }
+
+            fn deserialize(
+                typ: &#metadata_lifetime #crate_path::ColumnType<#metadata_lifetime>,
+                v: ::std::option::Option<#crate_path::FrameSlice<#frame_lifetime>>,
+            ) -> ::std::result::Result<Self, #crate_path::DeserializationError> {
+                let raw_val = <#repr_type as #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(typ, v)
+                    .map_err(#crate_path::value_deser_error_replace_rust_name::<Self>)?;
+
+                match raw_val {
+                    #(#match_arms)*
+                    val => ::std::result::Result::Err(
+                        #crate_path::DeserializationError::new(
+                            ::std::io::Error::new(
+                                ::std::io::ErrorKind::InvalidData,
+                                format!("Invalid enum value: {:?}", val)
+                            )
+                        )
+                    ),
+                }
+            }
+        }
+    };
+
+    Ok(res)
 }
 
 fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::Error> {

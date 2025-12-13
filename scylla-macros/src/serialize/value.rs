@@ -41,6 +41,26 @@ impl Attributes {
     }
 }
 
+#[derive(FromAttributes)]
+#[darling(attributes(scylla))]
+struct EnumAttrs {
+    #[darling(rename = "crate")]
+    crate_path: Option<syn::Path>,
+
+    // Allows the user to specify the target type, e.g., "i32", "i8"
+    #[darling(default)]
+    repr: Option<String>,
+}
+
+impl EnumAttrs {
+    fn crate_path(&self) -> syn::Path {
+        self.crate_path
+            .as_ref()
+            .map(|p| parse_quote!(#p::_macro_internal))
+            .unwrap_or_else(|| parse_quote!(::scylla::_macro_internal))
+    }
+}
+
 struct Field {
     ident: syn::Ident,
     typ: syn::Type,
@@ -95,6 +115,10 @@ pub(crate) fn derive_serialize_value(
     tokens_input: TokenStream,
 ) -> Result<syn::ItemImpl, syn::Error> {
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
+    if let syn::Data::Enum(data_enum) = &input.data {
+        return derive_serialize_value_enum(&input, data_enum);
+    }
+
     let struct_name = input.ident.clone();
     let named_fields = crate::parser::parse_named_fields(&input, "SerializeValue")?;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -133,6 +157,48 @@ pub(crate) fn derive_serialize_value(
             #serialize_item
         }
     };
+    Ok(res)
+}
+
+fn derive_serialize_value_enum(
+    input: &syn::DeriveInput,
+    data: &syn::DataEnum,
+) -> Result<syn::ItemImpl, syn::Error> {
+    let attrs = EnumAttrs::from_attributes(&input.attrs)?;
+    let crate_path = attrs.crate_path();
+    let struct_name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+    for variant in &data.variants {
+        if !variant.fields.is_empty() {
+            return Err(syn::Error::new_spanned(
+                variant,
+                "SerializeValue can only be derived for enums with unit variants (no data fields).",
+            ));
+        }
+    }
+
+    let repr_type_str = attrs.repr.as_deref().unwrap_or("i32");
+    let repr_type: syn::Type = syn::parse_str(repr_type_str).map_err(|_| {
+        syn::Error::new_spanned(input, format!("Invalid type for repr: {}", repr_type_str))
+    })?;
+
+    let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
+
+    let res = parse_quote! {
+        #[automatically_derived]
+        impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
+            fn serialize<'b>(
+                &self,
+                typ: &#crate_path::ColumnType,
+                writer: #crate_path::CellWriter<'b>,
+            ) -> ::std::result::Result<#crate_path::WrittenCellProof<'b>, #crate_path::SerializationError> {
+                let value = *self as #repr_type;
+                <#repr_type as #crate_path::SerializeValue>::serialize(&value, typ, writer)
+            }
+        }
+    };
+
     Ok(res)
 }
 
