@@ -155,10 +155,17 @@ impl ReconnectPolicy for ExponentialReconnectPolicy {
 }
 
 /// Constant reconnect policy.
-/// This policy always returns the same delay.
+/// This policy always returns constant delay with randomized jitter applied to it.
+/// This helps with the situation where multiple clients are trying to reconnect simultaneously.
+///
+/// When creating the policy, make sure that the effective delay value will be reasonable
+/// after multiplying by any value from the jitter range (by default: 0.85..=1.15).
+/// If, for example, jitter range is close to 0 (let's say, 0.01..=1.0), then effective delay
+/// may get close to 0 (when value close to 0.01 is chosen).
 #[derive(Debug, Clone)]
 pub struct ConstantReconnectPolicy {
     delay: Duration,
+    jitter_range: RangeInclusive<f64>,
 }
 
 #[cfg_attr(
@@ -168,7 +175,27 @@ pub struct ConstantReconnectPolicy {
 impl ConstantReconnectPolicy {
     /// Creates a new constant reconnect policy with the given delay.
     pub fn new(duration: Duration) -> Self {
-        Self { delay: duration }
+        Self {
+            delay: duration,
+            jitter_range: 0.85..=1.15,
+        }
+    }
+
+    /// Sets the jitter range for the delay between fill attempts.
+    ///
+    /// On each call to `get_delay`, value will be sampled from the provided range.
+    /// The delay will be multiplied by this value.
+    /// You can use 1.0..=1.0 to effectively disable jitter.
+    ///
+    /// Default value is 0.85..=1.15.
+    pub fn with_jitter_range(mut self, value: RangeInclusive<f64>) -> Self {
+        assert!(!value.is_empty(), "Jitter range must not be empty");
+        assert!(
+            *value.start() >= 0.0,
+            "Jitter range start must be non-negative"
+        );
+        self.jitter_range = value;
+        self
     }
 }
 
@@ -182,7 +209,10 @@ impl ReconnectPolicy for ConstantReconnectPolicy {
 // so we can avoid having another struct for per-host policy.
 impl ReconnectPolicySession for ConstantReconnectPolicy {
     fn get_delay(&self) -> Duration {
-        self.delay
+        // The clone below is cheap. Ranges intentionally don't implement Copy, but for other reasons.
+        // See: https://github.com/rust-lang/rust/pull/27186
+        let jitter_multiplier = rand::rng().random_range(self.jitter_range.clone());
+        self.delay.mul_f64(jitter_multiplier)
     }
 
     fn on_successful_fill(&mut self) {}
