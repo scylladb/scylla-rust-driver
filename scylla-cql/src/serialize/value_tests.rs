@@ -241,11 +241,11 @@ fn test_set_or_list_errors() {
         typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
     };
     let err = do_serialize_err(v, &typ);
-    let err = get_ser_err(&err);
-    assert_eq!(err.rust_name, std::any::type_name::<&[Unset]>());
-    assert_eq!(err.got, typ);
+    let ser_err = get_ser_err(&err);
+    assert_eq!(ser_err.rust_name, std::any::type_name::<&[Unset]>());
+    assert_eq!(ser_err.got, typ);
     assert_matches!(
-        err.kind,
+        ser_err.kind,
         BuiltinSerializationErrorKind::SetOrListError(
             SetOrListSerializationErrorKind::TooManyElements
         )
@@ -267,9 +267,9 @@ fn test_set_or_list_errors() {
     else {
         panic!("unexpected error kind: {}", err.kind)
     };
-    let err = get_typeck_err(err);
+    let typeck_err = get_typeck_err(err);
     assert_matches!(
-        err.kind,
+        typeck_err.kind,
         BuiltinTypeCheckErrorKind::MismatchedType {
             expected: &[ColumnType::Native(NativeType::Int)],
         }
@@ -330,9 +330,9 @@ fn test_map_errors() {
     else {
         panic!("unexpected error kind: {}", err.kind)
     };
-    let err = get_typeck_err(err);
+    let typeck_err = get_typeck_err(err);
     assert_matches!(
-        err.kind,
+        typeck_err.kind,
         BuiltinTypeCheckErrorKind::MismatchedType {
             expected: &[ColumnType::Native(NativeType::Int)],
         }
@@ -357,9 +357,9 @@ fn test_map_errors() {
     else {
         panic!("unexpected error kind: {}", err.kind)
     };
-    let err = get_typeck_err(err);
+    let typeck_err = get_typeck_err(err);
     assert_matches!(
-        err.kind,
+        typeck_err.kind,
         BuiltinTypeCheckErrorKind::MismatchedType {
             expected: &[ColumnType::Native(NativeType::Int)],
         }
@@ -456,9 +456,9 @@ fn test_tuple_errors() {
     else {
         panic!("unexpected error kind: {}", err.kind)
     };
-    let err = get_typeck_err(err);
+    let typeck_err = get_typeck_err(err);
     assert_matches!(
-        err.kind,
+        typeck_err.kind,
         BuiltinTypeCheckErrorKind::MismatchedType {
             expected: &[ColumnType::Native(NativeType::Double)],
         }
