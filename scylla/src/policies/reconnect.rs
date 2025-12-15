@@ -42,7 +42,7 @@ pub trait ReconnectPolicy: Send + Sync + std::fmt::Debug {
 struct HostExponentialReconnectPolicy {
     min_fill_backoff: Duration,
     max_fill_backoff: Duration,
-    jitter_range: RangeInclusive<f64>,
+    jitter_range: (f64, f64),
     current_delay: Duration,
 }
 
@@ -50,12 +50,10 @@ impl ReconnectPolicySession for HostExponentialReconnectPolicy {
     fn get_delay(&self) -> Duration {
         // The clone below is cheap. Ranges intentionally don't implement Copy, but for other reasons.
         // See: https://github.com/rust-lang/rust/pull/27186
-        let jitter_multiplier = rand::rng().random_range(self.jitter_range.clone());
+        let (lower, upper) = self.jitter_range;
+        let jitter_multiplier = rand::rng().random_range(lower..=upper);
         let jittered_delay = self.current_delay.mul_f64(jitter_multiplier);
-        std::cmp::max(
-            std::cmp::min(self.max_fill_backoff, jittered_delay),
-            self.min_fill_backoff,
-        )
+        jittered_delay.clamp(self.min_fill_backoff, self.max_fill_backoff)
     }
 
     fn on_successful_fill(&mut self) {
@@ -126,13 +124,13 @@ impl ExponentialReconnectPolicy {
     /// You can use 1.0..=1.0 to effectively disable jitter.
     ///
     /// Default value is 0.85..=1.15.
-    pub fn with_jitter_range(mut self, value: RangeInclusive<f64>) -> Self {
-        assert!(!value.is_empty(), "Jitter range must not be empty");
+    pub fn with_jitter_range(mut self, jitter_range: RangeInclusive<f64>) -> Self {
+        assert!(!jitter_range.is_empty(), "Jitter range must not be empty");
         assert!(
-            *value.start() >= 0.0,
+            *jitter_range.start() >= 0.0,
             "Jitter range start must be non-negative"
         );
-        self.jitter_range = value;
+        self.jitter_range = jitter_range;
         self
     }
 }
@@ -149,7 +147,7 @@ impl ReconnectPolicy for ExponentialReconnectPolicy {
             min_fill_backoff: self.min_fill_backoff,
             max_fill_backoff: self.max_fill_backoff,
             current_delay: self.min_fill_backoff,
-            jitter_range: self.jitter_range.clone(),
+            jitter_range: (*self.jitter_range.start(), *self.jitter_range.end()),
         })
     }
 }
@@ -165,7 +163,7 @@ impl ReconnectPolicy for ExponentialReconnectPolicy {
 #[derive(Debug, Clone)]
 pub struct ConstantReconnectPolicy {
     delay: Duration,
-    jitter_range: RangeInclusive<f64>,
+    jitter_range: (f64, f64),
 }
 
 #[cfg_attr(
@@ -177,7 +175,7 @@ impl ConstantReconnectPolicy {
     pub fn new(duration: Duration) -> Self {
         Self {
             delay: duration,
-            jitter_range: 0.85..=1.15,
+            jitter_range: (0.85, 1.15),
         }
     }
 
@@ -188,13 +186,13 @@ impl ConstantReconnectPolicy {
     /// You can use 1.0..=1.0 to effectively disable jitter.
     ///
     /// Default value is 0.85..=1.15.
-    pub fn with_jitter_range(mut self, value: RangeInclusive<f64>) -> Self {
-        assert!(!value.is_empty(), "Jitter range must not be empty");
+    pub fn with_jitter_range(mut self, jitter_range: RangeInclusive<f64>) -> Self {
+        assert!(!jitter_range.is_empty(), "Jitter range must not be empty");
         assert!(
-            *value.start() >= 0.0,
+            *jitter_range.start() >= 0.0,
             "Jitter range start must be non-negative"
         );
-        self.jitter_range = value;
+        self.jitter_range = (*jitter_range.start(), *jitter_range.end());
         self
     }
 }
@@ -211,7 +209,8 @@ impl ReconnectPolicySession for ConstantReconnectPolicy {
     fn get_delay(&self) -> Duration {
         // The clone below is cheap. Ranges intentionally don't implement Copy, but for other reasons.
         // See: https://github.com/rust-lang/rust/pull/27186
-        let jitter_multiplier = rand::rng().random_range(self.jitter_range.clone());
+        let mut rng = rand::rng();
+        let jitter_multiplier = rng.random_range(self.jitter_range.0..=self.jitter_range.1);
         self.delay.mul_f64(jitter_multiplier)
     }
 
