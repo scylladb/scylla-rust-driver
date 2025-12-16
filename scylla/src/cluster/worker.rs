@@ -19,7 +19,7 @@ use std::time::Duration;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
-use super::metadata::MetadataReader;
+use super::metadata_reader::MetadataReader;
 use super::state::{ClusterState, ClusterStateNeatDebug};
 
 /// Cluster manages up to date information and connections to database nodes.

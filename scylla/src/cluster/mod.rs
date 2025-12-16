@@ -29,3 +29,4 @@ mod control_connection;
 pub mod metadata;
 
 mod metadata_fetching;
+mod metadata_reader;
