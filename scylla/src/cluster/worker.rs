@@ -86,9 +86,6 @@ struct ClusterWorker {
     // Sender part of that channel to pass to `PoolRefiller`s.
     connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
 
-    // Channel used to receive signals that control connection is broken
-    control_connection_repair_channel: tokio::sync::mpsc::Receiver<()>,
-
     // Channel used to receive info about new tablets from custom payload in responses
     // sent by server.
     tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
@@ -147,22 +144,16 @@ impl Cluster {
         // or drop events (if we decide to do so if the channel is full). Both options are bad.
         let (connectivity_events_sender, connectivity_events_receiver) =
             tokio::sync::mpsc::unbounded_channel();
-        let (control_connection_repair_sender, control_connection_repair_receiver) =
-            tokio::sync::mpsc::channel(32);
 
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
             hostname_resolution_timeout,
-            control_connection_repair_sender,
             pool_config.connection_config.clone(),
             metadata_request_serverside_timeout,
             server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
-            #[cfg(feature = "metrics")]
-            Arc::clone(&metrics),
-            Arc::clone(&pool_config.reconnect_policy),
         )
         .await?;
 
@@ -206,7 +197,6 @@ impl Cluster {
             server_events_channel: server_events_receiver,
             connectivity_events_sender,
             connectivity_events_receiver,
-            control_connection_repair_channel: control_connection_repair_receiver,
             tablets_channel: tablet_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
@@ -294,6 +284,11 @@ impl ClusterWorker {
                 .unwrap_or_else(Instant::now);
 
             let mut tablets = Vec::new();
+
+            let err_future = self
+                .metadata_reader
+                .control_connection_error_receiver
+                .as_mut();
 
             let sleep_future = tokio::time::sleep_until(sleep_until);
             tokio::pin!(sleep_future);
@@ -398,15 +393,15 @@ impl ClusterWorker {
                     continue; // Don't go to refreshing, wait for the next event
                 }
 
-                maybe_control_connection_failed = self.control_connection_repair_channel.recv() => {
+                maybe_control_connection_failed = err_future.unwrap(), if err_future.is_some() => {
                     match maybe_control_connection_failed {
-                        Some(()) => {
+                        Ok(_conn_err) => {
                             // The control connection was broken. Acknowledge that and start attempting to reconnect.
                             // The first reconnect attempt will be immediate (by attempting metadata refresh below),
                             // and if it does not succeed, then `control_connection_works` will be set to `false`,
                             // so subsequent attempts will be issued every second.
                         }
-                        None => {
+                        Err(_recv_err) => {
                             // If control_connection_repair_channel was closed then MetadataReader was dropped,
                             // we can stop working.
                             return;

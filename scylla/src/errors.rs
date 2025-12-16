@@ -288,6 +288,7 @@ pub enum TracingError {
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum MetadataError {
+    //TODO(2.0): Change this to `ConnectionError`. Control connection no longer uses a connection pool.
     /// Control connection pool error.
     #[error("Control connection pool error: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),

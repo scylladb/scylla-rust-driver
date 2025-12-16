@@ -1,33 +1,29 @@
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
 use rand::rng;
 use rand::seq::{IndexedRandom, SliceRandom};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
 
 use crate::cluster::KnownNode;
 use crate::cluster::control_connection::ControlConnection;
 use crate::cluster::metadata::{Metadata, PeerEndpoint, UntranslatedEndpoint};
 use crate::cluster::node::resolve_contact_points;
-use crate::errors::{MetadataError, NewSessionError};
+use crate::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
 use crate::frame::response::event::Event;
-use crate::network::{ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
-#[cfg(feature = "metrics")]
-use crate::observability::metrics::Metrics;
+use crate::network::{Connection, ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
-use crate::policies::reconnect::ReconnectPolicy;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
-    control_connection_pool_config: PoolConfig,
+    control_connection_config: ConnectionConfig,
     request_serverside_timeout: Option<Duration>,
     hostname_resolution_timeout: Option<Duration>,
 
     control_connection_endpoint: UntranslatedEndpoint,
-    control_connection: NodeConnectionPool,
+    control_connection: Result<Arc<Connection>, ConnectionError>,
 
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<UntranslatedEndpoint>,
@@ -41,10 +37,8 @@ pub(crate) struct MetadataReader {
 
     // When a control connection breaks, the PoolRefiller of its pool uses the requester
     // to signal ClusterWorker that an immediate metadata refresh is advisable.
-    control_connection_repair_requester: mpsc::Sender<()>,
-
-    #[cfg(feature = "metrics")]
-    metrics: Arc<Metrics>,
+    pub(crate) control_connection_error_receiver:
+        Option<tokio::sync::oneshot::Receiver<ConnectionError>>,
 }
 
 impl MetadataReader {
@@ -53,15 +47,12 @@ impl MetadataReader {
     pub(crate) async fn new(
         initial_known_nodes: Vec<KnownNode>,
         hostname_resolution_timeout: Option<Duration>,
-        control_connection_repair_requester: tokio::sync::mpsc::Sender<()>,
         mut connection_config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
-        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
-        reconnect_policy: Arc<dyn ReconnectPolicy>,
     ) -> Result<Self, NewSessionError> {
         let (initial_peers, resolved_hostnames) =
             resolve_contact_points(&initial_known_nodes, hostname_resolution_timeout).await;
@@ -84,28 +75,18 @@ impl MetadataReader {
         // - send received events via server_event_sender
         connection_config.event_sender = Some(server_event_sender);
 
-        let control_connection_pool_config = PoolConfig {
-            connection_config,
-
-            // We want to have only one connection to receive events from
-            pool_size: PoolSize::PerHost(NonZeroUsize::new(1).unwrap()),
-
-            // The shard-aware port won't be used with PerHost pool size anyway,
-            // so explicitly disable it here
-            can_use_shard_aware_port: false,
-            reconnect_policy,
+        let (control_connection, error_receiver) = match Self::make_control_connection(
+            control_connection_endpoint.clone(),
+            &connection_config,
+        )
+        .await
+        {
+            Ok((conn, err_recv)) => (Ok(conn), Some(err_recv)),
+            Err(e) => (Err(e), None),
         };
 
-        let control_connection = Self::make_control_connection_pool(
-            control_connection_endpoint.clone(),
-            &control_connection_pool_config,
-            control_connection_repair_requester.clone(),
-            #[cfg(feature = "metrics")]
-            metrics.clone(),
-        );
-
         Ok(MetadataReader {
-            control_connection_pool_config,
+            control_connection_config: connection_config,
             control_connection_endpoint,
             control_connection,
             request_serverside_timeout,
@@ -118,9 +99,7 @@ impl MetadataReader {
             fetch_schema,
             host_filter: host_filter.clone(),
             initial_known_nodes,
-            control_connection_repair_requester,
-            #[cfg(feature = "metrics")]
-            metrics,
+            control_connection_error_receiver: error_receiver,
         })
     }
 
@@ -132,7 +111,8 @@ impl MetadataReader {
                 debug!("Fetched new metadata");
                 self.update_known_peers(&metadata);
                 if initial {
-                    self.handle_unaccepted_host_in_control_connection(&metadata);
+                    self.handle_unaccepted_host_in_control_connection(&metadata)
+                        .await;
                 }
                 return Ok(metadata);
             }
@@ -192,7 +172,8 @@ impl MetadataReader {
         match &result {
             Ok(metadata) => {
                 self.update_known_peers(metadata);
-                self.handle_unaccepted_host_in_control_connection(metadata);
+                self.handle_unaccepted_host_in_control_connection(metadata)
+                    .await;
                 debug!("Fetched new metadata");
             }
             Err(error) => {
@@ -230,28 +211,44 @@ impl MetadataReader {
             );
 
             self.control_connection_endpoint = peer.clone();
-            self.control_connection = Self::make_control_connection_pool(
-                self.control_connection_endpoint.clone(),
-                &self.control_connection_pool_config,
-                self.control_connection_repair_requester.clone(),
-                #[cfg(feature = "metrics")]
-                Arc::clone(&self.metrics),
-            );
-
             debug!(
                 "Retrying to establish the control connection on {}",
                 self.control_connection_endpoint.address()
             );
+
+            match Self::make_control_connection(
+                self.control_connection_endpoint.clone(),
+                &self.control_connection_config,
+            )
+            .await
+            {
+                Ok((conn, err_recv)) => {
+                    self.control_connection = Ok(conn);
+                    self.control_connection_error_receiver = Some(err_recv);
+                }
+                Err(e) => {
+                    self.control_connection = Err(e);
+                    self.control_connection_error_receiver = None;
+                }
+            }
+
             result = self.fetch_metadata(initial).await;
         }
         result
     }
 
     async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, MetadataError> {
-        // TODO: Timeouts?
-        self.control_connection.wait_until_initialized().await;
-        let conn = ControlConnection::new(self.control_connection.random_connection()?)
-            .override_serverside_timeout(self.request_serverside_timeout);
+        let conn = match &self.control_connection {
+            Ok(connection) => ControlConnection::new(Arc::clone(connection))
+                .override_serverside_timeout(self.request_serverside_timeout),
+            Err(e) => {
+                return Err(MetadataError::ConnectionPoolError(
+                    ConnectionPoolError::Broken {
+                        last_connection_error: e.clone(),
+                    },
+                ));
+            }
+        };
 
         let res = conn
             .query_metadata(
@@ -304,7 +301,7 @@ impl MetadataReader {
         }
     }
 
-    fn handle_unaccepted_host_in_control_connection(&mut self, metadata: &Metadata) {
+    async fn handle_unaccepted_host_in_control_connection(&mut self, metadata: &Metadata) {
         let control_connection_peer = metadata
             .peers
             .iter()
@@ -335,32 +332,36 @@ impl MetadataReader {
                         .expect("known_peers is empty - should be impossible")
                         .clone();
 
-                    self.control_connection = Self::make_control_connection_pool(
+                    match Self::make_control_connection(
                         self.control_connection_endpoint.clone(),
-                        &self.control_connection_pool_config,
-                        self.control_connection_repair_requester.clone(),
-                        #[cfg(feature = "metrics")]
-                        Arc::clone(&self.metrics),
-                    );
+                        &self.control_connection_config,
+                    )
+                    .await
+                    {
+                        Ok((conn, err_recv)) => {
+                            self.control_connection = Ok(conn);
+                            self.control_connection_error_receiver = Some(err_recv);
+                        }
+                        Err(e) => {
+                            self.control_connection = Err(e);
+                            self.control_connection_error_receiver = None;
+                        }
+                    }
                 }
             }
         }
     }
 
-    fn make_control_connection_pool(
+    async fn make_control_connection(
         endpoint: UntranslatedEndpoint,
-        pool_config: &PoolConfig,
-        refresh_requester: mpsc::Sender<()>,
-        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
-    ) -> NodeConnectionPool {
-        NodeConnectionPool::new(
-            endpoint,
-            pool_config,
+        config: &ConnectionConfig,
+    ) -> Result<(Arc<Connection>, oneshot::Receiver<ConnectionError>), ConnectionError> {
+        open_connection(
+            &endpoint,
             None,
-            None,
-            refresh_requester,
-            #[cfg(feature = "metrics")]
-            metrics,
+            &config.to_host_connection_config(&endpoint),
         )
+        .await
+        .map(|(con, recv)| (Arc::new(con), recv))
     }
 }
