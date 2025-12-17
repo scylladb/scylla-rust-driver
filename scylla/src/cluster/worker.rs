@@ -1,4 +1,5 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
+use crate::cluster::metadata_reader::ControlConnectionState;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::Event;
@@ -285,10 +286,13 @@ impl ClusterWorker {
 
             let mut tablets = Vec::new();
 
-            let err_future = self
-                .metadata_reader
-                .control_connection_error_receiver
-                .as_mut();
+            let err_future = if let ControlConnectionState::Working(connection) =
+                &mut self.metadata_reader.control_connection_state
+            {
+                Some(&mut connection.error_channel)
+            } else {
+                None
+            };
 
             let sleep_future = tokio::time::sleep_until(sleep_until);
             tokio::pin!(sleep_future);

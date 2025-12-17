@@ -16,6 +16,16 @@ use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
+pub(crate) struct WorkingControlConnection {
+    connection: ControlConnection,
+    pub(crate) error_channel: oneshot::Receiver<ConnectionError>,
+}
+
+pub(crate) enum ControlConnectionState {
+    Working(WorkingControlConnection),
+    Broken { last_error: ConnectionError },
+}
+
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
     control_connection_config: ConnectionConfig,
@@ -23,7 +33,7 @@ pub(crate) struct MetadataReader {
     hostname_resolution_timeout: Option<Duration>,
 
     control_connection_endpoint: UntranslatedEndpoint,
-    control_connection: Result<ControlConnection, ConnectionError>,
+    pub(crate) control_connection_state: ControlConnectionState,
 
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<UntranslatedEndpoint>,
@@ -34,11 +44,6 @@ pub(crate) struct MetadataReader {
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
     initial_known_nodes: Vec<KnownNode>,
-
-    // When a control connection breaks, the PoolRefiller of its pool uses the requester
-    // to signal ClusterWorker that an immediate metadata refresh is advisable.
-    pub(crate) control_connection_error_receiver:
-        Option<tokio::sync::oneshot::Receiver<ConnectionError>>,
 }
 
 impl MetadataReader {
@@ -75,21 +80,21 @@ impl MetadataReader {
         // - send received events via server_event_sender
         connection_config.event_sender = Some(server_event_sender);
 
-        let (control_connection, error_receiver) = match Self::make_control_connection(
+        let control_connection_state = match Self::make_control_connection(
             control_connection_endpoint.clone(),
             &connection_config,
             request_serverside_timeout,
         )
         .await
         {
-            Ok((conn, err_recv)) => (Ok(conn), Some(err_recv)),
-            Err(e) => (Err(e), None),
+            Ok(working_connection) => ControlConnectionState::Working(working_connection),
+            Err(e) => ControlConnectionState::Broken { last_error: e },
         };
 
         Ok(MetadataReader {
             control_connection_config: connection_config,
             control_connection_endpoint,
-            control_connection,
+            control_connection_state,
             request_serverside_timeout,
             hostname_resolution_timeout,
             known_peers: initial_peers
@@ -100,7 +105,6 @@ impl MetadataReader {
             fetch_schema,
             host_filter: host_filter.clone(),
             initial_known_nodes,
-            control_connection_error_receiver: error_receiver,
         })
     }
 
@@ -217,22 +221,16 @@ impl MetadataReader {
                 self.control_connection_endpoint.address()
             );
 
-            match Self::make_control_connection(
+            self.control_connection_state = match Self::make_control_connection(
                 self.control_connection_endpoint.clone(),
                 &self.control_connection_config,
                 self.request_serverside_timeout,
             )
             .await
             {
-                Ok((conn, err_recv)) => {
-                    self.control_connection = Ok(conn);
-                    self.control_connection_error_receiver = Some(err_recv);
-                }
-                Err(e) => {
-                    self.control_connection = Err(e);
-                    self.control_connection_error_receiver = None;
-                }
-            }
+                Ok(working_connection) => ControlConnectionState::Working(working_connection),
+                Err(e) => ControlConnectionState::Broken { last_error: e },
+            };
 
             result = self.fetch_metadata(initial).await;
         }
@@ -240,9 +238,9 @@ impl MetadataReader {
     }
 
     async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, MetadataError> {
-        let conn = match &self.control_connection {
-            Ok(connection) => connection,
-            Err(e) => {
+        let conn = match &self.control_connection_state {
+            ControlConnectionState::Working(working_connection) => &working_connection.connection,
+            ControlConnectionState::Broken { last_error: e } => {
                 return Err(MetadataError::ConnectionPoolError(
                     ConnectionPoolError::Broken {
                         last_connection_error: e.clone(),
@@ -333,22 +331,18 @@ impl MetadataReader {
                         .expect("known_peers is empty - should be impossible")
                         .clone();
 
-                    match Self::make_control_connection(
+                    self.control_connection_state = match Self::make_control_connection(
                         self.control_connection_endpoint.clone(),
                         &self.control_connection_config,
                         self.request_serverside_timeout,
                     )
                     .await
                     {
-                        Ok((conn, err_recv)) => {
-                            self.control_connection = Ok(conn);
-                            self.control_connection_error_receiver = Some(err_recv);
+                        Ok(working_connection) => {
+                            ControlConnectionState::Working(working_connection)
                         }
-                        Err(e) => {
-                            self.control_connection = Err(e);
-                            self.control_connection_error_receiver = None;
-                        }
-                    }
+                        Err(e) => ControlConnectionState::Broken { last_error: e },
+                    };
                 }
             }
         }
@@ -358,19 +352,17 @@ impl MetadataReader {
         endpoint: UntranslatedEndpoint,
         config: &ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
-    ) -> Result<(ControlConnection, oneshot::Receiver<ConnectionError>), ConnectionError> {
+    ) -> Result<WorkingControlConnection, ConnectionError> {
         open_connection(
             &endpoint,
             None,
             &config.to_host_connection_config(&endpoint),
         )
         .await
-        .map(|(con, recv)| {
-            (
-                ControlConnection::new(Arc::new(con))
-                    .override_serverside_timeout(request_serverside_timeout),
-                recv,
-            )
+        .map(|(con, recv)| WorkingControlConnection {
+            connection: ControlConnection::new(Arc::new(con))
+                .override_serverside_timeout(request_serverside_timeout),
+            error_channel: recv,
         })
     }
 }
