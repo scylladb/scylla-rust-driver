@@ -19,6 +19,7 @@ use crate::utils::safe_format::IteratorSafeFormatExt;
 pub(crate) struct WorkingControlConnection {
     connection: ControlConnection,
     pub(crate) error_channel: oneshot::Receiver<ConnectionError>,
+    pub(crate) events_channel: mpsc::Receiver<Event>,
 }
 
 pub(crate) enum ControlConnectionState {
@@ -48,13 +49,11 @@ pub(crate) struct MetadataReader {
 
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
-    #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         initial_known_nodes: Vec<KnownNode>,
         hostname_resolution_timeout: Option<Duration>,
-        mut connection_config: ConnectionConfig,
+        connection_config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
-        server_event_sender: mpsc::Sender<Event>,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
@@ -75,14 +74,9 @@ impl MetadataReader {
                 .clone(),
         );
 
-        // setting event_sender field in connection config will cause control connection to
-        // - send REGISTER message to receive server events
-        // - send received events via server_event_sender
-        connection_config.event_sender = Some(server_event_sender);
-
         let control_connection_state = match Self::make_control_connection(
             control_connection_endpoint.clone(),
-            &connection_config,
+            connection_config.clone(),
             request_serverside_timeout,
         )
         .await
@@ -223,7 +217,7 @@ impl MetadataReader {
 
             self.control_connection_state = match Self::make_control_connection(
                 self.control_connection_endpoint.clone(),
-                &self.control_connection_config,
+                self.control_connection_config.clone(),
                 self.request_serverside_timeout,
             )
             .await
@@ -333,7 +327,7 @@ impl MetadataReader {
 
                     self.control_connection_state = match Self::make_control_connection(
                         self.control_connection_endpoint.clone(),
-                        &self.control_connection_config,
+                        self.control_connection_config.clone(),
                         self.request_serverside_timeout,
                     )
                     .await
@@ -350,9 +344,14 @@ impl MetadataReader {
 
     async fn make_control_connection(
         endpoint: UntranslatedEndpoint,
-        config: &ConnectionConfig,
+        mut config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
     ) -> Result<WorkingControlConnection, ConnectionError> {
+        let (sender, receiver) = tokio::sync::mpsc::channel(32);
+        // setting event_sender field in connection config will cause control connection to
+        // - send REGISTER message to receive server events
+        // - send received events via server_event_sender
+        config.event_sender = Some(sender);
         open_connection(
             &endpoint,
             None,
@@ -363,6 +362,7 @@ impl MetadataReader {
             connection: ControlConnection::new(Arc::new(con))
                 .override_serverside_timeout(request_serverside_timeout),
             error_channel: recv,
+            events_channel: receiver,
         })
     }
 }

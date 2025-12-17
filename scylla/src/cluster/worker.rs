@@ -79,9 +79,6 @@ struct ClusterWorker {
     // Channel used to receive use keyspace requests
     use_keyspace_channel: tokio::sync::mpsc::Receiver<UseKeyspaceRequest>,
 
-    // Channel used to receive server events
-    server_events_channel: tokio::sync::mpsc::Receiver<Event>,
-
     // Channel used to receive signals that node is no longer reachable or became reachable.
     connectivity_events_receiver: tokio::sync::mpsc::UnboundedReceiver<ConnectivityChangeEvent>,
     // Sender part of that channel to pass to `PoolRefiller`s.
@@ -137,7 +134,6 @@ impl Cluster {
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
-        let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
         // This is unbounded, because there is possibility that many events will be sent quickly,
         // for example when driver is connected to a large cluster and it loses network connectivity.
         //
@@ -151,7 +147,6 @@ impl Cluster {
             hostname_resolution_timeout,
             pool_config.connection_config.clone(),
             metadata_request_serverside_timeout,
-            server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
@@ -195,7 +190,6 @@ impl Cluster {
             pool_config,
 
             refresh_channel: refresh_receiver,
-            server_events_channel: server_events_receiver,
             connectivity_events_sender,
             connectivity_events_receiver,
             tablets_channel: tablet_receiver,
@@ -286,12 +280,15 @@ impl ClusterWorker {
 
             let mut tablets = Vec::new();
 
-            let err_future = if let ControlConnectionState::Working(connection) =
+            let (err_future, events_channel) = if let ControlConnectionState::Working(connection) =
                 &mut self.metadata_reader.control_connection_state
             {
-                Some(&mut connection.error_channel)
+                (
+                    Some(&mut connection.error_channel),
+                    Some(&mut connection.events_channel),
+                )
             } else {
-                None
+                (None, None)
             };
 
             let sleep_future = tokio::time::sleep_until(sleep_until);
@@ -341,7 +338,7 @@ impl ClusterWorker {
                     continue;
                 }
 
-                maybe_cql_event = self.server_events_channel.recv() => {
+                maybe_cql_event = events_channel.unwrap().recv(), if events_channel.is_some() => {
                     if let Some(event) = maybe_cql_event {
                         debug!("Received server event: {:?}", event);
 
