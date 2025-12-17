@@ -12,7 +12,7 @@ use crate::cluster::metadata::{Metadata, PeerEndpoint, UntranslatedEndpoint};
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
 use crate::frame::response::event::Event;
-use crate::network::{Connection, ConnectionConfig, open_connection};
+use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
@@ -23,7 +23,7 @@ pub(crate) struct MetadataReader {
     hostname_resolution_timeout: Option<Duration>,
 
     control_connection_endpoint: UntranslatedEndpoint,
-    control_connection: Result<Arc<Connection>, ConnectionError>,
+    control_connection: Result<ControlConnection, ConnectionError>,
 
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<UntranslatedEndpoint>,
@@ -78,6 +78,7 @@ impl MetadataReader {
         let (control_connection, error_receiver) = match Self::make_control_connection(
             control_connection_endpoint.clone(),
             &connection_config,
+            request_serverside_timeout,
         )
         .await
         {
@@ -219,6 +220,7 @@ impl MetadataReader {
             match Self::make_control_connection(
                 self.control_connection_endpoint.clone(),
                 &self.control_connection_config,
+                self.request_serverside_timeout,
             )
             .await
             {
@@ -239,8 +241,7 @@ impl MetadataReader {
 
     async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, MetadataError> {
         let conn = match &self.control_connection {
-            Ok(connection) => ControlConnection::new(Arc::clone(connection))
-                .override_serverside_timeout(self.request_serverside_timeout),
+            Ok(connection) => connection,
             Err(e) => {
                 return Err(MetadataError::ConnectionPoolError(
                     ConnectionPoolError::Broken {
@@ -335,6 +336,7 @@ impl MetadataReader {
                     match Self::make_control_connection(
                         self.control_connection_endpoint.clone(),
                         &self.control_connection_config,
+                        self.request_serverside_timeout,
                     )
                     .await
                     {
@@ -355,13 +357,20 @@ impl MetadataReader {
     async fn make_control_connection(
         endpoint: UntranslatedEndpoint,
         config: &ConnectionConfig,
-    ) -> Result<(Arc<Connection>, oneshot::Receiver<ConnectionError>), ConnectionError> {
+        request_serverside_timeout: Option<Duration>,
+    ) -> Result<(ControlConnection, oneshot::Receiver<ConnectionError>), ConnectionError> {
         open_connection(
             &endpoint,
             None,
             &config.to_host_connection_config(&endpoint),
         )
         .await
-        .map(|(con, recv)| (Arc::new(con), recv))
+        .map(|(con, recv)| {
+            (
+                ControlConnection::new(Arc::new(con))
+                    .override_serverside_timeout(request_serverside_timeout),
+                recv,
+            )
+        })
     }
 }
