@@ -16,13 +16,18 @@ use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
-pub(crate) struct WorkingControlConnection {
-    connection: ControlConnection,
-    pub(crate) error_channel: oneshot::Receiver<ConnectionError>,
-    pub(crate) events_channel: mpsc::Receiver<Event>,
+pub(crate) enum ControlConnectionEvent {
+    Broken,
+    ServerEvent(Event),
 }
 
-pub(crate) enum ControlConnectionState {
+struct WorkingControlConnection {
+    connection: ControlConnection,
+    error_channel: oneshot::Receiver<ConnectionError>,
+    events_channel: mpsc::Receiver<Event>,
+}
+
+enum ControlConnectionState {
     Working(WorkingControlConnection),
     Broken { last_error: ConnectionError },
 }
@@ -34,7 +39,7 @@ pub(crate) struct MetadataReader {
     hostname_resolution_timeout: Option<Duration>,
 
     control_connection_endpoint: UntranslatedEndpoint,
-    pub(crate) control_connection_state: ControlConnectionState,
+    control_connection_state: ControlConnectionState,
 
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<UntranslatedEndpoint>,
@@ -100,6 +105,44 @@ impl MetadataReader {
             host_filter: host_filter.clone(),
             initial_known_nodes,
         })
+    }
+
+    pub(crate) async fn wait_for_control_connection_event(&mut self) -> ControlConnectionEvent {
+        match &mut self.control_connection_state {
+            ControlConnectionState::Broken { .. } => std::future::pending().await,
+            ControlConnectionState::Working(working_connection) => {
+                tokio::select! {
+                    // Why only `Some`? `None` means that event channel was dropped.
+                    // In current implementation (as of writing this comment)
+                    // this should not be possible: events sender is stored in HostConnectionConfig,
+                    // which is a field of Connection that we own. If we got `None`, then most likely
+                    // two things happened:
+                    //  - The implementation changed, for example by moving event sender to router.
+                    //  - Connection was closed, router shutdown.
+                    //  - `tokio::select!` chose this branch instead of error channel.
+                    // The best thing we can imo do is ignore this `None`. `error_channel` should receive
+                    // info about connection shutdown very soon.
+                    Some(cql_event) = working_connection.events_channel.recv() => {
+                        ControlConnectionEvent::ServerEvent(cql_event)
+                    },
+                    maybe_control_connection_failed = &mut working_connection.error_channel => {
+                        let err = match maybe_control_connection_failed {
+                            Ok(err) => err,
+                            Err(_recv_error) => {
+                                // If we got here then error channel, in a Connection that we own,
+                                // was dropped without sending anything. This is definitely a bug in the driver!
+                                // We could theoretically recover by dropping a connection and creating new one,
+                                // but we would need to add an error variant to `BrokenConnectionErrorKind` that
+                                // could basically never happen. Let's panic instead.
+                                panic!("Error sender of control connection unexpectedly dropped. This is a bug in the driver, please open an issue!");
+                            },
+                        };
+                        self.control_connection_state = ControlConnectionState::Broken { last_error: err };
+                        ControlConnectionEvent::Broken
+                    }
+                }
+            }
+        }
     }
 
     /// Fetches current metadata from the cluster

@@ -1,5 +1,5 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
-use crate::cluster::metadata_reader::ControlConnectionState;
+use crate::cluster::metadata_reader::ControlConnectionEvent;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::Event;
@@ -280,17 +280,6 @@ impl ClusterWorker {
 
             let mut tablets = Vec::new();
 
-            let (err_future, events_channel) = if let ControlConnectionState::Working(connection) =
-                &mut self.metadata_reader.control_connection_state
-            {
-                (
-                    Some(&mut connection.error_channel),
-                    Some(&mut connection.events_channel),
-                )
-            } else {
-                (None, None)
-            };
-
             let sleep_future = tokio::time::sleep_until(sleep_until);
             tokio::pin!(sleep_future);
 
@@ -338,30 +327,33 @@ impl ClusterWorker {
                     continue;
                 }
 
-                maybe_cql_event = events_channel.unwrap().recv(), if events_channel.is_some() => {
-                    if let Some(event) = maybe_cql_event {
-                        debug!("Received server event: {:?}", event);
-
-                        match event {
-                            Event::TopologyChange(_) => (), // Refresh immediately
-                            Event::StatusChange(_status) => {
-                                // TODO: Tracking status using events is unreliable because of
-                                // the possibility of losing events when control connection is broken.
-                                // Maybe a better thing to do here is to treat those events as hints?
-                                // What I mean by that?
-                                // - Don't store the status at all.
-                                // - When receiving down event, and the driver still sees the node
-                                //   as connected, then try to send a keepalive query to its connections.
-                                // - When receiving up event, and we have no connections to the node,
-                                //   then try to open new connections.
-                                continue;
-                            },
-                            _ => continue, // Don't go to refreshing
+                control_connection_event = self.metadata_reader.wait_for_control_connection_event() => {
+                    match control_connection_event {
+                        ControlConnectionEvent::Broken => {
+                            // The control connection was broken. Acknowledge that and start attempting to reconnect.
+                            // The first reconnect attempt will be immediate (by attempting metadata refresh below),
+                            // and if it does not succeed, then `control_connection_works` will be set to `false`,
+                            // so subsequent attempts will be issued every second.
+                        },
+                        ControlConnectionEvent::ServerEvent(event) => {
+                            debug!("Received server event: {:?}", event);
+                            match event {
+                                Event::TopologyChange(_) => (), // Refresh immediately
+                                Event::StatusChange(_status) => {
+                                    // TODO: Tracking status using events is unreliable because of
+                                    // the possibility of losing events when control connection is broken.
+                                    // Maybe a better thing to do here is to treat those events as hints?
+                                    // What I mean by that?
+                                    // - Don't store the status at all.
+                                    // - When receiving down event, and the driver still sees the node
+                                    //   as connected, then try to send a keepalive query to its connections.
+                                    // - When receiving up event, and we have no connections to the node,
+                                    //   then try to open new connections.
+                                    continue;
+                                },
+                                _ => continue, // Don't go to refreshing
+                            }
                         }
-                    } else {
-                        // If server_events_channel was closed, than MetadataReader was dropped,
-                        // so we can probably stop working too
-                        return;
                     }
                 }
 
@@ -392,22 +384,6 @@ impl ClusterWorker {
                     }
 
                     continue; // Don't go to refreshing, wait for the next event
-                }
-
-                maybe_control_connection_failed = err_future.unwrap(), if err_future.is_some() => {
-                    match maybe_control_connection_failed {
-                        Ok(_conn_err) => {
-                            // The control connection was broken. Acknowledge that and start attempting to reconnect.
-                            // The first reconnect attempt will be immediate (by attempting metadata refresh below),
-                            // and if it does not succeed, then `control_connection_works` will be set to `false`,
-                            // so subsequent attempts will be issued every second.
-                        }
-                        Err(_recv_err) => {
-                            // If control_connection_repair_channel was closed then MetadataReader was dropped,
-                            // we can stop working.
-                            return;
-                        }
-                    }
                 }
             }
 
