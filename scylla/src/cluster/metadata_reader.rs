@@ -34,22 +34,26 @@ enum ControlConnectionState {
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
+    // =======================================================================================
+    // Configuration values - they will stay the same during whole lifetime of MetadataReader.
+    // =======================================================================================
     control_connection_config: ConnectionConfig,
     request_serverside_timeout: Option<Duration>,
     hostname_resolution_timeout: Option<Duration>,
-
-    control_connection_endpoint: UntranslatedEndpoint,
-    control_connection_state: ControlConnectionState,
-
-    // when control connection fails, MetadataReader tries to connect to one of known_peers
-    known_peers: Vec<UntranslatedEndpoint>,
     keyspaces_to_fetch: Vec<String>,
     fetch_schema: bool,
     host_filter: Option<Arc<dyn HostFilter>>,
-
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
     initial_known_nodes: Vec<KnownNode>,
+
+    // ====================================================================
+    // Mutable state of MetadataReader. It will change during its lifetime.
+    // ====================================================================
+    control_connection_endpoint: UntranslatedEndpoint,
+    control_connection_state: ControlConnectionState,
+    // when control connection fails, MetadataReader tries to connect to one of known_peers
+    known_peers: Vec<UntranslatedEndpoint>,
 }
 
 impl MetadataReader {
