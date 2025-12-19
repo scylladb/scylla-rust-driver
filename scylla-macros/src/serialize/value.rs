@@ -30,6 +30,9 @@ struct Attributes {
     // the DB will interpret them as NULLs anyway.
     #[darling(default)]
     forbid_excess_udt_fields: bool,
+
+    #[darling(default)]
+    transparent: bool,
 }
 
 impl Attributes {
@@ -96,12 +99,87 @@ pub(crate) fn derive_serialize_value(
 ) -> Result<syn::ItemImpl, syn::Error> {
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
     let struct_name = input.ident.clone();
-    let named_fields = crate::parser::parse_named_fields(&input, "SerializeValue")?;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let attributes = Attributes::from_attributes(&input.attrs)?;
 
     let crate_path = attributes.crate_path();
     let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
+
+    if attributes.transparent {
+        if let syn::Data::Struct(data) = &input.data {
+            if data.fields.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    data.fields.clone(),
+                    "#[scylla(transparent)] requires exactly one field",
+                ));
+            }
+
+            let field = data.fields.iter().next().unwrap();
+            let field_accessor = match &field.ident {
+                Some(ident) => quote::quote! { #ident },
+                None => quote::quote! { 0 },
+            };
+
+            return Ok(parse_quote! {
+                #[automatically_derived]
+                impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
+                    fn serialize<'b>(
+                        &self,
+                        typ: &#crate_path::ColumnType,
+                        writer: #crate_path::CellWriter<'b>,
+                    ) -> ::std::result::Result<#crate_path::WrittenCellProof<'b>, #crate_path::SerializationError> {
+                        #crate_path::SerializeValue::serialize(&self.#field_accessor, typ, writer)
+                    }
+                }
+            });
+        }
+
+        if let syn::Data::Enum(data) = &input.data {
+            if data.variants.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    input,
+                    "#[scylla(transparent)] enums requires exactly one variant",
+                ));
+            }
+            let variant = data.variants.iter().next().unwrap();
+            if variant.fields.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    "#[scylla(transparent)] enum variant must have exactly one field",
+                ));
+            }
+
+            let variant_ident = &variant.ident;
+            let field = variant.fields.iter().next().unwrap();
+
+            let pattern_match = match &field.ident {
+                Some(field_name) => quote::quote! { Self::#variant_ident { #field_name: inner } },
+                None => quote::quote! { Self::#variant_ident(inner) },
+            };
+
+            return Ok(parse_quote! {
+                #[automatically_derived]
+                impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
+                    fn serialize<'b>(
+                        &self,
+                        typ: &#crate_path::ColumnType,
+                        writer: #crate_path::CellWriter<'b>,
+                    ) -> ::std::result::Result<#crate_path::WrittenCellProof<'b>, #crate_path::SerializationError> {
+                        match self {
+                            #pattern_match => #crate_path::SerializeValue::serialize(inner, typ, writer)
+                        }
+                    }
+                }
+            });
+        }
+
+        return Err(syn::Error::new_spanned(
+            input,
+            "#[scylla(transparent)] not supported for unions",
+        ));
+    }
+
+    let named_fields = crate::parser::parse_named_fields(&input, "SerializeValue")?;
 
     let fields = named_fields
         .named
