@@ -6,6 +6,15 @@ Driver uses either the
 
 Both of this features are behind their respective feature flag.
 
+## Hostname verification
+
+For both implementations we provide node IP address for purposes of hostname verification.
+Our assumption is that certificates on nodes will have node IP address in the subject alternative name.
+
+Implementation details (might change in the future):
+For openssl we use `set_ip` method on `X509VerifyParamRef`, which corresponds to `X509_VERIFY_PARAM_set1_ip` openssl function.
+For rustls, we use `ServerName::IpAddress`, which is passed to `ClientConnection::new_with_alpn` (by `tokio_rustls`).
+
 
 ### Enabling feature
 
@@ -49,6 +58,9 @@ and a rustls
 [`ClientConfig`](https://docs.rs/rustls/latest/rustls/client/struct.ClientConfig.html)
 can be automatically converted to a `TlsContext` when passing to
 `SessionBuilder`.
+
+**_NOTE:_** Recommended API in `openssl` crate is `SslConnector`, because it has safer defaults. Please use it, and then call `into_context()` to
+get `SslContext` instance you can pass to the driver.
 
 For example, if database certificate is in the file `ca.crt`:
 ```rust

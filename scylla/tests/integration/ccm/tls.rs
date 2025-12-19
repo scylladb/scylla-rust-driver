@@ -212,16 +212,13 @@ async fn test_tls_verifies_hostname() {
             let mut builder = SslContext::builder(SslMethod::tls()).unwrap();
             builder.set_verify(SslVerifyMode::PEER);
             builder.set_cert_store(build_openssl_ca_store(ca));
-            let session = cluster
+            let _err = cluster
                 .make_session_builder()
                 .await
                 .tls_context(Some(TlsContext::OpenSsl010(builder.build())))
                 .build()
                 .await
-                // This should be unwrap_err, but hostname verification doesn't work with openssl.
-                // This is a bug: https://github.com/scylladb/scylla-rust-driver/issues/1116
-                .unwrap();
-            check_session_works_and_fully_connected(cluster.nodes().len(), &session).await;
+                .unwrap_err();
         }
 
         {
