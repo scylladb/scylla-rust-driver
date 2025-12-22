@@ -1615,7 +1615,8 @@ impl Session {
 
     /// Prepares all statements within the batch and returns a new batch where every
     /// statement is prepared.
-    /// /// # Example
+    ///
+    /// # Example
     /// ```rust
     /// # extern crate scylla;
     /// # use scylla::client::session::Session;
