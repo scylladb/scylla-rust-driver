@@ -6,6 +6,7 @@ use proc_macro2::Span;
 use syn::{ext::IdentExt, parse_quote};
 
 use crate::Flavor;
+use crate::enum_attrs::EnumAttrs;
 
 use super::{DeserializeCommonFieldAttrs, DeserializeCommonStructAttrs};
 
@@ -34,6 +35,12 @@ struct StructAttrs {
 }
 
 impl DeserializeCommonStructAttrs for StructAttrs {
+    fn crate_path(&self) -> Option<&syn::Path> {
+        self.crate_path.as_ref()
+    }
+}
+
+impl DeserializeCommonStructAttrs for EnumAttrs {
     fn crate_path(&self) -> Option<&syn::Path> {
         self.crate_path.as_ref()
     }
@@ -83,26 +90,195 @@ pub(crate) fn deserialize_value_derive(
     tokens_input: TokenStream,
 ) -> Result<syn::ItemImpl, syn::Error> {
     let input = syn::parse(tokens_input)?;
+    let input: syn::DeriveInput = input;
 
-    let implemented_trait: syn::Path = parse_quote!(DeserializeValue);
-    let implemented_trait_name = implemented_trait
-        .segments
-        .last()
-        .unwrap()
-        .ident
-        .unraw()
-        .to_string();
-    let constraining_trait = implemented_trait.clone();
-    let s = StructDesc::new(&input, &implemented_trait_name, constraining_trait)?;
+    match &input.data {
+        syn::Data::Enum(data_enum) => deserialize_value_derive_enum(&input, data_enum),
+        syn::Data::Struct(_) => {
+            let implemented_trait: syn::Path = parse_quote!(DeserializeValue);
+            let implemented_trait_name = implemented_trait
+                .segments
+                .last()
+                .unwrap()
+                .ident
+                .unraw()
+                .to_string();
+            let constraining_trait = implemented_trait.clone();
+            let s = StructDesc::new(&input, &implemented_trait_name, constraining_trait)?;
 
-    validate_attrs(&s.attrs, s.fields())?;
+            validate_attrs(&s.attrs, s.fields())?;
 
-    let items = [
-        s.generate_type_check_method().into(),
-        s.generate_deserialize_method().into(),
-    ];
+            let items = [
+                s.generate_type_check_method().into(),
+                s.generate_deserialize_method().into(),
+            ];
 
-    Ok(s.generate_impl(implemented_trait, items))
+            Ok(s.generate_impl(implemented_trait, items))
+        }
+        syn::Data::Union(_) => Err(syn::Error::new_spanned(
+            input,
+            "DeserializeValue cannot be derived for unions",
+        )),
+    }
+}
+
+fn deserialize_value_derive_enum(
+    input: &syn::DeriveInput,
+    data_enum: &syn::DataEnum,
+) -> Result<syn::ItemImpl, syn::Error> {
+    let attrs = EnumAttrs::from_attributes(&input.attrs)?;
+    let crate_path = <EnumAttrs as DeserializeCommonStructAttrs>::macro_internal_path(&attrs);
+
+    let repr_type_str = attrs.repr.as_deref().unwrap_or("i32");
+    let repr_type: syn::Type = syn::parse_str(repr_type_str).map_err(|_| {
+        syn::Error::new_spanned(
+            input,
+            format!(
+                "Invalid type for repr: '{}'. Valid options include: i8, i16, i32, i64.",
+                repr_type_str
+            ),
+        )
+    })?;
+
+    let mut match_arms = Vec::new();
+    let mut current_discriminant: i64 = 0;
+
+    if data_enum.variants.is_empty() {
+        return Err(syn::Error::new_spanned(
+            input,
+            "DeserializeValue cannot be derived for enums with no variants",
+        ));
+    }
+
+    for variant in &data_enum.variants {
+        if !variant.fields.is_empty() {
+            return Err(syn::Error::new_spanned(
+                variant,
+                "DeserializeValue can only be derived for enums with unit variants.",
+            ));
+        }
+
+        if let Some((_, expr)) = &variant.discriminant {
+            if let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Int(lit_int),
+                ..
+            }) = expr
+            {
+                current_discriminant = lit_int.base10_parse()?;
+            } else if let syn::Expr::Unary(syn::ExprUnary {
+                op: syn::UnOp::Neg(_),
+                expr: operand,
+                ..
+            }) = expr
+            {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Int(lit_int),
+                    ..
+                }) = &**operand
+                {
+                    let val: i64 = lit_int.base10_parse()?;
+                    current_discriminant = -val;
+                } else {
+                    return Err(syn::Error::new_spanned(
+                        expr,
+                        "Only integer literals (positive or negative) are supported as enum discriminants.",
+                    ));
+                }
+            } else {
+                return Err(syn::Error::new_spanned(
+                    expr,
+                    "Only integer literals are supported as enum discriminants.",
+                ));
+            }
+        }
+
+        match repr_type_str {
+            "i8" => {
+                if current_discriminant < i8::MIN as i64 || current_discriminant > i8::MAX as i64 {
+                    return Err(syn::Error::new_spanned(
+                        variant,
+                        "Discriminant value out of range for i8",
+                    ));
+                }
+            }
+            "i16" => {
+                if current_discriminant < i16::MIN as i64 || current_discriminant > i16::MAX as i64
+                {
+                    return Err(syn::Error::new_spanned(
+                        variant,
+                        "Discriminant value out of range for i16",
+                    ));
+                }
+            }
+            "i32" => {
+                if current_discriminant < i32::MIN as i64 || current_discriminant > i32::MAX as i64
+                {
+                    return Err(syn::Error::new_spanned(
+                        variant,
+                        "Discriminant value out of range for i32",
+                    ));
+                }
+            }
+            _ => {}
+        }
+
+        let variant_ident = &variant.ident;
+        let disc_lit = syn::LitInt::new(&current_discriminant.to_string(), variant_ident.span());
+
+        match_arms.push(quote::quote! {
+            #disc_lit => ::std::result::Result::Ok(Self::#variant_ident),
+        });
+
+        current_discriminant += 1;
+    }
+
+    let (_, ty_generics, where_clause) = input.generics.split_for_impl();
+    let impl_generics = &input.generics.params;
+    let struct_name = &input.ident;
+
+    let (frame_lifetime, metadata_lifetime) =
+        super::generate_pair_of_unique_lifetimes_for_impl(&input.generics);
+
+    let predicates = super::generate_lifetime_constraints_for_impl(
+        &input.generics,
+        parse_quote!(DeserializeValue),
+        &frame_lifetime,
+    );
+
+    let res = parse_quote! {
+        #[automatically_derived]
+        impl<#frame_lifetime, #metadata_lifetime, #impl_generics> #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
+        where #repr_type: ::std::fmt::Debug + ::std::marker::Copy, #(#predicates),* #where_clause
+        {
+            fn type_check(
+                typ: &#crate_path::ColumnType,
+            ) -> ::std::result::Result<(), #crate_path::TypeCheckError> {
+                <#repr_type as #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(typ)
+            }
+
+            fn deserialize(
+                typ: &#metadata_lifetime #crate_path::ColumnType<#metadata_lifetime>,
+                v: ::std::option::Option<#crate_path::FrameSlice<#frame_lifetime>>,
+            ) -> ::std::result::Result<Self, #crate_path::DeserializationError> {
+                let raw_val = <#repr_type as #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(typ, v)
+                    .map_err(#crate_path::value_deser_error_replace_rust_name::<Self>)?;
+
+                match raw_val {
+                    #(#match_arms)*
+                    val => ::std::result::Result::Err(
+                        #crate_path::DeserializationError::new(
+                            ::std::io::Error::new(
+                                ::std::io::ErrorKind::InvalidData,
+                                format!("Invalid enum value: {:?}", val)
+                            )
+                        )
+                    ),
+                }
+            }
+        }
+    };
+
+    Ok(res)
 }
 
 fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::Error> {
