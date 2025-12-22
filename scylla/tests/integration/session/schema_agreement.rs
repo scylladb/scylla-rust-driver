@@ -2,9 +2,12 @@ use std::sync::Arc;
 
 use assert_matches::assert_matches;
 use scylla::client::PoolSize;
+use scylla::client::pager::QueryPager;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::errors::{DbError, ExecutionError, RequestAttemptError, SchemaAgreementError};
+use scylla::errors::{
+    DbError, ExecutionError, PagerExecutionError, RequestAttemptError, SchemaAgreementError,
+};
 use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 use scylla::response::query_result::QueryResult;
 use scylla::statement::Statement;
@@ -18,12 +21,55 @@ use crate::utils::{
     calculate_proxy_host_ids, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
 };
 
-async fn run_some_ddl_with_unreachable_node(
+trait DdlExecutionAPI {
+    type Result;
+
+    async fn run_ddl(session: &Session, statement: Statement) -> Self::Result;
+}
+
+struct SessionQueryAPI;
+impl DdlExecutionAPI for SessionQueryAPI {
+    type Result = Result<QueryResult, ExecutionError>;
+
+    async fn run_ddl(session: &Session, statement: Statement) -> Self::Result {
+        session.query_unpaged(statement, &[]).await
+    }
+}
+#[allow(dead_code)]
+struct SessionExecuteAPI;
+impl DdlExecutionAPI for SessionExecuteAPI {
+    type Result = Result<QueryResult, ExecutionError>;
+
+    async fn run_ddl(session: &Session, statement: Statement) -> Self::Result {
+        let prepared = session.prepare(statement).await?;
+        session.execute_unpaged(&prepared, &[]).await
+    }
+}
+struct PagerQueryIterAPI;
+impl DdlExecutionAPI for PagerQueryIterAPI {
+    type Result = Result<QueryPager, PagerExecutionError>;
+
+    async fn run_ddl(session: &Session, statement: Statement) -> Self::Result {
+        session.query_iter(statement, &[]).await
+    }
+}
+#[allow(dead_code)]
+struct PagerExecuteIterAPI;
+impl DdlExecutionAPI for PagerExecuteIterAPI {
+    type Result = Result<QueryPager, PagerExecutionError>;
+
+    async fn run_ddl(session: &Session, statement: Statement) -> Self::Result {
+        let prepared = session.prepare(statement).await?;
+        session.execute_iter(prepared, &[]).await
+    }
+}
+
+async fn run_some_ddl_with_unreachable_node<Api: DdlExecutionAPI>(
     coordinator: NodeIdentifier,
     paused: usize,
     session: &Session,
     running_proxy: &mut RunningProxy,
-) -> Result<QueryResult, ExecutionError> {
+) -> Api::Result {
     // Prevent fetching schema version.
     // It simulates a node that became unreachable after our DDL completed,
     // but the pool in the driver is not yet `Broken`.
@@ -43,7 +89,7 @@ async fn run_some_ddl_with_unreachable_node(
         None,
     )));
 
-    let result = session.query_unpaged(request, &[]).await;
+    let result = Api::run_ddl(session, request).await;
 
     // Cleanup
     running_proxy.running_nodes[paused].change_request_rules(Some(vec![]));
@@ -78,7 +124,7 @@ async fn test_schema_await_with_unreachable_node() {
             {
                 // Case 1: Paused node is a coordinator for DDL.
                 // DDL needs to fail.
-                let result = run_some_ddl_with_unreachable_node(
+                let result = run_some_ddl_with_unreachable_node::<SessionQueryAPI>(
                     NodeIdentifier::HostId(host_ids[1]),
                     1,
                     &session,
@@ -98,7 +144,7 @@ async fn test_schema_await_with_unreachable_node() {
             {
                 // Case 2: Paused node is NOT a coordinator for DDL.
                 // DDL should succeed, because auto schema agreement only needs available nodes to agree.
-                let result = run_some_ddl_with_unreachable_node(
+                let result = run_some_ddl_with_unreachable_node::<SessionQueryAPI>(
                     NodeIdentifier::HostId(host_ids[2]),
                     1,
                     &session,
@@ -112,7 +158,7 @@ async fn test_schema_await_with_unreachable_node() {
                 // Case 3: Paused node is a coordinator for DDL, and is used by control connection.
                 // It is the same as case 1, but paused node is also control connection.
                 // DDL needs to fail.
-                let result = run_some_ddl_with_unreachable_node(
+                let result = run_some_ddl_with_unreachable_node::<SessionQueryAPI>(
                     NodeIdentifier::HostId(host_ids[0]),
                     0,
                     &session,
@@ -134,7 +180,7 @@ async fn test_schema_await_with_unreachable_node() {
                 // It is the same as case 2, but paused node is also control connection.
                 // DDL should succeed, because auto schema agreement only needs available nodes to agree,
                 // and control connection is not used for that at all.
-                let result = run_some_ddl_with_unreachable_node(
+                let result = run_some_ddl_with_unreachable_node::<SessionQueryAPI>(
                     NodeIdentifier::HostId(host_ids[1]),
                     0,
                     &session,
@@ -217,6 +263,107 @@ async fn test_schema_await_with_transient_failure() {
                     .for_each(|node| node.change_request_rules(node_rules.clone()));
 
                 session.await_schema_agreement().await.unwrap();
+            }
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
+
+// Verifies that auto schema agreement (performed after receiving response of DDL request) works
+// correctly even if the first check fails in pager APIs (`Session::{query,execute}_iter`).
+#[tokio::test]
+async fn test_schema_await_with_pager_apis() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            // DB preparation phase
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map.clone()))
+                .build()
+                .await
+                .unwrap();
+
+            let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &session);
+
+            {
+                // Case 1: Paused node is a coordinator for DDL.
+                // DDL needs to fail.
+                info!("Case 1: Paused node is a coordinator for DDL.");
+                let result = run_some_ddl_with_unreachable_node::<PagerQueryIterAPI>(
+                    NodeIdentifier::HostId(host_ids[1]),
+                    1,
+                    &session,
+                    &mut running_proxy,
+                )
+                .await;
+                assert_matches!(
+                    result,
+                    Err(PagerExecutionError::SchemaAgreementError(
+                        SchemaAgreementError::RequestError(
+                            RequestAttemptError::BrokenConnectionError(_)
+                        )
+                    ))
+                )
+            }
+
+            {
+                // Case 2: Paused node is NOT a coordinator for DDL.
+                // DDL should succeed, because auto schema agreement only needs available nodes to agree.
+                let result = run_some_ddl_with_unreachable_node::<PagerQueryIterAPI>(
+                    NodeIdentifier::HostId(host_ids[2]),
+                    1,
+                    &session,
+                    &mut running_proxy,
+                )
+                .await;
+                assert_matches!(result, Ok(_))
+            }
+
+            {
+                // Case 3: Paused node is a coordinator for DDL, and is used by control connection.
+                // It is the same as case 1, but paused node is also control connection.
+                // DDL needs to fail.
+                let result = run_some_ddl_with_unreachable_node::<PagerQueryIterAPI>(
+                    NodeIdentifier::HostId(host_ids[0]),
+                    0,
+                    &session,
+                    &mut running_proxy,
+                )
+                .await;
+                assert_matches!(
+                    result,
+                    Err(PagerExecutionError::SchemaAgreementError(
+                        SchemaAgreementError::RequestError(
+                            RequestAttemptError::BrokenConnectionError(_)
+                        )
+                    ))
+                )
+            }
+
+            {
+                // Case 4: Paused node is NOT a coordinator for DDL, but is used by control connection.
+                // It is the same as case 2, but paused node is also control connection.
+                // DDL should succeed, because auto schema agreement only needs available nodes to agree,
+                // and control connection is not used for that at all.
+                let result = run_some_ddl_with_unreachable_node::<PagerQueryIterAPI>(
+                    NodeIdentifier::HostId(host_ids[1]),
+                    0,
+                    &session,
+                    &mut running_proxy,
+                )
+                .await;
+                assert_matches!(result, Ok(_))
             }
 
             running_proxy
