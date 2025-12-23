@@ -1,5 +1,5 @@
 # Duration
-`Duration` is represented as [`CqlDuration`](https://docs.rs/scylla/latest/scylla/frame/value/struct.CqlDuration.html)\
+`Duration` is represented as [`CqlDuration`](https://docs.rs/scylla/latest/scylla/value/struct.CqlDuration.html)\
 
 ```rust
 # extern crate scylla;
