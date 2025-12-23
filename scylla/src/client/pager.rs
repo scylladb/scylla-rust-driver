@@ -28,7 +28,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::client::execution_profile::ExecutionProfileInner;
 use crate::cluster::{ClusterState, NodeRef};
 use crate::deserialize::DeserializeOwnedRow;
-use crate::errors::{RequestAttemptError, RequestError};
+use crate::errors::{PagerExecutionError, RequestAttemptError, RequestError};
 use crate::frame::response::result;
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
@@ -1126,7 +1126,7 @@ If you are using this API, you are probably doing something wrong."
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_state: Arc<ClusterState>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
-    ) -> Result<Self, NextPageError> {
+    ) -> Result<Self, PagerExecutionError> {
         let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
 
         let consistency = statement
@@ -1212,12 +1212,14 @@ If you are using this API, you are probably doing something wrong."
             worker.work(cluster_state, sender.into()).await
         };
 
-        Self::new_from_worker_future(worker_task, receiver).await
+        Self::new_from_worker_future(worker_task, receiver)
+            .await
+            .map_err(PagerExecutionError::NextPageError)
     }
 
     pub(crate) async fn new_for_prepared_statement(
         config: PreparedPagerConfig,
-    ) -> Result<Self, NextPageError> {
+    ) -> Result<Self, PagerExecutionError> {
         let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
 
         let consistency = config
@@ -1345,7 +1347,9 @@ If you are using this API, you are probably doing something wrong."
             worker.work(config.cluster_state, sender.into()).await
         };
 
-        Self::new_from_worker_future(worker_task, receiver).await
+        Self::new_from_worker_future(worker_task, receiver)
+            .await
+            .map_err(PagerExecutionError::NextPageError)
     }
 
     pub(crate) async fn new_for_connection_execute_iter(
