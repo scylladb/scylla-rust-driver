@@ -1377,7 +1377,6 @@ impl Session {
             Arc::clone(&self.metrics),
         )
         .await
-        .map_err(PagerExecutionError::NextPageError)
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
@@ -1701,7 +1700,6 @@ impl Session {
             metrics: Arc::clone(&self.metrics),
         })
         .await
-        .map_err(PagerExecutionError::NextPageError)
     }
 
     /// Prepares all statements within the batch and returns a new batch where every
