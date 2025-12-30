@@ -839,7 +839,7 @@ impl DeserializedMetadataAndRawRows {
 
     /// Allows to retrieve raw rows, without the need for deserialization
     /// Intended to be used only in nodejs-rs driver only.
-    #[cfg(all(scylla_unstable, feature = "unstable-nodejs-rs"))]
+    // #[cfg(all(scylla_unstable, feature = "unstable-nodejs-rs"))]
     pub fn raw_rows(&self) -> &Bytes {
         &self.raw_rows
     }
@@ -1520,7 +1520,8 @@ mod test_utils {
         }
 
         /// Returns the size of the type in bytes, as it is seen by the vector type if it is treated as fixed size.
-        pub(crate) fn type_size(&self) -> Option<usize> {
+        #[allow(missing_docs)]
+        pub fn type_size(&self) -> Option<usize> {
             match self {
                 ColumnType::Native(n) => n.type_size(),
                 ColumnType::Tuple(_) => None,

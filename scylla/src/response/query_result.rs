@@ -127,7 +127,7 @@ impl QueryResult {
         }
     }
 
-    pub(crate) fn deserialized_metadata_and_rows(&self) -> Option<&DeserializedMetadataAndRawRows> {
+    pub fn deserialized_metadata_and_rows(&self) -> Option<&DeserializedMetadataAndRawRows> {
         self.deserialized_metadata_and_rows.as_ref()
     }
 

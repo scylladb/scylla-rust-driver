@@ -676,7 +676,8 @@ pub(crate) fn unsigned_vint_encode(v: u64, buf: &mut Vec<u8>) {
     buf.put_uint(v, number_of_bytes as usize)
 }
 
-pub(crate) fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Error> {
+#[allow(missing_docs)]
+pub fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Error> {
     let first_byte = buf.read_u8()?;
     let extra_bytes = first_byte.leading_ones() as usize;
 
