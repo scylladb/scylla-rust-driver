@@ -1675,7 +1675,7 @@ pub struct FixedLengthBytesSequenceIterator<'frame> {
 }
 
 impl<'frame> FixedLengthBytesSequenceIterator<'frame> {
-    fn new(count: usize, slice: FrameSlice<'frame>) -> Self {
+    pub fn new(count: usize, slice: FrameSlice<'frame>) -> Self {
         Self {
             slice,
             remaining: count,
