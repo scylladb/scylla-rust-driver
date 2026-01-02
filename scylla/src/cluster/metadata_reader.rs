@@ -153,6 +153,13 @@ impl MetadataReader {
         }
     }
 
+    pub(crate) fn control_connection_works(&self) -> bool {
+        matches!(
+            self.control_connection_state,
+            ControlConnectionState::Working(_)
+        )
+    }
+
     /// Fetches current metadata from the cluster
     pub(crate) async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, MetadataError> {
         let mut result = self.fetch_metadata(initial).await;
@@ -286,7 +293,7 @@ impl MetadataReader {
         result
     }
 
-    async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, MetadataError> {
+    async fn fetch_metadata(&mut self, initial: bool) -> Result<Metadata, MetadataError> {
         let conn = match &self.control_connection_state {
             ControlConnectionState::Working(working_connection) => &working_connection.connection,
             ControlConnectionState::Broken { last_error: e } => {
@@ -301,6 +308,13 @@ impl MetadataReader {
                 self.fetch_schema,
             )
             .await;
+
+        // If metadata fetch failed, we consider the connection broken.
+        if let Err(err) = &res {
+            self.control_connection_state = ControlConnectionState::Broken {
+                last_error: err.clone(),
+            }
+        }
 
         if initial {
             if let Err(err) = res {

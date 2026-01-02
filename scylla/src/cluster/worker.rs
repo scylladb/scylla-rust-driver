@@ -264,14 +264,13 @@ impl ClusterWorker {
 
         let control_connection_repair_duration = Duration::from_secs(1); // Attempt control connection repair every second
         let mut last_refresh_time = Instant::now();
-        let mut control_connection_works = true;
 
         loop {
             let mut cur_request: Option<RefreshRequest> = None;
 
             // Wait until it's time for the next refresh
             let sleep_until: Instant = last_refresh_time
-                .checked_add(if control_connection_works {
+                .checked_add(if self.metadata_reader.control_connection_works() {
                     self.cluster_metadata_refresh_interval
                 } else {
                     control_connection_repair_duration
@@ -332,8 +331,8 @@ impl ClusterWorker {
                         ControlConnectionEvent::Broken => {
                             // The control connection was broken. Acknowledge that and start attempting to reconnect.
                             // The first reconnect attempt will be immediate (by attempting metadata refresh below),
-                            // and if it does not succeed, then `control_connection_works` will be set to `false`,
-                            // so subsequent attempts will be issued every second.
+                            // and if it does not succeed, then `ControlConnectionState` will be set to `Broken`, so
+                            // subsequent attempts will be issued every second.
                         },
                         ControlConnectionEvent::ServerEvent(event) => {
                             debug!("Received server event: {:?}", event);
@@ -391,8 +390,6 @@ impl ClusterWorker {
             debug!("Requesting metadata refresh");
             last_refresh_time = Instant::now();
             let refresh_res = self.perform_refresh().await;
-
-            control_connection_works = refresh_res.is_ok();
 
             // Send refresh result if there was a request
             if let Some(request) = cur_request {
