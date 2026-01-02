@@ -29,7 +29,7 @@ struct WorkingControlConnection {
 
 enum ControlConnectionState {
     Working(WorkingControlConnection),
-    Broken { last_error: ConnectionError },
+    Broken { last_error: MetadataError },
 }
 
 /// Allows to read current metadata from the cluster
@@ -91,7 +91,11 @@ impl MetadataReader {
         .await
         {
             Ok(working_connection) => ControlConnectionState::Working(working_connection),
-            Err(e) => ControlConnectionState::Broken { last_error: e },
+            Err(e) => ControlConnectionState::Broken {
+                last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
+                    last_connection_error: e,
+                }),
+            },
         };
 
         Ok(MetadataReader {
@@ -141,7 +145,7 @@ impl MetadataReader {
                                 panic!("Error sender of control connection unexpectedly dropped. This is a bug in the driver, please open an issue!");
                             },
                         };
-                        self.control_connection_state = ControlConnectionState::Broken { last_error: err };
+                        self.control_connection_state = ControlConnectionState::Broken { last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken { last_connection_error: err }) };
                         ControlConnectionEvent::Broken
                     }
                 }
@@ -270,7 +274,11 @@ impl MetadataReader {
             .await
             {
                 Ok(working_connection) => ControlConnectionState::Working(working_connection),
-                Err(e) => ControlConnectionState::Broken { last_error: e },
+                Err(e) => ControlConnectionState::Broken {
+                    last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
+                        last_connection_error: e,
+                    }),
+                },
             };
 
             result = self.fetch_metadata(initial).await;
@@ -282,11 +290,7 @@ impl MetadataReader {
         let conn = match &self.control_connection_state {
             ControlConnectionState::Working(working_connection) => &working_connection.connection,
             ControlConnectionState::Broken { last_error: e } => {
-                return Err(MetadataError::ConnectionPoolError(
-                    ConnectionPoolError::Broken {
-                        last_connection_error: e.clone(),
-                    },
-                ));
+                return Err(e.clone());
             }
         };
 
@@ -382,7 +386,13 @@ impl MetadataReader {
                         Ok(working_connection) => {
                             ControlConnectionState::Working(working_connection)
                         }
-                        Err(e) => ControlConnectionState::Broken { last_error: e },
+                        Err(e) => ControlConnectionState::Broken {
+                            last_error: MetadataError::ConnectionPoolError(
+                                ConnectionPoolError::Broken {
+                                    last_connection_error: e,
+                                },
+                            ),
+                        },
                     };
                 }
             }
