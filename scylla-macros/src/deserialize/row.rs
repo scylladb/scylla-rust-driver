@@ -65,12 +65,21 @@ impl DeserializeCommonFieldAttrs for Field {
     }
 }
 
-// derive(DeserializeRow) for the new DeserializeRow trait
 pub(crate) fn deserialize_row_derive(
     tokens_input: proc_macro::TokenStream,
 ) -> Result<syn::ItemImpl, syn::Error> {
-    let input = syn::parse(tokens_input)?;
+    let input: syn::DeriveInput = syn::parse(tokens_input)?;
 
+    match &input.data {
+        syn::Data::Struct(syn::DataStruct {
+            fields: syn::Fields::Unnamed(fields),
+            ..
+        }) => deserialize_tuple_struct_derive(&input, fields),
+        _ => deserialize_named_struct_derive(&input),
+    }
+}
+
+fn deserialize_named_struct_derive(input: &syn::DeriveInput) -> Result<syn::ItemImpl, syn::Error> {
     let implemented_trait: syn::Path = parse_quote! { DeserializeRow };
     let implemented_trait_name = implemented_trait
         .segments
@@ -80,7 +89,7 @@ pub(crate) fn deserialize_row_derive(
         .unraw()
         .to_string();
     let constraining_trait = parse_quote! { DeserializeValue };
-    let s = StructDesc::new(&input, &implemented_trait_name, constraining_trait)?;
+    let s = StructDesc::new(input, &implemented_trait_name, constraining_trait)?;
 
     validate_attrs(&s.attrs, &s.fields)?;
 
@@ -90,6 +99,127 @@ pub(crate) fn deserialize_row_derive(
     ];
 
     Ok(s.generate_impl(implemented_trait, items))
+}
+
+fn check_attributes_for_tuple_structs(attrs: &[syn::Attribute]) -> Result<(), syn::Error> {
+    for attr in attrs {
+        if !attr.path().is_ident("scylla") {
+            continue;
+        }
+
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("flavor") || meta.path.is_ident("skip_name_checks") {
+                return Err(meta.error(
+                    "struct-level attributes `flavor` and `skip_name_checks` are not supported for tuple structs; tuple structs always use order-based matching",
+                ));
+            }
+            if meta.input.peek(syn::Token![=]) {
+                let _ = meta.value()?.parse::<syn::Expr>()?;
+            }
+
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+fn deserialize_tuple_struct_derive(
+    input: &syn::DeriveInput,
+    fields: &syn::FieldsUnnamed,
+) -> Result<syn::ItemImpl, syn::Error> {
+    check_attributes_for_tuple_structs(&input.attrs)?;
+
+    let attrs = StructAttrs::from_attributes(&input.attrs)?;
+    let crate_path = <StructAttrs as DeserializeCommonStructAttrs>::macro_internal_path(&attrs);
+
+    let struct_name = &input.ident;
+    let (_, ty_generics, where_clause) = input.generics.split_for_impl();
+    let impl_generics_params = &input.generics.params;
+
+    let (frame_lifetime, metadata_lifetime) =
+        super::generate_pair_of_unique_lifetimes_for_impl(&input.generics);
+
+    let predicates = input.generics.type_params().map(|tp| {
+        let ident = &tp.ident;
+        let predicate: syn::WherePredicate = parse_quote! {
+            #ident: #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>
+        };
+        predicate
+    });
+
+    let field_count = fields.unnamed.len();
+
+    let type_checks = fields.unnamed.iter().enumerate().map(|(i, f)| {
+        let ty = &f.ty;
+        quote::quote! {
+            let spec = specs_iter.next().unwrap();
+            <#ty as #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(spec.typ())
+                .map_err(|err| #crate_path::mk_row_typck_err::<Self>(
+                    column_types_iter(),
+                    #crate_path::DeserBuiltinRowTypeCheckErrorKind::ColumnTypeCheckFailed {
+                        column_index: #i,
+                        column_name: spec.name().to_owned(),
+                        err,
+                    }
+                ))?;
+        }
+    });
+
+    let field_deserializers = fields.unnamed.iter().enumerate().map(|(i, f)| {
+        let ty = &f.ty;
+        quote::quote! {
+            {
+                let col = row.next()
+                    .expect("Typecheck should have prevented this scenario! Too few columns in the serialized data.")
+                    .map_err(#crate_path::row_deser_error_replace_rust_name::<Self>)?;
+
+                <#ty as #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
+                    .map_err(|err| #crate_path::mk_row_deser_err::<Self>(
+                        #crate_path::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
+                            column_index: #i,
+                            column_name: col.spec.name().to_owned(),
+                            err,
+                        }
+                    ))?
+            }
+        }
+    });
+
+    Ok(parse_quote! {
+        #[automatically_derived]
+        impl<#frame_lifetime, #metadata_lifetime, #impl_generics_params> #crate_path::DeserializeRow<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
+        where #(#predicates),* #where_clause
+        {
+            fn type_check(
+                specs: &[#crate_path::ColumnSpec],
+            ) -> ::std::result::Result<(), #crate_path::TypeCheckError> {
+                let column_types_iter = || specs.iter().map(|s| s.typ().clone().into_owned());
+
+                if specs.len() != #field_count {
+                    return ::std::result::Result::Err(#crate_path::mk_row_typck_err::<Self>(
+                        column_types_iter(),
+                        #crate_path::DeserBuiltinRowTypeCheckErrorKind::WrongColumnCount {
+                            rust_cols: #field_count,
+                            cql_cols: specs.len(),
+                        }
+                    ));
+                }
+
+                let mut specs_iter = specs.iter();
+                #(#type_checks)*
+
+                ::std::result::Result::Ok(())
+            }
+
+            fn deserialize(
+                mut row: #crate_path::ColumnIterator<#frame_lifetime, #metadata_lifetime>,
+            ) -> ::std::result::Result<Self, #crate_path::DeserializationError> {
+                ::std::result::Result::Ok(Self(
+                    #(#field_deserializers),*
+                ))
+            }
+        }
+    })
 }
 
 fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::Error> {
