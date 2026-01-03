@@ -133,13 +133,15 @@ fn derive_transparent(
 
     let (inner_type, constructor) = match &input.data {
         syn::Data::Struct(data) => {
-            if data.fields.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    &data.fields,
-                    "#[scylla(transparent)] requires exactly one field",
-                ));
-            }
-            let field = data.fields.iter().next().unwrap();
+            let field = match get_exactly_one(&data.fields) {
+                Some(field) => field,
+                None => {
+                    return Err(syn::Error::new_spanned(
+                        &data.fields,
+                        "#[scylla(transparent)] requires exactly one field",
+                    ));
+                }
+            };
             let ctor = match &field.ident {
                 Some(ident) => quote::quote! { |inner| Self { #ident: inner } },
                 None => quote::quote! { |inner| Self(inner) },
@@ -147,20 +149,24 @@ fn derive_transparent(
             (&field.ty, ctor)
         }
         syn::Data::Enum(data) => {
-            if data.variants.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    input,
-                    "#[scylla(transparent)] enum requires exactly one variant",
-                ));
-            }
-            let variant = data.variants.iter().next().unwrap();
-            if variant.fields.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    variant,
-                    "#[scylla(transparent)] enum variant requires exactly one field",
-                ));
-            }
-            let field = variant.fields.iter().next().unwrap();
+            let variant = match get_exactly_one(&data.variants) {
+                Some(variant) => variant,
+                None => {
+                    return Err(syn::Error::new_spanned(
+                        &data.variants,
+                        "#[scylla(transparent)] enum requires exactly one variant",
+                    ));
+                }
+            };
+            let field = match get_exactly_one(&variant.fields) {
+                Some(field) => field,
+                None => {
+                    return Err(syn::Error::new_spanned(
+                        variant,
+                        "#[scylla(transparent)] enum variant must have exactly one field",
+                    ));
+                }
+            };
             let v_ident = &variant.ident;
             let ctor = match &field.ident {
                 Some(ident) => quote::quote! { |inner| Self::#v_ident { #ident: inner } },
@@ -990,4 +996,16 @@ impl DeserializeUnorderedGenerator<'_> {
             }
         }
     }
+}
+
+fn get_exactly_one<I>(iter: I) -> Option<I::Item>
+where
+    I: IntoIterator,
+{
+    let mut iter = iter.into_iter();
+    let item = iter.next()?;
+    if iter.next().is_some() {
+        return None;
+    }
+    Some(item)
 }
