@@ -143,7 +143,7 @@ fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
 /// that you can deserialize T as some CQL value from bytes that have
 /// lifetime 'a, similarly for DeserializeRow. In impls for those traits,
 /// an additional lifetime must be introduced and properly constrained.
-pub(crate) fn generate_lifetime_constraints_for_impl<'a>(
+fn generate_lifetime_constraints_for_impl<'a>(
     generics: &'a syn::Generics,
     trait_full_name: syn::Path,
     constraint_lifetime: &'a syn::Lifetime,

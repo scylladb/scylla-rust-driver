@@ -126,19 +126,14 @@ fn deserialize_value_derive_enum(
     input: &syn::DeriveInput,
     data_enum: &syn::DataEnum,
 ) -> Result<syn::ItemImpl, syn::Error> {
+    use crate::enum_attrs::{EnumAttrs, get_enum_repr_type};
+
     let attrs = EnumAttrs::from_attributes(&input.attrs)?;
     let crate_path = <EnumAttrs as DeserializeCommonStructAttrs>::macro_internal_path(&attrs);
 
-    let repr_type_str = attrs.repr.as_deref().unwrap_or("i32");
-    let repr_type: syn::Type = syn::parse_str(repr_type_str).map_err(|_| {
-        syn::Error::new_spanned(
-            input,
-            format!(
-                "Invalid type for repr: '{}'. Valid options include: i8, i16, i32, i64.",
-                repr_type_str
-            ),
-        )
-    })?;
+    let repr_type_str = get_enum_repr_type(input)?;
+    let repr_type: syn::Type = syn::parse_str(&repr_type_str)
+        .map_err(|_| syn::Error::new_spanned(input, "Failed to parse repr type"))?;
 
     let mut match_arms = Vec::new();
     let mut current_discriminant: i64 = 0;
@@ -159,40 +154,42 @@ fn deserialize_value_derive_enum(
         }
 
         if let Some((_, expr)) = &variant.discriminant {
-            if let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Int(lit_int),
-                ..
-            }) = expr
-            {
-                current_discriminant = lit_int.base10_parse()?;
-            } else if let syn::Expr::Unary(syn::ExprUnary {
-                op: syn::UnOp::Neg(_),
-                expr: operand,
-                ..
-            }) = expr
-            {
-                if let syn::Expr::Lit(syn::ExprLit {
+            match expr {
+                syn::Expr::Lit(syn::ExprLit {
                     lit: syn::Lit::Int(lit_int),
                     ..
-                }) = &**operand
-                {
-                    let val: i64 = lit_int.base10_parse()?;
-                    current_discriminant = -val;
-                } else {
+                }) => {
+                    current_discriminant = lit_int.base10_parse()?;
+                }
+                syn::Expr::Unary(syn::ExprUnary {
+                    op: syn::UnOp::Neg(_),
+                    expr: operand,
+                    ..
+                }) => {
+                    if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Int(lit_int),
+                        ..
+                    }) = &**operand
+                    {
+                        let val: i64 = lit_int.base10_parse()?;
+                        current_discriminant = -val;
+                    } else {
+                        return Err(syn::Error::new_spanned(
+                            expr,
+                            "Only integer literals (positive or negative) are supported as enum discriminants.",
+                        ));
+                    }
+                }
+                _ => {
                     return Err(syn::Error::new_spanned(
                         expr,
-                        "Only integer literals (positive or negative) are supported as enum discriminants.",
+                        "Only integer literals are supported as enum discriminants.",
                     ));
                 }
-            } else {
-                return Err(syn::Error::new_spanned(
-                    expr,
-                    "Only integer literals are supported as enum discriminants.",
-                ));
             }
         }
 
-        match repr_type_str {
+        match repr_type_str.as_str() {
             "i8" => {
                 if current_discriminant < i8::MIN as i64 || current_discriminant > i8::MAX as i64 {
                     return Err(syn::Error::new_spanned(

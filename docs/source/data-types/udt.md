@@ -79,12 +79,12 @@ while let Some((my_type_value,)) = iter.try_next().await? {
 
 ## C-style Enums
 
-With this feature, you can map Rust C-style enums to integer columns (`int`, `smallint`, `tinyint`) in ScyllaDB. The driver macros support this via the `repr` attribute.
+With this feature, you can map Rust C-style enums to integer columns (`int`, `smallint`, `tinyint`) in ScyllaDB.
 
-When you have a C-style enum (an enum where all variants are unit variants, i.e., they have no fields), you can instruct the driver to serialize it as a specific integer type using `#[scylla(repr = "TYPE")]`.
+When you have a C-style enum (an enum where all variants are unit variants), simply add the standard Rust `#[repr(TYPE)]` attribute (e.g. `#[repr(i32)]`). The driver will detect this attribute and use the corresponding integer type for serialization.
 
 ### Supported Types
-You can use any standard Rust signed integer type: `i8`, `i16`, `i32`, `i64`, etc.
+You can use standard Rust signed integer types: `i8`, `i16`, `i32`, `i64`.
 
 ### Example
 
@@ -95,13 +95,11 @@ use scylla::{SerializeValue, DeserializeValue};
 
 // Defines an enum that will be stored as an 'int' in ScyllaDB.
 #[derive(SerializeValue, DeserializeValue, PartialEq, Debug, Clone, Copy)]
-#[scylla(repr = "i32")]
 #[repr(i32)]
 enum Status {
     New = 0,
     Processing = 1,
     Completed = 2,
-    // You can also use explicit discriminants with gaps
     Failed = 99,
 }
 # }

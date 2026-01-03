@@ -91,12 +91,12 @@ mod serialize;
 /// # C-style Enums
 ///
 /// You can derive `SerializeValue` for C-style enums (enums with only unit variants)
-/// to serialize them as integers. Use `#[scylla(repr = "TYPE")]` to specify the target integer type.
+/// to serialize them as integers. The macro reads the standard `#[repr(TYPE)]` attribute
+/// to determine the integer type.
 ///
 /// ```rust
 /// # use scylla::SerializeValue;
-/// #[derive(SerializeValue)]
-/// #[scylla(repr = "i32")]
+/// #[derive(SerializeValue, Clone, Copy)]
 /// #[repr(i32)]
 /// enum Color {
 ///     Red = 0,
@@ -458,16 +458,15 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 ///
 /// You can derive `DeserializeValue` for C-style enums to deserialize them from integers.
 /// The macro will verify that the value from the database matches one of the enum variants.
-/// Use `#[scylla(repr = "TYPE")]` to specify the source integer type.
+/// The macro reads the standard `#[repr(TYPE)]` attribute to determine the integer type.
 /// **Note:** The derive macro currently only supports explicit integer literals as discriminants
 /// (e.g., `Variant = 1`). Complex constant expressions (e.g., `Variant = 1 << 3`)
 /// or references to constants (e.g., `Variant = MY_CONST`) are not supported.
 ///
 /// ```rust
 /// # use scylla::DeserializeValue;
-/// #[derive(DeserializeValue)]
+/// #[derive(DeserializeValue, Clone, Copy, Debug, PartialEq)]
 /// #[scylla(crate = "scylla_cql")]
-/// #[scylla(repr = "i16")]
 /// #[repr(i16)]
 /// enum ErrorCode {
 ///     NotFound = 404,

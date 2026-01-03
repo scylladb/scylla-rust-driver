@@ -5,7 +5,6 @@ use proc_macro::TokenStream;
 use syn::parse_quote;
 
 use crate::Flavor;
-use crate::enum_attrs::EnumAttrs;
 
 #[derive(FromAttributes)]
 #[darling(attributes(scylla))]
@@ -145,6 +144,8 @@ fn derive_serialize_value_enum(
     input: &syn::DeriveInput,
     data_enum: &syn::DataEnum,
 ) -> Result<syn::ItemImpl, syn::Error> {
+    use crate::enum_attrs::{EnumAttrs, get_enum_repr_type};
+
     let attrs = EnumAttrs::from_attributes(&input.attrs)?;
     let crate_path = attrs.crate_path();
     let struct_name = &input.ident;
@@ -166,24 +167,9 @@ fn derive_serialize_value_enum(
         }
     }
 
-    let has_repr = input.attrs.iter().any(|attr| attr.path().is_ident("repr"));
-    if !has_repr {
-        return Err(syn::Error::new_spanned(
-            input,
-            "SerializeValue for enums requires a #[repr(...)] attribute (e.g., #[repr(i32)]) to ensure the memory layout matches the database representation.",
-        ));
-    }
-
-    let repr_type_str = attrs.repr.as_deref().unwrap_or("i32");
-    let repr_type: syn::Type = syn::parse_str(repr_type_str).map_err(|_| {
-        syn::Error::new_spanned(
-            input,
-            format!(
-                "Invalid type for repr: {}. Valid repr types include: i8, i16, i32, i64.",
-                repr_type_str
-            ),
-        )
-    })?;
+    let repr_type_str = get_enum_repr_type(input)?;
+    let repr_type: syn::Type = syn::parse_str(&repr_type_str)
+        .map_err(|_| syn::Error::new_spanned(input, "Failed to parse repr type"))?;
 
     let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
 
