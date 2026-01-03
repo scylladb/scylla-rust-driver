@@ -119,5 +119,33 @@ for row in result_rows.rows::<MyRow>()? {
 # }
 ```
 
+### Parsing row as a tuple struct
+It is also possible to receive a row as a tuple struct (a struct with unnamed fields).
+In this case, columns are matched by their **order** in the row (index), not by name.
+The first column from the query result maps to the first field of the tuple struct, the second column to the second field, and so on.
+
+```rust
+# extern crate scylla;
+# use scylla::client::session::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::DeserializeRow;
+
+#[derive(DeserializeRow)]
+struct Point(i32, i32);
+
+// Parse row as two int columns.
+// The first column maps to Point.0, the second to Point.1
+let result_rows = session
+    .query_unpaged("SELECT x, y from ks.points", &[])
+    .await?
+    .into_rows_result()?;
+
+for row in result_rows.rows::<Point>()? {
+    let point: Point = row?;
+}
+# Ok(())
+# }
+
 ### Other data types
 For parsing other data types see [Data Types](../data-types/data-types.md)
