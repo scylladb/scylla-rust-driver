@@ -302,3 +302,210 @@ mod derive_macros_integration {
         }
     }
 }
+
+mod enum_serialization_tests {
+    use crate::deserialize::FrameSlice;
+    use crate::deserialize::value::DeserializeValue;
+    use crate::frame::response::result::{ColumnType, NativeType};
+    use crate::serialize::value::SerializeValue;
+    use crate::serialize::writers::CellWriter;
+    use bytes::Bytes;
+    use scylla_macros::{DeserializeValue, SerializeValue};
+
+    // --- TEST HELPERS ---
+
+    fn assert_round_trip<T>(value: T, typ: ColumnType, expected_bytes: &[u8])
+    where
+        T: SerializeValue
+            + for<'f, 'm> DeserializeValue<'f, 'm>
+            + PartialEq
+            + std::fmt::Debug
+            + Copy,
+    {
+        // Serialization Test
+        let mut data = Vec::new();
+        let writer = CellWriter::new(&mut data);
+        value.serialize(&typ, writer).unwrap();
+
+        // Verify length header (4 bytes big endian) + data
+        let len = expected_bytes.len() as i32;
+        let mut expected_full = len.to_be_bytes().to_vec();
+        expected_full.extend_from_slice(expected_bytes);
+
+        assert_eq!(data, expected_full, "Serialization failed (byte mismatch)");
+
+        // Deserialization Test
+        // Simulate reading from a frame (skip 4 bytes length header)
+        let payload = Bytes::copy_from_slice(expected_bytes);
+        let slice = FrameSlice::new(&payload);
+
+        let deserialized = T::deserialize(&typ, Some(slice)).expect("Deserialization failed");
+        assert_eq!(
+            value, deserialized,
+            "Deserialized value does not match input"
+        );
+    }
+
+    fn assert_deser_error<T>(typ: ColumnType, bad_bytes: &[u8])
+    where
+        T: for<'f, 'm> DeserializeValue<'f, 'm> + std::fmt::Debug,
+    {
+        let payload = Bytes::copy_from_slice(bad_bytes);
+        let slice = FrameSlice::new(&payload);
+        let result = T::deserialize(&typ, Some(slice));
+        assert!(
+            result.is_err(),
+            "Expected error, but deserialization succeeded: {:?}",
+            result
+        );
+    }
+
+    // --- ENUM DEFINITIONS ---
+
+    #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
+    #[scylla(crate = "crate")]
+    #[repr(i32)]
+    enum DefaultInt {
+        A = 0,
+        B = 1,
+        C = 100,
+    }
+
+    #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
+    #[scylla(crate = "crate")]
+    #[repr(i8)]
+    enum TinyEnum {
+        Small = 10,
+        Max = 127,
+    }
+
+    #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
+    #[scylla(crate = "crate")]
+    #[repr(i16)]
+    enum SmallEnum {
+        Kilo = 1000,
+        BigKilo = 30000,
+    }
+
+    #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
+    #[repr(i64)]
+    #[scylla(crate = "crate")]
+    enum BigEnum {
+        Big = 5_000_000_000,
+    }
+
+    #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
+    #[scylla(crate = "crate")]
+    #[repr(i32)]
+    enum Gaps {
+        First = 1,
+        Jump = 5,
+        FarAway = 99,
+    }
+
+    #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
+    #[scylla(crate = "crate")]
+    #[repr(i32)]
+    enum NegativeEnum {
+        MinusOne = -1,
+        MinusHundred = -100,
+    }
+
+    #[derive(SerializeValue, DeserializeValue, Debug, PartialEq, Copy, Clone)]
+    #[scylla(crate = "crate")]
+    #[repr(i32)]
+    enum ImplicitEnum {
+        First,
+        Second,
+        Third,
+    }
+
+    // --- TESTS ---
+
+    #[test]
+    fn test_i32_standard() {
+        let typ = ColumnType::Native(NativeType::Int);
+        assert_round_trip(DefaultInt::A, typ.clone(), &[0, 0, 0, 0]);
+        assert_round_trip(DefaultInt::C, typ.clone(), &[0, 0, 0, 100]);
+    }
+
+    #[test]
+    fn test_i8_tinyint() {
+        let typ = ColumnType::Native(NativeType::TinyInt);
+        assert_round_trip(TinyEnum::Small, typ.clone(), &[10]);
+        assert_round_trip(TinyEnum::Max, typ.clone(), &[0x7F]);
+    }
+
+    #[test]
+    fn test_i16_smallint() {
+        let typ = ColumnType::Native(NativeType::SmallInt);
+        assert_round_trip(SmallEnum::Kilo, typ.clone(), &[0x03, 0xE8]);
+        assert_round_trip(SmallEnum::BigKilo, typ.clone(), &30000i16.to_be_bytes());
+    }
+
+    #[test]
+    fn test_i64_bigint() {
+        let typ = ColumnType::Native(NativeType::BigInt);
+        assert_round_trip(BigEnum::Big, typ.clone(), &5_000_000_000i64.to_be_bytes());
+    }
+
+    #[test]
+    fn test_gaps_in_discriminants() {
+        let typ = ColumnType::Native(NativeType::Int);
+        assert_round_trip(Gaps::First, typ.clone(), &1i32.to_be_bytes());
+        assert_round_trip(Gaps::Jump, typ.clone(), &5i32.to_be_bytes());
+        assert_round_trip(Gaps::FarAway, typ.clone(), &99i32.to_be_bytes());
+
+        let bad_val = 2i32.to_be_bytes();
+        assert_deser_error::<Gaps>(typ.clone(), &bad_val);
+    }
+
+    #[test]
+    fn test_negative_discriminants() {
+        let typ = ColumnType::Native(NativeType::Int);
+        assert_round_trip(NegativeEnum::MinusOne, typ.clone(), &(-1i32).to_be_bytes());
+        assert_round_trip(
+            NegativeEnum::MinusHundred,
+            typ.clone(),
+            &(-100i32).to_be_bytes(),
+        );
+    }
+
+    #[test]
+    fn test_implicit_discriminants() {
+        let typ = ColumnType::Native(NativeType::Int);
+        assert_round_trip(ImplicitEnum::First, typ.clone(), &0i32.to_be_bytes());
+        assert_round_trip(ImplicitEnum::Second, typ.clone(), &1i32.to_be_bytes());
+        assert_round_trip(ImplicitEnum::Third, typ.clone(), &2i32.to_be_bytes());
+    }
+
+    #[test]
+    fn test_invalid_data_errors() {
+        let typ = ColumnType::Native(NativeType::Int);
+        let out_of_range = 999i32.to_be_bytes();
+        assert_deser_error::<DefaultInt>(typ.clone(), &out_of_range);
+
+        let too_short = vec![0, 0, 1];
+        assert_deser_error::<DefaultInt>(typ.clone(), &too_short);
+    }
+
+    #[test]
+    fn test_null_handling() {
+        let typ = ColumnType::Native(NativeType::Int);
+        let result = <DefaultInt as DeserializeValue>::deserialize(&typ, None);
+        assert!(
+            result.is_err(),
+            "Deserializing NULL into non-Option enum should fail"
+        );
+    }
+
+    #[test]
+    fn test_type_check_mismatch() {
+        let bad_typ = ColumnType::Native(NativeType::Text);
+        let check = <DefaultInt as DeserializeValue>::type_check(&bad_typ);
+        assert!(
+            check.is_err(),
+            "Should return TypeCheck error (Int vs Text)"
+        );
+    }
+}

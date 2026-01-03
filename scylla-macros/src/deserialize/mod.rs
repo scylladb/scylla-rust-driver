@@ -171,7 +171,7 @@ fn generate_lifetime_constraints_for_impl<'a>(
 
 /// Generates a pair of new lifetime parameters, with a different name to any of the
 /// existing generic lifetimes.
-fn generate_pair_of_unique_lifetimes_for_impl(
+pub(crate) fn generate_pair_of_unique_lifetimes_for_impl(
     generics: &syn::Generics,
 ) -> (syn::Lifetime, syn::Lifetime) {
     let mut constraint_lifetime_name = "'lifetime".to_string();
