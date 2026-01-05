@@ -6,10 +6,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use dashmap::DashMap;
 use scylla_cql::serialize::row::SerializedValues;
 
 use crate::client::pager::QueryPager;
-use crate::errors::{NextRowError, RequestAttemptError};
+use crate::errors::{NextPageError, NextRowError, RequestAttemptError};
 use crate::network::Connection;
 use crate::statement::Statement;
 use crate::statement::prepared::PreparedStatement;
@@ -21,6 +22,7 @@ pub(super) struct ControlConnection {
     conn: Arc<Connection>,
     /// The custom server-side timeout set for requests executed on the control connection.
     overridden_serverside_timeout: Option<Duration>,
+    cache: DashMap<String, PreparedStatement>,
 }
 
 impl ControlConnection {
@@ -28,6 +30,7 @@ impl ControlConnection {
         Self {
             conn,
             overridden_serverside_timeout: None,
+            cache: DashMap::new(),
         }
     }
 
@@ -64,13 +67,38 @@ impl ControlConnection {
         }
     }
 
+    async fn get_or_prepare_statement(
+        &self,
+        statement_str: &str,
+    ) -> Result<PreparedStatement, RequestAttemptError> {
+        if let Some(statement) = self.cache.get(statement_str) {
+            return Ok(statement.clone());
+        }
+
+        let mut statement = Statement::new(statement_str);
+        self.maybe_append_timeout_override(&mut statement);
+        statement.set_page_size(METADATA_QUERY_PAGE_SIZE);
+        let prepared = Arc::clone(&self.conn).prepare(&statement).await?;
+        // Inserting with pre-`maybe_append_timeout_override` key, because
+        // that is the way we will query the map later.
+        self.cache
+            .insert(statement_str.to_string(), prepared.clone());
+        Ok(prepared)
+    }
+
     /// Executes a query and fetches its results over multiple pages, using
     /// the asynchronous iterator interface.
     pub(super) async fn query_iter(&self, statement: &str) -> Result<QueryPager, NextRowError> {
-        let mut statement = Statement::new(statement);
-        self.maybe_append_timeout_override(&mut statement);
-        statement.set_page_size(METADATA_QUERY_PAGE_SIZE);
-        Arc::clone(&self.conn).query_iter(statement).await
+        let prepared: PreparedStatement =
+            self.get_or_prepare_statement(statement)
+                .await
+                .map_err(|attempt_err| {
+                    NextRowError::NextPageError(NextPageError::RequestFailure(attempt_err.into()))
+                })?;
+
+        Arc::clone(&self.conn)
+            .execute_iter(prepared, SerializedValues::new())
+            .await
     }
 
     pub(crate) async fn prepare(

@@ -1078,6 +1078,7 @@ If you are using this API, you are probably doing something wrong."
         Self::new_from_worker_future(worker_task, receiver).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn new_for_connection_query_iter(
         query: Statement,
         connection: Arc<Connection>,

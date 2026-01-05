@@ -1066,6 +1066,7 @@ impl Connection {
 
     /// Executes a query and fetches its results over multiple pages, using
     /// the asynchronous iterator interface.
+    #[cfg(test)]
     pub(crate) async fn query_iter(
         self: Arc<Self>,
         query: Statement,
