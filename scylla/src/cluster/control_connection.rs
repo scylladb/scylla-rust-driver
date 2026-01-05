@@ -14,6 +14,8 @@ use crate::network::Connection;
 use crate::statement::Statement;
 use crate::statement::prepared::PreparedStatement;
 
+const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
+
 /// The single connection used to fetch metadata and receive events from the cluster.
 pub(super) struct ControlConnection {
     conn: Arc<Connection>,
@@ -64,11 +66,10 @@ impl ControlConnection {
 
     /// Executes a query and fetches its results over multiple pages, using
     /// the asynchronous iterator interface.
-    pub(super) async fn query_iter(
-        &self,
-        mut statement: Statement,
-    ) -> Result<QueryPager, NextRowError> {
+    pub(super) async fn query_iter(&self, statement: &str) -> Result<QueryPager, NextRowError> {
+        let mut statement = Statement::new(statement);
         self.maybe_append_timeout_override(&mut statement);
+        statement.set_page_size(METADATA_QUERY_PAGE_SIZE);
         Arc::clone(&self.conn).query_iter(statement).await
     }
 
@@ -250,7 +251,7 @@ mod tests {
             // No custom timeout set.
             {
                 conn_with_default_timeout
-                    .query_iter(QUERY_STR.into())
+                    .query_iter(QUERY_STR)
                     .await
                     .unwrap_err();
 
@@ -271,7 +272,7 @@ mod tests {
                     conn_with_default_timeout.override_serverside_timeout(Some(custom_timeout));
 
                 conn_with_custom_timeout
-                    .query_iter(QUERY_STR.into())
+                    .query_iter(QUERY_STR)
                     .await
                     .unwrap_err();
 

@@ -211,12 +211,8 @@ const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
 impl ControlConnection {
     async fn query_peers(&self, connect_port: u16) -> Result<Vec<Peer>, MetadataError> {
-        let mut peers_query = Statement::new(
-            "select host_id, rpc_address, data_center, rack, tokens from system.peers",
-        );
-        peers_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
         let peers_query_stream = self
-            .query_iter(peers_query)
+            .query_iter("select host_id, rpc_address, data_center, rack, tokens from system.peers")
             .map(|pager_res| {
                 let pager = pager_res?;
                 let rows_stream = pager.rows_stream::<NodeInfoRow>()?;
@@ -232,12 +228,8 @@ impl ControlConnection {
             })
             .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
-        let mut local_query = Statement::new(
-            "select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'",
-        );
-        local_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
         let local_query_stream = self
-            .query_iter(local_query)
+            .query_iter("select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'")
             .map(|pager_res| {
                 let pager = pager_res?;
                 let rows_stream = pager.rows_stream::<NodeInfoRow>()?;
@@ -371,10 +363,7 @@ impl ControlConnection {
             keyspaces_to_fetch: &[String],
         ) -> Result<QueryPager, MetadataFetchErrorKind> {
             if keyspaces_to_fetch.is_empty() {
-                let mut query = Statement::new(query_str);
-                query.set_page_size(METADATA_QUERY_PAGE_SIZE);
-
-                conn.query_iter(query)
+                conn.query_iter(query_str)
                     .await
                     .map_err(MetadataFetchErrorKind::NextRowError)
             } else {
@@ -1371,13 +1360,10 @@ impl ControlConnection {
             }
         }
 
-        let mut partitioner_query = Statement::new(
-            "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
-        );
-        partitioner_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
-
         let rows = self
-            .query_iter(partitioner_query)
+            .query_iter(
+                "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
+            )
             .map(|pager_res| {
                 let pager = pager_res.map_err(create_err)?;
                 let stream = pager
