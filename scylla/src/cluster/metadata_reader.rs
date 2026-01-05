@@ -23,13 +23,26 @@ pub(crate) enum ControlConnectionEvent {
 
 struct WorkingControlConnection {
     connection: ControlConnection,
+    endpoint: UntranslatedEndpoint,
     error_channel: oneshot::Receiver<ConnectionError>,
     events_channel: mpsc::Receiver<Event>,
 }
 
 enum ControlConnectionState {
     Working(WorkingControlConnection),
-    Broken { last_error: MetadataError },
+    Broken {
+        last_error: MetadataError,
+        last_endpoint: UntranslatedEndpoint,
+    },
+}
+
+impl ControlConnectionState {
+    fn endpoint(&self) -> &UntranslatedEndpoint {
+        match self {
+            ControlConnectionState::Working(c) => &c.endpoint,
+            ControlConnectionState::Broken { last_endpoint, .. } => last_endpoint,
+        }
+    }
 }
 
 /// Allows to read current metadata from the cluster
@@ -50,7 +63,6 @@ pub(crate) struct MetadataReader {
     // ====================================================================
     // Mutable state of MetadataReader. It will change during its lifetime.
     // ====================================================================
-    control_connection_endpoint: UntranslatedEndpoint,
     control_connection_state: ControlConnectionState,
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<UntranslatedEndpoint>,
@@ -95,12 +107,12 @@ impl MetadataReader {
                 last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
                     last_connection_error: e,
                 }),
+                last_endpoint: control_connection_endpoint,
             },
         };
 
         Ok(MetadataReader {
             control_connection_config: connection_config,
-            control_connection_endpoint,
             control_connection_state,
             request_serverside_timeout,
             hostname_resolution_timeout,
@@ -145,7 +157,10 @@ impl MetadataReader {
                                 panic!("Error sender of control connection unexpectedly dropped. This is a bug in the driver, please open an issue!");
                             },
                         };
-                        self.control_connection_state = ControlConnectionState::Broken { last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken { last_connection_error: err }) };
+                        self.control_connection_state = ControlConnectionState::Broken {
+                            last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken { last_connection_error: err }),
+                            last_endpoint: working_connection.endpoint.clone()
+                        };
                         ControlConnectionEvent::Broken
                     }
                 }
@@ -186,7 +201,8 @@ impl MetadataReader {
             self.known_peers.iter().safe_format(", ")
         );
 
-        let address_of_failed_control_connection = self.control_connection_endpoint.address();
+        let address_of_failed_control_connection =
+            self.control_connection_state.endpoint().address();
         let filtered_known_peers = self
             .known_peers
             .clone()
@@ -234,7 +250,11 @@ impl MetadataReader {
                 debug!("Fetched new metadata");
             }
             Err(error) => {
-                let target = self.control_connection_endpoint.address().into_inner();
+                let target = self
+                    .control_connection_state
+                    .endpoint()
+                    .address()
+                    .into_inner();
                 error!(
                     error = %error,
                     target = %target,
@@ -261,20 +281,20 @@ impl MetadataReader {
 
             warn!(
                 control_connection_address = tracing::field::display(self
-                    .control_connection_endpoint
+                    .control_connection_state.endpoint()
                     .address()),
                 error = %err,
                 "Failed to fetch metadata using current control connection"
             );
 
-            self.control_connection_endpoint = peer.clone();
+            let control_connection_endpoint = peer.clone();
             debug!(
                 "Retrying to establish the control connection on {}",
-                self.control_connection_endpoint.address()
+                control_connection_endpoint.address()
             );
 
             self.control_connection_state = match Self::make_control_connection(
-                self.control_connection_endpoint.clone(),
+                control_connection_endpoint.clone(),
                 self.control_connection_config.clone(),
                 self.request_serverside_timeout,
             )
@@ -285,6 +305,7 @@ impl MetadataReader {
                     last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
                         last_connection_error: e,
                     }),
+                    last_endpoint: control_connection_endpoint,
                 },
             };
 
@@ -294,16 +315,18 @@ impl MetadataReader {
     }
 
     async fn fetch_metadata(&mut self, initial: bool) -> Result<Metadata, MetadataError> {
-        let conn = match &self.control_connection_state {
-            ControlConnectionState::Working(working_connection) => &working_connection.connection,
-            ControlConnectionState::Broken { last_error: e } => {
+        let working_connection = match &self.control_connection_state {
+            ControlConnectionState::Working(working_connection) => working_connection,
+            ControlConnectionState::Broken { last_error: e, .. } => {
                 return Err(e.clone());
             }
         };
+        let endpoint = working_connection.endpoint.clone();
 
-        let res = conn
+        let res = working_connection
+            .connection
             .query_metadata(
-                self.control_connection_endpoint.address().port(),
+                endpoint.address().port(),
                 &self.keyspaces_to_fetch,
                 self.fetch_schema,
             )
@@ -313,6 +336,7 @@ impl MetadataReader {
         if let Err(err) = &res {
             self.control_connection_state = ControlConnectionState::Broken {
                 last_error: err.clone(),
+                last_endpoint: endpoint,
             }
         }
 
@@ -363,7 +387,7 @@ impl MetadataReader {
         let control_connection_peer = metadata
             .peers
             .iter()
-            .find(|peer| matches!(self.control_connection_endpoint, UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if address == peer.address));
+            .find(|peer| matches!(self.control_connection_state.endpoint(), UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if *address == peer.address));
         if let Some(peer) = control_connection_peer {
             if !self.host_filter.as_ref().is_none_or(|f| f.accept(peer)) {
                 warn!(
@@ -374,7 +398,7 @@ impl MetadataReader {
                         .map(|peer| peer.address)
                         .safe_format(", ")
                     ),
-                    control_connection_address = ?self.control_connection_endpoint.address(),
+                    control_connection_address = ?self.control_connection_state.endpoint().address(),
                     "The node that the control connection is established to \
                     is not accepted by the host filter. Please verify that \
                     the nodes in your initial peers list are accepted by the \
@@ -384,14 +408,14 @@ impl MetadataReader {
 
                 // Assuming here that known_peers are up-to-date
                 if !self.known_peers.is_empty() {
-                    self.control_connection_endpoint = self
+                    let control_connection_endpoint = self
                         .known_peers
                         .choose(&mut rng())
                         .expect("known_peers is empty - should be impossible")
                         .clone();
 
                     self.control_connection_state = match Self::make_control_connection(
-                        self.control_connection_endpoint.clone(),
+                        control_connection_endpoint.clone(),
                         self.control_connection_config.clone(),
                         self.request_serverside_timeout,
                     )
@@ -406,6 +430,7 @@ impl MetadataReader {
                                     last_connection_error: e,
                                 },
                             ),
+                            last_endpoint: control_connection_endpoint,
                         },
                     };
                 }
@@ -434,6 +459,7 @@ impl MetadataReader {
                 .override_serverside_timeout(request_serverside_timeout),
             error_channel: recv,
             events_channel: receiver,
+            endpoint,
         })
     }
 }
