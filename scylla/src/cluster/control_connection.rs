@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
-use scylla_cql::serialize::row::SerializedValues;
 
 use crate::client::pager::QueryPager;
 use crate::errors::{NextPageError, NextRowError, RequestAttemptError, RequestError};
@@ -109,26 +108,6 @@ impl ControlConnection {
         })?;
         Arc::clone(&self.conn)
             .execute_iter(prepared, serialized_values)
-            .await
-    }
-
-    pub(crate) async fn prepare(
-        &self,
-        mut statement: Statement,
-    ) -> Result<PreparedStatement, RequestAttemptError> {
-        self.maybe_append_timeout_override(&mut statement);
-        self.conn.prepare(&statement).await
-    }
-
-    /// Executes a prepared statements and fetches its results over multiple pages, using
-    /// the asynchronous iterator interface.
-    pub(crate) async fn execute_iter(
-        &self,
-        prepared_statement: PreparedStatement,
-        values: SerializedValues,
-    ) -> Result<QueryPager, NextRowError> {
-        Arc::clone(&self.conn)
-            .execute_iter(prepared_statement, values)
             .await
     }
 }
@@ -295,13 +274,6 @@ mod tests {
                     .unwrap_err();
 
                 assert_no_custom_timeout(feedback_rx).await;
-
-                conn_with_default_timeout
-                    .prepare(QUERY_STR.into())
-                    .await
-                    .unwrap_err();
-
-                assert_no_custom_timeout(feedback_rx).await;
             }
 
             // Custom timeout set, so it should be set in query strings iff the target node is ScyllaDB.
@@ -312,18 +284,6 @@ mod tests {
 
                 conn_with_custom_timeout
                     .query_iter(QUERY_STR, &())
-                    .await
-                    .unwrap_err();
-
-                assert_custom_timeout_iff_scylladb(
-                    feedback_rx,
-                    custom_timeout,
-                    connected_to_scylladb,
-                )
-                .await;
-
-                conn_with_custom_timeout
-                    .prepare(QUERY_STR.into())
                     .await
                     .unwrap_err();
 

@@ -46,7 +46,6 @@ use crate::errors::{
     RequestError, TablesMetadataError, UdtMetadataError,
 };
 use crate::routing::Token;
-use crate::statement::Statement;
 
 type PerKeyspace<T> = HashMap<String, T>;
 type PerKeyspaceResult<T, E> = PerKeyspace<Result<T, E>>;
@@ -206,8 +205,6 @@ impl NodeInfoSource {
         }
     }
 }
-
-const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
 impl ControlConnection {
     async fn query_peers(&self, connect_port: u16) -> Result<Vec<Peer>, MetadataError> {
@@ -372,13 +369,7 @@ impl ControlConnection {
             } else {
                 let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
                 let query_str = format!("{query_str} where keyspace_name in ?");
-
-                let mut query = Statement::new(query_str);
-                query.set_page_size(METADATA_QUERY_PAGE_SIZE);
-
-                let prepared = conn.prepare(query).await?;
-                let serialized_values = prepared.serialize_values(&keyspaces)?;
-                conn.execute_iter(prepared, serialized_values)
+                conn.query_iter(query_str.as_str(), &keyspaces)
                     .await
                     .map_err(MetadataFetchErrorKind::NextRowError)
             }
