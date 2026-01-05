@@ -10,8 +10,9 @@ use dashmap::DashMap;
 use scylla_cql::serialize::row::SerializedValues;
 
 use crate::client::pager::QueryPager;
-use crate::errors::{NextPageError, NextRowError, RequestAttemptError};
+use crate::errors::{NextPageError, NextRowError, RequestAttemptError, RequestError};
 use crate::network::Connection;
+use crate::serialize::row::SerializeRow;
 use crate::statement::Statement;
 use crate::statement::prepared::PreparedStatement;
 
@@ -88,7 +89,12 @@ impl ControlConnection {
 
     /// Executes a query and fetches its results over multiple pages, using
     /// the asynchronous iterator interface.
-    pub(super) async fn query_iter(&self, statement: &str) -> Result<QueryPager, NextRowError> {
+    pub(super) async fn query_iter(
+        &self,
+        statement: &str,
+        // Without this `Sync` compiler complains that cluster worker future is not Send.
+        values: &(dyn SerializeRow + Sync),
+    ) -> Result<QueryPager, NextRowError> {
         let prepared: PreparedStatement =
             self.get_or_prepare_statement(statement)
                 .await
@@ -96,8 +102,13 @@ impl ControlConnection {
                     NextRowError::NextPageError(NextPageError::RequestFailure(attempt_err.into()))
                 })?;
 
+        let serialized_values = prepared.serialize_values(&values).map_err(|ser_err| {
+            NextRowError::NextPageError(NextPageError::RequestFailure(
+                RequestError::LastAttemptError(RequestAttemptError::SerializationError(ser_err)),
+            ))
+        })?;
         Arc::clone(&self.conn)
-            .execute_iter(prepared, SerializedValues::new())
+            .execute_iter(prepared, serialized_values)
             .await
     }
 
@@ -279,7 +290,7 @@ mod tests {
             // No custom timeout set.
             {
                 conn_with_default_timeout
-                    .query_iter(QUERY_STR)
+                    .query_iter(QUERY_STR, &())
                     .await
                     .unwrap_err();
 
@@ -300,7 +311,7 @@ mod tests {
                     conn_with_default_timeout.override_serverside_timeout(Some(custom_timeout));
 
                 conn_with_custom_timeout
-                    .query_iter(QUERY_STR)
+                    .query_iter(QUERY_STR, &())
                     .await
                     .unwrap_err();
 
