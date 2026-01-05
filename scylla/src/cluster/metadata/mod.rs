@@ -16,6 +16,9 @@
 //!     - [CollectionType],
 //!
 
+mod fetching;
+pub(super) mod reader;
+
 use crate::routing::Token;
 
 use scylla_cql::frame::response::result::ColumnSpec;

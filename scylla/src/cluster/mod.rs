@@ -27,6 +27,3 @@ pub use node::{KnownNode, Node, NodeAddr, NodeRef};
 mod control_connection;
 
 pub mod metadata;
-
-mod metadata_fetching;
-mod metadata_reader;

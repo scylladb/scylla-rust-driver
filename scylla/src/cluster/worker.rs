@@ -1,5 +1,5 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
-use crate::cluster::metadata_reader::ControlConnectionEvent;
+use crate::cluster::metadata::reader::ControlConnectionEvent;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::Event;
@@ -20,7 +20,7 @@ use std::time::Duration;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
-use super::metadata_reader::MetadataReader;
+use super::metadata::reader::MetadataReader;
 use super::state::{ClusterState, ClusterStateNeatDebug};
 
 /// Cluster manages up to date information and connections to database nodes.
