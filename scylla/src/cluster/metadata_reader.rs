@@ -95,21 +95,12 @@ impl MetadataReader {
                 .clone(),
         );
 
-        let control_connection_state = match Self::make_control_connection(
-            control_connection_endpoint.clone(),
+        let control_connection_state = Self::make_control_connection(
+            control_connection_endpoint,
             connection_config.clone(),
             request_serverside_timeout,
         )
-        .await
-        {
-            Ok(working_connection) => ControlConnectionState::Working(working_connection),
-            Err(e) => ControlConnectionState::Broken {
-                last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
-                    last_connection_error: e,
-                }),
-                last_endpoint: control_connection_endpoint,
-            },
-        };
+        .await;
 
         Ok(MetadataReader {
             control_connection_config: connection_config,
@@ -287,27 +278,17 @@ impl MetadataReader {
                 "Failed to fetch metadata using current control connection"
             );
 
-            let control_connection_endpoint = peer.clone();
             debug!(
                 "Retrying to establish the control connection on {}",
-                control_connection_endpoint.address()
+                peer.address()
             );
 
-            self.control_connection_state = match Self::make_control_connection(
-                control_connection_endpoint.clone(),
+            self.control_connection_state = Self::make_control_connection(
+                peer,
                 self.control_connection_config.clone(),
                 self.request_serverside_timeout,
             )
-            .await
-            {
-                Ok(working_connection) => ControlConnectionState::Working(working_connection),
-                Err(e) => ControlConnectionState::Broken {
-                    last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
-                        last_connection_error: e,
-                    }),
-                    last_endpoint: control_connection_endpoint,
-                },
-            };
+            .await;
 
             result = self.fetch_metadata(initial).await;
         }
@@ -414,25 +395,12 @@ impl MetadataReader {
                         .expect("known_peers is empty - should be impossible")
                         .clone();
 
-                    self.control_connection_state = match Self::make_control_connection(
-                        control_connection_endpoint.clone(),
+                    self.control_connection_state = Self::make_control_connection(
+                        control_connection_endpoint,
                         self.control_connection_config.clone(),
                         self.request_serverside_timeout,
                     )
-                    .await
-                    {
-                        Ok(working_connection) => {
-                            ControlConnectionState::Working(working_connection)
-                        }
-                        Err(e) => ControlConnectionState::Broken {
-                            last_error: MetadataError::ConnectionPoolError(
-                                ConnectionPoolError::Broken {
-                                    last_connection_error: e,
-                                },
-                            ),
-                            last_endpoint: control_connection_endpoint,
-                        },
-                    };
+                    .await;
                 }
             }
         }
@@ -442,24 +410,33 @@ impl MetadataReader {
         endpoint: UntranslatedEndpoint,
         mut config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
-    ) -> Result<WorkingControlConnection, ConnectionError> {
+    ) -> ControlConnectionState {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         // setting event_sender field in connection config will cause control connection to
         // - send REGISTER message to receive server events
         // - send received events via server_event_sender
         config.event_sender = Some(sender);
-        open_connection(
+        let open_result = open_connection(
             &endpoint,
             None,
             &config.to_host_connection_config(&endpoint),
         )
-        .await
-        .map(|(con, recv)| WorkingControlConnection {
-            connection: ControlConnection::new(Arc::new(con))
-                .override_serverside_timeout(request_serverside_timeout),
-            error_channel: recv,
-            events_channel: receiver,
-            endpoint,
-        })
+        .await;
+
+        match open_result {
+            Ok((con, recv)) => ControlConnectionState::Working(WorkingControlConnection {
+                connection: ControlConnection::new(Arc::new(con))
+                    .override_serverside_timeout(request_serverside_timeout),
+                error_channel: recv,
+                events_channel: receiver,
+                endpoint,
+            }),
+            Err(conn_err) => ControlConnectionState::Broken {
+                last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
+                    last_connection_error: conn_err,
+                }),
+                last_endpoint: endpoint,
+            },
+        }
     }
 }
