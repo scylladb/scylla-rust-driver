@@ -27,6 +27,15 @@ use crate::value::{
     CqlTimeuuid, CqlValue, CqlVarint, deser_cql_value,
 };
 
+// Re-export for backwards compatibility. These types were moved to crate::value module.
+// Note: deprecated doesn't work on re-exports, users won't get the warning.
+// Added it anyway for documentation purposes.
+// TODO(2.0): Remove those re-exports.
+#[deprecated(since = "1.5.0", note = "Moved to `scylla_cql::value` module")]
+pub use crate::value::Emptiable;
+#[deprecated(since = "1.5.0", note = "Moved to `scylla_cql::value` module")]
+pub use crate::value::MaybeEmpty;
+
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
 ///
@@ -90,27 +99,6 @@ where
             .transpose()
             .map_err(deser_error_replace_rust_name::<Self>)
     }
-}
-
-/// Values that may be empty or not.
-///
-/// In CQL, some types can have a special value of "empty", represented as
-/// a serialized value of length 0. An example of this are integral types:
-/// the "int" type can actually hold 2^32 + 1 possible values because of this
-/// quirk. Note that this is distinct from being NULL.
-///
-/// Rust types that cannot represent an empty value (e.g. i32) should implement
-/// this trait in order to be deserialized as [MaybeEmpty].
-pub trait Emptiable {}
-
-/// A value that may be empty or not.
-///
-/// `MaybeEmpty` was introduced to help support the quirk described in [Emptiable]
-/// for Rust types which can't represent the empty, additional value.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub enum MaybeEmpty<T: Emptiable> {
-    Empty,
-    Value(T),
 }
 
 impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata> for MaybeEmpty<T>

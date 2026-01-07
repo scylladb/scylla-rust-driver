@@ -57,6 +57,34 @@ impl<V> MaybeUnset<V> {
     }
 }
 
+/// Values that may be empty or not.
+///
+/// In CQL, some types can have a special value of "empty", represented as
+/// a serialized value of length 0. An example of this are integral types:
+/// the "int" type can actually hold 2^32 + 1 possible values because of this
+/// quirk. Note that this is distinct from being NULL.
+///
+/// Rust types that cannot represent an empty value (e.g. i32) should implement
+/// this trait in order to be deserialized as [`MaybeEmpty`] or serialized
+/// from it.
+pub trait Emptiable {}
+
+/// A value that may be empty or not.
+///
+/// `MaybeEmpty` was introduced to help support the quirk described in [`Emptiable`]
+/// for Rust types which can't represent the empty, additional value.
+///
+/// This type can be both serialized and deserialized. When serializing,
+/// [`MaybeEmpty::Empty`] will produce an empty value (0 bytes) for emptiable types.
+/// When deserializing, an empty value will be represented as [`MaybeEmpty::Empty`].
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub enum MaybeEmpty<T: Emptiable> {
+    /// Represents an empty value (0 bytes in the serialized form).
+    Empty,
+    /// Represents a non-empty value.
+    Value(T),
+}
+
 /// Represents timeuuid (uuid V1) value
 ///
 /// This type has custom comparison logic which follows ScyllaDB/Cassandra semantics.
