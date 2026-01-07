@@ -233,6 +233,7 @@ impl Clone for PreparedStatement {
 }
 
 /// Stores a snapshot of current result metadata column specs.
+#[derive(Debug)]
 pub struct ColumnSpecsGuard {
     result: Guard<Arc<ResultMetadata<'static>>>,
 }
@@ -912,5 +913,43 @@ mod tests {
                 (89i64.to_be_bytes().as_ref(), &meta.col_specs[3]),
             ]
         );
+    }
+
+    #[test]
+    fn test_column_specs_guard_debug() {
+        use crate::statement::prepared::PreparedStatement;
+        use bytes::Bytes;
+        use scylla_cql::frame::response::result::ResultMetadata;
+
+        setup_tracing();
+
+        // Create a simple prepared statement with result metadata
+        let meta = make_meta([ColumnType::Native(NativeType::Int)], [0]);
+
+        // Create result metadata with actual column specs
+        let table_spec = TableSpec::owned("test_ks".to_owned(), "test_table".to_owned());
+        let col_specs = vec![ColumnSpec::owned(
+            "test_column_name".to_string(),
+            ColumnType::Native(NativeType::Text),
+            table_spec,
+        )];
+        let result_metadata = ResultMetadata::new_for_test(1, col_specs);
+        let prepared = PreparedStatement::new(
+            Bytes::from_static(b"test_id"),
+            false,
+            meta,
+            std::sync::Arc::new(result_metadata),
+            "SELECT * FROM test".to_string(),
+            crate::statement::PageSize::new(100).unwrap(),
+            Default::default(),
+        );
+
+        // Get the ColumnSpecsGuard and test Debug formatting
+        let guard = prepared.get_current_result_set_col_specs();
+        let debug_output = format!("{:?}", guard);
+
+        // Verify that Debug output contains expected structure and column name
+        assert!(debug_output.contains("ColumnSpecsGuard"));
+        assert!(debug_output.contains("test_column_name"));
     }
 }
