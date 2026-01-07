@@ -10,7 +10,7 @@ use crate::serialize::writers::WrittenCellProof;
 use crate::serialize::{CellWriter, SerializationError};
 use crate::value::{
     Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
-    MaybeUnset, Unset,
+    Emptiable, MaybeEmpty, MaybeUnset, Unset,
 };
 
 use std::collections::hash_map::DefaultHasher;
@@ -2577,4 +2577,126 @@ fn ref_value() {
     }
 
     check(&1_i32, 1_i32, &ColumnType::Native(NativeType::Int));
+}
+
+#[test]
+fn test_maybe_empty_serialization() {
+    // Test MaybeEmpty with various emptiable types
+
+    // MaybeEmpty::Empty serializes to an empty value (0 bytes)
+    let empty_int: MaybeEmpty<i32> = MaybeEmpty::Empty;
+    assert_eq!(
+        do_serialize(empty_int, &ColumnType::Native(NativeType::Int)),
+        vec![0, 0, 0, 0] // length 0
+    );
+
+    // MaybeEmpty::Value serializes the inner value normally
+    let value_int: MaybeEmpty<i32> = MaybeEmpty::Value(123);
+    assert_eq!(
+        do_serialize(value_int, &ColumnType::Native(NativeType::Int)),
+        vec![0, 0, 0, 4, 0, 0, 0, 123]
+    );
+
+    // Test with other emptiable types
+    let empty_i8: MaybeEmpty<i8> = MaybeEmpty::Empty;
+    assert_eq!(
+        do_serialize(empty_i8, &ColumnType::Native(NativeType::TinyInt)),
+        vec![0, 0, 0, 0]
+    );
+
+    let value_i8: MaybeEmpty<i8> = MaybeEmpty::Value(42);
+    assert_eq!(
+        do_serialize(value_i8, &ColumnType::Native(NativeType::TinyInt)),
+        vec![0, 0, 0, 1, 42]
+    );
+
+    // Test with i64
+    let empty_i64: MaybeEmpty<i64> = MaybeEmpty::Empty;
+    assert_eq!(
+        do_serialize(empty_i64, &ColumnType::Native(NativeType::BigInt)),
+        vec![0, 0, 0, 0]
+    );
+
+    let value_i64: MaybeEmpty<i64> = MaybeEmpty::Value(9876543210);
+    assert_eq!(
+        do_serialize(value_i64, &ColumnType::Native(NativeType::BigInt)),
+        vec![0, 0, 0, 8, 0, 0, 0, 2, 76, 176, 22, 234]
+    );
+
+    // Test with bool
+    let empty_bool: MaybeEmpty<bool> = MaybeEmpty::Empty;
+    assert_eq!(
+        do_serialize(empty_bool, &ColumnType::Native(NativeType::Boolean)),
+        vec![0, 0, 0, 0]
+    );
+
+    let value_bool: MaybeEmpty<bool> = MaybeEmpty::Value(true);
+    assert_eq!(
+        do_serialize(value_bool, &ColumnType::Native(NativeType::Boolean)),
+        vec![0, 0, 0, 1, 1]
+    );
+
+    // Test with CqlVarint
+    let empty_varint: MaybeEmpty<CqlVarint> = MaybeEmpty::Empty;
+    assert_eq!(
+        do_serialize(empty_varint, &ColumnType::Native(NativeType::Varint)),
+        vec![0, 0, 0, 0]
+    );
+
+    let value_varint: MaybeEmpty<CqlVarint> =
+        MaybeEmpty::Value(CqlVarint::from_signed_bytes_be(vec![0x7F]));
+    assert_eq!(
+        do_serialize(value_varint, &ColumnType::Native(NativeType::Varint)),
+        vec![0, 0, 0, 1, 0x7F]
+    );
+}
+
+#[test]
+fn test_maybe_empty_errors() {
+    // Test that MaybeEmpty::Empty fails for non-emptiable types (e.g., Counter)
+    let empty_counter: MaybeEmpty<i64> = MaybeEmpty::Empty;
+    let err = do_serialize_err(empty_counter, &ColumnType::Native(NativeType::Counter));
+    let err = get_typeck_err(&err);
+    assert_eq!(err.rust_name, std::any::type_name::<MaybeEmpty<i64>>());
+    assert_eq!(err.got, ColumnType::Native(NativeType::Counter));
+    assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NotEmptyable);
+
+    // Test that MaybeEmpty properly propagates errors from inner value serialization
+    let value_int: MaybeEmpty<i32> = MaybeEmpty::Value(123);
+    let err = do_serialize_err(value_int, &ColumnType::Native(NativeType::Double));
+    let err = get_typeck_err(&err);
+    assert_eq!(err.rust_name, std::any::type_name::<MaybeEmpty<i32>>());
+    assert_eq!(err.got, ColumnType::Native(NativeType::Double));
+    assert_matches!(
+        err.kind,
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[ColumnType::Native(NativeType::Int)],
+        }
+    );
+}
+
+#[test]
+fn test_maybe_empty_with_custom_error() {
+    // Custom type that implements Emptiable and SerializeValue with an error
+    #[derive(PartialEq, Eq, PartialOrd, Ord)]
+    struct CustomEmptiable;
+
+    impl Emptiable for CustomEmptiable {}
+
+    impl SerializeValue for CustomEmptiable {
+        fn serialize<'b>(
+            &self,
+            _typ: &ColumnType,
+            _writer: CellWriter<'b>,
+        ) -> Result<WrittenCellProof<'b>, SerializationError> {
+            Err(SerializationError::new(CustomSerializationError))
+        }
+    }
+
+    // MaybeEmpty::Value should propagate the custom error
+    let value: MaybeEmpty<CustomEmptiable> = MaybeEmpty::Value(CustomEmptiable);
+    let err = do_serialize_err(value, &ColumnType::Native(NativeType::Int));
+    err.0
+        .downcast_ref::<CustomSerializationError>()
+        .expect("CustomSerializationError");
 }

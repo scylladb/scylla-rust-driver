@@ -18,7 +18,7 @@ use crate::frame::response::result::{CollectionType, ColumnType, NativeType};
 use crate::frame::types::{unsigned_vint_encode, vint_encode};
 use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
-    CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, MaybeUnset, Unset,
+    CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, Emptiable, MaybeEmpty, MaybeUnset, Unset,
 };
 
 #[cfg(feature = "chrono-04")]
@@ -397,6 +397,28 @@ impl<V: SerializeValue> SerializeValue for MaybeUnset<V> {
                 .serialize(typ, writer)
                 .map_err(fix_rust_name_in_err::<Self>),
             MaybeUnset::Unset => Ok(writer.set_unset()),
+        }
+    }
+}
+impl<T: SerializeValue + Emptiable> SerializeValue for MaybeEmpty<T> {
+    fn serialize<'b>(
+        &self,
+        typ: &ColumnType,
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        // Check that the type supports empty values
+        if !typ.supports_special_empty_value() {
+            return Err(mk_typck_err::<Self>(
+                typ,
+                BuiltinTypeCheckErrorKind::NotEmptyable,
+            ));
+        }
+
+        match self {
+            MaybeEmpty::Empty => Ok(writer.set_value(&[]).unwrap()),
+            MaybeEmpty::Value(v) => v
+                .serialize(typ, writer)
+                .map_err(fix_rust_name_in_err::<Self>),
         }
     }
 }
