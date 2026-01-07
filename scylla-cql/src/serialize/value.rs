@@ -526,7 +526,7 @@ impl<T: SerializeValue> SerializeValue for Vec<T> {
         }
     }
 }
-impl<'a, T: SerializeValue + 'a> SerializeValue for &'a [T] {
+impl<T: SerializeValue> SerializeValue for [T] {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,

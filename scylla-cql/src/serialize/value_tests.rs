@@ -2241,6 +2241,30 @@ fn box_serialization() {
         do_serialize(x, &ColumnType::Native(NativeType::Int)),
         vec![0, 0, 0, 4, 0, 0, 0, 123]
     );
+
+    let x: Box<str> = "123".to_string().into_boxed_str();
+    assert_eq!(
+        do_serialize(x, &ColumnType::Native(NativeType::Text)),
+        vec![0, 0, 0, 3, 49, 50, 51]
+    );
+
+    let x: Box<[i32]> = vec![1, 2, 3].into_boxed_slice();
+    assert_eq!(
+        do_serialize(
+            x,
+            &ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int)))
+            }
+        ),
+        vec![
+            0, 0, 0, 28, // Length of serialized data
+            0, 0, 0, 3, // Element count
+            0, 0, 0, 4, 0, 0, 0, 1, // 1st element
+            0, 0, 0, 4, 0, 0, 0, 2, // 2nd element
+            0, 0, 0, 4, 0, 0, 0, 3 // 3rd element
+        ]
+    );
 }
 
 #[test]
@@ -2249,6 +2273,30 @@ fn arc_serialization() {
     assert_eq!(
         do_serialize(x, &ColumnType::Native(NativeType::Int)),
         vec![0, 0, 0, 4, 0, 0, 0, 123]
+    );
+
+    let x: Arc<str> = "123".into();
+    assert_eq!(
+        do_serialize(x, &ColumnType::Native(NativeType::Text)),
+        vec![0, 0, 0, 3, 49, 50, 51]
+    );
+
+    let x: Arc<[i32]> = [1, 2, 3].into();
+    assert_eq!(
+        do_serialize(
+            x,
+            &ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int)))
+            }
+        ),
+        vec![
+            0, 0, 0, 28, // Length of serialized data
+            0, 0, 0, 3, // Element count
+            0, 0, 0, 4, 0, 0, 0, 1, // 1st element
+            0, 0, 0, 4, 0, 0, 0, 2, // 2nd element
+            0, 0, 0, 4, 0, 0, 0, 3 // 3rd element
+        ]
     );
 }
 
