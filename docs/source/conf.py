@@ -57,7 +57,7 @@ author = "ScyllaDB Project Contributors"
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This patterns also effect to html_static_path and html_extra_path
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "_utils", "SUMMARY.md"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "_utils", "SUMMARY.md", ".venv"]
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = "sphinx"
