@@ -1,4 +1,5 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
+use crate::cluster::metadata::reader::ControlConnectionEvent;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::Event;
@@ -19,7 +20,7 @@ use std::time::Duration;
 use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
-use super::metadata::MetadataReader;
+use super::metadata::reader::MetadataReader;
 use super::state::{ClusterState, ClusterStateNeatDebug};
 
 /// Cluster manages up to date information and connections to database nodes.
@@ -78,16 +79,10 @@ struct ClusterWorker {
     // Channel used to receive use keyspace requests
     use_keyspace_channel: tokio::sync::mpsc::Receiver<UseKeyspaceRequest>,
 
-    // Channel used to receive server events
-    server_events_channel: tokio::sync::mpsc::Receiver<Event>,
-
     // Channel used to receive signals that node is no longer reachable or became reachable.
     connectivity_events_receiver: tokio::sync::mpsc::UnboundedReceiver<ConnectivityChangeEvent>,
     // Sender part of that channel to pass to `PoolRefiller`s.
     connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
-
-    // Channel used to receive signals that control connection is broken
-    control_connection_repair_channel: tokio::sync::mpsc::Receiver<()>,
 
     // Channel used to receive info about new tablets from custom payload in responses
     // sent by server.
@@ -139,7 +134,6 @@ impl Cluster {
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
-        let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
         // This is unbounded, because there is possibility that many events will be sent quickly,
         // for example when driver is connected to a large cluster and it loses network connectivity.
         //
@@ -147,22 +141,15 @@ impl Cluster {
         // or drop events (if we decide to do so if the channel is full). Both options are bad.
         let (connectivity_events_sender, connectivity_events_receiver) =
             tokio::sync::mpsc::unbounded_channel();
-        let (control_connection_repair_sender, control_connection_repair_receiver) =
-            tokio::sync::mpsc::channel(32);
 
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
             hostname_resolution_timeout,
-            control_connection_repair_sender,
             pool_config.connection_config.clone(),
             metadata_request_serverside_timeout,
-            server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
-            #[cfg(feature = "metrics")]
-            Arc::clone(&metrics),
-            Arc::clone(&pool_config.reconnect_policy),
         )
         .await?;
 
@@ -203,10 +190,8 @@ impl Cluster {
             pool_config,
 
             refresh_channel: refresh_receiver,
-            server_events_channel: server_events_receiver,
             connectivity_events_sender,
             connectivity_events_receiver,
-            control_connection_repair_channel: control_connection_repair_receiver,
             tablets_channel: tablet_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
@@ -279,14 +264,13 @@ impl ClusterWorker {
 
         let control_connection_repair_duration = Duration::from_secs(1); // Attempt control connection repair every second
         let mut last_refresh_time = Instant::now();
-        let mut control_connection_works = true;
 
         loop {
             let mut cur_request: Option<RefreshRequest> = None;
 
             // Wait until it's time for the next refresh
             let sleep_until: Instant = last_refresh_time
-                .checked_add(if control_connection_works {
+                .checked_add(if self.metadata_reader.control_connection_works() {
                     self.cluster_metadata_refresh_interval
                 } else {
                     control_connection_repair_duration
@@ -342,30 +326,33 @@ impl ClusterWorker {
                     continue;
                 }
 
-                maybe_cql_event = self.server_events_channel.recv() => {
-                    if let Some(event) = maybe_cql_event {
-                        debug!("Received server event: {:?}", event);
-
-                        match event {
-                            Event::TopologyChange(_) => (), // Refresh immediately
-                            Event::StatusChange(_status) => {
-                                // TODO: Tracking status using events is unreliable because of
-                                // the possibility of losing events when control connection is broken.
-                                // Maybe a better thing to do here is to treat those events as hints?
-                                // What I mean by that?
-                                // - Don't store the status at all.
-                                // - When receiving down event, and the driver still sees the node
-                                //   as connected, then try to send a keepalive query to its connections.
-                                // - When receiving up event, and we have no connections to the node,
-                                //   then try to open new connections.
-                                continue;
-                            },
-                            _ => continue, // Don't go to refreshing
+                control_connection_event = self.metadata_reader.wait_for_control_connection_event() => {
+                    match control_connection_event {
+                        ControlConnectionEvent::Broken => {
+                            // The control connection was broken. Acknowledge that and start attempting to reconnect.
+                            // The first reconnect attempt will be immediate (by attempting metadata refresh below),
+                            // and if it does not succeed, then `ControlConnectionState` will be set to `Broken`, so
+                            // subsequent attempts will be issued every second.
+                        },
+                        ControlConnectionEvent::ServerEvent(event) => {
+                            debug!("Received server event: {:?}", event);
+                            match event {
+                                Event::TopologyChange(_) => (), // Refresh immediately
+                                Event::StatusChange(_status) => {
+                                    // TODO: Tracking status using events is unreliable because of
+                                    // the possibility of losing events when control connection is broken.
+                                    // Maybe a better thing to do here is to treat those events as hints?
+                                    // What I mean by that?
+                                    // - Don't store the status at all.
+                                    // - When receiving down event, and the driver still sees the node
+                                    //   as connected, then try to send a keepalive query to its connections.
+                                    // - When receiving up event, and we have no connections to the node,
+                                    //   then try to open new connections.
+                                    continue;
+                                },
+                                _ => continue, // Don't go to refreshing
+                            }
                         }
-                    } else {
-                        // If server_events_channel was closed, than MetadataReader was dropped,
-                        // so we can probably stop working too
-                        return;
                     }
                 }
 
@@ -397,30 +384,12 @@ impl ClusterWorker {
 
                     continue; // Don't go to refreshing, wait for the next event
                 }
-
-                maybe_control_connection_failed = self.control_connection_repair_channel.recv() => {
-                    match maybe_control_connection_failed {
-                        Some(()) => {
-                            // The control connection was broken. Acknowledge that and start attempting to reconnect.
-                            // The first reconnect attempt will be immediate (by attempting metadata refresh below),
-                            // and if it does not succeed, then `control_connection_works` will be set to `false`,
-                            // so subsequent attempts will be issued every second.
-                        }
-                        None => {
-                            // If control_connection_repair_channel was closed then MetadataReader was dropped,
-                            // we can stop working.
-                            return;
-                        }
-                    }
-                }
             }
 
             // Perform the refresh
             debug!("Requesting metadata refresh");
             last_refresh_time = Instant::now();
             let refresh_res = self.perform_refresh().await;
-
-            control_connection_works = refresh_res.is_ok();
 
             // Send refresh result if there was a request
             if let Some(request) = cur_request {

@@ -87,6 +87,7 @@ async fn speculative_execution_is_fired() {
 
         info!("--------------------- FINISHING main test part ----------------");
 
+        running_proxy.running_nodes.iter_mut().for_each(|n| n.change_request_rules(None));
         session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
         running_proxy

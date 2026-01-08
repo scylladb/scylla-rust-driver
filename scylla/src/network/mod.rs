@@ -6,7 +6,6 @@
 
 mod connection;
 
-#[cfg(test)]
 pub(crate) use connection::open_connection;
 
 pub(crate) use connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
