@@ -123,13 +123,13 @@ impl ExponentialReconnectPolicy {
     /// You can use 1.0..=1.0 to effectively disable jitter.
     ///
     /// Default value is 0.85..=1.15.
-    pub fn with_jitter_range(mut self, value: RangeInclusive<f64>) -> Self {
-        assert!(!value.is_empty(), "Jitter range must not be empty");
+    pub fn with_jitter_range(mut self, jitter_range: RangeInclusive<f64>) -> Self {
+        assert!(!jitter_range.is_empty(), "Jitter range must not be empty");
         assert!(
-            *value.start() >= 0.0,
+            *jitter_range.start() >= 0.0,
             "Jitter range start must be non-negative"
         );
-        self.jitter_range = value;
+        self.jitter_range = jitter_range;
         self
     }
 }
@@ -185,13 +185,13 @@ impl ConstantReconnectPolicy {
     /// You can use 1.0..=1.0 to effectively disable jitter.
     ///
     /// Default value is 0.85..=1.15.
-    pub fn with_jitter_range(mut self, value: RangeInclusive<f64>) -> Self {
-        assert!(!value.is_empty(), "Jitter range must not be empty");
+    pub fn with_jitter_range(mut self, jitter_range: RangeInclusive<f64>) -> Self {
+        assert!(!jitter_range.is_empty(), "Jitter range must not be empty");
         assert!(
-            *value.start() >= 0.0,
+            *jitter_range.start() >= 0.0,
             "Jitter range start must be non-negative"
         );
-        self.jitter_range = value;
+        self.jitter_range = jitter_range;
         self
     }
 }
