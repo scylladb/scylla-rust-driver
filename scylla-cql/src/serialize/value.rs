@@ -227,6 +227,19 @@ impl<V: SerializeValue + secrecy_08::Zeroize> SerializeValue for secrecy_08::Sec
         V::serialize(self.expose_secret(), typ, writer).map_err(fix_rust_name_in_err::<Self>)
     }
 }
+#[cfg(feature = "secrecy-10")]
+impl<V: SerializeValue + secrecy_10::zeroize::Zeroize + ?Sized> SerializeValue
+    for secrecy_10::SecretBox<V>
+{
+    fn serialize<'b>(
+        &self,
+        typ: &ColumnType,
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        use secrecy_10::ExposeSecret;
+        V::serialize(self.expose_secret(), typ, writer).map_err(fix_rust_name_in_err::<Self>)
+    }
+}
 impl SerializeValue for bool {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Boolean);
@@ -548,7 +561,7 @@ impl<T: SerializeValue> SerializeValue for Vec<T> {
         }
     }
 }
-impl<'a, T: SerializeValue + 'a> SerializeValue for &'a [T] {
+impl<T: SerializeValue> SerializeValue for [T] {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,

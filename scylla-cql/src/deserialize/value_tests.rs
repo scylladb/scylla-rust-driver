@@ -1986,6 +1986,41 @@ fn test_secrecy_08_errors() {
     );
 }
 
+#[cfg(feature = "secrecy-10")]
+#[test]
+fn test_secrecy_10_errors() {
+    use secrecy_10::SecretBox;
+
+    use crate::frame::frame_errors::LowLevelDeserializationError;
+    // Type check correctly renames Rust type
+    assert_type_check_error!(
+        &Bytes::new(),
+        SecretBox<String>,
+        ColumnType::Native(NativeType::Int),
+        BuiltinTypeCheckErrorKind::MismatchedType {
+            expected: &[
+                ColumnType::Native(NativeType::Ascii),
+                ColumnType::Native(NativeType::Text)
+            ]
+        }
+    );
+
+    // Deserialize correctly renames Rust type
+    let v = 123_i32;
+    let bytes = serialize(&ColumnType::Native(NativeType::Int), &v);
+    assert_deser_error!(
+        &bytes,
+        SecretBox<Vec<String>>,
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Text)))
+        },
+        BuiltinDeserializationErrorKind::RawCqlBytesReadError(
+            LowLevelDeserializationError::IoError(_)
+        )
+    );
+}
+
 #[test]
 fn test_set_or_list_general_type_errors() {
     // Types that are not even collections
@@ -3981,4 +4016,44 @@ fn test_timeuuid_deserialize() {
             _ => panic!("Timeuuid parsed as wrong CqlValue"),
         }
     }
+}
+
+#[cfg(feature = "secrecy-10")]
+#[test]
+fn test_secret_010_box_deserialization() {
+    use secrecy_10::{ExposeSecret, SecretBox};
+
+    let num: i32 = 42;
+    let serialized = serialize(&ColumnType::Native(Int), &num);
+    let secret: SecretBox<i32> = deserialize(&ColumnType::Native(Int), &serialized).unwrap();
+
+    assert_eq!(*secret.expose_secret(), num);
+}
+
+#[cfg(feature = "secrecy-10")]
+#[test]
+fn test_secret_010_string_deserialization() {
+    use secrecy_10::{ExposeSecret, SecretString};
+
+    let text = "hello secret";
+    let serialized = serialize(&ColumnType::Native(Text), &text);
+    let secret: SecretString = deserialize(&ColumnType::Native(Text), &serialized).unwrap();
+
+    assert_eq!(secret.expose_secret(), text);
+}
+
+#[cfg(feature = "secrecy-10")]
+#[test]
+fn test_secret_010_slice_deserialization() {
+    use secrecy_10::{ExposeSecret, SecretSlice};
+
+    let vec = vec![1i32, 2, 3];
+    let typ = ColumnType::Collection {
+        frozen: false,
+        typ: CollectionType::List(Box::new(ColumnType::Native(Int))),
+    };
+    let serialized = serialize(&typ, &vec);
+    let secret: SecretSlice<i32> = deserialize(&typ, &serialized).unwrap();
+
+    assert_eq!(secret.expose_secret(), &[1i32, 2, 3]);
 }

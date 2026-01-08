@@ -40,6 +40,8 @@ openssl-010 = ["dep:tokio-openssl", "dep:openssl"]
 rustls-023 = ["dep:tokio-rustls", "dep:rustls"]
 # Enables support for CQL ser/de of Secrecy type from secrecy 0.8 crate.
 secrecy-08 = ["scylla-cql/secrecy-08"]
+# Enables support for CQL ser/de of Secrecy type from secrecy 0.10 crate.
+secrecy-10 = ["scylla-cql/secrecy-10"]
 # Enables support for CQL ser/de of time/date types from chrono 0.4 crate.
 chrono-04 = ["scylla-cql/chrono-04"]
 # Enables support for CQL ser/de of time/date types from time 0.3 crate.
@@ -55,6 +57,7 @@ full-serialization = [
     "chrono-04",
     "time-03",
     "secrecy-08",
+    "secrecy-10",
     "num-bigint-03",
     "num-bigint-04",
     "bigdecimal-04",
