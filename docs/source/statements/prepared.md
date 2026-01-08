@@ -3,6 +3,12 @@
 Prepared statements provide much better performance than unprepared statements,
 but they need to be prepared before use.
 
+:::{warning}
+**Prepare a statement once** and store it (e.g., in a variable, static, or struct field), then **execute it multiple times** with different values.
+Preparing a statement is a costly operation involving communication with database nodes and caching.
+Repeatedly calling `prepare()` for the same statement before each execution wastes resources and significantly degrades performance.
+:::
+
 Benefits that prepared statements have to offer:
 - Type safety - thanks to metadata provided by the server, the driver can verify bound values' types before serialization. This way, we can be always sure that the Rust type provided by the user is compatible (and if not, the error is returned) with the destined native type. The same applies for deserialization.
 - Performance - when executing an unprepared statement with non-empty values list, the driver
@@ -16,35 +22,40 @@ prepares the statement before execution. The reason for this is to provide type 
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::statement::prepared::PreparedStatement;
 
-// Prepare the statement for later execution
+// Prepare the statement ONCE for later execution
 let prepared: PreparedStatement = session
     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     .await?;
 
-// Execute the prepared statement with some values, just like an unprepared statement.
+// Execute the prepared statement MULTIPLE TIMES with different values
 let to_insert: i32 = 12345;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
+
+let to_insert: i32 = 67890;
 session.execute_unpaged(&prepared, (to_insert,)).await?;
 # Ok(())
 # }
 ```
 
-> ***Warning***\
-> For token/shard aware load balancing to work properly, all partition key values
-> must be sent as bound values (see [performance section](#performance))
+:::{warning}
+For token/shard aware load balancing to work properly, all partition key values
+must be sent as bound values (see [performance section](#performance))
+:::
 
-> ***Warning***\
-> Don't use `execute` to receive large amounts of data.\
-> By default the query is unpaged and might cause heavy load on the cluster.
-> In such cases set a page size and use a [paged query](paged.md) instead.
->
-> When page size is set, `execute` will return only the first page of results.
+:::{warning}
+Don't use `execute_unpaged` to receive large amounts of data.\
+Unpaged requests might cause heavy load on the cluster.
+In reality, its almost always wrong to use unpaged SELECTs.
+
+In such cases use a [paged query](paged.md) instead.
+:::
 
 ### `Session::prepare`
 `Session::prepare` takes statement text and prepares the statement on all nodes and shards.
 If at least one succeeds returns success.
 
-### `Session::execute`
-`Session::execute` takes a prepared statement and bound values and executes the statement.
+### `Session::execute_[unpaged/single_page/iter]`
+`Session::execute_[unpaged/single_page/iter]` family of functions all take a prepared statement and bound values and execute the statement.
 Passing values and the result is the same as in [unprepared statement](unprepared.md).
 
 ### Statement options
@@ -89,9 +100,11 @@ for more options.
 Prepared statement have good performance, much better than unprepared statements.
 By default they use shard/token aware load balancing.
 
-> **Always** pass partition key values as bound values.
-> Otherwise the driver can't hash them to compute partition key
-> and they will be sent to the wrong node, which worsens performance.
+:::{warning}
+**Always** pass partition key values as bound values.
+Otherwise the driver can't hash them to compute partition key
+and they will be sent to the wrong node, which worsens performance.
+:::
 
 Let's say we have a table like this:
 

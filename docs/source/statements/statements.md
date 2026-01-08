@@ -26,6 +26,11 @@ This is **NOT** strictly related to content of the CQL statement string.
 > enabling advanced load balancing (so better performance!) of all further executions of that prepared statement.\
 > ***Key take-over:*** always prepare statements that you are going to execute multiple times.
 
+:::{warning}
+**Prepare a statement once** (e.g., store it in a variable, static, or struct field), then **execute it multiple times** with different values.
+Do NOT prepare the same statement before each execution - this defeats the purpose of prepared statements and significantly degrades performance.
+:::
+
 | Statement comparison | Unprepared                                | Prepared                                                                                                        |
 |----------------------|-------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
 | Exposed Session API  | `query_*`                                 | `execute_*`                                                                                                     |
@@ -34,20 +39,24 @@ This is **NOT** strictly related to content of the CQL statement string.
 | Load balancing       | primitive (random choice of a node/shard) | advanced (proper node/shard, optimisations for LWT statements)                                                  |
 | Suitable operations  | one-shot operations                       | repeated operations                                                                                             |
 
-> ***Warning***\
-> If a statement contains bind markers (`?`), then it needs some values to be passed along the statement string.
-> If a statement is prepared, the metadata received from the DB can be used to verify validity of passed bind values.
-> In case of unprepared statements, this metadata is missing and thus verification is not feasible.
-> This used to allow some silent bugs sneaking in in user applications.
->
-> To prevent that, the driver will silently prepare every unprepared statement prior to its execution.
-> This has an overhead, which further lessens advantages of unprepared statements over prepared statements.
->
-> That behaviour is especially important in batches:
-> For each simple statement with a non-empty list of values in the batch,
-> the driver will send a prepare request, and it will be done **sequentially**!
-> Results of preparation are not cached between `Session::batch` calls.
-> Therefore, consider preparing the statements before putting them into the batch.
+
+If a statement contains bind markers (`?`), then it needs some values to be passed along the statement string.
+If a statement is prepared, the metadata received from the DB can be used to verify validity of passed bind values.
+In case of unprepared statements, this metadata is missing and thus verification is not feasible.
+This used to allow some silent bugs sneaking in in user applications.
+
+To prevent that, the driver will silently prepare every unprepared statement prior to its execution.
+This has an overhead, which further lessens advantages of unprepared statements over prepared statements.
+
+That behaviour is especially important in batches:
+For each simple statement with a non-empty list of values in the batch,
+the driver will send a prepare request, and it will be done **sequentially**!
+Results of preparation are not cached between `Session::batch` calls.
+Therefore, consider preparing the statements before putting them into the batch.
+
+:::{warning}
+Takeway from the above: Do NOT use unprepared statements in a batch, unless such statement takes no bind markers.
+:::
 
 ### Single vs [Batch](batch.md)
 

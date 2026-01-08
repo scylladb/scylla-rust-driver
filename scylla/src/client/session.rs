@@ -1318,10 +1318,26 @@ impl Session {
     /// * Database doesn't need to parse the statement string upon each execution (only once)
     /// * They are properly load balanced using token aware routing
     ///
-    /// > ***Warning***\
-    /// > For token/shard aware load balancing to work properly, all partition key values
-    /// > must be sent as bound values
-    /// > (see [performance section](https://rust-driver.docs.scylladb.com/stable/statements/prepared.html#performance))
+    /// <div class="warning">
+    ///
+    /// **Warning!**
+    ///
+    /// **Prepare a statement once** (e.g., store it in a variable, static, or struct field),
+    /// then **execute it multiple times** with different values.
+    /// Do **NOT** call `prepare()` repeatedly for the same statement before each execution -
+    /// this defeats the purpose of prepared statements and significantly degrades performance.
+    ///
+    /// </div>
+    ///
+    /// <div class="warning">
+    ///
+    /// **Warning!**
+    ///
+    /// For token/shard aware load balancing to work properly, all partition key values
+    /// must be sent as bound values
+    /// (see [performance section](https://rust-driver.docs.scylladb.com/stable/statements/prepared.html#performance))
+    ///
+    /// </div>
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/statements/prepared.html) for more information.
     /// See the documentation of [`PreparedStatement`].
@@ -1336,13 +1352,16 @@ impl Session {
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use scylla::statement::prepared::PreparedStatement;
     ///
-    /// // Prepare the statement for later execution
+    /// // Prepare the statement ONCE for later execution
     /// let prepared: PreparedStatement = session
     ///     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     ///     .await?;
     ///
-    /// // Execute the prepared statement with some values, just like an unprepared statement.
+    /// // Execute the prepared statement multiple times
     /// let to_insert: i32 = 12345;
+    /// session.execute_unpaged(&prepared, (to_insert,)).await?;
+    ///
+    /// let to_insert: i32 = 67890;
     /// session.execute_unpaged(&prepared, (to_insert,)).await?;
     /// # Ok(())
     /// # }
