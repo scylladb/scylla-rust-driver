@@ -62,6 +62,9 @@ pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
 const TRACING_QUERY_PAGE_SIZE: i32 = 1024;
 
+// Query used for schema agreement checks
+const SCHEMA_VERSION_QUERY_STR: &str = "SELECT schema_version FROM system.local WHERE key='local'";
+
 /// Lazily prepared statements for internal driver operations.
 ///
 /// These statements are prepared on first use, avoiding failures during session creation
@@ -71,6 +74,8 @@ struct InternalStatements {
     tracing_session: OnceCell<PreparedStatement>,
     /// Prepared statement for querying tracing events from system_traces.events
     tracing_events: OnceCell<PreparedStatement>,
+    /// Prepared statement for fetching schema version during schema agreement checks
+    schema_version: OnceCell<PreparedStatement>,
 }
 
 impl Default for InternalStatements {
@@ -78,6 +83,7 @@ impl Default for InternalStatements {
         Self {
             tracing_session: OnceCell::new(),
             tracing_events: OnceCell::new(),
+            schema_version: OnceCell::new(),
         }
     }
 }
@@ -1137,6 +1143,20 @@ impl Session {
                 stmt.set_page_size(TRACING_QUERY_PAGE_SIZE);
                 stmt.set_consistency(self.tracing_info_fetch_consistency);
                 self.prepare(stmt).await
+            })
+            .await
+    }
+
+    /// Lazily prepares and returns the statement for fetching schema version.
+    async fn get_schema_version_statement(&self) -> Result<&PreparedStatement, PrepareError> {
+        self.internal_statements
+            .schema_version
+            .get_or_try_init(|| async {
+                let mut statement = Statement::new(SCHEMA_VERSION_QUERY_STR);
+                // Use ONE consistency for schema version queries - this is a local query
+                // that reads from system.local, so ONE is appropriate.
+                statement.set_consistency(Consistency::One);
+                self.prepare(statement).await
             })
             .await
     }
@@ -2273,13 +2293,19 @@ impl Session {
         &self,
         required_node: Option<Uuid>,
     ) -> Result<Option<Uuid>, SchemaAgreementError> {
+        // Get lazily prepared statement for schema version query
+        let schema_version_stmt = self.get_schema_version_statement().await?;
+
         let cluster_state = self.get_cluster_state();
         // The iterator is guaranteed to be nonempty.
         let per_node_connections = cluster_state.iter_working_connections_per_node()?;
 
         // Therefore, this iterator is guaranteed to be nonempty, too.
         let handles = per_node_connections.map(|(host_id, pool)| async move {
-            (host_id, Session::read_node_schema_version(pool).await)
+            (
+                host_id,
+                Self::read_node_schema_version(schema_version_stmt, pool).await,
+            )
         });
         // Hence, this is nonempty, too.
         let versions_results = join_all(handles).await;
@@ -2346,12 +2372,13 @@ impl Session {
     ///
     /// `connections_to_node` iterator must be non-empty!
     async fn read_node_schema_version(
+        schema_version_stmt: &PreparedStatement,
         connections_to_node: impl Iterator<Item = Arc<Connection>>,
     ) -> Result<SchemaNodeResult, SchemaAgreementError> {
         let mut first_broken_connection_err: Option<BrokenConnectionError> = None;
         let mut first_unignorable_err: Option<SchemaAgreementError> = None;
         for connection in connections_to_node {
-            match connection.fetch_schema_version().await {
+            match Self::fetch_schema_version(&connection, schema_version_stmt).await {
                 Ok(schema_version) => return Ok(SchemaNodeResult::Success(schema_version)),
                 Err(SchemaAgreementError::RequestError(
                     RequestAttemptError::BrokenConnectionError(conn_err),
@@ -2376,6 +2403,26 @@ impl Session {
         Ok(SchemaNodeResult::BrokenConnection(
             first_broken_connection_err.unwrap(),
         ))
+    }
+
+    /// Fetches the schema version from a single connection using a prepared statement.
+    async fn fetch_schema_version(
+        connection: &Connection,
+        schema_version_stmt: &PreparedStatement,
+    ) -> Result<Uuid, SchemaAgreementError> {
+        let result = connection
+            .execute_raw_unpaged(schema_version_stmt, SerializedValues::EMPTY)
+            .await?;
+
+        let (version_id,) = result
+            .into_non_error_query_response()?
+            .into_query_result_with_unknown_coordinator()?
+            .into_rows_result()
+            .map_err(SchemaAgreementError::TracesEventsIntoRowsResultError)?
+            .single_row::<(Uuid,)>()
+            .map_err(SchemaAgreementError::SingleRowError)?;
+
+        Ok(version_id)
     }
 
     /// Retrieves the handle to execution profile that is used by this session

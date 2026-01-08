@@ -8,8 +8,8 @@ use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
-    InternalRequestError, RequestAttemptError, ResponseParseError, SchemaAgreementError,
-    TranslationError, UseKeyspaceError,
+    InternalRequestError, RequestAttemptError, ResponseParseError, TranslationError,
+    UseKeyspaceError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
@@ -20,6 +20,7 @@ use crate::frame::{
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
+#[cfg(test)]
 use crate::response::query_result::QueryResult;
 use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse};
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
@@ -62,10 +63,6 @@ use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
-use uuid::Uuid;
-
-// Queries for schema agreement
-const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
 
 // FIXME: Make this constants configurable
 // The term "orphan" refers to stream ids, that were allocated for a {request, response} that no
@@ -820,6 +817,7 @@ impl Connection {
         Ok(response)
     }
 
+    #[cfg(test)]
     pub(crate) async fn query_unpaged(
         &self,
         statement: impl Into<Statement>,
@@ -889,16 +887,15 @@ impl Connection {
         Ok(response)
     }
 
-    #[cfg(test)]
-    async fn execute_raw_unpaged(
+    pub(crate) async fn execute_raw_unpaged(
         &self,
         prepared: &PreparedStatement,
-        values: SerializedValues,
+        values: &SerializedValues,
     ) -> Result<QueryResponse, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
             prepared,
-            &values,
+            values,
             prepared
                 .config
                 .determine_consistency(self.config.default_consistency),
@@ -1292,18 +1289,6 @@ impl Connection {
                 }
             },
         }
-    }
-
-    pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, SchemaAgreementError> {
-        let (version_id,) = self
-            .query_unpaged(LOCAL_VERSION)
-            .await?
-            .into_rows_result()
-            .map_err(SchemaAgreementError::TracesEventsIntoRowsResultError)?
-            .single_row::<(Uuid,)>()
-            .map_err(SchemaAgreementError::SingleRowError)?;
-
-        Ok(version_id)
     }
 
     async fn send_request(
@@ -2391,8 +2376,10 @@ mod tests {
         let prepared = connection.prepare(&insert_query).await.unwrap();
         let mut insert_futures = Vec::new();
         for v in &values {
-            let values = prepared.serialize_values(&(*v,)).unwrap();
-            let fut = async { connection.execute_raw_unpaged(&prepared, values).await };
+            let fut = async {
+                let values = prepared.serialize_values(&(*v,)).unwrap();
+                connection.execute_raw_unpaged(&prepared, &values).await
+            };
             insert_futures.push(fut);
         }
 
@@ -2502,7 +2489,7 @@ mod tests {
                                 .serialize_values(&(j, vec![j as u8; j as usize]))
                                 .unwrap();
                             let response =
-                                conn.execute_raw_unpaged(&prepared, values).await.unwrap();
+                                conn.execute_raw_unpaged(&prepared, &values).await.unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
                             let _nonerror_response =
                                 response.into_non_error_query_response().unwrap();

@@ -200,6 +200,10 @@ pub enum SchemaAgreementError {
     #[error("Failed to find a node with working connection pool: {0}")]
     ConnectionPoolError(#[from] ConnectionPoolError),
 
+    /// Failed to prepare the schema version query.
+    #[error("Failed to prepare schema version query: {0}")]
+    PrepareError(#[from] PrepareError),
+
     /// Failed to execute schema version query on one of the connections.
     ///
     /// The driver attempts to fetch schema version on all connections in the pool (for all nodes).
