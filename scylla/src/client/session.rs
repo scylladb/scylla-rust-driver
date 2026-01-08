@@ -53,6 +53,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::OnceCell;
 use tokio::time::timeout;
 use tracing::{Instrument, debug, error, trace, trace_span};
 use uuid::Uuid;
@@ -60,6 +61,26 @@ use uuid::Uuid;
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
 const TRACING_QUERY_PAGE_SIZE: i32 = 1024;
+
+/// Lazily prepared statements for internal driver operations.
+///
+/// These statements are prepared on first use, avoiding failures during session creation
+/// if the cluster temporarily cannot prepare statements.
+struct InternalStatements {
+    /// Prepared statement for querying tracing session info from system_traces.sessions
+    tracing_session: OnceCell<PreparedStatement>,
+    /// Prepared statement for querying tracing events from system_traces.events
+    tracing_events: OnceCell<PreparedStatement>,
+}
+
+impl Default for InternalStatements {
+    fn default() -> Self {
+        Self {
+            tracing_session: OnceCell::new(),
+            tracing_events: OnceCell::new(),
+        }
+    }
+}
 
 /// `Session` manages connections to the cluster and allows to execute CQL requests.
 pub struct Session {
@@ -75,6 +96,7 @@ pub struct Session {
     tracing_info_fetch_attempts: NonZeroU32,
     tracing_info_fetch_interval: Duration,
     tracing_info_fetch_consistency: Consistency,
+    internal_statements: InternalStatements,
 }
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -1079,6 +1101,7 @@ impl Session {
             tracing_info_fetch_attempts: config.tracing_info_fetch_attempts,
             tracing_info_fetch_interval: config.tracing_info_fetch_interval,
             tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
+            internal_statements: InternalStatements::default(),
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -1088,6 +1111,34 @@ impl Session {
         }
 
         Ok(session)
+    }
+
+    /// Lazily prepares and returns the statement for querying tracing session info.
+    async fn get_tracing_session_statement(&self) -> Result<&PreparedStatement, PrepareError> {
+        self.internal_statements
+            .tracing_session
+            .get_or_try_init(|| async {
+                let mut stmt =
+                    Statement::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
+                stmt.set_page_size(TRACING_QUERY_PAGE_SIZE);
+                stmt.set_consistency(self.tracing_info_fetch_consistency);
+                self.prepare(stmt).await
+            })
+            .await
+    }
+
+    /// Lazily prepares and returns the statement for querying tracing events.
+    async fn get_tracing_events_statement(&self) -> Result<&PreparedStatement, PrepareError> {
+        self.internal_statements
+            .tracing_events
+            .get_or_try_init(|| async {
+                let mut stmt =
+                    Statement::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
+                stmt.set_page_size(TRACING_QUERY_PAGE_SIZE);
+                stmt.set_consistency(self.tracing_info_fetch_consistency);
+                self.prepare(stmt).await
+            })
+            .await
     }
 
     async fn do_query_unpaged(
@@ -1749,9 +1800,8 @@ impl Session {
     pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, TracingError> {
         // tracing_info_fetch_attempts is NonZeroU32 so at least one attempt will be made
         for _ in 0..self.tracing_info_fetch_attempts.get() {
-            let current_try: Option<TracingInfo> = self
-                .try_getting_tracing_info(tracing_id, Some(self.tracing_info_fetch_consistency))
-                .await?;
+            let current_try: Option<TracingInfo> =
+                self.try_getting_tracing_info(tracing_id).await?;
 
             match current_try {
                 Some(tracing_info) => return Ok(tracing_info),
@@ -1783,23 +1833,15 @@ impl Session {
     async fn try_getting_tracing_info(
         &self,
         tracing_id: &Uuid,
-        consistency: Option<Consistency>,
     ) -> Result<Option<TracingInfo>, TracingError> {
-        // Query system_traces.sessions for TracingInfo
-        let mut traces_session_query =
-            Statement::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
-        traces_session_query.config.consistency = consistency;
-        traces_session_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
-
-        // Query system_traces.events for TracingEvents
-        let mut traces_events_query =
-            Statement::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
-        traces_events_query.config.consistency = consistency;
-        traces_events_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
+        // Get lazily prepared statements for tracing queries.
+        // Consistency is set during preparation based on session's tracing_info_fetch_consistency.
+        let traces_session_stmt = self.get_tracing_session_statement().await?;
+        let traces_events_stmt = self.get_tracing_events_statement().await?;
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.do_query_unpaged(&traces_session_query, (tracing_id,)),
-            self.do_query_unpaged(&traces_events_query, (tracing_id,))
+            self.execute_unpaged(traces_session_stmt, (tracing_id,)),
+            self.execute_unpaged(traces_events_stmt, (tracing_id,))
         )?;
 
         // Get tracing info

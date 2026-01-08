@@ -238,6 +238,10 @@ pub enum TracingError {
     )]
     ExecutionError(#[from] ExecutionError),
 
+    /// Failed to prepare a tracing query.
+    #[error("Failed to prepare tracing query: {0}")]
+    PrepareError(#[from] PrepareError),
+
     /// Failed to convert result of system_traces.session query to rows result.
     #[error("Failed to convert result of system_traces.session query to rows result")]
     TracesSessionIntoRowsResultError(IntoRowsResultError),
