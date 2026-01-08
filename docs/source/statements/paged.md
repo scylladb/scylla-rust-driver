@@ -4,16 +4,17 @@ e.g. to reduce latency and/or memory footprint.
 Paged queries allow to receive the whole result page by page, with a configurable page size.
 In fact, most SELECTs queries should be done with paging, to avoid big load on cluster and large memory footprint.
 
-> ***Warning***\
-> Issuing unpaged SELECTs (`Session::query_unpaged` or `Session::execute_unpaged`)
-> may have dramatic performance consequences! **BEWARE!**\
-> If the result set is big (or, e.g., there are a lot of tombstones), those atrocities can happen:
-> - cluster may experience high load,
-> - queries may time out,
-> - the driver may devour a lot of RAM,
-> - latency will likely spike.
->
-> Stay safe. Page your SELECTs.
+:::{warning}
+Issuing unpaged SELECTs (`Session::query_unpaged` or `Session::execute_unpaged`)
+may have dramatic performance consequences! **BEWARE!**\
+If the result set is big (or, e.g., there are a lot of tombstones), those atrocities can happen:
+ - cluster may experience high load,
+ - queries may time out,
+ - the driver may devour a lot of RAM,
+ - latency will likely spike.
+
+Stay safe. Page your SELECTs.
+:::
 
 ## `QueryPager`
 
@@ -36,13 +37,14 @@ deserialize rows.
 > (such as slices, `&str`, etc.) in order to save allocations, you should use the manual paging
 > method (described in a section **Manual Paging** below).
 
-> ***Warning***\
-> In case of unprepared variant (`Session::query_iter`) if the values are not empty
-> driver will first fully prepare a statement (which means issuing additional request to each
-> node in a cluster). This will have a performance penalty - how big it is depends on
-> the size of your cluster (more nodes - more requests) and the size of returned
-> result (more returned pages - more amortized penalty). In any case, it is preferable to
-> use `Session::execute_iter`.
+:::{warning}
+In case of unprepared variant (`Session::query_iter`) if the values are not empty
+driver will first fully prepare a statement (which means issuing additional request to each
+node in a cluster). This will have a performance penalty - how big it is depends on
+the size of your cluster (more nodes - more requests) and the size of returned
+result (more returned pages - more amortized penalty). In any case, it is preferable to
+use `Session::execute_iter`.
+:::
 
 ### Examples
 Use `query_iter` to perform an [unprepared query](unprepared.md) with paging:
@@ -177,10 +179,13 @@ loop {
 # }
 ```
 
-> ***Warning***\
-> If the values are not empty, driver first needs to send a `PREPARE` request
-> in order to fetch information required to serialize values. This will affect
-> performance because 2 round trips will be required instead of 1.
+:::{warning}
+If the values are not empty, driver first needs to send a `PREPARE` request
+in order to fetch information required to serialize values. This will affect
+performance because 2 round trips will be required instead of 1.
+
+Use `execute_single_page` instead (see example below) to avoid this problem.
+:::
 
 On a `PreparedStatement`:
 ```rust
