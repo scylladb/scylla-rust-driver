@@ -30,6 +30,8 @@ harness = false
 [features]
 # Enables support for CQL ser/de of Secrecy type from secrecy 0.8 crate.
 secrecy-08 = ["dep:secrecy-08"]
+# Enables support for CQL ser/de of Secrecy type from secrecy 0.10 crate.
+secrecy-10 = ["dep:secrecy-10"]
 # Enables support for CQL ser/de of time/date types from time 0.3 crate.
 time-03 = ["dep:time-03"]
 # Enables support for CQL ser/de of time/date types from chrono 0.4 crate.
@@ -45,6 +47,7 @@ full-serialization = [
     "chrono-04",
     "time-03",
     "secrecy-08",
+    "secrecy-10",
     "num-bigint-03",
     "num-bigint-04",
     "bigdecimal-04",
@@ -79,6 +82,7 @@ chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, 
     "alloc",
 ] }
 secrecy-08 = { package = "secrecy", version = "0.8", optional = true }
+secrecy-10 = { package = "secrecy", version = "0.10", optional = true }
 num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
 num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }

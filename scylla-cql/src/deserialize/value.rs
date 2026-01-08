@@ -679,6 +679,66 @@ where
     }
 }
 
+#[cfg(feature = "secrecy-10")]
+impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata> for secrecy_10::SecretBox<T>
+where
+    T: DeserializeValue<'frame, 'metadata> + secrecy_10::zeroize::Zeroize,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
+            .map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)
+            .map(|v| secrecy_10::SecretBox::new(Box::new(v)))
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
+// Special implementation for SecretString (SecretBox<str>)
+#[cfg(feature = "secrecy-10")]
+impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for secrecy_10::SecretString {
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        <String as DeserializeValue<'frame, 'metadata>>::type_check(typ)
+            .map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        <String as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)
+            .map(secrecy_10::SecretString::from)
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
+// Special implementation for SecretSlice (SecretBox<[S]>)
+#[cfg(feature = "secrecy-10")]
+impl<'frame, 'metadata, S> DeserializeValue<'frame, 'metadata> for secrecy_10::SecretSlice<S>
+where
+    S: DeserializeValue<'frame, 'metadata> + secrecy_10::zeroize::Zeroize,
+    [S]: secrecy_10::zeroize::Zeroize,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        <Vec<S> as DeserializeValue<'frame, 'metadata>>::type_check(typ)
+            .map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        <Vec<S> as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)
+            .map(secrecy_10::SecretSlice::from)
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
 // collections
 
 make_error_replace_rust_name!(

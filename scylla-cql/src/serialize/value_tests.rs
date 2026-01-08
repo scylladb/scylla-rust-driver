@@ -42,8 +42,15 @@ impl SerializeValue for SerializeWithCustomError {
     }
 }
 
-#[cfg(feature = "secrecy-08")]
-impl secrecy_08::Zeroize for SerializeWithCustomError {
+// When both secrecy features are enabled, prefer secrecy-10's zeroize.
+// They both refer to the same trait.
+#[cfg(feature = "secrecy-10")]
+impl secrecy_10::zeroize::Zeroize for SerializeWithCustomError {
+    fn zeroize(&mut self) {}
+}
+
+#[cfg(all(feature = "secrecy-08", not(feature = "secrecy-10")))]
+impl secrecy_08::zeroize::Zeroize for SerializeWithCustomError {
     fn zeroize(&mut self) {}
 }
 
@@ -162,6 +169,16 @@ fn test_secrecy_08_errors() {
     verify_typeck_error_in_wrapper::<Secret<i32>>(Secret::new(123));
     verify_custom_error_in_wrapper::<Secret<SerializeWithCustomError>>(Secret::new(
         SerializeWithCustomError,
+    ));
+}
+
+#[cfg(feature = "secrecy-10")]
+#[test]
+fn test_secrecy_10_errors() {
+    use secrecy_10::SecretBox;
+    verify_typeck_error_in_wrapper::<SecretBox<i32>>(SecretBox::new(Box::new(123)));
+    verify_custom_error_in_wrapper::<SecretBox<SerializeWithCustomError>>(SecretBox::new(
+        Box::new(SerializeWithCustomError),
     ));
 }
 
@@ -2556,11 +2573,53 @@ fn cqlvalue_serialization() {
 
 #[cfg(feature = "secrecy-08")]
 #[test]
-fn secret_serialization() {
+fn secret_08_serialization() {
     let secret = secrecy_08::Secret::new(987654i32);
     assert_eq!(
         do_serialize(secret, &ColumnType::Native(NativeType::Int)),
         vec![0, 0, 0, 4, 0x00, 0x0f, 0x12, 0x06]
+    );
+}
+
+#[cfg(feature = "secrecy-10")]
+#[test]
+fn secret_010_box_serialization() {
+    let secret = secrecy_10::SecretBox::new(Box::new(987654i32));
+    assert_eq!(
+        do_serialize(secret, &ColumnType::Native(NativeType::Int)),
+        vec![0, 0, 0, 4, 0x00, 0x0f, 0x12, 0x06]
+    );
+}
+
+#[cfg(feature = "secrecy-10")]
+#[test]
+fn secret_010_string_serialization() {
+    let secret = secrecy_10::SecretString::from("hello".to_string());
+    assert_eq!(
+        do_serialize(&secret, &ColumnType::Native(NativeType::Text)),
+        vec![0, 0, 0, 5, b'h', b'e', b'l', b'l', b'o']
+    );
+}
+
+#[cfg(feature = "secrecy-10")]
+#[test]
+fn secret_010_slice_serialization() {
+    let secret = secrecy_10::SecretSlice::from(vec![1i32, 2, 3]);
+    assert_eq!(
+        do_serialize(
+            &secret,
+            &ColumnType::Collection {
+                frozen: false,
+                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int)))
+            }
+        ),
+        vec![
+            0, 0, 0, 28, // total size (4 bytes for count + 24 bytes for elements)
+            0, 0, 0, 3, // 3 elements
+            0, 0, 0, 4, 0, 0, 0, 1, // 1_i32 (4 bytes size + 4 bytes value)
+            0, 0, 0, 4, 0, 0, 0, 2, // 2_i32
+            0, 0, 0, 4, 0, 0, 0, 3, // 3_i32
+        ]
     );
 }
 
