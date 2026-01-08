@@ -484,27 +484,23 @@ async fn test_views_in_schema_info() {
     let tables = keyspace_meta
         .tables
         .keys()
-        .collect::<std::collections::HashSet<&String>>();
+        .map(|s| s.as_str())
+        .collect::<std::collections::HashSet<&str>>();
 
     let views = keyspace_meta
         .views
         .keys()
-        .collect::<std::collections::HashSet<&String>>();
+        .map(|s| s.as_str())
+        .collect::<std::collections::HashSet<&str>>();
     let views_base_table = keyspace_meta
         .views
         .values()
-        .map(|view_meta| &view_meta.base_table_name)
-        .collect::<std::collections::HashSet<&String>>();
+        .map(|view_meta| view_meta.base_table_name.as_str())
+        .collect::<std::collections::HashSet<&str>>();
 
-    assert_eq!(tables, std::collections::HashSet::from([&"t".to_string()]));
-    assert_eq!(
-        views,
-        std::collections::HashSet::from([&"mv1".to_string(), &"mv2".to_string()])
-    );
-    assert_eq!(
-        views_base_table,
-        std::collections::HashSet::from([&"t".to_string()])
-    );
+    assert_eq!(tables, std::collections::HashSet::from(["t"]));
+    assert_eq!(views, std::collections::HashSet::from(["mv1", "mv2"]));
+    assert_eq!(views_base_table, std::collections::HashSet::from(["t"]));
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

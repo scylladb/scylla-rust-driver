@@ -348,13 +348,13 @@ pub(crate) async fn resolve_contact_points(
     // Find IP addresses of all known nodes passed in the config
     let mut initial_peers: Vec<ResolvedContactPoint> = Vec::with_capacity(known_nodes.len());
 
-    let mut to_resolve: Vec<&String> = Vec::new();
+    let mut to_resolve: Vec<&str> = Vec::new();
     let mut hostnames: Vec<String> = Vec::new();
 
     for node in known_nodes.iter() {
         match node {
             KnownNode::Hostname(hostname) => {
-                to_resolve.push(hostname);
+                to_resolve.push(hostname.as_str());
                 hostnames.push(hostname.clone());
             }
             KnownNode::Address(address) => {
