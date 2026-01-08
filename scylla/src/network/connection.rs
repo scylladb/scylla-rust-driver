@@ -1064,23 +1064,6 @@ impl Connection {
         }
     }
 
-    /// Executes a query and fetches its results over multiple pages, using
-    /// the asynchronous iterator interface.
-    #[cfg(test)]
-    pub(crate) async fn query_iter(
-        self: Arc<Self>,
-        query: Statement,
-    ) -> Result<QueryPager, NextRowError> {
-        let consistency = query
-            .config
-            .determine_consistency(self.config.default_consistency);
-        let serial_consistency = query.config.serial_consistency.flatten();
-
-        QueryPager::new_for_connection_query_iter(query, self, consistency, serial_consistency)
-            .await
-            .map_err(NextRowError::NextPageError)
-    }
-
     /// Executes a prepared statements and fetches its results over multiple pages, using
     /// the asynchronous iterator interface.
     pub(crate) async fn execute_iter(
@@ -2316,6 +2299,7 @@ mod tests {
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };
     use scylla_cql::frame::types;
+    use scylla_cql::serialize::row::SerializedValues;
     use scylla_proxy::{
         Condition, Node, Proxy, Reaction, RequestFrame, RequestOpcode, RequestReaction,
         RequestRule, ResponseFrame, ShardAwareness,
@@ -2336,13 +2320,13 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// Tests for Connection::query_iter
+    /// Tests for Connection::execute_iter
     /// 1. SELECT from an empty table.
     /// 2. Create table and insert ints 0..100.
-    ///    Then use query_iter with page_size set to 7 to select all 100 rows.
-    /// 3. INSERT query_iter should work and not return any rows.
+    ///    Then use execute_iter with page_size set to 7 to select all 100 rows.
+    /// 3. INSERT execute_iter should work and not return any rows.
     #[tokio::test]
-    async fn connection_query_iter_test() {
+    async fn connection_execute_iter_test() {
         use crate::client::session_builder::SessionBuilder;
 
         setup_tracing();
@@ -2370,11 +2354,11 @@ mod tests {
             session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
             session.use_keyspace(ks.clone(), false).await.unwrap();
             session
-                .ddl("DROP TABLE IF EXISTS connection_query_iter_tab")
+                .ddl("DROP TABLE IF EXISTS connection_execute_iter_tab")
                 .await
                 .unwrap();
             session
-                .ddl("CREATE TABLE IF NOT EXISTS connection_query_iter_tab (p int primary key)")
+                .ddl("CREATE TABLE IF NOT EXISTS connection_execute_iter_tab (p int primary key)")
                 .await
                 .unwrap();
         }
@@ -2386,10 +2370,11 @@ mod tests {
 
         // 1. SELECT from an empty table returns query result where rows are Some(Vec::new())
         let select_query =
-            Statement::new("SELECT p FROM connection_query_iter_tab").with_page_size(7);
+            Statement::new("SELECT p FROM connection_execute_iter_tab").with_page_size(7);
+        let prepared_select = connection.prepare(&select_query).await.unwrap();
         let empty_res = connection
             .clone()
-            .query_iter(select_query.clone())
+            .execute_iter(prepared_select.clone(), SerializedValues::new())
             .await
             .unwrap()
             .rows_stream::<(i32,)>()
@@ -2399,9 +2384,9 @@ mod tests {
             .unwrap();
         assert!(empty_res.is_empty());
 
-        // 2. Insert 100 and select using query_iter with page_size 7
+        // 2. Insert 100 and select using execute_iter with page_size 7
         let values: Vec<i32> = (0..100).collect();
-        let insert_query = Statement::new("INSERT INTO connection_query_iter_tab (p) VALUES (?)")
+        let insert_query = Statement::new("INSERT INTO connection_execute_iter_tab (p) VALUES (?)")
             .with_page_size(7);
         let prepared = connection.prepare(&insert_query).await.unwrap();
         let mut insert_futures = Vec::new();
@@ -2415,7 +2400,7 @@ mod tests {
 
         let mut results: Vec<i32> = connection
             .clone()
-            .query_iter(select_query.clone())
+            .execute_iter(prepared_select, SerializedValues::new())
             .await
             .unwrap()
             .rows_stream::<(i32,)>()
@@ -2426,11 +2411,11 @@ mod tests {
         results.sort_unstable(); // Clippy recommended to use sort_unstable instead of sort()
         assert_eq!(results, values);
 
-        // 3. INSERT query_iter should work and not return any rows.
+        // 3. INSERT execute_iter should work and not return any rows.
+        let insert_stmt = Statement::new("INSERT INTO connection_execute_iter_tab (p) VALUES (0)");
+        let prepared_insert = connection.prepare(&insert_stmt).await.unwrap();
         let insert_res1 = connection
-            .query_iter(Statement::new(
-                "INSERT INTO connection_query_iter_tab (p) VALUES (0)",
-            ))
+            .execute_iter(prepared_insert, SerializedValues::new())
             .await
             .unwrap()
             .rows_stream::<()>()

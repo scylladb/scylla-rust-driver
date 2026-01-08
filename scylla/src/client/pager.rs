@@ -1078,43 +1078,6 @@ If you are using this API, you are probably doing something wrong."
         Self::new_from_worker_future(worker_task, receiver).await
     }
 
-    #[cfg(test)]
-    pub(crate) async fn new_for_connection_query_iter(
-        query: Statement,
-        connection: Arc<Connection>,
-        consistency: Consistency,
-        serial_consistency: Option<SerialConsistency>,
-    ) -> Result<Self, NextPageError> {
-        let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
-
-        let page_size = query.get_validated_page_size();
-        let timeout = query.get_request_timeout().or_else(|| {
-            query
-                .get_execution_profile_handle()?
-                .access()
-                .request_timeout
-        });
-
-        let worker_task = async move {
-            let worker = SingleConnectionPagerWorker {
-                sender: sender.into(),
-                fetcher: |paging_state| {
-                    connection.query_raw_with_consistency(
-                        &query,
-                        consistency,
-                        serial_consistency,
-                        Some(page_size),
-                        paging_state,
-                    )
-                },
-                timeout,
-            };
-            worker.work().await
-        };
-
-        Self::new_from_worker_future(worker_task, receiver).await
-    }
-
     pub(crate) async fn new_for_connection_execute_iter(
         prepared: PreparedStatement,
         values: SerializedValues,
