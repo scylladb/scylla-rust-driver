@@ -414,6 +414,7 @@ async fn test_pager_timeouts() {
             }
 
             /* Teardown */
+            running_proxy.turn_off_rules();
             session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
             running_proxy
