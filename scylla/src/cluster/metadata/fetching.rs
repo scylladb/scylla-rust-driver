@@ -75,7 +75,7 @@ enum PreColumnType {
 impl PreColumnType {
     pub(crate) fn into_cql_type(
         self,
-        keyspace_name: &String,
+        keyspace_name: &str,
         keyspace_udts: &PerTable<Arc<UserDefinedType<'static>>>,
     ) -> Result<ColumnType<'static>, MissingUserDefinedType> {
         match self {
@@ -103,7 +103,7 @@ impl PreColumnType {
                     None => {
                         return Err(MissingUserDefinedType {
                             name,
-                            keyspace: keyspace_name.clone(),
+                            keyspace: keyspace_name.to_owned(),
                         });
                     }
                 };
@@ -123,7 +123,7 @@ enum PreCollectionType {
 impl PreCollectionType {
     pub(crate) fn into_collection_type(
         self,
-        keyspace_name: &String,
+        keyspace_name: &str,
         keyspace_udts: &PerTable<Arc<UserDefinedType<'static>>>,
     ) -> Result<CollectionType<'static>, MissingUserDefinedType> {
         match self {
