@@ -24,16 +24,19 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           fetch-depth: 0
-      - name: Set up Python
-        uses: actions/setup-python@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: '3.10'
-      - name: Set up env
-        run: make -C docs setupenv
+          working-directory: docs
+          enable-cache: true
+
       - name: Build docs
         run: make -C docs multiversion
+
       - name: Build redirects
         run: make -C docs redirects
+
       - name: Deploy docs to GitHub Pages
         run: ./docs/_utils/deploy.sh
         env:
