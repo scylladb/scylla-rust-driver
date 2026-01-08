@@ -3,6 +3,12 @@
 Prepared statements provide much better performance than unprepared statements,
 but they need to be prepared before use.
 
+:::{warning}
+**Prepare a statement once** and store it (e.g., in a variable, static, or struct field), then **execute it multiple times** with different values.
+Preparing a statement is a costly operation involving communication with database nodes and caching.
+Repeatedly calling `prepare()` for the same statement before each execution wastes resources and significantly degrades performance.
+:::
+
 Benefits that prepared statements have to offer:
 - Type safety - thanks to metadata provided by the server, the driver can verify bound values' types before serialization. This way, we can be always sure that the Rust type provided by the user is compatible (and if not, the error is returned) with the destined native type. The same applies for deserialization.
 - Performance - when executing an unprepared statement with non-empty values list, the driver
@@ -16,13 +22,16 @@ prepares the statement before execution. The reason for this is to provide type 
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::statement::prepared::PreparedStatement;
 
-// Prepare the statement for later execution
+// Prepare the statement ONCE for later execution
 let prepared: PreparedStatement = session
     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     .await?;
 
-// Execute the prepared statement with some values, just like an unprepared statement.
+// Execute the prepared statement MULTIPLE TIMES with different values
 let to_insert: i32 = 12345;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
+
+let to_insert: i32 = 67890;
 session.execute_unpaged(&prepared, (to_insert,)).await?;
 # Ok(())
 # }

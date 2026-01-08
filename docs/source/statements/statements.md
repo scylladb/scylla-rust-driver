@@ -26,6 +26,11 @@ This is **NOT** strictly related to content of the CQL statement string.
 > enabling advanced load balancing (so better performance!) of all further executions of that prepared statement.\
 > ***Key take-over:*** always prepare statements that you are going to execute multiple times.
 
+:::{warning}
+**Prepare a statement once** (e.g., store it in a variable, static, or struct field), then **execute it multiple times** with different values.
+Do NOT prepare the same statement before each execution - this defeats the purpose of prepared statements and significantly degrades performance.
+:::
+
 | Statement comparison | Unprepared                                | Prepared                                                                                                        |
 |----------------------|-------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
 | Exposed Session API  | `query_*`                                 | `execute_*`                                                                                                     |
