@@ -73,7 +73,8 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     let cluster_size = session.get_cluster_state().get_nodes_info().len();
     let ks = unique_keyspace_name();
     let mut create_ks = format!(
-        "CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}",
+        "CREATE KEYSPACE {} WITH
+            REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}",
         ks,
         cluster_size + 1
     );
@@ -125,7 +126,13 @@ async fn test_iter_methods_with_modification_statements() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH
+        REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+        ))
+        .await
+        .unwrap();
     session
         .ddl(format!(
             "CREATE TABLE IF NOT EXISTS {ks}.t (a int, b int, c text, primary key (a, b))"
@@ -170,7 +177,13 @@ async fn test_iter_methods_when_altering_table() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH
+        REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+        ))
+        .await
+        .unwrap();
     session
         .ddl(format!(
             "CREATE TABLE IF NOT EXISTS {ks}.t (a int, b int, d int, primary key (a, b))"
@@ -250,14 +263,17 @@ async fn test_pager_timeouts() {
                 .unwrap();
 
             session
-            .ddl(format!(
-                "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+                .ddl(format!(
+                "CREATE KEYSPACE IF NOT EXISTS {ks} WITH
+                    REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
             ))
-            .await
-            .unwrap();
+                .await
+                .unwrap();
 
             session
-                .ddl(format!("CREATE TABLE IF NOT EXISTS {ks}.t (a int PRIMARY KEY)"))
+                .ddl(format!(
+                    "CREATE TABLE IF NOT EXISTS {ks}.t (a int PRIMARY KEY)"
+                ))
                 .await
                 .unwrap();
 
@@ -268,7 +284,10 @@ async fn test_pager_timeouts() {
                     .unwrap();
             }
 
-            let mut prepared = session.prepare(format!("SELECT a FROM {ks}.t")).await.unwrap();
+            let mut prepared = session
+                .prepare(format!("SELECT a FROM {ks}.t"))
+                .await
+                .unwrap();
             // Important to have multiple pages.
             prepared.set_page_size(1);
             // Important for retries to fire.
@@ -282,16 +301,17 @@ async fn test_pager_timeouts() {
                 prepared.set_request_timeout(Some(timeout));
 
                 running_proxy.running_nodes.iter_mut().for_each(|node| {
-                    node.change_request_rules(Some(vec![
-                        RequestRule(
-                            Condition::RequestOpcode(RequestOpcode::Execute)
-                                .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
-                            RequestReaction::delay(timeout + Duration::from_millis(10))
-                        )
-                    ]));
+                    node.change_request_rules(Some(vec![RequestRule(
+                        Condition::RequestOpcode(RequestOpcode::Execute)
+                            .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
+                        RequestReaction::delay(timeout + Duration::from_millis(10)),
+                    )]));
                 });
 
-                let pager_err = session.execute_iter(prepared.clone(), ()).await.unwrap_err();
+                let pager_err = session
+                    .execute_iter(prepared.clone(), ())
+                    .await
+                    .unwrap_err();
                 let PagerExecutionError::NextPageError(NextPageError::RequestFailure(
                     RequestError::RequestTimeout(got_timeout),
                 )) = pager_err
@@ -314,13 +334,13 @@ async fn test_pager_timeouts() {
                             Condition::RequestOpcode(RequestOpcode::Execute)
                                 .and(Condition::not(Condition::ConnectionRegisteredAnyEvent))
                                 .and(Condition::TrueForLimitedTimes(1)),
-                            RequestReaction::noop()
+                            RequestReaction::noop(),
                         ),
                         RequestRule(
                             Condition::RequestOpcode(RequestOpcode::Execute)
                                 .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
-                            RequestReaction::delay(timeout + Duration::from_millis(100))
-                        )
+                            RequestReaction::delay(timeout + Duration::from_millis(100)),
+                        ),
                     ]));
                 });
 
@@ -363,22 +383,23 @@ async fn test_pager_timeouts() {
 
                 // Set timeout through the execution profile.
                 {
-                    let profile = ExecutionProfile::builder().request_timeout(Some(timeout)).build();
+                    let profile = ExecutionProfile::builder()
+                        .request_timeout(Some(timeout))
+                        .build();
                     let handle = profile.into_handle();
                     prepared.set_execution_profile_handle(Some(handle));
                     prepared.set_request_timeout(None);
                 }
 
                 running_proxy.running_nodes.iter_mut().for_each(|node| {
-                    node.change_request_rules(Some(vec![
-                        RequestRule(
-                            Condition::RequestOpcode(RequestOpcode::Execute)
-                                .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
-                            RequestReaction::forge_with_error_lazy_delay(
-                                Box::new(example_db_errors::overloaded),
-                                Some(per_retry_delay))
-                        )
-                    ]));
+                    node.change_request_rules(Some(vec![RequestRule(
+                        Condition::RequestOpcode(RequestOpcode::Execute)
+                            .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
+                        RequestReaction::forge_with_error_lazy_delay(
+                            Box::new(example_db_errors::overloaded),
+                            Some(per_retry_delay),
+                        ),
+                    )]));
                 });
 
                 let pager_err = session.execute_iter(prepared, ()).await.unwrap_err();
@@ -397,7 +418,8 @@ async fn test_pager_timeouts() {
 
             running_proxy
         },
-    ).await;
+    )
+    .await;
 
     match res {
         Ok(()) => (),
