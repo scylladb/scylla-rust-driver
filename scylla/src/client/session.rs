@@ -1318,10 +1318,15 @@ impl Session {
     /// * Database doesn't need to parse the statement string upon each execution (only once)
     /// * They are properly load balanced using token aware routing
     ///
-    /// > ***Warning***\
-    /// > For token/shard aware load balancing to work properly, all partition key values
-    /// > must be sent as bound values
-    /// > (see [performance section](https://rust-driver.docs.scylladb.com/stable/statements/prepared.html#performance))
+    /// <div class="warning">
+    ///
+    /// **Warning!**
+    ///
+    /// For token/shard aware load balancing to work properly, all partition key values
+    /// must be sent as bound values
+    /// (see [performance section](https://rust-driver.docs.scylladb.com/stable/statements/prepared.html#performance))
+    ///
+    /// </div>
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/statements/prepared.html) for more information.
     /// See the documentation of [`PreparedStatement`].
