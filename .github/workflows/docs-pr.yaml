@@ -9,6 +9,8 @@ on:
       - 'branch-*'
     paths:
       - "docs/**"
+      - ".github/workflows/docs-pr.yaml"
+  workflow_dispatch:
 
 jobs:
   build:
