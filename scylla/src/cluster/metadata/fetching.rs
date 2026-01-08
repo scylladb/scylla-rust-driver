@@ -1,3 +1,19 @@
+//! Metadata fetching and processing module.
+//!
+//! This module is responsible for querying cluster metadata from the control connection,
+//! including information about peers (nodes in the cluster), keyspaces, tables, views,
+//! and user-defined types (UDTs).
+//!
+//! The main entry point is [`ControlConnection::query_metadata`], which fetches all
+//! metadata needed to maintain an up-to-date view of the cluster topology and schema.
+//!
+//! Key functionality includes:
+//! - Querying peer information from `system.peers` and `system.local` tables
+//! - Fetching keyspace metadata including replication strategies
+//! - Loading table and materialized view schemas from `system_schema` tables
+//! - Processing user-defined types with proper dependency resolution via topological sort
+//! - Parsing CQL type strings into structured type representations
+
 use std::borrow::BorrowMut;
 use std::cell::Cell;
 use std::collections::HashMap;

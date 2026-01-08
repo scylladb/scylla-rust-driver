@@ -1,3 +1,18 @@
+//! This module contains the [`MetadataReader`] struct, which is responsible for
+//! fetching and maintaining cluster metadata through a control connection.
+//!
+//! The control connection is a dedicated connection to one of the cluster nodes
+//! that is used to:
+//! - Fetch cluster metadata (topology, schema, token ring information)
+//! - Receive server-side events (topology changes, schema changes, status changes)
+//!
+//! [`MetadataReader`] handles control connection lifecycle, including:
+//! - Initial connection establishment to contact points
+//! - Automatic reconnection to other known peers on connection failure
+//! - Fallback to initial contact points when all known peers are unreachable
+//! - Host filtering to ensure the control connection is established to an accepted node
+//!
+
 use std::sync::Arc;
 use std::time::Duration;
 
