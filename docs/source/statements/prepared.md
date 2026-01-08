@@ -34,19 +34,19 @@ must be sent as bound values (see [performance section](#performance))
 :::
 
 :::{warning}
-Don't use `execute` to receive large amounts of data.\
-By default the query is unpaged and might cause heavy load on the cluster.
-In such cases set a page size and use a [paged query](paged.md) instead.
+Don't use `execute_unpaged` to receive large amounts of data.\
+Unpaged requests might cause heavy load on the cluster.
+In reality, its almost always wrong to use unpaged SELECTs.
 
-When page size is set, `execute` will return only the first page of results.
+In such cases use a [paged query](paged.md) instead.
 :::
 
 ### `Session::prepare`
 `Session::prepare` takes statement text and prepares the statement on all nodes and shards.
 If at least one succeeds returns success.
 
-### `Session::execute`
-`Session::execute` takes a prepared statement and bound values and executes the statement.
+### `Session::execute_[unpaged/single_page/iter]`
+`Session::execute_[unpaged/single_page/iter]` family of functions all take a prepared statement and bound values and execute the statement.
 Passing values and the result is the same as in [unprepared statement](unprepared.md).
 
 ### Statement options
