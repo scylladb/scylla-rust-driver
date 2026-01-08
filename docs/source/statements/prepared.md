@@ -28,16 +28,18 @@ session.execute_unpaged(&prepared, (to_insert,)).await?;
 # }
 ```
 
-> ***Warning***\
-> For token/shard aware load balancing to work properly, all partition key values
-> must be sent as bound values (see [performance section](#performance))
+:::{warning}
+For token/shard aware load balancing to work properly, all partition key values
+must be sent as bound values (see [performance section](#performance))
+:::
 
-> ***Warning***\
-> Don't use `execute` to receive large amounts of data.\
-> By default the query is unpaged and might cause heavy load on the cluster.
-> In such cases set a page size and use a [paged query](paged.md) instead.
->
-> When page size is set, `execute` will return only the first page of results.
+:::{warning}
+Don't use `execute` to receive large amounts of data.\
+By default the query is unpaged and might cause heavy load on the cluster.
+In such cases set a page size and use a [paged query](paged.md) instead.
+
+When page size is set, `execute` will return only the first page of results.
+:::
 
 ### `Session::prepare`
 `Session::prepare` takes statement text and prepares the statement on all nodes and shards.
@@ -89,9 +91,11 @@ for more options.
 Prepared statement have good performance, much better than unprepared statements.
 By default they use shard/token aware load balancing.
 
-> **Always** pass partition key values as bound values.
-> Otherwise the driver can't hash them to compute partition key
-> and they will be sent to the wrong node, which worsens performance.
+:::{warning}
+**Always** pass partition key values as bound values.
+Otherwise the driver can't hash them to compute partition key
+and they will be sent to the wrong node, which worsens performance.
+:::
 
 Let's say we have a table like this:
 
