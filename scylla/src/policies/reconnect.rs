@@ -52,10 +52,7 @@ impl ReconnectPolicySession for HostExponentialReconnectPolicy {
         // See: https://github.com/rust-lang/rust/pull/27186
         let jitter_multiplier = rand::rng().random_range(self.jitter_range.clone());
         let jittered_delay = self.current_delay.mul_f64(jitter_multiplier);
-        std::cmp::max(
-            std::cmp::min(self.max_fill_backoff, jittered_delay),
-            self.min_fill_backoff,
-        )
+        jittered_delay.clamp(self.min_fill_backoff, self.max_fill_backoff)
     }
 
     fn on_successful_fill(&mut self) {
