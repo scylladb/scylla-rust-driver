@@ -22,7 +22,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
 
 use crate::cluster::KnownNode;
-use crate::cluster::control_connection::ControlConnection;
+use crate::cluster::control_connection::{ControlConnection, ControlConnectionCache};
 use crate::cluster::metadata::{Metadata, PeerEndpoint, UntranslatedEndpoint};
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
@@ -81,6 +81,7 @@ pub(crate) struct MetadataReader {
     control_connection_state: ControlConnectionState,
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<UntranslatedEndpoint>,
+    cc_cache: Arc<ControlConnectionCache>,
 }
 
 impl MetadataReader {
@@ -110,10 +111,13 @@ impl MetadataReader {
                 .clone(),
         );
 
+        let cc_cache = Arc::new(ControlConnectionCache::new());
+
         let control_connection_state = Self::make_control_connection(
             control_connection_endpoint,
             connection_config.clone(),
             request_serverside_timeout,
+            Arc::clone(&cc_cache),
         )
         .await;
 
@@ -130,6 +134,7 @@ impl MetadataReader {
             fetch_schema,
             host_filter: host_filter.clone(),
             initial_known_nodes,
+            cc_cache,
         })
     }
 
@@ -302,6 +307,7 @@ impl MetadataReader {
                 peer,
                 self.control_connection_config.clone(),
                 self.request_serverside_timeout,
+                Arc::clone(&self.cc_cache),
             )
             .await;
 
@@ -414,6 +420,7 @@ impl MetadataReader {
                         control_connection_endpoint,
                         self.control_connection_config.clone(),
                         self.request_serverside_timeout,
+                        Arc::clone(&self.cc_cache),
                     )
                     .await;
                 }
@@ -425,6 +432,7 @@ impl MetadataReader {
         endpoint: UntranslatedEndpoint,
         mut config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
+        cache: Arc<ControlConnectionCache>,
     ) -> ControlConnectionState {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         // setting event_sender field in connection config will cause control connection to
@@ -440,7 +448,7 @@ impl MetadataReader {
 
         match open_result {
             Ok((con, recv)) => ControlConnectionState::Working(WorkingControlConnection {
-                connection: ControlConnection::new(Arc::new(con))
+                connection: ControlConnection::new(Arc::new(con), cache)
                     .override_serverside_timeout(request_serverside_timeout),
                 error_channel: recv,
                 events_channel: receiver,

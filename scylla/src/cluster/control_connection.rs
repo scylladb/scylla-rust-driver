@@ -17,20 +17,22 @@ use crate::statement::prepared::PreparedStatement;
 
 const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
+pub(crate) type ControlConnectionCache = DashMap<String, PreparedStatement>;
+
 /// The single connection used to fetch metadata and receive events from the cluster.
 pub(super) struct ControlConnection {
     conn: Arc<Connection>,
     /// The custom server-side timeout set for requests executed on the control connection.
     overridden_serverside_timeout: Option<Duration>,
-    cache: DashMap<String, PreparedStatement>,
+    cache: Arc<ControlConnectionCache>,
 }
 
 impl ControlConnection {
-    pub(super) fn new(conn: Arc<Connection>) -> Self {
+    pub(super) fn new(conn: Arc<Connection>, cache: Arc<ControlConnectionCache>) -> Self {
         Self {
             conn,
             overridden_serverside_timeout: None,
-            cache: DashMap::new(),
+            cache,
         }
     }
 
@@ -127,6 +129,7 @@ mod tests {
 
     use std::num::NonZeroU16;
 
+    use crate::cluster::control_connection::ControlConnectionCache;
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
     use crate::network::open_connection;
@@ -264,7 +267,8 @@ mod tests {
             .unwrap();
 
             let connected_to_scylladb = conn.get_shard_info().is_some();
-            let conn_with_default_timeout = ControlConnection::new(Arc::new(conn));
+            let conn_with_default_timeout =
+                ControlConnection::new(Arc::new(conn), Arc::new(ControlConnectionCache::new()));
 
             // No custom timeout set.
             {
