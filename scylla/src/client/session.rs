@@ -53,13 +53,38 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::OnceCell;
 use tokio::time::timeout;
 use tracing::{Instrument, debug, error, trace, trace_span};
 use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
-const TRACING_QUERY_PAGE_SIZE: i32 = 1024;
+// Query used for schema agreement checks
+const SCHEMA_VERSION_QUERY_STR: &str = "SELECT schema_version FROM system.local WHERE key='local'";
+
+/// Lazily prepared statements for internal driver operations.
+///
+/// These statements are prepared on first use, avoiding failures during session creation
+/// if the cluster temporarily cannot prepare statements.
+struct InternalStatements {
+    /// Prepared statement for querying tracing session info from system_traces.sessions
+    tracing_session: OnceCell<PreparedStatement>,
+    /// Prepared statement for querying tracing events from system_traces.events
+    tracing_events: OnceCell<PreparedStatement>,
+    /// Prepared statement for fetching schema version during schema agreement checks
+    schema_version: OnceCell<PreparedStatement>,
+}
+
+impl Default for InternalStatements {
+    fn default() -> Self {
+        Self {
+            tracing_session: OnceCell::new(),
+            tracing_events: OnceCell::new(),
+            schema_version: OnceCell::new(),
+        }
+    }
+}
 
 /// `Session` manages connections to the cluster and allows to execute CQL requests.
 pub struct Session {
@@ -75,6 +100,7 @@ pub struct Session {
     tracing_info_fetch_attempts: NonZeroU32,
     tracing_info_fetch_interval: Duration,
     tracing_info_fetch_consistency: Consistency,
+    internal_statements: InternalStatements,
 }
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -1079,6 +1105,7 @@ impl Session {
             tracing_info_fetch_attempts: config.tracing_info_fetch_attempts,
             tracing_info_fetch_interval: config.tracing_info_fetch_interval,
             tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
+            internal_statements: InternalStatements::default(),
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -1088,6 +1115,51 @@ impl Session {
         }
 
         Ok(session)
+    }
+
+    /// Lazily prepares and returns the statement for querying tracing session info.
+    async fn get_tracing_session_statement(&self) -> Result<&PreparedStatement, PrepareError> {
+        self.internal_statements
+            .tracing_session
+            .get_or_try_init(|| async {
+                let mut stmt =
+                    Statement::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
+                stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
+                stmt.set_consistency(self.tracing_info_fetch_consistency);
+                stmt.set_is_idempotent(true);
+                self.prepare(stmt).await
+            })
+            .await
+    }
+
+    /// Lazily prepares and returns the statement for querying tracing events.
+    async fn get_tracing_events_statement(&self) -> Result<&PreparedStatement, PrepareError> {
+        self.internal_statements
+            .tracing_events
+            .get_or_try_init(|| async {
+                let mut stmt =
+                    Statement::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
+                stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
+                stmt.set_consistency(self.tracing_info_fetch_consistency);
+                stmt.set_is_idempotent(true);
+                self.prepare(stmt).await
+            })
+            .await
+    }
+
+    /// Lazily prepares and returns the statement for fetching schema version.
+    async fn get_schema_version_statement(&self) -> Result<&PreparedStatement, PrepareError> {
+        self.internal_statements
+            .schema_version
+            .get_or_try_init(|| async {
+                let mut statement = Statement::new(SCHEMA_VERSION_QUERY_STR);
+                // Use ONE consistency for schema version queries - this is a local query
+                // that reads from system.local, so ONE is appropriate.
+                statement.set_consistency(Consistency::One);
+                statement.set_is_idempotent(true);
+                self.prepare(statement).await
+            })
+            .await
     }
 
     async fn do_query_unpaged(
@@ -1768,9 +1840,8 @@ impl Session {
     pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, TracingError> {
         // tracing_info_fetch_attempts is NonZeroU32 so at least one attempt will be made
         for _ in 0..self.tracing_info_fetch_attempts.get() {
-            let current_try: Option<TracingInfo> = self
-                .try_getting_tracing_info(tracing_id, Some(self.tracing_info_fetch_consistency))
-                .await?;
+            let current_try: Option<TracingInfo> =
+                self.try_getting_tracing_info(tracing_id).await?;
 
             match current_try {
                 Some(tracing_info) => return Ok(tracing_info),
@@ -1802,23 +1873,15 @@ impl Session {
     async fn try_getting_tracing_info(
         &self,
         tracing_id: &Uuid,
-        consistency: Option<Consistency>,
     ) -> Result<Option<TracingInfo>, TracingError> {
-        // Query system_traces.sessions for TracingInfo
-        let mut traces_session_query =
-            Statement::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
-        traces_session_query.config.consistency = consistency;
-        traces_session_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
-
-        // Query system_traces.events for TracingEvents
-        let mut traces_events_query =
-            Statement::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
-        traces_events_query.config.consistency = consistency;
-        traces_events_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
+        // Get lazily prepared statements for tracing queries.
+        // Consistency is set during preparation based on session's tracing_info_fetch_consistency.
+        let traces_session_stmt = self.get_tracing_session_statement().await?;
+        let traces_events_stmt = self.get_tracing_events_statement().await?;
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.do_query_unpaged(&traces_session_query, (tracing_id,)),
-            self.do_query_unpaged(&traces_events_query, (tracing_id,))
+            self.execute_unpaged(traces_session_stmt, (tracing_id,)),
+            self.execute_unpaged(traces_events_stmt, (tracing_id,))
         )?;
 
         // Get tracing info
@@ -2250,13 +2313,19 @@ impl Session {
         &self,
         required_node: Option<Uuid>,
     ) -> Result<Option<Uuid>, SchemaAgreementError> {
+        // Get lazily prepared statement for schema version query
+        let schema_version_stmt = self.get_schema_version_statement().await?;
+
         let cluster_state = self.get_cluster_state();
         // The iterator is guaranteed to be nonempty.
         let per_node_connections = cluster_state.iter_working_connections_per_node()?;
 
         // Therefore, this iterator is guaranteed to be nonempty, too.
         let handles = per_node_connections.map(|(host_id, pool)| async move {
-            (host_id, Session::read_node_schema_version(pool).await)
+            (
+                host_id,
+                Self::read_node_schema_version(schema_version_stmt, pool).await,
+            )
         });
         // Hence, this is nonempty, too.
         let versions_results = join_all(handles).await;
@@ -2323,12 +2392,13 @@ impl Session {
     ///
     /// `connections_to_node` iterator must be non-empty!
     async fn read_node_schema_version(
+        schema_version_stmt: &PreparedStatement,
         connections_to_node: impl Iterator<Item = Arc<Connection>>,
     ) -> Result<SchemaNodeResult, SchemaAgreementError> {
         let mut first_broken_connection_err: Option<BrokenConnectionError> = None;
         let mut first_unignorable_err: Option<SchemaAgreementError> = None;
         for connection in connections_to_node {
-            match connection.fetch_schema_version().await {
+            match Self::fetch_schema_version(&connection, schema_version_stmt).await {
                 Ok(schema_version) => return Ok(SchemaNodeResult::Success(schema_version)),
                 Err(SchemaAgreementError::RequestError(
                     RequestAttemptError::BrokenConnectionError(conn_err),
@@ -2353,6 +2423,26 @@ impl Session {
         Ok(SchemaNodeResult::BrokenConnection(
             first_broken_connection_err.unwrap(),
         ))
+    }
+
+    /// Fetches the schema version from a single connection using a prepared statement.
+    async fn fetch_schema_version(
+        connection: &Connection,
+        schema_version_stmt: &PreparedStatement,
+    ) -> Result<Uuid, SchemaAgreementError> {
+        let result = connection
+            .execute_raw_unpaged(schema_version_stmt, SerializedValues::EMPTY)
+            .await?;
+
+        let (version_id,) = result
+            .into_non_error_query_response()?
+            .into_query_result_with_unknown_coordinator()?
+            .into_rows_result()
+            .map_err(SchemaAgreementError::TracesEventsIntoRowsResultError)?
+            .single_row::<(Uuid,)>()
+            .map_err(SchemaAgreementError::SingleRowError)?;
+
+        Ok(version_id)
     }
 
     /// Retrieves the handle to execution profile that is used by this session

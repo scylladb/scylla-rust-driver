@@ -161,7 +161,7 @@ async fn check_for_all_consistencies_and_setting_options<
         .build()
         .await
         .unwrap();
-    create_schema(&session, ks).await;
+    session.use_keyspace(ks, false).await.unwrap();
     rx = after_session_init(rx).await;
 
     // We will be using these requests:
@@ -248,8 +248,6 @@ async fn check_for_all_consistencies_and_setting_options<
             .unwrap();
         rx = check_consistencies(consistency, serial_consistency, rx).await;
     }
-
-    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
 // Checks that the expected consistency and serial_consistency are set
@@ -283,11 +281,6 @@ async fn consistency_is_correctly_set_in_cql_requests() {
                 )
             };
 
-            let (request_tx, request_rx) = mpsc::unbounded_channel();
-            for running_node in running_proxy.running_nodes.iter_mut() {
-                running_node.change_request_rules(Some(vec![request_rule(request_tx.clone())]));
-            }
-
             let fallthrough_exec_profile_builder =
                 ExecutionProfile::builder().retry_policy(Arc::new(FallthroughRetryPolicy));
 
@@ -299,6 +292,14 @@ async fn consistency_is_correctly_set_in_cql_requests() {
                 .known_node(proxy_uris[0].as_str())
                 .keepalive_interval(Duration::from_secs(10000))
                 .address_translator(translation_map.clone());
+
+            let schema_session = session_builder.build().await.unwrap();
+            create_schema(&schema_session, &ks).await;
+
+            let (request_tx, request_rx) = mpsc::unbounded_channel();
+            for running_node in running_proxy.running_nodes.iter_mut() {
+                running_node.change_request_rules(Some(vec![request_rule(request_tx.clone())]));
+            }
 
             let check_consistencies =
                 async |consistency: Consistency,
@@ -324,6 +325,12 @@ async fn consistency_is_correctly_set_in_cql_requests() {
                 check_consistencies,
             )
             .await;
+
+            running_proxy.turn_off_rules();
+            schema_session
+                .ddl(format!("DROP KEYSPACE {ks}"))
+                .await
+                .unwrap();
 
             running_proxy
         },
@@ -450,6 +457,9 @@ async fn consistency_is_correctly_set_in_routing_info() {
         routing_info_rx
     }
 
+    let schema_session = session_builder.build().await.unwrap();
+    create_schema(&schema_session, &ks).await;
+
     check_for_all_consistencies_and_setting_options(
         session_builder,
         exec_profile_builder,
@@ -459,6 +469,11 @@ async fn consistency_is_correctly_set_in_routing_info() {
         check_consistencies,
     )
     .await;
+
+    schema_session
+        .ddl(format!("DROP KEYSPACE {ks}"))
+        .await
+        .unwrap();
 }
 
 // Performs a read using Paxos, by setting Consistency to Serial.

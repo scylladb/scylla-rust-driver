@@ -25,15 +25,6 @@ async fn test_consistent_shard_awareness() {
 
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
 
-        let (feedback_txs, mut feedback_rxs): (Vec<_>, Vec<_>) = (0..3).map(|_| {
-            mpsc::unbounded_channel::<(RequestFrame, Option<TargetShard>)>()
-        }).unzip();
-        for (i, tx) in feedback_txs.iter().cloned().enumerate() {
-            running_proxy.running_nodes[i].change_request_rules(Some(vec![
-                RequestRule(Condition::RequestOpcode(RequestOpcode::Execute).and(Condition::not(Condition::ConnectionRegisteredAnyEvent)), RequestReaction::noop().with_feedback_when_performed(tx))
-            ]));
-        }
-
         let session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
@@ -56,6 +47,15 @@ async fn test_consistent_shard_awareness() {
             )
             .await
             .unwrap();
+
+        let (feedback_txs, mut feedback_rxs): (Vec<_>, Vec<_>) = (0..3).map(|_| {
+            mpsc::unbounded_channel::<(RequestFrame, Option<TargetShard>)>()
+        }).unzip();
+        for (i, tx) in feedback_txs.iter().cloned().enumerate() {
+            running_proxy.running_nodes[i].change_request_rules(Some(vec![
+                RequestRule(Condition::RequestOpcode(RequestOpcode::Execute).and(Condition::not(Condition::ConnectionRegisteredAnyEvent)), RequestReaction::noop().with_feedback_when_performed(tx))
+            ]));
+        }
 
         let prepared = session.prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, 'abc')")).await.unwrap();
 
@@ -81,6 +81,7 @@ async fn test_consistent_shard_awareness() {
             }
         }
 
+        running_proxy.turn_off_rules();
         session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
         running_proxy

@@ -29,10 +29,7 @@ async fn run_some_ddl_with_unreachable_node(
     // but the pool in the driver is not yet `Broken`.
     running_proxy.running_nodes[paused].change_request_rules(Some(vec![RequestRule(
         Condition::not(Condition::ConnectionRegisteredAnyEvent)
-            .and(Condition::RequestOpcode(RequestOpcode::Query))
-            .and(Condition::BodyContainsCaseSensitive(Box::new(
-                *b"system.local",
-            ))),
+            .and(Condition::RequestOpcode(RequestOpcode::Execute)),
         // Simulates driver discovering that node is unreachable.
         RequestReaction::drop_connection(),
     )]));
@@ -181,10 +178,7 @@ async fn test_schema_await_with_transient_failure() {
 
             let node_rules = Some(vec![RequestRule(
                 Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                    .and(Condition::RequestOpcode(RequestOpcode::Query))
-                    .and(Condition::BodyContainsCaseSensitive(Box::new(
-                        *b"system.local",
-                    )))
+                    .and(Condition::RequestOpcode(RequestOpcode::Execute))
                     .and(Condition::TrueForLimitedTimes(1)),
                 // Use error that would prevent DefaultRetryPolicy from retrying.
                 // I don't think it is used for those queries, but it's additional future-proofing

@@ -272,6 +272,7 @@ async fn perform_test_for_proxy(
         assert_eq!(rows.as_slice(), &[(1, "abc", None)]);
     }
 
+    running_proxy.turn_off_rules();
     drop_schema(&session_1, &ks).await;
     running_proxy
 }

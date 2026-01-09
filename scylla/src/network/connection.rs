@@ -8,8 +8,8 @@ use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 use crate::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
-    InternalRequestError, RequestAttemptError, ResponseParseError, SchemaAgreementError,
-    TranslationError, UseKeyspaceError,
+    InternalRequestError, RequestAttemptError, ResponseParseError, TranslationError,
+    UseKeyspaceError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
@@ -20,6 +20,7 @@ use crate::frame::{
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
+#[cfg(test)]
 use crate::response::query_result::QueryResult;
 use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse};
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
@@ -62,10 +63,6 @@ use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
-use uuid::Uuid;
-
-// Queries for schema agreement
-const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
 
 // FIXME: Make this constants configurable
 // The term "orphan" refers to stream ids, that were allocated for a {request, response} that no
@@ -820,6 +817,7 @@ impl Connection {
         Ok(response)
     }
 
+    #[cfg(test)]
     pub(crate) async fn query_unpaged(
         &self,
         statement: impl Into<Statement>,
@@ -889,16 +887,15 @@ impl Connection {
         Ok(response)
     }
 
-    #[cfg(test)]
-    async fn execute_raw_unpaged(
+    pub(crate) async fn execute_raw_unpaged(
         &self,
         prepared: &PreparedStatement,
-        values: SerializedValues,
+        values: &SerializedValues,
     ) -> Result<QueryResponse, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
             prepared,
-            &values,
+            values,
             prepared
                 .config
                 .determine_consistency(self.config.default_consistency),
@@ -1062,22 +1059,6 @@ impl Connection {
             }
             _ => Ok(query_response),
         }
-    }
-
-    /// Executes a query and fetches its results over multiple pages, using
-    /// the asynchronous iterator interface.
-    pub(crate) async fn query_iter(
-        self: Arc<Self>,
-        query: Statement,
-    ) -> Result<QueryPager, NextRowError> {
-        let consistency = query
-            .config
-            .determine_consistency(self.config.default_consistency);
-        let serial_consistency = query.config.serial_consistency.flatten();
-
-        QueryPager::new_for_connection_query_iter(query, self, consistency, serial_consistency)
-            .await
-            .map_err(NextRowError::NextPageError)
     }
 
     /// Executes a prepared statements and fetches its results over multiple pages, using
@@ -1308,18 +1289,6 @@ impl Connection {
                 }
             },
         }
-    }
-
-    pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, SchemaAgreementError> {
-        let (version_id,) = self
-            .query_unpaged(LOCAL_VERSION)
-            .await?
-            .into_rows_result()
-            .map_err(SchemaAgreementError::TracesEventsIntoRowsResultError)?
-            .single_row::<(Uuid,)>()
-            .map_err(SchemaAgreementError::SingleRowError)?;
-
-        Ok(version_id)
     }
 
     async fn send_request(
@@ -2315,6 +2284,7 @@ mod tests {
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };
     use scylla_cql::frame::types;
+    use scylla_cql::serialize::row::SerializedValues;
     use scylla_proxy::{
         Condition, Node, Proxy, Reaction, RequestFrame, RequestOpcode, RequestReaction,
         RequestRule, ResponseFrame, ShardAwareness,
@@ -2335,13 +2305,13 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// Tests for Connection::query_iter
+    /// Tests for Connection::execute_iter
     /// 1. SELECT from an empty table.
     /// 2. Create table and insert ints 0..100.
-    ///    Then use query_iter with page_size set to 7 to select all 100 rows.
-    /// 3. INSERT query_iter should work and not return any rows.
+    ///    Then use execute_iter with page_size set to 7 to select all 100 rows.
+    /// 3. INSERT execute_iter should work and not return any rows.
     #[tokio::test]
-    async fn connection_query_iter_test() {
+    async fn connection_execute_iter_test() {
         use crate::client::session_builder::SessionBuilder;
 
         setup_tracing();
@@ -2369,11 +2339,11 @@ mod tests {
             session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone())).await.unwrap();
             session.use_keyspace(ks.clone(), false).await.unwrap();
             session
-                .ddl("DROP TABLE IF EXISTS connection_query_iter_tab")
+                .ddl("DROP TABLE IF EXISTS connection_execute_iter_tab")
                 .await
                 .unwrap();
             session
-                .ddl("CREATE TABLE IF NOT EXISTS connection_query_iter_tab (p int primary key)")
+                .ddl("CREATE TABLE IF NOT EXISTS connection_execute_iter_tab (p int primary key)")
                 .await
                 .unwrap();
         }
@@ -2385,10 +2355,11 @@ mod tests {
 
         // 1. SELECT from an empty table returns query result where rows are Some(Vec::new())
         let select_query =
-            Statement::new("SELECT p FROM connection_query_iter_tab").with_page_size(7);
+            Statement::new("SELECT p FROM connection_execute_iter_tab").with_page_size(7);
+        let prepared_select = connection.prepare(&select_query).await.unwrap();
         let empty_res = connection
             .clone()
-            .query_iter(select_query.clone())
+            .execute_iter(prepared_select.clone(), SerializedValues::new())
             .await
             .unwrap()
             .rows_stream::<(i32,)>()
@@ -2398,15 +2369,17 @@ mod tests {
             .unwrap();
         assert!(empty_res.is_empty());
 
-        // 2. Insert 100 and select using query_iter with page_size 7
+        // 2. Insert 100 and select using execute_iter with page_size 7
         let values: Vec<i32> = (0..100).collect();
-        let insert_query = Statement::new("INSERT INTO connection_query_iter_tab (p) VALUES (?)")
+        let insert_query = Statement::new("INSERT INTO connection_execute_iter_tab (p) VALUES (?)")
             .with_page_size(7);
         let prepared = connection.prepare(&insert_query).await.unwrap();
         let mut insert_futures = Vec::new();
         for v in &values {
-            let values = prepared.serialize_values(&(*v,)).unwrap();
-            let fut = async { connection.execute_raw_unpaged(&prepared, values).await };
+            let fut = async {
+                let values = prepared.serialize_values(&(*v,)).unwrap();
+                connection.execute_raw_unpaged(&prepared, &values).await
+            };
             insert_futures.push(fut);
         }
 
@@ -2414,7 +2387,7 @@ mod tests {
 
         let mut results: Vec<i32> = connection
             .clone()
-            .query_iter(select_query.clone())
+            .execute_iter(prepared_select, SerializedValues::new())
             .await
             .unwrap()
             .rows_stream::<(i32,)>()
@@ -2425,11 +2398,11 @@ mod tests {
         results.sort_unstable(); // Clippy recommended to use sort_unstable instead of sort()
         assert_eq!(results, values);
 
-        // 3. INSERT query_iter should work and not return any rows.
+        // 3. INSERT execute_iter should work and not return any rows.
+        let insert_stmt = Statement::new("INSERT INTO connection_execute_iter_tab (p) VALUES (0)");
+        let prepared_insert = connection.prepare(&insert_stmt).await.unwrap();
         let insert_res1 = connection
-            .query_iter(Statement::new(
-                "INSERT INTO connection_query_iter_tab (p) VALUES (0)",
-            ))
+            .execute_iter(prepared_insert, SerializedValues::new())
             .await
             .unwrap()
             .rows_stream::<()>()
@@ -2516,7 +2489,7 @@ mod tests {
                                 .serialize_values(&(j, vec![j as u8; j as usize]))
                                 .unwrap();
                             let response =
-                                conn.execute_raw_unpaged(&prepared, values).await.unwrap();
+                                conn.execute_raw_unpaged(&prepared, &values).await.unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
                             let _nonerror_response =
                                 response.into_non_error_query_response().unwrap();
