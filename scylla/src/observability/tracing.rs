@@ -111,3 +111,5 @@ pub(crate) const TRACES_SESSION_QUERY_STR: &str = "SELECT client, command, coord
 // A query used to query TracingEvent from system_traces.events
 pub(crate) const TRACES_EVENTS_QUERY_STR: &str = "SELECT event_id, activity, source, source_elapsed, thread \
     FROM system_traces.events WHERE session_id = ?";
+
+pub(crate) const TRACING_QUERY_PAGE_SIZE: i32 = 1024;

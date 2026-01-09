@@ -60,8 +60,6 @@ use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
-const TRACING_QUERY_PAGE_SIZE: i32 = 1024;
-
 // Query used for schema agreement checks
 const SCHEMA_VERSION_QUERY_STR: &str = "SELECT schema_version FROM system.local WHERE key='local'";
 
@@ -1126,7 +1124,7 @@ impl Session {
             .get_or_try_init(|| async {
                 let mut stmt =
                     Statement::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
-                stmt.set_page_size(TRACING_QUERY_PAGE_SIZE);
+                stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
                 stmt.set_consistency(self.tracing_info_fetch_consistency);
                 self.prepare(stmt).await
             })
@@ -1140,7 +1138,7 @@ impl Session {
             .get_or_try_init(|| async {
                 let mut stmt =
                     Statement::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
-                stmt.set_page_size(TRACING_QUERY_PAGE_SIZE);
+                stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
                 stmt.set_consistency(self.tracing_info_fetch_consistency);
                 self.prepare(stmt).await
             })
