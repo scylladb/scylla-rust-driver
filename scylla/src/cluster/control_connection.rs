@@ -80,6 +80,7 @@ impl ControlConnection {
         let mut statement = Statement::new(statement_str);
         self.maybe_append_timeout_override(&mut statement);
         statement.set_page_size(METADATA_QUERY_PAGE_SIZE);
+        statement.set_is_idempotent(true);
         let prepared = Arc::clone(&self.conn).prepare(&statement).await?;
         // Inserting with pre-`maybe_append_timeout_override` key, because
         // that is the way we will query the map later.

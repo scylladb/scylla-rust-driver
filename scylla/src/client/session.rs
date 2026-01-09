@@ -1126,6 +1126,7 @@ impl Session {
                     Statement::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
                 stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
                 stmt.set_consistency(self.tracing_info_fetch_consistency);
+                stmt.set_is_idempotent(true);
                 self.prepare(stmt).await
             })
             .await
@@ -1140,6 +1141,7 @@ impl Session {
                     Statement::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
                 stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
                 stmt.set_consistency(self.tracing_info_fetch_consistency);
+                stmt.set_is_idempotent(true);
                 self.prepare(stmt).await
             })
             .await
@@ -1154,6 +1156,7 @@ impl Session {
                 // Use ONE consistency for schema version queries - this is a local query
                 // that reads from system.local, so ONE is appropriate.
                 statement.set_consistency(Consistency::One);
+                statement.set_is_idempotent(true);
                 self.prepare(statement).await
             })
             .await
