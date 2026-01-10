@@ -38,7 +38,7 @@ use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
-use crate::response::{NonErrorQueryResponse, QueryResponse};
+use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 use tracing::{Instrument, trace, trace_span, warn};
@@ -121,8 +121,6 @@ mod checked_channel_sender {
 }
 
 use checked_channel_sender::{ProvingSender, SendAttemptedProof};
-
-use crate::response::Coordinator;
 
 type PageSendAttemptedProof = SendAttemptedProof<Result<ReceivedPage, NextPageError>>;
 
