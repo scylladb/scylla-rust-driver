@@ -64,15 +64,6 @@ struct ReceivedPage {
     request_coordinator: Option<Coordinator>,
 }
 
-pub(crate) struct PreparedPagerConfig {
-    pub(crate) prepared: PreparedStatement,
-    pub(crate) values: SerializedValues,
-    pub(crate) execution_profile: Arc<ExecutionProfileInner>,
-    pub(crate) cluster_state: Arc<ClusterState>,
-    #[cfg(feature = "metrics")]
-    pub(crate) metrics: Arc<Metrics>,
-}
-
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_channel_sender {
@@ -724,6 +715,15 @@ where
             }
         }
     }
+}
+
+pub(crate) struct PreparedPagerConfig {
+    pub(crate) prepared: PreparedStatement,
+    pub(crate) values: SerializedValues,
+    pub(crate) execution_profile: Arc<ExecutionProfileInner>,
+    pub(crate) cluster_state: Arc<ClusterState>,
+    #[cfg(feature = "metrics")]
+    pub(crate) metrics: Arc<Metrics>,
 }
 
 /// An intermediate object that allows to construct a stream over a query
