@@ -18,7 +18,9 @@ use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
 use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::request::query::PagingState;
 use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
-use scylla_cql::frame::response::result::DeserializedMetadataAndRawRows;
+use scylla_cql::frame::response::result::{
+    DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace,
+};
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::serialize::row::SerializedValues;
 use std::result::Result;
@@ -26,9 +28,12 @@ use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::client::execution_profile::ExecutionProfileInner;
+use crate::client::session::Session;
 use crate::cluster::{ClusterState, NodeRef};
 use crate::deserialize::DeserializeOwnedRow;
-use crate::errors::{PagerExecutionError, RequestAttemptError, RequestError};
+use crate::errors::{
+    PagerExecutionError, RequestAttemptError, RequestError, SchemaAgreementError, UseKeyspaceError,
+};
 use crate::frame::response::result;
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
@@ -41,7 +46,7 @@ use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
-use tracing::{Instrument, trace, trace_span, warn};
+use tracing::{Instrument, error, trace, trace_span, warn};
 use uuid::Uuid;
 
 // Like std::task::ready!, but handles the whole stack of Poll<Option<Result<>>>.
@@ -58,7 +63,7 @@ macro_rules! ready_some_ok {
     };
 }
 
-struct ReceivedPage {
+struct NextReceivedPage {
     rows: DeserializedMetadataAndRawRows,
     tracing_id: Option<Uuid>,
     request_coordinator: Option<Coordinator>,
@@ -86,12 +91,28 @@ struct ReceivedPage {
  *   page in the sequence of pages, this is another argument for having
  *   clear distinction between the first page case and the remaining pages.
  */
-// For now equivalent, soon these will be different.
-type FirstReceivedPage = ReceivedPage;
-type NextReceivedPage = ReceivedPage;
 
-type ResultNextPage = Result<NextReceivedPage, NextPageError>;
+enum FirstPageContent {
+    Rows {
+        rows: DeserializedMetadataAndRawRows,
+    },
+    SetKeyspace {
+        set_keyspace: SetKeyspace,
+    },
+    #[expect(unused)] // Currently the underlying event is never read.
+    SchemaChange {
+        schema_change: SchemaChange,
+    },
+}
+
+struct FirstReceivedPage {
+    content: FirstPageContent,
+    tracing_id: Option<Uuid>,
+    request_coordinator: Option<Coordinator>,
+}
+
 type ResultFirstPage = Result<(FirstReceivedPage, mpsc::Receiver<ResultNextPage>), NextPageError>;
+type ResultNextPage = Result<NextReceivedPage, NextPageError>;
 
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
@@ -103,7 +124,7 @@ mod checked_oneshot_sender {
 
     use crate::response::Coordinator;
 
-    use super::{FirstReceivedPage, ResultFirstPage, ResultNextPage};
+    use super::{FirstPageContent, FirstReceivedPage, ResultFirstPage, ResultNextPage};
 
     /// A value whose existence proves that there was an attempt
     /// to send an item of type T through a oneshot.
@@ -142,7 +163,9 @@ mod checked_oneshot_sender {
             Result<(), ResultFirstPage>,
         ) {
             let empty_page = FirstReceivedPage {
-                rows: DeserializedMetadataAndRawRows::mock_empty(),
+                content: FirstPageContent::Rows {
+                    rows: DeserializedMetadataAndRawRows::mock_empty(),
+                },
                 tracing_id,
                 request_coordinator,
             };
@@ -232,7 +255,7 @@ impl PageSender {
                 proof
             }
             PageSender::NextPages(proof, sender) => {
-                let empty_page = ReceivedPage {
+                let empty_page = NextReceivedPage {
                     rows: DeserializedMetadataAndRawRows::mock_empty(),
                     tracing_id,
                     request_coordinator,
@@ -243,11 +266,23 @@ impl PageSender {
         }
     }
 
-    async fn send(self, page: ReceivedPage) -> (FirstPageSendAttemptedProof, Self, Result<(), ()>) {
+    async fn send(
+        self,
+        page: NextReceivedPage,
+    ) -> (FirstPageSendAttemptedProof, Self, Result<(), ()>) {
         match self {
             PageSender::FirstPage(sender) => {
+                // This conversion from NextReceivedPage to FirstReceivedPage is correct as long as we assume
+                // that NextReceivedPage is a logical subset of FirstReceivedPage. This is true because
+                // currently FirstReceivedPage can contain either Rows, SetKeyspace or SchemaChange,
+                // while NextReceivedPage can only contain Rows.
+                let first_page = FirstReceivedPage {
+                    content: FirstPageContent::Rows { rows: page.rows },
+                    tracing_id: page.tracing_id,
+                    request_coordinator: page.request_coordinator,
+                };
                 let (next_pages_sender, next_pages_receiver) = mpsc::channel::<ResultNextPage>(1);
-                let (proof, res) = sender.send(Ok((page, next_pages_receiver)));
+                let (proof, res) = sender.send(Ok((first_page, next_pages_receiver)));
                 let sender = PageSender::NextPages(proof.clone(), next_pages_sender);
                 (proof, sender, res.map_err(|_| ()))
             }
@@ -636,7 +671,7 @@ where
                 request_span.record_raw_rows_fields(&rows);
 
                 let received_page = FirstReceivedPage {
-                    rows,
+                    content: FirstPageContent::Rows { rows },
                     tracing_id,
                     request_coordinator: Some(coordinator),
                 };
@@ -676,6 +711,54 @@ where
                     &err,
                 );
                 Err((err, sender))
+            }
+            Ok(NonErrorQueryResponse {
+                response:
+                    NonErrorResponseWithDeserializedMetadata::Result(
+                        result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace),
+                    ),
+                tracing_id,
+                ..
+            }) => {
+                // It seems we executed a USE <keyspace> statement.
+                // Although it makes little sense to page over such a statement,
+                // we must handle it gracefully. Especially that there may be users who execute
+                // all statements in a paged manner (e.g., C#-RS Driver).
+
+                let (next_pages_sender, next_pages_receiver) = mpsc::channel(1);
+                let (proof, _) = sender.send(Ok((
+                    (FirstReceivedPage {
+                        tracing_id,
+                        request_coordinator: Some(coordinator),
+                        content: FirstPageContent::SetKeyspace { set_keyspace },
+                    }),
+                    next_pages_receiver,
+                )));
+                Ok((ControlFlow::Break(()), proof, next_pages_sender))
+            }
+            Ok(NonErrorQueryResponse {
+                response:
+                    NonErrorResponseWithDeserializedMetadata::Result(
+                        result::ResultWithDeserializedMetadata::SchemaChange(schema_change),
+                    ),
+                tracing_id,
+                ..
+            }) => {
+                // It seems we executed a DDL statement.
+                // Although it makes little sense to page over such a statement,
+                // we must handle it gracefully. Especially that there may be users who execute
+                // all statements in a paged manner (e.g., C#-RS Driver).
+
+                let (next_pages_sender, next_pages_receiver) = mpsc::channel(1);
+                let (proof, _) = sender.send(Ok((
+                    FirstReceivedPage {
+                        tracing_id,
+                        request_coordinator: Some(coordinator),
+                        content: FirstPageContent::SchemaChange { schema_change },
+                    },
+                    next_pages_receiver,
+                )));
+                Ok((ControlFlow::Break(()), proof, next_pages_sender))
             }
             Ok(NonErrorQueryResponse {
                 response: NonErrorResponseWithDeserializedMetadata::Result(_),
@@ -762,9 +845,13 @@ where
 
                 Ok((ControlFlow::Continue(()), ()))
             }
-            Err(err) => {
+            // This catches all other kinds of responses that are not rows.
+            // As this is not the first page, this is certainly an error.
+            Ok(response) => {
                 #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
+                let err =
+                    RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
                 self.load_balancing_policy.on_request_failure(
                     &self.routing_info,
                     elapsed,
@@ -773,13 +860,9 @@ where
                 );
                 Err(err)
             }
-            // This catches all other kinds of responses that are not rows.
-            // As this is not the first page, this is certainly an error.
-            Ok(response) => {
+            Err(err) => {
                 #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
-                let err =
-                    RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
                 self.load_balancing_policy.on_request_failure(
                     &self.routing_info,
                     elapsed,
@@ -954,7 +1037,7 @@ where
                     result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
                 ) => {
                     let (proof, new_sender, send_result) = sender
-                        .send(ReceivedPage {
+                        .send(NextReceivedPage {
                             rows,
                             tracing_id: response.tracing_id,
                             request_coordinator: None,
@@ -1038,7 +1121,6 @@ impl QueryPager {
             None => return None,
         };
 
-        // We are guaranteed here to have a non-empty page, so unwrap
         Some(
             self.current_page
                 .next()
@@ -1122,6 +1204,7 @@ If you are using this API, you are probably doing something wrong."
     }
 
     pub(crate) async fn new_for_query(
+        session: &Session,
         statement: Statement,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_state: Arc<ClusterState>,
@@ -1212,12 +1295,13 @@ If you are using this API, you are probably doing something wrong."
             worker.work(cluster_state, sender.into()).await
         };
 
-        Self::new_from_worker_future(worker_task, receiver)
+        Self::new_from_worker_future(worker_task, receiver, Some(session))
             .await
-            .map_err(PagerExecutionError::NextPageError)
+            .map_err(PagerExecutionError::from)
     }
 
     pub(crate) async fn new_for_prepared_statement(
+        session: &Session,
         config: PreparedPagerConfig,
     ) -> Result<Self, PagerExecutionError> {
         let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
@@ -1347,9 +1431,9 @@ If you are using this API, you are probably doing something wrong."
             worker.work(config.cluster_state, sender.into()).await
         };
 
-        Self::new_from_worker_future(worker_task, receiver)
+        Self::new_from_worker_future(worker_task, receiver, Some(session))
             .await
-            .map_err(PagerExecutionError::NextPageError)
+            .map_err(PagerExecutionError::from)
     }
 
     pub(crate) async fn new_for_connection_execute_iter(
@@ -1386,13 +1470,26 @@ If you are using this API, you are probably doing something wrong."
             worker.work(sender.into()).await
         };
 
-        Self::new_from_worker_future(worker_task, receiver).await
+        Self::new_from_worker_future(worker_task, receiver, None)
+            .await
+            .map_err(|e| match e {
+                PagerConstructionError::NextPage(next_page_error) => next_page_error,
+                PagerConstructionError::SchemaAgreement(schema_agreement_error) => panic!(
+                    "A DDL statement executed via Connection::execute_iter(), which is unsupported and a bug in the driver! Triggered error: {:?}",
+                    schema_agreement_error
+                ),
+                PagerConstructionError::UseKeyspace(use_keyspace_error) => panic!(
+                    "A \"USE <keyspace>\" statement executed via Connection::execute_iter(), which is unsupported and a bug in the driver! Triggered error: {:?}",
+                    use_keyspace_error
+                ),
+            })
     }
 
     async fn new_from_worker_future(
         worker_task: impl Future<Output = FirstPageSendAttemptedProof> + Send + 'static,
         first_page_receiver: oneshot::Receiver<ResultFirstPage>,
-    ) -> Result<Self, NextPageError> {
+        session: Option<&Session>,
+    ) -> Result<Self, PagerConstructionError> {
         let worker_handle = tokio::task::spawn(worker_task);
 
         let Ok(first_page_res) = first_page_receiver.await else {
@@ -1440,15 +1537,76 @@ If you are using this API, you are probably doing something wrong."
 
         let (first_page, remaining_pages_receiver) = first_page_res?;
 
+        let tracing_ids = Vec::from_iter(first_page.tracing_id);
+        let coordinator_id = first_page
+            .request_coordinator
+            .as_ref()
+            .map(|coordinator| coordinator.node().host_id);
+        let request_coordinators = Vec::from_iter(first_page.request_coordinator);
+
+        let current_page = match first_page.content {
+            FirstPageContent::Rows { rows } => RawRowLendingIterator::new(rows),
+            FirstPageContent::SetKeyspace { set_keyspace } => {
+                if let Some(session) = session {
+                    // If we are here, this means that we received a SET_KEYSPACE response as a first page.
+                    // This can happen when the user executes a "USE <keyspace>" statement.
+                    // Although it makes little sense to page over such a statement,
+                    // we must handle it gracefully. Especially that there may be users who execute
+                    // all statements in a paged manner (e.g., C#-RS Driver).
+                    //
+                    // Let's set the keyspace on the session.
+                    if let Err(err) = session
+                        .use_keyspace(&set_keyspace.keyspace_name, true)
+                        .await
+                    {
+                        return Err(PagerConstructionError::UseKeyspace(err));
+                    }
+                } else {
+                    // We don't have a session to set the keyspace on.
+                    // Let's just log an erroneous situation.
+                    error!(
+                    "BUG: Received SET_KEYSPACE response as a first page in QueryPager without a Session.
+                    This should be impossible, because it means that we executed USE KEYSPACE statement with `Connection::execute_iter()`.
+                    The response may not be handled by setting the keyspace on the Session."
+                );
+                }
+                // The stream will be empty.
+                RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
+            }
+            FirstPageContent::SchemaChange { schema_change: _ } => {
+                if let Some(session) = session {
+                    // If we are here, this means that we received a SCHEMA_CHANGE response as a first page.
+                    // This can happen when the user executes a DDL statement.
+                    // Although it makes little sense to page over such a statement,
+                    // we must handle it gracefully. Especially that there may be users who execute
+                    // all statements in a paged manner (e.g., C#-RS Driver).
+                    //
+                    // Let's await schema agreement, if Session is configured to do so.
+                    if let Err(err) = session
+                        .await_schema_agreement_with_required_node(coordinator_id)
+                        .await
+                    {
+                        return Err(PagerConstructionError::SchemaAgreement(err));
+                    }
+                } else {
+                    // We don't have a session to await schema agreement with.
+                    // Let's just log an erroneous situation.
+                    error!(
+                        "BUG: Received SCHEMA_CHANGE response as a first page in QueryPager without a Session.
+                        This should be impossible, because it means that we executed a DDL statement with `Connection::execute_iter()`.
+                        Without Session, the response may not be handled by awaiting schema agreement."
+                    );
+                }
+                // The stream will be empty.
+                RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
+            }
+        };
+
         Ok(Self {
-            current_page: RawRowLendingIterator::new(first_page.rows),
+            current_page,
             page_receiver: remaining_pages_receiver,
-            tracing_ids: if let Some(tracing_id) = first_page.tracing_id {
-                vec![tracing_id]
-            } else {
-                Vec::new()
-            },
-            request_coordinators: Vec::from_iter(first_page.request_coordinator),
+            tracing_ids,
+            request_coordinators,
         })
     }
 
@@ -1609,4 +1767,67 @@ pub enum NextRowError {
     /// An error occurred during row deserialization.
     #[error("Row deserialization error: {0}")]
     RowDeserializationError(#[from] DeserializationError),
+}
+
+/// An error that occurred during construction of [QueryPager].
+/// A temporary error type that is introduced to support proper error handling
+/// when the first page is received and processed.
+///
+/// Rationale:
+/// - `new_from_worker_future` function is used both by Session-based QueryPager constructors
+///   (`QueryPager::new_for_query` and `QueryPager::new_for_prepared_statement`,
+///   used by `Session::query_iter` and `Session::execute_iter`, respectively)
+///   and by connection-based QueryPager constructor (QueryPager::new_for_connection_execute_iter,
+///   used by `Connection::execute_iter`).
+/// - In the Session-based constructors, we have a Session available, so we can handle
+///   SET_KEYSPACE and SCHEMA_CHANGE responses properly (by setting the keyspace on the Session,
+///   or awaiting schema agreement, respectively).
+/// - In the connection-based constructor, we do not have a Session available, so we cannot handle
+///   those responses properly. We can only log an error message. Note that those responses
+///   should never be received in that case, because USE KEYSPACE statements and DDL statements
+///   should not be executed via `Connection::execute_iter()`.
+/// - Therefore, we need to distinguish between errors that can occur during handling
+///   of those responses, so that we can propagate them only in the Session-based constructors.
+///   Specifically, we need to propagate UseKeyspaceError and SchemaAgreementError
+///   only in the Session-based constructors, and assert that they never occur in the connection-based constructor.
+/// - We don't want to pollute NextPageError or NextRowError with those variants,
+///   because they are not relevant for normal paging operation (only for construction and the first received page).
+enum PagerConstructionError {
+    NextPage(NextPageError),
+    SchemaAgreement(SchemaAgreementError),
+    UseKeyspace(UseKeyspaceError),
+}
+
+impl From<NextPageError> for PagerConstructionError {
+    fn from(err: NextPageError) -> Self {
+        PagerConstructionError::NextPage(err)
+    }
+}
+
+impl From<SchemaAgreementError> for PagerConstructionError {
+    fn from(err: SchemaAgreementError) -> Self {
+        PagerConstructionError::SchemaAgreement(err)
+    }
+}
+
+impl From<UseKeyspaceError> for PagerConstructionError {
+    fn from(err: UseKeyspaceError) -> Self {
+        PagerConstructionError::UseKeyspace(err)
+    }
+}
+
+impl From<PagerConstructionError> for PagerExecutionError {
+    fn from(err: PagerConstructionError) -> Self {
+        match err {
+            PagerConstructionError::NextPage(next_page_err) => {
+                PagerExecutionError::NextPageError(next_page_err)
+            }
+            PagerConstructionError::SchemaAgreement(schema_agreement_err) => {
+                PagerExecutionError::SchemaAgreementError(schema_agreement_err)
+            }
+            PagerConstructionError::UseKeyspace(use_keyspace_err) => {
+                PagerExecutionError::UseKeyspaceError(use_keyspace_err)
+            }
+        }
+    }
 }
