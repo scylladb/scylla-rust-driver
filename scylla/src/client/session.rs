@@ -1370,6 +1370,7 @@ impl Session {
             .access();
 
         QueryPager::new_for_query(
+            self,
             statement,
             execution_profile,
             self.cluster.get_state(),
@@ -1691,14 +1692,17 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        QueryPager::new_for_prepared_statement(PreparedPagerConfig {
-            prepared,
-            values,
-            execution_profile,
-            cluster_state: self.cluster.get_state(),
-            #[cfg(feature = "metrics")]
-            metrics: Arc::clone(&self.metrics),
-        })
+        QueryPager::new_for_prepared_statement(
+            self,
+            PreparedPagerConfig {
+                prepared,
+                values,
+                execution_profile,
+                cluster_state: self.cluster.get_state(),
+                #[cfg(feature = "metrics")]
+                metrics: Arc::clone(&self.metrics),
+            },
+        )
         .await
     }
 
@@ -2261,7 +2265,7 @@ impl Session {
     ///
     /// If `required_node` is Some, only returns Ok if this node successfully
     /// returned its schema version during the agreement process.
-    async fn await_schema_agreement_with_required_node(
+    pub(crate) async fn await_schema_agreement_with_required_node(
         &self,
         required_node: Option<Uuid>,
     ) -> Result<Uuid, SchemaAgreementError> {
