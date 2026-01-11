@@ -23,7 +23,7 @@ use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::serialize::row::SerializedValues;
 use std::result::Result;
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::client::execution_profile::ExecutionProfileInner;
 use crate::cluster::{ClusterState, NodeRef};
@@ -64,65 +64,99 @@ struct ReceivedPage {
     request_coordinator: Option<Coordinator>,
 }
 
+/*
+ * The first page is special in a number of ways:
+ * - It is delivered synchronously (not meaning non-`async`, but the code
+ *   does not progress until the first page is there) when QueryPager is
+ *   constructed. All subsequent pages are delivered asynchronously via
+ *   a channel to QueryPager.
+ * - The first page may be non-Rows Result and still correct. For example,
+ *   `USE <keyspace>` statements return Result:SetKeyspace, and DDLs often
+ *   return Result:SchemaChange response. In order to handle those special
+ *   results, we need access to Session:
+ *   - SetKeyspace requires issuing `USE <keyspace>` statement on
+ *     connections to all nodes;
+ *   - SchemaChange should be followed with awaiting schema agreement.
+ *   Session is available when constructing the QueryPager (except for
+ *   `Connection::execute_iter()` API, which we handle separately by
+ *   treating all non-Rows results as erroneous).
+ *   However, Session is not available once we have the QueryPager
+ *   constructed, because it does not borrow from Session. Combining this
+ *   with the fact that non-Rows result should never appear as a non-first
+ *   page in the sequence of pages, this is another argument for having
+ *   clear distinction between the first page case and the remaining pages.
+ */
+// For now equivalent, soon these will be different.
+type FirstReceivedPage = ReceivedPage;
+type NextReceivedPage = ReceivedPage;
+
+type ResultNextPage = Result<NextReceivedPage, NextPageError>;
+type ResultFirstPage = Result<(FirstReceivedPage, mpsc::Receiver<ResultNextPage>), NextPageError>;
+
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
-mod checked_channel_sender {
+mod checked_oneshot_sender {
     use scylla_cql::frame::response::result::DeserializedMetadataAndRawRows;
     use std::marker::PhantomData;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, oneshot};
     use uuid::Uuid;
 
     use crate::response::Coordinator;
 
-    use super::{NextPageError, ReceivedPage};
+    use super::{FirstReceivedPage, ResultFirstPage, ResultNextPage};
 
     /// A value whose existence proves that there was an attempt
-    /// to send an item of type T through a channel.
+    /// to send an item of type T through a oneshot.
     /// Can only be constructed by ProvingSender::send.
     pub(crate) struct SendAttemptedProof<T>(PhantomData<T>);
 
-    /// An mpsc::Sender which returns proofs that it attempted to send items.
-    pub(crate) struct ProvingSender<T>(mpsc::Sender<T>);
+    impl<T> Clone for SendAttemptedProof<T> {
+        fn clone(&self) -> Self {
+            SendAttemptedProof(PhantomData)
+        }
+    }
 
-    impl<T> From<mpsc::Sender<T>> for ProvingSender<T> {
-        fn from(s: mpsc::Sender<T>) -> Self {
+    /// An oneshot::Sender which returns proof that it attempted to send an item.
+    pub(crate) struct ProvingSender<T>(oneshot::Sender<T>);
+
+    impl<T> From<oneshot::Sender<T>> for ProvingSender<T> {
+        fn from(s: oneshot::Sender<T>) -> Self {
             Self(s)
         }
     }
 
     impl<T> ProvingSender<T> {
-        pub(crate) async fn send(
-            &self,
-            value: T,
-        ) -> (SendAttemptedProof<T>, Result<(), mpsc::error::SendError<T>>) {
-            (SendAttemptedProof(PhantomData), self.0.send(value).await)
+        pub(crate) fn send(self, value: T) -> (SendAttemptedProof<T>, Result<(), T>) {
+            let res = self.0.send(value);
+            (SendAttemptedProof(PhantomData), res)
         }
     }
 
-    type ResultPage = Result<ReceivedPage, NextPageError>;
-
-    impl ProvingSender<ResultPage> {
-        pub(crate) async fn send_empty_page(
-            &self,
+    impl ProvingSender<ResultFirstPage> {
+        pub(crate) fn send_empty_page(
+            self,
             tracing_id: Option<Uuid>,
             request_coordinator: Option<Coordinator>,
         ) -> (
-            SendAttemptedProof<ResultPage>,
-            Result<(), mpsc::error::SendError<ResultPage>>,
+            SendAttemptedProof<ResultFirstPage>,
+            Result<(), ResultFirstPage>,
         ) {
-            let empty_page = ReceivedPage {
+            let empty_page = FirstReceivedPage {
                 rows: DeserializedMetadataAndRawRows::mock_empty(),
                 tracing_id,
                 request_coordinator,
             };
-            self.send(Ok(empty_page)).await
+            // No more pages to follow.
+            let (_, next_pages_receiver) = mpsc::channel::<ResultNextPage>(1);
+
+            self.send(Ok((empty_page, next_pages_receiver)))
         }
     }
 }
 
-use checked_channel_sender::{ProvingSender, SendAttemptedProof};
+use checked_oneshot_sender::{ProvingSender, SendAttemptedProof};
 
-type PageSendAttemptedProof = SendAttemptedProof<Result<ReceivedPage, NextPageError>>;
+type FirstPageSendAttemptedProof = SendAttemptedProof<ResultFirstPage>;
 
 mod timeouter {
     use std::time::Duration;
@@ -168,11 +202,66 @@ mod timeouter {
 }
 use timeouter::PageQueryTimeouter;
 
+enum PageSender {
+    FirstPage(ProvingSender<ResultFirstPage>),
+    NextPages(FirstPageSendAttemptedProof, mpsc::Sender<ResultNextPage>),
+}
+
+impl PageSender {
+    async fn send_err(self, err: NextPageError) -> FirstPageSendAttemptedProof {
+        match self {
+            PageSender::FirstPage(sender) => {
+                let (proof, _) = sender.send(Err(err));
+                proof
+            }
+            PageSender::NextPages(proof, sender) => {
+                let _ = sender.send(Err(err)).await;
+                proof
+            }
+        }
+    }
+
+    async fn send_empty_page(
+        self,
+        tracing_id: Option<Uuid>,
+        request_coordinator: Option<Coordinator>,
+    ) -> FirstPageSendAttemptedProof {
+        match self {
+            PageSender::FirstPage(sender) => {
+                let (proof, _) = sender.send_empty_page(tracing_id, request_coordinator);
+                proof
+            }
+            PageSender::NextPages(proof, sender) => {
+                let empty_page = ReceivedPage {
+                    rows: DeserializedMetadataAndRawRows::mock_empty(),
+                    tracing_id,
+                    request_coordinator,
+                };
+                let _ = sender.send(Ok(empty_page)).await;
+                proof
+            }
+        }
+    }
+
+    async fn send(self, page: ReceivedPage) -> (FirstPageSendAttemptedProof, Self, Result<(), ()>) {
+        match self {
+            PageSender::FirstPage(sender) => {
+                let (next_pages_sender, next_pages_receiver) = mpsc::channel::<ResultNextPage>(1);
+                let (proof, res) = sender.send(Ok((page, next_pages_receiver)));
+                let sender = PageSender::NextPages(proof.clone(), next_pages_sender);
+                (proof, sender, res.map_err(|_| ()))
+            }
+            PageSender::NextPages(ref proof, ref next_pages_sender) => {
+                let res = next_pages_sender.send(Ok(page)).await;
+                (proof.clone(), self, res.map_err(|_| ()))
+            }
+        }
+    }
+}
+
 // PagerWorker works in the background to fetch pages
 // QueryPager receives them through a channel
 struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
-    sender: ProvingSender<Result<ReceivedPage, NextPageError>>,
-
     // Closure used to perform a single page query
     // AsyncFn(Arc<Connection>, Option<Arc<[u8]>>) -> Result<QueryResponse, RequestAttemptError>
     page_query: QueryFunc,
@@ -202,8 +291,12 @@ where
     QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     SpanCreator: Fn() -> RequestSpan,
 {
-    // Contract: this function MUST send at least one item through self.sender
-    async fn work(mut self, cluster_state: Arc<ClusterState>) -> PageSendAttemptedProof {
+    // Contract: this function MUST send at least one item through first_page_sender.
+    async fn work(
+        mut self,
+        cluster_state: Arc<ClusterState>,
+        first_page_sender: ProvingSender<ResultFirstPage>,
+    ) -> FirstPageSendAttemptedProof {
         let load_balancer = Arc::clone(&self.load_balancing_policy);
         let statement_info = self.routing_info.clone();
         let query_plan =
@@ -211,6 +304,8 @@ where
 
         let mut last_error: RequestError = RequestError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
+
+        let mut sender = PageSender::FirstPage(first_page_sender);
 
         self.log_request_start();
         self.timeouter.as_mut().map(PageQueryTimeouter::reset);
@@ -244,20 +339,30 @@ where
                     Coordinator::new(node, node.sharder().is_some().then_some(shard), &connection);
 
                 // Query pages until an error occurs
-                let queries_result: Result<
-                    Result<PageSendAttemptedProof, RequestAttemptError>,
-                    RequestTimeoutError,
-                > = self
-                    .query_pages(&connection, current_consistency, node, coordinator.clone())
+                let (queries_result, new_sender): (
+                    Result<
+                        Result<FirstPageSendAttemptedProof, RequestAttemptError>,
+                        RequestTimeoutError,
+                    >,
+                    PageSender,
+                ) = self
+                    .query_pages(
+                        &connection,
+                        current_consistency,
+                        node,
+                        coordinator.clone(),
+                        sender,
+                    )
                     .instrument(span.clone())
                     .await;
+                sender = new_sender;
 
                 let request_error: RequestAttemptError = match queries_result {
                     Ok(Ok(proof)) => {
                         trace!(parent: &span, "Request succeeded");
                         // query_pages returned Ok, so we are guaranteed
                         // that it attempted to send at least one page
-                        // through self.sender and we can safely return now.
+                        // through sender and we can safely return now.
                         return proof;
                     }
                     Ok(Err(error)) => {
@@ -276,9 +381,8 @@ where
                             error = %request_error,
                             "Request timed out"
                         );
-                        let (proof, _) = self
-                            .sender
-                            .send(Err(NextPageError::RequestFailure(request_error)))
+                        let proof = sender
+                            .send_err(NextPageError::RequestFailure(request_error))
                             .await;
                         return proof;
                     }
@@ -323,22 +427,18 @@ where
                         // interface isn't meant for sending writes),
                         // we must attempt to send something because
                         // QueryPager expects it.
-                        let (proof, _) = self
-                            .sender
+                        return sender
                             .send_empty_page(None, Some(coordinator.clone()))
                             .await;
-                        return proof;
                     }
                 };
             }
         }
 
         self.log_request_error(&last_error);
-        let (proof, _) = self
-            .sender
-            .send(Err(NextPageError::RequestFailure(last_error)))
-            .await;
-        proof
+        sender
+            .send_err(NextPageError::RequestFailure(last_error))
+            .await
     }
 
     // Given a working connection query as many pages as possible until the first error.
@@ -352,23 +452,30 @@ where
         consistency: Consistency,
         node: NodeRef<'_>,
         coordinator: Coordinator,
-    ) -> Result<Result<PageSendAttemptedProof, RequestAttemptError>, RequestTimeoutError> {
+        mut sender: PageSender,
+    ) -> (
+        Result<Result<FirstPageSendAttemptedProof, RequestAttemptError>, RequestTimeoutError>,
+        PageSender,
+    ) {
         loop {
             let request_span = (self.span_creator)();
-            match self
+            let (res, new_sender) = self
                 .query_one_page(
                     connection,
                     consistency,
                     node,
                     coordinator.clone(),
                     &request_span,
+                    sender,
                 )
                 .instrument(request_span.span().clone())
-                .await
-            {
+                .await;
+            sender = new_sender;
+
+            match res {
                 Ok(Ok(ControlFlow::Break(proof))) => {
                     // Successfully queried the last remaining page.
-                    return Ok(Ok(proof));
+                    return (Ok(Ok(proof)), sender);
                 }
 
                 Ok(Ok(ControlFlow::Continue(()))) => {
@@ -377,12 +484,12 @@ where
                     self.timeouter.as_mut().map(PageQueryTimeouter::reset);
                 }
                 Ok(Err(request_attempt_error)) => {
-                    return Ok(Err(request_attempt_error));
+                    return (Ok(Err(request_attempt_error)), sender);
                 }
                 Err(request_timeout_error) => {
-                    return Err(request_timeout_error);
+                    return (Err(request_timeout_error), sender);
                 }
-            }
+            };
         }
     }
 
@@ -393,10 +500,70 @@ where
         node: NodeRef<'_>,
         coordinator: Coordinator,
         request_span: &RequestSpan,
-    ) -> Result<
-        Result<ControlFlow<PageSendAttemptedProof, ()>, RequestAttemptError>,
-        RequestTimeoutError,
-    > {
+        mut sender: PageSender,
+    ) -> (
+        Result<
+            Result<ControlFlow<FirstPageSendAttemptedProof, ()>, RequestAttemptError>,
+            RequestTimeoutError,
+        >,
+        PageSender,
+    ) {
+        let (elapsed, page_result) = match self
+            .fetch_one_page(connection, consistency, request_span)
+            .await
+        {
+            Err(timeout_err) => return (Err(timeout_err), sender),
+            Ok((elapsed, resp)) => (elapsed, resp),
+        };
+
+        let res = match sender {
+            PageSender::FirstPage(first_page_sender) => {
+                let res = self
+                    .process_first_page(
+                        node,
+                        coordinator,
+                        request_span,
+                        first_page_sender,
+                        elapsed,
+                        page_result,
+                    )
+                    .await;
+                let (res, new_sender) = match res {
+                    Ok((cf, proof, next_pages_sender)) => {
+                        let new_sender = PageSender::NextPages(proof.clone(), next_pages_sender);
+                        (Ok(cf.map_break(|()| proof)), new_sender)
+                    }
+                    Err((attempt_err, proving_sender)) => {
+                        (Err(attempt_err), PageSender::FirstPage(proving_sender))
+                    }
+                };
+                sender = new_sender;
+                res
+            }
+            PageSender::NextPages(ref proof, ref next_pages_sender) => {
+                let res = self
+                    .process_next_page(
+                        node,
+                        coordinator,
+                        request_span,
+                        next_pages_sender,
+                        elapsed,
+                        page_result,
+                    )
+                    .await;
+                res.map(|(cf, ())| cf.map_break(|()| proof.clone()))
+            }
+        };
+        (Ok(res), sender)
+    }
+
+    async fn fetch_one_page(
+        &mut self,
+        connection: &Arc<Connection>,
+        consistency: Consistency,
+        request_span: &RequestSpan,
+    ) -> Result<(Duration, Result<NonErrorQueryResponse, RequestAttemptError>), RequestTimeoutError>
+    {
         #[cfg(feature = "metrics")]
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
@@ -429,9 +596,27 @@ where
         };
 
         let elapsed = query_start.elapsed();
-
         request_span.record_shard_id(connection);
 
+        Ok((elapsed, query_response))
+    }
+
+    async fn process_first_page(
+        &mut self,
+        node: NodeRef<'_>,
+        coordinator: Coordinator,
+        request_span: &RequestSpan,
+        sender: ProvingSender<ResultFirstPage>,
+        elapsed: Duration,
+        query_response: Result<NonErrorQueryResponse, RequestAttemptError>,
+    ) -> Result<
+        (
+            ControlFlow<(), ()>,
+            FirstPageSendAttemptedProof,
+            mpsc::Sender<ResultNextPage>,
+        ),
+        (RequestAttemptError, ProvingSender<ResultFirstPage>),
+    > {
         match query_response {
             Ok(NonErrorQueryResponse {
                 response:
@@ -450,17 +635,19 @@ where
 
                 request_span.record_raw_rows_fields(&rows);
 
-                let received_page = ReceivedPage {
+                let received_page = FirstReceivedPage {
                     rows,
                     tracing_id,
                     request_coordinator: Some(coordinator),
                 };
 
-                // Send next page to QueryPager
-                let (proof, res) = self.sender.send(Ok(received_page)).await;
+                let (next_pages_sender, next_pages_receiver) = mpsc::channel(1);
+
+                // Send the first page to QueryPager
+                let (proof, res) = sender.send(Ok((received_page, next_pages_receiver)));
                 if res.is_err() {
                     // channel was closed, QueryPager was dropped - should shutdown
-                    return Ok(Ok(ControlFlow::Break(proof)));
+                    return Ok((ControlFlow::Break(()), proof, next_pages_sender));
                 }
 
                 match paging_state_response.into_paging_control_flow() {
@@ -469,7 +656,7 @@ where
                     }
                     ControlFlow::Break(()) => {
                         // Reached the last query, shutdown
-                        return Ok(Ok(ControlFlow::Break(proof)));
+                        return Ok((ControlFlow::Break(()), proof, next_pages_sender));
                     }
                 }
 
@@ -477,7 +664,7 @@ where
                 self.retry_session.reset();
                 self.log_request_start();
 
-                Ok(Ok(ControlFlow::Continue(())))
+                Ok((ControlFlow::Continue(()), proof, next_pages_sender))
             }
             Err(err) => {
                 #[cfg(feature = "metrics")]
@@ -488,7 +675,7 @@ where
                     node,
                     &err,
                 );
-                Ok(Err(err))
+                Err((err, sender))
             }
             Ok(NonErrorQueryResponse {
                 response: NonErrorResponseWithDeserializedMetadata::Result(_),
@@ -498,12 +685,10 @@ where
                 // We have most probably sent a modification statement (e.g. INSERT or UPDATE),
                 // so let's return an empty stream as suggested in #631.
 
-                // We must attempt to send something because the iterator expects it.
-                let (proof, _) = self
-                    .sender
-                    .send_empty_page(tracing_id, Some(coordinator))
-                    .await;
-                Ok(Ok(ControlFlow::Break(proof)))
+                // We must attempt to send something because the pager expects it.
+                let (next_pages_sender, _) = mpsc::channel(1);
+                let (proof, _) = sender.send_empty_page(tracing_id, Some(coordinator));
+                Ok((ControlFlow::Break(()), proof, next_pages_sender))
             }
             Ok(response) => {
                 #[cfg(feature = "metrics")]
@@ -516,7 +701,92 @@ where
                     node,
                     &err,
                 );
-                Ok(Err(err))
+                Err((err, sender))
+            }
+        }
+    }
+
+    async fn process_next_page(
+        &mut self,
+        node: NodeRef<'_>,
+        coordinator: Coordinator,
+        request_span: &RequestSpan,
+        sender: &mpsc::Sender<ResultNextPage>,
+        elapsed: Duration,
+        query_response: Result<NonErrorQueryResponse, RequestAttemptError>,
+    ) -> Result<(ControlFlow<(), ()>, ()), RequestAttemptError> {
+        match query_response {
+            Ok(NonErrorQueryResponse {
+                response:
+                    NonErrorResponseWithDeserializedMetadata::Result(
+                        result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
+                    ),
+                tracing_id,
+                ..
+            }) => {
+                #[cfg(feature = "metrics")]
+                let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
+                self.log_attempt_success();
+                self.log_request_success();
+                self.load_balancing_policy
+                    .on_request_success(&self.routing_info, elapsed, node);
+
+                request_span.record_raw_rows_fields(&rows);
+
+                let received_page = NextReceivedPage {
+                    rows,
+                    tracing_id,
+                    request_coordinator: Some(coordinator),
+                };
+
+                // Send next page to QueryPager
+                let res = sender.send(Ok(received_page)).await;
+                if res.is_err() {
+                    // channel was closed, QueryPager was dropped - should shutdown
+                    return Ok((ControlFlow::Break(()), ()));
+                }
+
+                match paging_state_response.into_paging_control_flow() {
+                    ControlFlow::Continue(paging_state) => {
+                        self.paging_state = paging_state;
+                    }
+                    ControlFlow::Break(()) => {
+                        // Reached the last query, shutdown
+                        return Ok((ControlFlow::Break(()), ()));
+                    }
+                }
+
+                // Query succeeded, reset retry policy for future retries
+                self.retry_session.reset();
+                self.log_request_start();
+
+                Ok((ControlFlow::Continue(()), ()))
+            }
+            Err(err) => {
+                #[cfg(feature = "metrics")]
+                self.metrics.inc_failed_paged_queries();
+                self.load_balancing_policy.on_request_failure(
+                    &self.routing_info,
+                    elapsed,
+                    node,
+                    &err,
+                );
+                Err(err)
+            }
+            // This catches all other kinds of responses that are not rows.
+            // As this is not the first page, this is certainly an error.
+            Ok(response) => {
+                #[cfg(feature = "metrics")]
+                self.metrics.inc_failed_paged_queries();
+                let err =
+                    RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
+                self.load_balancing_policy.on_request_failure(
+                    &self.routing_info,
+                    elapsed,
+                    node,
+                    &err,
+                );
+                Err(err)
             }
         }
     }
@@ -610,7 +880,6 @@ where
 /// More specifically, it expects that each response is of Rows kind.
 /// Other kinds of responses will result in an error.
 struct SingleConnectionPagerWorker<Fetcher> {
-    sender: ProvingSender<Result<ReceivedPage, NextPageError>>,
     fetcher: Fetcher,
     timeout: Option<Duration>,
 }
@@ -620,34 +889,41 @@ where
     Fetcher: Fn(PagingState) -> FetchFut + Send + Sync,
     FetchFut: Future<Output = Result<QueryResponse, RequestAttemptError>> + Send,
 {
-    async fn work(mut self) -> PageSendAttemptedProof {
-        match self.do_work().await {
+    async fn work(
+        mut self,
+        first_page_sender: ProvingSender<ResultFirstPage>,
+    ) -> FirstPageSendAttemptedProof {
+        let sender = PageSender::FirstPage(first_page_sender);
+
+        let (res, sender) = self.do_work(sender).await;
+        match res {
             Ok(Ok(proof)) => proof,
             Ok(Err(err)) => {
-                let (proof, _) = self
-                    .sender
-                    .send(Err(NextPageError::RequestFailure(
+                sender
+                    .send_err(NextPageError::RequestFailure(
                         RequestError::LastAttemptError(err),
-                    )))
-                    .await;
-                proof
+                    ))
+                    .await
             }
             Err(RequestTimeoutError(timeout)) => {
-                let (proof, _) = self
-                    .sender
-                    .send(Err(NextPageError::RequestFailure(
-                        RequestError::RequestTimeout(timeout),
+                sender
+                    .send_err(NextPageError::RequestFailure(RequestError::RequestTimeout(
+                        timeout,
                     )))
-                    .await;
-                proof
+                    .await
             }
         }
     }
 
     async fn do_work(
         &mut self,
-    ) -> Result<Result<PageSendAttemptedProof, RequestAttemptError>, RequestTimeoutError> {
+        mut sender: PageSender,
+    ) -> (
+        Result<Result<FirstPageSendAttemptedProof, RequestAttemptError>, RequestTimeoutError>,
+        PageSender,
+    ) {
         let mut paging_state = PagingState::start();
+
         loop {
             let runner = async {
                 (self.fetcher)(paging_state)
@@ -659,7 +935,7 @@ where
                     match tokio::time::timeout(timeout, runner).await {
                         Ok(res) => res,
                         Err(_) /* tokio::time::error::Elapsed */ => {
-                            return Err(RequestTimeoutError(timeout));
+                            return (Err(RequestTimeoutError(timeout)), sender);
                         }
                     }
                 }
@@ -669,7 +945,7 @@ where
             let response = match response_res {
                 Ok(resp) => resp,
                 Err(err) => {
-                    return Ok(Err(err));
+                    return (Ok(Err(err)), sender);
                 }
             };
 
@@ -677,18 +953,18 @@ where
                 NonErrorResponseWithDeserializedMetadata::Result(
                     result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
                 ) => {
-                    let (proof, send_result) = self
-                        .sender
-                        .send(Ok(ReceivedPage {
+                    let (proof, new_sender, send_result) = sender
+                        .send(ReceivedPage {
                             rows,
                             tracing_id: response.tracing_id,
                             request_coordinator: None,
-                        }))
+                        })
                         .await;
+                    sender = new_sender;
 
                     if send_result.is_err() {
                         // channel was closed, QueryPager was dropped - should shutdown
-                        return Ok(Ok(proof));
+                        return (Ok(Ok(proof)), sender);
                     }
 
                     match paging_state_response.into_paging_control_flow() {
@@ -697,14 +973,17 @@ where
                         }
                         ControlFlow::Break(()) => {
                             // Reached the last query, shutdown
-                            return Ok(Ok(proof));
+                            return (Ok(Ok(proof)), sender);
                         }
                     }
                 }
                 _ => {
-                    return Ok(Err(RequestAttemptError::UnexpectedResponse(
-                        response.response.to_response_kind(),
-                    )));
+                    return (
+                        Ok(Err(RequestAttemptError::UnexpectedResponse(
+                            response.response.to_response_kind(),
+                        ))),
+                        sender,
+                    );
                 }
             }
         }
@@ -730,7 +1009,7 @@ pub(crate) struct PreparedPagerConfig {
 #[derive(Debug)]
 pub struct QueryPager {
     current_page: RawRowLendingIterator,
-    page_receiver: mpsc::Receiver<Result<ReceivedPage, NextPageError>>,
+    page_receiver: mpsc::Receiver<Result<NextReceivedPage, NextPageError>>,
     tracing_ids: Vec<Uuid>,
     request_coordinators: Vec<Coordinator>,
 }
@@ -848,7 +1127,7 @@ If you are using this API, you are probably doing something wrong."
         cluster_state: Arc<ClusterState>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Result<Self, NextPageError> {
-        let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
+        let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
 
         let consistency = statement
             .config
@@ -913,7 +1192,6 @@ If you are using this API, you are probably doing something wrong."
             };
 
             let worker = PagerWorker {
-                sender: sender.into(),
                 page_query,
                 routing_info,
                 query_is_idempotent: statement.config.is_idempotent,
@@ -931,7 +1209,7 @@ If you are using this API, you are probably doing something wrong."
                 span_creator,
             };
 
-            worker.work(cluster_state).await
+            worker.work(cluster_state, sender.into()).await
         };
 
         Self::new_from_worker_future(worker_task, receiver).await
@@ -940,7 +1218,7 @@ If you are using this API, you are probably doing something wrong."
     pub(crate) async fn new_for_prepared_statement(
         config: PreparedPagerConfig,
     ) -> Result<Self, NextPageError> {
-        let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
+        let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
 
         let consistency = config
             .prepared
@@ -988,8 +1266,7 @@ If you are using this API, you are probably doing something wrong."
                 Ok(res) => res.unzip(),
                 Err(err) => {
                     let (proof, _res) = ProvingSender::from(sender)
-                        .send(Err(NextPageError::PartitionKeyError(err)))
-                        .await;
+                        .send(Err(NextPageError::PartitionKeyError(err)));
                     return proof;
                 }
             };
@@ -1048,7 +1325,6 @@ If you are using this API, you are probably doing something wrong."
             };
 
             let worker = PagerWorker {
-                sender: sender.into(),
                 page_query,
                 routing_info: statement_info,
                 query_is_idempotent: config.prepared.config.is_idempotent,
@@ -1066,7 +1342,7 @@ If you are using this API, you are probably doing something wrong."
                 span_creator,
             };
 
-            worker.work(config.cluster_state).await
+            worker.work(config.cluster_state, sender.into()).await
         };
 
         Self::new_from_worker_future(worker_task, receiver).await
@@ -1079,7 +1355,7 @@ If you are using this API, you are probably doing something wrong."
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<Self, NextPageError> {
-        let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, NextPageError>>(1);
+        let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
 
         let page_size = prepared.get_validated_page_size();
         let timeout = prepared.get_request_timeout().or_else(|| {
@@ -1091,7 +1367,6 @@ If you are using this API, you are probably doing something wrong."
 
         let worker_task = async move {
             let worker = SingleConnectionPagerWorker {
-                sender: sender.into(),
                 fetcher: |paging_state| {
                     connection.execute_raw_with_consistency(
                         &prepared,
@@ -1104,19 +1379,19 @@ If you are using this API, you are probably doing something wrong."
                 },
                 timeout,
             };
-            worker.work().await
+            worker.work(sender.into()).await
         };
 
         Self::new_from_worker_future(worker_task, receiver).await
     }
 
     async fn new_from_worker_future(
-        worker_task: impl Future<Output = PageSendAttemptedProof> + Send + 'static,
-        mut receiver: mpsc::Receiver<Result<ReceivedPage, NextPageError>>,
+        worker_task: impl Future<Output = FirstPageSendAttemptedProof> + Send + 'static,
+        first_page_receiver: oneshot::Receiver<ResultFirstPage>,
     ) -> Result<Self, NextPageError> {
         let worker_handle = tokio::task::spawn(worker_task);
 
-        let Some(first_page_res) = receiver.recv().await else {
+        let Ok(first_page_res) = first_page_receiver.await else {
             // - The future returned by worker.work sends at least one item
             //   to the channel (the PageSendAttemptedProof helps enforce this);
             // - That future is polled in a tokio::task which isn't going to be
@@ -1159,11 +1434,11 @@ If you are using this API, you are probably doing something wrong."
             }
         };
 
-        let first_page = first_page_res?;
+        let (first_page, remaining_pages_receiver) = first_page_res?;
 
         Ok(Self {
             current_page: RawRowLendingIterator::new(first_page.rows),
-            page_receiver: receiver,
+            page_receiver: remaining_pages_receiver,
             tracing_ids: if let Some(tracing_id) = first_page.tracing_id {
                 vec![tracing_id]
             } else {
