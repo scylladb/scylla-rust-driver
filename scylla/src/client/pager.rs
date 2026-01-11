@@ -496,7 +496,7 @@ where
                 ..
             }) => {
                 // We have most probably sent a modification statement (e.g. INSERT or UPDATE),
-                // so let's return an empty iterator as suggested in #631.
+                // so let's return an empty stream as suggested in #631.
 
                 // We must attempt to send something because the iterator expects it.
                 let (proof, _) = self
@@ -1116,7 +1116,7 @@ If you are using this API, you are probably doing something wrong."
     ) -> Result<Self, NextPageError> {
         let worker_handle = tokio::task::spawn(worker_task);
 
-        let Some(page_received_res) = receiver.recv().await else {
+        let Some(first_page_res) = receiver.recv().await else {
             // - The future returned by worker.work sends at least one item
             //   to the channel (the PageSendAttemptedProof helps enforce this);
             // - That future is polled in a tokio::task which isn't going to be
@@ -1158,17 +1158,18 @@ If you are using this API, you are probably doing something wrong."
                 }
             }
         };
-        let page_received = page_received_res?;
+
+        let first_page = first_page_res?;
 
         Ok(Self {
-            current_page: RawRowLendingIterator::new(page_received.rows),
+            current_page: RawRowLendingIterator::new(first_page.rows),
             page_receiver: receiver,
-            tracing_ids: if let Some(tracing_id) = page_received.tracing_id {
+            tracing_ids: if let Some(tracing_id) = first_page.tracing_id {
                 vec![tracing_id]
             } else {
                 Vec::new()
             },
-            request_coordinators: Vec::from_iter(page_received.request_coordinator),
+            request_coordinators: Vec::from_iter(first_page.request_coordinator),
         })
     }
 
