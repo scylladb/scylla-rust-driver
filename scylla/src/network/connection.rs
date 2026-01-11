@@ -1063,6 +1063,10 @@ impl Connection {
 
     /// Executes a prepared statements and fetches its results over multiple pages, using
     /// the asynchronous iterator interface.
+    ///
+    /// NOTE: This function only supports executing SELECT statements.
+    /// More specifically, it expects that each response is of Rows kind.
+    /// Other kinds of responses will result in an error.
     pub(crate) async fn execute_iter(
         self: Arc<Self>,
         prepared_statement: PreparedStatement,
@@ -2397,20 +2401,6 @@ mod tests {
             .await;
         results.sort_unstable(); // Clippy recommended to use sort_unstable instead of sort()
         assert_eq!(results, values);
-
-        // 3. INSERT execute_iter should work and not return any rows.
-        let insert_stmt = Statement::new("INSERT INTO connection_execute_iter_tab (p) VALUES (0)");
-        let prepared_insert = connection.prepare(&insert_stmt).await.unwrap();
-        let insert_res1 = connection
-            .execute_iter(prepared_insert, SerializedValues::new())
-            .await
-            .unwrap()
-            .rows_stream::<()>()
-            .unwrap()
-            .try_collect::<Vec<_>>()
-            .await
-            .unwrap();
-        assert!(insert_res1.is_empty());
 
         {
             // Teardown phase

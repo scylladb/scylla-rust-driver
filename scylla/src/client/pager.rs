@@ -605,6 +605,10 @@ where
 /// A massively simplified version of the PagerWorker. It does not have
 /// any complicated logic related to retries, it just fetches pages from
 /// a single connection.
+///
+/// NOTE: This worker only supports executing SELECT statements.
+/// More specifically, it expects that each response is of Rows kind.
+/// Other kinds of responses will result in an error.
 struct SingleConnectionPagerWorker<Fetcher> {
     sender: ProvingSender<Result<ReceivedPage, NextPageError>>,
     fetcher: Fetcher,
@@ -696,14 +700,6 @@ where
                             return Ok(Ok(proof));
                         }
                     }
-                }
-                NonErrorResponseWithDeserializedMetadata::Result(_) => {
-                    // We have most probably sent a modification statement (e.g. INSERT or UPDATE),
-                    // so let's return an empty iterator as suggested in #631.
-
-                    // We must attempt to send something because the iterator expects it.
-                    let (proof, _) = self.sender.send_empty_page(response.tracing_id, None).await;
-                    return Ok(Ok(proof));
                 }
                 _ => {
                     return Ok(Err(RequestAttemptError::UnexpectedResponse(
