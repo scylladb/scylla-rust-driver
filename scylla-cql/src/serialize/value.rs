@@ -947,7 +947,7 @@ fn serialize_next_constant_length_elem<'t, T: SerializeValue + 't>(
     Ok(())
 }
 
-fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
+pub fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
     rust_name: &'static str,
     element_type: &ColumnType,
     typ: &ColumnType,
