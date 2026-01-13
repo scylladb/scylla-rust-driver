@@ -1002,7 +1002,19 @@ fn serialize_next_constant_length_elem<'t, T: SerializeValue + 't>(
     Ok(())
 }
 
-fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
+/// Serializes an element with variable-length encoding (vint length prefix + data).
+#[cfg(all(scylla_unstable, feature = "unstable-python-rs"))]
+pub fn serialize_next_variable_length_elem_unstable<'t, T: SerializeValue + 't>(
+    rust_name: &'static str,
+    element_type: &ColumnType,
+    typ: &ColumnType,
+    builder: &mut CellValueBuilder,
+    element: &'t T,
+) -> Result<(), SerializationError> {
+    serialize_next_variable_length_elem(rust_name, element_type, typ, builder, element)
+}
+
+pub(crate) fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
     rust_name: &'static str,
     element_type: &ColumnType,
     typ: &ColumnType,
