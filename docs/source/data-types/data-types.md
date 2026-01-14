@@ -35,7 +35,7 @@ Database types and their Rust equivalents:
 * `UDT (User defined type)` <----> Custom user structs with macros
 * `Vector` <----> `Vec<T>`
 
-Additionally, `Box` and `Arc` serialization and deserialization is supported for all above types.
+Additionally, `Box`, `Arc`, and `Cow` serialization and deserialization is supported for all above types.
 
 ```{eval-rst}
 .. toctree::

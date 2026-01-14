@@ -13,6 +13,7 @@ use crate::value::{
     Emptiable, MaybeEmpty, MaybeUnset, Unset,
 };
 
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hash, Hasher};
@@ -25,7 +26,7 @@ use bytes::Bytes;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
 struct SerializeWithCustomError;
 
 #[derive(Error, Debug)]
@@ -217,6 +218,14 @@ fn test_arc_errors() {
     verify_typeck_error_in_wrapper::<Arc<i32>>(Arc::new(123));
     verify_custom_error_in_wrapper::<Arc<SerializeWithCustomError>>(Arc::new(
         SerializeWithCustomError,
+    ));
+}
+
+#[test]
+fn test_cow_errors() {
+    verify_typeck_error_in_wrapper::<Cow<i32>>(Cow::Borrowed(&123));
+    verify_custom_error_in_wrapper::<Cow<SerializeWithCustomError>>(Cow::Borrowed(
+        &SerializeWithCustomError,
     ));
 }
 
@@ -2329,6 +2338,15 @@ fn arc_serialization() {
             0, 0, 0, 4, 0, 0, 0, 2, // 2nd element
             0, 0, 0, 4, 0, 0, 0, 3 // 3rd element
         ]
+    );
+}
+
+#[test]
+fn cow_serialization() {
+    let x: Cow<str> = "123".into();
+    assert_eq!(
+        do_serialize(x, &ColumnType::Native(NativeType::Text)),
+        vec![0, 0, 0, 3, 49, 50, 51]
     );
 }
 

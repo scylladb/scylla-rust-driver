@@ -3,6 +3,7 @@
 // Note: When editing above doc-comment edit the corresponding comment on
 // re-export module in scylla crate too.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
 use std::hash::BuildHasher;
@@ -460,6 +461,15 @@ impl<T: SerializeValue + ?Sized> SerializeValue for Arc<T> {
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
         T::serialize(&**self, typ, writer).map_err(fix_rust_name_in_err::<Self>)
+    }
+}
+impl<T: SerializeValue + ?Sized + ToOwned> SerializeValue for Cow<'_, T> {
+    fn serialize<'b>(
+        &self,
+        typ: &ColumnType,
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        T::serialize(self.as_ref(), typ, writer).map_err(fix_rust_name_in_err::<Self>)
     }
 }
 impl<V: SerializeValue, S: BuildHasher + Default> SerializeValue for HashSet<V, S> {
