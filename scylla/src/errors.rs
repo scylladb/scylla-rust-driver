@@ -302,7 +302,7 @@ pub enum MetadataError {
     ConnectionPoolError(#[from] ConnectionPoolError),
 
     /// Failed to fetch metadata.
-    #[error("transparent")]
+    #[error(transparent)]
     FetchError(#[from] MetadataFetchError),
 
     /// Bad peers metadata.
