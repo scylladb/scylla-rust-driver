@@ -115,6 +115,7 @@ where
             &self.generics,
             self.constraint_trait.clone(),
             frame_lifetime,
+            metadata_lifetime,
         )
         .chain(generate_default_constraints(&self.fields));
         let trait_: syn::Path = parse_quote!(#macro_internal::#trait_);
@@ -153,24 +154,25 @@ fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
 fn generate_lifetime_constraints_for_impl<'a>(
     generics: &'a syn::Generics,
     trait_full_name: syn::Path,
-    constraint_lifetime: &'a syn::Lifetime,
+    frame_lifetime: &'a syn::Lifetime,
+    metadata_lifetime: &'a syn::Lifetime,
 ) -> impl Iterator<Item = syn::WherePredicate> + use<'a> {
     // Constrain the new lifetime with the existing lifetime parameters
-    //     'lifetime: 'a + 'b + 'c ...
+    //     'frame_lifetime: 'a + 'b + 'c ...
     let mut lifetimes = generics.lifetimes().map(|l| &l.lifetime).peekable();
     let lifetime_constraints = std::iter::from_fn(move || {
         let lifetimes = lifetimes.by_ref();
         lifetimes
             .peek()
             .is_some()
-            .then::<syn::WherePredicate, _>(|| parse_quote!(#constraint_lifetime: #(#lifetimes)+*))
+            .then::<syn::WherePredicate, _>(|| parse_quote!(#frame_lifetime: #(#lifetimes)+*))
     });
 
     // For each type parameter T, constrain it like this:
-    //     T: DeserializeValue<'lifetime>,
+    //     T: DeserializeValue<'frame_lifetime, 'metadata_lifetime>,
     let type_constraints = generics.type_params().map(move |t| {
         let t_ident = &t.ident;
-        parse_quote!(#t_ident: #trait_full_name<#constraint_lifetime>)
+        parse_quote!(#t_ident: #trait_full_name<#frame_lifetime, #metadata_lifetime>)
     });
 
     lifetime_constraints.chain(type_constraints)

@@ -2218,6 +2218,37 @@ mod derive_macros_integration {
                 let udt = deserialize::<Udt>(&typ, &bytes).unwrap();
                 assert_eq!(udt, Udt { a: 42 });
             }
+
+            #[test]
+            fn test_udt_deserialization_with_generics() {
+                #[derive(DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct Udt<'a, T, U> {
+                    a: &'a str,
+                    b: T,
+                    c: U,
+                }
+
+                let typ = udt_def_with_fields([
+                    ("a", ColumnType::Native(NativeType::Text)),
+                    ("b", ColumnType::Native(NativeType::Int)),
+                    ("c", ColumnType::Native(NativeType::BigInt)),
+                ]);
+                let bytes = UdtSerializer::new()
+                    .field("Ala ma kota".as_bytes())
+                    .field(&123_i32.to_be_bytes())
+                    .field(&456_i64.to_be_bytes())
+                    .finalize();
+                let udt = deserialize::<Udt<i32, i64>>(&typ, &bytes).unwrap();
+                assert_eq!(
+                    udt,
+                    Udt {
+                        a: "Ala ma kota",
+                        b: 123,
+                        c: 456,
+                    }
+                );
+            }
         }
     }
 
@@ -3912,6 +3943,37 @@ mod derive_macros_integration {
                 let bytes = serialize_cells([val_int(42)]);
                 let row = deserialize::<MyRow>(specs, &bytes).unwrap();
                 assert_eq!(row, MyRow { a: 42 });
+            }
+
+            #[test]
+            fn test_row_deserialization_with_generics() {
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct MyRow<'a, T, U> {
+                    a: &'a str,
+                    b: T,
+                    c: U,
+                }
+
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("c", ColumnType::Native(NativeType::BigInt)),
+                ];
+                let bytes = serialize_cells([
+                    val_str("Ala ma kota"),
+                    val_int(123),
+                    Some(456_i64.to_be_bytes().to_vec()),
+                ]);
+                let row = deserialize::<MyRow<i32, i64>>(specs, &bytes).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: "Ala ma kota",
+                        b: 123,
+                        c: 456,
+                    }
+                );
             }
         }
     }
