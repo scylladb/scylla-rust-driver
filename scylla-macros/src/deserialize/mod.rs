@@ -57,6 +57,9 @@ where
     ) -> Result<Self, syn::Error> {
         let attrs = Attrs::from_attributes(&input.attrs)?;
 
+        let macro_internal = attrs.macro_internal_path();
+        let constraint_trait = parse_quote!(#macro_internal::#constraint_trait);
+
         // TODO: support structs with unnamed fields.
         // A few things to consider:
         // - such support would necessarily require `enforce_order` and `skip_name_checks` attributes to be passed,
