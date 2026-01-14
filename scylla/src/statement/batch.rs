@@ -432,14 +432,9 @@ impl BoundBatch {
         Ok(bound_batch)
     }
 
-    /// Borrows the execution profile handle associated with this batch.
-    pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
-        self.config.execution_profile_handle.as_ref()
-    }
-
-    /// Gets the default timestamp for this batch in microseconds.
-    pub fn get_timestamp(&self) -> Option<i64> {
-        self.config.timestamp
+    /// Gets the number of statements that have been added to this batch so far
+    pub fn statements_len(&self) -> u16 {
+        self.statements_len
     }
 
     /// Gets type of batch.
@@ -447,9 +442,148 @@ impl BoundBatch {
         self.batch_type
     }
 
-    /// Gets the number of statements that have been added to this batch so far
-    pub fn statements_len(&self) -> u16 {
-        self.statements_len
+    /// Sets the consistency to be used when executing this batch.
+    pub fn set_consistency(&mut self, c: Consistency) {
+        self.config.consistency = Some(c);
+    }
+
+    /// Unsets the consistency overridden on this batch.
+    /// This means that consistency will be derived from the execution profile
+    /// (per-batch or, if absent, the default one).
+    pub fn unset_consistency(&mut self) {
+        self.config.consistency = None;
+    }
+
+    /// Gets the consistency to be used when executing this batch if it is filled.
+    /// If this is empty, the default_consistency of the session will be used.
+    pub fn get_consistency(&self) -> Option<Consistency> {
+        self.config.consistency
+    }
+
+    /// Sets the serial consistency to be used when executing this batch.
+    /// (Ignored unless the batch is an LWT)
+    pub fn set_serial_consistency(&mut self, sc: Option<SerialConsistency>) {
+        self.config.serial_consistency = Some(sc);
+    }
+
+    /// Unsets the serial consistency overridden on this batch.
+    /// This means that serial consistency will be derived from the execution profile
+    /// (per-batch or, if absent, the default one).
+    pub fn unset_serial_consistency(&mut self) {
+        self.config.serial_consistency = None;
+    }
+
+    /// Gets the serial consistency to be used when executing this batch.
+    /// (Ignored unless the batch is an LWT)
+    pub fn get_serial_consistency(&self) -> Option<SerialConsistency> {
+        self.config.serial_consistency.flatten()
+    }
+
+    /// Sets the idempotence of this batch
+    /// A query is idempotent if it can be applied multiple times without changing the result of the initial application
+    /// If set to `true` we can be sure that it is idempotent
+    /// If set to `false` it is unknown whether it is idempotent
+    /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
+    pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
+        self.config.is_idempotent = is_idempotent;
+    }
+
+    /// Gets the idempotence of this batch
+    pub fn get_is_idempotent(&self) -> bool {
+        self.config.is_idempotent
+    }
+
+    /// Enable or disable CQL Tracing for this batch
+    /// If enabled session.batch() will return a QueryResult containing tracing_id
+    /// which can be used to query tracing information about the execution of this query
+    pub fn set_tracing(&mut self, should_trace: bool) {
+        self.config.tracing = should_trace;
+    }
+
+    /// Gets whether tracing is enabled for this batch
+    pub fn get_tracing(&self) -> bool {
+        self.config.tracing
+    }
+
+    /// Sets the default timestamp for this batch in microseconds.
+    /// If not None, it will replace the server side assigned timestamp as default timestamp for
+    /// all the statements contained in the batch.
+    pub fn set_timestamp(&mut self, timestamp: Option<i64>) {
+        self.config.timestamp = timestamp
+    }
+
+    /// Gets the default timestamp for this batch in microseconds.
+    pub fn get_timestamp(&self) -> Option<i64> {
+        self.config.timestamp
+    }
+
+    /// Sets the client-side timeout for this batch.
+    /// If not None, the driver will stop waiting for the request
+    /// to finish after `timeout` passed.
+    /// Otherwise, execution profile timeout will be applied.
+    pub fn set_request_timeout(&mut self, timeout: Option<Duration>) {
+        self.config.request_timeout = timeout
+    }
+
+    /// Gets client timeout associated with this batch.
+    pub fn get_request_timeout(&self) -> Option<Duration> {
+        self.config.request_timeout
+    }
+
+    /// Set the retry policy for this batch, overriding the one from execution profile if not None.
+    #[inline]
+    pub fn set_retry_policy(&mut self, retry_policy: Option<Arc<dyn RetryPolicy>>) {
+        self.config.retry_policy = retry_policy;
+    }
+
+    /// Get the retry policy set for the batch.
+    ///
+    /// This method returns the retry policy that is **overridden** on this statement.
+    /// In other words, it returns the retry policy set using [`Batch::set_retry_policy`].
+    /// This does not take the retry policy from the set execution profile into account.
+    #[inline]
+    pub fn get_retry_policy(&self) -> Option<&Arc<dyn RetryPolicy>> {
+        self.config.retry_policy.as_ref()
+    }
+
+    /// Set the load balancing policy for this batch, overriding the one from execution profile if not None.
+    #[inline]
+    pub fn set_load_balancing_policy(
+        &mut self,
+        load_balancing_policy: Option<Arc<dyn LoadBalancingPolicy>>,
+    ) {
+        self.config.load_balancing_policy = load_balancing_policy;
+    }
+
+    /// Get the load balancing policy set for the batch.
+    ///
+    /// This method returns the load balancing policy that is **overridden** on this statement.
+    /// In other words, it returns the load balancing policy set using [`Batch::set_load_balancing_policy`].
+    /// This does not take the load balancing policy from the set execution profile into account.
+    #[inline]
+    pub fn get_load_balancing_policy(&self) -> Option<&Arc<dyn LoadBalancingPolicy>> {
+        self.config.load_balancing_policy.as_ref()
+    }
+
+    /// Sets the listener capable of listening what happens during query execution.
+    pub fn set_history_listener(&mut self, history_listener: Arc<dyn HistoryListener>) {
+        self.config.history_listener = Some(history_listener);
+    }
+
+    /// Removes the listener set by `set_history_listener`.
+    pub fn remove_history_listener(&mut self) -> Option<Arc<dyn HistoryListener>> {
+        self.config.history_listener.take()
+    }
+
+    /// Associates the batch with execution profile referred by the provided handle.
+    /// Handle may be later remapped to another profile, and batch will reflect those changes.
+    pub fn set_execution_profile_handle(&mut self, profile_handle: Option<ExecutionProfileHandle>) {
+        self.config.execution_profile_handle = profile_handle;
+    }
+
+    /// Borrows the execution profile handle associated with this batch.
+    pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
+        self.config.execution_profile_handle.as_ref()
     }
 
     // **IMPORTANT NOTE**: It is OK for this function to append to the buffer even if it errors
