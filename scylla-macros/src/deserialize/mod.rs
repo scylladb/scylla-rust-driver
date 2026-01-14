@@ -171,7 +171,18 @@ fn generate_lifetime_constraints_for_impl<'a>(
         parse_quote!(#t_ident: #trait_full_name<#frame_lifetime, #metadata_lifetime>)
     });
 
-    lifetime_constraints.chain(type_constraints)
+    // The struct may already have some `where` constraints
+    // on its definition. We should copy them to the impl.
+    let original_constraints = generics
+        .where_clause
+        .clone()
+        .map(|clause| clause.predicates)
+        .unwrap_or_default()
+        .into_iter();
+
+    lifetime_constraints
+        .chain(type_constraints)
+        .chain(original_constraints)
 }
 
 /// Generates a pair of new lifetime parameters, with a different name to any of the
