@@ -213,6 +213,10 @@ pub enum SchemaAgreementError {
     RequestError(#[from] RequestAttemptError),
 
     /// Failed to convert schema version query result into rows result.
+    ///
+    /// This variant should be named `SchemaVersionIntoRowsResultError`, current name
+    /// is a copy-paste error. It will be renamed in 2.0
+    //TODO(2.0): Rename to `SchemaVersionIntoRowsResultError`
     #[error("Failed to convert schema version query result into rows result: {0}")]
     TracesEventsIntoRowsResultError(IntoRowsResultError),
 
