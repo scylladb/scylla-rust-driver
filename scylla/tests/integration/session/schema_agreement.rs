@@ -25,19 +25,36 @@ async fn run_some_ddl_with_unreachable_node(
     session: &Session,
     running_proxy: &mut RunningProxy,
 ) -> Result<QueryResult, ExecutionError> {
-    // Prevent fetching schema version.
-    // It simulates a node that became unreachable after our DDL completed,
-    // but the pool in the driver is not yet `Broken`.
-    running_proxy.running_nodes[paused].change_request_rules(Some(vec![RequestRule(
+    running_proxy.running_nodes.iter_mut().for_each(|node| {
+        node.change_request_rules(Some(vec![
+            // First check goes without trouble
+            RequestRule(
+                Condition::not(Condition::ConnectionRegisteredAnyEvent)
+                    .and(Condition::RequestOpcode(RequestOpcode::Execute))
+                    .and(Condition::TrueForLimitedTimes(1)),
+                RequestReaction::noop(),
+            ),
+            // Second check stalls on non-paused nodes, to time it out and
+            // return the error stored from first attempt.
+            RequestRule(
+                Condition::not(Condition::ConnectionRegisteredAnyEvent)
+                    .and(Condition::RequestOpcode(RequestOpcode::Execute)),
+                RequestReaction::delay(Duration::from_secs(1)),
+            ),
+        ]))
+    });
+
+    running_proxy.running_nodes[paused].prepend_request_rules(vec![RequestRule(
         Condition::not(Condition::ConnectionRegisteredAnyEvent)
             .and(Condition::RequestOpcode(RequestOpcode::Execute)),
         // Simulates driver discovering that node is unreachable.
         RequestReaction::drop_connection(),
-    )]));
+    )]);
 
     let ks = unique_keyspace_name();
     let mut request = Statement::new(format!(
-        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+        "CREATE KEYSPACE {ks}
+            WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
     ));
     request.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
         coordinator,
@@ -47,8 +64,10 @@ async fn run_some_ddl_with_unreachable_node(
     let result = session.query_unpaged(request, &[]).await;
 
     // Cleanup
-    running_proxy.running_nodes[paused].change_request_rules(Some(vec![]));
-    session.await_schema_agreement().await.unwrap();
+    running_proxy
+        .running_nodes
+        .iter_mut()
+        .for_each(|node| node.change_request_rules(Some(vec![])));
     session
         .query_unpaged(format!("DROP KEYSPACE {ks}"), &[])
         .await
