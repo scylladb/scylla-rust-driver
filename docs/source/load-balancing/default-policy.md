@@ -9,13 +9,14 @@ When the policy is datacenter-aware, you can configure whether to allow datacent
 
 `DefaultPolicy` can be created only using `DefaultPolicyBuilder`. The
 `builder()` method of `DefaultPolicy` returns a new instance of
-`DefaultPolicyBuilder` with the following default values:
+`DefaultPolicyBuilder`. Builder has the following configuration options
+and default values:
 
-- `preferences`: no particular datacenter/rack preference
-- `is_token_aware`: `true`
-- `permit_dc_failover`: `false`
-- `latency_awareness`: `None`
-- `enable_replica_shuffle`: `true`
+- `preferences`, configured using `prefer_datacenter` and `prefer_datacenter_and_rack` methods: no particular datacenter/rack preference
+- `is_token_aware`, configured using `token_aware` method: `true`
+- `permit_dc_failover`, configured using method with the same name: `false`
+- `latency_awareness`, configured using method with the same name: `None`
+- `enable_replica_shuffle`, configured using `enable_shuffling_replicas` method: `true`
 
 You can use the builder methods to configure the desired settings and create a
 `DefaultPolicy` instance:
