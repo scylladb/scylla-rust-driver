@@ -67,7 +67,7 @@ async fn test_schema_await_with_unreachable_node() {
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
             // DB preparation phase
-            let session: Session = SessionBuilder::new()
+            let builder = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map.clone()))
                 // Important in order to have a predictable amount of connections after session creation.
@@ -77,15 +77,17 @@ async fn test_schema_await_with_unreachable_node() {
                 // Let's try more often to prevent timeouts.
                 .schema_agreement_interval(Duration::from_millis(5))
                 // And also not make the test too long.
-                .schema_agreement_timeout(Duration::from_millis(600))
-                .build()
-                .await
-                .unwrap();
+                .schema_agreement_timeout(Duration::from_millis(600));
 
-            let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &session);
+            let host_ids = {
+                let session: Session = builder.clone().build().await.unwrap();
+                calculate_proxy_host_ids(&proxy_uris, &translation_map, &session)
+            };
 
             {
                 tracing::info!("================= Sub test 1 =================");
+
+                let session: Session = builder.clone().build().await.unwrap();
 
                 // Case 1: Paused node is a coordinator for DDL.
                 // DDL needs to fail.
@@ -109,6 +111,8 @@ async fn test_schema_await_with_unreachable_node() {
             {
                 tracing::info!("================= Sub test 2 =================");
 
+                let session: Session = builder.clone().build().await.unwrap();
+
                 // Case 2: Paused node is NOT a coordinator for DDL.
                 // DDL should succeed, because auto schema agreement only needs available nodes to agree.
                 let result = run_some_ddl_with_unreachable_node(
@@ -123,6 +127,8 @@ async fn test_schema_await_with_unreachable_node() {
 
             {
                 tracing::info!("================= Sub test 3 =================");
+
+                let session: Session = builder.clone().build().await.unwrap();
 
                 // Case 3: Paused node is a coordinator for DDL, and is used by control connection.
                 // It is the same as case 1, but paused node is also control connection.
@@ -146,6 +152,8 @@ async fn test_schema_await_with_unreachable_node() {
 
             {
                 tracing::info!("================= Sub test 4 =================");
+
+                let session: Session = builder.clone().build().await.unwrap();
 
                 // Case 4: Paused node is NOT a coordinator for DDL, but is used by control connection.
                 // It is the same as case 2, but paused node is also control connection.
@@ -182,7 +190,7 @@ async fn test_schema_await_with_transient_failure() {
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
             // DB preparation phase
-            let session: Session = SessionBuilder::new()
+            let builder = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map.clone()))
                 // Important in order to have a predictable amount of connections after session creation.
@@ -190,10 +198,7 @@ async fn test_schema_await_with_transient_failure() {
                 // already when we check schema agreement.
                 .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
                 // Let's try more often to prevent timeouts.
-                .schema_agreement_interval(Duration::from_millis(30))
-                .build()
-                .await
-                .unwrap();
+                .schema_agreement_interval(Duration::from_millis(30));
 
             let node_rules = Some(vec![RequestRule(
                 Condition::not(Condition::ConnectionRegisteredAnyEvent)
@@ -208,6 +213,7 @@ async fn test_schema_await_with_transient_failure() {
             // Note that this is only true because we configured the session with 1-connection-per-node.
             info!("Starting phase 1 - sanity check");
             {
+                let session: Session = builder.clone().build().await.unwrap();
                 running_proxy
                     .running_nodes
                     .iter_mut()
@@ -227,6 +233,7 @@ async fn test_schema_await_with_transient_failure() {
             // I'll use the same proxy rules as before, so first check will error out.
             info!("Starting phase 2 - main test");
             {
+                let session: Session = builder.clone().build().await.unwrap();
                 running_proxy
                     .running_nodes
                     .iter_mut()
