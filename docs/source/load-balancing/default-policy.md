@@ -9,13 +9,14 @@ When the policy is datacenter-aware, you can configure whether to allow datacent
 
 `DefaultPolicy` can be created only using `DefaultPolicyBuilder`. The
 `builder()` method of `DefaultPolicy` returns a new instance of
-`DefaultPolicyBuilder` with the following default values:
+`DefaultPolicyBuilder`. Builder has the following configuration options
+and default values:
 
-- `preferences`: no particular datacenter/rack preference
-- `is_token_aware`: `true`
-- `permit_dc_failover`: `false`
-- `latency_awareness`: `None`
-- `enable_replica_shuffle`: `true`
+- `preferences`, configured using `prefer_datacenter` and `prefer_datacenter_and_rack` methods: no particular datacenter/rack preference
+- `is_token_aware`, configured using `token_aware` method: `true`
+- `permit_dc_failover`, configured using method with the same name: `false`
+- `latency_awareness`, configured using method with the same name: `None`
+- `enable_replica_shuffle`, configured using `enable_shuffling_replicas` method: `true`
 
 You can use the builder methods to configure the desired settings and create a
 `DefaultPolicy` instance:
@@ -98,6 +99,18 @@ improving throughput.
 
 Please note that for token awareness to be applied, a statement must be
 prepared before being executed.
+
+#### Replica shuffling
+
+Setting `enable_replica_shuffle` to `false` (default: `true`) does something
+slightly different than its name suggests. It will cause all randomness-based
+operations on replicas, like selecting random one or shuffling a list of them,
+to always use PRNG with the same seed.
+The setting has no effect for non-replica nodes. Those are always shuffled
+randomly, without predefined seed. For that reason, this setting has no effect
+if token awareness is disabled.
+This is mostly useful in testing, to make sure subsequent calls to the policy
+return replicas in the same order. We discourage its use in production setting.
 
 ### Latency awareness
 
