@@ -343,8 +343,6 @@ async fn test_cql_tuple_db_repr_shorter_than_metadata() {
         .unwrap();
 }
 
-// TODO: Remove this ignore when vector type is supported in ScyllaDB
-#[cfg_attr(not(cassandra_tests), ignore)]
 #[tokio::test]
 async fn test_vector_type_metadata() {
     setup_tracing();
@@ -382,8 +380,6 @@ async fn test_vector_type_metadata() {
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
-// TODO: Remove this ignore when vector type is supported in ScyllaDB
-#[cfg_attr(not(cassandra_tests), ignore)]
 #[tokio::test]
 async fn test_vector_type_unprepared() {
     setup_tracing();
@@ -448,8 +444,6 @@ async fn test_vector_type_unprepared() {
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
-// TODO: Remove this ignore when vector type is supported in ScyllaDB
-#[cfg_attr(not(cassandra_tests), ignore)]
 #[tokio::test]
 async fn test_vector_type_prepared() {
     setup_tracing();
@@ -554,8 +548,6 @@ async fn test_vector_single_type<
     session.ddl(drop_statement).await.unwrap();
 }
 
-// TODO: Remove this ignore when vector type is available in ScyllaDB
-#[cfg_attr(not(cassandra_tests), ignore)]
 #[tokio::test]
 async fn test_vector_type_all_types() {
     setup_tracing();
