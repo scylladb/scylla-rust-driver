@@ -24,6 +24,7 @@ async fn run_some_ddl_with_unreachable_node(
     paused: usize,
     session: &Session,
     running_proxy: &mut RunningProxy,
+    util_session: &Session,
 ) -> Result<QueryResult, ExecutionError> {
     running_proxy.running_nodes.iter_mut().for_each(|node| {
         node.change_request_rules(Some(vec![
@@ -68,7 +69,7 @@ async fn run_some_ddl_with_unreachable_node(
         .running_nodes
         .iter_mut()
         .for_each(|node| node.change_request_rules(Some(vec![])));
-    session
+    util_session
         .query_unpaged(format!("DROP KEYSPACE {ks}"), &[])
         .await
         .unwrap();
@@ -98,10 +99,14 @@ async fn test_schema_await_with_unreachable_node() {
                 // And also not make the test too long.
                 .schema_agreement_timeout(Duration::from_millis(600));
 
-            let host_ids = {
-                let session: Session = builder.clone().build().await.unwrap();
-                calculate_proxy_host_ids(&proxy_uris, &translation_map, &session)
-            };
+            let normal_session = builder
+                .clone()
+                .schema_agreement_timeout(Duration::from_millis(60000))
+                .build()
+                .await
+                .unwrap();
+
+            let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &normal_session);
 
             {
                 tracing::info!("================= Sub test 1 =================");
@@ -115,6 +120,7 @@ async fn test_schema_await_with_unreachable_node() {
                     1,
                     &session,
                     &mut running_proxy,
+                    &normal_session,
                 )
                 .await;
                 assert_matches!(
@@ -139,6 +145,7 @@ async fn test_schema_await_with_unreachable_node() {
                     1,
                     &session,
                     &mut running_proxy,
+                    &normal_session,
                 )
                 .await;
                 assert_matches!(result, Ok(_))
@@ -157,6 +164,7 @@ async fn test_schema_await_with_unreachable_node() {
                     0,
                     &session,
                     &mut running_proxy,
+                    &normal_session,
                 )
                 .await;
                 assert_matches!(
@@ -183,6 +191,7 @@ async fn test_schema_await_with_unreachable_node() {
                     0,
                     &session,
                     &mut running_proxy,
+                    &normal_session,
                 )
                 .await;
                 assert_matches!(result, Ok(_))
