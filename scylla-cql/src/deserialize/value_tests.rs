@@ -1202,6 +1202,16 @@ fn test_arc() {
     }
 }
 
+#[test]
+fn test_cow() {
+    {
+        let text_bytes = make_bytes(b"abcd");
+        let decoded_str: Cow<str> =
+            deserialize::<Cow<str>>(&ColumnType::Native(NativeType::Text), &text_bytes).unwrap();
+        assert_eq!(&*decoded_str, "abcd");
+    }
+}
+
 pub(crate) fn udt_def_with_fields(
     fields: impl IntoIterator<Item = (impl Into<Cow<'static, str>>, ColumnType<'static>)>,
 ) -> ColumnType<'static> {
