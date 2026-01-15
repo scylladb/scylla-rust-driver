@@ -100,6 +100,18 @@ improving throughput.
 Please note that for token awareness to be applied, a statement must be
 prepared before being executed.
 
+#### Replica shuffling
+
+Setting `enable_replica_shuffle` to `false` (default: `true`) does something
+slightly different than its name suggests. It will cause all randomness-based
+operations on replicas, like selecting random one or shuffling a list of them,
+to always use PRNG with the same seed.
+The setting has no effect for non-replica nodes. Those are always shuffled
+randomly, without predefined seed. For that reason, this setting has no effect
+if token awareness is disabled.
+This is mostly useful in testing, to make sure subsequent calls to the policy
+return replicas in the same order. We discourage its use in production setting.
+
 ### Latency awareness
 
 Latency awareness is a mechanism that penalises nodes whose measured recent
