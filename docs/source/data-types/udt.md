@@ -76,3 +76,41 @@ while let Some((my_type_value,)) = iter.try_next().await? {
 # Ok(())
 # }
 ```
+
+## Transparent Wrappers (Newtype Pattern)
+
+Sometimes it is desirable to wrap a driver's type (like `i32` or `String`) in a custom struct for type safety, a pattern often called the "newtype pattern".
+To avoid writing manual implementations of `SerializeValue` and `DeserializeValue`, you can use the `#[scylla(transparent)]` attribute.
+
+This attribute delegates the serialization, deserialization, and type checking logic to the single field contained within the struct or enum. The wrapper will be stored in the database exactly as the inner type is stored (e.g., as an `Int` or `Text` column), not as a UDT.
+
+**Requirements:**
+* The struct must have exactly one field.
+* The enum must have exactly one variant with exactly one field.
+
+```rust
+# extern crate scylla;
+# async fn check_only_compiles() {
+use scylla::{DeserializeValue, SerializeValue};
+
+// This struct will be serialized as a simple Int (4 bytes),
+// strictly matching the inner `i32` type.
+#[derive(Debug, SerializeValue, DeserializeValue)]
+#[scylla(transparent)]
+struct UserId(i32);
+
+// Works with named fields too
+#[derive(Debug, SerializeValue, DeserializeValue)]
+#[scylla(transparent)]
+struct OrderId {
+    val: i64,
+}
+
+// Enums are also supported
+#[derive(Debug, SerializeValue, DeserializeValue)]
+#[scylla(transparent)]
+enum Status {
+    Value(String),
+}
+# }
+```
