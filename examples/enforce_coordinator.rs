@@ -44,7 +44,7 @@ async fn query_system_local_and_verify(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 

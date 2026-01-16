@@ -2315,7 +2315,7 @@ mod tests {
         use crate::client::session_builder::SessionBuilder;
 
         setup_tracing();
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
         let (connection, _) = super::open_connection(
@@ -2431,7 +2431,7 @@ mod tests {
         // to trigger the coalescing logic and check that everything works fine
         // no matter whether coalescing is enabled or not.
 
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;
         let ks = unique_keyspace_name();
 
@@ -2642,7 +2642,7 @@ mod tests {
         setup_tracing();
 
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
         let node_addr: SocketAddr = resolve_hostname(&uri).await;
 
         let drop_options_rule = RequestRule(

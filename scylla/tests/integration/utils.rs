@@ -106,11 +106,11 @@ where
     F: FnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy) -> Fut,
     Fut: Future<Output = RunningProxy>,
 {
-    let real1_uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let real1_uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
     let proxy1_uri = format!("{}:9042", scylla_proxy::get_exclusive_local_address());
-    let real2_uri = env::var("SCYLLA_URI2").unwrap_or_else(|_| "127.0.0.2:9042".to_string());
+    let real2_uri = env::var("SCYLLA_URI2").unwrap_or_else(|_| "172.42.0.3:9042".to_string());
     let proxy2_uri = format!("{}:9042", scylla_proxy::get_exclusive_local_address());
-    let real3_uri = env::var("SCYLLA_URI3").unwrap_or_else(|_| "127.0.0.3:9042".to_string());
+    let real3_uri = env::var("SCYLLA_URI3").unwrap_or_else(|_| "172.42.0.4:9042".to_string());
     let proxy3_uri = format!("{}:9042", scylla_proxy::get_exclusive_local_address());
 
     let real1_addr = SocketAddr::from_str(real1_uri.as_str()).unwrap();
@@ -193,7 +193,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
     let session_builder = {
         use scylla::client::session_builder::SessionBuilder;
 
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
 
         SessionBuilder::new().known_node(uri)
     };
@@ -515,7 +515,7 @@ impl<'typ, T> SerializeValueWithFakeType<'typ, T> {
 // and send OPTIONS request. If performance becomes a problem, we can do this.
 pub(crate) async fn fetch_negotiated_features(server: Option<String>) -> ProtocolFeatures {
     let real1_uri =
-        server.unwrap_or(env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string()));
+        server.unwrap_or(env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string()));
     let proxy1_uri = format!("{}:9042", scylla_proxy::get_exclusive_local_address());
     let real1_addr = SocketAddr::from_str(real1_uri.as_str()).unwrap();
     let proxy1_addr = SocketAddr::from_str(proxy1_uri.as_str()).unwrap();

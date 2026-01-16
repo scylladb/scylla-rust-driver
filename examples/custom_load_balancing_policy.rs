@@ -58,7 +58,7 @@ impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
 
     let custom_load_balancing = CustomLoadBalancingPolicy {
         fav_datacenter_name: "PL".to_string(),
