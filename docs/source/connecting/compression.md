@@ -20,7 +20,7 @@ use std::error::Error;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let uri = std::env::var("SCYLLA_URI")
-        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        .unwrap_or_else(|_| "172.42.0.2:9042".to_string());
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)

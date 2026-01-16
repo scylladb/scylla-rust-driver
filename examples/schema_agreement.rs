@@ -9,7 +9,7 @@ use std::time::Duration;
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create connection
-    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
 
     println!("Connecting to {uri} ...");
 

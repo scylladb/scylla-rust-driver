@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Create a new Session which connects to node at 127.0.0.1:9042
     // (or SCYLLA_URI if specified)
     let uri = std::env::var("SCYLLA_URI")
-        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        .unwrap_or_else(|_| "172.42.0.2:9042".to_string());
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)

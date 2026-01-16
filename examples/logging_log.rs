@@ -15,7 +15,7 @@ async fn main() -> Result<()> {
     // loggers like `env_logger` to see driver's messages.
     env_logger::init();
 
-    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
     info!("Connecting to {}", uri);
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
