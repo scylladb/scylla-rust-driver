@@ -4,7 +4,7 @@ use scylla::client::session_builder::SessionBuilder;
 
 #[tokio::main]
 async fn main() {
-    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
 
     println!("Connecting to {uri} ...");
 
