@@ -49,16 +49,6 @@ jobs:
     - name: Clippy scylla-cql
       run: cargo clippy --all-targets -p scylla-cql --features "full-serialization"
 
-# No scylla_unstable flag with features
-    - name: Cargo check without scylla_unstable
-      run: RUSTFLAGS="-Dwarnings" cargo clippy --all-features --tests --examples # No benches, because they require unstable features.
-
-# No scylla_unstable flag without features
-    - name: Cargo check without scylla_unstable and features
-      # If we pass --tests or --examples here, feature unification turns on some features anyway,
-      # so we only check the main target.
-      run: RUSTFLAGS="-Dwarnings" cargo clippy -p scylla
-
 # Features checks.
     # No features.
     - name: Cargo check without features
@@ -108,6 +98,16 @@ jobs:
   # unstable-reconnect-policy feature.
     - name: Cargo check with unstable-reconnect-policy feature
       run: RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --features "unstable-reconnect-policy"
+
+  # No scylla_unstable flag with features
+    - name: Cargo check without scylla_unstable
+      run: RUSTFLAGS="-Dwarnings" cargo clippy --all-features --tests --examples # No benches, because they require unstable features.
+
+  # No scylla_unstable flag without features
+    - name: Cargo check without scylla_unstable and features
+      # If we pass --tests or --examples here, feature unification turns on some features anyway,
+      # so we only check the main target.
+      run: RUSTFLAGS="-Dwarnings" cargo clippy -p scylla
 
 
   tests:
