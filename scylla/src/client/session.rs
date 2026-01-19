@@ -2755,3 +2755,17 @@ enum SchemaNodeResult {
     Success(Uuid),
     BrokenConnection(BrokenConnectionError),
 }
+
+/// Additional API for interop-based code.
+#[cfg(all(scylla_unstable, feature = "unstable-csharp-rs"))]
+impl Session {
+    /// Needed to bridge C#'s counterpart of `await_schema_agreement`
+    /// which requires a specified host to participate in agreement checking.
+    pub async fn await_schema_agreement_with_required_node_external(
+        &self,
+        required_node: Option<Uuid>,
+    ) -> Result<Uuid, SchemaAgreementError> {
+        self.await_schema_agreement_with_required_node(required_node)
+            .await
+    }
+}
