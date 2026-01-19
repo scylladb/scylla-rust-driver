@@ -8,10 +8,11 @@ use bytes::Bytes;
 use compression::no_compression;
 use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
+use std::env::VarError;
 use std::fmt::Display;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
@@ -1495,6 +1496,19 @@ impl ProxyWorker {
 // Returns next free IP address for another proxy instance.
 // Useful for concurrent testing.
 pub fn get_exclusive_local_address() -> IpAddr {
+    match std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
+        Ok(slot) => {
+            let slot: u16 = slot
+                .parse()
+                .unwrap_or_else(|e| panic!("Invalid slot {e:?}"));
+            get_exclusive_local_address_nextest(slot)
+        }
+        Err(VarError::NotPresent) => get_exclusive_local_address_libtest(),
+        Err(VarError::NotUnicode(e)) => panic!("Invalid slot {e:?}"),
+    }
+}
+
+fn get_exclusive_local_address_libtest() -> IpAddr {
     // A big enough number reduces possibility of clashes with user-taken addresses:
     static ADDRESS_LOWER_THREE_OCTETS: AtomicU32 = AtomicU32::new(4242);
     let next_addr = ADDRESS_LOWER_THREE_OCTETS.fetch_add(1, Ordering::Relaxed);
@@ -1507,6 +1521,29 @@ pub fn get_exclusive_local_address() -> IpAddr {
         next_addr_bytes[2],
         next_addr_bytes[1],
         next_addr_bytes[0],
+    ))
+}
+
+fn get_exclusive_local_address_nextest(slot: u16) -> IpAddr {
+    static ADDRESS_LOWER_OCTET: AtomicU8 = AtomicU8::new(255);
+    // This is a heuristic to avoid using low addresses, which I think have
+    // a higher chance of being taken.
+    const FREE_RANGES: u16 = 16;
+    let next_address_lower = ADDRESS_LOWER_OCTET.fetch_sub(1, Ordering::Relaxed);
+    if next_address_lower == 0 {
+        panic!("Loopback address pool for this test depleted");
+    }
+
+    let next_range_bytes: [u8; 2] = slot
+        .checked_add(FREE_RANGES)
+        .unwrap_or_else(|| panic!("Loopback address pool for tests depleted"))
+        .to_le_bytes();
+
+    IpAddr::V4(Ipv4Addr::new(
+        127,
+        next_range_bytes[1],
+        next_range_bytes[0],
+        next_address_lower,
     ))
 }
 
