@@ -21,8 +21,5 @@ fi
 docker run --name "scylla-rust-driver-testing" \
     --network scylla_rust_driver_public \
     -it --rm \
-    --env SCYLLA_URI=172.42.0.2:9042 \
-    --env SCYLLA_URI2=172.42.0.3:9042 \
-    --env SCYLLA_URI3=172.42.0.4:9042 \
     "$IMAGE_NAME:latest" \
     cargo test

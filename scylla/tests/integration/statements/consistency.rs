@@ -418,7 +418,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
 #[ntest::timeout(60000)]
 async fn consistency_is_correctly_set_in_routing_info() {
     setup_tracing();
-    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
     let ks = unique_keyspace_name();
 
     let (routing_info_tx, routing_info_rx) = mpsc::unbounded_channel();
@@ -484,7 +484,7 @@ async fn consistency_is_correctly_set_in_routing_info() {
 #[ntest::timeout(60000)]
 async fn consistency_allows_for_paxos_selects() {
     setup_tracing();
-    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
 
     let session = SessionBuilder::new()
         .known_node(uri.as_str())
