@@ -14,7 +14,6 @@ fn cluster_1_node() -> ClusterOptions {
 }
 
 #[tokio::test]
-#[cfg_attr(not(ccm_tests), ignore)]
 async fn test_cluster_lifecycle1() {
     setup_tracing();
     async fn test(cluster: &mut Cluster) {

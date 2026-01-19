@@ -348,7 +348,6 @@ async fn add(cluster: &mut Cluster, dc_id: Option<u16>) -> u16 {
 }
 
 #[tokio::test]
-#[cfg_attr(not(ccm_tests), ignore)]
 async fn test_host_listener_with_status_changes() {
     setup_tracing();
 
@@ -428,7 +427,6 @@ async fn test_host_listener_with_status_changes() {
 }
 
 #[tokio::test]
-#[cfg_attr(not(ccm_tests), ignore)]
 async fn test_host_listener_with_topology_changes() {
     setup_tracing();
 
@@ -535,7 +533,6 @@ async fn test_host_listener_with_topology_changes() {
 }
 
 #[tokio::test]
-#[cfg_attr(not(ccm_tests), ignore)]
 async fn test_host_listener_with_host_filter() {
     setup_tracing();
 

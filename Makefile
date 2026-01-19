@@ -64,7 +64,7 @@ test: up
 
 .PHONY: ccm-test
 ccm-test:
-	RUSTFLAGS="${RUSTFLAGS} --cfg ccm_tests" cargo nextest run --all-features --test integration ccm
+	cargo nextest run --all-features -E 'test(ccm::)' --ignore-default-filter
 
 .PHONY: dockerized-test
 dockerized-test: up

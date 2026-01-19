@@ -1,3 +1,7 @@
+[profile.default]
+# This will run all tests excluding ccm tests.
+default-filter = "all() - (binary_id(scylla::integration) & test(ccm::))"
+
 [profile.ci]
 # Do not cancel the test run on the first failure.
 fail-fast = false

@@ -24,7 +24,6 @@ missing-docs = "warn"
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(scylla_unstable)',
     'cfg(cassandra_tests)',
-    'cfg(ccm_tests)',
 ] }
 
 [[bench]]

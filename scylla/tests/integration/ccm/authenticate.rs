@@ -37,7 +37,6 @@ where
 }
 
 #[tokio::test]
-#[cfg_attr(not(ccm_tests), ignore)]
 async fn authenticate_superuser_cluster_one_node() {
     setup_tracing();
     async fn test(cluster: &mut Cluster) {
@@ -100,7 +99,6 @@ impl AuthenticatorProvider for CustomAuthenticatorProvider {
 }
 
 #[tokio::test]
-#[cfg_attr(not(ccm_tests), ignore)]
 async fn custom_authentication_cluster_one_node() {
     setup_tracing();
     async fn test(cluster: &mut Cluster) {
