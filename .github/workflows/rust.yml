@@ -6,11 +6,11 @@ permissions:
 on:
   push:
     branches:
-    - main
-    - 'branch-*'
+      - main
+      - "branch-*"
   pull_request:
     branches:
-    - '**'
+      - "**"
 
 env:
   CARGO_TERM_COLOR: always
@@ -23,147 +23,154 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-    - uses: actions/checkout@v3
-    - name: Setup rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        components: clippy, rustfmt
-    - name: Print rustc version
-      run: rustc --version
-    - name: Print rustfmt version
-      run: cargo fmt --version
-    - name: Print clippy version
-      run: cargo clippy --version
+      - uses: actions/checkout@v3
+      - name: Setup rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy, rustfmt
+      - name: Print rustc version
+        run: rustc --version
+      - name: Print rustfmt version
+        run: cargo fmt --version
+      - name: Print clippy version
+        run: cargo clippy --version
 
-# Formatting
-    - name: Format check
-      run: cargo fmt --all -- --check
+      # Formatting
+      - name: Format check
+        run: cargo fmt --all -- --check
 
-# Basic clippy checks
-    - name: Clippy check
-      run: cargo clippy --all-targets
-    - name: Clippy check with all features
-      run: cargo clippy --all-targets --all-features
+      # Basic clippy checks
+      - name: Clippy check
+        run: cargo clippy --all-targets
+      - name: Clippy check with all features
+        run: cargo clippy --all-targets --all-features
 
-# Verify scylla-cql separately
-    - name: Clippy scylla-cql
-      run: cargo clippy --all-targets -p scylla-cql --features "full-serialization"
+      # Verify scylla-cql separately
+      - name: Clippy scylla-cql
+        run: cargo clippy --all-targets -p scylla-cql --features "full-serialization"
 
-# Features checks.
-    # No features.
-    - name: Cargo check without features
-      run: cargo check --all-targets -p scylla --features ""
+      # Features checks.
+      # No features.
+      - name: Cargo check without features
+        run: cargo check --all-targets -p scylla --features ""
 
-    # All features.
-    - name: Cargo check with all features
-      run: cargo check --all-targets -p scylla --all-features
+      # All features.
+      - name: Cargo check with all features
+        run: cargo check --all-targets -p scylla --all-features
 
-    # Various (de)serialization features.
-    - name: Cargo check with all serialization features
-      run: cargo check --all-targets -p scylla --features "full-serialization"
-    - name: Cargo check with metrics feature
-      run: cargo check --all-targets -p scylla --features "metrics"
-    - name: Cargo check with secrecy-08 feature
-      run: cargo check --all-targets -p scylla --features "secrecy-08"
-    - name: Cargo check with chrono-04 feature
-      run: cargo check --all-targets -p scylla --features "chrono-04"
-    - name: Cargo check with time-03 feature
-      run: cargo check --all-targets -p scylla --features "time-03"
-    - name: Cargo check with num-bigint-03 feature
-      run: cargo check --all-targets -p scylla --features "num-bigint-03"
-    - name: Cargo check with num-bigint-04 feature
-      run: cargo check --all-targets -p scylla --features "num-bigint-04"
-    - name: Cargo check with bigdecimal-04 feature
-      run: cargo check --all-targets -p scylla --features "bigdecimal-04"
+      # Various (de)serialization features.
+      - name: Cargo check with all serialization features
+        run: cargo check --all-targets -p scylla --features "full-serialization"
+      - name: Cargo check with metrics feature
+        run: cargo check --all-targets -p scylla --features "metrics"
+      - name: Cargo check with secrecy-08 feature
+        run: cargo check --all-targets -p scylla --features "secrecy-08"
+      - name: Cargo check with chrono-04 feature
+        run: cargo check --all-targets -p scylla --features "chrono-04"
+      - name: Cargo check with time-03 feature
+        run: cargo check --all-targets -p scylla --features "time-03"
+      - name: Cargo check with num-bigint-03 feature
+        run: cargo check --all-targets -p scylla --features "num-bigint-03"
+      - name: Cargo check with num-bigint-04 feature
+        run: cargo check --all-targets -p scylla --features "num-bigint-04"
+      - name: Cargo check with bigdecimal-04 feature
+        run: cargo check --all-targets -p scylla --features "bigdecimal-04"
 
-    # TLS-related feature sets.
-    - name: Cargo check with openssl-x feature
-      run: cargo check --all-targets -p scylla --features "openssl-010"
-    - name: Cargo check with rustls-x feature
-      run: cargo check --all-targets -p scylla --features "rustls-023"
-    - name: Cargo check with rustls-x and openssl-x features
-      run: cargo check --all-targets -p scylla --features "rustls-023" --features "openssl-010"
+      # TLS-related feature sets.
+      - name: Cargo check with openssl-x feature
+        run: cargo check --all-targets -p scylla --features "openssl-010"
+      - name: Cargo check with rustls-x feature
+        run: cargo check --all-targets -p scylla --features "rustls-023"
+      - name: Cargo check with rustls-x and openssl-x features
+        run: cargo check --all-targets -p scylla --features "rustls-023" --features "openssl-010"
 
-  # unstable-cpp-rs feature.
-    - name: Cargo check with unstable-cpp-rs feature
-      run: cargo clippy --all-targets --features "unstable-cpp-rs"
+      # unstable-cpp-rs feature.
+      - name: Cargo check with unstable-cpp-rs feature
+        run: cargo clippy --all-targets --features "unstable-cpp-rs"
 
-  # unstable-nodejs-rs feature.
-    - name: Cargo check with unstable-nodejs-rs feature
-      run: cargo clippy --all-targets --features "unstable-nodejs-rs"
+      # unstable-nodejs-rs feature.
+      - name: Cargo check with unstable-nodejs-rs feature
+        run: cargo clippy --all-targets --features "unstable-nodejs-rs"
 
-  # unstable-host-listener feature.
-    - name: Cargo check with unstable-host-listener  feature
-      run: cargo clippy --all-targets --features "unstable-host-listener"
-  # unstable-reconnect-policy feature.
-    - name: Cargo check with unstable-reconnect-policy feature
-      run: cargo clippy --all-targets --features "unstable-reconnect-policy"
+      # unstable-host-listener feature.
+      - name: Cargo check with unstable-host-listener  feature
+        run: cargo clippy --all-targets --features "unstable-host-listener"
+      # unstable-reconnect-policy feature.
+      - name: Cargo check with unstable-reconnect-policy feature
+        run: cargo clippy --all-targets --features "unstable-reconnect-policy"
 
-  # No scylla_unstable flag with features
-    - name: Cargo check without scylla_unstable
-      run: RUSTFLAGS="-Dwarnings" cargo clippy --all-features --tests --examples # No benches, because they require unstable features.
+      # No scylla_unstable flag with features
+      - name: Cargo check without scylla_unstable
+        run: RUSTFLAGS="-Dwarnings" cargo clippy --all-features --tests --examples # No benches, because they require unstable features.
 
-  # No scylla_unstable flag without features
-    - name: Cargo check without scylla_unstable and features
-      # If we pass --tests or --examples here, feature unification turns on some features anyway,
-      # so we only check the main target.
-      run: RUSTFLAGS="-Dwarnings" cargo clippy -p scylla
-
+      # No scylla_unstable flag without features
+      - name: Cargo check without scylla_unstable and features
+        # If we pass --tests or --examples here, feature unification turns on some features anyway,
+        # so we only check the main target.
+        run: RUSTFLAGS="-Dwarnings" cargo clippy -p scylla
 
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-    - uses: actions/checkout@v3
-    - name: Setup 3-node ScyllaDB cluster
-      run: |
-        sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
-        docker compose -f test/cluster/docker-compose.yml up -d --wait
-    - name: Setup rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-    - name: Print rustc version
-      run: rustc --version
-    - name: Run tests
-      run: |
-        RUST_LOG=trace cargo test --all-features
-    - name: Check for stale test keyspaces
-      run: cargo run --bin find_stale_test_keyspaces
-    - name: Stop the cluster
-      if: ${{ always() }}
-      run: docker compose -f test/cluster/docker-compose.yml stop
-    - name: Print the cluster logs
-      if: ${{ always() }}
-      run: docker compose -f test/cluster/docker-compose.yml logs
-    - name: Remove cluster
-      run: docker compose -f test/cluster/docker-compose.yml down
+      - uses: actions/checkout@v3
+      - name: Setup rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+      - name: Print rustc version
+        run: rustc --version
+      # We need to run doctests separately, because nextest doesn't support them :(
+      # https://github.com/nextest-rs/nextest/issues/16
+      - name: Run doctests
+        run: cargo test --doc --all-features
+      # Cluster is setup after doctests to make sure that doctests
+      # don't require running DB.
+      - name: Setup 3-node ScyllaDB cluster
+        run: |
+          sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
+          docker compose -f test/cluster/docker-compose.yml up -d --wait
+      - name: Run tests
+        run: |
+          RUST_LOG=trace cargo nextest run --all-features
+      - name: Check for stale test keyspaces
+        run: cargo run --bin find_stale_test_keyspaces
+      - name: Stop the cluster
+        if: ${{ always() }}
+        run: docker compose -f test/cluster/docker-compose.yml stop
+      - name: Print the cluster logs
+        if: ${{ always() }}
+        run: docker compose -f test/cluster/docker-compose.yml logs
+      - name: Remove cluster
+        run: docker compose -f test/cluster/docker-compose.yml down
 
   # Tests that our current minimum supported rust version compiles everything sucessfully
   min_rust:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Install Rust ${{ env.rust_min }}
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: ${{ env.rust_min }}
-    - name: Print Rust version
-      run: rustc --version
-    - name: MSRV cargo check with features
-      run: cargo check --all-targets --all-features
-    - name: MSRV cargo check without features
-      run: cargo check --all-targets -p scylla
-    - name: MSRV cargo check scylla-cql
-      run: cargo check --all-targets -p scylla-cql
+      - uses: actions/checkout@v3
+      - name: Install Rust ${{ env.rust_min }}
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.rust_min }}
+      - name: Print Rust version
+        run: rustc --version
+      - name: MSRV cargo check with features
+        run: cargo check --all-targets --all-features
+      - name: MSRV cargo check without features
+        run: cargo check --all-targets -p scylla
+      - name: MSRV cargo check scylla-cql
+        run: cargo check --all-targets -p scylla-cql
 
   # Tests that docstrings generate docs without warnings
   cargo_docs:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Setup rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-    - name: Compile docs
-      run: RUSTDOCFLAGS=-Dwarnings cargo doc
+      - uses: actions/checkout@v3
+      - name: Setup rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Compile docs
+        run: RUSTDOCFLAGS=-Dwarnings cargo doc
 
   docs_rs:
     runs-on: ubuntu-latest

@@ -57,11 +57,14 @@ clippy-all-features:
 
 .PHONY: test
 test: up
-	cargo test --all-features
+	# We need to run doctests separately, because nextest doesn't support them :(
+	# https://github.com/nextest-rs/nextest/issues/16
+	cargo test --doc --all-features
+	cargo nextest run --all-features
 
 .PHONY: ccm-test
 ccm-test:
-	RUSTFLAGS="${RUSTFLAGS} --cfg ccm_tests" cargo test --all-features --test integration ccm
+	RUSTFLAGS="${RUSTFLAGS} --cfg ccm_tests" cargo nextest run --all-features --test integration ccm
 
 .PHONY: dockerized-test
 dockerized-test: up

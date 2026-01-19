@@ -4,39 +4,42 @@ name: Cassandra tests
 on:
   push:
     branches:
-    - main
-    - 'branch-*'
+      - main
+      - "branch-*"
   pull_request:
     branches:
-    - '**'
+      - "**"
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: --cfg scylla_unstable
   RUST_BACKTRACE: full
+  NEXTEST_PROFILE: ci
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-    - uses: actions/checkout@v3
-    - name: Setup 3-node Cassandra cluster
-      run: |
-        docker compose -f test/cluster/cassandra/docker-compose.yml up -d --wait
-      # A separate step for building to separate measuring time of compilation and testing
-    - name: Setup rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-    - name: Run tests on cassandra
-      run: |
-        RUSTFLAGS="${RUSTFLAGS} --cfg cassandra_tests" RUST_LOG=trace cargo test --all-features
-    - name: Check for stale test keyspaces
-      run: cargo run --bin find_stale_test_keyspaces
-    - name: Stop the cluster
-      if: ${{ always() }}
-      run: docker compose -f test/cluster/cassandra/docker-compose.yml stop
-    - name: Print the cluster logs
-      if: ${{ always() }}
-      run: docker compose -f test/cluster/cassandra/docker-compose.yml logs
-    - name: Remove cluster
-      run: docker compose -f test/cluster/cassandra/docker-compose.yml down
+      - uses: actions/checkout@v3
+      - name: Setup 3-node Cassandra cluster
+        run: |
+          docker compose -f test/cluster/cassandra/docker-compose.yml up -d --wait
+        # A separate step for building to separate measuring time of compilation and testing
+      - name: Setup rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+      - name: Run tests on cassandra
+        run: |
+          RUSTFLAGS="${RUSTFLAGS} --cfg cassandra_tests" RUST_LOG=trace cargo nextest run --all-features
+      - name: Check for stale test keyspaces
+        run: cargo run --bin find_stale_test_keyspaces
+      - name: Stop the cluster
+        if: ${{ always() }}
+        run: docker compose -f test/cluster/cassandra/docker-compose.yml stop
+      - name: Print the cluster logs
+        if: ${{ always() }}
+        run: docker compose -f test/cluster/cassandra/docker-compose.yml logs
+      - name: Remove cluster
+        run: docker compose -f test/cluster/cassandra/docker-compose.yml down
