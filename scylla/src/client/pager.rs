@@ -652,6 +652,15 @@ where
         ),
         (RequestAttemptError, ProvingSender<ResultFirstPage>),
     > {
+        let mut log_success = || {
+            #[cfg(feature = "metrics")]
+            let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
+            self.log_attempt_success();
+            self.log_request_success();
+            self.load_balancing_policy
+                .on_request_success(&self.routing_info, elapsed, node);
+        };
+
         match query_response {
             Ok(NonErrorQueryResponse {
                 response:
@@ -661,13 +670,7 @@ where
                 tracing_id,
                 ..
             }) => {
-                #[cfg(feature = "metrics")]
-                let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
-                self.log_attempt_success();
-                self.log_request_success();
-                self.load_balancing_policy
-                    .on_request_success(&self.routing_info, elapsed, node);
-
+                log_success();
                 request_span.record_raw_rows_fields(&rows);
 
                 let received_page = FirstReceivedPage {
@@ -725,6 +728,8 @@ where
                 // we must handle it gracefully. Especially that there may be users who execute
                 // all statements in a paged manner (e.g., C#-RS Driver).
 
+                log_success();
+
                 let (next_pages_sender, next_pages_receiver) = mpsc::channel(1);
                 let (proof, _) = sender.send(Ok((
                     (FirstReceivedPage {
@@ -749,6 +754,8 @@ where
                 // we must handle it gracefully. Especially that there may be users who execute
                 // all statements in a paged manner (e.g., C#-RS Driver).
 
+                log_success();
+
                 let (next_pages_sender, next_pages_receiver) = mpsc::channel(1);
                 let (proof, _) = sender.send(Ok((
                     FirstReceivedPage {
@@ -767,6 +774,8 @@ where
             }) => {
                 // We have most probably sent a modification statement (e.g. INSERT or UPDATE),
                 // so let's return an empty stream as suggested in #631.
+
+                log_success();
 
                 // We must attempt to send something because the pager expects it.
                 let (next_pages_sender, _) = mpsc::channel(1);
