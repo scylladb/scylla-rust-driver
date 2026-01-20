@@ -1618,6 +1618,25 @@ impl<'frame, 'metadata, T: DeserializeValue<'frame, 'metadata>> DeserializeValue
     }
 }
 
+impl<'frame, 'metadata, T: 'frame + ToOwned + ?Sized> DeserializeValue<'frame, 'metadata>
+    for Cow<'frame, T>
+where
+    &'frame T: DeserializeValue<'frame, 'metadata>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        <&T>::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        <&T>::deserialize(typ, v)
+            .map(Cow::Borrowed)
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
 // Special cases for Box<str> and Arc<str>
 // The generic implementations above don't work for str. This is because
 // DeserializeValue is implemented for &str, but not for str. We can't change this:
