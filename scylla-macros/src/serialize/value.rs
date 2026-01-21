@@ -30,6 +30,11 @@ struct Attributes {
     // the DB will interpret them as NULLs anyway.
     #[darling(default)]
     forbid_excess_udt_fields: bool,
+
+    // Used for deserialization only. Ignored in serialization.
+    #[darling(default)]
+    #[darling(rename = "allow_missing")]
+    _default_when_missing: bool,
 }
 
 impl Attributes {
