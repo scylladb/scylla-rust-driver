@@ -2367,6 +2367,7 @@ impl Session {
                 let result = self
                     .check_schema_agreement_with_required_node(required_node)
                     .await;
+                debug!("Schema agreement check result: {:?}", result);
                 match result {
                     Ok(Some(agreed_version)) => return Ok(agreed_version),
                     Ok(None) => last_agreement_failure = Some(Ok(())),
