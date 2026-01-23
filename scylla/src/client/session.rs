@@ -76,6 +76,17 @@ struct InternalStatements {
     schema_version: RwLock<Option<PreparedStatement>>,
 }
 
+impl InternalStatements {
+    // We need that because of https://github.com/scylladb/scylla-rust-driver/issues/1561
+    // If we ever solve it, `InternalStatement` could be changed back to use
+    // OnceLock instead of RwLock.
+    async fn reset(&self) {
+        *self.tracing_session.write().await = None;
+        *self.tracing_events.write().await = None;
+        *self.schema_version.write().await = None;
+    }
+}
+
 impl Default for InternalStatements {
     fn default() -> Self {
         Self {
@@ -1830,9 +1841,14 @@ impl Session {
         // To avoid any possible CQL injections it's good to verify that the name is valid
         let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name, case_sensitive)?;
 
-        self.cluster.use_keyspace(verified_ks_name).await?;
+        let result = self.cluster.use_keyspace(verified_ks_name).await;
 
-        Ok(())
+        // We need to reset statement because of https://github.com/scylladb/scylla-rust-driver/issues/1561
+        // Resetting after set keyspace seems a bit safer against it being reprepared before
+        // changing keyspace is finished.
+        self.internal_statements.reset().await;
+
+        result
     }
 
     /// Manually trigger a metadata refresh\
