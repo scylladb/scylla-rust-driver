@@ -53,7 +53,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::OnceCell;
+use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tracing::{Instrument, debug, error, trace, trace_span};
 use uuid::Uuid;
@@ -69,19 +69,19 @@ const SCHEMA_VERSION_QUERY_STR: &str = "SELECT schema_version FROM system.local 
 /// if the cluster temporarily cannot prepare statements.
 struct InternalStatements {
     /// Prepared statement for querying tracing session info from system_traces.sessions
-    tracing_session: OnceCell<PreparedStatement>,
+    tracing_session: RwLock<Option<PreparedStatement>>,
     /// Prepared statement for querying tracing events from system_traces.events
-    tracing_events: OnceCell<PreparedStatement>,
+    tracing_events: RwLock<Option<PreparedStatement>>,
     /// Prepared statement for fetching schema version during schema agreement checks
-    schema_version: OnceCell<PreparedStatement>,
+    schema_version: RwLock<Option<PreparedStatement>>,
 }
 
 impl Default for InternalStatements {
     fn default() -> Self {
         Self {
-            tracing_session: OnceCell::new(),
-            tracing_events: OnceCell::new(),
-            schema_version: OnceCell::new(),
+            tracing_session: RwLock::new(None),
+            tracing_events: RwLock::new(None),
+            schema_version: RwLock::new(None),
         }
     }
 }
@@ -1117,49 +1117,76 @@ impl Session {
         Ok(session)
     }
 
+    async fn get_or_prepare_internal_statement(
+        &self,
+        statement: &RwLock<Option<PreparedStatement>>,
+        prepare: impl AsyncFnOnce() -> Result<PreparedStatement, PrepareError>,
+    ) -> Result<PreparedStatement, PrepareError> {
+        {
+            let read_lock = statement.read().await;
+            if let Some(statement) = read_lock.as_ref() {
+                return Ok(statement.clone());
+            }
+        }
+
+        let mut write_lock = statement.write().await;
+        if let Some(statement) = write_lock.as_ref() {
+            return Ok(statement.clone());
+        }
+
+        let prepared = prepare().await?;
+
+        *write_lock = Some(prepared.clone());
+
+        Ok(prepared)
+    }
+
     /// Lazily prepares and returns the statement for querying tracing session info.
-    async fn get_tracing_session_statement(&self) -> Result<&PreparedStatement, PrepareError> {
-        self.internal_statements
-            .tracing_session
-            .get_or_try_init(|| async {
+    async fn get_tracing_session_statement(&self) -> Result<PreparedStatement, PrepareError> {
+        self.get_or_prepare_internal_statement(
+            &self.internal_statements.tracing_session,
+            async || {
                 let mut stmt =
                     Statement::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
                 stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
                 stmt.set_consistency(self.tracing_info_fetch_consistency);
                 stmt.set_is_idempotent(true);
                 self.prepare(stmt).await
-            })
-            .await
+            },
+        )
+        .await
     }
 
     /// Lazily prepares and returns the statement for querying tracing events.
-    async fn get_tracing_events_statement(&self) -> Result<&PreparedStatement, PrepareError> {
-        self.internal_statements
-            .tracing_events
-            .get_or_try_init(|| async {
+    async fn get_tracing_events_statement(&self) -> Result<PreparedStatement, PrepareError> {
+        self.get_or_prepare_internal_statement(
+            &self.internal_statements.tracing_events,
+            async || {
                 let mut stmt =
                     Statement::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
                 stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
                 stmt.set_consistency(self.tracing_info_fetch_consistency);
                 stmt.set_is_idempotent(true);
                 self.prepare(stmt).await
-            })
-            .await
+            },
+        )
+        .await
     }
 
     /// Lazily prepares and returns the statement for fetching schema version.
-    async fn get_schema_version_statement(&self) -> Result<&PreparedStatement, PrepareError> {
-        self.internal_statements
-            .schema_version
-            .get_or_try_init(|| async {
+    async fn get_schema_version_statement(&self) -> Result<PreparedStatement, PrepareError> {
+        self.get_or_prepare_internal_statement(
+            &self.internal_statements.schema_version,
+            async || {
                 let mut statement = Statement::new(SCHEMA_VERSION_QUERY_STR);
                 // Use ONE consistency for schema version queries - this is a local query
                 // that reads from system.local, so ONE is appropriate.
                 statement.set_consistency(Consistency::One);
                 statement.set_is_idempotent(true);
                 self.prepare(statement).await
-            })
-            .await
+            },
+        )
+        .await
     }
 
     async fn do_query_unpaged(
@@ -1880,8 +1907,8 @@ impl Session {
         let traces_events_stmt = self.get_tracing_events_statement().await?;
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.execute_unpaged(traces_session_stmt, (tracing_id,)),
-            self.execute_unpaged(traces_events_stmt, (tracing_id,))
+            self.execute_unpaged(&traces_session_stmt, (tracing_id,)),
+            self.execute_unpaged(&traces_events_stmt, (tracing_id,))
         )?;
 
         // Get tracing info
@@ -2315,6 +2342,7 @@ impl Session {
     ) -> Result<Option<Uuid>, SchemaAgreementError> {
         // Get lazily prepared statement for schema version query
         let schema_version_stmt = self.get_schema_version_statement().await?;
+        let schema_version_stmt_ref = &schema_version_stmt;
 
         let cluster_state = self.get_cluster_state();
         // The iterator is guaranteed to be nonempty.
@@ -2324,7 +2352,7 @@ impl Session {
         let handles = per_node_connections.map(|(host_id, pool)| async move {
             (
                 host_id,
-                Self::read_node_schema_version(schema_version_stmt, pool).await,
+                Self::read_node_schema_version(schema_version_stmt_ref, pool).await,
             )
         });
         // Hence, this is nonempty, too.
