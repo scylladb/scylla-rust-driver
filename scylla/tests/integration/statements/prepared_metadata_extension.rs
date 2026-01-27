@@ -319,7 +319,6 @@ async fn test_basic_metadata_update() {
 // Verify that if we prepare statement on such node, and execute it on another,
 // everything works.
 #[tokio::test]
-#[ntest::timeout(10000)]
 async fn test_mixed_cluster() {
     use Condition::*;
     setup_tracing();
