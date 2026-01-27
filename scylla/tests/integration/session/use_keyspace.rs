@@ -244,6 +244,8 @@ async fn test_raw_use_keyspace() {
 
 #[tokio::test]
 async fn test_get_keyspace_name() {
+    setup_tracing();
+
     let ks = unique_keyspace_name();
 
     // Create the keyspace
