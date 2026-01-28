@@ -314,3 +314,85 @@ async fn test_schema_await_with_transient_failure() {
         Err(err) => panic!("{}", err),
     }
 }
+
+// Test that produces SchemaAgreementError::RequiredHostAbsent to prove that
+// such condition is possible, and handled correctly.
+#[tokio::test]
+async fn test_schema_await_required_host_absent() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            // DB preparation phase
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map.clone()))
+                // Needed to have pools filled immediately after session creation.
+                .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
+                // Schema agreement will only return error after timeout,
+                // so without this line the test would take over 60s.
+                .schema_agreement_timeout(Duration::from_secs(1))
+                .schema_agreement_interval(Duration::from_millis(50))
+                .build()
+                .await
+                .unwrap();
+
+            let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &session);
+
+            let coordinator = NodeIdentifier::HostId(host_ids[1]);
+
+            running_proxy.running_nodes[1].change_request_rules(Some(vec![
+                // This prevents opening new connections to the node
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Startup),
+                    RequestReaction::drop_connection(),
+                ),
+                // This prevents schema agreement check on this node, and closes connection.
+                // After some attempts, no connections will be left.
+                RequestRule(
+                    Condition::not(Condition::ConnectionRegisteredAnyEvent)
+                        .and(Condition::RequestOpcode(RequestOpcode::Execute)),
+                    RequestReaction::drop_connection(),
+                ),
+            ]));
+
+            let ks = unique_keyspace_name();
+            let mut request = Statement::new(format!(
+                "CREATE KEYSPACE {ks}
+                    WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
+            ));
+            request.set_load_balancing_policy(Some(SingleTargetLoadBalancingPolicy::new(
+                coordinator,
+                None,
+            )));
+
+            let result = session.query_unpaged(request, &[]).await;
+            let Err(ExecutionError::SchemaAgreementError(
+                SchemaAgreementError::RequiredHostAbsent(host),
+            )) = result
+            else {
+                panic!("Unexpected error type: {:?}", result);
+            };
+
+            assert_eq!(host, host_ids[1]);
+
+            // Cleanup
+            running_proxy.running_nodes[1].change_request_rules(Some(vec![]));
+            session.await_schema_agreement().await.unwrap();
+            session
+                .query_unpaged(format!("DROP KEYSPACE {ks}"), &[])
+                .await
+                .unwrap();
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
