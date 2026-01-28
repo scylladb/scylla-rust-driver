@@ -1,5 +1,6 @@
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use crate::SerializeRow;
 use crate::frame::response::result::{
@@ -1151,6 +1152,45 @@ fn test_name_flatten_with_lifetimes() {
     let spec = [col("b", ColumnType::Native(NativeType::Boolean))];
 
     let reference = do_serialize((&value.inner.b,), &spec);
+    let row = do_serialize(value, &spec);
+
+    assert_eq!(reference, row);
+}
+
+#[test]
+fn test_name_flatten_maps() {
+    #[derive(SerializeRow)]
+    #[scylla(crate = crate)]
+    struct Outer<'s> {
+        #[scylla(flatten)]
+        numbers: BTreeMap<Arc<str>, i32>,
+        #[scylla(flatten)]
+        texts: HashMap<Cow<'s, str>, String>,
+    }
+
+    let numbers = BTreeMap::from_iter([(Arc::from("num_a"), 3), (Arc::from("num_b"), 1)]);
+    let texts = HashMap::from_iter([
+        (Cow::Borrowed("text_a"), "foo".to_owned()),
+        (Cow::Owned("text_b".to_owned()), "bar".to_owned()),
+    ]);
+    let value = Outer { numbers, texts };
+
+    let spec = [
+        col("num_a", ColumnType::Native(NativeType::Int)),
+        col("text_b", ColumnType::Native(NativeType::Text)),
+        col("text_a", ColumnType::Native(NativeType::Text)),
+        col("num_b", ColumnType::Native(NativeType::Int)),
+    ];
+
+    let reference = do_serialize(
+        (
+            &value.numbers["num_a"],
+            &value.texts["text_b"],
+            &value.texts["text_a"],
+            &value.numbers["num_b"],
+        ),
+        &spec,
+    );
     let row = do_serialize(value, &spec);
 
     assert_eq!(reference, row);
