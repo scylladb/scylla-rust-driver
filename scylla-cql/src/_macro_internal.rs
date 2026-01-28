@@ -217,7 +217,7 @@ pub mod ser {
                     // 3. If the field was not used that means the column doesn't belong to this
                     // struct and thus cannot be serialized. Return error.
                     if matches!(serialized, FieldStatus::NotUsed) {
-                        return Err(mk_typck_err::<Self>(
+                        return Err(mk_typck_err::<T>(
                             BuiltinTypeCheckErrorKind::ValueMissingForColumn {
                                 name: spec.name().to_owned(),
                             },
