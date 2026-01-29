@@ -1,6 +1,6 @@
 [project]
 name = "sphinx-docs"
-version = "1.4"
+version = "1.5"
 description = "ScyllaDB Documentation"
 authors = [{ name = "ScyllaDB Documentation Contributors" }]
 requires-python = ">=3.10"

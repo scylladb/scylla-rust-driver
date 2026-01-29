@@ -1,6 +1,6 @@
 [package]
 name = "scylla"
-version = "1.4.1"
+version = "1.5.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Async CQL driver for Rust, optimized for ScyllaDB, fully compatible with Apache Cassandra™"
@@ -82,7 +82,7 @@ unstable-reconnect-policy = []
 ###########################
 # Main, public dependencies
 ###########################
-scylla-cql = { version = "1.4.0", path = "../scylla-cql" }
+scylla-cql = { version = "1.5.0", path = "../scylla-cql" }
 tokio = { version = "1.40", features = [
     "net",
     "time",
