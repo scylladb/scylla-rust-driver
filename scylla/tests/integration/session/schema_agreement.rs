@@ -5,8 +5,11 @@ use assert_matches::assert_matches;
 use scylla::client::PoolSize;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
-use scylla::errors::{DbError, ExecutionError, RequestAttemptError, SchemaAgreementError};
+use scylla::errors::{
+    DbError, ExecutionError, PagerExecutionError, RequestAttemptError, SchemaAgreementError,
+};
 use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
+use scylla::response::PagingState;
 use scylla::response::query_result::QueryResult;
 use scylla::statement::Statement;
 use scylla_proxy::{
@@ -14,6 +17,7 @@ use scylla_proxy::{
     ShardAwareness, WorkerError,
 };
 use tracing::info;
+use uuid::Uuid;
 
 use crate::utils::{
     calculate_proxy_host_ids, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
@@ -384,6 +388,182 @@ async fn test_schema_await_required_host_absent() {
                 .query_unpaged(format!("DROP KEYSPACE {ks}"), &[])
                 .await
                 .unwrap();
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
+
+async fn run_ddl_with_failing_agreement_check<Err: std::fmt::Debug>(
+    mut run_ddl: impl AsyncFnMut(Statement) -> Result<(), Err>,
+    running_proxy: &mut RunningProxy,
+    host_ids: &[Uuid],
+) -> Result<(), Err> {
+    // Schema agreement will return error from node 0, causing it
+    // to fail instantly.
+    let fail_schema_check_rule = RequestRule(
+        Condition::not(Condition::ConnectionRegisteredAnyEvent)
+            .and(Condition::RequestOpcode(RequestOpcode::Execute)),
+        RequestReaction::forge_with_error(DbError::SyntaxError),
+    );
+
+    // Let's send DDL to node 1 to avoid it failing on node 0 due to proxy rule.
+    let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::HostId(host_ids[1]), None);
+
+    let ks = unique_keyspace_name();
+
+    running_proxy.running_nodes[0].change_request_rules(Some(vec![fail_schema_check_rule]));
+
+    let mut statement = Statement::new(format!(
+        "CREATE KEYSPACE {ks}
+    WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
+    ));
+    statement.set_load_balancing_policy(Some(policy));
+    let result = run_ddl(statement).await;
+
+    running_proxy.running_nodes[0].change_request_rules(Some(vec![]));
+    run_ddl(format!("DROP KEYSPACE {ks}").into()).await.unwrap();
+
+    result
+}
+
+// Verifies that schema agreement is triggered on all driver APIs.
+#[tokio::test]
+async fn test_schema_await_with_various_apis() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            // DB preparation phase
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map.clone()))
+                .build()
+                .await
+                .unwrap();
+
+            let host_ids = calculate_proxy_host_ids(&proxy_uris, &translation_map, &session);
+
+            fn check_error(err: Result<(), ExecutionError>) {
+                assert_matches!(
+                    err,
+                    Err(ExecutionError::SchemaAgreementError(
+                        SchemaAgreementError::RequestError(RequestAttemptError::DbError(
+                            DbError::SyntaxError,
+                            _
+                        ))
+                    ))
+                )
+            }
+
+            fn check_paging_error(err: Result<(), PagerExecutionError>) {
+                assert_matches!(
+                    err,
+                    Err(PagerExecutionError::SchemaAgreementError(
+                        SchemaAgreementError::RequestError(RequestAttemptError::DbError(
+                            DbError::SyntaxError,
+                            _
+                        ))
+                    ))
+                )
+            }
+
+            {
+                tracing::info!("================= Sub test: query_unpaged =================");
+
+                let result = run_ddl_with_failing_agreement_check(
+                    async |ddl| session.query_unpaged(ddl, &()).await.map(|_| ()),
+                    &mut running_proxy,
+                    &host_ids,
+                )
+                .await;
+                check_error(result);
+            }
+
+            {
+                tracing::info!("================= Sub test: query_single_page =================");
+
+                let result = run_ddl_with_failing_agreement_check(
+                    async |ddl| {
+                        session
+                            .query_single_page(ddl, &(), PagingState::start())
+                            .await
+                            .map(|_| ())
+                    },
+                    &mut running_proxy,
+                    &host_ids,
+                )
+                .await;
+                check_error(result);
+            }
+
+            {
+                tracing::info!("================= Sub test: query_iter =================");
+
+                let result = run_ddl_with_failing_agreement_check(
+                    async |ddl| session.query_iter(ddl, &()).await.map(|_| ()),
+                    &mut running_proxy,
+                    &host_ids,
+                )
+                .await;
+                check_paging_error(result);
+            }
+
+            {
+                tracing::info!("================= Sub test: execute_unpaged =================");
+
+                let result = run_ddl_with_failing_agreement_check(
+                    async |ddl| {
+                        let stmt = session.prepare(ddl).await?;
+                        session.execute_unpaged(&stmt, &()).await.map(|_| ())
+                    },
+                    &mut running_proxy,
+                    &host_ids,
+                )
+                .await;
+                check_error(result);
+            }
+
+            {
+                tracing::info!("================= Sub test: execute_single_page =================");
+
+                let result = run_ddl_with_failing_agreement_check(
+                    async |ddl| {
+                        let stmt = session.prepare(ddl).await?;
+                        session
+                            .execute_single_page(&stmt, &(), PagingState::start())
+                            .await
+                            .map(|_| ())
+                    },
+                    &mut running_proxy,
+                    &host_ids,
+                )
+                .await;
+                check_error(result);
+            }
+
+            {
+                tracing::info!("================= Sub test: execute_iter =================");
+
+                let result = run_ddl_with_failing_agreement_check(
+                    async |ddl| {
+                        let stmt = session.prepare(ddl).await?;
+                        session.execute_iter(stmt, &()).await.map(|_| ())
+                    },
+                    &mut running_proxy,
+                    &host_ids,
+                )
+                .await;
+                check_paging_error(result);
+            }
 
             running_proxy
         },
