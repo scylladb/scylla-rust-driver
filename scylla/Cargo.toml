@@ -81,7 +81,7 @@ unstable-reconnect-policy = []
 ###########################
 # Main, public dependencies
 ###########################
-scylla-cql = { version = "1.4.0", path = "../scylla-cql" }
+scylla-cql = { version = "1.5.0", path = "../scylla-cql" }
 tokio = { version = "1.40", features = [
     "net",
     "time",
