@@ -91,6 +91,10 @@ impl ControlConnection {
 
     /// Executes a query and fetches its results over multiple pages, using
     /// the asynchronous iterator interface.
+    ///
+    /// NOTE: This function only supports executing SELECT statements.
+    /// More specifically, it expects that each response is of Rows kind.
+    /// Other kinds of responses will result in an error.
     pub(super) async fn query_iter(
         &self,
         statement: &str,
