@@ -73,6 +73,8 @@ async fn run_some_ddl_with_unreachable_node(
         .running_nodes
         .iter_mut()
         .for_each(|node| node.change_request_rules(Some(vec![])));
+    // Schema may have not propagated from the coordinator of CREATE KEYSPACE
+    util_session.await_schema_agreement().await.unwrap();
     util_session
         .query_unpaged(format!("DROP KEYSPACE {ks}"), &[])
         .await
@@ -425,11 +427,15 @@ async fn run_ddl_with_failing_agreement_check<Err: std::fmt::Debug>(
         "CREATE KEYSPACE {ks}
     WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
     ));
-    statement.set_load_balancing_policy(Some(policy));
+    statement.set_load_balancing_policy(Some(Arc::clone(&policy)));
     let result = run_ddl(statement).await;
 
     running_proxy.running_nodes[0].change_request_rules(Some(vec![]));
-    run_ddl(format!("DROP KEYSPACE {ks}").into()).await.unwrap();
+    let mut drop_statement = Statement::new(format!("DROP KEYSPACE {ks}"));
+    // Execute it on the same coordinator as CREATE KEYSPACE, becuse it may have
+    // not propagated the schema yet.
+    drop_statement.set_load_balancing_policy(Some(policy));
+    run_ddl(drop_statement).await.unwrap();
 
     result
 }
