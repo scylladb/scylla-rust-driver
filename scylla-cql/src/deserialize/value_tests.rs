@@ -104,6 +104,59 @@ fn test_custom_cassandra_type_parser() {
                 ),
             },
         ),
+        // Frozen collection inside vector.
+        (
+            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)), 3)",
+            ColumnType::Vector {
+                typ: Box::new(ColumnType::Collection {
+                    frozen: true,
+                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                }),
+                dimensions: 3,
+            },
+        ),
+        // Frozen collection inside another frozen collection, inside vector.
+        (
+            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)))), 3)",
+            ColumnType::Vector {
+                typ: Box::new(ColumnType::Collection {
+                    frozen: true,
+                    typ: CollectionType::Set(Box::new(ColumnType::Collection {
+                        frozen: true,
+                        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                    })),
+                }),
+                dimensions: 3,
+            },
+        ),
+        // Tuple: non-frozen collection, frozen collection, non-frozen collection, frozen collection.
+        // Tests that frozen context is correctly set and unset.
+        (
+            "org.apache.cassandra.db.marshal.TupleType(\
+               org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type),\
+               org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)),\
+               org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type),\
+               org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)),\
+            )",
+            ColumnType::Tuple(vec![
+                ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                },
+                ColumnType::Collection {
+                    frozen: true,
+                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                },
+                ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                },
+                ColumnType::Collection {
+                    frozen: true,
+                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                },
+            ]),
+        ),
     ];
 
     for (input, expected) in tests {
