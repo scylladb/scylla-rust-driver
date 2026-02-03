@@ -114,6 +114,12 @@ async fn test_schema_await_with_unreachable_node() {
                 // Shard connections are created asynchronously, so it's hard to predict how many will be opened
                 // already when we check schema agreement.
                 .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
+                // This speeds up the test significantly on my machine.
+                // From ~11s to ~4s when executed individually
+                // From ~18s to ~9s when running all tests.
+                // I doubt Scylla needs this much time to perform the requests,
+                // so we probably have some inefficiency in Driver or Proxy.
+                .fetch_schema_metadata(false)
                 // Let's try more often to prevent timeouts.
                 .schema_agreement_interval(Duration::from_millis(5));
 
