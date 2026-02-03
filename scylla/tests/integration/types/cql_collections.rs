@@ -387,40 +387,47 @@ async fn test_vector_type_unprepared() {
     let ks = unique_keyspace_name();
 
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
+
     session
         .ddl(
             format!(
-                "CREATE TABLE IF NOT EXISTS {ks}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>)"
+                "CREATE TABLE IF NOT EXISTS {ks}.t (a int PRIMARY KEY, b vector<int, 4>, c vector<text, 2>, d vector<frozen<list<set<int>>>, 2>)"
             ),
         )
         .await
         .unwrap();
 
+    let complex_vector: Vec<Vec<HashSet<i32>>> = vec![
+        vec![HashSet::from([1, 2, 3]), HashSet::from([4, 5])],
+        vec![HashSet::from([6, 7, 8])],
+    ];
+
     session
         .query_unpaged(
-            format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, ?)"),
-            &(1, vec![1, 2, 3, 4], vec!["foo", "bar"]),
+            format!("INSERT INTO {ks}.t (a, b, c, d) VALUES (?, ?, ?, ?)"),
+            &(1, vec![1, 2, 3, 4], vec!["foo", "bar"], &complex_vector),
         )
         .await
         .unwrap();
 
     session
         .query_unpaged(
-            format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, ?)"),
-            &(2, &[5, 6, 7, 8][..], &["afoo", "abar"][..]),
+            format!("INSERT INTO {ks}.t (a, b, c, d) VALUES (?, ?, ?, ?)"),
+            &(2, &[5, 6, 7, 8][..], &["afoo", "abar"][..], &complex_vector),
         )
         .await
         .unwrap();
 
     let query_result = session
-        .query_unpaged(format!("SELECT a, b, c FROM {ks}.t"), &[])
+        .query_unpaged(format!("SELECT a, b, c, d FROM {ks}.t"), &[])
         .await
         .unwrap();
 
-    let rows: Vec<(i32, Vec<i32>, Vec<String>)> = query_result
+    type RowType = (i32, Vec<i32>, Vec<String>, Vec<Vec<HashSet<i32>>>);
+    let rows: Vec<RowType> = query_result
         .into_rows_result()
         .unwrap()
-        .rows::<(i32, Vec<i32>, Vec<String>)>()
+        .rows::<RowType>()
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
@@ -429,7 +436,8 @@ async fn test_vector_type_unprepared() {
         (
             1,
             vec![1, 2, 3, 4],
-            vec!["foo".to_string(), "bar".to_string()]
+            vec!["foo".to_string(), "bar".to_string()],
+            complex_vector.clone(),
         )
     );
     assert_eq!(
@@ -437,7 +445,8 @@ async fn test_vector_type_unprepared() {
         (
             2,
             vec![5, 6, 7, 8],
-            vec!["afoo".to_string(), "abar".to_string()]
+            vec!["afoo".to_string(), "abar".to_string()],
+            complex_vector,
         )
     );
 

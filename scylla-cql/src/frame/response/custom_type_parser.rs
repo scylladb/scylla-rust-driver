@@ -28,12 +28,18 @@ struct UDTParameters<'result> {
 
 pub(crate) struct CustomTypeParser<'result> {
     parser: ParserState<'result>,
+    /// This field is used to track whether we are currently parsing a frozen type.
+    /// Being frozen flows down to all nested types, so we need to track it in the parser state.
+    /// When we encounter a `FrozenType(...)`, this field is set to true for the duration
+    /// of parsing the inner type, and then set back to false.
+    frozen_context: bool,
 }
 
 impl<'result> CustomTypeParser<'result> {
     fn new(input: &'result str) -> CustomTypeParser<'result> {
         Self {
             parser: ParserState::new(input),
+            frozen_context: false,
         }
     }
 
@@ -241,6 +247,7 @@ impl<'result> CustomTypeParser<'result> {
     ) -> Result<[Result<ColumnType<'result>, CustomTypeParseError>; N], CustomTypeParseError> {
         let mut backup = Self {
             parser: self.parser,
+            frozen_context: self.frozen_context,
         };
 
         // FIXME: Rewrite using std::iter::FromIterator::collect_array after it is stabilized.
@@ -270,7 +277,7 @@ impl<'result> CustomTypeParser<'result> {
                 let [element_type_result] = self.get_n_type_parameters::<1>()?;
                 let element_type = element_type_result?;
                 Ok(ColumnType::Collection {
-                    frozen: false,
+                    frozen: self.frozen_context,
                     typ: CollectionType::List(Box::new(element_type)),
                 })
             }
@@ -278,7 +285,7 @@ impl<'result> CustomTypeParser<'result> {
                 let [element_type_result] = self.get_n_type_parameters::<1>()?;
                 let element_type = element_type_result?;
                 Ok(ColumnType::Collection {
-                    frozen: false,
+                    frozen: self.frozen_context,
                     typ: CollectionType::Set(Box::new(element_type)),
                 })
             }
@@ -287,7 +294,7 @@ impl<'result> CustomTypeParser<'result> {
                 let key_type = key_type_result?;
                 let value_type = value_type_result?;
                 Ok(ColumnType::Collection {
-                    frozen: false,
+                    frozen: self.frozen_context,
                     typ: CollectionType::Map(Box::new(key_type), Box::new(value_type)),
                 })
             }
@@ -313,13 +320,33 @@ impl<'result> CustomTypeParser<'result> {
             "UserType" => {
                 let params = self.get_udt_parameters()?;
                 Ok(ColumnType::UserDefinedType {
-                    frozen: false,
+                    frozen: self.frozen_context,
                     definition: Arc::new(UserDefinedType {
                         name: params.type_name.into(),
                         keyspace: params.keyspace.into(),
                         field_types: params.field_types,
                     }),
                 })
+            }
+            "FrozenType" => {
+                // Frozeness flows down to all nested types.
+                //
+                // In my tests, ScyllaDB always wraps the inner collection types in FrozenType anyway.
+                // Given CQL definition:
+                // > vector<frozen<list<set<int>>>, 3>
+                // The type string received is (omitting the `org.apache.cassandra.db.marshal.` prefix for brevity):
+                // > VectorType(FrozenType(ListType(FrozenType(SetType(Int32Type)))))
+                //
+                // But it logically could omit the inner FrozenType wrappers, so we need to handle that case as well
+                // (by pushing `frozen` flag as `true` down the parsing process).
+
+                let previous_frozen_context = self.frozen_context;
+                self.frozen_context = true;
+
+                let [result] = self.get_n_type_parameters::<1>()?;
+
+                self.frozen_context = previous_frozen_context;
+                result
             }
             name => Err(CustomTypeParseError::UnknownComplexCustomTypeName(
                 name.into(),
