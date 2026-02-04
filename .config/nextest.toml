@@ -31,6 +31,14 @@ slow-timeout = { period = "20s", terminate-after = 6 }
 filter = 'binary_id(scylla::integration)'
 slow-timeout = { period = "10s", terminate-after = 6 }
 
+# Util profile, to make it easier to run just ccm test.
+[profile.ccm]
+default-filter = "binary_id(scylla::integration) & test(ccm::)"
+
+# Util profile, to make it easier to run all tests, including ccm
+[profile.all]
+default-filter = "all()"
+
 [profile.ci]
 # Do not cancel the test run on the first failure.
 fail-fast = false
