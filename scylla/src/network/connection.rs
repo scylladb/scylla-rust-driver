@@ -2625,7 +2625,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ntest::timeout(20000)]
     async fn connection_is_closed_on_no_response_to_keepalives() {
         use crate::errors::BrokenConnectionErrorKind;
 

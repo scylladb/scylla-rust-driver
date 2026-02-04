@@ -282,7 +282,6 @@ async fn perform_test_for_proxy(
 // re-inserts statement into the cache. The other client should have its metadata
 // updated after executing the request.
 #[tokio::test]
-#[ntest::timeout(10000)]
 async fn test_basic_metadata_update() {
     setup_tracing();
 

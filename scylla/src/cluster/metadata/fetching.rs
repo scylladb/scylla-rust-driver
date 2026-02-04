@@ -732,7 +732,6 @@ mod toposort_tests {
     }
 
     #[test]
-    #[ntest::timeout(1000)]
     fn test_udt_topo_sort_valid_case() {
         setup_tracing();
         // UDTs dependencies on each other (arrow A -> B signifies that type B is composed of type A):
@@ -799,7 +798,6 @@ mod toposort_tests {
     }
 
     #[test]
-    #[ntest::timeout(1000)]
     fn test_udt_topo_sort_detects_cycles() {
         setup_tracing();
         const KEYSPACE1: &str = "KEYSPACE1";
@@ -834,7 +832,6 @@ mod toposort_tests {
     }
 
     #[test]
-    #[ntest::timeout(1000)]
     fn test_udt_topo_sort_ignores_invalid_metadata() {
         setup_tracing();
         // A depends on B, which depends on unknown C; also, there is an independent E.

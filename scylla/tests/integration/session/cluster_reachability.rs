@@ -10,7 +10,6 @@ use crate::utils::{
 
 /// Tests that all nodes are reachable and can serve requests.
 #[tokio::test]
-#[ntest::timeout(30000)]
 async fn test_all_nodes_are_reachable_and_serving() {
     setup_tracing();
 

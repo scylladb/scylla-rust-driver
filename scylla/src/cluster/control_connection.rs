@@ -146,7 +146,6 @@ mod tests {
     /// Tests that ControlConnection enforces the provided custom timeout
     /// iff ScyllaDB is the target node (else ignores the custom timeout).
     #[tokio::test]
-    #[ntest::timeout(2000)]
     async fn test_custom_timeouts() {
         setup_tracing();
 

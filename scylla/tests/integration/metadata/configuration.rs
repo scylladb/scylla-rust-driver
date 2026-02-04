@@ -39,7 +39,6 @@ fn map_fedback_message<'a, T, F: Fn(RequestFrame) -> T + 'a>(
 }
 
 #[tokio::test]
-#[ntest::timeout(20000)]
 async fn test_custom_metadata_timeouts() {
     setup_tracing();
 

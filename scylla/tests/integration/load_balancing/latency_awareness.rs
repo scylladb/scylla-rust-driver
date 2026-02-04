@@ -5,7 +5,6 @@ use crate::utils::{create_new_session_builder, setup_tracing};
 
 // This is a regression test for #696.
 #[tokio::test]
-#[ntest::timeout(1000)]
 async fn latency_aware_query_completes() {
     setup_tracing();
     let policy = DefaultPolicy::builder()

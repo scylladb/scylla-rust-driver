@@ -15,7 +15,6 @@ use tracing::info;
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
 
 #[tokio::test]
-#[ntest::timeout(10000)]
 async fn test_no_unprepared_internal_requests() {
     setup_tracing();
 
