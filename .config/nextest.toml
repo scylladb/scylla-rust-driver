@@ -4,6 +4,10 @@ default-filter = "all() - (binary_id(scylla::integration) & test(ccm::))"
 # This is restrictive default. Of course some tests (e.g. integration) inherently need
 # more time. This will be configured below.
 slow-timeout = { period = "1s", terminate-after = 6 }
+# This is so we see which tests were skipped
+status-level = "all"
+# Without this a list of slow tests won't be printed at the end
+final-status-level = "slow"
 
 # Overrides section. Overrides allow changing some settings for some subset of tests.
 # Here their main purpose is configuring timeouts. First override that matches given
