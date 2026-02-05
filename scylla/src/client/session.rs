@@ -53,9 +53,8 @@ use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::ops::ControlFlow;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tracing::{Instrument, debug, error, trace, trace_span};
 use uuid::Uuid;
@@ -65,38 +64,18 @@ pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 // Query used for schema agreement checks
 const SCHEMA_VERSION_QUERY_STR: &str = "SELECT schema_version FROM system.local WHERE key='local'";
 
-/// Lazily prepared statements for internal driver operations.
+/// Statements for internal driver operations.
 ///
-/// These statements are prepared on first use, avoiding failures during session creation
-/// if the cluster temporarily cannot prepare statements.
+/// We would like those to be prepared, but there are issues related to
+/// changing connection keyspace: https://github.com/scylladb/scylla-rust-driver/issues/1561
+#[derive(Default)]
 struct InternalStatements {
-    /// Prepared statement for querying tracing session info from system_traces.sessions
-    tracing_session: RwLock<Option<PreparedStatement>>,
-    /// Prepared statement for querying tracing events from system_traces.events
-    tracing_events: RwLock<Option<PreparedStatement>>,
-    /// Prepared statement for fetching schema version during schema agreement checks
-    schema_version: RwLock<Option<PreparedStatement>>,
-}
-
-impl InternalStatements {
-    // We need that because of https://github.com/scylladb/scylla-rust-driver/issues/1561
-    // If we ever solve it, `InternalStatement` could be changed back to use
-    // OnceLock instead of RwLock.
-    async fn reset(&self) {
-        *self.tracing_session.write().await = None;
-        *self.tracing_events.write().await = None;
-        *self.schema_version.write().await = None;
-    }
-}
-
-impl Default for InternalStatements {
-    fn default() -> Self {
-        Self {
-            tracing_session: RwLock::new(None),
-            tracing_events: RwLock::new(None),
-            schema_version: RwLock::new(None),
-        }
-    }
+    /// Statement for querying tracing session info from system_traces.sessions
+    tracing_session: OnceLock<Statement>,
+    /// Statement for querying tracing events from system_traces.events
+    tracing_events: OnceLock<Statement>,
+    /// Statement for fetching schema version during schema agreement checks
+    schema_version: OnceLock<Statement>,
 }
 
 /// `Session` manages connections to the cluster and allows to execute CQL requests.
@@ -1130,76 +1109,38 @@ impl Session {
         Ok(session)
     }
 
-    async fn get_or_prepare_internal_statement(
-        &self,
-        statement: &RwLock<Option<PreparedStatement>>,
-        prepare: impl AsyncFnOnce() -> Result<PreparedStatement, PrepareError>,
-    ) -> Result<PreparedStatement, PrepareError> {
-        {
-            let read_lock = statement.read().await;
-            if let Some(statement) = read_lock.as_ref() {
-                return Ok(statement.clone());
-            }
-        }
-
-        let mut write_lock = statement.write().await;
-        if let Some(statement) = write_lock.as_ref() {
-            return Ok(statement.clone());
-        }
-
-        let prepared = prepare().await?;
-
-        *write_lock = Some(prepared.clone());
-
-        Ok(prepared)
+    /// Creates and returns ref to a shared statement for querying tracing session info.
+    fn get_tracing_session_statement(&self) -> &Statement {
+        self.internal_statements.tracing_session.get_or_init(|| {
+            let mut stmt = Statement::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
+            stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
+            stmt.set_consistency(self.tracing_info_fetch_consistency);
+            stmt.set_is_idempotent(true);
+            stmt
+        })
     }
 
-    /// Lazily prepares and returns the statement for querying tracing session info.
-    async fn get_tracing_session_statement(&self) -> Result<PreparedStatement, PrepareError> {
-        self.get_or_prepare_internal_statement(
-            &self.internal_statements.tracing_session,
-            async || {
-                let mut stmt =
-                    Statement::new(crate::observability::tracing::TRACES_SESSION_QUERY_STR);
-                stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
-                stmt.set_consistency(self.tracing_info_fetch_consistency);
-                stmt.set_is_idempotent(true);
-                self.prepare(stmt).await
-            },
-        )
-        .await
+    /// Creates and returns ref to a shared statement for querying tracing events.
+    fn get_tracing_events_statement(&self) -> &Statement {
+        self.internal_statements.tracing_events.get_or_init(|| {
+            let mut stmt = Statement::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
+            stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
+            stmt.set_consistency(self.tracing_info_fetch_consistency);
+            stmt.set_is_idempotent(true);
+            stmt
+        })
     }
 
-    /// Lazily prepares and returns the statement for querying tracing events.
-    async fn get_tracing_events_statement(&self) -> Result<PreparedStatement, PrepareError> {
-        self.get_or_prepare_internal_statement(
-            &self.internal_statements.tracing_events,
-            async || {
-                let mut stmt =
-                    Statement::new(crate::observability::tracing::TRACES_EVENTS_QUERY_STR);
-                stmt.set_page_size(crate::observability::tracing::TRACING_QUERY_PAGE_SIZE);
-                stmt.set_consistency(self.tracing_info_fetch_consistency);
-                stmt.set_is_idempotent(true);
-                self.prepare(stmt).await
-            },
-        )
-        .await
-    }
-
-    /// Lazily prepares and returns the statement for fetching schema version.
-    async fn get_schema_version_statement(&self) -> Result<PreparedStatement, PrepareError> {
-        self.get_or_prepare_internal_statement(
-            &self.internal_statements.schema_version,
-            async || {
-                let mut statement = Statement::new(SCHEMA_VERSION_QUERY_STR);
-                // Use ONE consistency for schema version queries - this is a local query
-                // that reads from system.local, so ONE is appropriate.
-                statement.set_consistency(Consistency::One);
-                statement.set_is_idempotent(true);
-                self.prepare(statement).await
-            },
-        )
-        .await
+    /// Creates and returns ref to a shared statement for querying schema version.
+    fn get_schema_version_statement(&self) -> &Statement {
+        self.internal_statements.schema_version.get_or_init(|| {
+            let mut statement = Statement::new(SCHEMA_VERSION_QUERY_STR);
+            // Use ONE consistency for schema version queries - this is a local query
+            // that reads from system.local, so ONE is appropriate.
+            statement.set_consistency(Consistency::One);
+            statement.set_is_idempotent(true);
+            statement
+        })
     }
 
     async fn do_query_unpaged(
@@ -1845,14 +1786,7 @@ impl Session {
         // To avoid any possible CQL injections it's good to verify that the name is valid
         let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name, case_sensitive)?;
 
-        let result = self.cluster.use_keyspace(verified_ks_name).await;
-
-        // We need to reset statement because of https://github.com/scylladb/scylla-rust-driver/issues/1561
-        // Resetting after set keyspace seems a bit safer against it being reprepared before
-        // changing keyspace is finished.
-        self.internal_statements.reset().await;
-
-        result
+        self.cluster.use_keyspace(verified_ks_name).await
     }
 
     /// Manually trigger a metadata refresh\
@@ -1921,14 +1855,15 @@ impl Session {
         &self,
         tracing_id: &Uuid,
     ) -> Result<Option<TracingInfo>, TracingError> {
-        // Get lazily prepared statements for tracing queries.
-        // Consistency is set during preparation based on session's tracing_info_fetch_consistency.
-        let traces_session_stmt = self.get_tracing_session_statement().await?;
-        let traces_events_stmt = self.get_tracing_events_statement().await?;
+        // Get statements for tracing queries.
+        // Consistency is set during construction based on session's tracing_info_fetch_consistency.
+        let traces_session_stmt = self.get_tracing_session_statement();
+        let traces_events_stmt = self.get_tracing_events_statement();
 
+        // Using non-public do_query_unpaged allows us to avoid cloning.
         let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.execute_unpaged(&traces_session_stmt, (tracing_id,)),
-            self.execute_unpaged(&traces_events_stmt, (tracing_id,))
+            self.do_query_unpaged(traces_session_stmt, (tracing_id,)),
+            self.do_query_unpaged(traces_events_stmt, (tracing_id,))
         )?;
 
         // Get tracing info
@@ -2467,20 +2402,13 @@ impl Session {
         &self,
         required_node: Option<Uuid>,
     ) -> Result<Option<Uuid>, SchemaAgreementError> {
-        // Get lazily prepared statement for schema version query
-        let schema_version_stmt = self.get_schema_version_statement().await?;
-        let schema_version_stmt_ref = &schema_version_stmt;
-
         let cluster_state = self.get_cluster_state();
         // The iterator is guaranteed to be nonempty.
         let per_node_connections = cluster_state.iter_working_connections_per_node()?;
 
         // Therefore, this iterator is guaranteed to be nonempty, too.
         let handles = per_node_connections.map(|(host_id, pool)| async move {
-            (
-                host_id,
-                Self::read_node_schema_version(schema_version_stmt_ref, pool).await,
-            )
+            (host_id, self.read_node_schema_version(pool).await)
         });
         // Hence, this is nonempty, too.
         let versions_results = join_all(handles).await;
@@ -2547,13 +2475,13 @@ impl Session {
     ///
     /// `connections_to_node` iterator must be non-empty!
     async fn read_node_schema_version(
-        schema_version_stmt: &PreparedStatement,
+        &self,
         connections_to_node: impl Iterator<Item = Arc<Connection>>,
     ) -> Result<SchemaNodeResult, SchemaAgreementError> {
         let mut first_broken_connection_err: Option<BrokenConnectionError> = None;
         let mut first_unignorable_err: Option<SchemaAgreementError> = None;
         for connection in connections_to_node {
-            match Self::fetch_schema_version(&connection, schema_version_stmt).await {
+            match self.fetch_connection_schema_version(&connection).await {
                 Ok(schema_version) => return Ok(SchemaNodeResult::Success(schema_version)),
                 Err(SchemaAgreementError::RequestError(
                     RequestAttemptError::BrokenConnectionError(conn_err),
@@ -2580,18 +2508,16 @@ impl Session {
         ))
     }
 
-    /// Fetches the schema version from a single connection using a prepared statement.
-    async fn fetch_schema_version(
+    /// Fetches the schema version from a single connection.
+    async fn fetch_connection_schema_version(
+        &self,
         connection: &Connection,
-        schema_version_stmt: &PreparedStatement,
     ) -> Result<Uuid, SchemaAgreementError> {
         let result = connection
-            .execute_raw_unpaged(schema_version_stmt, SerializedValues::EMPTY)
+            .query_unpaged(self.get_schema_version_statement())
             .await?;
 
         let (version_id,) = result
-            .into_non_error_query_response()?
-            .into_query_result_with_unknown_coordinator()?
             .into_rows_result()
             .map_err(SchemaAgreementError::TracesEventsIntoRowsResultError)?
             .single_row::<(Uuid,)>()

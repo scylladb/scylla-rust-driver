@@ -35,7 +35,10 @@ async fn run_some_ddl_with_unreachable_node(
             // First check goes without trouble
             RequestRule(
                 Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                    .and(Condition::RequestOpcode(RequestOpcode::Execute))
+                    .and(Condition::RequestOpcode(RequestOpcode::Query))
+                    .and(Condition::BodyContainsCaseSensitive(Box::new(
+                        *b"system.local",
+                    )))
                     .and(Condition::TrueForLimitedTimes(1)),
                 RequestReaction::noop(),
             ),
@@ -43,7 +46,10 @@ async fn run_some_ddl_with_unreachable_node(
             // return the error stored from first attempt.
             RequestRule(
                 Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                    .and(Condition::RequestOpcode(RequestOpcode::Execute)),
+                    .and(Condition::RequestOpcode(RequestOpcode::Query))
+                    .and(Condition::BodyContainsCaseSensitive(Box::new(
+                        *b"system.local",
+                    ))),
                 RequestReaction::delay(Duration::from_secs(10)),
             ),
         ]))
@@ -51,7 +57,10 @@ async fn run_some_ddl_with_unreachable_node(
 
     running_proxy.running_nodes[paused].prepend_request_rules(vec![RequestRule(
         Condition::not(Condition::ConnectionRegisteredAnyEvent)
-            .and(Condition::RequestOpcode(RequestOpcode::Execute)),
+            .and(Condition::RequestOpcode(RequestOpcode::Query))
+            .and(Condition::BodyContainsCaseSensitive(Box::new(
+                *b"system.local",
+            ))),
         // Simulates driver discovering that node is unreachable.
         RequestReaction::drop_connection(),
     )]);
@@ -269,7 +278,10 @@ async fn test_schema_await_with_transient_failure() {
 
             let node_rules = Some(vec![RequestRule(
                 Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                    .and(Condition::RequestOpcode(RequestOpcode::Execute))
+                    .and(Condition::RequestOpcode(RequestOpcode::Query))
+                    .and(Condition::BodyContainsCaseSensitive(Box::new(
+                        *b"system.local",
+                    )))
                     .and(Condition::TrueForLimitedTimes(1)),
                 RequestReaction::forge_with_error(DbError::Overloaded),
             )]);
@@ -358,7 +370,10 @@ async fn test_schema_await_required_host_absent() {
                 // After some attempts, no connections will be left.
                 RequestRule(
                     Condition::not(Condition::ConnectionRegisteredAnyEvent)
-                        .and(Condition::RequestOpcode(RequestOpcode::Execute)),
+                        .and(Condition::RequestOpcode(RequestOpcode::Query))
+                        .and(Condition::BodyContainsCaseSensitive(Box::new(
+                            *b"system.local",
+                        ))),
                     RequestReaction::drop_connection(),
                 ),
             ]));
@@ -412,7 +427,10 @@ async fn run_ddl_with_failing_agreement_check<Err: std::fmt::Debug>(
     // to fail instantly.
     let fail_schema_check_rule = RequestRule(
         Condition::not(Condition::ConnectionRegisteredAnyEvent)
-            .and(Condition::RequestOpcode(RequestOpcode::Execute)),
+            .and(Condition::RequestOpcode(RequestOpcode::Query))
+            .and(Condition::BodyContainsCaseSensitive(Box::new(
+                *b"system.local",
+            ))),
         RequestReaction::forge_with_error(DbError::SyntaxError),
     );
 

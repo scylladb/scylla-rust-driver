@@ -244,7 +244,7 @@ impl PerformDDL for Connection {
     async fn ddl(&self, query: impl Into<Statement> + Send) -> Result<(), ExecutionError> {
         let mut query = query.into();
         apply_ddl_lbp(&mut query);
-        self.query_unpaged(query)
+        self.query_unpaged(&query)
             .await
             .map(|_| ())
             .map_err(ExecutionError::LastAttemptError)
