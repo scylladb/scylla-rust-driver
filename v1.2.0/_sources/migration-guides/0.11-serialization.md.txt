@@ -1,0 +1,78 @@
+# Adjusting code to changes in serialization API introduced in 0.11
+
+## Background
+
+When executing a statement through the CQL protocol, values for the bind markers are sent in a serialized, untyped form. In order to implement a safer and more robust interface, drivers can use the information returned after preparing a statement to check the type of data provided by the user against the actual types of the bind markers.
+
+Before 0.11, the driver couldn't do this kind of type checking. For example, in the case of non-batch queries, the only information about the user data it has is that it implements `ValueList` - defined as follows:
+
+```rust,ignore
+
+pub trait ValueList {
+    fn serialized(&self) -> SerializedResult<'_>;
+    fn write_to_request(&self, buf: &mut impl BufMut) -> Result<(), SerializeValuesError>;
+}
+```
+
+The driver would naively serialize the data and hope that the user took care to send correct types of values. Failing to do so would, in the best case, fail on the DB-side validation; in the worst case, the data in its raw form may be reinterpreted as another type in an unintended manner.
+
+Another problem is that the information from the prepared statement response is required to robustly serialize user defined types, as UDTs require their fields to be serialized in the same order as they are defined in the database schema. The `IntoUserType` macro which implements Rust struct -> UDT serialization just expects that the order of the Rust struct fields matches the schema, but ensuring this can be very cumbersome for the users.
+
+In version 0.11, a new set of traits is introduced and the old ones are deprecated. The new traits receive more information during serialization such as names of the column/bind markers and their types, which allows to fix the issues mentioned in the previous section.
+
+## Old vs. new
+
+Both the old and the new APIs are based on three core traits:
+
+- `Value` - called `SerializeValue` in the new API. A type that can serialize itself to a single CQL value. For example, `i32` serializes itself into a representation that is compatible with the CQL `int` type.
+- `ValueList` - called `SerializeRow` in the new API. A type that can serialize itself as a list of values for a CQL statement. For example, a `(i32, &str)` produces a list of two values which can be used in a query with two bind markers, e.g. `SELECT * FROM table WHERE pk = ? AND ck = ?`. Optionally, values in the produced list may be associated with names which is useful when using it with a query with named bind markers, e.g. `SELECT * FROM table WHERE pk = :pk AND ck = :ck`.
+- `LegacyBatchValues`, previously named `BatchValues` - in new API replaced with new trait called (again) `BatchValues`.  Represents a source of data for a batch request. It is essentially equivalent to a list of `ValueList`, one for each statement in the batch. For example, `((1, 2), (3, 4, 5))` can be used for a batch with two statements, the first one having two bind markers and the second one having three.
+
+All methods which take one of the old traits were changed to take the new trait - notably, this includes `Session::query`, `(Caching)Session::execute`, `(Caching)Session::batch`.
+
+The driver comes a set of `impl`s of those traits which allow to represent any CQL type (for example, see [Data Types](../data-types/data-types.md) page for a list of for which `Value` and `SerializeValue` is implemented). If the driver implements an old trait for some type, then it also provides implements the new trait for the same type.
+
+## Migration scenarios
+
+### Different default behavior in `SerializeRow`/`SerializeValue` macros
+
+By default, the `SerializeRow` and `SerializeValue` **will match the fields in the Rust struct by name to bind marker names** (in case of `SerializeRow`) **or UDT field names** (in case of `SerializeValue`). This is different from the old `ValueList` and `IntoUserType` macros which did not look at the field names at all and would expect the user to order the fields correctly. While the new behavior is much more ergonomic, you might have reasons not to use it.
+
+In order to bring the old behavior to the new macros (the only difference being type checking which cannot be disabled right now) you can configure it using attributes, as shown in the snippet below:
+
+```rust
+use scylla::SerializeValue;
+
+// The exact same attributes apply to the `SerializeRow` macro and their
+// effect is completely analogous.
+#[derive(SerializeValue)]
+#[scylla(flavor = "enforce_order", skip_name_checks)]
+struct Person {
+    name: String,
+    surname: String,
+    age: i16,
+}
+```
+
+Refer to the API reference page for the `SerializeRow` and `SerializeValue` macros in the `scylla` crate to learn more about the supported attributes and their meaning.
+
+### Preparing is mandatory with a non-empty list of values
+
+> **NOTE:** The considerations in this section only concerns users of the `Session` API, `CachingSession` is not affected as it already does preparation before execute and caches the result.
+
+As explained in the [Background](#background) section, the driver uses data returned from the database after preparing a statement in order to implement type checking. As the new API makes type checking mandatory, **the driver must prepare the statement** so that the data for the bind markers can be type checked. It is done in case of the existing methods which used to send unprepared statements: `Session::query` and `Session::batch`.
+
+> **NOTE:** The driver will skip preparation if it detects that the list of values for the statement is empty, as there is nothing to be type checked.
+
+If you send simple statements along with non-empty lists of values, the slowdown will be as follows:
+
+- For `Session::query`, the driver will prepare the statement before sending it, incurring an additional round-trip.
+- For `Session::batch`, the driver will send a prepare request for each *unique* unprepared statement with a non-empty list of values. **This is done serially!** 
+
+In both cases, if the additional roundtrips are unacceptable, you should prepare the statements beforehand and reuse them - which aligns with our general recommendation against use of simple statements in performance sensitive scenarios.
+
+### Migrating from old to new traits
+
+Up to 1.0 the driver offered a set of migration types and macros to allow adapting new API gradually.
+Since 1.0 this is no longer the case and the old API is fully removed. In order to use 1.0 you have to
+change your code to use new API.

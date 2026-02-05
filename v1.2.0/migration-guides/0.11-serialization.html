@@ -1,0 +1,805 @@
+
+
+<!DOCTYPE html>
+<html class="no-js" lang="en" style="visibility: hidden;">
+    
+    
+
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width initial-scale=1" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <title>
+             Adjusting code to changes in serialization API introduced in 0.11 | ScyllaDB Docs 
+        </title>
+        <meta name="description" content="ScyllaDB Driver for Rust." />
+        <link rel="icon" href="../_static/img/favicon.ico" type="image/x-icon" />
+        <link rel="icon" href="../_static/img/favicon-32x32.png" sizes="32x32" />
+        <link rel="icon" href="../_static/img/favicon-228x228.png" sizes="192x192" />
+        <link rel="apple-touch-icon" href="../_static/img/favicon-228x228.png" />
+        <meta name="msapplication-TileImage" href="../_static/img/favicon-228x228.png" />
+
+        
+            
+            
+        
+
+        
+            
+            <link rel="canonical" href="https://rust-driver.docs.scylladb.com/stable/migration-guides/0.11-serialization.html"/>
+        
+
+        <link rel="author" href="mailto:info@scylladb.com" />
+
+        
+            
+        <!-- increase expertrec loading priority-->
+        <link rel="dns-prefetch" href="https://cse.expertrec.com">
+
+        <!-- increase font loading priority -->
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link rel="preload" as="style"
+              href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" />
+
+        <!-- async CSS -->
+        <link rel="stylesheet" media="print" onload="this.onload=null;this.removeAttribute('media');"
+              href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" />
+
+        <!-- no-JS fallback -->
+        <noscript>
+            <link rel="stylesheet"
+                  href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" />
+        </noscript>
+
+        
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/biel-search@latest/dist/biel-search/biel-search.css">
+            <script type="module" src="https://cdn.jsdelivr.net/npm/biel-search@latest/dist/biel-search/biel-search.esm.js"></script>
+        
+
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+            
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/css/main.css?v=0ebb4bd5" />
+            
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/sphinx_collapse.css?v=226d88b4" />
+            
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+            
+        
+    
+        
+        
+            
+        <script type="text/javascript" src="../_static/js/runtime.bundle.js"></script>
+        <script type="text/javascript" src="../_static/js/main.bundle.js"></script>
+        
+            
+                <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+            
+        
+            
+                <script src="../_static/doctools.js?v=9bcbadda"></script>
+            
+        
+            
+                <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+            
+        
+            
+                <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+            
+        
+            
+                <script src="../_static/copybutton.js?v=f281be69"></script>
+            
+        
+    
+            
+                <!-- Local meta tags -->
+            
+            
+                <!-- Google Tag Manager docs -->
+<script>
+    (function (w, d, s, l, i) {
+        w[l] = w[l] || [];
+        w[l].push({
+            "gtm.start": new Date().getTime(),
+            event: "gtm.js"
+        });
+        var f = d.getElementsByTagName(s)[0],
+            j = d.createElement(s),
+            dl = l != "dataLayer" ? "&l=" + l : "";
+        j.async = true;
+        j.src = "https://www.googletagmanager.com/gtm.js?id=" + i + dl;
+        f.parentNode.insertBefore(j, f);
+    })(window, document, "script", "dataLayer", "GTM-54NWVS4");
+</script>
+<!-- End Google Tag Manager -->
+
+<!-- Google Tag Manager global -->
+<script>
+    (function (w, d, s, l, i) {
+        w[l] = w[l] || [];
+        w[l].push({
+            "gtm.start": new Date().getTime(),
+            event: "gtm.js"
+        });
+        var f = d.getElementsByTagName(s)[0],
+            j = d.createElement(s),
+            dl = l != "dataLayer" ? "&l=" + l : "";
+        j.async = true;
+        j.src = "https://www.googletagmanager.com/gtm.js?id=" + i + dl;
+        f.parentNode.insertBefore(j, f);
+    })(window, document, "script", "dataLayer", "GTM-T8P2JP");
+</script>
+<!-- End Google Tag Manager -->
+
+<!-- Expertrec -->
+<script>
+    var id = "e2077224-9ccf-11e9-a0c9-0242ac130002";
+    var ci_search = document.createElement("script");
+    ci_search.type = "text/javascript";
+    ci_search.async = true;
+    ci_search.src = "https://cse.expertrec.com/api/js/ci_common.js?id=" + id;
+    var s = document.getElementsByTagName("script")[0];
+    s.parentNode.insertBefore(ci_search, s);
+</script>
+<!-- End Expertrec -->
+            
+        
+    </head>
+
+    <body class="brand-product">
+        <section class="promo-banner  promo-banner--hide" style="display: none;">
+    <div class="promo-banner-wrapper">
+        <div class="promo-banner__content">
+            
+            <div class="promo-banner__title">ScyllaDB University Live | Free Virtual Training Event</div>
+            <a class="promo-banner__button button button--reverse" href="#"
+               target="_blank" rel="noopener noreferrer">Learn more</a>
+        </div>
+        <button class="promo-banner__close">
+            <i class="icon-cancel"></i>
+        </button>
+    </div>
+</section>
+        <header class="header">
+    <div class="header-logo">
+        <a class="header-logo__img" href="https://scylladb.com/">
+            <img src="../_static/img/scylladb-logo-horizontal.svg" alt="ScyllaDB Documentation Logo" />
+        </a>
+        <span class="header-logo__bar"></span>
+        <a class="header-logo__text" href="https://docs.scylladb.com/">
+            Documentation
+        </a>
+    </div>
+    <div class="header-navigation">
+        <ul class="dropdown menu scylla-dropdown scylla-dropdown--header" data-dropdown-menu>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Deployments <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://docs.scylladb.com/scylla-cloud/">
+                            <i class="icon-docs-cloud"></i>Cloud</a>
+                    </li>
+                    <li>
+                        <a href="https://docs.scylladb.com/manual/">
+                            <i class="icon-server"></i>Server</a>
+                    </li>
+                </ul>
+            </li>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Tools <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://manager.docs.scylladb.com/">
+                            <i class="icon-docs-manager"></i>ScyllaDB Manager</a>
+                    </li>
+                    <li>
+                        <a href="https://monitoring.docs.scylladb.com/">
+                            <i class="icon-docs-monitoring"></i>ScyllaDB
+                            Monitoring Stack</a>
+                    </li>
+                    <li>
+                        <a href="https://operator.docs.scylladb.com/">
+                            <i class="icon-docs-operator"></i>ScyllaDB Operator
+                        </a>
+                    </li>
+                </ul>
+            </li>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Drivers <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://docs.scylladb.com/stable/drivers/cql-drivers">
+                            <i class="icon-docs-nsql-guides"></i>CQL Drivers
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://docs.scylladb.com/stable/drivers/dynamo-drivers">
+                            <i class="icon-docs-alternator"></i>DynamoDB Drivers
+                        </a>
+
+                        <li>
+                            <a href="https://docs.scylladb.com/stable/versioning/driver-support">
+                                <i class="icon-docs-blog"></i>Supported Driver Versions
+                            </a>
+                        </li>
+                    </li>
+                </ul>
+            </li>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Resources
+                    <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://university.scylladb.com">
+                            <i class="icon-university"></i>
+                            ScyllaDB University
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://forum.scylladb.com">
+                            <i class="icon-docs-community"></i>
+                            Community Forum
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://docs.scylladb.com/stable/get-started/develop-with-scylladb/tutorials-example-projects.html">
+                            <i class="icon-docs-training"></i>
+                            Tutorials
+                        </a>
+                    </li>
+                </ul>
+            </li>
+        </ul>
+        <div class="header-button">
+            <a href="https://docs.scylladb.com/manual/stable/getting-started/installation-common/scylla-web-installer.html" class="button"><i class="icon-download me-2"></i> Install</a>
+        </div>
+    </div>
+    <div class="header-search-box">
+        <i class="dark-theme-toggler icon-theme"></i>
+        <div class="search-box">
+            <ci-search></ci-search>
+        </div>
+        
+            <biel-button class="header-ask-ai" project="ddfdo8m94k"
+                         header-title="ScyllaDB chatbot (beta)"
+                         button-position="default"
+                         modal-position="bottom-right"
+                         button-style="dark">
+                Ask AI
+            </biel-button>
+        
+    </div>
+    <div class="side-nav-toggle">
+    <i class="dark-theme-toggler icon-theme"></i>
+    <div class="side-nav-toggle__button" data-toggle="side-nav">
+        <i class="icon-menu"></i>
+    </div>
+</div>
+</header>
+        <div class="title"></div>
+        <section
+            class="layout  layout--sidebar layout--has-secondary-sidebar ">
+            <div class="content large-order-2">
+                
+                    <div class="pre-content">
+                        <div class="breadcrumbs">
+    <span class="bread__item">
+        <a href="https://docs.scylladb.com"
+           class="bread__highlight">
+            <i class="icon-home"></i> ScyllaDB Docs
+        </a>
+    </span>
+    <span class="bread__item">
+        <a href="https://rust-driver.docs.scylladb.com"
+           class="bread__highlight">
+            ScyllaDB Rust Driver
+        </a>
+    </span>
+    
+        <span class="bread__item">
+            <a href="migration-guides.html" class="bread__highlight">
+                Migration guides
+            </a>
+        </span>
+    
+    <span class="bread__item bread__item--last">Adjusting code to changes in serialization API introduced in 0.11</span>
+</div>
+                    </div>
+                
+                
+                    <div class="sidebar-right-layout">
+                        <div class="body-container">
+                
+
+                <div class="content-body">
+                    
+                        
+    <div class="admonition caution">
+        <p class="admonition-title">Caution</p>
+        <p>
+            
+                You're viewing documentation for a deprecated version of ScyllaDB Rust Driver.
+            
+            <a href="../../stable/migration-guides/0.11-serialization.html">Switch to the latest stable version.</a>
+        </p>
+    </div>
+
+                    
+
+                    <section id="adjusting-code-to-changes-in-serialization-api-introduced-in-0-11">
+<h1>Adjusting code to changes in serialization API introduced in 0.11<a class="headerlink" href="#adjusting-code-to-changes-in-serialization-api-introduced-in-0-11" title="Link to this heading">¶</a></h1>
+<section id="background">
+<h2>Background<a class="headerlink" href="#background" title="Link to this heading">¶</a></h2>
+<p>When executing a statement through the CQL protocol, values for the bind markers are sent in a serialized, untyped form. In order to implement a safer and more robust interface, drivers can use the information returned after preparing a statement to check the type of data provided by the user against the actual types of the bind markers.</p>
+<p>Before 0.11, the driver couldn’t do this kind of type checking. For example, in the case of non-batch queries, the only information about the user data it has is that it implements <code class="docutils literal notranslate"><span class="pre">ValueList</span></code> - defined as follows:</p>
+<div class="highlight-rust,ignore notranslate"><div class="highlight"><pre><span></span><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">ValueList</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">serialized</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">SerializedResult</span><span class="o">&lt;&#39;</span><span class="nb">_</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="w">    </span><span class="k">fn</span><span class="w"> </span><span class="nf">write_to_request</span><span class="p">(</span><span class="o">&amp;</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">buf</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="k">impl</span><span class="w"> </span><span class="n">BufMut</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="n">SerializeValuesError</span><span class="o">&gt;</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The driver would naively serialize the data and hope that the user took care to send correct types of values. Failing to do so would, in the best case, fail on the DB-side validation; in the worst case, the data in its raw form may be reinterpreted as another type in an unintended manner.</p>
+<p>Another problem is that the information from the prepared statement response is required to robustly serialize user defined types, as UDTs require their fields to be serialized in the same order as they are defined in the database schema. The <code class="docutils literal notranslate"><span class="pre">IntoUserType</span></code> macro which implements Rust struct -&gt; UDT serialization just expects that the order of the Rust struct fields matches the schema, but ensuring this can be very cumbersome for the users.</p>
+<p>In version 0.11, a new set of traits is introduced and the old ones are deprecated. The new traits receive more information during serialization such as names of the column/bind markers and their types, which allows to fix the issues mentioned in the previous section.</p>
+</section>
+<section id="old-vs-new">
+<h2>Old vs. new<a class="headerlink" href="#old-vs-new" title="Link to this heading">¶</a></h2>
+<p>Both the old and the new APIs are based on three core traits:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">Value</span></code> - called <code class="docutils literal notranslate"><span class="pre">SerializeValue</span></code> in the new API. A type that can serialize itself to a single CQL value. For example, <code class="docutils literal notranslate"><span class="pre">i32</span></code> serializes itself into a representation that is compatible with the CQL <code class="docutils literal notranslate"><span class="pre">int</span></code> type.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ValueList</span></code> - called <code class="docutils literal notranslate"><span class="pre">SerializeRow</span></code> in the new API. A type that can serialize itself as a list of values for a CQL statement. For example, a <code class="docutils literal notranslate"><span class="pre">(i32,</span> <span class="pre">&amp;str)</span></code> produces a list of two values which can be used in a query with two bind markers, e.g. <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">*</span> <span class="pre">FROM</span> <span class="pre">table</span> <span class="pre">WHERE</span> <span class="pre">pk</span> <span class="pre">=</span> <span class="pre">?</span> <span class="pre">AND</span> <span class="pre">ck</span> <span class="pre">=</span> <span class="pre">?</span></code>. Optionally, values in the produced list may be associated with names which is useful when using it with a query with named bind markers, e.g. <code class="docutils literal notranslate"><span class="pre">SELECT</span> <span class="pre">*</span> <span class="pre">FROM</span> <span class="pre">table</span> <span class="pre">WHERE</span> <span class="pre">pk</span> <span class="pre">=</span> <span class="pre">:pk</span> <span class="pre">AND</span> <span class="pre">ck</span> <span class="pre">=</span> <span class="pre">:ck</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">LegacyBatchValues</span></code>, previously named <code class="docutils literal notranslate"><span class="pre">BatchValues</span></code> - in new API replaced with new trait called (again) <code class="docutils literal notranslate"><span class="pre">BatchValues</span></code>.  Represents a source of data for a batch request. It is essentially equivalent to a list of <code class="docutils literal notranslate"><span class="pre">ValueList</span></code>, one for each statement in the batch. For example, <code class="docutils literal notranslate"><span class="pre">((1,</span> <span class="pre">2),</span> <span class="pre">(3,</span> <span class="pre">4,</span> <span class="pre">5))</span></code> can be used for a batch with two statements, the first one having two bind markers and the second one having three.</p></li>
+</ul>
+<p>All methods which take one of the old traits were changed to take the new trait - notably, this includes <code class="docutils literal notranslate"><span class="pre">Session::query</span></code>, <code class="docutils literal notranslate"><span class="pre">(Caching)Session::execute</span></code>, <code class="docutils literal notranslate"><span class="pre">(Caching)Session::batch</span></code>.</p>
+<p>The driver comes a set of <code class="docutils literal notranslate"><span class="pre">impl</span></code>s of those traits which allow to represent any CQL type (for example, see <a class="reference internal" href="../data-types/data-types.html"><span class="std std-doc">Data Types</span></a> page for a list of for which <code class="docutils literal notranslate"><span class="pre">Value</span></code> and <code class="docutils literal notranslate"><span class="pre">SerializeValue</span></code> is implemented). If the driver implements an old trait for some type, then it also provides implements the new trait for the same type.</p>
+</section>
+<section id="migration-scenarios">
+<h2>Migration scenarios<a class="headerlink" href="#migration-scenarios" title="Link to this heading">¶</a></h2>
+<section id="different-default-behavior-in-serializerow-serializevalue-macros">
+<h3>Different default behavior in <code class="docutils literal notranslate"><span class="pre">SerializeRow</span></code>/<code class="docutils literal notranslate"><span class="pre">SerializeValue</span></code> macros<a class="headerlink" href="#different-default-behavior-in-serializerow-serializevalue-macros" title="Link to this heading">¶</a></h3>
+<p>By default, the <code class="docutils literal notranslate"><span class="pre">SerializeRow</span></code> and <code class="docutils literal notranslate"><span class="pre">SerializeValue</span></code> <strong>will match the fields in the Rust struct by name to bind marker names</strong> (in case of <code class="docutils literal notranslate"><span class="pre">SerializeRow</span></code>) <strong>or UDT field names</strong> (in case of <code class="docutils literal notranslate"><span class="pre">SerializeValue</span></code>). This is different from the old <code class="docutils literal notranslate"><span class="pre">ValueList</span></code> and <code class="docutils literal notranslate"><span class="pre">IntoUserType</span></code> macros which did not look at the field names at all and would expect the user to order the fields correctly. While the new behavior is much more ergonomic, you might have reasons not to use it.</p>
+<p>In order to bring the old behavior to the new macros (the only difference being type checking which cannot be disabled right now) you can configure it using attributes, as shown in the snippet below:</p>
+<div class="highlight-rust notranslate"><div class="highlight"><pre><span></span><span class="k">use</span><span class="w"> </span><span class="n">scylla</span><span class="p">::</span><span class="n">SerializeValue</span><span class="p">;</span>
+
+<span class="c1">// The exact same attributes apply to the `SerializeRow` macro and their</span>
+<span class="c1">// effect is completely analogous.</span>
+<span class="cp">#[derive(SerializeValue)]</span>
+<span class="cp">#[scylla(flavor = </span><span class="s">&quot;enforce_order&quot;</span><span class="cp">, skip_name_checks)]</span>
+<span class="k">struct</span><span class="w"> </span><span class="nc">Person</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span>
+<span class="w">    </span><span class="n">surname</span><span class="p">:</span><span class="w"> </span><span class="nb">String</span><span class="p">,</span>
+<span class="w">    </span><span class="n">age</span><span class="p">:</span><span class="w"> </span><span class="kt">i16</span><span class="p">,</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Refer to the API reference page for the <code class="docutils literal notranslate"><span class="pre">SerializeRow</span></code> and <code class="docutils literal notranslate"><span class="pre">SerializeValue</span></code> macros in the <code class="docutils literal notranslate"><span class="pre">scylla</span></code> crate to learn more about the supported attributes and their meaning.</p>
+</section>
+<section id="preparing-is-mandatory-with-a-non-empty-list-of-values">
+<h3>Preparing is mandatory with a non-empty list of values<a class="headerlink" href="#preparing-is-mandatory-with-a-non-empty-list-of-values" title="Link to this heading">¶</a></h3>
+<blockquote>
+<div><p><strong>NOTE:</strong> The considerations in this section only concerns users of the <code class="docutils literal notranslate"><span class="pre">Session</span></code> API, <code class="docutils literal notranslate"><span class="pre">CachingSession</span></code> is not affected as it already does preparation before execute and caches the result.</p>
+</div></blockquote>
+<p>As explained in the <a class="reference internal" href="#background">Background</a> section, the driver uses data returned from the database after preparing a statement in order to implement type checking. As the new API makes type checking mandatory, <strong>the driver must prepare the statement</strong> so that the data for the bind markers can be type checked. It is done in case of the existing methods which used to send unprepared statements: <code class="docutils literal notranslate"><span class="pre">Session::query</span></code> and <code class="docutils literal notranslate"><span class="pre">Session::batch</span></code>.</p>
+<blockquote>
+<div><p><strong>NOTE:</strong> The driver will skip preparation if it detects that the list of values for the statement is empty, as there is nothing to be type checked.</p>
+</div></blockquote>
+<p>If you send simple statements along with non-empty lists of values, the slowdown will be as follows:</p>
+<ul class="simple">
+<li><p>For <code class="docutils literal notranslate"><span class="pre">Session::query</span></code>, the driver will prepare the statement before sending it, incurring an additional round-trip.</p></li>
+<li><p>For <code class="docutils literal notranslate"><span class="pre">Session::batch</span></code>, the driver will send a prepare request for each <em>unique</em> unprepared statement with a non-empty list of values. <strong>This is done serially!</strong></p></li>
+</ul>
+<p>In both cases, if the additional roundtrips are unacceptable, you should prepare the statements beforehand and reuse them - which aligns with our general recommendation against use of simple statements in performance sensitive scenarios.</p>
+</section>
+<section id="migrating-from-old-to-new-traits">
+<h3>Migrating from old to new traits<a class="headerlink" href="#migrating-from-old-to-new-traits" title="Link to this heading">¶</a></h3>
+<p>Up to 1.0 the driver offered a set of migration types and macros to allow adapting new API gradually.
+Since 1.0 this is no longer the case and the old API is fully removed. In order to use 1.0 you have to
+change your code to use new API.</p>
+</section>
+</section>
+</section>
+
+                </div>
+                
+                    <div class="post-content">
+                        
+    <div class="feedback-container">
+        <p class="feedback-container__title">Was this page helpful?</p>
+        <span data-tooltip tabindex="1" title="Yes" data-position="top">
+            <button class="feedback-container__button" id="feedback-positive">
+                <i class="feedback-container__icon icon-docs-thumbs-up"></i>
+            </button>
+        </span>
+        <span data-tooltip tabindex="1" title="No" data-position="top">
+            <button class="feedback-container__button" id="feedback-negative">
+                <i class="feedback-container__icon icon-docs-thumbs-down"></i>
+            </button>
+        </span>
+        <div class="feedback-container__message" id="feedback-message"></div>
+    </div>
+
+    <script>
+        function resetFeedbackButtonActive() {
+            const feedbackButtons = document.getElementsByClassName('feedback-container__button');
+            for (let i = 0; i < feedbackButtons.length; i++) {
+                feedbackButtons[i].classList.remove('active');
+            }
+        }
+
+        function showMessage(liked) {
+            const feedbackMessage = document.getElementById('feedback-message');
+            const themeGithubRepository = true;
+            let message = 'Great! Thanks for your feedback.';
+            if (themeGithubRepository && !liked) {
+                message = "Thanks for your feedback! Please don't hesitate to <a href='https://github.com/scylladb/scylla-rust-driver/issues/new?title=docs:%20Issue on page Adjusting code to changes in serialization API introduced in 0.11&&body=I%20would%20like%20to%20report%20an%20issue%20on%20page%20https://rust-driver.docs.scylladb.com/v1.2.0/migration-guides/0.11-serialization%0A%0A%23%23%23%20Problem%0A%0A%23%23%23%20%20Suggest%20a%20fix&labels=documentation'>create an issue</a> if you have any suggestions on how we can improve.";
+            }
+            feedbackMessage.innerHTML = message;
+        }
+
+        function sendGaEvent(liked) {
+            const event_label = liked ? "positive" : "negative";
+            const event = "feedback_" + event_label;
+            window.dataLayer = window.dataLayer || [];
+            window.dataLayer.push({
+                'event': event,
+            });
+        }
+
+        const positiveFeebackButton = document.getElementById('feedback-positive');
+        const negativeFeedbackButton = document.getElementById('feedback-negative');
+
+        positiveFeebackButton.addEventListener('click', function() {
+            resetFeedbackButtonActive();
+            sendGaEvent(true);
+            showMessage(true);
+            positiveFeebackButton.classList.add('active');
+        });
+
+        negativeFeedbackButton.addEventListener('click', function() {
+            resetFeedbackButtonActive();
+            sendGaEvent(false);
+            showMessage(false);
+            negativeFeedbackButton.classList.add('active');
+        });
+    </script>
+
+                        <div class="content-navigation">
+    <div class="navigation navigation--prev">
+        
+            <a class="navigation__link" href="migration-guides.html">
+                <button class="navigation__button">
+                    <i class="icon-chevron-left"></i>
+                </button>
+                <div class="navigation__title">
+                    <span class="colored">PREVIOUS</span> <br />Migration guides
+                </div>
+            </a>
+        
+    </div>
+    <div class="navigation navigation--next">
+        
+            <a class="navigation__link" href="0.15-deserialization.html">
+                <div class="navigation__title">
+                    <span class="colored">NEXT</span> <br />Adjusting code to changes in deserialization API introduced in 0.15
+                </div>
+                <button class="navigation__button">
+                    <i class="icon-chevron-right"></i>
+                </button>
+            </a>
+        
+    </div>
+</div>
+                        <!-- Post content text -->
+                    </div>
+                
+
+                
+                    </div>
+                    <div class="sidebar-right large-order-3">
+                        <div class="secondary-side-nav custom-scroll-bar">
+    
+    <ul class="contribute">
+        <li class="contribute__item">
+            <a class="button button-sm" href="https://github.com/scylladb/scylla-rust-driver/issues/new?title=docs:%20Issue on page Adjusting code to changes in serialization API introduced in 0.11&&body=I%20would%20like%20to%20report%20an%20issue%20on%20page%20https://rust-driver.docs.scylladb.com/v1.2.0/migration-guides/0.11-serialization%0A%0A%23%23%23%20Problem%0A%0A%23%23%23%20%20Suggest%20a%20fix&labels=documentation"
+               target="_blank">
+                <i class="icon-github" aria-hidden="true"></i>Create an issue
+            </a>
+        </li>
+        
+            <li class="contribute__item">
+                <a class="button button-sm" href="https://github.com/scylladb/scylla-rust-driver/edit/main/docs/source/migration-guides/0.11-serialization.md"
+                   target="_blank">
+                    <i class="icon-edit" aria-hidden="true"></i>Edit this page
+                </a>
+            </li>
+        
+    </ul>
+
+    
+        <div class="secondary-side-nav__content">
+            <p class="topic-title">On this page</p>
+            <ul>
+<li><a class="reference internal" href="#">Adjusting code to changes in serialization API introduced in 0.11</a><ul>
+<li><a class="reference internal" href="#background">Background</a></li>
+<li><a class="reference internal" href="#old-vs-new">Old vs. new</a></li>
+<li><a class="reference internal" href="#migration-scenarios">Migration scenarios</a><ul>
+<li><a class="reference internal" href="#different-default-behavior-in-serializerow-serializevalue-macros">Different default behavior in <code class="docutils literal notranslate"><span class="pre">SerializeRow</span></code>/<code class="docutils literal notranslate"><span class="pre">SerializeValue</span></code> macros</a></li>
+<li><a class="reference internal" href="#preparing-is-mandatory-with-a-non-empty-list-of-values">Preparing is mandatory with a non-empty list of values</a></li>
+<li><a class="reference internal" href="#migrating-from-old-to-new-traits">Migrating from old to new traits</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+        </div>
+    
+</div>
+                    </div>
+                    </div>
+                
+            </div>
+            <div class="sidebar-left  large-order-1">
+                
+                    
+                        <div id="side-nav" class="side-nav custom-scroll-bar" data-closable data-toggler=".show">
+    <button class="collapsible-button">
+        <i class="icon-docs-menu-collapse"></i>
+    </button>
+    <div class="side-nav-content custom-scroll-bar">
+        <div class="side-nav__title">
+            <a href="https://rust-driver.docs.scylladb.com">ScyllaDB Rust Driver</a>
+        </div>
+        <div class="side-nav__search">
+            <div class="search-box">
+                <ci-search></ci-search>
+            </div>
+        </div>
+        <div class="side-nav__versions"><ul class="dropdown menu scylla-dropdown scylla-dropdown--versions" data-dropdown-menu>
+    <li class="scylla-dropdown__item">
+        <a class="scylla-dropdown__title" href="#">
+            
+                v1.2.0
+            
+            <i class="chevron icon-docs-chevron-right"></i>
+        </a>
+        <ul class="menu scylla-dropdown__content">
+            
+                
+                    <li>
+                        <a href="../../main/migration-guides/0.11-serialization.html">main</a>
+                    </li>
+                
+            
+            
+                
+                    <li>
+                        <a href="../../stable/migration-guides/0.11-serialization.html">
+                            v1.5.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.4.1/migration-guides/0.11-serialization.html">
+                            v1.4.1
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.4.0/migration-guides/0.11-serialization.html">
+                            v1.4.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.3.1/migration-guides/0.11-serialization.html">
+                            v1.3.1
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.3.0/migration-guides/0.11-serialization.html">
+                            v1.3.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="0.11-serialization.html">
+                            v1.2.0
+                        </a>
+                    </li>
+                
+            
+        </ul>
+    </li>
+</ul></div>
+        <div class="side-nav__content">
+            <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../index.html">Scylla Rust Driver</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../quickstart/quickstart.html">Quick Start</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label for="toctree-checkbox-1"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart/create-project.html">Creating a project</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart/example.html">Connecting and running a simple query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart/scylla-docker.html">Running Scylla using Docker</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../connecting/connecting.html">Connecting to the cluster</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label for="toctree-checkbox-2"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../connecting/compression.html">Compression</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../connecting/authentication.html">Authentication</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../connecting/tls.html">TLS</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../statements/statements.html">Executing CQL statements - best practices</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label for="toctree-checkbox-3"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../statements/unprepared.html">Unprepared statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/values.html">Statement values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/result.html">Query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/prepared.html">Prepared statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/batch.html">Batch statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/paged.html">Paged query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/usekeyspace.html">USE keyspace</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/schema-agreement.html">Schema agreement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/lwt.html">Lightweight transaction (LWT) statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/timeouts.html">Request timeouts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/timestamp-generators.html">Timestamp generators</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../execution-profiles/execution-profiles.html">Execution profiles</a><input class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" type="checkbox"/><label for="toctree-checkbox-4"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/create-and-use.html">Creating a profile and setting it</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/maximal-example.html">All options supported by a profile</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/priority.html">Priorities of execution settings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/remap.html">Remapping execution profile handles</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../data-types/data-types.html">Data Types</a><input class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" type="checkbox"/><label for="toctree-checkbox-5"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/primitive.html">Bool, Tinyint, Smallint, Int, Bigint, Float, Double</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/text.html">Ascii, Text, Varchar</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/counter.html">Counter</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/blob.html">Blob</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/inet.html">Inet</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/uuid.html">Uuid</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/timeuuid.html">Timeuuid</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/date.html">Date</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/time.html">Time</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/timestamp.html">Timestamp</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/duration.html">Duration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/decimal.html">Decimal</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/varint.html">Varint</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/collections.html">List, Set, Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/tuple.html">Tuple</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/udt.html">User defined types</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/vector.html">Vector</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../load-balancing/load-balancing.html">Load balancing</a><input class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" type="checkbox"/><label for="toctree-checkbox-6"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../load-balancing/default-policy.html">DefaultPolicy</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../retry-policy/retry-policy.html">Retry policy configuration</a><input class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" type="checkbox"/><label for="toctree-checkbox-7"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../retry-policy/fallthrough.html">Fallthrough retry policy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../retry-policy/default.html">Default retry policy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../retry-policy/downgrading-consistency.html">Downgrading consistency retry policy</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../speculative-execution/speculative.html">Speculative execution</a><input class="toctree-checkbox" id="toctree-checkbox-8" name="toctree-checkbox-8" type="checkbox"/><label for="toctree-checkbox-8"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../speculative-execution/simple.html">Simple speculative execution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../speculative-execution/percentile.html">Percentile speculative execution</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../metrics/metrics.html">Driver metrics</a></li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="migration-guides.html">Migration guides</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-9" name="toctree-checkbox-9" type="checkbox"/><label for="toctree-checkbox-9"><i class="icon-chevron-right"></i></label><div class="break"></div><ul class="current">
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Adjusting code to changes in serialization API introduced in 0.11</a></li>
+<li class="toctree-l2"><a class="reference internal" href="0.15-deserialization.html">Adjusting code to changes in deserialization API introduced in 0.15</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../logging/logging.html">Logging</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tracing/tracing.html">Query tracing</a><input class="toctree-checkbox" id="toctree-checkbox-10" name="toctree-checkbox-10" type="checkbox"/><label for="toctree-checkbox-10"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/basic.html">Tracing a simple/prepared/batch query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/paged.html">Tracing a paged query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/prepare.html">Tracing <code class="docutils literal notranslate"><span class="pre">Session::prepare</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/query-history.html">Query Execution History</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../schema/schema.html">Schema</a></li>
+</ul>
+
+        </div>
+    </div>
+</div>
+                    
+                
+            </div>
+
+        </section>
+
+        <footer class="footer">
+    <div class="footer-group">
+        <div class="footer-top">
+            <a class="footer-logo" href="https://www.scylladb.com"></a>
+            <div class="footer-links">
+                <a class="footer-links__link" href="https://docs.scylladb.com/" target="_blank">Docs</a>
+                <a class="footer-links__link" href="https://docs.scylladb.com/stable/get-started/develop-with-scylladb/tutorials-example-projects.html" target="_blank">Tutorials</a>
+                <a class="footer-links__link" href="https://university.scylladb.com/" target="_blank">University</a>
+                <a class="footer-links__link" href="https://www.scylladb.com/company/contact-us/"
+                   target="_blank">Contact Us</a>
+                <a class="footer-links__link" href="https://www.scylladb.com/company/" target="_blank">About Us</a>
+            </div>
+            <div class="footer-actions">
+                <a class="footer-actions__link" href="http://slack.scylladb.com/" target="_blank">
+                    <span data-tooltip tabindex="1" title="User Slack channel" data-position="bottom">
+                        <i class="icon-slack"></i>
+                    </span>
+                </a>
+                <a class="footer-actions__link" href="https://forum.scylladb.com/" target="_blank">
+                    <span data-tooltip tabindex="1" title="Community forum" data-position="bottom">
+                        <i class="icon-docs-community"></i>
+                    </span>
+                </a>
+            </div>
+        </div>
+
+        
+            <div class="footer-copyright">
+                
+                    
+                        &#169; 2026, ScyllaDB. All rights reserved.
+                    
+                    | <a class="footer-copyright__link" href="https://www.scylladb.com/tos/" target="_blank">Terms of Service</a>
+                    | <a class="footer-copyright__link" href="https://www.scylladb.com/privacy/" target="_blank">Privacy Policy</a>
+                    | ScyllaDB, and ScyllaDB Cloud, are registered trademarks of ScyllaDB, Inc.
+                
+            </div>
+        
+
+
+        <div class="footer-bottom">
+            
+                <div class="footer-bottom__last-updated">
+                    
+                        Last updated on 05 February 2026.
+                    
+                </div>
+            
+            <div class="footer-bottom__version">
+                Powered by
+                <a class="footer-bottom__link" href="http://sphinx-doc.org/">Sphinx 8.2.3</a> &amp;
+                <a class="footer-bottom__link" href="https://sphinx-theme.scylladb.com/">ScyllaDB Theme 1.8.10</a>
+            </div>
+        </div>
+    </div>
+    
+        <biel-button class="footer-ask-ai" project="ddfdo8m94k"
+                     header-title="ScyllaDB chatbot (beta)"
+                     button-position="bottom-right"
+                     modal-position="bottom-right"
+                     button-style="dark">
+            Ask AI
+        </biel-button>
+    
+</footer>
+
+        <noscript>
+            <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-T8P2JP" height="0" width="0"
+                    style="display: none; visibility: hidden"></iframe>
+        </noscript>
+    </body>
+
+</html>

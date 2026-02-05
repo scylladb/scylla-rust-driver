@@ -1,0 +1,762 @@
+
+
+<!DOCTYPE html>
+<html class="no-js" lang="en" style="visibility: hidden;">
+    
+    
+
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width initial-scale=1" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <title>
+             Simple speculative execution | ScyllaDB Docs 
+        </title>
+        <meta name="description" content="ScyllaDB Driver for Rust." />
+        <link rel="icon" href="../_static/img/favicon.ico" type="image/x-icon" />
+        <link rel="icon" href="../_static/img/favicon-32x32.png" sizes="32x32" />
+        <link rel="icon" href="../_static/img/favicon-228x228.png" sizes="192x192" />
+        <link rel="apple-touch-icon" href="../_static/img/favicon-228x228.png" />
+        <meta name="msapplication-TileImage" href="../_static/img/favicon-228x228.png" />
+
+        
+            
+            
+        
+
+        
+            
+            <link rel="canonical" href="https://rust-driver.docs.scylladb.com/stable/speculative-execution/simple.html"/>
+        
+
+        <link rel="author" href="mailto:info@scylladb.com" />
+
+        
+            
+        <!-- increase expertrec loading priority-->
+        <link rel="dns-prefetch" href="https://cse.expertrec.com">
+
+        <!-- increase font loading priority -->
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link rel="preload" as="style"
+              href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" />
+
+        <!-- async CSS -->
+        <link rel="stylesheet" media="print" onload="this.onload=null;this.removeAttribute('media');"
+              href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" />
+
+        <!-- no-JS fallback -->
+        <noscript>
+            <link rel="stylesheet"
+                  href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,400;0,500;0,700;1,400&display=swap" />
+        </noscript>
+
+        
+            <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/biel-search@latest/dist/biel-search/biel-search.css">
+            <script type="module" src="https://cdn.jsdelivr.net/npm/biel-search@latest/dist/biel-search/biel-search.esm.js"></script>
+        
+
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+            
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/css/main.css?v=0ebb4bd5" />
+            
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/sphinx_collapse.css?v=226d88b4" />
+            
+        
+            
+                <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+            
+        
+    
+        
+        
+            
+        <script type="text/javascript" src="../_static/js/runtime.bundle.js"></script>
+        <script type="text/javascript" src="../_static/js/main.bundle.js"></script>
+        
+            
+                <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+            
+        
+            
+                <script src="../_static/doctools.js?v=9bcbadda"></script>
+            
+        
+            
+                <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+            
+        
+            
+                <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+            
+        
+            
+                <script src="../_static/copybutton.js?v=f281be69"></script>
+            
+        
+    
+            
+                <!-- Local meta tags -->
+            
+            
+                <!-- Google Tag Manager docs -->
+<script>
+    (function (w, d, s, l, i) {
+        w[l] = w[l] || [];
+        w[l].push({
+            "gtm.start": new Date().getTime(),
+            event: "gtm.js"
+        });
+        var f = d.getElementsByTagName(s)[0],
+            j = d.createElement(s),
+            dl = l != "dataLayer" ? "&l=" + l : "";
+        j.async = true;
+        j.src = "https://www.googletagmanager.com/gtm.js?id=" + i + dl;
+        f.parentNode.insertBefore(j, f);
+    })(window, document, "script", "dataLayer", "GTM-54NWVS4");
+</script>
+<!-- End Google Tag Manager -->
+
+<!-- Google Tag Manager global -->
+<script>
+    (function (w, d, s, l, i) {
+        w[l] = w[l] || [];
+        w[l].push({
+            "gtm.start": new Date().getTime(),
+            event: "gtm.js"
+        });
+        var f = d.getElementsByTagName(s)[0],
+            j = d.createElement(s),
+            dl = l != "dataLayer" ? "&l=" + l : "";
+        j.async = true;
+        j.src = "https://www.googletagmanager.com/gtm.js?id=" + i + dl;
+        f.parentNode.insertBefore(j, f);
+    })(window, document, "script", "dataLayer", "GTM-T8P2JP");
+</script>
+<!-- End Google Tag Manager -->
+
+<!-- Expertrec -->
+<script>
+    var id = "e2077224-9ccf-11e9-a0c9-0242ac130002";
+    var ci_search = document.createElement("script");
+    ci_search.type = "text/javascript";
+    ci_search.async = true;
+    ci_search.src = "https://cse.expertrec.com/api/js/ci_common.js?id=" + id;
+    var s = document.getElementsByTagName("script")[0];
+    s.parentNode.insertBefore(ci_search, s);
+</script>
+<!-- End Expertrec -->
+            
+        
+    </head>
+
+    <body class="brand-product">
+        <section class="promo-banner  promo-banner--hide" style="display: none;">
+    <div class="promo-banner-wrapper">
+        <div class="promo-banner__content">
+            
+            <div class="promo-banner__title">ScyllaDB University Live | Free Virtual Training Event</div>
+            <a class="promo-banner__button button button--reverse" href="#"
+               target="_blank" rel="noopener noreferrer">Learn more</a>
+        </div>
+        <button class="promo-banner__close">
+            <i class="icon-cancel"></i>
+        </button>
+    </div>
+</section>
+        <header class="header">
+    <div class="header-logo">
+        <a class="header-logo__img" href="https://scylladb.com/">
+            <img src="../_static/img/scylladb-logo-horizontal.svg" alt="ScyllaDB Documentation Logo" />
+        </a>
+        <span class="header-logo__bar"></span>
+        <a class="header-logo__text" href="https://docs.scylladb.com/">
+            Documentation
+        </a>
+    </div>
+    <div class="header-navigation">
+        <ul class="dropdown menu scylla-dropdown scylla-dropdown--header" data-dropdown-menu>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Deployments <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://docs.scylladb.com/scylla-cloud/">
+                            <i class="icon-docs-cloud"></i>Cloud</a>
+                    </li>
+                    <li>
+                        <a href="https://docs.scylladb.com/manual/">
+                            <i class="icon-server"></i>Server</a>
+                    </li>
+                </ul>
+            </li>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Tools <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://manager.docs.scylladb.com/">
+                            <i class="icon-docs-manager"></i>ScyllaDB Manager</a>
+                    </li>
+                    <li>
+                        <a href="https://monitoring.docs.scylladb.com/">
+                            <i class="icon-docs-monitoring"></i>ScyllaDB
+                            Monitoring Stack</a>
+                    </li>
+                    <li>
+                        <a href="https://operator.docs.scylladb.com/">
+                            <i class="icon-docs-operator"></i>ScyllaDB Operator
+                        </a>
+                    </li>
+                </ul>
+            </li>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Drivers <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://docs.scylladb.com/stable/drivers/cql-drivers">
+                            <i class="icon-docs-nsql-guides"></i>CQL Drivers
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://docs.scylladb.com/stable/drivers/dynamo-drivers">
+                            <i class="icon-docs-alternator"></i>DynamoDB Drivers
+                        </a>
+
+                        <li>
+                            <a href="https://docs.scylladb.com/stable/versioning/driver-support">
+                                <i class="icon-docs-blog"></i>Supported Driver Versions
+                            </a>
+                        </li>
+                    </li>
+                </ul>
+            </li>
+            <li class="scylla-dropdown__item">
+                <a href="#" class="scylla-dropdown__title">Resources
+                    <i class="chevron icon-arrow-dropdown"></i></a>
+                <ul class="menu scylla-dropdown__content">
+                    <li>
+                        <a href="https://university.scylladb.com">
+                            <i class="icon-university"></i>
+                            ScyllaDB University
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://forum.scylladb.com">
+                            <i class="icon-docs-community"></i>
+                            Community Forum
+                        </a>
+                    </li>
+                    <li>
+                        <a href="https://docs.scylladb.com/stable/get-started/develop-with-scylladb/tutorials-example-projects.html">
+                            <i class="icon-docs-training"></i>
+                            Tutorials
+                        </a>
+                    </li>
+                </ul>
+            </li>
+        </ul>
+        <div class="header-button">
+            <a href="https://docs.scylladb.com/manual/stable/getting-started/installation-common/scylla-web-installer.html" class="button"><i class="icon-download me-2"></i> Install</a>
+        </div>
+    </div>
+    <div class="header-search-box">
+        <i class="dark-theme-toggler icon-theme"></i>
+        <div class="search-box">
+            <ci-search></ci-search>
+        </div>
+        
+            <biel-button class="header-ask-ai" project="ddfdo8m94k"
+                         header-title="ScyllaDB chatbot (beta)"
+                         button-position="default"
+                         modal-position="bottom-right"
+                         button-style="dark">
+                Ask AI
+            </biel-button>
+        
+    </div>
+    <div class="side-nav-toggle">
+    <i class="dark-theme-toggler icon-theme"></i>
+    <div class="side-nav-toggle__button" data-toggle="side-nav">
+        <i class="icon-menu"></i>
+    </div>
+</div>
+</header>
+        <div class="title"></div>
+        <section
+            class="layout  layout--sidebar layout--has-secondary-sidebar ">
+            <div class="content large-order-2">
+                
+                    <div class="pre-content">
+                        <div class="breadcrumbs">
+    <span class="bread__item">
+        <a href="https://docs.scylladb.com"
+           class="bread__highlight">
+            <i class="icon-home"></i> ScyllaDB Docs
+        </a>
+    </span>
+    <span class="bread__item">
+        <a href="https://rust-driver.docs.scylladb.com"
+           class="bread__highlight">
+            ScyllaDB Rust Driver
+        </a>
+    </span>
+    
+        <span class="bread__item">
+            <a href="speculative.html" class="bread__highlight">
+                Speculative execution
+            </a>
+        </span>
+    
+    <span class="bread__item bread__item--last">Simple speculative execution</span>
+</div>
+                    </div>
+                
+                
+                    <div class="sidebar-right-layout">
+                        <div class="body-container">
+                
+
+                <div class="content-body">
+                    
+                        
+    <div class="admonition caution">
+        <p class="admonition-title">Caution</p>
+        <p>
+            
+                You're viewing documentation for a deprecated version of ScyllaDB Rust Driver.
+            
+            <a href="../../stable/speculative-execution/simple.html">Switch to the latest stable version.</a>
+        </p>
+    </div>
+
+                    
+
+                    <section id="simple-speculative-execution">
+<h1>Simple speculative execution<a class="headerlink" href="#simple-speculative-execution" title="Link to this heading">¶</a></h1>
+<p>The easiest speculative execution policy available.  It starts another
+execution of a query after constant delay of <code class="docutils literal notranslate"><span class="pre">retry_interval</span></code> and does at most
+<code class="docutils literal notranslate"><span class="pre">max_retry_count</span></code> speculative query executions (not counting the first,
+non-speculative one).</p>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading">¶</a></h2>
+<p>To use this policy in <code class="docutils literal notranslate"><span class="pre">Session</span></code>:</p>
+<div class="highlight-rust notranslate"><div class="highlight"><pre><span></span><span class="k">use</span><span class="w"> </span><span class="n">std</span><span class="p">::{</span><span class="n">sync</span><span class="p">::</span><span class="n">Arc</span><span class="p">,</span><span class="w"> </span><span class="n">time</span><span class="p">::</span><span class="n">Duration</span><span class="p">};</span>
+<span class="k">use</span><span class="w"> </span><span class="n">scylla</span><span class="p">::</span><span class="n">client</span><span class="p">::</span><span class="n">session</span><span class="p">::</span><span class="n">Session</span><span class="p">;</span>
+<span class="k">use</span><span class="w"> </span><span class="n">scylla</span><span class="p">::</span><span class="n">client</span><span class="p">::</span><span class="n">session_builder</span><span class="p">::</span><span class="n">SessionBuilder</span><span class="p">;</span>
+<span class="k">use</span><span class="w"> </span><span class="n">scylla</span><span class="p">::{</span>
+<span class="w">    </span><span class="n">policies</span><span class="p">::</span><span class="n">speculative_execution</span><span class="p">::</span><span class="n">SimpleSpeculativeExecutionPolicy</span><span class="p">,</span>
+<span class="w">    </span><span class="n">client</span><span class="p">::</span><span class="n">execution_profile</span><span class="p">::</span><span class="n">ExecutionProfile</span><span class="p">,</span>
+<span class="p">};</span>
+
+<span class="kd">let</span><span class="w"> </span><span class="n">policy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SimpleSpeculativeExecutionPolicy</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">max_retry_count</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w">    </span><span class="n">retry_interval</span><span class="p">:</span><span class="w"> </span><span class="nc">Duration</span><span class="p">::</span><span class="n">from_millis</span><span class="p">(</span><span class="mi">100</span><span class="p">),</span>
+<span class="p">};</span>
+
+<span class="kd">let</span><span class="w"> </span><span class="n">handle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ExecutionProfile</span><span class="p">::</span><span class="n">builder</span><span class="p">()</span>
+<span class="w">    </span><span class="p">.</span><span class="n">speculative_execution_policy</span><span class="p">(</span><span class="nb">Some</span><span class="p">(</span><span class="n">Arc</span><span class="p">::</span><span class="n">new</span><span class="p">(</span><span class="n">policy</span><span class="p">)))</span>
+<span class="w">    </span><span class="p">.</span><span class="n">build</span><span class="p">()</span>
+<span class="w">    </span><span class="p">.</span><span class="n">into_handle</span><span class="p">();</span>
+
+<span class="kd">let</span><span class="w"> </span><span class="n">session</span><span class="p">:</span><span class="w"> </span><span class="nc">Session</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">SessionBuilder</span><span class="p">::</span><span class="n">new</span><span class="p">()</span>
+<span class="w">    </span><span class="p">.</span><span class="n">known_node</span><span class="p">(</span><span class="s">&quot;127.0.0.1:9042&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="p">.</span><span class="n">default_execution_profile_handle</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+<span class="w">    </span><span class="p">.</span><span class="n">build</span><span class="p">()</span>
+<span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="o">?</span><span class="p">;</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+                </div>
+                
+                    <div class="post-content">
+                        
+    <div class="feedback-container">
+        <p class="feedback-container__title">Was this page helpful?</p>
+        <span data-tooltip tabindex="1" title="Yes" data-position="top">
+            <button class="feedback-container__button" id="feedback-positive">
+                <i class="feedback-container__icon icon-docs-thumbs-up"></i>
+            </button>
+        </span>
+        <span data-tooltip tabindex="1" title="No" data-position="top">
+            <button class="feedback-container__button" id="feedback-negative">
+                <i class="feedback-container__icon icon-docs-thumbs-down"></i>
+            </button>
+        </span>
+        <div class="feedback-container__message" id="feedback-message"></div>
+    </div>
+
+    <script>
+        function resetFeedbackButtonActive() {
+            const feedbackButtons = document.getElementsByClassName('feedback-container__button');
+            for (let i = 0; i < feedbackButtons.length; i++) {
+                feedbackButtons[i].classList.remove('active');
+            }
+        }
+
+        function showMessage(liked) {
+            const feedbackMessage = document.getElementById('feedback-message');
+            const themeGithubRepository = true;
+            let message = 'Great! Thanks for your feedback.';
+            if (themeGithubRepository && !liked) {
+                message = "Thanks for your feedback! Please don't hesitate to <a href='https://github.com/scylladb/scylla-rust-driver/issues/new?title=docs:%20Issue on page Simple speculative execution&&body=I%20would%20like%20to%20report%20an%20issue%20on%20page%20https://rust-driver.docs.scylladb.com/v1.2.0/speculative-execution/simple%0A%0A%23%23%23%20Problem%0A%0A%23%23%23%20%20Suggest%20a%20fix&labels=documentation'>create an issue</a> if you have any suggestions on how we can improve.";
+            }
+            feedbackMessage.innerHTML = message;
+        }
+
+        function sendGaEvent(liked) {
+            const event_label = liked ? "positive" : "negative";
+            const event = "feedback_" + event_label;
+            window.dataLayer = window.dataLayer || [];
+            window.dataLayer.push({
+                'event': event,
+            });
+        }
+
+        const positiveFeebackButton = document.getElementById('feedback-positive');
+        const negativeFeedbackButton = document.getElementById('feedback-negative');
+
+        positiveFeebackButton.addEventListener('click', function() {
+            resetFeedbackButtonActive();
+            sendGaEvent(true);
+            showMessage(true);
+            positiveFeebackButton.classList.add('active');
+        });
+
+        negativeFeedbackButton.addEventListener('click', function() {
+            resetFeedbackButtonActive();
+            sendGaEvent(false);
+            showMessage(false);
+            negativeFeedbackButton.classList.add('active');
+        });
+    </script>
+
+                        <div class="content-navigation">
+    <div class="navigation navigation--prev">
+        
+            <a class="navigation__link" href="speculative.html">
+                <button class="navigation__button">
+                    <i class="icon-chevron-left"></i>
+                </button>
+                <div class="navigation__title">
+                    <span class="colored">PREVIOUS</span> <br />Speculative execution
+                </div>
+            </a>
+        
+    </div>
+    <div class="navigation navigation--next">
+        
+            <a class="navigation__link" href="percentile.html">
+                <div class="navigation__title">
+                    <span class="colored">NEXT</span> <br />Percentile speculative execution
+                </div>
+                <button class="navigation__button">
+                    <i class="icon-chevron-right"></i>
+                </button>
+            </a>
+        
+    </div>
+</div>
+                        <!-- Post content text -->
+                    </div>
+                
+
+                
+                    </div>
+                    <div class="sidebar-right large-order-3">
+                        <div class="secondary-side-nav custom-scroll-bar">
+    
+    <ul class="contribute">
+        <li class="contribute__item">
+            <a class="button button-sm" href="https://github.com/scylladb/scylla-rust-driver/issues/new?title=docs:%20Issue on page Simple speculative execution&&body=I%20would%20like%20to%20report%20an%20issue%20on%20page%20https://rust-driver.docs.scylladb.com/v1.2.0/speculative-execution/simple%0A%0A%23%23%23%20Problem%0A%0A%23%23%23%20%20Suggest%20a%20fix&labels=documentation"
+               target="_blank">
+                <i class="icon-github" aria-hidden="true"></i>Create an issue
+            </a>
+        </li>
+        
+            <li class="contribute__item">
+                <a class="button button-sm" href="https://github.com/scylladb/scylla-rust-driver/edit/main/docs/source/speculative-execution/simple.md"
+                   target="_blank">
+                    <i class="icon-edit" aria-hidden="true"></i>Edit this page
+                </a>
+            </li>
+        
+    </ul>
+
+    
+        <div class="secondary-side-nav__content">
+            <p class="topic-title">On this page</p>
+            <ul>
+<li><a class="reference internal" href="#">Simple speculative execution</a><ul>
+<li><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+</ul>
+
+        </div>
+    
+</div>
+                    </div>
+                    </div>
+                
+            </div>
+            <div class="sidebar-left  large-order-1">
+                
+                    
+                        <div id="side-nav" class="side-nav custom-scroll-bar" data-closable data-toggler=".show">
+    <button class="collapsible-button">
+        <i class="icon-docs-menu-collapse"></i>
+    </button>
+    <div class="side-nav-content custom-scroll-bar">
+        <div class="side-nav__title">
+            <a href="https://rust-driver.docs.scylladb.com">ScyllaDB Rust Driver</a>
+        </div>
+        <div class="side-nav__search">
+            <div class="search-box">
+                <ci-search></ci-search>
+            </div>
+        </div>
+        <div class="side-nav__versions"><ul class="dropdown menu scylla-dropdown scylla-dropdown--versions" data-dropdown-menu>
+    <li class="scylla-dropdown__item">
+        <a class="scylla-dropdown__title" href="#">
+            
+                v1.2.0
+            
+            <i class="chevron icon-docs-chevron-right"></i>
+        </a>
+        <ul class="menu scylla-dropdown__content">
+            
+                
+                    <li>
+                        <a href="../../main/speculative-execution/simple.html">main</a>
+                    </li>
+                
+            
+            
+                
+                    <li>
+                        <a href="../../stable/speculative-execution/simple.html">
+                            v1.5.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.4.1/speculative-execution/simple.html">
+                            v1.4.1
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.4.0/speculative-execution/simple.html">
+                            v1.4.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.3.1/speculative-execution/simple.html">
+                            v1.3.1
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="../../v1.3.0/speculative-execution/simple.html">
+                            v1.3.0
+                        </a>
+                    </li>
+                
+            
+                
+                    <li>
+                        <a href="simple.html">
+                            v1.2.0
+                        </a>
+                    </li>
+                
+            
+        </ul>
+    </li>
+</ul></div>
+        <div class="side-nav__content">
+            <ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../index.html">Scylla Rust Driver</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../quickstart/quickstart.html">Quick Start</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label for="toctree-checkbox-1"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart/create-project.html">Creating a project</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart/example.html">Connecting and running a simple query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../quickstart/scylla-docker.html">Running Scylla using Docker</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../connecting/connecting.html">Connecting to the cluster</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label for="toctree-checkbox-2"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../connecting/compression.html">Compression</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../connecting/authentication.html">Authentication</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../connecting/tls.html">TLS</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../statements/statements.html">Executing CQL statements - best practices</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label for="toctree-checkbox-3"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../statements/unprepared.html">Unprepared statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/values.html">Statement values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/result.html">Query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/prepared.html">Prepared statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/batch.html">Batch statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/paged.html">Paged query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/usekeyspace.html">USE keyspace</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/schema-agreement.html">Schema agreement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/lwt.html">Lightweight transaction (LWT) statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/timeouts.html">Request timeouts</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../statements/timestamp-generators.html">Timestamp generators</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../execution-profiles/execution-profiles.html">Execution profiles</a><input class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" type="checkbox"/><label for="toctree-checkbox-4"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/create-and-use.html">Creating a profile and setting it</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/maximal-example.html">All options supported by a profile</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/priority.html">Priorities of execution settings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../execution-profiles/remap.html">Remapping execution profile handles</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../data-types/data-types.html">Data Types</a><input class="toctree-checkbox" id="toctree-checkbox-5" name="toctree-checkbox-5" type="checkbox"/><label for="toctree-checkbox-5"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/primitive.html">Bool, Tinyint, Smallint, Int, Bigint, Float, Double</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/text.html">Ascii, Text, Varchar</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/counter.html">Counter</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/blob.html">Blob</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/inet.html">Inet</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/uuid.html">Uuid</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/timeuuid.html">Timeuuid</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/date.html">Date</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/time.html">Time</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/timestamp.html">Timestamp</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/duration.html">Duration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/decimal.html">Decimal</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/varint.html">Varint</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/collections.html">List, Set, Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/tuple.html">Tuple</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/udt.html">User defined types</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../data-types/vector.html">Vector</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../load-balancing/load-balancing.html">Load balancing</a><input class="toctree-checkbox" id="toctree-checkbox-6" name="toctree-checkbox-6" type="checkbox"/><label for="toctree-checkbox-6"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../load-balancing/default-policy.html">DefaultPolicy</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../retry-policy/retry-policy.html">Retry policy configuration</a><input class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" type="checkbox"/><label for="toctree-checkbox-7"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../retry-policy/fallthrough.html">Fallthrough retry policy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../retry-policy/default.html">Default retry policy</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../retry-policy/downgrading-consistency.html">Downgrading consistency retry policy</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="speculative.html">Speculative execution</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-8" name="toctree-checkbox-8" type="checkbox"/><label for="toctree-checkbox-8"><i class="icon-chevron-right"></i></label><div class="break"></div><ul class="current">
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Simple speculative execution</a></li>
+<li class="toctree-l2"><a class="reference internal" href="percentile.html">Percentile speculative execution</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../metrics/metrics.html">Driver metrics</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../migration-guides/migration-guides.html">Migration guides</a><input class="toctree-checkbox" id="toctree-checkbox-9" name="toctree-checkbox-9" type="checkbox"/><label for="toctree-checkbox-9"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../migration-guides/0.11-serialization.html">Adjusting code to changes in serialization API introduced in 0.11</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../migration-guides/0.15-deserialization.html">Adjusting code to changes in deserialization API introduced in 0.15</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../logging/logging.html">Logging</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tracing/tracing.html">Query tracing</a><input class="toctree-checkbox" id="toctree-checkbox-10" name="toctree-checkbox-10" type="checkbox"/><label for="toctree-checkbox-10"><i class="icon-chevron-right"></i></label><div class="break"></div><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/basic.html">Tracing a simple/prepared/batch query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/paged.html">Tracing a paged query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/prepare.html">Tracing <code class="docutils literal notranslate"><span class="pre">Session::prepare</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tracing/query-history.html">Query Execution History</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../schema/schema.html">Schema</a></li>
+</ul>
+
+        </div>
+    </div>
+</div>
+                    
+                
+            </div>
+
+        </section>
+
+        <footer class="footer">
+    <div class="footer-group">
+        <div class="footer-top">
+            <a class="footer-logo" href="https://www.scylladb.com"></a>
+            <div class="footer-links">
+                <a class="footer-links__link" href="https://docs.scylladb.com/" target="_blank">Docs</a>
+                <a class="footer-links__link" href="https://docs.scylladb.com/stable/get-started/develop-with-scylladb/tutorials-example-projects.html" target="_blank">Tutorials</a>
+                <a class="footer-links__link" href="https://university.scylladb.com/" target="_blank">University</a>
+                <a class="footer-links__link" href="https://www.scylladb.com/company/contact-us/"
+                   target="_blank">Contact Us</a>
+                <a class="footer-links__link" href="https://www.scylladb.com/company/" target="_blank">About Us</a>
+            </div>
+            <div class="footer-actions">
+                <a class="footer-actions__link" href="http://slack.scylladb.com/" target="_blank">
+                    <span data-tooltip tabindex="1" title="User Slack channel" data-position="bottom">
+                        <i class="icon-slack"></i>
+                    </span>
+                </a>
+                <a class="footer-actions__link" href="https://forum.scylladb.com/" target="_blank">
+                    <span data-tooltip tabindex="1" title="Community forum" data-position="bottom">
+                        <i class="icon-docs-community"></i>
+                    </span>
+                </a>
+            </div>
+        </div>
+
+        
+            <div class="footer-copyright">
+                
+                    
+                        &#169; 2026, ScyllaDB. All rights reserved.
+                    
+                    | <a class="footer-copyright__link" href="https://www.scylladb.com/tos/" target="_blank">Terms of Service</a>
+                    | <a class="footer-copyright__link" href="https://www.scylladb.com/privacy/" target="_blank">Privacy Policy</a>
+                    | ScyllaDB, and ScyllaDB Cloud, are registered trademarks of ScyllaDB, Inc.
+                
+            </div>
+        
+
+
+        <div class="footer-bottom">
+            
+                <div class="footer-bottom__last-updated">
+                    
+                        Last updated on 05 February 2026.
+                    
+                </div>
+            
+            <div class="footer-bottom__version">
+                Powered by
+                <a class="footer-bottom__link" href="http://sphinx-doc.org/">Sphinx 8.2.3</a> &amp;
+                <a class="footer-bottom__link" href="https://sphinx-theme.scylladb.com/">ScyllaDB Theme 1.8.10</a>
+            </div>
+        </div>
+    </div>
+    
+        <biel-button class="footer-ask-ai" project="ddfdo8m94k"
+                     header-title="ScyllaDB chatbot (beta)"
+                     button-position="bottom-right"
+                     modal-position="bottom-right"
+                     button-style="dark">
+            Ask AI
+        </biel-button>
+    
+</footer>
+
+        <noscript>
+            <iframe src="https://www.googletagmanager.com/ns.html?id=GTM-T8P2JP" height="0" width="0"
+                    style="display: none; visibility: hidden"></iframe>
+        </noscript>
+    </body>
+
+</html>
