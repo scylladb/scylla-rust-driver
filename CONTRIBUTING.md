@@ -30,14 +30,20 @@ Currently, we require new PRs to compile without warnings, pass `cargo fmt` and 
 
 ## Testing
 
-A 3-node ScyllaDB cluster is required to run the tests.
-The simplest way to set it up locally is to use a `docker compose`.
+We run tests using [cargo-nextest](https://nexte.st/). See its website for installation instructions.
+`cargo test` should work, but we don't test it in CI, and it may have different default behaviors.
+For example, `cargo test` will run ccm tests (more on them below) by default.
+
+Some tests require a live database.
+Most of them live in `scylla/tests/integration`, but there are still a few leftovers in `scylla/src`.
+To run them, you need a 3-node DB cluster. The simplest way to set it up locally is to use a `docker compose`.
 Fortunately there is no need to invoke `docker compose` manually, everything can be handled by our `Makefile`.
 
-To run a cargo test suite, use the command below (note that you must have Docker and Docker Compose V2 installed):
+To run a cargo test suite, use the command below (note that you must have Docker, Docker Compose V2, and [cargo-nextest](https://nexte.st/) installed):
 ```bash
 make test
 ```
+
 When on non-Linux machine, however, it can be impossible to connect to containerized ScyllaDB instance from outside Docker.\
 If you are using macOS, we provide a `dockerized-test` make target for running tests inside another Docker container:
 ```bash
@@ -48,6 +54,12 @@ If working on Windows, run tests in WSL.
 The above commands will leave a running ScyllaDB cluster in the background.
 To stop it, use `make down`.\
 Starting a cluster without running any test is possible with `make up`.
+
+The above test commands will run doctests, unit tests and integration tests.
+There is a third category: ccm tests. They live in `scylla/tests/integration/ccm`. Those tests setup their own clusters, in order to test
+topology changes, or custom configurations. To run them you need to have [scylla-ccm](https://github.com/scylladb/scylla-ccm)
+installed. Easiest way is to install it using uv: `uv tool install git+https://github.com/scylladb/scylla-ccm.git`
+You can then execute those tests with `make ccm-test`.
 
 ### Writing tests that need to connect to Scylla
 
@@ -76,7 +88,7 @@ simply add the call at the beginning of the test.
 ## CI
 
 Before sending a pull request, it is a good idea to run `make ci` locally (or `make dockerized-ci` if on macOS).
-It will perform a format check, `cargo check`, linter check (clippy), build and `cargo test`.
+It will perform a format check, `cargo check`, linter check (clippy), build and `cargo nextest`.
 
 ### Semver checking
 

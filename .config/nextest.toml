@@ -1,0 +1,60 @@
+[profile.default]
+# This will run all tests excluding ccm tests.
+default-filter = "all() - (binary_id(scylla::integration) & test(ccm::))"
+# This is restrictive default. Of course some tests (e.g. integration) inherently need
+# more time. This will be configured below.
+slow-timeout = { period = "1s", terminate-after = 6 }
+# This is so we see which tests were skipped
+status-level = "all"
+# Without this a list of slow tests won't be printed at the end
+final-status-level = "slow"
+
+# Overrides section. Overrides allow changing some settings for some subset of tests.
+# Here their main purpose is configuring timeouts. First override that matches given
+# test is chosen, so they should be ordered from most specific to least specific.
+
+# Some tests in scylla package are still DB tests (in other
+# words, they use real Scylla). This makes them slower.
+[[profile.default.overrides]]
+filter = 'binary_id(scylla) & (test(network::connection::) | test(client::caching_session::) | test(network::connection_pool::))'
+slow-timeout = { period = "20s", terminate-after = 6 }
+
+# CCM tests may need to configure cluster. This takes even
+# more time than typical integration test.
+[[profile.default.overrides]]
+filter = '(binary_id(scylla::integration) & test(ccm::))'
+slow-timeout = { period = "20s", terminate-after = 6 }
+
+# Integration tests often create keyspaces, tables, sessions etc.
+# This requires a bit more time
+[[profile.default.overrides]]
+filter = 'binary_id(scylla::integration)'
+slow-timeout = { period = "10s", terminate-after = 6 }
+
+# Util profile, to make it easier to run just ccm test.
+[profile.ccm]
+default-filter = "binary_id(scylla::integration) & test(ccm::)"
+
+# Util profile, to make it easier to run all tests, including ccm
+[profile.all]
+default-filter = "all()"
+
+[profile.ci]
+# Do not cancel the test run on the first failure.
+fail-fast = false
+
+# Let's have a separate profile for matrix.
+# That way we'll be able to configure its behavior more easily.
+[profile.matrix]
+inherits = "ci"
+# Matrix should only run tests that require scylla
+# For now it means all tests in scylla package.
+# In the future we may be able to change that to
+# only integration tests.
+default-filter = "package(scylla)"
+
+[profile.matrix.junit]
+path = "junit.xml"
+# These are the default values, specified for clarity.
+store-success-output = false
+store-failure-output = true

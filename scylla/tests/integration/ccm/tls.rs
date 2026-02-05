@@ -143,7 +143,6 @@ fn build_openssl_ca_store(ca: &CertifiedIssuer<'_, KeyPair>) -> X509Store {
 // It checks that driver can connect to all nodes of TLS-enabled cluster,
 // and execute requests on them.
 #[tokio::test]
-#[cfg_attr(not(ccm_tests), ignore)]
 async fn test_connect_tls_no_client_auth() {
     setup_tracing();
 
@@ -194,7 +193,6 @@ async fn test_connect_tls_no_client_auth() {
 // Verifies that if a node presents a certificate without a subject alternative name
 // matching the node's IP address, the driver won't connect to it.
 #[tokio::test]
-#[cfg_attr(not(ccm_tests), ignore)]
 async fn test_tls_verifies_hostname() {
     setup_tracing();
 
@@ -243,7 +241,6 @@ async fn test_tls_verifies_hostname() {
 
 // Check that we can still connect if client_encryption_options.require_client_auth is true.
 #[tokio::test]
-#[cfg_attr(not(ccm_tests), ignore)]
 async fn test_connect_tls_with_client_auth() {
     setup_tracing();
 

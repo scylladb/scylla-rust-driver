@@ -490,7 +490,6 @@ async fn test_prepared_statement_col_specs() {
 }
 
 #[tokio::test]
-#[ntest::timeout(20000)]
 async fn test_skip_result_metadata() {
     use scylla::client::session::Session;
     use scylla::client::session_builder::SessionBuilder;
@@ -718,7 +717,6 @@ fn assert_preparation_attempted_on_all_shards(
 ///     and we assert that all shards were attempted.
 ///
 #[tokio::test]
-#[ntest::timeout(30000)]
 async fn test_preparation_logic() {
     setup_tracing();
 

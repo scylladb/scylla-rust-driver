@@ -15,7 +15,6 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 #[tokio::test]
-#[ntest::timeout(60000)]
 async fn batch_statements_and_values_mismatch_detected() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();

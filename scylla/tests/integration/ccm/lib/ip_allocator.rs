@@ -1,10 +1,12 @@
 use std::collections::BTreeSet;
+use std::env::VarError;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::net::{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
 use anyhow::{Context, Error};
+use tracing::debug;
 
 /// A subnet prefix for local network (127.x.x.x/24).
 #[derive(Debug, Clone, Copy)]
@@ -83,7 +85,7 @@ impl Default for NetPrefix {
 /// A local subnet identifier (127.x.y.0/24).
 /// The local subnet is identified by two octets x and y.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-struct LocalSubnetIdentifier(u8, u8);
+pub(super) struct LocalSubnetIdentifier(u8, u8);
 
 impl From<LocalSubnetIdentifier> for Ipv4Addr {
     fn from(subnet_id: LocalSubnetIdentifier) -> Self {
@@ -103,8 +105,17 @@ impl From<Ipv4Addr> for LocalSubnetIdentifier {
     }
 }
 
-pub(super) struct IpAllocator {
-    used_ips: BTreeSet<LocalSubnetIdentifier>,
+/// Nextest-based allocator will have a separate instance for each test.
+/// Each test will have a predefined IP range available to them, based on
+/// NEXTEST_TEST_GLOBAL_SLOT env variable. Nextest based allocator must thus
+/// only give out such predefined range, instead of scanning /proc/net/tcp.
+/// `Nextest` variant will be `Some` when this range is available, and will become
+/// `None` after calling `alloc_ip_prefix` (and then `Some` again after `free_ip_prefix`).
+pub(super) enum IpAllocator {
+    FileBased {
+        used_ips: BTreeSet<LocalSubnetIdentifier>,
+    },
+    Nextest(Option<LocalSubnetIdentifier>),
 }
 
 impl IpAllocator {
@@ -114,45 +125,78 @@ impl IpAllocator {
     ///   sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
     ///   0: 3500007F:0035 00000000:0000 0A 00000000:00000000 00:00000000 00000000   193        0 7487 1 000000007e427786 100 0 0 10 5
     pub(super) fn new() -> Result<Self, Error> {
-        let mut used_ips: BTreeSet<LocalSubnetIdentifier> = BTreeSet::new();
-        let file = File::open("/proc/net/tcp").context("Failed to open /proc/net/tcp file")?;
-        let mut lines = BufReader::new(file).lines();
-        let _header_line = lines
-            .next()
-            .context("Failed to read the header line from /proc/net/tcp")?;
-        for line_res in lines {
-            let line = line_res.context("Failed to read a line from /proc/net/tcp")?;
-            line.split_whitespace()
-                .nth(1) // Skip ordinal number (first column), and get local address (second column)
-                .and_then(|ip_addr_hex| ip_addr_hex.split_once(':'))
-                .and_then(|(addr_hex, _port_hex)| u32::from_str_radix(addr_hex, 16).ok())
-                .inspect(|&ip| {
-                    let first_octet = ip as u8;
-                    if first_octet == 127 {
-                        used_ips.insert(LocalSubnetIdentifier((ip >> 8) as u8, (ip >> 16) as u8));
-                    }
-                });
+        match std::env::var("NEXTEST_TEST_GLOBAL_SLOT") {
+            Ok(slot_str) => {
+                const FREE_RANGES: u16 = 16;
+                let slot: u16 = slot_str
+                    .parse()
+                    .context("Invalid value of NEXTEST_TEST_GLOBAL_SLOT")?;
+                let real_slot_bytes: [u8; 2] = slot
+                    .checked_add(FREE_RANGES)
+                    .context("Loopback address pool for tests depleted")?
+                    .to_le_bytes();
+
+                let nextest_subnet = LocalSubnetIdentifier(real_slot_bytes[1], real_slot_bytes[0]);
+                debug!("CCM allocator for nextest: allocated {nextest_subnet:?}");
+                Ok(Self::Nextest(Some(nextest_subnet)))
+            }
+            Err(VarError::NotPresent) => {
+                let mut used_ips: BTreeSet<LocalSubnetIdentifier> = BTreeSet::new();
+                let file =
+                    File::open("/proc/net/tcp").context("Failed to open /proc/net/tcp file")?;
+                let mut lines = BufReader::new(file).lines();
+                let _header_line = lines
+                    .next()
+                    .context("Failed to read the header line from /proc/net/tcp")?;
+                for line_res in lines {
+                    let line = line_res.context("Failed to read a line from /proc/net/tcp")?;
+                    line.split_whitespace()
+                        .nth(1) // Skip ordinal number (first column), and get local address (second column)
+                        .and_then(|ip_addr_hex| ip_addr_hex.split_once(':'))
+                        .and_then(|(addr_hex, _port_hex)| u32::from_str_radix(addr_hex, 16).ok())
+                        .inspect(|&ip| {
+                            let first_octet = ip as u8;
+                            if first_octet == 127 {
+                                used_ips.insert(LocalSubnetIdentifier(
+                                    (ip >> 8) as u8,
+                                    (ip >> 16) as u8,
+                                ));
+                            }
+                        });
+                }
+                Ok(Self::FileBased { used_ips })
+            }
+            Err(VarError::NotUnicode(e)) => Err(anyhow::anyhow!(
+                "NEXTEST_TEST_GLOBAL_SLOT contains non-Unicode characters: {e:?}"
+            )),
         }
-        Ok(Self { used_ips })
     }
 
     /// Removes a free IP prefix from the pool of local subnets (127.x.x.x/24) and returns it to the caller.
     /// The IP prefix should be later returned via [`IpAllocator::return_ip_prefix`].
     pub(super) fn alloc_ip_prefix(&mut self) -> Result<NetPrefix, Error> {
-        for a in 0..=255 {
-            for b in 0..=255 {
-                if a == 0 && b == 0 {
-                    continue;
+        match self {
+            Self::FileBased { used_ips } => {
+                for a in 0..=255 {
+                    for b in 0..=255 {
+                        if a == 0 && b == 0 {
+                            continue;
+                        }
+                        let subnet_id = LocalSubnetIdentifier(a, b);
+                        if !used_ips.contains(&subnet_id) {
+                            used_ips.insert(subnet_id);
+                            return Ok(subnet_id.into());
+                        }
+                    }
                 }
-                let subnet_id = LocalSubnetIdentifier(a, b);
-                if !self.used_ips.contains(&subnet_id) {
-                    self.used_ips.insert(subnet_id);
-                    return Ok(subnet_id.into());
-                }
-            }
-        }
 
-        Err(anyhow::anyhow!("No free IP prefixes available"))
+                Err(anyhow::anyhow!("No free IP prefixes available"))
+            }
+            Self::Nextest(state) => match state.take() {
+                Some(subnet_id) => Ok(subnet_id.into()),
+                None => Err(anyhow::anyhow!("No free IP prefixes available")),
+            },
+        }
     }
 
     /// Returns the IP prefix back to the pool of local subnets (127.x.x.x/24).
@@ -162,12 +206,24 @@ impl IpAllocator {
             _ => return Err(anyhow::anyhow!("Ipv6 addresses are not yet supported!")),
         };
         let subnet_id: LocalSubnetIdentifier = ipv4.into();
-
-        if !self.used_ips.remove(&subnet_id) {
-            return Err(anyhow::anyhow!(
-                "IP prefix {} was not allocated - something gone wrong!",
-                ip_prefix
-            ));
+        match self {
+            Self::FileBased { used_ips } => {
+                if !used_ips.remove(&subnet_id) {
+                    return Err(anyhow::anyhow!(
+                        "IP prefix {} was not allocated - something gone wrong!",
+                        ip_prefix
+                    ));
+                }
+            }
+            Self::Nextest(state) => {
+                if state.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "IP prefix {} was not allocated - something gone wrong!",
+                        ip_prefix
+                    ));
+                }
+                *state = Some(subnet_id)
+            }
         }
 
         Ok(())

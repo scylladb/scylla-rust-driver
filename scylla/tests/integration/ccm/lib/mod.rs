@@ -52,7 +52,7 @@ static ROOT_CCM_DIR: LazyLock<String> = LazyLock::new(|| {
     let path = PathBuf::from(&ccm_root_dir);
     if !path.try_exists().unwrap() {
         info!("Directory {:?} not found, creating", path);
-        std::fs::create_dir(path).unwrap();
+        std::fs::create_dir_all(path).unwrap();
     }
 
     ccm_root_dir

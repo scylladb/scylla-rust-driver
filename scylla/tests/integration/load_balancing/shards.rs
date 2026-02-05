@@ -19,7 +19,6 @@ use scylla_proxy::{
 use scylla_proxy::{ProxyError, RequestFrame, WorkerError};
 
 #[tokio::test]
-#[ntest::timeout(30000)]
 async fn test_consistent_shard_awareness() {
     setup_tracing();
 

@@ -31,8 +31,7 @@ use std::num::NonZeroU32;
 use std::process::Command;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use std::{env, iter};
 use tokio::sync::mpsc;
 use tracing::{error, warn};
@@ -82,18 +81,9 @@ pub(crate) fn find_local_ip_for_destination(dest: IpAddr) -> Option<IpAddr> {
     IpAddr::from_str(local_ip_str).ok()
 }
 
-static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
 pub(crate) fn unique_keyspace_name() -> String {
-    let cnt = UNIQUE_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let name = format!(
-        "test_rust_{}_{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-        cnt
-    );
+    let id = Uuid::new_v4();
+    let name = format!("test_rust_{}", id.as_simple(),);
     println!("Unique name: {name}");
     name
 }

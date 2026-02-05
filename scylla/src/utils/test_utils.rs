@@ -3,6 +3,7 @@ use tracing::{error, warn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use uuid::Uuid;
 
 use crate::client::caching_session::CachingSession;
 use crate::client::session::Session;
@@ -18,23 +19,10 @@ use crate::statement::unprepared::Statement;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
-use std::{
-    sync::atomic::{AtomicUsize, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
-};
-
-static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) fn unique_keyspace_name() -> String {
-    let cnt = UNIQUE_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let name = format!(
-        "test_rust_{}_{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-        cnt
-    );
+    let id = Uuid::new_v4();
+    let name = format!("test_rust_{}", id.as_simple(),);
     println!("Unique name: {name}");
     name
 }
