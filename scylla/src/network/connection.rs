@@ -820,12 +820,10 @@ impl Connection {
     #[cfg(test)]
     pub(crate) async fn query_unpaged(
         &self,
-        statement: impl Into<Statement>,
+        statement: &Statement,
     ) -> Result<QueryResult, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        let statement: Statement = statement.into();
-
-        self.query_raw_unpaged(&statement)
+        self.query_raw_unpaged(statement)
             .await
             .and_then(|response| {
                 response
@@ -2496,7 +2494,7 @@ mod tests {
             // Check that everything was written properly
             let range_end = arithmetic_sequence_sum(NUM_BATCHES);
             let mut results = connection
-                .query_unpaged("SELECT p, v FROM t")
+                .query_unpaged(&"SELECT p, v FROM t".into())
                 .await
                 .unwrap()
                 .into_rows_result()
@@ -2673,7 +2671,7 @@ mod tests {
         // As everything is normal, these queries should succeed.
         for _ in 0..3 {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            conn.query_unpaged("SELECT host_id FROM system.local WHERE key='local'")
+            conn.query_unpaged(&"SELECT host_id FROM system.local WHERE key='local'".into())
                 .await
                 .unwrap();
         }
@@ -2697,7 +2695,7 @@ mod tests {
 
         // As the router is invalidated, all further queries should immediately
         // return error.
-        conn.query_unpaged("SELECT host_id FROM system.local WHERE key='local'")
+        conn.query_unpaged(&"SELECT host_id FROM system.local WHERE key='local'".into())
             .await
             .unwrap_err();
 
