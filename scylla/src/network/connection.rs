@@ -20,7 +20,6 @@ use crate::frame::{
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
-#[cfg(test)]
 use crate::response::query_result::QueryResult;
 use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse};
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
@@ -817,7 +816,6 @@ impl Connection {
         Ok(response)
     }
 
-    #[cfg(test)]
     pub(crate) async fn query_unpaged(
         &self,
         statement: &Statement,
@@ -885,7 +883,8 @@ impl Connection {
         Ok(response)
     }
 
-    pub(crate) async fn execute_raw_unpaged(
+    #[cfg(test)]
+    async fn execute_raw_unpaged(
         &self,
         prepared: &PreparedStatement,
         values: &SerializedValues,
