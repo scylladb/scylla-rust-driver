@@ -311,6 +311,8 @@ macro_rules! test_crate {
             c: ::core::primitive::i32,
             #[scylla(default_when_null)]
             d: ::core::primitive::i32,
+            #[scylla(allow_missing)]
+            e: ::core::primitive::i32,
         }
 
         // Test attributes for row struct with ordered flavor
@@ -327,6 +329,8 @@ macro_rules! test_crate {
             c: ::core::primitive::i32,
             #[scylla(default_when_null)]
             d: ::core::primitive::i32,
+            #[scylla(allow_missing)]
+            e: ::core::primitive::i32,
         }
 
         // Test attributes for row struct with ordered flavor and skipped name checks
@@ -342,6 +346,8 @@ macro_rules! test_crate {
             c: ::core::primitive::i32,
             #[scylla(default_when_null)]
             d: ::core::primitive::i32,
+            #[scylla(allow_missing)]
+            e: ::core::primitive::i32,
         }
     };
 }

@@ -5,7 +5,7 @@ pub use crate::deserialize::row::{
     BuiltinDeserializationError as BuiltinRowDeserializationError,
     BuiltinDeserializationErrorKind as BuiltinRowDeserializationErrorKind,
     BuiltinTypeCheckErrorKind as DeserBuiltinRowTypeCheckErrorKind, ColumnIterator, DeserializeRow,
-    deser_error_replace_rust_name as row_deser_error_replace_rust_name,
+    RawColumn, deser_error_replace_rust_name as row_deser_error_replace_rust_name,
     mk_deser_err as mk_row_deser_err, mk_typck_err as mk_row_typck_err,
 };
 pub use crate::deserialize::value::{
