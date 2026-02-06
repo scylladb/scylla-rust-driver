@@ -106,8 +106,13 @@ impl<'frame, 'metadata> Iterator for ColumnIterator<'frame, 'metadata> {
 /// documentation of the parent module.
 ///
 /// The crate also provides a derive macro which allows to automatically
-/// implement the trait for a custom type. For more details on what the macro
-/// is capable of, see its documentation.
+/// implement the trait for a custom type.
+///
+/// The macro supports:
+/// * **Structs with named fields**: columns are matched by name.
+/// * **Tuple structs**: columns are matched by their order in the row.
+///
+/// For more details on what the macro is capable of, see its documentation.
 pub trait DeserializeRow<'frame, 'metadata>
 where
     Self: Sized,
