@@ -11,3 +11,24 @@ Cargo.lock
 .idea/workspace.xml
 scylla/ccm_data/
 .DS_Store
+
+
+# Personal and AI TODO items
+TODO.md
+
+# Codex
+.codex/
+.codex-cache/
+.codex-config.json
+.codex-settings.json
+codex.log
+AGENTS.md
+
+# Claude / AI assistant metadata
+.anthropic/
+.claude/
+claude.log
+claude_history.json
+claude_config.json
+CLAUDE.md
+
