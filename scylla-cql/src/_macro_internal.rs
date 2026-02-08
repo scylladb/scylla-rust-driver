@@ -15,6 +15,7 @@ pub use crate::deserialize::value::{
     UdtDeserializationErrorKind, UdtIterator, UdtTypeCheckErrorKind as DeserUdtTypeCheckErrorKind,
     deser_error_replace_rust_name as value_deser_error_replace_rust_name,
     mk_deser_err as mk_value_deser_err, mk_typck_err as mk_value_typck_err,
+    typck_error_replace_rust_name as value_type_check_error_replace_rust_name,
 };
 pub use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 pub use crate::serialize::row::{
