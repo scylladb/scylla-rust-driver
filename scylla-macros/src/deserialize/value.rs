@@ -6,6 +6,7 @@ use proc_macro2::Span;
 use syn::{ext::IdentExt, parse_quote};
 
 use crate::Flavor;
+use crate::enum_attrs::EnumAttrs;
 
 use super::{DeserializeCommonFieldAttrs, DeserializeCommonStructAttrs};
 
@@ -34,6 +35,12 @@ struct StructAttrs {
 }
 
 impl DeserializeCommonStructAttrs for StructAttrs {
+    fn crate_path(&self) -> Option<&syn::Path> {
+        self.crate_path.as_ref()
+    }
+}
+
+impl DeserializeCommonStructAttrs for EnumAttrs {
     fn crate_path(&self) -> Option<&syn::Path> {
         self.crate_path.as_ref()
     }
@@ -82,29 +89,123 @@ impl DeserializeCommonFieldAttrs for Field {
 pub(crate) fn deserialize_value_derive(
     tokens_input: TokenStream,
 ) -> Result<syn::ItemImpl, syn::Error> {
-    let input = syn::parse(tokens_input)?;
+    let input: syn::DeriveInput = syn::parse(tokens_input)?;
 
-    let implemented_trait: syn::Path = parse_quote!(DeserializeValue);
-    let implemented_trait_name = implemented_trait
-        .segments
-        .last()
-        .unwrap()
-        .ident
-        .unraw()
-        .to_string();
-    let constraining_trait = implemented_trait.clone();
-    let s = StructDesc::new(&input, &implemented_trait_name, constraining_trait)?;
+    match &input.data {
+        syn::Data::Enum(data_enum) => deserialize_value_derive_enum(&input, data_enum),
+        syn::Data::Struct(_) => {
+            let implemented_trait: syn::Path = parse_quote!(DeserializeValue);
+            let implemented_trait_name = implemented_trait
+                .segments
+                .last()
+                .unwrap()
+                .ident
+                .unraw()
+                .to_string();
+            let constraining_trait = implemented_trait.clone();
+            let s = StructDesc::new(&input, &implemented_trait_name, constraining_trait)?;
 
-    validate_attrs(&s.attrs, s.fields())?;
+            validate_attrs(&s.attrs, s.fields())?;
 
-    let items = [
-        s.generate_type_check_method().into(),
-        s.generate_deserialize_method().into(),
-    ];
+            let items = [
+                s.generate_type_check_method().into(),
+                s.generate_deserialize_method().into(),
+            ];
 
-    Ok(s.generate_impl(implemented_trait, items))
+            Ok(s.generate_impl(implemented_trait, items))
+        }
+        syn::Data::Union(_) => Err(syn::Error::new_spanned(
+            input,
+            "DeserializeValue cannot be derived for unions",
+        )),
+    }
 }
 
+fn deserialize_value_derive_enum(
+    input: &syn::DeriveInput,
+    data_enum: &syn::DataEnum,
+) -> Result<syn::ItemImpl, syn::Error> {
+    use crate::enum_attrs::{EnumAttrs, get_enum_repr_type, validate_c_style_enum};
+
+    validate_c_style_enum(data_enum)?;
+
+    let attrs = EnumAttrs::from_attributes(&input.attrs)?;
+    let crate_path = <EnumAttrs as DeserializeCommonStructAttrs>::macro_internal_path(&attrs);
+
+    let repr_type_str = get_enum_repr_type(input)?;
+    let repr_type: syn::Type = syn::parse_str(&repr_type_str)
+        .map_err(|_| syn::Error::new_spanned(input, "Failed to parse repr type"))?;
+
+    let mut match_arms = Vec::new();
+
+    for variant in &data_enum.variants {
+        let variant_ident = &variant.ident;
+
+        match_arms.push(quote::quote! {
+            v if v == Self::#variant_ident as #repr_type => {
+                ::std::result::Result::Ok(Self::#variant_ident)
+            }
+        });
+    }
+
+    let (_, ty_generics, where_clause) = input.generics.split_for_impl();
+    let impl_generics = &input.generics.params;
+    let struct_name = &input.ident;
+
+    let (frame_lifetime, metadata_lifetime) =
+        super::generate_pair_of_unique_lifetimes_for_impl(&input.generics);
+
+    let predicates = super::generate_lifetime_constraints_for_impl(
+        &input.generics,
+        parse_quote!(DeserializeValue),
+        &frame_lifetime,
+    );
+
+    let res = parse_quote! {
+        #[automatically_derived]
+        impl<#frame_lifetime, #metadata_lifetime, #impl_generics> #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime> for #struct_name #ty_generics
+        where #repr_type: ::std::fmt::Debug + ::std::marker::Copy, #(#predicates),* #where_clause
+        {
+            fn type_check(
+                typ: &#crate_path::ColumnType,
+            ) -> ::std::result::Result<(), #crate_path::TypeCheckError> {
+                <#repr_type as #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(typ)
+            }
+
+            fn deserialize(
+                typ: &#metadata_lifetime #crate_path::ColumnType<#metadata_lifetime>,
+                v: ::std::option::Option<#crate_path::FrameSlice<#frame_lifetime>>,
+            ) -> ::std::result::Result<Self, #crate_path::DeserializationError> {
+                let raw_val = <#repr_type as #crate_path::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(typ, v)
+                    .map_err(#crate_path::value_deser_error_replace_rust_name::<Self>)?;
+
+                match raw_val {
+                    #(#match_arms)*
+                    val => {
+                        #[derive(Debug)]
+                        struct UnknownEnumVariant(String);
+
+                        impl ::std::fmt::Display for UnknownEnumVariant {
+                            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                                f.write_str(&self.0)
+                            }
+                        }
+
+                        impl ::std::error::Error for UnknownEnumVariant {}
+
+                        ::std::result::Result::Err(
+                            #crate_path::DeserializationError::new(
+                                UnknownEnumVariant(format!("Enum value does not match any variant: {:?}", val))
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    };
+
+    Ok(res)
+}
 fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::Error> {
     let mut errors = darling::Error::accumulator();
 
