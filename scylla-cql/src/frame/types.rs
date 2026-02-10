@@ -316,6 +316,17 @@ pub fn read_short_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], LowLevelDese
     Ok(v)
 }
 
+pub fn read_short_bytes_to_buffer(
+    input: &mut &[u8],
+    out: &mut impl BufMut,
+) -> Result<(), LowLevelDeserializationError> {
+    let len = read_short(input)?;
+    let v = read_raw_bytes(len.into(), input)?;
+    write_short(len, out);
+    out.put_slice(v);
+    Ok(())
+}
+
 pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     write_int_length(v.len(), buf)?;
     buf.put_slice(v);
@@ -419,6 +430,23 @@ pub fn write_long_string(v: &str, buf: &mut impl BufMut) -> Result<(), std::num:
     let len = raw.len();
     write_int_length(len, buf)?;
     buf.put_slice(raw);
+    Ok(())
+}
+
+pub(crate) fn read_long_string_to_buff(
+    input: &mut &[u8],
+    out: &mut impl BufMut,
+) -> Result<(), LowLevelDeserializationError> {
+    let len = read_int(input)?;
+    let raw = read_raw_bytes(len.try_into()?, input)?;
+
+    // verify it is a valid string but ignore the out string; we already have the raw bytes
+    let _ = str::from_utf8(raw)?;
+
+    // now write it out
+    write_int(len, out);
+    out.put_slice(raw);
+
     Ok(())
 }
 
