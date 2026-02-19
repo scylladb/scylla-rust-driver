@@ -210,7 +210,7 @@ impl ControlConnection {
     async fn query_peers(&self, connect_port: u16) -> Result<Vec<Peer>, MetadataError> {
         let peers_query_stream = self
             .query_iter(
-                "select host_id, rpc_address, data_center, rack, tokens from system.peers",
+                "SELECT host_id, rpc_address, data_center, rack, tokens FROM system.peers",
                 &(),
             )
             .map(|pager_res| {
@@ -229,7 +229,7 @@ impl ControlConnection {
             .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
         let local_query_stream = self
-            .query_iter("select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'", &())
+            .query_iter("SELECT host_id, rpc_address, data_center, rack, tokens FROM system.local WHERE key='local'", &())
             .map(|pager_res| {
                 let pager = pager_res?;
                 let rows_stream = pager.rows_stream::<NodeInfoRow>()?;
@@ -393,7 +393,7 @@ impl ControlConnection {
     ) -> Result<PerKeyspaceResult<Keyspace, SingleKeyspaceMetadataError>, MetadataError> {
         let rows = self
             .query_filter_keyspace_name::<(String, HashMap<String, String>, bool)>(
-                "select keyspace_name, replication, durable_writes from system_schema.keyspaces",
+                "SELECT keyspace_name, replication, durable_writes FROM system_schema.keyspaces",
                 keyspaces_to_fetch,
             )
             .map_err(|error| MetadataFetchError {
@@ -522,7 +522,7 @@ impl ControlConnection {
         MetadataError,
     > {
         let rows = self.query_filter_keyspace_name::<UdtRow>(
-        "select keyspace_name, type_name, field_names, field_types from system_schema.types",
+        "SELECT keyspace_name, type_name, field_names, field_types FROM system_schema.types",
         keyspaces_to_fetch,
     )
     .map_err(|error| MetadataFetchError {
@@ -976,7 +976,7 @@ impl ControlConnection {
         type RowType = (String, String, String, String, i32, String);
 
         let rows = self.query_filter_keyspace_name::<RowType>(
-        "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns",
+        "SELECT keyspace_name, table_name, column_name, kind, position, type FROM system_schema.columns",
         keyspaces_to_fetch
     ).map_err(|error| MetadataFetchError {
         error,
@@ -1354,7 +1354,7 @@ impl ControlConnection {
 
         let rows = self
             .query_iter(
-                "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
+                "SELECT keyspace_name, table_name, partitioner FROM system_schema.scylla_tables",
                 &(),
             )
             .map(|pager_res| {

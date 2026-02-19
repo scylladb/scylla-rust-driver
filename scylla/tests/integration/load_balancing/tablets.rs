@@ -48,7 +48,7 @@ async fn get_tablets(session: &Session, ks: &str, table: &str) -> Vec<Tablet> {
     }
 
     let selected_tablets_response = session.query_iter(
-        "select last_token, replicas from system.tablets WHERE keyspace_name = ? and table_name = ? ALLOW FILTERING",
+        "SELECT last_token, replicas FROM system.tablets WHERE keyspace_name = ? AND table_name = ? ALLOW FILTERING",
         &(ks, table)).await.unwrap();
 
     let mut selected_tablets: Vec<SelectedTablet> = selected_tablets_response
