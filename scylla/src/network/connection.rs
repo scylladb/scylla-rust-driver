@@ -2117,11 +2117,16 @@ pub(crate) async fn open_connection(
 
     /* If this is a control connection, REGISTER to receive all event types. */
     if connection.config.event_sender.is_some() {
-        let all_event_types = vec![
+        #[cfg_attr(not(feature = "client-routes"), allow(unused_mut))]
+        let mut all_event_types = vec![
             EventType::TopologyChange,
             EventType::StatusChange,
             EventType::SchemaChange,
         ];
+        #[cfg(feature = "client-routes")]
+        if config.read_client_routes {
+            all_event_types.push(EventType::ClientRoutesChange)
+        }
         connection.register(all_event_types).await?;
     }
 
