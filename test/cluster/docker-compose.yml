@@ -34,7 +34,14 @@ services:
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
     healthcheck:
-      test: [ "CMD", "cqlsh", "scylla1", "-e", "select * from system.local WHERE key='local'" ]
+      test:
+        [
+          "CMD",
+          "cqlsh",
+          "scylla1",
+          "-e",
+          "SELECT * FROM system.local WHERE key='local'",
+        ]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -63,7 +70,14 @@ services:
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
     healthcheck:
-      test: [ "CMD", "cqlsh", "scylla2", "-e", "select * from system.local WHERE key='local'" ]
+      test:
+        [
+          "CMD",
+          "cqlsh",
+          "scylla2",
+          "-e",
+          "SELECT * FROM system.local WHERE key='local'",
+        ]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -95,7 +109,14 @@ services:
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
     healthcheck:
-      test: [ "CMD", "cqlsh", "scylla3", "-e", "select * from system.local WHERE key='local'" ]
+      test:
+        [
+          "CMD",
+          "cqlsh",
+          "scylla3",
+          "-e",
+          "SELECT * FROM system.local WHERE key='local'",
+        ]
       interval: 5s
       timeout: 5s
       retries: 60

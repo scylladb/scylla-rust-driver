@@ -488,9 +488,9 @@ mod tests {
         setup_tracing();
         let session = create_caching_session().await;
 
-        let first_query = "select * from test_table";
-        let middle_query = "insert into test_table(a, b) values (?, ?)";
-        let last_query = "update test_table set b = ? where a = 1";
+        let first_query = "SELECT * FROM test_table";
+        let middle_query = "INSERT INTO test_table(a, b) VALUES (?, ?)";
+        let last_query = "UPDATE test_table SET b = ? WHERE a = 1";
 
         session
             .add_prepared_statement(&first_query.into())
@@ -525,7 +525,7 @@ mod tests {
         setup_tracing();
         let session = create_caching_session().await;
         let result = session
-            .execute_unpaged("select * from test_table", &[])
+            .execute_unpaged("SELECT * FROM test_table", &[])
             .await
             .unwrap();
         let result_rows = result.into_rows_result().unwrap();
@@ -534,7 +534,7 @@ mod tests {
         assert_eq!(1, result_rows.rows_num());
 
         let result = session
-            .execute_unpaged("select * from test_table", &[])
+            .execute_unpaged("SELECT * FROM test_table", &[])
             .await
             .unwrap();
 
@@ -555,7 +555,7 @@ mod tests {
         assert!(session.cache.is_empty());
 
         let iter = session
-            .execute_iter("select * from test_table", &[])
+            .execute_iter("SELECT * FROM test_table", &[])
             .await
             .unwrap()
             .rows_stream::<Row>()
@@ -584,7 +584,7 @@ mod tests {
         assert!(session.cache.is_empty());
 
         let (result, _paging_state) = session
-            .execute_single_page("select * from test_table", &[], PagingState::start())
+            .execute_single_page("SELECT * FROM test_table", &[], PagingState::start())
             .await
             .unwrap();
 
