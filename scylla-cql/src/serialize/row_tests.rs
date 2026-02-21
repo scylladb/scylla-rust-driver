@@ -1197,6 +1197,33 @@ fn test_name_flatten_maps() {
 }
 
 #[test]
+fn test_name_flatten_maps_collission_error() {
+    #[derive(SerializeRow)]
+    #[scylla(crate = crate)]
+    struct Outer<'s> {
+        #[scylla(flatten)]
+        map_one: HashMap<&'s str, i32>,
+        #[scylla(flatten)]
+        map_two: HashMap<&'s str, i32>,
+    }
+
+    let value = Outer {
+        map_one: HashMap::from([("a", 1)]),
+        map_two: HashMap::from([("a", 2)]),
+    };
+    let spec = [col("a", ColumnType::Native(NativeType::Int))];
+    let ctx = RowSerializationContext { columns: &spec };
+    let mut data = vec![];
+    let mut builder = RowWriter::new(&mut data);
+    let error = value.serialize(&ctx, &mut builder).unwrap_err();
+    let error = error.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let BuiltinTypeCheckErrorKind::NoColumnWithName { name } = &error.kind else {
+        panic!("expected NoColumnWithName error");
+    };
+    assert_eq!(name, "a");
+}
+
+#[test]
 fn test_ordered_flatten_with_lifetimes() {
     #[derive(SerializeRow)]
     #[scylla(crate = crate, flavor = "enforce_order")]
