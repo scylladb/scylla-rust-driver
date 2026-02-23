@@ -467,11 +467,10 @@ impl Metrics {
             count += bucket.count() as u128;
         }
 
-        if count != 0 {
-            Ok((weighted_sum / count) as u64)
-        } else {
-            Err(MetricsError::Empty)
-        }
+        weighted_sum
+            .checked_div(count)
+            .map(|result| result as u64)
+            .ok_or(MetricsError::Empty)
     }
 
     fn percentiles(
