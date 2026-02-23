@@ -22,6 +22,18 @@ services:
       --ring-delay-ms 0
       --smp 2
       --memory 1G
+      --developer-mode=1
+      --unsafe-bypass-fsync=on
+      --kernel-page-cache=on
+      --collectd=0
+      --max-networking-io-control-blocks=1000
+      --commitlog-use-o-dsync=0
+      --flush-schema-tables-after-modification=false
+      --auto-snapshot=0
+      --logger-log-level=compaction=warn
+      --logger-log-level=migration_manager=warn
+      --shutdown-announce-in-ms=0
+      --reactor-backend=io_uring
     healthcheck:
       test: [ "CMD", "cqlsh", "scylla1", "-e", "select * from system.local WHERE key='local'" ]
       interval: 5s
@@ -40,6 +52,18 @@ services:
       --ring-delay-ms 0
       --smp 2
       --memory 1G
+      --developer-mode=1
+      --unsafe-bypass-fsync=on
+      --kernel-page-cache=on
+      --collectd=0
+      --max-networking-io-control-blocks=1000
+      --commitlog-use-o-dsync=0
+      --flush-schema-tables-after-modification=false
+      --auto-snapshot=0
+      --logger-log-level=compaction=warn
+      --logger-log-level=migration_manager=warn
+      --shutdown-announce-in-ms=0
+      --reactor-backend=io_uring
     healthcheck:
       test: [ "CMD", "cqlsh", "scylla2", "-e", "select * from system.local WHERE key='local'" ]
       interval: 5s
@@ -61,6 +85,18 @@ services:
       --ring-delay-ms 0
       --smp 2
       --memory 1G
+      --developer-mode=1
+      --unsafe-bypass-fsync=on
+      --kernel-page-cache=on
+      --collectd=0
+      --max-networking-io-control-blocks=1000
+      --commitlog-use-o-dsync=0
+      --flush-schema-tables-after-modification=false
+      --auto-snapshot=0
+      --logger-log-level=compaction=warn
+      --logger-log-level=migration_manager=warn
+      --shutdown-announce-in-ms=0
+      --reactor-backend=io_uring
     healthcheck:
       test: [ "CMD", "cqlsh", "scylla3", "-e", "select * from system.local WHERE key='local'" ]
       interval: 5s
