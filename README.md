@@ -26,14 +26,14 @@ while let Some((a, b, c)) = stream.try_next().await? {
 }
 ```
 
-Please see the full [example](examples/basic.rs) program for more information.
+Please see the full [example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/basic.rs) program for more information.
 You can also run the example as follows if you have a ScyllaDB server running:
 
 ```sh
 SCYLLA_URI="127.0.0.1:9042" cargo run --example basic
 ```
 
-All examples are available in the [examples](examples) directory
+All examples are available in the [examples](https://github.com/scylladb/scylla-rust-driver/tree/main/examples) directory
 
 ## Features and Roadmap
 
@@ -108,8 +108,8 @@ We will not bump MSRV to a Rust version that was released less than 6 months ago
 
 This project is licensed under either of
 
-- Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0))
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
+- Apache License, Version 2.0, ([LICENSE-APACHE](https://github.com/scylladb/scylla-rust-driver/blob/main/LICENSE-APACHE) or [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0))
+- MIT license ([LICENSE-MIT](https://github.com/scylladb/scylla-rust-driver/blob/main/LICENSE-MIT) or [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
 
 at your option.
 
