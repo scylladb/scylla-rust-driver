@@ -575,7 +575,7 @@ impl ControlConnection {
 
             let mut fields = Vec::with_capacity(field_names.len());
 
-            for (field_name, field_type) in field_names.into_iter().zip(field_types.into_iter()) {
+            for (field_name, field_type) in field_names.into_iter().zip(field_types) {
                 match field_type.into_cql_type(&keyspace_name_clone, keyspace_udts) {
                     Ok(cql_type) => fields.push((field_name.into(), cql_type)),
                     Err(e) => {
