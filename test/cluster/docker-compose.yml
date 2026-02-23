@@ -33,7 +33,6 @@ services:
       --logger-log-level=compaction=warn
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
-      --reactor-backend=io_uring
     healthcheck:
       test: [ "CMD", "cqlsh", "scylla1", "-e", "select * from system.local WHERE key='local'" ]
       interval: 5s
@@ -63,7 +62,6 @@ services:
       --logger-log-level=compaction=warn
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
-      --reactor-backend=io_uring
     healthcheck:
       test: [ "CMD", "cqlsh", "scylla2", "-e", "select * from system.local WHERE key='local'" ]
       interval: 5s
@@ -96,7 +94,6 @@ services:
       --logger-log-level=compaction=warn
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
-      --reactor-backend=io_uring
     healthcheck:
       test: [ "CMD", "cqlsh", "scylla3", "-e", "select * from system.local WHERE key='local'" ]
       interval: 5s
