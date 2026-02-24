@@ -75,6 +75,9 @@ unstable-nodejs-rs = ["scylla-cql/unstable-nodejs-rs"]
 unstable-host-listener = []
 # Enables unstable reconnection policy configuration.
 unstable-reconnect-policy = []
+# Enables fetching contents of the `system.client_routes` table.
+# Needed for custom routing (AWS PrivateLink, GCP PSC, etc.).
+unstable-client-routes = []
 
 
 [dependencies]

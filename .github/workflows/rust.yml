@@ -95,9 +95,14 @@ jobs:
       # unstable-host-listener feature.
       - name: Cargo check with unstable-host-listener  feature
         run: cargo clippy --all-targets --features "unstable-host-listener"
+
       # unstable-reconnect-policy feature.
       - name: Cargo check with unstable-reconnect-policy feature
         run: cargo clippy --all-targets --features "unstable-reconnect-policy"
+
+      # unstable-client-routes feature.
+      - name: Cargo check with unstable-client-routes feature
+        run: cargo check --all-targets -p scylla --features "unstable-client-routes"
 
       # No scylla_unstable flag with features
       - name: Cargo check without scylla_unstable
