@@ -63,6 +63,9 @@ full-serialization = [
 ]
 # Enables collection of internal driver metrics.
 metrics = ["dep:histogram"]
+# Enables fetching to contents of `system.client_routes` table.
+# Needed for PrivateLink routing, among others.
+client-routes = []
 
 ### UNSTABLE FEATURES ###
 # Opts-in to various unstable testing features.

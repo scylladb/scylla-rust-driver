@@ -6,7 +6,7 @@ export RUSTFLAGS
 all: test
 
 .PHONY: static
-static: fmt-check check check-without-features check-without-unstable check-without-unstable-and-features check-all-features clippy clippy-all-features
+static: fmt-check check check-without-features check-without-unstable check-without-unstable-and-features check-all-features check-with-just-client-routes clippy clippy-all-features
 
 .PHONY: ci
 ci: static test
@@ -31,6 +31,12 @@ check-without-features:
 	# If we pass --all-targets here, feature unification turns on some features anyway,
 	# so we only check the main target.
 	cargo check -p scylla
+
+.PHONY: check-with-just-client-routes
+check-with-just-client-routes:
+	# If we pass --all-targets here, feature unification turns on some features anyway,
+	# so we only check the main target.
+	cargo check -p scylla --features="client-routes"
 
 .PHONY: check-without-unstable
 check-without-unstable:
