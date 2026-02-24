@@ -5,6 +5,8 @@ use super::session::{Session, SessionConfig};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 use crate::client::session::TlsContext;
+#[cfg(feature = "private-link")]
+use crate::cluster::KnownNode;
 use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
@@ -42,6 +44,18 @@ impl SessionBuilderKind for DefaultMode {}
 
 /// Builder for regular sessions.
 pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
+
+/// Session builder kind used to create sessions connected to PrivateLink clusters.
+// #[cfg(feature = "private-link")] TODO: uncomment
+#[derive(Clone)]
+pub enum PrivateLinkMode {}
+// #[cfg(feature = "private-link")] TODO: uncomment
+impl sealed::Sealed for PrivateLinkMode {}
+// #[cfg(feature = "private-link")] TODO: uncomment
+impl SessionBuilderKind for PrivateLinkMode {}
+/// Builder for PrivateLink sessions.
+// #[cfg(feature = "private-link")] TODO: uncomment
+pub type PrivateLinkSessionBuilder = GenericSessionBuilder<PrivateLinkMode>;
 
 /// Used to conveniently configure new Session instances.
 ///
@@ -367,6 +381,55 @@ impl GenericSessionBuilder<DefaultMode> {
             self.config.tls_context = tls_context.map(|t| t.into());
         }
         self
+    }
+}
+
+// NOTE: this `impl` block contains configuration options specific for PrivateLink mode.
+// We don't want users to be able to create invalid configuration, so some options available
+// in the default builder, like contact points configuration, or TLS configuration,
+// should not be available for this builder type. On the other hand, if there are some options
+// specific for PrivateLink sessions, they should be added to this block as well.
+#[cfg(feature = "private-link")]
+impl GenericSessionBuilder<PrivateLinkMode> {
+    /// Creates new PrivateLinkSessionBuilder with given contact point and connection id.
+    ///
+    /// This SessionBuilder kind is used to create sessions connected to PrivateLink clusters.
+    /// It requires a contact point and a connection id, which are used to establish the connection to the cluster.
+    /// The contact point is the address of the PrivateLink endpoint,
+    /// and the connection id is a unique identifier for the PrivateLink instance.
+    ///
+    /// # Example
+    /// ```
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use scylla::client::session::Session;
+    /// use scylla::client::session_builder::PrivateLinkSessionBuilder;
+    /// use scylla::client::private_link::{PrivateLinkConfig, PrivateLinkEndpoint};
+    ///
+    /// let contact_points = vec!["my-privatelink-contact-point.amazonaws.com:9042".to_owned()];
+    /// let endpoints = [
+    ///     PrivateLinkEndpoint::new_with_connection_id("my-privatelink-connection-id".to_owned()),
+    /// ];
+    /// let private_link_config = PrivateLinkConfig::new(endpoints, contact_points)?;
+    /// let session: Session = PrivateLinkSessionBuilder::new(private_link_config)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn new(config: super::private_link::PrivateLinkConfig) -> Self {
+        PrivateLinkSessionBuilder {
+            config: SessionConfig {
+                known_nodes: config
+                    .contact_points()
+                    .iter()
+                    .cloned()
+                    .map(KnownNode::Hostname)
+                    .collect(),
+                private_link_config: Some(config),
+                ..SessionConfig::new()
+            },
+            kind: PhantomData,
+        }
     }
 }
 

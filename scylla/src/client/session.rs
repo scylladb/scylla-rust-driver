@@ -343,6 +343,11 @@ pub struct SessionConfig {
     /// Driver and application self-identifying information,
     /// to be sent to server in STARTUP message.
     pub identity: SelfIdentity<'static>,
+
+    /// PrivateLink configuration for Scylla Cloud. If set, Session will connect
+    /// to Scylla Cloud clusters using PrivateLink.
+    #[cfg(feature = "private-link")]
+    pub(crate) private_link_config: Option<super::private_link::PrivateLinkConfig>,
 }
 
 impl SessionConfig {
@@ -397,6 +402,8 @@ impl SessionConfig {
             tracing_info_fetch_consistency: Consistency::One,
             cluster_metadata_refresh_interval: Duration::from_secs(60),
             identity: SelfIdentity::default(),
+            #[cfg(feature = "private-link")]
+            private_link_config: None,
         }
     }
 
@@ -1041,7 +1048,16 @@ impl Session {
             tablet_sender: Some(tablet_sender),
             identity: config.identity,
             #[cfg(feature = "client-routes")]
-            read_client_routes: false, // TODO: make this configurable - done in later commits.
+            #[cfg_attr(not(feature = "private-link"), expect(unused_labels))]
+            read_client_routes: 'routes: {
+                #[cfg(feature = "private-link")]
+                {
+                    if config.private_link_config.is_some() {
+                        break 'routes true;
+                    }
+                }
+                false
+            },
         };
 
         let pool_config = PoolConfig {
