@@ -117,6 +117,12 @@ impl<T: SerializeRowInOrder + ?Sized> SerializeRowInOrder for &T {
 
 pub mod ser {
     pub mod row {
+        use std::{
+            borrow::Borrow,
+            collections::{BTreeMap, HashMap},
+            hash::{BuildHasher, Hash},
+        };
+
         use super::super::{PartialSerializeRowByName, SerializeRowByName, SerializeRowInOrder};
         use crate::{
             frame::response::result::ColumnSpec,
@@ -129,6 +135,7 @@ pub mod ser {
                 value::SerializeValue,
                 writers::WrittenCellProof,
             },
+            string_keyed_map_like::StringKeyedMapLike,
         };
 
         pub use crate::serialize::row::mk_typck_err;
@@ -217,7 +224,7 @@ pub mod ser {
                     // 3. If the field was not used that means the column doesn't belong to this
                     // struct and thus cannot be serialized. Return error.
                     if matches!(serialized, FieldStatus::NotUsed) {
-                        return Err(mk_typck_err::<Self>(
+                        return Err(mk_typck_err::<T>(
                             BuiltinTypeCheckErrorKind::ValueMissingForColumn {
                                 name: spec.name().to_owned(),
                             },
@@ -306,6 +313,80 @@ pub mod ser {
 
                 self.0.serialize_in_order(&mut next_serializer, writer)?;
                 next_serializer.finish::<T>()
+            }
+        }
+
+        pub struct PartialMapLike<'m, M> {
+            map: &'m M,
+            unused: std::collections::HashSet<&'m str>,
+        }
+
+        impl<'m, M> PartialSerializeRowByName for PartialMapLike<'m, M>
+        where
+            M: StringKeyedMapLike,
+            M::Value: SerializeValue,
+        {
+            fn serialize_field(
+                &mut self,
+                spec: &ColumnSpec,
+                writer: &mut RowWriter<'_>,
+            ) -> Result<FieldStatus, SerializationError> {
+                let Some(value) = self.map.get(spec.name()) else {
+                    return Ok(FieldStatus::NotUsed);
+                };
+
+                serialize_column::<M>(value, spec, writer)?;
+                self.unused.remove(spec.name());
+                Ok(if self.unused.is_empty() {
+                    FieldStatus::Done
+                } else {
+                    FieldStatus::NotDone
+                })
+            }
+
+            fn check_missing(self) -> Result<(), SerializationError> {
+                // Report the lexicographically first value for deterministic error messages
+                let Some(unused) = self.unused.iter().min() else {
+                    return Ok(());
+                };
+                Err(mk_typck_err::<M>(
+                    BuiltinTypeCheckErrorKind::NoColumnWithName {
+                        name: unused.to_string(),
+                    },
+                ))
+            }
+        }
+
+        impl<K: Borrow<str> + Ord, T: SerializeValue> SerializeRowByName for BTreeMap<K, T> {
+            type Partial<'d>
+                = PartialMapLike<'d, Self>
+            where
+                K: 'd,
+                T: 'd;
+
+            fn partial(&self) -> Self::Partial<'_> {
+                PartialMapLike {
+                    map: self,
+                    unused: self.keys().map(|k| k.borrow()).collect(),
+                }
+            }
+        }
+
+        impl<K: Borrow<str> + Eq + Hash, T: SerializeValue, S: BuildHasher> SerializeRowByName
+            for HashMap<K, T, S>
+        {
+            type Partial<'d>
+                = PartialMapLike<'d, Self>
+            where
+                K: 'd,
+                T: 'd,
+                S: 'd;
+
+            fn partial(&self) -> Self::Partial<'_> {
+                PartialMapLike {
+                    map: self,
+                    unused: self.keys().map(|k| k.borrow()).collect(),
+                }
             }
         }
     }
