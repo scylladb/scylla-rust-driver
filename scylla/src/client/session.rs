@@ -8,11 +8,10 @@ use crate::authentication::AuthenticatorProvider;
 use crate::cluster::node::{KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
-    BadQuery, BrokenConnectionError, ExecutionError, MetadataError, NewSessionError,
-    PagerExecutionError, PrepareError, RequestAttemptError, RequestError, SchemaAgreementError,
-    TracingError, UseKeyspaceError,
+    BrokenConnectionError, ExecutionError, MetadataError, NewSessionError, PagerExecutionError,
+    PrepareError, RequestAttemptError, RequestError, SchemaAgreementError, TracingError,
+    UseKeyspaceError,
 };
-use crate::frame::response::result;
 use crate::network::tls::TlsProvider;
 use crate::network::{Connection, ConnectionConfig, PoolConfig, VerifiedKeyspaceName};
 use crate::observability::driver_tracing::RequestSpan;
@@ -30,25 +29,25 @@ use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
-use crate::response::{
-    Coordinator, NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse,
-};
+use crate::response::{Coordinator, NonErrorQueryResponse, PagingState, PagingStateResponse};
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, ShardAwarePortRange};
-use crate::statement::batch::batch_values;
+use crate::statement::batch::BoundBatch;
 use crate::statement::batch::{Batch, BatchStatement};
-use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
+use crate::statement::bound::BoundStatement;
+use crate::statement::execute::{Execute, ExecutePageable};
+use crate::statement::prepared::PreparedStatement;
 use crate::statement::unprepared::Statement;
-use crate::statement::{Consistency, PageSize, StatementConfig};
+use crate::statement::{Consistency, StatementConfig};
 use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
 use scylla_cql::frame::response::error::DbError;
-use scylla_cql::serialize::batch::BatchValues;
-use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
-use std::borrow::Borrow;
+use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
+use scylla_cql::serialize::row::SerializeRow;
+use std::borrow::{Borrow, Cow};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
@@ -537,7 +536,8 @@ impl Session {
         statement: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
-        self.do_query_unpaged(&statement.into(), values).await
+        let statement = statement.into();
+        (&statement, values).execute(self).await
     }
 
     /// Queries a single page from the database, optionally continuing from a saved point.
@@ -597,7 +597,9 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.do_query_single_page(&statement.into(), values, paging_state)
+        let statement = statement.into();
+        (&statement, values)
+            .execute_pageable::<true>(self, paging_state)
             .await
     }
 
@@ -693,19 +695,8 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-        let (result, paging_state) = self
-            .execute(prepared, &serialized_values, None, PagingState::start())
-            .await?;
-        if !paging_state.finished() {
-            error!(
-                "Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug."
-            );
-            return Err(ExecutionError::LastAttemptError(
-                RequestAttemptError::NonfinishedPagingState,
-            ));
-        }
-        Ok(result)
+        let bound = prepared.bind(&values)?;
+        bound.execute(self).await
     }
 
     /// Executes a prepared statement, restricting results to single page.
@@ -770,10 +761,8 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-        let page_size = prepared.get_validated_page_size();
-        self.execute(prepared, &serialized_values, Some(page_size), paging_state)
-            .await
+        let bound = prepared.bind(&values)?;
+        bound.execute_pageable::<true>(self, paging_state).await
     }
 
     /// Execute a prepared statement with paging.\
@@ -820,11 +809,8 @@ impl Session {
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let prepared = prepared.into();
-        let serialized_values = prepared.serialize_values(&values)?;
-
-        self.execute_iter_nongeneric(prepared, serialized_values)
-            .await
+        let bound = prepared.into().into_bind(&values)?;
+        self.execute_iter_nongeneric(bound).await
     }
 
     /// Execute a batch statement\
@@ -877,95 +863,10 @@ impl Session {
         batch: &Batch,
         values: impl BatchValues,
     ) -> Result<QueryResult, ExecutionError> {
-        // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
-        // If users batch statements by shard, they will be rewarded with full shard awareness
-
-        // check to ensure that we don't send a batch statement with more than u16::MAX queries
-        let batch_statements_length = batch.statements.len();
-        if batch_statements_length > u16::MAX as usize {
-            return Err(ExecutionError::BadQuery(
-                BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
-            ));
-        }
-
-        let execution_profile = batch
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
-
-        let consistency = batch
-            .config
-            .consistency
-            .unwrap_or(execution_profile.consistency);
-
-        let serial_consistency = batch
-            .config
-            .serial_consistency
-            .unwrap_or(execution_profile.serial_consistency);
-
-        let (first_value_token, values) =
-            batch_values::peek_first_token(values, batch.statements.first())?;
-        let values_ref = &values;
-
-        let table_spec =
-            if let Some(BatchStatement::PreparedStatement(ps)) = batch.statements.first() {
-                ps.get_table_spec()
-            } else {
-                None
-            };
-
-        let statement_info = RoutingInfo {
-            consistency,
-            serial_consistency,
-            token: first_value_token,
-            table: table_spec,
-            is_confirmed_lwt: false,
-        };
-
-        let span = RequestSpan::new_batch();
-
-        let (run_request_result, coordinator): (
-            RunRequestResult<NonErrorQueryResponse>,
-            Coordinator,
-        ) = self
-            .run_request(
-                statement_info,
-                &batch.config,
-                execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = batch
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
-                    async move {
-                        connection
-                            .batch_with_consistency(
-                                batch,
-                                values_ref,
-                                consistency,
-                                serial_consistency,
-                            )
-                            .await
-                            .and_then(QueryResponse::into_non_error_query_response)
-                    }
-                },
-                &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
-
-        let result = match run_request_result {
-            RunRequestResult::IgnoredWriteError => QueryResult::mock_empty(coordinator),
-            RunRequestResult::Completed(non_error_query_response) => {
-                let result = non_error_query_response.into_query_result(coordinator)?;
-                span.record_result_fields(&result);
-                result
-            }
-        };
-
-        Ok(result)
+        let batch = self.last_minute_prepare_batch(batch, &values).await?;
+        BoundBatch::from_batch(batch.as_ref(), values)?
+            .execute(self)
+            .await
     }
 
     /// Estabilishes a CQL session with the database
@@ -1143,149 +1044,6 @@ impl Session {
         })
     }
 
-    async fn do_query_unpaged(
-        &self,
-        statement: &Statement,
-        values: impl SerializeRow,
-    ) -> Result<QueryResult, ExecutionError> {
-        let (result, paging_state_response) = self
-            .query(statement, values, None, PagingState::start())
-            .await?;
-        if !paging_state_response.finished() {
-            error!(
-                "Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug."
-            );
-            return Err(ExecutionError::LastAttemptError(
-                RequestAttemptError::NonfinishedPagingState,
-            ));
-        }
-        Ok(result)
-    }
-
-    async fn do_query_single_page(
-        &self,
-        statement: &Statement,
-        values: impl SerializeRow,
-        paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.query(
-            statement,
-            values,
-            Some(statement.get_validated_page_size()),
-            paging_state,
-        )
-        .await
-    }
-
-    /// Sends a request to the database.
-    /// Optionally continues fetching results from a saved point.
-    ///
-    /// This is now an internal method only.
-    ///
-    /// Tl;dr: use [Session::query_unpaged], [Session::query_single_page] or [Session::query_iter] instead.
-    ///
-    /// The rationale is that we believe that paging is so important concept (and it has shown to be error-prone as well)
-    /// that we need to require users to make a conscious decision to use paging or not. For that, we expose
-    /// the aforementioned 3 methods clearly differing in naming and API, so that no unconscious choices about paging
-    /// should be made.
-    async fn query(
-        &self,
-        statement: &Statement,
-        values: impl SerializeRow,
-        page_size: Option<PageSize>,
-        paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let execution_profile = statement
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
-
-        let statement_info = RoutingInfo {
-            consistency: statement
-                .config
-                .consistency
-                .unwrap_or(execution_profile.consistency),
-            serial_consistency: statement
-                .config
-                .serial_consistency
-                .unwrap_or(execution_profile.serial_consistency),
-            ..Default::default()
-        };
-
-        let span = RequestSpan::new_query(&statement.contents);
-        let span_ref = &span;
-        let (run_request_result, coordinator): (
-            RunRequestResult<NonErrorQueryResponse>,
-            Coordinator,
-        ) = self
-            .run_request(
-                statement_info,
-                &statement.config,
-                execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = statement
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
-                    // Needed to avoid moving query and values into async move block
-                    let values_ref = &values;
-                    let paging_state_ref = &paging_state;
-                    async move {
-                        if values_ref.is_empty() {
-                            span_ref.record_request_size(0);
-                            connection
-                                .query_raw_with_consistency(
-                                    statement,
-                                    consistency,
-                                    serial_consistency,
-                                    page_size,
-                                    paging_state_ref.clone(),
-                                )
-                                .await
-                                .and_then(QueryResponse::into_non_error_query_response)
-                        } else {
-                            let prepared = connection.prepare(statement).await?;
-                            let serialized = prepared.serialize_values(values_ref)?;
-                            span_ref.record_request_size(serialized.buffer_size());
-                            connection
-                                .execute_raw_with_consistency(
-                                    &prepared,
-                                    &serialized,
-                                    consistency,
-                                    serial_consistency,
-                                    page_size,
-                                    paging_state_ref.clone(),
-                                )
-                                .await
-                                .and_then(QueryResponse::into_non_error_query_response)
-                        }
-                    }
-                },
-                &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
-
-        let response = match run_request_result {
-            RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
-                response: NonErrorResponseWithDeserializedMetadata::Result(
-                    result::ResultWithDeserializedMetadata::Void,
-                ),
-                tracing_id: None,
-                warnings: Vec::new(),
-            },
-            RunRequestResult::Completed(response) => response,
-        };
-
-        let (result, paging_state_response) =
-            response.into_query_result_and_paging_state(coordinator)?;
-        span.record_result_fields(&result);
-
-        Ok((result, paging_state_response))
-    }
-
     async fn handle_set_keyspace_response(
         &self,
         response: &NonErrorQueryResponse,
@@ -1334,9 +1092,11 @@ impl Session {
             // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
             // we fully prepare a statement beforehand.
-            let prepared = self.prepare_nongeneric(&statement).await?;
-            let values = prepared.serialize_values(&values)?;
-            self.execute_iter_nongeneric(prepared, values).await
+            let bound = self
+                .prepare_nongeneric(&statement)
+                .await?
+                .into_bind(&values)?;
+            self.execute_iter_nongeneric(bound).await
         }
     }
 
@@ -1536,120 +1296,6 @@ impl Session {
             .as_deref()
     }
 
-    /// Sends a prepared request to the database, optionally continuing from a saved point.
-    ///
-    /// This is now an internal method only.
-    ///
-    /// Tl;dr: use [Session::execute_unpaged], [Session::execute_single_page] or [Session::execute_iter] instead.
-    ///
-    /// The rationale is that we believe that paging is so important concept (and it has shown to be error-prone as well)
-    /// that we need to require users to make a conscious decision to use paging or not. For that, we expose
-    /// the aforementioned 3 methods clearly differing in naming and API, so that no unconscious choices about paging
-    /// should be made.
-    async fn execute(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-        page_size: Option<PageSize>,
-        paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        let paging_state_ref = &paging_state;
-
-        let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(
-                prepared.get_partitioner_name(),
-                serialized_values,
-            )
-            .map_err(PartitionKeyError::into_execution_error)?
-            .unzip();
-
-        let execution_profile = prepared
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
-
-        let table_spec = prepared.get_table_spec();
-
-        let statement_info = RoutingInfo {
-            consistency: prepared
-                .config
-                .consistency
-                .unwrap_or(execution_profile.consistency),
-            serial_consistency: prepared
-                .config
-                .serial_consistency
-                .unwrap_or(execution_profile.serial_consistency),
-            token,
-            table: table_spec,
-            is_confirmed_lwt: prepared.is_confirmed_lwt(),
-        };
-
-        let span = RequestSpan::new_prepared(
-            partition_key.as_ref().map(|pk| pk.iter()),
-            token,
-            serialized_values.buffer_size(),
-        );
-
-        if !span.span().is_disabled() {
-            if let (Some(table_spec), Some(token)) = (statement_info.table, token) {
-                let cluster_state = self.get_cluster_state();
-                let replicas = cluster_state.get_token_endpoints_iter(table_spec, token);
-                span.record_replicas(replicas)
-            }
-        }
-
-        let (run_request_result, coordinator): (
-            RunRequestResult<NonErrorQueryResponse>,
-            Coordinator,
-        ) = self
-            .run_request(
-                statement_info,
-                &prepared.config,
-                execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = prepared
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
-                    async move {
-                        connection
-                            .execute_raw_with_consistency(
-                                prepared,
-                                serialized_values,
-                                consistency,
-                                serial_consistency,
-                                page_size,
-                                paging_state_ref.clone(),
-                            )
-                            .await
-                            .and_then(QueryResponse::into_non_error_query_response)
-                    }
-                },
-                &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
-
-        let response = match run_request_result {
-            RunRequestResult::IgnoredWriteError => NonErrorQueryResponse {
-                response: NonErrorResponseWithDeserializedMetadata::Result(
-                    result::ResultWithDeserializedMetadata::Void,
-                ),
-                tracing_id: None,
-                warnings: Vec::new(),
-            },
-            RunRequestResult::Completed(response) => response,
-        };
-
-        let (result, paging_state_response) =
-            response.into_query_result_and_paging_state(coordinator)?;
-        span.record_result_fields(&result);
-
-        Ok((result, paging_state_response))
-    }
-
     /// Does the same as [`Session::execute_iter`], but without generics.
     /// This is to reduce code bloat.
     ///
@@ -1665,10 +1311,10 @@ impl Session {
     ///   if special compile flag is passed.
     async fn execute_iter_nongeneric(
         &self,
-        prepared: PreparedStatement,
-        values: SerializedValues,
+        bound: BoundStatement<'static>,
     ) -> Result<QueryPager, PagerExecutionError> {
-        let execution_profile = prepared
+        let execution_profile = bound
+            .prepared
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
@@ -1676,8 +1322,7 @@ impl Session {
         QueryPager::new_for_prepared_statement(
             self,
             PreparedPagerConfig {
-                prepared,
-                values,
+                bound,
                 execution_profile,
                 cluster_state: self.cluster.get_state(),
                 #[cfg(feature = "metrics")]
@@ -1733,6 +1378,54 @@ impl Session {
         .await?;
 
         Ok(prepared_batch)
+    }
+
+    async fn last_minute_prepare_batch<'b>(
+        &self,
+        init_batch: &'b Batch,
+        values: impl BatchValues,
+    ) -> Result<Cow<'b, Batch>, PrepareError> {
+        let mut to_prepare = HashSet::<&str>::new();
+
+        {
+            let mut values_iter = values.batch_values_iter();
+            for stmt in &init_batch.statements {
+                if let BatchStatement::Query(query) = stmt {
+                    if let Some(false) = values_iter.is_empty_next() {
+                        to_prepare.insert(&query.contents);
+                    }
+                } else {
+                    values_iter.skip_next();
+                }
+            }
+        }
+
+        if to_prepare.is_empty() {
+            return Ok(Cow::Borrowed(init_batch));
+        }
+
+        let mut prepared_queries = HashMap::<&str, PreparedStatement>::new();
+
+        for query in to_prepare {
+            let prepared = self.prepare(query).await?;
+            prepared_queries.insert(query, prepared);
+        }
+
+        let mut batch: Cow<Batch> = Cow::Owned(Batch::new_from(init_batch));
+        for stmt in &init_batch.statements {
+            match stmt {
+                BatchStatement::Query(query) => match prepared_queries.get(query.contents.as_str())
+                {
+                    Some(prepared) => batch.to_mut().append_statement(prepared.clone()),
+                    None => batch.to_mut().append_statement(query.clone()),
+                },
+                BatchStatement::PreparedStatement(prepared) => {
+                    batch.to_mut().append_statement(prepared.clone());
+                }
+            }
+        }
+
+        Ok(batch)
     }
 
     /// Sends `USE <keyspace_name>` request on all connections\
@@ -1859,11 +1552,13 @@ impl Session {
         // Consistency is set during construction based on session's tracing_info_fetch_consistency.
         let traces_session_stmt = self.get_tracing_session_statement();
         let traces_events_stmt = self.get_tracing_events_statement();
+        let traces_session_stmt = (traces_session_stmt, (tracing_id,));
+        let traces_events_stmt = (traces_events_stmt, (tracing_id,));
 
         // Using non-public do_query_unpaged allows us to avoid cloning.
         let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.do_query_unpaged(traces_session_stmt, (tracing_id,)),
-            self.do_query_unpaged(traces_events_stmt, (tracing_id,))
+            traces_session_stmt.execute(self),
+            traces_events_stmt.execute(self)
         )?;
 
         // Get tracing info
@@ -1914,7 +1609,7 @@ impl Session {
     /// On success, this request's result is returned.
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
-    async fn run_request<'a, QueryFut>(
+    pub(crate) async fn run_request<'a, QueryFut>(
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,

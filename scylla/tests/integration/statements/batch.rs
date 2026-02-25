@@ -7,7 +7,8 @@ use scylla::client::session::Session;
 use scylla::errors::{BadQuery, ExecutionError, RequestAttemptError};
 use scylla::frame::frame_errors::{BatchSerializationError, CqlRequestSerializationError};
 use scylla::response::query_result::{QueryResult, QueryRowsResult};
-use scylla::statement::batch::{Batch, BatchStatement, BatchType};
+use scylla::statement::batch::{Batch, BatchStatement, BatchType, BoundBatch};
+use scylla::statement::execute::Execute;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 use scylla::value::Counter;
@@ -652,6 +653,70 @@ async fn test_batch_to_multiple_tables() {
         .execute_unpaged(&prepared_statement, (1, 2, "ala", 4, 5, "ma"))
         .await
         .unwrap();
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_bound_batch() {
+    setup_tracing();
+    let session = Arc::new(create_new_session_builder().build().await.unwrap());
+    let ks = unique_keyspace_name();
+
+    session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
+    session
+        .ddl(format!(
+            "CREATE TABLE IF NOT EXISTS {ks}.t_batch (a int, b int, c text, primary key (a, b))",
+        ))
+        .await
+        .unwrap();
+
+    let prepared_statement = session
+        .prepare(format!(
+            "INSERT INTO {ks}.t_batch (a, b, c) VALUES (?, ?, ?)",
+        ))
+        .await
+        .unwrap();
+
+    let four_value: i32 = 4;
+    let hello_value: String = String::from("hello");
+
+    let bound_statement = prepared_statement
+        .clone()
+        .into_bind(&(1_i32, &four_value, hello_value.as_str()))
+        .unwrap();
+
+    let mut batch: BoundBatch = Default::default();
+    batch
+        .append_statement((prepared_statement, (1_i32, 2_i32, "abc")))
+        .unwrap();
+    batch
+        .append_statement(&format!("INSERT INTO {ks}.t_batch (a, b, c) VALUES (7, 11, '')")[..])
+        .unwrap();
+    batch.append_statement(bound_statement).unwrap();
+
+    batch.execute(&session).await.unwrap();
+
+    let mut results: Vec<(i32, i32, String)> = session
+        .query_unpaged(format!("SELECT a, b, c FROM {ks}.t_batch"), &[])
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .rows::<(i32, i32, String)>()
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+
+    results.sort();
+    assert_eq!(
+        results,
+        vec![
+            (1, 2, String::from("abc")),
+            (1, 4, String::from("hello")),
+            (7, 11, String::from(""))
+        ]
+    );
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }

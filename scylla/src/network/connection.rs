@@ -24,7 +24,8 @@ use crate::response::query_result::QueryResult;
 use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse};
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
-use crate::statement::batch::{Batch, BatchStatement};
+use crate::statement::batch::BoundBatch;
+use crate::statement::bound::BoundStatement;
 use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
@@ -40,12 +41,10 @@ use scylla_cql::frame::response::result::{
 use scylla_cql::frame::response::{self, error};
 use scylla_cql::frame::response::{Error, ResponseWithDeserializedMetadata};
 use scylla_cql::frame::types::SerialConsistency;
-use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
-use scylla_cql::serialize::raw_batch::RawBatchValuesAdapter;
-use scylla_cql::serialize::row::{RowSerializationContext, SerializedValues};
+use scylla_cql::serialize::row::SerializedValues;
 use socket2::{SockRef, TcpKeepalive};
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::convert::TryFrom;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU64;
@@ -886,17 +885,16 @@ impl Connection {
     #[cfg(test)]
     async fn execute_raw_unpaged(
         &self,
-        prepared: &PreparedStatement,
-        values: &SerializedValues,
+        bound: &BoundStatement<'_>,
     ) -> Result<QueryResponse, RequestAttemptError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
-            prepared,
-            values,
-            prepared
+            bound,
+            bound
+                .prepared
                 .config
                 .determine_consistency(self.config.default_consistency),
-            prepared.config.serial_consistency.flatten(),
+            bound.prepared.config.serial_consistency.flatten(),
             None,
             PagingState::start(),
         )
@@ -950,8 +948,7 @@ impl Connection {
 
     pub(crate) async fn execute_raw_with_consistency(
         &self,
-        prepared_statement: &PreparedStatement,
-        values: &SerializedValues,
+        bound: &BoundStatement<'_>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
@@ -963,7 +960,8 @@ impl Connection {
                 .as_ref()
                 .map(|generator| generator.next_timestamp())
         };
-        let timestamp = prepared_statement
+        let timestamp = bound
+            .prepared
             .get_timestamp()
             .or_else(get_timestamp_from_gen);
 
@@ -972,20 +970,19 @@ impl Connection {
         // If the metadata id extension is supported, there is no point in not caching metadata,
         // so we ignore the setting on prepared statement.
         let skip_metadata =
-            prepared_statement.get_use_cached_result_metadata() || has_metadata_extension;
+            bound.prepared.get_use_cached_result_metadata() || has_metadata_extension;
 
-        let cached_metadata =
-            skip_metadata.then(|| prepared_statement.get_current_result_metadata());
+        let cached_metadata = skip_metadata.then(|| bound.prepared.get_current_result_metadata());
 
         let result_id = Self::get_result_id(&cached_metadata, has_metadata_extension);
 
         let execute_frame = execute::ExecuteV2 {
-            id: prepared_statement.get_id().as_ref().into(),
+            id: bound.prepared.get_id().as_ref().into(),
             result_metadata_id: result_id.map(Into::into),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: Cow::Borrowed(values),
+                values: Cow::Borrowed(&bound.values),
                 page_size: page_size.map(Into::into),
                 timestamp,
                 skip_metadata,
@@ -997,12 +994,12 @@ impl Connection {
             .send_request(
                 &execute_frame,
                 true,
-                prepared_statement.config.tracing,
+                bound.prepared.config.tracing,
                 cached_metadata.as_ref(),
             )
             .await?;
 
-        if let Some(spec) = prepared_statement.get_table_spec() {
+        if let Some(spec) = bound.prepared.get_table_spec() {
             if let Err(e) = self
                 .update_tablets_from_response(spec, &query_response)
                 .await
@@ -1011,7 +1008,7 @@ impl Connection {
             }
         }
 
-        Self::handle_result_metadata_new_id(prepared_statement, &query_response);
+        Self::handle_result_metadata_new_id(&bound.prepared, &query_response);
 
         match &query_response.response {
             ResponseWithDeserializedMetadata::Error(frame::response::Error {
@@ -1023,11 +1020,11 @@ impl Connection {
                     statement_id
                 );
                 // Repreparation of a statement is needed
-                self.reprepare(prepared_statement.get_statement(), prepared_statement)
+                self.reprepare(bound.prepared.get_statement(), &bound.prepared)
                     .await?;
                 // Metadata may have changed in reprepare, or in some concurrent execution
                 let cached_metadata =
-                    skip_metadata.then(|| prepared_statement.get_current_result_metadata());
+                    skip_metadata.then(|| bound.prepared.get_current_result_metadata());
                 let result_id = Self::get_result_id(&cached_metadata, has_metadata_extension);
                 let new_response = self
                     .send_request(
@@ -1036,12 +1033,12 @@ impl Connection {
                             ..execute_frame
                         },
                         true,
-                        prepared_statement.config.tracing,
+                        bound.prepared.config.tracing,
                         cached_metadata.as_ref(),
                     )
                     .await?;
 
-                if let Some(spec) = prepared_statement.get_table_spec() {
+                if let Some(spec) = bound.prepared.get_table_spec() {
                     if let Err(e) = self.update_tablets_from_response(spec, &new_response).await {
                         tracing::warn!(
                             "Error while parsing tablet info from custom payload: {}",
@@ -1050,7 +1047,7 @@ impl Connection {
                     }
                 }
 
-                Self::handle_result_metadata_new_id(prepared_statement, &new_response);
+                Self::handle_result_metadata_new_id(&bound.prepared, &new_response);
 
                 Ok(new_response)
             }
@@ -1066,43 +1063,25 @@ impl Connection {
     /// Other kinds of responses will result in an error.
     pub(crate) async fn execute_iter(
         self: Arc<Self>,
-        prepared_statement: PreparedStatement,
-        values: SerializedValues,
+        bound: BoundStatement<'static>,
     ) -> Result<QueryPager, NextRowError> {
-        let consistency = prepared_statement
+        let consistency = bound
+            .prepared
             .config
             .determine_consistency(self.config.default_consistency);
-        let serial_consistency = prepared_statement.config.serial_consistency.flatten();
+        let serial_consistency = bound.prepared.config.serial_consistency.flatten();
 
-        QueryPager::new_for_connection_execute_iter(
-            prepared_statement,
-            values,
-            self,
-            consistency,
-            serial_consistency,
-        )
-        .await
-        .map_err(NextRowError::NextPageError)
+        QueryPager::new_for_connection_execute_iter(bound, self, consistency, serial_consistency)
+            .await
+            .map_err(NextRowError::NextPageError)
     }
 
     pub(crate) async fn batch_with_consistency(
         &self,
-        init_batch: &Batch,
-        values: impl BatchValues,
+        batch: &BoundBatch,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResponse, RequestAttemptError> {
-        let batch = self.prepare_batch(init_batch, &values).await?;
-
-        let contexts = batch.statements.iter().map(|bs| match bs {
-            BatchStatement::Query(_) => RowSerializationContext::empty(),
-            BatchStatement::PreparedStatement(ps) => {
-                RowSerializationContext::from_prepared(ps.get_prepared_metadata())
-            }
-        });
-
-        let values = RawBatchValuesAdapter::new(values, contexts);
-
         let get_timestamp_from_gen = || {
             self.config
                 .timestamp_generator
@@ -1111,13 +1090,13 @@ impl Connection {
         };
         let timestamp = batch.get_timestamp().or_else(get_timestamp_from_gen);
 
-        let batch_frame = batch::Batch {
-            statements: Cow::Borrowed(&batch.statements),
-            values,
+        let batch_frame = batch::BatchV2 {
+            statements_and_values: Cow::Borrowed(&batch.buffer),
             batch_type: batch.get_type(),
             consistency,
             serial_consistency,
             timestamp,
+            statements_len: batch.statements_len(),
         };
 
         loop {
@@ -1133,13 +1112,7 @@ impl Connection {
                             "Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}",
                             statement_id
                         );
-                        let prepared_statement = batch.statements.iter().find_map(|s| match s {
-                            BatchStatement::PreparedStatement(s) if *s.get_id() == statement_id => {
-                                Some(s)
-                            }
-                            _ => None,
-                        });
-                        if let Some(p) = prepared_statement {
+                        if let Some(p) = batch.prepared.get(&statement_id) {
                             self.reprepare(p.get_statement(), p).await?;
                             continue;
                         } else {
@@ -1154,54 +1127,6 @@ impl Connection {
                 )),
             };
         }
-    }
-
-    async fn prepare_batch<'b>(
-        &self,
-        init_batch: &'b Batch,
-        values: impl BatchValues,
-    ) -> Result<Cow<'b, Batch>, RequestAttemptError> {
-        let mut to_prepare = HashSet::<&str>::new();
-
-        {
-            let mut values_iter = values.batch_values_iter();
-            for stmt in &init_batch.statements {
-                if let BatchStatement::Query(query) = stmt {
-                    if let Some(false) = values_iter.is_empty_next() {
-                        to_prepare.insert(&query.contents);
-                    }
-                } else {
-                    values_iter.skip_next();
-                }
-            }
-        }
-
-        if to_prepare.is_empty() {
-            return Ok(Cow::Borrowed(init_batch));
-        }
-
-        let mut prepared_queries = HashMap::<&str, PreparedStatement>::new();
-
-        for query in &to_prepare {
-            let prepared = self.prepare(&Statement::new(query.to_string())).await?;
-            prepared_queries.insert(query, prepared);
-        }
-
-        let mut batch: Cow<Batch> = Cow::Owned(Batch::new_from(init_batch));
-        for stmt in &init_batch.statements {
-            match stmt {
-                BatchStatement::Query(query) => match prepared_queries.get(query.contents.as_str())
-                {
-                    Some(prepared) => batch.to_mut().append_statement(prepared.clone()),
-                    None => batch.to_mut().append_statement(query.clone()),
-                },
-                BatchStatement::PreparedStatement(prepared) => {
-                    batch.to_mut().append_statement(prepared.clone());
-                }
-            }
-        }
-
-        Ok(batch)
     }
 
     pub(super) async fn use_keyspace(
@@ -2285,7 +2210,6 @@ mod tests {
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };
     use scylla_cql::frame::types;
-    use scylla_cql::serialize::row::SerializedValues;
     use scylla_proxy::{
         Condition, Node, Proxy, Reaction, RequestFrame, RequestOpcode, RequestReaction,
         RequestRule, ResponseFrame, ShardAwareness,
@@ -2297,10 +2221,12 @@ mod tests {
     use super::{HostConnectionConfig, open_connection};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
+    use crate::statement::bound::BoundStatement;
     use crate::statement::unprepared::Statement;
     use crate::test_utils::setup_tracing;
     use crate::utils::test_utils::{PerformDDL, resolve_hostname, unique_keyspace_name};
     use futures::{StreamExt, TryStreamExt};
+    use std::borrow::Cow;
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -2358,9 +2284,10 @@ mod tests {
         let select_query =
             Statement::new("SELECT p FROM connection_execute_iter_tab").with_page_size(7);
         let prepared_select = connection.prepare(&select_query).await.unwrap();
+        let bound_select = BoundStatement::empty(Cow::Owned(prepared_select));
         let empty_res = connection
             .clone()
-            .execute_iter(prepared_select.clone(), SerializedValues::new())
+            .execute_iter(bound_select.clone())
             .await
             .unwrap()
             .rows_stream::<(i32,)>()
@@ -2378,8 +2305,8 @@ mod tests {
         let mut insert_futures = Vec::new();
         for v in &values {
             let fut = async {
-                let values = prepared.serialize_values(&(*v,)).unwrap();
-                connection.execute_raw_unpaged(&prepared, &values).await
+                let bound = prepared.bind(&(*v,)).unwrap();
+                connection.execute_raw_unpaged(&bound).await
             };
             insert_futures.push(fut);
         }
@@ -2388,7 +2315,7 @@ mod tests {
 
         let mut results: Vec<i32> = connection
             .clone()
-            .execute_iter(prepared_select, SerializedValues::new())
+            .execute_iter(bound_select.clone())
             .await
             .unwrap()
             .rows_stream::<(i32,)>()
@@ -2472,11 +2399,8 @@ mod tests {
                         let conn = conn.clone();
                         async move {
                             let prepared = conn.prepare(&q).await.unwrap();
-                            let values = prepared
-                                .serialize_values(&(j, vec![j as u8; j as usize]))
-                                .unwrap();
-                            let response =
-                                conn.execute_raw_unpaged(&prepared, &values).await.unwrap();
+                            let bound = prepared.bind(&(j, vec![j as u8; j as usize])).unwrap();
+                            let response = conn.execute_raw_unpaged(&bound).await.unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
                             let _nonerror_response =
                                 response.into_non_error_query_response().unwrap();
