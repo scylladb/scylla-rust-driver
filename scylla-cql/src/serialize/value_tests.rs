@@ -1383,7 +1383,7 @@ fn test_udt_serialization_with_field_rename_and_enforce_order() {
     assert_eq!(reference, udt);
 }
 
-#[expect(unused)]
+#[allow(unused)]
 #[derive(SerializeValue, Debug)]
 #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
 struct TestUdtWithSkippedNameChecks {

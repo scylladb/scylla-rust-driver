@@ -19,7 +19,7 @@ impl<ElemT> TokenRing<ElemT> {
 
     pub(crate) fn new(ring_iter: impl Iterator<Item = (Token, ElemT)>) -> TokenRing<ElemT> {
         let mut ring: Vec<(Token, ElemT)> = ring_iter.collect();
-        ring.sort_by(|a, b| a.0.cmp(&b.0));
+        ring.sort_by_key(|a| a.0);
         TokenRing { ring }
     }
 

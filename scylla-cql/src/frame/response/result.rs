@@ -1330,8 +1330,7 @@ fn deser_prepared_metadata(
     for i in 0..pk_count {
         pk_indexes.push(PartitionKeyIndex {
             index: types::read_short(buf)
-                .map_err(|err| PreparedMetadataParseError::PkIndexParseError(err.into()))?
-                as u16,
+                .map_err(|err| PreparedMetadataParseError::PkIndexParseError(err.into()))?,
             sequence: i as u16,
         });
     }
