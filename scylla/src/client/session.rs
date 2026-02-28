@@ -201,6 +201,23 @@ pub struct SessionConfig {
     /// If `None`, no TCP keepalive messages are sent.
     pub tcp_keepalive_interval: Option<Duration>,
 
+    /// Size of the TCP receive buffer in bytes.
+    /// If `None`, the OS default is used.
+    pub tcp_recv_buffer_size: Option<usize>,
+
+    /// Size of the TCP send buffer in bytes.
+    /// If `None`, the OS default is used.
+    pub tcp_send_buffer_size: Option<usize>,
+
+    /// Whether to set the `SO_REUSEADDR` socket option.
+    /// If `None`, the OS default is used (typically `false`).
+    pub tcp_reuse_address: Option<bool>,
+
+    /// Linger duration for the socket.
+    /// If `None`, the OS default is used (lingering disabled).
+    /// Setting this to `Some(Duration::ZERO)` causes the connection to be reset (RST) on close.
+    pub tcp_linger: Option<Duration>,
+
     /// Handle to the default execution profile, which is used
     /// for all statements that do not specify an execution profile.
     pub default_execution_profile_handle: ExecutionProfileHandle,
@@ -363,6 +380,10 @@ impl SessionConfig {
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
+            tcp_recv_buffer_size: None,
+            tcp_send_buffer_size: None,
+            tcp_reuse_address: None,
+            tcp_linger: None,
             schema_agreement_interval: Duration::from_millis(200),
             default_execution_profile_handle: ExecutionProfile::new_from_inner(Default::default())
                 .into_handle(),
@@ -1025,6 +1046,10 @@ impl Session {
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
             tcp_keepalive_interval: config.tcp_keepalive_interval,
+            tcp_recv_buffer_size: config.tcp_recv_buffer_size,
+            tcp_send_buffer_size: config.tcp_send_buffer_size,
+            tcp_reuse_address: config.tcp_reuse_address,
+            tcp_linger: config.tcp_linger,
             timestamp_generator: config.timestamp_generator,
             tls_provider,
             authenticator: config.authenticator,
