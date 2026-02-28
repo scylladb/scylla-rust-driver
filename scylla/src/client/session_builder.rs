@@ -554,6 +554,91 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
+    /// Set the size of the TCP receive buffer in bytes.
+    /// If not set, the OS default is used.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tcp_recv_buffer_size(65536)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tcp_recv_buffer_size(mut self, size: usize) -> Self {
+        self.config.tcp_recv_buffer_size = Some(size);
+        self
+    }
+
+    /// Set the size of the TCP send buffer in bytes.
+    /// If not set, the OS default is used.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tcp_send_buffer_size(65536)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tcp_send_buffer_size(mut self, size: usize) -> Self {
+        self.config.tcp_send_buffer_size = Some(size);
+        self
+    }
+
+    /// Set the `SO_REUSEADDR` socket option.
+    /// If not set, the OS default is used (typically `false`).
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tcp_reuse_address(true)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tcp_reuse_address(mut self, reuse: bool) -> Self {
+        self.config.tcp_reuse_address = Some(reuse);
+        self
+    }
+
+    /// Set the linger duration for the socket (`SO_LINGER`).
+    /// If not set, the OS default is used (lingering disabled).
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tcp_linger(Duration::from_secs(5))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tcp_linger(mut self, duration: Duration) -> Self {
+        self.config.tcp_linger = Some(duration);
+        self
+    }
+
     /// Set keyspace to be used on all connections.\
     /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
     /// This can be later changed with [`crate::client::session::Session::use_keyspace`]
