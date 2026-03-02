@@ -58,7 +58,7 @@ async fn get_tablets(session: &Session, ks: &str, table: &str) -> Vec<Tablet> {
         .try_collect::<Vec<_>>()
         .await
         .unwrap();
-    selected_tablets.sort_unstable_by(|a, b| a.last_token.cmp(&b.last_token));
+    selected_tablets.sort_unstable_by_key(|a| a.last_token);
 
     let (tablets, _) = selected_tablets.iter().fold(
         (Vec::new(), i64::MIN),
