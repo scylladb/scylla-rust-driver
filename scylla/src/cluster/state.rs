@@ -170,7 +170,7 @@ impl ClusterState {
                             "Encountered an error while processing metadata\
                             of keyspace \"{ks_name}\": {e}.\
                             No previous version of this keyspace metadata found, so it will not be\
-                            present in ClusterData until next refresh."
+                            present in ClusterState until next refresh."
                         );
                         None
                     }
