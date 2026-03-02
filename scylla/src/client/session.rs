@@ -55,6 +55,7 @@ use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use thiserror::Error;
 use tokio::time::timeout;
 use tracing::{Instrument, debug, error, trace, trace_span};
 use uuid::Uuid;
@@ -1301,12 +1302,34 @@ impl Session {
 
         Ok(())
     }
+}
 
+#[derive(Debug, Error)]
+/// Errors that can occur during automatic awaiting of schema agreement after a schema change.
+pub(crate) enum AutoSchemaAwaitingError {
+    /// Schema agreement could not be reached.
+    #[error("Schema agreement could not be reached: {0}")]
+    SchemaAgreement(#[from] SchemaAgreementError),
+    /// Metadata refresh after reaching schema agreement failed.
+    #[error("Metadata refresh after reaching schema agreement failed: {0}")]
+    MetadataRefresh(#[from] MetadataError),
+}
+
+impl From<AutoSchemaAwaitingError> for ExecutionError {
+    fn from(err: AutoSchemaAwaitingError) -> Self {
+        match err {
+            AutoSchemaAwaitingError::SchemaAgreement(e) => e.into(),
+            AutoSchemaAwaitingError::MetadataRefresh(e) => e.into(),
+        }
+    }
+}
+
+impl Session {
     async fn handle_auto_await_schema_agreement(
         &self,
         response: &NonErrorQueryResponse,
         coordinator_id: Uuid,
-    ) -> Result<(), ExecutionError> {
+    ) -> Result<(), AutoSchemaAwaitingError> {
         if self.schema_agreement_automatic_waiting && response.as_schema_change().is_some() {
             debug!("Detected schema change, so awaiting schema agreement automatically...");
             self.await_schema_agreement_with_required_node(Some(coordinator_id))
