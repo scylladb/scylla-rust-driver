@@ -145,6 +145,10 @@ pub enum PagerExecutionError {
     /// Failed to await automatic schema agreement.
     #[error("Failed to await schema agreement: {0}")]
     SchemaAgreementError(#[from] SchemaAgreementError),
+
+    /// Failed when refreshing metadata after schema agreement was reached.
+    #[error("Failed when refreshing metadata after schema agreement was reached: {0}")]
+    MetadataError(#[from] MetadataError),
 }
 
 /// Error that occurred during session creation

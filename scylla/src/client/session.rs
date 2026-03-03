@@ -55,6 +55,7 @@ use std::num::NonZeroU32;
 use std::ops::ControlFlow;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use thiserror::Error;
 use tokio::time::timeout;
 use tracing::{Instrument, debug, error, trace, trace_span};
 use uuid::Uuid;
@@ -1286,7 +1287,7 @@ impl Session {
         Ok((result, paging_state_response))
     }
 
-    async fn handle_set_keyspace_response(
+    pub(crate) async fn handle_set_keyspace_response(
         &self,
         response: &NonErrorQueryResponse,
     ) -> Result<(), UseKeyspaceError> {
@@ -1301,21 +1302,41 @@ impl Session {
 
         Ok(())
     }
+}
 
-    async fn handle_auto_await_schema_agreement(
+#[derive(Debug, Error)]
+/// Errors that can occur during automatic awaiting of schema agreement after a schema change.
+pub(crate) enum AutoSchemaAwaitingError {
+    /// Schema agreement could not be reached.
+    #[error("Schema agreement could not be reached: {0}")]
+    SchemaAgreement(#[from] SchemaAgreementError),
+    /// Metadata refresh after reaching schema agreement failed.
+    #[error("Metadata refresh after reaching schema agreement failed: {0}")]
+    MetadataRefresh(#[from] MetadataError),
+}
+
+impl From<AutoSchemaAwaitingError> for ExecutionError {
+    fn from(err: AutoSchemaAwaitingError) -> Self {
+        match err {
+            AutoSchemaAwaitingError::SchemaAgreement(e) => e.into(),
+            AutoSchemaAwaitingError::MetadataRefresh(e) => e.into(),
+        }
+    }
+}
+
+impl Session {
+    pub(crate) async fn handle_auto_await_schema_agreement(
         &self,
         response: &NonErrorQueryResponse,
         coordinator_id: Uuid,
-    ) -> Result<(), ExecutionError> {
-        if self.schema_agreement_automatic_waiting {
-            if response.as_schema_change().is_some() {
-                self.await_schema_agreement_with_required_node(Some(coordinator_id))
-                    .await?;
-            }
+    ) -> Result<(), AutoSchemaAwaitingError> {
+        if self.schema_agreement_automatic_waiting && response.as_schema_change().is_some() {
+            debug!("Detected schema change, so awaiting schema agreement automatically...");
+            self.await_schema_agreement_with_required_node(Some(coordinator_id))
+                .await?;
+            debug!("Auto schema agreement awaiting: schema agreement reached.",);
 
-            if self.refresh_metadata_on_auto_schema_agreement
-                && response.as_schema_change().is_some()
-            {
+            if self.refresh_metadata_on_auto_schema_agreement {
                 self.refresh_metadata().await?;
             }
         }
@@ -1795,7 +1816,10 @@ impl Session {
     /// Normally this is not needed,
     /// the driver should automatically detect all metadata changes in the cluster
     pub async fn refresh_metadata(&self) -> Result<(), MetadataError> {
-        self.cluster.refresh_metadata().await
+        debug!("Session: requested metadata refresh");
+        let res = self.cluster.refresh_metadata().await;
+        debug!("Session: finished metadata refresh");
+        res
     }
 
     /// Access metrics collected by the driver\

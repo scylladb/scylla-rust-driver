@@ -20,7 +20,8 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::utils::{
-    calculate_proxy_host_ids, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL, calculate_proxy_host_ids, setup_tracing, test_with_3_node_cluster,
+    unique_keyspace_name,
 };
 
 async fn run_some_ddl_with_unreachable_node(
@@ -605,4 +606,106 @@ async fn test_schema_await_with_various_apis() {
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
     }
+}
+
+// Verifies that metadata is refreshed as part of the auto schema agreement process.
+#[tokio::test]
+async fn test_schema_await_refreshes_metadata() {
+    setup_tracing();
+    let ks = unique_keyspace_name();
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
+    let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE {ks}
+    WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}"
+        ))
+        .await
+        .unwrap();
+
+    async fn run_ddl_and_inspect_schema(
+        session: &Session,
+        ks: &str,
+        table: &str,
+        mut run_ddl: impl AsyncFnMut(&Session, Statement),
+    ) {
+        let statement = Statement::new(format!("CREATE TABLE {ks}.{table} (id int PRIMARY KEY)"));
+        run_ddl(session, statement).await;
+        let cluster_state = session.get_cluster_state();
+        let keyspace = cluster_state.get_keyspace(ks).unwrap();
+        // This verifies that schema metadata was refreshed, because if it wasn't,
+        // the table wouldn't be found and the test would panic.
+        let _table = keyspace.tables.get(table).unwrap();
+    }
+
+    {
+        tracing::info!("================= Sub test: query_unpaged =================");
+
+        run_ddl_and_inspect_schema(&session, &ks, "query_unpaged", async |session, ddl| {
+            session.query_unpaged(ddl, &()).await.unwrap();
+        })
+        .await;
+    }
+
+    {
+        tracing::info!("================= Sub test: query_single_page =================");
+
+        run_ddl_and_inspect_schema(&session, &ks, "query_single_page", async |session, ddl| {
+            session
+                .query_single_page(ddl, &(), PagingState::start())
+                .await
+                .unwrap();
+        })
+        .await;
+    }
+
+    {
+        tracing::info!("================= Sub test: query_iter =================");
+
+        run_ddl_and_inspect_schema(&session, &ks, "query_iter", async |session, ddl| {
+            session.query_iter(ddl, &()).await.unwrap();
+        })
+        .await;
+    }
+
+    {
+        tracing::info!("================= Sub test: execute_unpaged =================");
+
+        run_ddl_and_inspect_schema(&session, &ks, "execute_unpaged", async |session, ddl| {
+            let stmt = session.prepare(ddl).await.unwrap();
+            session.execute_unpaged(&stmt, &()).await.unwrap();
+        })
+        .await;
+    }
+
+    {
+        tracing::info!("================= Sub test: execute_single_page =================");
+
+        run_ddl_and_inspect_schema(
+            &session,
+            &ks,
+            "execute_single_page",
+            async |session, ddl| {
+                let stmt = session.prepare(ddl).await.unwrap();
+                session
+                    .execute_single_page(&stmt, &(), PagingState::start())
+                    .await
+                    .unwrap();
+            },
+        )
+        .await;
+    }
+
+    {
+        tracing::info!("================= Sub test: execute_iter =================");
+
+        run_ddl_and_inspect_schema(&session, &ks, "execute_iter", async |session, ddl| {
+            let stmt = session.prepare(ddl).await.unwrap();
+            session.execute_iter(stmt, &()).await.unwrap();
+        })
+        .await;
+    }
+
+    let drop_statement = Statement::new(format!("DROP KEYSPACE {ks}"));
+    session.ddl(drop_statement).await.unwrap();
 }
