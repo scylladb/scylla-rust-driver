@@ -708,9 +708,31 @@ impl Connection {
         }
 
         let response = raw_prepared.into_response();
-        if response.result_metadata.id().is_some()
-            && previous_prepared.get_current_result_metadata().id() != response.result_metadata.id()
-        {
+
+        if response.result_metadata.id().is_none() {
+            return Ok(());
+        }
+
+        let current_metadata = previous_prepared.get_current_result_metadata();
+
+        let non_destructive_update =
+            current_metadata.col_count() == 0 || response.result_metadata.col_count() != 0;
+        if !non_destructive_update {
+            // For some statements, real result metadata is only provided in response to EXECUTE.
+            // In PREPARED we just get NO_METADATA.
+            // The following is possible
+            //  - We PREPARE a statement, get id X and NO_METADATA
+            //  - We EXECUTE it with id X
+            //  - Server responds with id Y and real metadata
+            //  - Statement is cleared from the cache
+            //  - We reprepare, get id X again
+            //  - We replace metadata, throwing the useful one out.
+            // This condition is supposed to prevent that. I don't think there
+            // is any scenario where we want to replace non-empty metadata with empty metadata.
+            return Ok(());
+        }
+
+        if current_metadata.id() != response.result_metadata.id() {
             previous_prepared.update_current_result_metadata(Arc::new(response.result_metadata));
         }
 
@@ -918,10 +940,22 @@ impl Connection {
             rows_result,
         )) = &query_response.response
         {
-            if rows_result.0.metadata().id().is_some()
-                && rows_result.0.metadata().id()
-                    != prepared_statement.get_current_result_metadata().id()
-            {
+            // New metadata doesn't have id, so nothing to update.
+            if rows_result.0.metadata().id().is_none() {
+                return;
+            }
+
+            let current_metadata = prepared_statement.get_current_result_metadata();
+
+            let updated_id = rows_result.0.metadata().id() != current_metadata.id();
+            // If server sent us real ID in PREPARED, but sent us no metadata,
+            // we will send empty id in EXECUTE. This forces server to resend id, and metadata.
+            // In this case id will be the same, but there will be some columns.
+            let same_id_but_non_empty = (!updated_id)
+                && current_metadata.col_count() == 0
+                && rows_result.0.metadata().col_count() != 0;
+
+            if updated_id || same_id_but_non_empty {
                 // Metadata in response is either cached metadata extracted from statement, or a new extracted from response.
                 // If the id differs from the one in prepared statement, I see 2 possibilities:
                 // 1. Metadata changed, and was already updated on PreparedStatement by another execution.
@@ -942,27 +976,61 @@ impl Connection {
         statement_metadata: &'statement Arc<ResultMetadata<'static>>,
     ) -> CachedMetadataParameters<'statement> {
         let has_metadata_extension = self.features.protocol_features.scylla_metadata_id_supported;
-        // If the metadata id extension is supported, there is no point in not caching metadata,
-        // so we ignore the setting on prepared statement.
-        let skip_metadata = statement.get_use_cached_result_metadata() || has_metadata_extension;
+        let skip_metadata = {
+            // If the metadata id extension is supported, there is usually no point in not caching metadata.
+            // There is one case where we still want to request new result metadata: if the current one has 0
+            // columns.
+            // It may be the case for INSERT statement which really doesn't return columns,
+            // but it may also be the case for statements like `LIST ROLES of` which don't return metadata
+            // in PREPARED, but return columns when executed. If we don't request metadata for those, we won't
+            // be able to deserialize them.
+            if statement_metadata.col_count() == 0 {
+                false
+            } else {
+                // If the cached metadata has some columns, and we do have the extension, then
+                // we can safely skip result metadata. Server will send it if our current metadata id is wrong.
+                statement.get_use_cached_result_metadata() || has_metadata_extension
+            }
+        };
 
-        let cached_metadata = skip_metadata.then(|| statement_metadata);
+        // If we don't set `skip_metadata`, then there is no point in using cached metadata,
+        // because the server is obligated to send us one anyway.
+        // Using cached wouldn't impact the driver in any way, because the cached metadata is only used
+        // for deserialization, and ignored if server sent a new one.
+        // Ignoring it here just seems more correct and clear to me.
+        let cached_metadata = skip_metadata.then_some(statement_metadata);
 
         let result_metadata_id =
             // We want to send result metadata id if, and only if, metadata extension is enabled.
-            // The logic in the caller of this function forces `cached_metadata` to be `Some`. in that case.
-            // Here we need to extract metadata from Option, so we need to handle the case where it is None.
-            // and extension is enabled. The only way to handle it is a panic, because it is a clear bug in the driver.
             match (cached_metadata.as_ref(), has_metadata_extension) {
-                // In the first branch we know that metadata extension is enabled, and we have extracted cached metadata.
+                // In the first branch we know that metadata extension is enabled, and we are using cached metadata.
                 // Can we `unwrap()` the id? I think not, because I see one scenario where it can be None.
                 // Statement may have been prepared on connection that does not have the extension (think:
                 // cluster during upgrade, with mixed versions), and then used on this connection.
                 // What to do in this case? We have to send some id, because it is not optional in the protocol,
                 // so let's send empty id.
                 (Some(metadata), true) => Some(metadata.id().unwrap_or(&[])),
+                // Extension is not enabled. We must never send an id in this case.
                 (_, false) => None,
-                (None, true) => unreachable!("metadata extension enabled, but no cached metadata."),
+                // Extension is enabled, but we are not using cached metadata!
+                // See definition of `skip_metadata`: this can happen if cached result metadata
+                // has 0 columns.
+                // We must send an id, and we have basically 2 options:
+                //  1. Id from current result metadata (or empty if not present)
+                //  2. Empty id
+                // I don't think it matters a lot which choice we make here.
+                //  - Not sending ID should be a small bit cheaper for INSERTs, because we send less data.
+                //  - Scylla currently has slightly weird implementation of ID for some statements,
+                //    notable `LIST ROLES of`. In PREPARED, it sends NO_METADATA, and some result metadata id
+                //    (which is a result of hashing empty string). In response to EXECUTE made with such ID,
+                //    it will not send a new id, and will not send metadata (unless skip_metadata=false).
+                //    Cassandra has a more reasonable approach to this. More details in:
+                //     - https://github.com/scylladb/scylla-rust-driver/issues/1575#issuecomment-3990545877
+                //     - https://github.com/scylladb/scylla-rust-driver/issues/1575#issuecomment-3990812038
+                //    Sending empty id will force Scylla to resend id alongside metadata, giving us a chance to update
+                //    it, and use it for subsequent executions.
+                //    This isn't very important, `LIST ROLES of` performance doesn't matter, so its not a strong argument.
+                (None, true) => Some(&[] as &[u8]),
             };
 
         CachedMetadataParameters {
