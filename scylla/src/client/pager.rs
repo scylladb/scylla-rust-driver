@@ -586,7 +586,7 @@ where
                         page_result,
                     )
                     .await;
-                res.map(|(cf, ())| cf.map_break(|()| proof.clone()))
+                res.map(|cf| cf.map_break(|()| proof.clone()))
             }
         };
         (Ok(res), sender)
@@ -806,7 +806,7 @@ where
         sender: &mpsc::Sender<ResultNextPage>,
         elapsed: Duration,
         query_response: Result<NonErrorQueryResponse, RequestAttemptError>,
-    ) -> Result<(ControlFlow<(), ()>, ()), RequestAttemptError> {
+    ) -> Result<ControlFlow<(), ()>, RequestAttemptError> {
         match query_response {
             Ok(NonErrorQueryResponse {
                 response:
@@ -835,7 +835,7 @@ where
                 let res = sender.send(Ok(received_page)).await;
                 if res.is_err() {
                     // channel was closed, QueryPager was dropped - should shutdown
-                    return Ok((ControlFlow::Break(()), ()));
+                    return Ok(ControlFlow::Break(()));
                 }
 
                 match paging_state_response.into_paging_control_flow() {
@@ -844,7 +844,7 @@ where
                     }
                     ControlFlow::Break(()) => {
                         // Reached the last query, shutdown
-                        return Ok((ControlFlow::Break(()), ()));
+                        return Ok(ControlFlow::Break(()));
                     }
                 }
 
@@ -852,7 +852,7 @@ where
                 self.retry_session.reset();
                 self.log_request_start();
 
-                Ok((ControlFlow::Continue(()), ()))
+                Ok(ControlFlow::Continue(()))
             }
             // This catches all other kinds of responses that are not rows.
             // As this is not the first page, this is certainly an error.
