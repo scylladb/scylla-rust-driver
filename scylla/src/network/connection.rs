@@ -33,6 +33,7 @@ use futures::{FutureExt, future::RemoteHandle};
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::CqlRequestKind;
 use scylla_cql::frame::request::options::{self, Options};
+use scylla_cql::frame::request::query::QueryParameters;
 use scylla_cql::frame::response::authenticate::Authenticate;
 use scylla_cql::frame::response::result::{
     ResultMetadata, ResultWithDeserializedMetadata, TableSpec,
@@ -416,6 +417,12 @@ impl HostConnectionConfig {
 
 // Used to listen for fatal error in connection
 pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<ConnectionError>;
+
+struct CachedMetadataParameters<'statement> {
+    cached_metadata: Option<&'statement Arc<ResultMetadata<'static>>>,
+    skip_metadata: bool,
+    result_metadata_id: Option<&'statement [u8]>,
+}
 
 impl Connection {
     // Returns new connection and ErrorReceiver which can be used to wait for a fatal error
@@ -927,24 +934,41 @@ impl Connection {
         }
     }
 
-    fn get_result_id<'metadata>(
-        cached_metadata: &'metadata Option<Arc<ResultMetadata<'static>>>,
-        has_metadata_extension: bool,
-    ) -> Option<&'metadata [u8]> {
-        // We want to send result metadata id if, and only if, metadata extension is enabled.
-        // The logic in the caller of this function forces `cached_metadata` to be `Some`. in that case.
-        // Here we need to extract metadata from Option, so we need to handle the case where it is None.
-        // and extension is enabled. The only way to handle it is a panic, because it is a clear bug in the driver.
-        match (cached_metadata.as_ref(), has_metadata_extension) {
-            // In the first branch we know that metadata extension is enabled, and we have extracted cached metadata.
-            // Can we `unwrap()` the id? I think not, because I see one scenario where it can be None.
-            // Statement may have been prepared on connection that does not have the extension (think:
-            // cluster during upgrade, with mixed versions), and then used on this connection.
-            // What to do in this case? We have to send some id, because it is not optional in the protocol,
-            // so let's send empty id.
-            (Some(metadata), true) => Some(metadata.id().unwrap_or(&[])),
-            (_, false) => None,
-            (None, true) => unreachable!("metadata extension enabled, but no cached metadata."),
+    fn calculate_cached_metadata_params<'statement>(
+        &self,
+        statement: &'statement PreparedStatement,
+        // We could extract it from the statement in this function, but result_metadata_id references
+        // such extracted metadata, leading to self-referential struct problem.
+        statement_metadata: &'statement Arc<ResultMetadata<'static>>,
+    ) -> CachedMetadataParameters<'statement> {
+        let has_metadata_extension = self.features.protocol_features.scylla_metadata_id_supported;
+        // If the metadata id extension is supported, there is no point in not caching metadata,
+        // so we ignore the setting on prepared statement.
+        let skip_metadata = statement.get_use_cached_result_metadata() || has_metadata_extension;
+
+        let cached_metadata = skip_metadata.then(|| statement_metadata);
+
+        let result_metadata_id =
+            // We want to send result metadata id if, and only if, metadata extension is enabled.
+            // The logic in the caller of this function forces `cached_metadata` to be `Some`. in that case.
+            // Here we need to extract metadata from Option, so we need to handle the case where it is None.
+            // and extension is enabled. The only way to handle it is a panic, because it is a clear bug in the driver.
+            match (cached_metadata.as_ref(), has_metadata_extension) {
+                // In the first branch we know that metadata extension is enabled, and we have extracted cached metadata.
+                // Can we `unwrap()` the id? I think not, because I see one scenario where it can be None.
+                // Statement may have been prepared on connection that does not have the extension (think:
+                // cluster during upgrade, with mixed versions), and then used on this connection.
+                // What to do in this case? We have to send some id, because it is not optional in the protocol,
+                // so let's send empty id.
+                (Some(metadata), true) => Some(metadata.id().unwrap_or(&[])),
+                (_, false) => None,
+                (None, true) => unreachable!("metadata extension enabled, but no cached metadata."),
+            };
+
+        CachedMetadataParameters {
+            cached_metadata,
+            skip_metadata,
+            result_metadata_id,
         }
     }
 
@@ -967,28 +991,20 @@ impl Connection {
             .get_timestamp()
             .or_else(get_timestamp_from_gen);
 
-        let has_metadata_extension = self.features.protocol_features.scylla_metadata_id_supported;
-
-        // If the metadata id extension is supported, there is no point in not caching metadata,
-        // so we ignore the setting on prepared statement.
-        let skip_metadata =
-            prepared_statement.get_use_cached_result_metadata() || has_metadata_extension;
-
-        let cached_metadata =
-            skip_metadata.then(|| prepared_statement.get_current_result_metadata());
-
-        let result_id = Self::get_result_id(&cached_metadata, has_metadata_extension);
+        let current_result_metadata = prepared_statement.get_current_result_metadata();
+        let cached_metadata_params =
+            self.calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
 
         let execute_frame = execute::ExecuteV2 {
             id: prepared_statement.get_id().as_ref().into(),
-            result_metadata_id: result_id.map(Into::into),
+            result_metadata_id: cached_metadata_params.result_metadata_id.map(Into::into),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
                 values: Cow::Borrowed(values),
                 page_size: page_size.map(Into::into),
                 timestamp,
-                skip_metadata,
+                skip_metadata: cached_metadata_params.skip_metadata,
                 paging_state,
             },
         };
@@ -998,7 +1014,7 @@ impl Connection {
                 &execute_frame,
                 true,
                 prepared_statement.config.tracing,
-                cached_metadata.as_ref(),
+                cached_metadata_params.cached_metadata,
             )
             .await?;
 
@@ -1026,18 +1042,20 @@ impl Connection {
                 self.reprepare(prepared_statement.get_statement(), prepared_statement)
                     .await?;
                 // Metadata may have changed in reprepare, or in some concurrent execution
-                let cached_metadata =
-                    skip_metadata.then(|| prepared_statement.get_current_result_metadata());
-                let result_id = Self::get_result_id(&cached_metadata, has_metadata_extension);
+                let current_result_metadata = prepared_statement.get_current_result_metadata();
+                let cached_metadata_params = self
+                    .calculate_cached_metadata_params(prepared_statement, &current_result_metadata);
                 let new_response = self
                     .send_request(
                         &execute::ExecuteV2 {
-                            result_metadata_id: result_id.map(Into::into),
+                            result_metadata_id: cached_metadata_params
+                                .result_metadata_id
+                                .map(Into::into),
                             ..execute_frame
                         },
                         true,
                         prepared_statement.config.tracing,
-                        cached_metadata.as_ref(),
+                        cached_metadata_params.cached_metadata,
                     )
                     .await?;
 
