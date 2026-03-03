@@ -509,3 +509,44 @@ async fn test_fetch_system_keyspace() {
         .unwrap()
         .for_each(|_| ());
 }
+
+#[tokio::test]
+async fn test_durable_writes_in_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks_durable = unique_keyspace_name();
+    let ks_non_durable = unique_keyspace_name();
+
+    // Create a keyspace with durable_writes explicitly set to true
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE {ks_durable} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}} AND DURABLE_WRITES = true"
+        ))
+        .await
+        .unwrap();
+
+    // Create a keyspace with durable_writes explicitly set to false
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE {ks_non_durable} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}} AND DURABLE_WRITES = false"
+        ))
+        .await
+        .unwrap();
+
+    let cluster_state = session.get_cluster_state();
+
+    let ks_durable_meta = cluster_state.get_keyspace(&ks_durable).unwrap();
+    assert!(ks_durable_meta.durable_writes);
+
+    let ks_non_durable_meta = cluster_state.get_keyspace(&ks_non_durable).unwrap();
+    assert!(!ks_non_durable_meta.durable_writes);
+
+    session
+        .ddl(format!("DROP KEYSPACE {ks_durable}"))
+        .await
+        .unwrap();
+    session
+        .ddl(format!("DROP KEYSPACE {ks_non_durable}"))
+        .await
+        .unwrap();
+}
