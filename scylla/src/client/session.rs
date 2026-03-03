@@ -1287,7 +1287,7 @@ impl Session {
         Ok((result, paging_state_response))
     }
 
-    async fn handle_set_keyspace_response(
+    pub(crate) async fn handle_set_keyspace_response(
         &self,
         response: &NonErrorQueryResponse,
     ) -> Result<(), UseKeyspaceError> {
@@ -1325,7 +1325,7 @@ impl From<AutoSchemaAwaitingError> for ExecutionError {
 }
 
 impl Session {
-    async fn handle_auto_await_schema_agreement(
+    pub(crate) async fn handle_auto_await_schema_agreement(
         &self,
         response: &NonErrorQueryResponse,
         coordinator_id: Uuid,

@@ -28,11 +28,12 @@ use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::client::execution_profile::ExecutionProfileInner;
-use crate::client::session::Session;
+use crate::client::session::{AutoSchemaAwaitingError, Session};
 use crate::cluster::{ClusterState, NodeRef};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
-    PagerExecutionError, RequestAttemptError, RequestError, SchemaAgreementError, UseKeyspaceError,
+    MetadataError, PagerExecutionError, RequestAttemptError, RequestError, SchemaAgreementError,
+    UseKeyspaceError,
 };
 use crate::frame::response::result;
 use crate::network::Connection;
@@ -99,7 +100,6 @@ enum FirstPageContent {
     SetKeyspace {
         set_keyspace: SetKeyspace,
     },
-    #[expect(unused)] // Currently the underlying event is never read.
     SchemaChange {
         schema_change: SchemaChange,
     },
@@ -1487,6 +1487,10 @@ If you are using this API, you are probably doing something wrong."
                     "A DDL statement executed via Connection::execute_iter(), which is unsupported and a bug in the driver! Triggered error: {:?}",
                     schema_agreement_error
                 ),
+                PagerConstructionError::MetadataRefresh(metadata_error) => panic!(
+                    "A DDL statement executed via Connection::execute_iter(), which is unsupported and a bug in the driver! Triggered error: {:?}",
+                    metadata_error
+                ),
                 PagerConstructionError::UseKeyspace(use_keyspace_error) => panic!(
                     "A \"USE <keyspace>\" statement executed via Connection::execute_iter(), which is unsupported and a bug in the driver! Triggered error: {:?}",
                     use_keyspace_error
@@ -1564,12 +1568,14 @@ If you are using this API, you are probably doing something wrong."
                     // all statements in a paged manner (e.g., C#-RS Driver).
                     //
                     // Let's set the keyspace on the session.
-                    if let Err(err) = session
-                        .use_keyspace(&set_keyspace.keyspace_name, true)
-                        .await
-                    {
-                        return Err(PagerConstructionError::UseKeyspace(err));
-                    }
+                    let response = NonErrorQueryResponse {
+                        response: NonErrorResponseWithDeserializedMetadata::Result(
+                            result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace),
+                        ),
+                        tracing_id: None,
+                        warnings: Vec::new(),
+                    };
+                    session.handle_set_keyspace_response(&response).await?;
                 } else {
                     // We don't have a session to set the keyspace on.
                     // Let's just log an erroneous situation.
@@ -1582,7 +1588,7 @@ If you are using this API, you are probably doing something wrong."
                 // The stream will be empty.
                 RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
             }
-            FirstPageContent::SchemaChange { schema_change: _ } => {
+            FirstPageContent::SchemaChange { schema_change } => {
                 if let Some(session) = session {
                     // If we are here, this means that we received a SCHEMA_CHANGE response as a first page.
                     // This can happen when the user executes a DDL statement.
@@ -1591,12 +1597,29 @@ If you are using this API, you are probably doing something wrong."
                     // all statements in a paged manner (e.g., C#-RS Driver).
                     //
                     // Let's await schema agreement, if Session is configured to do so.
-                    if let Err(err) = session
-                        .await_schema_agreement_with_required_node(coordinator_id)
-                        .await
-                    {
-                        return Err(PagerConstructionError::SchemaAgreement(err));
-                    }
+                    let response = NonErrorQueryResponse {
+                        response: NonErrorResponseWithDeserializedMetadata::Result(
+                            result::ResultWithDeserializedMetadata::SchemaChange(schema_change),
+                        ),
+                        tracing_id: None,
+                        warnings: Vec::new(),
+                    };
+                    session
+                        .handle_auto_await_schema_agreement(
+                            &response,
+                            // Making it impossible to pass None here on the type level would be possible,
+                            // but it would require heavy restructuring. The culprit is SingleConnectionPagerWorker,
+                            // which is used for ControlConnection::execute_iter, and which doesn't have enough
+                            // data to provide a Coordinator in its proof of sending the first page.
+                            //
+                            // I could duplicate data types and the proving sender with Coordinator for PagerWorker
+                            // and no Coordinator for SingleConnectionPagerWorker, but it's not worth it given that
+                            // this None here is an erroneous situation that can only happen due to a bug in the driver.
+                            //
+                            // Also, we hope to refactor the Pager soon [#1549](https://github.com/scylladb/scylla-rust-driver/issues/1549).
+                            coordinator_id.expect("PagerWorker always has Coordinator specified"),
+                        )
+                        .await?;
                 } else {
                     // We don't have a session to await schema agreement with.
                     // Let's just log an erroneous situation.
@@ -1804,6 +1827,7 @@ pub enum NextRowError {
 enum PagerConstructionError {
     NextPage(NextPageError),
     SchemaAgreement(SchemaAgreementError),
+    MetadataRefresh(MetadataError),
     UseKeyspace(UseKeyspaceError),
 }
 
@@ -1825,6 +1849,19 @@ impl From<UseKeyspaceError> for PagerConstructionError {
     }
 }
 
+impl From<AutoSchemaAwaitingError> for PagerConstructionError {
+    fn from(err: AutoSchemaAwaitingError) -> Self {
+        match err {
+            AutoSchemaAwaitingError::SchemaAgreement(err) => {
+                PagerConstructionError::SchemaAgreement(err)
+            }
+            AutoSchemaAwaitingError::MetadataRefresh(err) => {
+                PagerConstructionError::MetadataRefresh(err)
+            }
+        }
+    }
+}
+
 impl From<PagerConstructionError> for PagerExecutionError {
     fn from(err: PagerConstructionError) -> Self {
         match err {
@@ -1833,6 +1870,9 @@ impl From<PagerConstructionError> for PagerExecutionError {
             }
             PagerConstructionError::SchemaAgreement(schema_agreement_err) => {
                 PagerExecutionError::SchemaAgreementError(schema_agreement_err)
+            }
+            PagerConstructionError::MetadataRefresh(metadata_err) => {
+                PagerExecutionError::MetadataError(metadata_err)
             }
             PagerConstructionError::UseKeyspace(use_keyspace_err) => {
                 PagerExecutionError::UseKeyspaceError(use_keyspace_err)
