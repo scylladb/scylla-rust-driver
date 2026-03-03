@@ -1308,8 +1308,10 @@ impl Session {
         coordinator_id: Uuid,
     ) -> Result<(), ExecutionError> {
         if self.schema_agreement_automatic_waiting && response.as_schema_change().is_some() {
+            debug!("Detected schema change, so awaiting schema agreement automatically...");
             self.await_schema_agreement_with_required_node(Some(coordinator_id))
                 .await?;
+            debug!("Auto schema agreement awaiting: schema agreement reached.",);
 
             if self.refresh_metadata_on_auto_schema_agreement {
                 self.refresh_metadata().await?;
@@ -1791,7 +1793,10 @@ impl Session {
     /// Normally this is not needed,
     /// the driver should automatically detect all metadata changes in the cluster
     pub async fn refresh_metadata(&self) -> Result<(), MetadataError> {
-        self.cluster.refresh_metadata().await
+        debug!("Session: requested metadata refresh");
+        let res = self.cluster.refresh_metadata().await;
+        debug!("Session: finished metadata refresh");
+        res
     }
 
     /// Access metrics collected by the driver\
