@@ -1307,15 +1307,11 @@ impl Session {
         response: &NonErrorQueryResponse,
         coordinator_id: Uuid,
     ) -> Result<(), ExecutionError> {
-        if self.schema_agreement_automatic_waiting {
-            if response.as_schema_change().is_some() {
-                self.await_schema_agreement_with_required_node(Some(coordinator_id))
-                    .await?;
-            }
+        if self.schema_agreement_automatic_waiting && response.as_schema_change().is_some() {
+            self.await_schema_agreement_with_required_node(Some(coordinator_id))
+                .await?;
 
-            if self.refresh_metadata_on_auto_schema_agreement
-                && response.as_schema_change().is_some()
-            {
+            if self.refresh_metadata_on_auto_schema_agreement {
                 self.refresh_metadata().await?;
             }
         }
