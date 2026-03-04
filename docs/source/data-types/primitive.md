@@ -1,4 +1,4 @@
-# Bool, Tinyint, Smallint, Int, Bigint, Float, Double
+# Bool, Tinyint, Smallint, Int, Bigint, Float, Double, C-style Enum
 
 ### Bool
 
@@ -200,5 +200,33 @@ while let Some((double_value,)) = iter.try_next().await? {
     println!("{:?}", double_value);
 }
 # Ok(())
+# }
+```
+
+### C-style Enums
+
+With this feature, you can map Rust C-style enums to integer columns (`int`, `smallint`, `tinyint`) in ScyllaDB.
+
+When you have a C-style enum (an enum where all variants are unit variants), simply add the standard Rust `#[repr(TYPE)]` attribute (e.g. `#[repr(i32)]`). The driver will detect this attribute and use the corresponding integer type for serialization.
+
+#### Supported Types
+You can use standard Rust signed integer types: `i8`, `i16`, `i32`, `i64`.
+
+#### Example
+
+```rust
+# extern crate scylla;
+# async fn check_only_compiles() {
+use scylla::{SerializeValue, DeserializeValue};
+
+// Defines an enum that will be stored as an 'int' in ScyllaDB.
+#[derive(SerializeValue, DeserializeValue, PartialEq, Debug, Clone, Copy)]
+#[repr(i32)]
+enum Status {
+    New = 0,
+    Processing = 1,
+    Completed = 2,
+    Failed = 99,
+}
 # }
 ```

@@ -95,13 +95,16 @@ pub(crate) fn derive_serialize_value(
     tokens_input: TokenStream,
 ) -> Result<syn::ItemImpl, syn::Error> {
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
+
+    if let syn::Data::Enum(data_enum) = &input.data {
+        return derive_serialize_value_enum(&input, data_enum);
+    }
+
     let struct_name = input.ident.clone();
     let named_fields = crate::parser::parse_named_fields(&input, "SerializeValue")?;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let attributes = Attributes::from_attributes(&input.attrs)?;
 
     let crate_path = attributes.crate_path();
-    let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
 
     let fields = named_fields
         .named
@@ -125,15 +128,56 @@ pub(crate) fn derive_serialize_value(
         Flavor::EnforceOrder => Box::new(FieldOrderedGenerator { ctx: &ctx }),
     };
 
-    let serialize_item = generator.generate_serialize();
+    let serialize_method = generator.generate_serialize();
 
-    let res = parse_quote! {
-        #[automatically_derived]
-        impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
-            #serialize_item
+    Ok(generate_serialize_value_impl(
+        &crate_path,
+        &struct_name,
+        &input.generics,
+        serialize_method,
+    ))
+}
+
+fn derive_serialize_value_enum(
+    input: &syn::DeriveInput,
+    data_enum: &syn::DataEnum,
+) -> Result<syn::ItemImpl, syn::Error> {
+    use crate::enum_attrs::{EnumAttrs, get_enum_repr_type, validate_c_style_enum};
+
+    validate_c_style_enum(data_enum)?;
+
+    let attrs = EnumAttrs::from_attributes(&input.attrs)?;
+    let crate_path = attrs.macro_internal_path();
+    let struct_name = &input.ident;
+
+    let repr_type_str = get_enum_repr_type(input)?;
+    let repr_type: syn::Type = syn::parse_str(&repr_type_str)
+        .map_err(|_| syn::Error::new_spanned(input, "Failed to parse repr type"))?;
+
+    let mut generics = input.generics.clone();
+    let (_, ty_generics, _) = input.generics.split_for_impl();
+
+    generics.make_where_clause().predicates.push(parse_quote! {
+        #struct_name #ty_generics: ::std::marker::Copy
+    });
+
+    let serialize_method = parse_quote! {
+        fn serialize<'b>(
+            &self,
+            typ: &#crate_path::ColumnType,
+            writer: #crate_path::CellWriter<'b>,
+        ) -> ::std::result::Result<#crate_path::WrittenCellProof<'b>, #crate_path::SerializationError> {
+            let value = *self as #repr_type;
+            <#repr_type as #crate_path::SerializeValue>::serialize(&value, typ, writer)
         }
     };
-    Ok(res)
+
+    Ok(generate_serialize_value_impl(
+        &crate_path,
+        struct_name,
+        &generics,
+        serialize_method,
+    ))
 }
 
 impl Context {
@@ -561,6 +605,23 @@ impl Generator for FieldOrderedGenerator<'_> {
                     ) as #crate_path::SerializationError)?;
                 ::std::result::Result::Ok(proof)
             }
+        }
+    }
+}
+
+fn generate_serialize_value_impl(
+    crate_path: &syn::Path,
+    struct_name: &syn::Ident,
+    generics: &syn::Generics,
+    serialize_method: syn::TraitItemFn,
+) -> syn::ItemImpl {
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
+
+    parse_quote! {
+        #[automatically_derived]
+        impl #impl_generics #implemented_trait for #struct_name #ty_generics #where_clause {
+            #serialize_method
         }
     }
 }
