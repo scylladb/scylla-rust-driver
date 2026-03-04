@@ -1051,6 +1051,10 @@ impl Connection {
                             result_metadata_id: cached_metadata_params
                                 .result_metadata_id
                                 .map(Into::into),
+                            parameters: QueryParameters {
+                                skip_metadata: cached_metadata_params.skip_metadata,
+                                ..execute_frame.parameters
+                            },
                             ..execute_frame
                         },
                         true,
