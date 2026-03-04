@@ -277,6 +277,115 @@ async fn perform_test_for_proxy(
     running_proxy
 }
 
+// Verify that executing an INSERT statement (which returns VOID) always results in:
+// 1. A VOID response type (which can't carry result metadata id).
+// 2. The EXECUTE request sending an empty result_metadata_id.
+// First part is important. Second not so much - it's just the current implementation strategy
+// in the driver. Test will need to be adjusted if we ever change it.
+#[tokio::test]
+async fn test_insert_sends_empty_result_metadata_id() {
+    use Condition::*;
+    setup_tracing();
+
+    let features = fetch_negotiated_features(None).await;
+    if !features.scylla_metadata_id_supported {
+        return;
+    }
+
+    let res = test_with_3_node_cluster(
+        scylla_proxy::ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map.clone()))
+                .build()
+                .await
+                .unwrap();
+
+            let ks = unique_keyspace_name();
+            prepare_schema_and_data(&session, &ks).await;
+
+            let insert_str = format!("INSERT INTO {ks}.t (a, b) VALUES (?, ?)");
+            let prepared_insert = session.prepare(insert_str).await.unwrap();
+
+            // Set up feedback channels to intercept EXECUTE requests and RESULT responses.
+            let (tx_execute, mut rx_execute) = tokio::sync::mpsc::unbounded_channel();
+            let (tx_result, mut rx_result) = tokio::sync::mpsc::unbounded_channel();
+
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.prepend_request_rules(vec![RequestRule(
+                    Condition::not(ConnectionRegisteredAnyEvent)
+                        .and(RequestOpcode(scylla_proxy::RequestOpcode::Execute)),
+                    RequestReaction::noop().with_feedback_when_performed(tx_execute.clone()),
+                )]);
+                node.prepend_response_rules(vec![ResponseRule(
+                    Condition::not(ConnectionRegisteredAnyEvent)
+                        .and(ResponseOpcode(scylla_proxy::ResponseOpcode::Result)),
+                    ResponseReaction::noop().with_feedback_when_performed(tx_result.clone()),
+                )]);
+            });
+
+            // Execute the INSERT 3 times and verify each time.
+            for i in 0..3 {
+                tracing::info!("Executing INSERT iteration {}", i);
+                let result = session
+                    .execute_unpaged(&prepared_insert, &(i, format!("val_{i}")))
+                    .await
+                    .unwrap();
+
+                // The result should not be of Rows kind (INSERT returns VOID).
+                result.result_not_rows().unwrap();
+
+                // Verify the EXECUTE request sent empty result_metadata_id.
+                let (req_frame, _) = rx_execute.recv().await.unwrap();
+                let body_with_extensions =
+                    parse_response_body_extensions(req_frame.params.flags, None, req_frame.body)
+                        .unwrap();
+                let execute = ExecuteV2::deserialize_with_features(
+                    &mut &*body_with_extensions.body,
+                    &features,
+                )
+                .unwrap();
+                let Some(id) = execute.result_metadata_id else {
+                    panic!("Expected result_metadata_id to be Some (extension is enabled)");
+                };
+                assert!(
+                    id.as_ref().is_empty(),
+                    "INSERT should always send empty result_metadata_id, iteration {i}"
+                );
+
+                // Verify the response is VOID.
+                let (resp_frame, _) = rx_result.recv().await.unwrap();
+                let body_with_extensions =
+                    parse_response_body_extensions(resp_frame.params.flags, None, resp_frame.body)
+                        .unwrap();
+                let response = Response::deserialize(
+                    &features,
+                    resp_frame.opcode,
+                    body_with_extensions.body,
+                    None,
+                )
+                .unwrap();
+                assert!(
+                    matches!(response, Response::Result(Result::Void)),
+                    "INSERT should return VOID response, iteration {i}, got: {response:?}"
+                );
+            }
+
+            running_proxy.turn_off_rules();
+            drop_schema(&session, &ks).await;
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
+
 // Test for the basic scenario that result metadata id extension is supposed to fix.
 // We have 2 clients using 'SELECT *' query. Schema is changed. One of the clients
 // re-inserts statement into the cache. The other client should have its metadata
