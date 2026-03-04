@@ -148,9 +148,6 @@ async fn test_schema_types_in_metadata() {
         .await
         .unwrap();
 
-    session.await_schema_agreement().await.unwrap();
-    session.refresh_metadata().await.unwrap();
-
     let cluster_state = session.get_cluster_state();
     let tables = &cluster_state.get_keyspace(&ks).unwrap().tables;
 
@@ -280,9 +277,6 @@ async fn test_user_defined_types_in_metadata() {
         .await
         .unwrap();
 
-    session.await_schema_agreement().await.unwrap();
-    session.refresh_metadata().await.unwrap();
-
     let cluster_state = session.get_cluster_state();
     let user_defined_types = &cluster_state.get_keyspace(&ks).unwrap().user_defined_types;
 
@@ -337,9 +331,6 @@ async fn test_column_kinds_in_metadata() {
         .await
         .unwrap();
 
-    session.await_schema_agreement().await.unwrap();
-    session.refresh_metadata().await.unwrap();
-
     let cluster_state = session.get_cluster_state();
     let columns = &cluster_state.get_keyspace(&ks).unwrap().tables["t"].columns;
 
@@ -387,9 +378,6 @@ async fn test_primary_key_ordering_in_metadata() {
         .await
         .unwrap();
 
-    session.await_schema_agreement().await.unwrap();
-    session.refresh_metadata().await.unwrap();
-
     let cluster_state = session.get_cluster_state();
     let table = &cluster_state.get_keyspace(&ks).unwrap().tables["t"];
 
@@ -428,9 +416,6 @@ async fn test_table_partitioner_in_metadata() {
         )
         .await
         .unwrap();
-
-    session.await_schema_agreement().await.unwrap();
-    session.refresh_metadata().await.unwrap();
 
     let cluster_state = session.get_cluster_state();
     let tables = &cluster_state.get_keyspace(&ks).unwrap().tables;
@@ -471,9 +456,6 @@ async fn test_views_in_schema_info() {
 
     session.ddl("CREATE MATERIALIZED VIEW mv1 AS SELECT * FROM t WHERE v IS NOT NULL PRIMARY KEY (v, id)").await.unwrap();
     session.ddl("CREATE MATERIALIZED VIEW mv2 AS SELECT id, v FROM t WHERE v IS NOT NULL PRIMARY KEY (v, id)").await.unwrap();
-
-    session.await_schema_agreement().await.unwrap();
-    session.refresh_metadata().await.unwrap();
 
     let keyspace_meta = session
         .get_cluster_state()
