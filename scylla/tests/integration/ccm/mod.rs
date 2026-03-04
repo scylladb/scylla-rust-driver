@@ -7,3 +7,5 @@ mod host_listener;
 
 #[cfg(all(feature = "openssl-010", feature = "rustls-023"))]
 mod tls;
+
+mod result_metadata_extension;
