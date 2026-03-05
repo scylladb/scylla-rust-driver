@@ -392,8 +392,8 @@ impl ControlConnection {
         fetch_schema: bool,
     ) -> Result<PerKeyspaceResult<Keyspace, SingleKeyspaceMetadataError>, MetadataError> {
         let rows = self
-            .query_filter_keyspace_name::<(String, HashMap<String, String>)>(
-                "select keyspace_name, replication from system_schema.keyspaces",
+            .query_filter_keyspace_name::<(String, HashMap<String, String>, bool)>(
+                "select keyspace_name, replication, durable_writes from system_schema.keyspaces",
                 keyspaces_to_fetch,
             )
             .map_err(|error| MetadataFetchError {
@@ -423,7 +423,7 @@ impl ControlConnection {
         };
 
         rows.map(|row_result| {
-            let (keyspace_name, strategy_map) = row_result?;
+            let (keyspace_name, strategy_map, durable_writes) = row_result?;
 
             let strategy: Strategy = strategy_from_string_map(strategy_map).map_err(|error| {
                 KeyspacesMetadataError::Strategy {
@@ -461,6 +461,7 @@ impl ControlConnection {
 
             let keyspace = Keyspace {
                 strategy,
+                durable_writes,
                 tables,
                 views,
                 user_defined_types,

@@ -140,6 +140,8 @@ impl Peer {
 pub struct Keyspace {
     /// Replication strategy used by the keyspace.
     pub strategy: Strategy,
+    /// Whether the keyspace has durable writes enabled.
+    pub durable_writes: bool,
     /// Tables in the keyspace.
     ///
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.

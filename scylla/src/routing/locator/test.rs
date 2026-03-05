@@ -122,6 +122,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                 strategy: Strategy::SimpleStrategy {
                     replication_factor: 2,
                 },
+                durable_writes: true,
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
@@ -135,6 +136,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                         .into_iter()
                         .collect(),
                 },
+                durable_writes: true,
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
@@ -148,6 +150,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
                         .into_iter()
                         .collect(),
                 },
+                durable_writes: true,
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),

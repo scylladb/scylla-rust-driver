@@ -235,6 +235,7 @@ mod tests {
                 strategy: Strategy::SimpleStrategy {
                     replication_factor: 2,
                 },
+                durable_writes: true,
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
