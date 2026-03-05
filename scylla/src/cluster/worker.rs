@@ -339,7 +339,8 @@ impl ClusterWorker {
                         ControlConnectionEvent::ServerEvent(event) => {
                             debug!("Received server event: {:?}", event);
                             match event {
-                                Event::TopologyChange(_) => (), // Refresh immediately
+                                Event::TopologyChange(_) |
+                                Event::ClientRoutesChange(_) => (), // Refresh immediately
                                 Event::StatusChange(_status) => {
                                     // TODO: Tracking status using events is unreliable because of
                                     // the possibility of losing events when control connection is broken.
