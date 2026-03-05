@@ -150,6 +150,8 @@ impl Cluster {
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
+            #[cfg(feature = "client-routes")]
+            String::new(), // TODO: pass real connection ids
         )
         .await?;
 

@@ -30,13 +30,17 @@ pub(super) struct ControlConnection {
 }
 
 impl ControlConnection {
-    pub(super) fn new(conn: Arc<Connection>, cache: Arc<ControlConnectionCache>) -> Self {
+    pub(super) fn new(
+        conn: Arc<Connection>,
+        cache: Arc<ControlConnectionCache>,
+        #[cfg(feature = "client-routes")] private_link_connection_ids: String,
+    ) -> Self {
         Self {
             conn,
             overridden_serverside_timeout: None,
             cache,
             #[cfg(feature = "client-routes")]
-            client_routes_connection_ids: String::new(), // TODO: pass it from MetadataReader
+            client_routes_connection_ids: private_link_connection_ids,
         }
     }
 
@@ -285,8 +289,12 @@ mod tests {
             .unwrap();
 
             let connected_to_scylladb = conn.get_shard_info().is_some();
-            let conn_with_default_timeout =
-                ControlConnection::new(Arc::new(conn), Arc::new(ControlConnectionCache::new()));
+            let conn_with_default_timeout = ControlConnection::new(
+                Arc::new(conn),
+                Arc::new(ControlConnectionCache::new()),
+                #[cfg(feature = "client-routes")]
+                String::new(),
+            );
 
             // No custom timeout set.
             {
