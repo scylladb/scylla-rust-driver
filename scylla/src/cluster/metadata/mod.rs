@@ -14,11 +14,13 @@
 //!     - [NativeType],
 //!     - [UserDefinedType],
 //!     - [CollectionType],
-//!
+//  - client routes:
+//    - [ClientRoute]
 
 mod fetching;
 pub(super) mod reader;
 
+use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 use crate::routing::Token;
 
 use scylla_cql::frame::response::result::ColumnSpec;
@@ -26,8 +28,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
-
-use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 
 // Re-export of CQL types.
 pub use scylla_cql::frame::response::result::{
@@ -276,6 +276,21 @@ pub enum Strategy {
         /// Additional parameters of the strategy, which the driver does not understand.
         data: HashMap<String, String>,
     },
+}
+
+/// Represents an entry of `system.client_routes` table, in a more refined form (port as u16).
+#[derive(Debug, Clone)]
+#[expect(unused)] // temporarily, removed in further commit
+pub(crate) struct ClientRoute {
+    pub(crate) connection_id: String,
+    pub(crate) host_id: Uuid,
+    pub(crate) hostname: String,
+    // At least one of `port` and `tls_port` must be non-null, as per the REST API constraints.
+    // This is not validated by the driver, as it anyway requires specific one to be non-null
+    // based on the `use_tls` setting, so the non-nullability of _any_ of them is not helpful
+    // for the driver.
+    pub(crate) port: Option<u16>,
+    pub(crate) tls_port: Option<u16>,
 }
 
 impl Metadata {

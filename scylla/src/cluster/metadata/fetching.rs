@@ -30,20 +30,21 @@ use scylla_cql::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
-use crate::DeserializeRow;
-use crate::client::pager::QueryPager;
-use crate::cluster::NodeAddr;
-use crate::cluster::control_connection::ControlConnection;
-use crate::cluster::metadata::{
+use super::{
     CollectionType, Column, ColumnKind, ColumnType, Keyspace, MaterializedView, Metadata,
     MissingUserDefinedType, NativeType, Peer, SingleKeyspaceMetadataError, Strategy, Table,
     UserDefinedType,
 };
+
+use crate::DeserializeRow;
+use crate::client::pager::QueryPager;
+use crate::cluster::NodeAddr;
+use crate::cluster::control_connection::ControlConnection;
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
-    DbError, KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, MetadataFetchError,
-    MetadataFetchErrorKind, NextPageError, NextRowError, PeersMetadataError, RequestAttemptError,
-    RequestError, TablesMetadataError, UdtMetadataError,
+    ClientRoutesMetadataError, DbError, KeyspaceStrategyError, KeyspacesMetadataError,
+    MetadataError, MetadataFetchError, MetadataFetchErrorKind, NextPageError, NextRowError,
+    PeersMetadataError, RequestAttemptError, RequestError, TablesMetadataError, UdtMetadataError,
 };
 use crate::routing::Token;
 
@@ -333,7 +334,88 @@ impl ControlConnection {
             rack,
         })
     }
+}
 
+/*
+ * CREATE TABLE system.client_routes (
+ *     connection_id text,
+ *     host_id uuid,
+ *     address text,          -- DNS hostname of the proxy reachable via client_routes routing
+ *     port int,              -- CQL plaintext port
+ *     tls_port int,          -- CQL TLS port
+ *     alternator_port int,
+ *     alternator_https_port int,
+ *     PRIMARY KEY (connection_id, host_id)
+ * );
+ */
+
+/* There are two separate structs:
+ * 1. ClientRoutesEntry
+ * 2. ClientRoute
+ * They differ just by types to represent ports: i32 in ClientRoutesEntry and u16 for ClientRoute.
+ * The reason is that only signed integers implement DeserializeValue.
+ * So, we utilise the derive macro to implement DeserializeRow automatically on ClientRoutesEntry,
+ * and then convert ClientRoutesEntry to a ClientRoute.
+ */
+
+/// Represents an entry of `system.client_routes` table, in a more raw form (ports as i32).
+#[derive(DeserializeRow)]
+#[expect(unused)] // temporarily, removed in further commit
+#[scylla(crate = "crate")]
+pub(crate) struct ClientRoutesEntry {
+    // PRIMARY KEY (connection_id, host_id)
+    pub(crate) connection_id: String,
+    // DB's REST API throws HTTP 500 if `host_id` is invalid UUID.
+    pub(crate) host_id: Uuid,
+
+    // DB's REST API throws HTTP 400 if `address` is null.
+    #[scylla(rename = "address")]
+    pub(crate) hostname: String,
+
+    // DB's REST API throws HTTP 400 if both `port` and `tls_port` are null,
+    // allows inserting either of them as null as long as the other is not null.
+
+    // Nullable, not part of the primary key. DB's REST API allows inserting null.
+    pub(crate) port: Option<i32>,
+    // Nullable, not part of the primary key. DB's REST API allows inserting null.
+    pub(crate) tls_port: Option<i32>,
+}
+
+impl TryFrom<ClientRoutesEntry> for super::ClientRoute {
+    type Error = ClientRoutesMetadataError;
+
+    fn try_from(
+        ClientRoutesEntry {
+            connection_id,
+            host_id,
+            hostname,
+            port,
+            tls_port,
+        }: ClientRoutesEntry,
+    ) -> Result<Self, Self::Error> {
+        fn parse_port(
+            port: Option<i32>,
+            is_tls: bool,
+        ) -> Result<Option<u16>, ClientRoutesMetadataError> {
+            port.map(|port| {
+                u16::try_from(port)
+                    .map_err(|_| ClientRoutesMetadataError::InvalidPortValue { port, is_tls })
+            })
+            .transpose()
+        }
+        let port = parse_port(port, false)?;
+        let tls_port = parse_port(tls_port, true)?;
+        Ok(Self {
+            connection_id,
+            host_id,
+            hostname,
+            port,
+            tls_port,
+        })
+    }
+}
+
+impl ControlConnection {
     fn query_filter_keyspace_name<'a, R>(
         &'a self,
         query_str: &'a str,
