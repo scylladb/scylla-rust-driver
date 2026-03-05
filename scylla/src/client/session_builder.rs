@@ -334,54 +334,6 @@ impl GenericSessionBuilder<DefaultMode> {
         self.config.address_translator = Some(translator);
         self
     }
-
-    /// TLS feature
-    ///
-    /// Provide SessionBuilder with TlsContext that will be
-    /// used to create a TLS connection to the database.
-    /// If set to None TLS connection won't be used.
-    ///
-    /// Default is None.
-    ///
-    #[cfg_attr(
-        feature = "openssl-010",
-        doc = r#"
-# Example
-
-```
-    # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    use std::fs;
-    use std::path::PathBuf;
-    use scylla::client::session::Session;
-    use scylla::client::session_builder::SessionBuilder;
-    use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
-
-    let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
-    let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
-    context_builder.set_verify(SslVerifyMode::NONE);
-
-    let session: Session = SessionBuilder::new()
-        .known_node("127.0.0.1:9042")
-        .tls_context(Some(context_builder.build()))
-        .build()
-        .await?;
-    # Ok(())
-    # }
-```
-"#
-    )]
-    pub fn tls_context(mut self, tls_context: Option<impl Into<TlsContext>>) -> Self {
-        #[cfg_attr(
-            not(any(feature = "openssl-010", feature = "rustls-023")),
-            // TODO: make this expect() once MSRV is 1.92+.
-            allow(unreachable_code)
-        )]
-        {
-            self.config.tls_context = tls_context.map(|t| t.into());
-        }
-        self
-    }
 }
 
 // NOTE: this `impl` block contains configuration options specific for PrivateLink mode.
@@ -436,6 +388,54 @@ impl GenericSessionBuilder<PrivateLinkMode> {
 // This block contains configuration options that make sense both for any `Session` type.
 // If an option fit only some of them, it should be put in a specialised block.
 impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
+    /// TLS feature
+    ///
+    /// Provide SessionBuilder with TlsContext that will be
+    /// used to create a TLS connection to the database.
+    /// If set to None TLS connection won't be used.
+    ///
+    /// Default is None.
+    ///
+    #[cfg_attr(
+        feature = "openssl-010",
+        doc = r#"
+# Example
+
+```
+    # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+    use std::path::PathBuf;
+    use scylla::client::session::Session;
+    use scylla::client::session_builder::SessionBuilder;
+    use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
+
+    let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
+    let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
+    context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
+    context_builder.set_verify(SslVerifyMode::NONE);
+
+    let session: Session = SessionBuilder::new()
+        .known_node("127.0.0.1:9042")
+        .tls_context(Some(context_builder.build()))
+        .build()
+        .await?;
+    # Ok(())
+    # }
+```
+"#
+    )]
+    pub fn tls_context(mut self, tls_context: Option<impl Into<TlsContext>>) -> Self {
+        #[cfg_attr(
+            not(any(feature = "openssl-010", feature = "rustls-023")),
+            // TODO: make this expect() once MSRV is 1.92+.
+            allow(unreachable_code)
+        )]
+        {
+            self.config.tls_context = tls_context.map(|t| t.into());
+        }
+        self
+    }
+
     /// Sets the local ip address all TCP sockets are bound to.
     ///
     /// By default, this option is set to `None`, which is equivalent to:
