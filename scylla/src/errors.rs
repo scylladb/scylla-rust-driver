@@ -336,6 +336,11 @@ pub enum MetadataError {
     /// Bad tables metadata.
     #[error("Bad tables metadata: {0}")]
     Tables(#[from] TablesMetadataError),
+
+    /// Bad client routes metadata.
+    #[cfg(feature = "client-routes")]
+    #[error("Bad client routes metadata: {0}")]
+    ClientRoutes(#[from] ClientRoutesMetadataError),
 }
 
 /// An error occurred during metadata fetch.
@@ -476,6 +481,21 @@ pub enum TablesMetadataError {
         column_name: String,
         /// Kind of the column that is unknown.
         column_kind: String,
+    },
+}
+
+/// An error that occurred during client routes metadata fetch.
+#[cfg(feature = "client-routes")]
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ClientRoutesMetadataError {
+    /// Failed to parse CQL type returned from system_schema.columns query.
+    #[error("Invalid port value: {port}, is TLS port? {is_tls}")]
+    InvalidPortValue {
+        /// Invalid port value.
+        port: i32,
+        /// Whether the port is the TLS port (ordinary port otherwise)
+        is_tls: bool,
     },
 }
 
