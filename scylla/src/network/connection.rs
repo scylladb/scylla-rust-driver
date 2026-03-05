@@ -98,6 +98,8 @@ pub(crate) struct Connection {
     config: HostConnectionConfig,
     features: ConnectionFeatures,
     router_handle: Arc<RouterHandle>,
+    #[cfg(test)]
+    socket: socket2::Socket,
 }
 
 struct RouterHandle {
@@ -493,6 +495,12 @@ impl Connection {
             orphan_notification_sender,
         });
 
+        #[cfg(test)]
+        let socket = {
+            use std::os::unix::io::AsFd;
+            socket2::Socket::from(stream.as_fd().try_clone_to_owned()?)
+        };
+
         let _worker_handle = Self::run_router(
             config.clone(),
             stream,
@@ -510,6 +518,8 @@ impl Connection {
             features: Default::default(),
             connect_address,
             router_handle,
+            #[cfg(test)]
+            socket,
         };
 
         Ok((connection, error_receiver))
@@ -1885,6 +1895,11 @@ impl Connection {
 
         Ok(())
     }
+
+    #[cfg(test)]
+    pub(crate) fn get_sock_ref(&self) -> socket2::SockRef<'_> {
+        socket2::SockRef::from(&self.socket)
+    }
 }
 
 async fn maybe_translated_addr(
@@ -2743,5 +2758,110 @@ mod tests {
             .unwrap_err();
 
         let _ = proxy.finish().await;
+    }
+
+    #[tokio::test]
+    async fn test_tcp_reuse_address_is_applied() {
+        use socket2::SockRef;
+        use tokio::net::TcpListener;
+
+        setup_tracing();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_addr = listener.local_addr().unwrap();
+
+        let accept_handle = tokio::spawn(async move {
+            let _ = listener.accept().await.unwrap();
+        });
+
+        // Connect with SO_REUSEADDR enabled – this must succeed.
+        let stream = super::connect_with_source_ip_and_port(server_addr, None, None, Some(true))
+            .await
+            .expect("connect with SO_REUSEADDR=true failed");
+
+        // The socket option is still visible on the connected stream.
+        let sf = SockRef::from(&stream);
+        assert!(
+            sf.reuse_address().expect("failed to read SO_REUSEADDR"),
+            "SO_REUSEADDR should be true after connect_with_source_ip_and_port(reuse=true)"
+        );
+
+        // Also verify that connecting with SO_REUSEADDR disabled doesn't break anything.
+        let listener2 = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_addr2 = listener2.local_addr().unwrap();
+        let accept_handle2 = tokio::spawn(async move {
+            let _ = listener2.accept().await.unwrap();
+        });
+
+        let stream2 = super::connect_with_source_ip_and_port(server_addr2, None, None, Some(false))
+            .await
+            .expect("connect with SO_REUSEADDR=false failed");
+        let sf2 = SockRef::from(&stream2);
+        assert!(
+            !sf2.reuse_address().expect("failed to read SO_REUSEADDR"),
+            "SO_REUSEADDR should be false after connect_with_source_ip_and_port(reuse=false)"
+        );
+
+        accept_handle.await.unwrap();
+        accept_handle2.await.unwrap();
+    }
+
+    /// Verifies that setting tcp_recv_buffer_size, tcp_send_buffer_size and tcp_linger
+    /// on the builder does not prevent the driver from establishing a connection.
+    #[tokio::test]
+    async fn tcp_buffer_and_linger_options_do_not_break_connection() {
+        use crate::client::session_builder::SessionBuilder;
+
+        setup_tracing();
+
+        const RECV_BUFFER_SIZE: usize = 131_072;
+        const SEND_BUFFER_SIZE: usize = 65_536;
+        const LINGER_SECS: Duration = Duration::from_secs(42);
+
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.17.0.2:9042".to_string());
+
+        let session = SessionBuilder::new()
+            .known_node(uri)
+            .tcp_recv_buffer_size(RECV_BUFFER_SIZE)
+            .tcp_send_buffer_size(SEND_BUFFER_SIZE)
+            .tcp_linger(LINGER_SECS)
+            .build()
+            .await
+            .unwrap();
+
+        // A simple query to confirm the connection is actually usable.
+        session
+            .query_unpaged("SELECT key FROM system.local WHERE key='local'", &[])
+            .await
+            .unwrap();
+
+        let connection = session
+            .get_cluster_state()
+            .all_nodes
+            .first()
+            .unwrap()
+            .get_random_connection()
+            .unwrap();
+
+        let sock_ref = connection.get_sock_ref();
+
+        // Linux kernel doubles SO_RCVBUF and SO_SNDBUF values,
+        // so we check that the actual buffer sizes are at least as large as the requested ones.
+        assert!(
+            sock_ref
+                .recv_buffer_size()
+                .expect("failed to read SO_RCVBUF")
+                >= RECV_BUFFER_SIZE
+        );
+        assert!(
+            sock_ref
+                .send_buffer_size()
+                .expect("failed to read SO_SNDBUF")
+                >= SEND_BUFFER_SIZE
+        );
+        assert_eq!(
+            sock_ref.linger().expect("failed to read SO_LINGER"),
+            Some(LINGER_SECS)
+        );
     }
 }
