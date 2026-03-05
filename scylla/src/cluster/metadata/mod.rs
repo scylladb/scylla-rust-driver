@@ -53,6 +53,10 @@ pub(crate) enum SingleKeyspaceMetadataError {
 pub(crate) struct Metadata {
     pub(crate) peers: Vec<Peer>,
     pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
+    // Arc'd for cheaper feeding to ClientRoutesSubscribers.
+    #[expect(unused)] // temporarily, removed in further commit
+    #[cfg(feature = "client-routes")]
+    pub(crate) client_routes: Arc<ClientRoutes>,
 }
 
 /// Represents a node in the cluster, as fetched from the `system.{peers,local}` tables.
@@ -292,6 +296,34 @@ pub(crate) struct ClientRoute {
     pub(crate) tls_port: Option<u16>,
 }
 
+#[cfg(feature = "client-routes")]
+#[derive(Debug, Default)] // Default is needed for `try_collect()`.
+pub(crate) struct ClientRoutes {
+    routes: HashMap<Uuid, ClientRoute>,
+}
+
+// Needed for `Stream::try_collect()` to work.
+#[cfg(feature = "client-routes")]
+impl Extend<ClientRoute> for ClientRoutes {
+    fn extend<T: IntoIterator<Item = ClientRoute>>(&mut self, into_iter: T) {
+        for route in into_iter {
+            // If there are multiple routes for the same host id (which means they differ by connection id),
+            // we can do nothing better than choose an arbitrary route. This anyway means a configuration issue,
+            // because the driver should receive such set of connection ids that corresponding sets of host ids
+            // are disjoint. This was confirmed with the Cloud.
+            self.routes.entry(route.host_id).or_insert(route);
+        }
+    }
+}
+
+#[cfg(feature = "client-routes")]
+impl ClientRoutes {
+    #[expect(unused)] // temporarily, removed in further commit
+    pub(crate) fn get(&self, host_id: Uuid) -> Option<&ClientRoute> {
+        self.routes.get(&host_id)
+    }
+}
+
 impl Metadata {
     /// Creates new, dummy metadata from a given list of peers.
     ///
@@ -319,6 +351,8 @@ impl Metadata {
         Metadata {
             peers,
             keyspaces: HashMap::new(),
+            #[cfg(feature = "client-routes")]
+            client_routes: Arc::new(ClientRoutes::default()),
         }
     }
 }

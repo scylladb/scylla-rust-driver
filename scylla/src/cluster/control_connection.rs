@@ -25,6 +25,8 @@ pub(super) struct ControlConnection {
     /// The custom server-side timeout set for requests executed on the control connection.
     overridden_serverside_timeout: Option<Duration>,
     cache: Arc<ControlConnectionCache>,
+    #[cfg(feature = "client-routes")]
+    client_routes_connection_ids: String,
 }
 
 impl ControlConnection {
@@ -33,6 +35,8 @@ impl ControlConnection {
             conn,
             overridden_serverside_timeout: None,
             cache,
+            #[cfg(feature = "client-routes")]
+            client_routes_connection_ids: String::new(), // TODO: pass it from MetadataReader
         }
     }
 
@@ -54,7 +58,11 @@ impl ControlConnection {
     }
 
     #[cfg(feature = "client-routes")]
-    #[expect(unused)] // temporarily, removed in further commits
+    pub(super) fn client_routes_connection_ids(&self) -> &str {
+        &self.client_routes_connection_ids
+    }
+
+    #[cfg(feature = "client-routes")]
     pub(super) fn read_client_routes(&self) -> bool {
         self.conn.read_client_routes()
     }
