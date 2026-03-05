@@ -99,6 +99,8 @@ pub(crate) struct Connection {
     config: HostConnectionConfig,
     features: ConnectionFeatures,
     router_handle: Arc<RouterHandle>,
+    #[cfg(test)]
+    socket: socket2::Socket,
 }
 
 struct RouterHandle {
@@ -500,6 +502,12 @@ impl Connection {
             orphan_notification_sender,
         });
 
+        #[cfg(test)]
+        let socket = {
+            use std::os::unix::io::AsFd;
+            socket2::Socket::from(stream.as_fd().try_clone_to_owned()?)
+        };
+
         let _worker_handle = Self::run_router(
             config.clone(),
             stream,
@@ -517,6 +525,8 @@ impl Connection {
             features: Default::default(),
             connect_address,
             router_handle,
+            #[cfg(test)]
+            socket,
         };
 
         Ok((connection, error_receiver))
@@ -1975,6 +1985,11 @@ impl Connection {
 
         Ok(())
     }
+
+    #[cfg(test)]
+    pub(crate) fn get_sock_ref(&self) -> socket2::SockRef<'_> {
+        socket2::SockRef::from(&self.socket)
+    }
 }
 
 async fn maybe_translated_addr(
@@ -2833,5 +2848,71 @@ mod tests {
             .unwrap_err();
 
         let _ = proxy.finish().await;
+    }
+
+    /// Verifies that setting tcp_recv_buffer_size, tcp_send_buffer_size, tcp_linger, and
+    /// tcp_reuse_address on the builder are propagated correctly all the way to the
+    /// underlying socket and do not prevent the driver from establishing a connection.
+    #[tokio::test]
+    async fn tcp_socket_options_do_not_break_connection() {
+        use crate::client::session_builder::SessionBuilder;
+
+        setup_tracing();
+
+        const RECV_BUFFER_SIZE: usize = 131_072;
+        const SEND_BUFFER_SIZE: usize = 65_536;
+        const LINGER_DUR: Duration = Duration::from_secs(42);
+
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
+
+        let session = SessionBuilder::new()
+            .known_node(uri)
+            .tcp_recv_buffer_size(RECV_BUFFER_SIZE)
+            .tcp_send_buffer_size(SEND_BUFFER_SIZE)
+            .tcp_linger(LINGER_DUR)
+            .tcp_reuse_address(true)
+            .build()
+            .await
+            .unwrap();
+
+        // A simple query to confirm the connection is actually usable.
+        session
+            .query_unpaged("SELECT key FROM system.local WHERE key='local'", &[])
+            .await
+            .unwrap();
+
+        let connection = session
+            .get_cluster_state()
+            .all_nodes
+            .first()
+            .unwrap()
+            .get_random_connection()
+            .unwrap();
+
+        let sock_ref = connection.get_sock_ref();
+
+        // Linux kernel doubles SO_RCVBUF and SO_SNDBUF values,
+        // so we check that the actual buffer sizes are at least as large as the requested ones.
+        assert!(
+            sock_ref
+                .recv_buffer_size()
+                .expect("failed to read SO_RCVBUF")
+                >= RECV_BUFFER_SIZE
+        );
+        assert!(
+            sock_ref
+                .send_buffer_size()
+                .expect("failed to read SO_SNDBUF")
+                >= SEND_BUFFER_SIZE
+        );
+        assert_eq!(
+            sock_ref.linger().expect("failed to read SO_LINGER"),
+            Some(LINGER_DUR)
+        );
+        assert!(
+            sock_ref
+                .reuse_address()
+                .expect("failed to read SO_REUSEADDR")
+        );
     }
 }
