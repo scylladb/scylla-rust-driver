@@ -150,6 +150,7 @@ impl Cluster {
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
+            None, // TODO: pass actual subscriber
         )
         .await?;
 

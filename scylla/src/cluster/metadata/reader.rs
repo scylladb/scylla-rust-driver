@@ -21,6 +21,7 @@ use rand::seq::{IndexedRandom, SliceRandom};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
 
+use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
 use crate::cluster::control_connection::{ControlConnection, ControlConnectionCache};
 use crate::cluster::metadata::{Metadata, PeerEndpoint, UntranslatedEndpoint};
@@ -75,6 +76,7 @@ pub(crate) struct MetadataReader {
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
     initial_known_nodes: Vec<KnownNode>,
+    client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
 
     // ====================================================================
     // Mutable state of MetadataReader. It will change during its lifetime.
@@ -87,6 +89,7 @@ pub(crate) struct MetadataReader {
 
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
         initial_known_nodes: Vec<KnownNode>,
         hostname_resolution_timeout: Option<Duration>,
@@ -95,6 +98,7 @@ impl MetadataReader {
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
+        client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
     ) -> Result<Self, NewSessionError> {
         let (initial_peers, resolved_hostnames) =
             resolve_contact_points(&initial_known_nodes, hostname_resolution_timeout).await;
@@ -119,6 +123,7 @@ impl MetadataReader {
             connection_config.clone(),
             request_serverside_timeout,
             Arc::clone(&cc_cache),
+            client_routes_subscriber.as_ref().map(Arc::clone),
         )
         .await;
 
@@ -136,6 +141,7 @@ impl MetadataReader {
             host_filter: host_filter.clone(),
             initial_known_nodes,
             cc_cache,
+            client_routes_subscriber,
         })
     }
 
@@ -309,6 +315,7 @@ impl MetadataReader {
                 self.control_connection_config.clone(),
                 self.request_serverside_timeout,
                 Arc::clone(&self.cc_cache),
+                self.client_routes_subscriber.as_ref().map(Arc::clone),
             )
             .await;
 
@@ -421,6 +428,7 @@ impl MetadataReader {
                     self.control_connection_config.clone(),
                     self.request_serverside_timeout,
                     Arc::clone(&self.cc_cache),
+                    self.client_routes_subscriber.as_ref().map(Arc::clone),
                 )
                 .await;
             }
@@ -432,6 +440,7 @@ impl MetadataReader {
         mut config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
         cache: Arc<ControlConnectionCache>,
+        client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
     ) -> ControlConnectionState {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         // setting event_sender field in connection config will cause control connection to
@@ -452,7 +461,7 @@ impl MetadataReader {
 
         match open_result {
             Ok((con, recv)) => ControlConnectionState::Working(WorkingControlConnection {
-                connection: ControlConnection::new(Arc::new(con), cache)
+                connection: ControlConnection::new(Arc::new(con), cache, client_routes_subscriber)
                     .override_serverside_timeout(request_serverside_timeout),
                 error_channel: recv,
                 events_channel: receiver,
