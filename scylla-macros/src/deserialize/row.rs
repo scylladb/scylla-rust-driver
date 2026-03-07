@@ -51,6 +51,12 @@ struct Field {
     #[darling(default)]
     default_when_null: bool,
 
+    // If true, then - if this field is missing from the query result metadata
+    // - it will be initialized to Default::default().
+    #[darling(default)]
+    #[darling(rename = "allow_missing")]
+    default_when_missing: bool,
+
     ident: Option<syn::Ident>,
     ty: syn::Type,
 }
@@ -137,7 +143,7 @@ fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::
 impl Field {
     // Returns whether this field is mandatory for deserialization.
     fn is_required(&self) -> bool {
-        !self.skip
+        !self.skip && !self.default_when_missing
     }
 
     // The name of the column corresponding to this Rust struct field
@@ -174,63 +180,70 @@ impl StructDesc {
 
 struct TypeCheckAssumeOrderGenerator<'sd>(&'sd StructDesc);
 
+// TypeCheckAssumeOrderGenerator only assume order in the required fields, the workaround for allow_missing_fields is to save column spec in #[allow_missing] when it didnt match with the rust field
 impl TypeCheckAssumeOrderGenerator<'_> {
     fn generate_name_verification(
         &self,
         field_index: usize, //  These two indices can be different because of `skip` attribute
         column_index: usize, // applied to some field.
         field: &Field,
-        column_spec: &syn::Ident,
     ) -> Option<syn::Expr> {
         (!self.0.attrs.skip_name_checks).then(|| {
             let macro_internal = self.0.struct_attrs().macro_internal_path();
             let rust_field_name = field.cql_name_literal();
+            let default_when_missing = field.default_when_missing;
+            // Action performed in case of field name mismatch.
+            let name_mismatch: syn::Expr = if default_when_missing {
+                parse_quote! {
+                    {
+                        // If the Rust struct's field is marked as `default_when_missing`, then let's assume
+                        // optimistically that the remaining column match required Rust struct fields.
+                        // For that, store the read column to be fit against the next Rust struct field.
+                        saved_column_spec = ::std::option::Option::Some(next_column_spec);
+                        break 'verifications; // Skip type verification, because the field is absent.
+                    }
+                }
+            } else {
+                parse_quote! {
+                    {
+                        // Error - required value for field not present among the columns field.
+                        return ::std::result::Result::Err(
+                            #macro_internal::mk_row_typck_err::<Self>(
+                                column_types_iter(),
+                                #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
+                                    field_index: #field_index,
+                                    column_index: #column_index,
+                                    rust_column_name: #rust_field_name,
+                                    db_column_name: ::std::borrow::ToOwned::to_owned(next_column_spec.name()),
+                                }
+                            )
+                        );
+                    }
+                }
+            };
 
             parse_quote! {
-                if #column_spec.name() != #rust_field_name {
-                    return ::std::result::Result::Err(
-                        #macro_internal::mk_row_typck_err::<Self>(
-                            column_types_iter(),
-                            #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
-                                field_index: #field_index,
-                                column_index: #column_index,
-                                rust_column_name: #rust_field_name,
-                                db_column_name: ::std::borrow::ToOwned::to_owned(#column_spec.name()),
-                            }
-                        )
-                    );
+                if next_column_spec.name() != #rust_field_name {
+                    #name_mismatch
                 }
             }
+
         })
     }
 
-    fn generate(&self) -> syn::ImplItemFn {
-        // The generated method will check that the order and the types
-        // of the columns correspond fields' names/types.
-
+    fn generate_field_validation(
+        &self,
+        field_index: usize, //  These two indices can be different because of `skip` attribute
+        column_index: usize, // applied to some field.
+        field: &Field,
+    ) -> syn::Expr {
         let macro_internal = self.0.struct_attrs().macro_internal_path();
         let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
+        let default_when_missing = field.default_when_missing;
 
-        let required_fields_iter = || {
-            self.0
-                .fields()
-                .iter()
-                .enumerate()
-                .filter(|(_, f)| f.is_required())
-        };
-        let required_fields_count = required_fields_iter().count();
-        let required_fields_idents: Vec<_> = (0..required_fields_count)
-            .map(|i| quote::format_ident!("f_{}", i))
-            .collect();
-        let name_verifications = required_fields_iter()
-            .zip(required_fields_idents.iter().enumerate())
-            .map(|((field_idx, field), (col_idx, fidents))| {
-                self.generate_name_verification(field_idx, col_idx, field, fidents)
-            });
-
-        let required_fields_deserializers = required_fields_iter().map(|(_, f)| -> syn::Type {
-            let typ = f.deserialize_target();
-            if f.default_when_null {
+        let rust_field_typ: syn::Type = {
+            let typ = field.deserialize_target();
+            if field.default_when_null {
                 parse_quote! {
                     ::std::option::Option<#typ>
                 }
@@ -239,44 +252,114 @@ impl TypeCheckAssumeOrderGenerator<'_> {
                     #typ
                 }
             }
-        });
-        let numbers = 0usize..;
+        };
+
+        let name_verification = self.generate_name_verification(field_index, column_index, field);
+
+        parse_quote! {
+            'field: {
+                let next_column_spec = match saved_column_spec
+                    // We may have a stored column spec that did not match the previous Rust struct's field.
+                    .take()
+                    // If not, simply fetch another column spec from the iterator.
+                    .or_else(|| ::std::iter::Iterator::next(&mut col_spec_iter)) {
+                        ::std::option::Option::Some(col_spec) => col_spec,
+                        // In case the Rust field allows default-initialisation and there are no more column specs,
+                        // simply assume it's going to be default-initialised.
+                        ::std::option::Option::None if #default_when_missing => break 'field,
+                        ::std::option::Option::None => return ::std::result::Result::Err(wrong_column_count()),
+                    };
+
+                'verifications: {
+                    // Verify the name (unless `skip_name_checks` is specified)
+                    // In a specific case when this Rust field is going to be default-initialised
+                    // due to no corresponding column, the below type verification will be skipped.
+                    #name_verification
+
+                    // Verify the type
+                    <#rust_field_typ as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(next_column_spec.typ())
+                        .map_err(|err| #macro_internal::mk_row_typck_err::<Self>(
+                            column_types_iter(),
+                            #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnTypeCheckFailed {
+                                column_index: #column_index,
+                                column_name: ::std::borrow::ToOwned::to_owned(next_column_spec.name()),
+                                err,
+                            }
+                        ))?;
+                };
+            }
+        }
+    }
+
+    // Generates the type_check method for when ensure_order == true.
+    fn generate(&self) -> syn::ImplItemFn {
+        // The generated method will:
+        // - Check that every required column appears on the list in the same order as struct fields
+        // - Every type on the list is correct
+
+        let macro_internal = self.0.struct_attrs().macro_internal_path();
+
+        let required_fields_count = self.0.fields().iter().filter(|f| f.is_required()).count();
+
+        let nonskipped_fields_iter = || {
+            self.0
+                .fields()
+                .iter()
+                // It is important that we enumerate **before** filtering, because otherwise we would not
+                // count the skipped fields, which might be confusing.
+                .enumerate()
+                .filter(|(_, f)| !f.skip)
+        };
+
+        let nonskippable_fields_idents: Vec<_> = (0..nonskipped_fields_iter().count())
+            .map(|i| quote::format_ident!("f_{}", i))
+            .collect();
+
+        let field_validations = nonskipped_fields_iter()
+            .zip(nonskippable_fields_idents.iter().enumerate())
+            .map(|((field_idx, field), (col_idx, ..))| {
+                self.generate_field_validation(field_idx, col_idx, field)
+            });
 
         parse_quote! {
             fn type_check(
                 specs: &[#macro_internal::ColumnSpec],
             ) -> ::std::result::Result<(), #macro_internal::TypeCheckError> {
+
                 let column_types_iter = || ::std::iter::Iterator::map(specs.iter(), |spec| ::std::clone::Clone::clone(spec.typ()).into_owned());
 
-                match specs {
-                    [#(#required_fields_idents),*] => {
-                        #(
-                            // Verify the name (unless `skip_name_checks' is specified)
-                            #name_verifications
+                let wrong_column_count = || {
+                    #macro_internal::mk_row_typck_err::<Self>(
+                        column_types_iter(),
+                        #macro_internal::DeserBuiltinRowTypeCheckErrorKind::WrongColumnCount {
+                            rust_cols: #required_fields_count,
+                            cql_cols: specs.len(),
+                        }
+                    )
+                };
 
-                            // Verify the type
-                            <#required_fields_deserializers as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::type_check(#required_fields_idents.typ())
-                                .map_err(|err| #macro_internal::mk_row_typck_err::<Self>(
-                                    column_types_iter(),
-                                    #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnTypeCheckFailed {
-                                        column_index: #numbers,
-                                        column_name: ::std::borrow::ToOwned::to_owned(#required_fields_idents.name()),
-                                        err,
-                                    }
-                                ))?;
-                        )*
-                        ::std::result::Result::Ok(())
-                    },
-                    _ => ::std::result::Result::Err(
-                        #macro_internal::mk_row_typck_err::<Self>(
-                            column_types_iter(),
-                            #macro_internal::DeserBuiltinRowTypeCheckErrorKind::WrongColumnCount {
-                                rust_cols: #required_fields_count,
-                                cql_cols: specs.len(),
-                            }
-                        ),
-                    ),
+                if specs.len() < #required_fields_count {
+                    return ::std::result::Result::Err(wrong_column_count());
                 }
+
+                let mut col_spec_iter = specs.iter();
+                // A column spec that has already been fetched from the column spec iterator,
+                // but not yet matched to a Rust struct field (because the previous
+                // Rust struct field didn't match it and had #[allow_missing] specified).
+                let mut saved_column_spec = ::std::option::Option::None::<&#macro_internal::ColumnSpec>;
+                #(
+                    #field_validations
+                )*
+
+                // check excess fields from column specs
+                if let ::std::option::Option::Some(next_col) = saved_column_spec
+                    .take()
+                    .or_else(|| ::std::iter::Iterator::next(&mut col_spec_iter)) {
+                    return ::std::result::Result::Err(wrong_column_count());
+                }
+
+                // All is good!
+                ::std::result::Result::Ok(())
             }
         }
     }
@@ -284,6 +367,7 @@ impl TypeCheckAssumeOrderGenerator<'_> {
 
 struct DeserializeAssumeOrderGenerator<'sd>(&'sd StructDesc);
 
+// assume order only assume order in the required fields, the workaround is to save column spec in #[allow_missing] case it didnt match with the rust field
 impl DeserializeAssumeOrderGenerator<'_> {
     fn generate_finalize_field(&self, field_index: usize, field: &Field) -> syn::Expr {
         if field.skip {
@@ -296,16 +380,25 @@ impl DeserializeAssumeOrderGenerator<'_> {
         let deserializer = field.deserialize_target();
         let (frame_lifetime, metadata_lifetime) = self.0.constraint_lifetimes();
 
-        let name_check: Option<syn::Stmt> = (!self.0.struct_attrs().skip_name_checks).then(|| parse_quote! {
-            if col.spec.name() != #cql_name_literal {
-                ::std::panic!(
-                    "Typecheck should have prevented this scenario - field-column name mismatch! Rust field name {}, CQL column name {}",
-                    #cql_name_literal,
-                    col.spec.name()
-                );
-            }
-        });
+        let maybe_mismatch: syn::Expr = if field.default_when_missing {
+            parse_quote! {
+                {
+                    saved_col = ::std::option::Option::Some(col);
 
+                    ::std::default::Default::default()
+                }
+            }
+        } else {
+            parse_quote! {
+                {
+                    ::std::panic!(
+                        "Typecheck should have prevented this scenario - field-column name mismatch! Rust field name {}, CQL column name {}",
+                        #cql_name_literal,
+                        col.spec.name()
+                    );
+                }
+            }
+        };
         let deserialize_expr: syn::Expr = if field.default_when_null {
             parse_quote! {
                 <::std::option::Option<#deserializer> as #macro_internal::DeserializeValue<#frame_lifetime, #metadata_lifetime>>::deserialize(col.spec.typ(), col.slice)
@@ -331,15 +424,51 @@ impl DeserializeAssumeOrderGenerator<'_> {
             }
         };
 
+        let maybe_name_check_then_deserialize: syn::Expr = if self.0.struct_attrs().skip_name_checks
+        {
+            parse_quote! {
+                #deserialize_expr
+            }
+        } else {
+            parse_quote! {
+                if col.spec.name() == #cql_name_literal {
+                    #deserialize_expr
+                } else {
+                    #maybe_mismatch
+                }
+            }
+        };
+
+        let no_more_fields: syn::Expr = if field.default_when_missing {
+            parse_quote! {
+                ::std::default::Default::default()
+            }
+        } else {
+            parse_quote! {
+                {
+                    // Type check has ensured that there are enough column specs.
+                    ::std::panic!("Typecheck should have prevented this scenario! Too few columns in the serialized data.");
+
+                }
+            }
+        };
+
         parse_quote!(
             {
-                let col = ::std::iter::Iterator::next(&mut row)
-                    .expect("Typecheck should have prevented this scenario! Too few columns in the serialized data.")
+                let maybe_next_col = saved_col
+                    // Check if it has the previous column to struct_field name mismatch
+                    .take()
+                    // Option<RawColumn> to Option<Result<RawColumn>> to follow the Iterator::next() with Item=Result<RawColumn>
+                    .map(::std::result::Result::Ok)
+                    .or_else(|| ::std::iter::Iterator::next(&mut row))
+                    .transpose()
                     .map_err(#macro_internal::row_deser_error_replace_rust_name::<Self>)?;
 
-                #name_check
-
-                #deserialize_expr
+                if let ::std::option::Option::Some(col) = maybe_next_col {
+                    #maybe_name_check_then_deserialize
+                } else {
+                    #no_more_fields
+                }
             }
         )
     }
@@ -359,6 +488,8 @@ impl DeserializeAssumeOrderGenerator<'_> {
             fn deserialize(
                 mut row: #macro_internal::ColumnIterator<#frame_lifetime, #metadata_lifetime>,
             ) -> ::std::result::Result<Self, #macro_internal::DeserializationError> {
+                let mut saved_col = ::std::option::Option::None::<#macro_internal::RawColumn<#frame_lifetime, #metadata_lifetime>>;
+
                 ::std::result::Result::Ok(Self {
                     #(#field_idents: #field_finalizers,)*
                 })
@@ -543,11 +674,18 @@ impl DeserializeUnorderedGenerator<'_> {
 
         let deserialize_field = Self::deserialize_field_variable(field);
         let cql_name_literal = field.cql_name_literal();
-        parse_quote! {
-            #deserialize_field.unwrap_or_else(|| ::std::panic!(
-                "column {} missing in DB row - type check should have prevented this!",
-                #cql_name_literal
-            ))
+
+        if field.default_when_missing {
+            parse_quote! {
+                 #deserialize_field.unwrap_or_default()
+            }
+        } else {
+            parse_quote! {
+                #deserialize_field.unwrap_or_else(|| ::std::panic!(
+                    "column {} missing in DB row - type check should have prevented this!",
+                    #cql_name_literal
+                ))
+            }
         }
     }
 
