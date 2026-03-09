@@ -360,7 +360,6 @@ impl ControlConnection {
 
 /// Represents an entry of `system.client_routes` table, in a more raw form (ports as i32).
 #[derive(DeserializeRow)]
-#[expect(unused)] // temporarily, removed in further commit
 #[scylla(crate = "crate")]
 pub(crate) struct ClientRoutesEntry {
     // PRIMARY KEY (connection_id, host_id)

@@ -297,7 +297,6 @@ pub(crate) struct ClientRoute {
 /// This is always filtered by specified connection ids, and may be filtered by
 /// host ids, too.
 #[derive(Debug, Default)] // Default is needed for `try_collect()`.
-#[expect(unused)] // temporarily, removed in further commit
 pub(crate) struct ClientRoutes {
     // Routes are grouped by host id first, because this is how AddressTranslator
     // looks them up. Then, routes for given host id are grouped by connection id,
