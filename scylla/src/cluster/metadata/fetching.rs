@@ -441,6 +441,7 @@ impl ControlConnection {
         // If empty, all host ids are accepted.
         host_ids: &[Uuid],
     ) -> Result<ClientRoutes, MetadataError> {
+        #[expect(clippy::result_large_err)]
         async fn query_client_routes_with_values(
             conn: &ControlConnection,
             query_str: &str,
@@ -535,6 +536,7 @@ impl ControlConnection {
             .try_flatten()
     }
 
+    #[expect(clippy::result_large_err)]
     async fn query_keyspaces(
         &self,
         keyspaces_to_fetch: &[String],
@@ -663,6 +665,7 @@ impl TryFrom<UdtRow> for UdtRowWithParsedFieldTypes {
 }
 
 impl ControlConnection {
+    #[expect(clippy::result_large_err)]
     async fn query_user_defined_types(
         &self,
         keyspaces_to_fetch: &[String],
@@ -1006,6 +1009,7 @@ mod toposort_tests {
 }
 
 impl ControlConnection {
+    #[expect(clippy::result_large_err)]
     async fn query_tables(
         &self,
         keyspaces_to_fetch: &[String],
@@ -1053,6 +1057,7 @@ impl ControlConnection {
         Ok(result)
     }
 
+    #[expect(clippy::result_large_err)]
     async fn query_views(
         &self,
         keyspaces_to_fetch: &[String],
@@ -1112,6 +1117,7 @@ impl ControlConnection {
         Ok(result)
     }
 
+    #[expect(clippy::result_large_err)]
     async fn query_tables_schema(
         &self,
         keyspaces_to_fetch: &[String],
@@ -1491,6 +1497,7 @@ fn freeze_type(typ: PreColumnType) -> PreColumnType {
 }
 
 impl ControlConnection {
+    #[expect(clippy::result_large_err)]
     async fn query_table_partitioners(
         &self,
     ) -> Result<PerKsTable<Option<String>>, MetadataFetchError> {
