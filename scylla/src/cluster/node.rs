@@ -1,10 +1,9 @@
 use itertools::Itertools;
-use thiserror::Error;
 use tokio::net::{ToSocketAddrs, lookup_host};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::errors::{ConnectionPoolError, UseKeyspaceError};
+use crate::errors::{ConnectionPoolError, DnsLookupError, UseKeyspaceError};
 use crate::network::VerifiedKeyspaceName;
 use crate::network::{Connection, ConnectivityChangeEvent};
 use crate::network::{NodeConnectionPool, PoolConfig};
@@ -278,16 +277,6 @@ pub enum KnownNode {
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
-}
-
-#[derive(Error, Debug)]
-pub(crate) enum DnsLookupError {
-    #[error("Failed to perform DNS lookup within {0}ms")]
-    Timeout(u128),
-    #[error("Empty address list returned by DNS for {0}")]
-    EmptyAddressListForHost(String),
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
 }
 
 /// Performs a DNS lookup with provided optional timeout.

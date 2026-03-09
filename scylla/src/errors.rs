@@ -660,9 +660,33 @@ pub enum TranslationError {
     #[error("An I/O error occurred during address translation: {0}")]
     IoError(Arc<std::io::Error>),
 
+    /// DNS lookup failed during address translation.
+    #[error("DNS lookup failed: {0}")]
+    DnsLookupFailed(DnsLookupError),
+
     /// Custom error, for example from user-implemented policy.
     #[error(transparent)]
     Custom(#[from] CustomTranslationError),
+}
+
+/// Error that occurred during DNS lookup.
+#[derive(Error, Debug, Clone)]
+pub enum DnsLookupError {
+    /// Timed out during DNS lookup.
+    #[error("Failed to perform DNS lookup within {0}ms")]
+    Timeout(u128),
+    /// DNS lookup returned an empty address list for a given hostname.
+    #[error("Empty address list returned by DNS for {0}")]
+    EmptyAddressListForHost(String),
+    /// I/O error occurred during DNS lookup.
+    #[error("An I/O error occurred during DNS lookup: {0}")]
+    IoError(Arc<std::io::Error>),
+}
+
+impl From<std::io::Error> for DnsLookupError {
+    fn from(err: std::io::Error) -> Self {
+        DnsLookupError::IoError(Arc::new(err))
+    }
 }
 
 /// An error that occurred during connection setup request execution.
