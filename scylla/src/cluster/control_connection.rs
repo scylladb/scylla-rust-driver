@@ -53,6 +53,12 @@ impl ControlConnection {
         self.conn.get_shard_info().is_some()
     }
 
+    #[cfg(feature = "client-routes")]
+    #[expect(unused)] // temporarily, removed in further commits
+    pub(super) fn read_client_routes(&self) -> bool {
+        self.conn.read_client_routes()
+    }
+
     /// Appends the custom server-side timeout to the statement string, if such custom timeout
     /// is provided and we are connected to ScyllaDB (since custom timeouts is ScyllaDB-only feature).
     fn maybe_append_timeout_override(&self, statement: &mut Statement) {

@@ -289,6 +289,12 @@ pub(crate) struct ConnectionConfig {
     pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
+
+    // Makes the control connection subscribe for client routes updates,
+    // as well fetch client routes upon metadata refresh.
+    // Does nothing for ordinary connections.
+    #[cfg(feature = "client-routes")]
+    pub(crate) read_client_routes: bool,
 }
 
 impl ConnectionConfig {
@@ -320,6 +326,8 @@ impl ConnectionConfig {
             keepalive_timeout: self.keepalive_timeout,
             tablet_sender: self.tablet_sender.clone(),
             identity: self.identity.clone(),
+            #[cfg(feature = "client-routes")]
+            read_client_routes: self.read_client_routes,
         }
     }
 }
@@ -349,6 +357,12 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
+
+    // Makes the control connection subscribe for client routes updates,
+    // as well fetch client routes upon metadata refresh.
+    // Does nothing for ordinary connections.
+    #[cfg(feature = "client-routes")]
+    pub(crate) read_client_routes: bool,
 }
 
 #[cfg(test)]
@@ -376,6 +390,8 @@ impl Default for HostConnectionConfig {
             tablet_sender: None,
 
             identity: SelfIdentity::default(),
+            #[cfg(feature = "client-routes")]
+            read_client_routes: false,
         }
     }
 }
@@ -405,6 +421,8 @@ impl Default for ConnectionConfig {
             tablet_sender: None,
 
             identity: SelfIdentity::default(),
+            #[cfg(feature = "client-routes")]
+            read_client_routes: false,
         }
     }
 }
@@ -1910,6 +1928,11 @@ impl Connection {
 
     pub(crate) fn get_connect_address(&self) -> SocketAddr {
         self.connect_address
+    }
+
+    #[cfg(feature = "client-routes")]
+    pub(crate) fn read_client_routes(&self) -> bool {
+        self.config.read_client_routes
     }
 
     async fn update_tablets_from_response(

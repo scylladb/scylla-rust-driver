@@ -1040,6 +1040,8 @@ impl Session {
             keepalive_timeout: config.keepalive_timeout,
             tablet_sender: Some(tablet_sender),
             identity: config.identity,
+            #[cfg(feature = "client-routes")]
+            read_client_routes: false, // TODO: make this configurable - done in later commits.
         };
 
         let pool_config = PoolConfig {
