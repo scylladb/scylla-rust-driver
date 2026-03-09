@@ -54,7 +54,6 @@ pub(crate) struct Metadata {
     pub(crate) peers: Vec<Peer>,
     pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
     // Arc'd for cheaper feeding to ClientRoutesSubscribers.
-    #[expect(unused)] // temporarily, removed in further commit
     #[cfg(feature = "client-routes")]
     pub(crate) client_routes: Arc<ClientRoutes>,
 }
@@ -283,7 +282,6 @@ pub enum Strategy {
 
 #[cfg(feature = "client-routes")]
 #[derive(Debug, Clone)]
-#[expect(unused)] // temporarily, removed in further commit
 pub(crate) struct ClientRoute {
     pub(crate) connection_id: String,
     pub(crate) host_id: Uuid,
@@ -318,7 +316,6 @@ impl Extend<ClientRoute> for ClientRoutes {
 
 #[cfg(feature = "client-routes")]
 impl ClientRoutes {
-    #[expect(unused)] // temporarily, removed in further commit
     pub(crate) fn get(&self, host_id: Uuid) -> Option<&ClientRoute> {
         self.routes.get(&host_id)
     }

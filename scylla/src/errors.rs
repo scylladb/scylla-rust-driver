@@ -668,6 +668,11 @@ pub enum TranslationError {
     #[error("DNS lookup failed: {0}")]
     DnsLookupFailed(DnsLookupError),
 
+    /// system.client_routes is missing a port for a host.
+    #[cfg(feature = "private-link")]
+    #[error("Missing port for host {0} in system.client_routes")]
+    MissingPortForHost(Uuid),
+
     /// Custom error, for example from user-implemented policy.
     #[error(transparent)]
     Custom(#[from] CustomTranslationError),

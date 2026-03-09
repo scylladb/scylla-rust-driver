@@ -1,5 +1,5 @@
 #[cfg(feature = "private-link")]
-use crate::client::private_link::PrivateLinkConfig;
+use crate::client::private_link::{ClientRoutesAddressTranslator, PrivateLinkConfig};
 use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::metadata::reader::ControlConnectionEvent;
 use crate::cluster::{KnownNode, Node};
@@ -8,6 +8,10 @@ use crate::frame::response::event::EventV2 as Event;
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
+#[cfg(feature = "private-link")]
+use crate::policies::address_translator::AddressTranslator;
+#[cfg(feature = "private-link")]
+use crate::policies::client_routes_subscriber::ClientRoutesSubscriber as _;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::host_listener::{HostEvent, HostEventContext, HostListener};
 use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
@@ -106,6 +110,10 @@ struct ClusterWorker {
 
     #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
+
+    /// Translates nodes' addresses using entries in the system.client_routes table.
+    #[cfg(feature = "private-link")]
+    client_routes_address_translator: Option<Arc<ClientRoutesAddressTranslator>>,
 }
 
 #[derive(Debug)]
@@ -123,7 +131,7 @@ impl Cluster {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         known_nodes: Vec<KnownNode>,
-        pool_config: PoolConfig,
+        #[cfg_attr(not(feature = "private-link"), expect(unused_mut))] mut pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         metadata_request_serverside_timeout: Option<Duration>,
@@ -144,6 +152,23 @@ impl Cluster {
         // or drop events (if we decide to do so if the channel is full). Both options are bad.
         let (connectivity_events_sender, connectivity_events_receiver) =
             tokio::sync::mpsc::unbounded_channel();
+
+        #[cfg(feature = "private-link")]
+        let client_routes_address_translator = private_link_config.as_ref().map(|config| {
+            use crate::client::private_link::ClientRoutesAddressTranslator;
+
+            Arc::new(ClientRoutesAddressTranslator::new(
+                config.clone(),
+                hostname_resolution_timeout,
+                pool_config.connection_config.tls_provider.is_some(),
+            ))
+        });
+
+        #[cfg(feature = "private-link")]
+        if let Some(translator) = client_routes_address_translator.as_ref() {
+            pool_config.connection_config.address_translator =
+                Some(Arc::clone(translator) as Arc<dyn AddressTranslator>);
+        }
 
         #[cfg(feature = "client-routes")]
         #[cfg_attr(not(feature = "private-link"), expect(unused_labels))]
@@ -174,6 +199,12 @@ impl Cluster {
         let mut node_status = HashMap::new();
 
         let metadata = metadata_reader.read_metadata(true).await?;
+        #[cfg(feature = "private-link")]
+        if let Some(translator) = client_routes_address_translator.as_ref() {
+            translator
+                .update_client_routes(&metadata.client_routes)
+                .await;
+        }
         let cluster_state = ClusterState::new(
             metadata,
             &pool_config,
@@ -221,6 +252,8 @@ impl Cluster {
 
             #[cfg(feature = "metrics")]
             metrics,
+            #[cfg(feature = "private-link")]
+            client_routes_address_translator,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -445,6 +478,20 @@ impl ClusterWorker {
     async fn perform_refresh(&mut self) -> Result<(), MetadataError> {
         // Read latest Metadata
         let metadata = self.metadata_reader.read_metadata(false).await?;
+        #[cfg(feature = "private-link")]
+        if let Some(translator) = self.client_routes_address_translator.as_ref() {
+            // There were doubts when to update translator's knowledge of client routes relative to the construction
+            // of the new ClusterState (opening connections etc.). We came to a conclusion that we should give the driver
+            // the newest possible client routes as soon as possible, because it's the Cloud's responsibility
+            // to have system.client_routes contain entries to all nodes that the driver should be able to contact -
+            // both the new nodes (assuming a cluster operation of nodes replacement) and the old nodes.
+            // So in case there's a rolling node replacement, all nodes will be reachable throughout the process,
+            // provided the Cloud configures system.client_routes correctly.
+            translator
+                .update_client_routes(&metadata.client_routes)
+                .await;
+        }
+
         let cluster_state: Arc<ClusterState> = self.cluster_state.load_full();
 
         let new_cluster_state = Arc::new(
