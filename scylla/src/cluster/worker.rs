@@ -1,3 +1,5 @@
+#[cfg(feature = "private-link")]
+use crate::client::private_link::PrivateLinkConfig;
 use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::metadata::reader::ControlConnectionEvent;
 use crate::cluster::{KnownNode, Node};
@@ -131,6 +133,7 @@ impl Cluster {
         cluster_metadata_refresh_interval: Duration,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        #[cfg(feature = "private-link")] private_link_config: Option<PrivateLinkConfig>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -142,6 +145,19 @@ impl Cluster {
         let (connectivity_events_sender, connectivity_events_receiver) =
             tokio::sync::mpsc::unbounded_channel();
 
+        #[cfg(feature = "client-routes")]
+        #[cfg_attr(not(feature = "private-link"), expect(unused_labels))]
+        let connection_ids = 'ids: {
+            {
+                #[cfg(feature = "private-link")]
+                if let Some(config) = private_link_config.as_ref() {
+                    break 'ids config.connection_ids().to_owned();
+                }
+                // If PrivateLink is not enabled but "client-routes" feature is on, let's don't filter connection ids.
+                String::new()
+            }
+        };
+
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
             hostname_resolution_timeout,
@@ -151,7 +167,7 @@ impl Cluster {
             fetch_schema_metadata,
             &host_filter,
             #[cfg(feature = "client-routes")]
-            String::new(), // TODO: pass real connection ids
+            connection_ids,
         )
         .await?;
 

@@ -94,7 +94,6 @@ impl PrivateLinkConfig {
         })
     }
 
-    #[expect(unused)] // temporarily, removed in further commit
     pub(crate) fn connection_ids(&self) -> &str {
         &self.connection_ids
     }

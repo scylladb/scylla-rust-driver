@@ -1097,6 +1097,8 @@ impl Session {
             tablet_receiver,
             #[cfg(feature = "metrics")]
             Arc::clone(&metrics),
+            #[cfg(feature = "private-link")]
+            config.private_link_config,
         )
         .await?;
 
