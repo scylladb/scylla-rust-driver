@@ -647,6 +647,10 @@ pub enum TranslationError {
     #[error("No rule for address {0}")]
     NoRuleForAddress(SocketAddr),
 
+    /// Driver failed to find a translation rule for a provided host id.
+    #[error("No rule for host id {0}")]
+    NoRuleForHost(Uuid),
+
     /// A translation rule for a provided address was found, but the translated address was invalid.
     #[error("Failed to parse translated address: {translated_addr_str}, reason: {reason}")]
     InvalidAddressInRule {
