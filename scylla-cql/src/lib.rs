@@ -3,8 +3,6 @@
 //! Mainly intended to be used by the ScyllaDB driver, but can also be useful for other
 //! applications that need to interact with CQL.
 
-pub(crate) mod pretty;
-
 pub mod frame;
 
 pub use scylla_macros::DeserializeRow;
