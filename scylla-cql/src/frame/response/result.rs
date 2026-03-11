@@ -265,6 +265,19 @@ impl ColumnType<'_> {
             }
         }
     }
+
+    /// Returns the size of the type in bytes, as it is seen by the vector type if it is treated as fixed size.
+    pub(crate) fn type_size(&self) -> Option<usize> {
+        match self {
+            ColumnType::Native(n) => n.type_size(),
+            ColumnType::Tuple(_) => None,
+            ColumnType::Collection { .. } => None,
+            ColumnType::Vector { typ, dimensions } => {
+                typ.type_size().map(|size| size * usize::from(*dimensions))
+            }
+            ColumnType::UserDefinedType { .. } => None,
+        }
+    }
 }
 
 impl CollectionType<'_> {
@@ -1515,19 +1528,6 @@ mod test_utils {
                 }
                 Self::UserDefinedType { .. } => 0x0030,
                 Self::Tuple(_) => 0x0031,
-            }
-        }
-
-        /// Returns the size of the type in bytes, as it is seen by the vector type if it is treated as fixed size.
-        pub(crate) fn type_size(&self) -> Option<usize> {
-            match self {
-                ColumnType::Native(n) => n.type_size(),
-                ColumnType::Tuple(_) => None,
-                ColumnType::Collection { .. } => None,
-                ColumnType::Vector { typ, dimensions } => {
-                    typ.type_size().map(|size| size * usize::from(*dimensions))
-                }
-                ColumnType::UserDefinedType { .. } => None,
             }
         }
 
