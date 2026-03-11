@@ -1,0 +1,25 @@
+[package]
+name = "scylla-cql-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "CQL data types and primitives that form the stable public API of the ScyllaDB Rust driver."
+repository = "https://github.com/scylladb/scylla-rust-driver"
+readme = "../README.md"
+keywords = ["database", "scylla", "scylladb", "cql", "cassandra"]
+categories = ["database"]
+license = "MIT OR Apache-2.0"
+
+[package.metadata."docs.rs"]
+all-features = true
+
+[lints.rust]
+unnameable_types = "warn"
+unreachable_pub = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(scylla_unstable)',
+] }
+
+[features]
+
+[dependencies]
