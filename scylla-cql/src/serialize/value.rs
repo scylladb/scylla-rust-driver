@@ -671,27 +671,31 @@ fn serialize_cql_value<'b>(
         CqlValue::Tuple(t) => {
             // We allow serializing tuples that have less fields
             // than the database tuple, but not the other way around.
-            let fields = match typ {
-                ColumnType::Tuple(fields) => {
-                    if fields.len() < t.len() {
+            let fields = {
+                #[deny(clippy::wildcard_enum_match_arm)]
+                match typ {
+                    ColumnType::Tuple(fields) => {
+                        if fields.len() < t.len() {
+                            return Err(mk_typck_err::<CqlValue>(
+                                typ,
+                                TupleTypeCheckErrorKind::WrongElementCount {
+                                    rust_type_el_count: t.len(),
+                                    cql_type_el_count: fields.len(),
+                                },
+                            ));
+                        }
+                        fields
+                    }
+                    ColumnType::Native(_)
+                    | ColumnType::Collection { .. }
+                    | ColumnType::Vector { .. }
+                    | ColumnType::UserDefinedType { .. } => {
                         return Err(mk_typck_err::<CqlValue>(
                             typ,
-                            TupleTypeCheckErrorKind::WrongElementCount {
-                                rust_type_el_count: t.len(),
-                                cql_type_el_count: fields.len(),
-                            },
+                            TupleTypeCheckErrorKind::NotTuple,
                         ));
                     }
-                    fields
-                }
-                ColumnType::Native(_)
-                | ColumnType::Collection { .. }
-                | ColumnType::Vector { .. }
-                | ColumnType::UserDefinedType { .. } => {
-                    return Err(mk_typck_err::<CqlValue>(
-                        typ,
-                        TupleTypeCheckErrorKind::NotTuple,
-                    ));
+                    _ => unreachable!(),
                 }
             };
             serialize_tuple_like(typ, fields.iter(), t.iter(), writer)
