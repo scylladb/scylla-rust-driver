@@ -2,7 +2,7 @@ use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::metadata::reader::ControlConnectionEvent;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
-use crate::frame::response::event::Event;
+use crate::frame::response::event::EventV2 as Event;
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;

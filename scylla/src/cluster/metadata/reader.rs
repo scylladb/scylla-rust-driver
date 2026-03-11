@@ -26,7 +26,7 @@ use crate::cluster::control_connection::{ControlConnection, ControlConnectionCac
 use crate::cluster::metadata::{Metadata, PeerEndpoint, UntranslatedEndpoint};
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
-use crate::frame::response::event::Event;
+use crate::frame::response::event::EventV2 as Event;
 use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
 use crate::utils::safe_format::IteratorSafeFormatExt;

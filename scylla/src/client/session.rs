@@ -44,7 +44,7 @@ use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
+use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
 use scylla_cql::frame::response::error::DbError;
 use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
