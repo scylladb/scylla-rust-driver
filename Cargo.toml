@@ -4,6 +4,7 @@ members = [
     "scylla",
     "scylla-macros",
     "scylla-cql",
+    "scylla-cql-core",
     "scylla-proxy",
     "utils/analyze_errors_size",
     "utils/find_stale_test_keyspaces",
