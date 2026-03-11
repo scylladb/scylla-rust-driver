@@ -148,7 +148,7 @@ pub mod frame {
             pub use scylla_cql::frame::response::result::DeserializedMetadataAndRawRows;
 
             pub(crate) use scylla_cql::frame::response::result::*;
-            pub use scylla_cql::frame::response::result::{
+            pub use scylla_cql_core::frame::response::result::{
                 CollectionType, ColumnSpec, ColumnType, NativeType, PartitionKeyIndex, TableSpec,
                 UserDefinedType,
             };

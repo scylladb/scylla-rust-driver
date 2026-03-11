@@ -30,7 +30,7 @@ use uuid::Uuid;
 use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 
 // Re-export of CQL types.
-pub use scylla_cql::frame::response::result::{
+pub use scylla_cql_core::frame::response::result::{
     CollectionType, ColumnType, NativeType, UserDefinedType,
 };
 
