@@ -3,7 +3,7 @@
 use crate::frame::frame_errors::{
     ClusterChangeEventParseError, CqlEventParseError, SchemaChangeEventParseError,
 };
-use crate::frame::server_event_type::EventType;
+use crate::frame::server_event_type::{EventType, EventTypeV2};
 use crate::frame::types;
 use std::net::SocketAddr;
 
@@ -13,6 +13,22 @@ use std::net::SocketAddr;
 // TODO(2.0): Remove the "Change" postfix from variants.
 #[expect(clippy::enum_variant_names)]
 pub enum Event {
+    /// Topology changed.
+    TopologyChange(TopologyChangeEvent),
+    /// Status of a node changed.
+    StatusChange(StatusChangeEvent),
+    /// Schema changed.
+    SchemaChange(SchemaChangeEvent),
+}
+
+/// Event that the server notified the client about.
+#[derive(Debug)]
+// The postfix "Change" is used in all variants just because all currently existing events happen to be
+// about changes in the cluster, so it makes sense to use the same postfix for all of them.
+// If we add a new event type that is not about changes, then clippy will no longer complain.
+#[expect(clippy::enum_variant_names)]
+#[non_exhaustive]
+pub enum EventV2 {
     /// Topology changed.
     TopologyChange(TopologyChangeEvent),
     /// Status of a node changed.
@@ -126,6 +142,28 @@ impl Event {
                     .map_err(CqlEventParseError::StatusChangeEventParseError)?,
             )),
             EventType::SchemaChange => Ok(Self::SchemaChange(SchemaChangeEvent::deserialize(buf)?)),
+        }
+    }
+}
+
+impl EventV2 {
+    /// Deserialize an event from the provided buffer.
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlEventParseError> {
+        let event_type: EventTypeV2 = types::read_string(buf)
+            .map_err(CqlEventParseError::EventTypeParseError)?
+            .parse()?;
+        match event_type {
+            EventTypeV2::TopologyChange => Ok(Self::TopologyChange(
+                TopologyChangeEvent::deserialize(buf)
+                    .map_err(CqlEventParseError::TopologyChangeEventParseError)?,
+            )),
+            EventTypeV2::StatusChange => Ok(Self::StatusChange(
+                StatusChangeEvent::deserialize(buf)
+                    .map_err(CqlEventParseError::StatusChangeEventParseError)?,
+            )),
+            EventTypeV2::SchemaChange => {
+                Ok(Self::SchemaChange(SchemaChangeEvent::deserialize(buf)?))
+            }
         }
     }
 }
