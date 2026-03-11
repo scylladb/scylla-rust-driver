@@ -984,20 +984,6 @@ impl CqlValue {
         }
     }
 
-    /// Converts the value to `chrono` NaiveDate if it is of Date type.
-    #[cfg(test)]
-    #[cfg(feature = "chrono-04")]
-    pub(crate) fn as_naive_date_04(&self) -> Option<chrono_04::NaiveDate> {
-        self.as_cql_date().and_then(|date| date.try_into().ok())
-    }
-
-    /// Converts the value to `time` Date if it is of Date type.
-    #[cfg(test)]
-    #[cfg(feature = "time-03")]
-    pub(crate) fn as_date_03(&self) -> Option<time_03::Date> {
-        self.as_cql_date().and_then(|date| date.try_into().ok())
-    }
-
     /// Casts the value to CQL Timestamp if it is of that type.
     pub fn as_cql_timestamp(&self) -> Option<CqlTimestamp> {
         match self {
@@ -1006,40 +992,12 @@ impl CqlValue {
         }
     }
 
-    /// Converts the value to `chrono` DateTime if it is of Timestamp type.
-    #[cfg(test)]
-    #[cfg(feature = "chrono-04")]
-    pub(crate) fn as_datetime_04(&self) -> Option<chrono_04::DateTime<chrono_04::Utc>> {
-        self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
-    }
-
-    /// Converts the value to `time` OffsetDateTime if it is of Timestamp type.
-    #[cfg(test)]
-    #[cfg(feature = "time-03")]
-    pub(crate) fn as_offset_date_time_03(&self) -> Option<time_03::OffsetDateTime> {
-        self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
-    }
-
     /// Casts the value to CQL Time if it is of that type.
     pub fn as_cql_time(&self) -> Option<CqlTime> {
         match self {
             Self::Time(i) => Some(*i),
             _ => None,
         }
-    }
-
-    /// Converts the value to `chrono` NaiveTime if it is of Time type.
-    #[cfg(test)]
-    #[cfg(feature = "chrono-04")]
-    pub(crate) fn as_naive_time_04(&self) -> Option<chrono_04::NaiveTime> {
-        self.as_cql_time().and_then(|ts| ts.try_into().ok())
-    }
-
-    /// Converts the value to `time` Time if it is of Time type.
-    #[cfg(test)]
-    #[cfg(feature = "time-03")]
-    pub(crate) fn as_time_03(&self) -> Option<time_03::Time> {
-        self.as_cql_time().and_then(|ts| ts.try_into().ok())
     }
 
     /// Casts the value to CQL Duration if it is of that type.
