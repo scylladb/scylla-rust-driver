@@ -336,6 +336,11 @@ pub enum MetadataError {
     /// Bad tables metadata.
     #[error("Bad tables metadata: {0}")]
     Tables(#[from] TablesMetadataError),
+
+    /// Bad client routes metadata.
+    #[cfg(feature = "client-routes")]
+    #[error("Bad client routes metadata: {0}")]
+    ClientRoutes(#[from] ClientRoutesMetadataError),
 }
 
 /// An error occurred during metadata fetch.
@@ -476,6 +481,21 @@ pub enum TablesMetadataError {
         column_name: String,
         /// Kind of the column that is unknown.
         column_kind: String,
+    },
+}
+
+/// An error that occurred during client routes metadata fetch.
+#[cfg(feature = "client-routes")]
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ClientRoutesMetadataError {
+    /// Failed to parse CQL type returned from system_schema.columns query.
+    #[error("Invalid port value: {port}, is TLS port? {is_tls}")]
+    InvalidPortValue {
+        /// Invalid port value.
+        port: i32,
+        /// Whether the port is the TLS port (ordinary port otherwise)
+        is_tls: bool,
     },
 }
 
@@ -627,6 +647,10 @@ pub enum TranslationError {
     #[error("No rule for address {0}")]
     NoRuleForAddress(SocketAddr),
 
+    /// Driver failed to find a translation rule for a provided host id.
+    #[error("No rule for host id {0}")]
+    NoRuleForHost(Uuid),
+
     /// A translation rule for a provided address was found, but the translated address was invalid.
     #[error("Failed to parse translated address: {translated_addr_str}, reason: {reason}")]
     InvalidAddressInRule {
@@ -640,9 +664,38 @@ pub enum TranslationError {
     #[error("An I/O error occurred during address translation: {0}")]
     IoError(Arc<std::io::Error>),
 
+    /// DNS lookup failed during address translation.
+    #[error("DNS lookup failed: {0}")]
+    DnsLookupFailed(DnsLookupError),
+
+    /// system.client_routes is missing a port for a host.
+    #[cfg(feature = "private-link")]
+    #[error("Missing port for host {0} in system.client_routes")]
+    MissingPortForHost(Uuid),
+
     /// Custom error, for example from user-implemented policy.
     #[error(transparent)]
     Custom(#[from] CustomTranslationError),
+}
+
+/// Error that occurred during DNS lookup.
+#[derive(Error, Debug, Clone)]
+pub enum DnsLookupError {
+    /// Timed out during DNS lookup.
+    #[error("Failed to perform DNS lookup within {0}ms")]
+    Timeout(u128),
+    /// DNS lookup returned an empty address list for a given hostname.
+    #[error("Empty address list returned by DNS for {0}")]
+    EmptyAddressListForHost(String),
+    /// I/O error occurred during DNS lookup.
+    #[error("An I/O error occurred during DNS lookup: {0}")]
+    IoError(Arc<std::io::Error>),
+}
+
+impl From<std::io::Error> for DnsLookupError {
+    fn from(err: std::io::Error) -> Self {
+        DnsLookupError::IoError(Arc::new(err))
+    }
 }
 
 /// An error that occurred during connection setup request execution.

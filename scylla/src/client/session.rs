@@ -44,7 +44,7 @@ use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
+use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
 use scylla_cql::frame::response::error::DbError;
 use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
@@ -343,6 +343,11 @@ pub struct SessionConfig {
     /// Driver and application self-identifying information,
     /// to be sent to server in STARTUP message.
     pub identity: SelfIdentity<'static>,
+
+    /// PrivateLink configuration for Scylla Cloud. If set, Session will connect
+    /// to Scylla Cloud clusters using PrivateLink.
+    #[cfg(feature = "private-link")]
+    pub(crate) private_link_config: Option<super::private_link::PrivateLinkConfig>,
 }
 
 impl SessionConfig {
@@ -397,6 +402,8 @@ impl SessionConfig {
             tracing_info_fetch_consistency: Consistency::One,
             cluster_metadata_refresh_interval: Duration::from_secs(60),
             identity: SelfIdentity::default(),
+            #[cfg(feature = "private-link")]
+            private_link_config: None,
         }
     }
 
@@ -1040,6 +1047,17 @@ impl Session {
             keepalive_timeout: config.keepalive_timeout,
             tablet_sender: Some(tablet_sender),
             identity: config.identity,
+            #[cfg(feature = "client-routes")]
+            #[cfg_attr(not(feature = "private-link"), expect(unused_labels))]
+            read_client_routes: 'routes: {
+                #[cfg(feature = "private-link")]
+                {
+                    if config.private_link_config.is_some() {
+                        break 'routes true;
+                    }
+                }
+                false
+            },
         };
 
         let pool_config = PoolConfig {
@@ -1079,6 +1097,8 @@ impl Session {
             tablet_receiver,
             #[cfg(feature = "metrics")]
             Arc::clone(&metrics),
+            #[cfg(feature = "private-link")]
+            config.private_link_config,
         )
         .await?;
 

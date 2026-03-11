@@ -19,6 +19,9 @@ pub mod execution_profile;
 
 pub mod pager;
 
+#[cfg(feature = "private-link")]
+pub mod private_link;
+
 pub mod caching_session;
 
 mod self_identity;

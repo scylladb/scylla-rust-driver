@@ -14,11 +14,12 @@
 //!     - [NativeType],
 //!     - [UserDefinedType],
 //!     - [CollectionType],
-//!
-
+#![cfg_attr(feature = "client-routes", doc = " - client routes:")]
+#![cfg_attr(feature = "client-routes", doc = "   - [ClientRoute]")]
 mod fetching;
 pub(super) mod reader;
 
+use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 use crate::routing::Token;
 
 use scylla_cql::frame::response::result::ColumnSpec;
@@ -26,8 +27,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
-
-use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 
 // Re-export of CQL types.
 pub use scylla_cql::frame::response::result::{
@@ -54,6 +53,9 @@ pub(crate) enum SingleKeyspaceMetadataError {
 pub(crate) struct Metadata {
     pub(crate) peers: Vec<Peer>,
     pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
+    // Arc'd for cheaper feeding to ClientRoutesSubscribers.
+    #[cfg(feature = "client-routes")]
+    pub(crate) client_routes: Arc<ClientRoutes>,
 }
 
 /// Represents a node in the cluster, as fetched from the `system.{peers,local}` tables.
@@ -278,6 +280,47 @@ pub enum Strategy {
     },
 }
 
+#[cfg(feature = "client-routes")]
+#[derive(Debug, Clone)]
+pub(crate) struct ClientRoute {
+    pub(crate) connection_id: String,
+    pub(crate) host_id: Uuid,
+    pub(crate) hostname: String,
+    // At least one of `port` and `tls_port` must be non-null, as per the REST API constraints.
+    // This is not validated by the driver, as it anyway requires specific one to be non-null
+    // based on the `use_tls` setting, so the non-nullability of _any_ of them is not helpful
+    // for the driver.
+    pub(crate) port: Option<u16>,
+    pub(crate) tls_port: Option<u16>,
+}
+
+#[cfg(feature = "client-routes")]
+#[derive(Debug, Default)] // Default is needed for `try_collect()`.
+pub(crate) struct ClientRoutes {
+    routes: HashMap<Uuid, ClientRoute>,
+}
+
+// Needed for `Stream::try_collect()` to work.
+#[cfg(feature = "client-routes")]
+impl Extend<ClientRoute> for ClientRoutes {
+    fn extend<T: IntoIterator<Item = ClientRoute>>(&mut self, into_iter: T) {
+        for route in into_iter {
+            // If there are multiple routes for the same host id (which means they differ by connection id),
+            // we can do nothing better than choose an arbitrary route. This anyway means a configuration issue,
+            // because the driver should receive such set of connection ids that corresponding sets of host ids
+            // are disjoint. This was confirmed with the Cloud.
+            self.routes.entry(route.host_id).or_insert(route);
+        }
+    }
+}
+
+#[cfg(feature = "client-routes")]
+impl ClientRoutes {
+    pub(crate) fn get(&self, host_id: Uuid) -> Option<&ClientRoute> {
+        self.routes.get(&host_id)
+    }
+}
+
 impl Metadata {
     /// Creates new, dummy metadata from a given list of peers.
     ///
@@ -305,6 +348,8 @@ impl Metadata {
         Metadata {
             peers,
             keyspaces: HashMap::new(),
+            #[cfg(feature = "client-routes")]
+            client_routes: Arc::new(ClientRoutes::default()),
         }
     }
 }

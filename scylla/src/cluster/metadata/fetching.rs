@@ -30,16 +30,23 @@ use scylla_cql::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
-use crate::DeserializeRow;
-use crate::client::pager::QueryPager;
-use crate::cluster::NodeAddr;
-use crate::cluster::control_connection::ControlConnection;
-use crate::cluster::metadata::{
+#[cfg(feature = "client-routes")]
+use super::ClientRoute;
+use super::{
     CollectionType, Column, ColumnKind, ColumnType, Keyspace, MaterializedView, Metadata,
     MissingUserDefinedType, NativeType, Peer, SingleKeyspaceMetadataError, Strategy, Table,
     UserDefinedType,
 };
+
+use crate::DeserializeRow;
+use crate::client::pager::QueryPager;
+use crate::cluster::NodeAddr;
+use crate::cluster::control_connection::ControlConnection;
+#[cfg(feature = "client-routes")]
+use crate::cluster::metadata::ClientRoutes;
 use crate::deserialize::DeserializeOwnedRow;
+#[cfg(feature = "client-routes")]
+use crate::errors::ClientRoutesMetadataError;
 use crate::errors::{
     DbError, KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, MetadataFetchError,
     MetadataFetchErrorKind, NextPageError, NextRowError, PeersMetadataError, RequestAttemptError,
@@ -160,10 +167,37 @@ impl ControlConnection {
         keyspace_to_fetch: &[String],
         fetch_schema: bool,
     ) -> Result<Metadata, MetadataError> {
-        let peers_query = self.query_peers(connect_port);
         let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, fetch_schema);
+        let peers_query = self.query_peers(connect_port);
 
-        let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
+        let peers: Vec<Peer>;
+        let keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>;
+        #[cfg(feature = "client-routes")]
+        let client_routes: Arc<ClientRoutes>;
+
+        #[cfg(feature = "client-routes")]
+        {
+            let topology_query = async {
+                let peers = peers_query.await?;
+                let client_routes = if self.read_client_routes() {
+                    self.query_client_routes(
+                        self.client_routes_connection_ids(),
+                        Some(peers.iter().map(|peer| peer.host_id)),
+                    )
+                    .await?
+                } else {
+                    Arc::new(ClientRoutes::default())
+                };
+                Ok((peers, client_routes))
+            };
+            ((peers, client_routes), keyspaces) =
+                tokio::try_join!(topology_query, keyspaces_query)?;
+        }
+
+        #[cfg(not(feature = "client-routes"))]
+        {
+            (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
+        }
 
         // There must be at least one peer
         if peers.is_empty() {
@@ -175,7 +209,12 @@ impl ControlConnection {
             return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists));
         }
 
-        Ok(Metadata { peers, keyspaces })
+        Ok(Metadata {
+            peers,
+            keyspaces,
+            #[cfg(feature = "client-routes")]
+            client_routes,
+        })
     }
 }
 
@@ -210,7 +249,7 @@ impl ControlConnection {
     async fn query_peers(&self, connect_port: u16) -> Result<Vec<Peer>, MetadataError> {
         let peers_query_stream = self
             .query_iter(
-                "select host_id, rpc_address, data_center, rack, tokens from system.peers",
+                "SELECT host_id, rpc_address, data_center, rack, tokens FROM system.peers",
                 &(),
             )
             .map(|pager_res| {
@@ -229,7 +268,7 @@ impl ControlConnection {
             .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
         let local_query_stream = self
-            .query_iter("select host_id, rpc_address, data_center, rack, tokens from system.local WHERE key='local'", &())
+            .query_iter("SELECT host_id, rpc_address, data_center, rack, tokens FROM system.local WHERE key='local'", &())
             .map(|pager_res| {
                 let pager = pager_res?;
                 let rows_stream = pager.rows_stream::<NodeInfoRow>()?;
@@ -345,6 +384,244 @@ impl ControlConnection {
             rack,
         })
     }
+}
+
+/*
+ * CREATE TABLE system.client_routes (
+ *     connection_id uuid,
+ *     host_id uuid,
+ *     address text,          -- DNS hostname of the PrivateLink endpoint
+ *     port int,              -- CQL plaintext port
+ *     tls_port int,          -- CQL TLS port
+ *     alternator_port int,
+ *     alternator_https_port int,
+ *     PRIMARY KEY (connection_id, host_id)
+ * );
+ */
+
+/* There are two separate structs:
+ * 1. ClientRoutesEntry
+ * 2. ClientRoute
+ * They differ just by types to represent ports: i32 in ClientRoutesEntry and u16 for ClientRoute.
+ * The reason is that only signed integers implement DeserializeValue.
+ * So, we utilise the derive macro to implement DeserializeRow automatically on ClientRoutesEntry,
+ * and then convert ClientRoutesEntry to a ClientRoute.
+ */
+
+#[cfg(feature = "client-routes")]
+#[derive(DeserializeRow)]
+#[scylla(crate = "crate")]
+pub(crate) struct ClientRoutesEntry {
+    // PRIMARY KEY (connection_id, host_id)
+    pub(crate) connection_id: String,
+    // DB's REST API throws HTTP 500 if `host_id` is invalid UUID.
+    pub(crate) host_id: Uuid,
+
+    // DB's REST API throws HTTP 400 if `address` is null.
+    #[scylla(rename = "address")]
+    pub(crate) hostname: String,
+
+    // DB's REST API throws HTTP 400 if both `port` and `tls_port` are null,
+    // allows inserting either of them as null as long as the other is not null.
+
+    // Nullable, not part of the primary key. DB's REST API allows inserting null.
+    pub(crate) port: Option<i32>,
+    // Nullable, not part of the primary key. DB's REST API allows inserting null.
+    pub(crate) tls_port: Option<i32>,
+}
+
+#[cfg(feature = "client-routes")]
+impl TryFrom<ClientRoutesEntry> for ClientRoute {
+    type Error = ClientRoutesMetadataError;
+
+    fn try_from(
+        ClientRoutesEntry {
+            connection_id,
+            host_id,
+            hostname,
+            port,
+            tls_port,
+        }: ClientRoutesEntry,
+    ) -> Result<Self, Self::Error> {
+        fn parse_port(
+            port: Option<i32>,
+            is_tls: bool,
+        ) -> Result<Option<u16>, ClientRoutesMetadataError> {
+            port.map(|port| {
+                u16::try_from(port)
+                    .map_err(|_| ClientRoutesMetadataError::InvalidPortValue { port, is_tls })
+            })
+            .transpose()
+        }
+        let port = parse_port(port, false)?;
+        let tls_port = parse_port(tls_port, true)?;
+        Ok(Self {
+            connection_id,
+            host_id,
+            hostname,
+            port,
+            tls_port,
+        })
+    }
+}
+
+#[cfg(feature = "client-routes")]
+fn build_client_routes_query(
+    // Comma-separated list of connection ids that are accepted.
+    // If empty, all connection ids are accepted.
+    connection_ids: &str,
+    host_ids: Option<impl IntoIterator<Item = Uuid>>,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut query_str =
+        "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes"
+            .to_owned();
+    if !connection_ids.is_empty() {
+        write!(query_str, " WHERE connection_id IN ({connection_ids})")
+            .expect("formatted output to a String never fails");
+    }
+    if let Some(host_ids) = host_ids {
+        // TODO: consider passing host_ids as bound parameters, to hopefully decrease number
+        // of unique query strings in the prepared cache.
+        let host_ids = itertools::join(host_ids, ", ");
+        if !host_ids.is_empty() {
+            if connection_ids.is_empty() {
+                query_str.push_str(" WHERE");
+            } else {
+                query_str.push_str(" AND");
+            }
+            write!(query_str, " host_id IN ({host_ids})")
+                .expect("formatted output to a String never fails");
+
+            // The table's PRIMARY KEY is (connection_id, host_id), where connection_id
+            // is the partition key. ALLOW FILTERING is needed when the query has a WHERE
+            // clause that doesn't restrict the partition key.
+            if connection_ids.is_empty() {
+                query_str.push_str(" ALLOW FILTERING");
+            }
+        }
+    }
+
+    query_str
+}
+
+// Tests by Claude Opus 4.6, reviewed and edited by me.
+#[cfg(test)]
+#[cfg(feature = "client-routes")]
+mod client_routes_query_tests {
+    use crate::test_utils::setup_tracing;
+    use uuid::Uuid;
+
+    use super::build_client_routes_query;
+
+    const BASE_QUERY: &str =
+        "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes";
+
+    #[test]
+    fn test_no_filters_none_host_ids() {
+        setup_tracing();
+        let query = build_client_routes_query("", None::<Vec<Uuid>>);
+        let expected = BASE_QUERY;
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn test_connection_ids_only_none_host_ids() {
+        setup_tracing();
+        // Partition key (connection_id) is restricted, so ALLOW FILTERING is not needed.
+        let query = build_client_routes_query("'conn1', 'conn2'", None::<Vec<Uuid>>);
+        let expected = format!("{BASE_QUERY} WHERE connection_id IN ('conn1', 'conn2')");
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn test_no_connection_ids_with_host_ids() {
+        setup_tracing();
+        // Partition key (connection_id) is not restricted, so filtering by
+        // clustering key (host_id) alone requires ALLOW FILTERING.
+        let u1 = Uuid::from_u128(1);
+        let u2 = Uuid::from_u128(2);
+        let query = build_client_routes_query("", Some(vec![u1, u2]));
+        let expected = format!("{BASE_QUERY} WHERE host_id IN ({u1}, {u2}) ALLOW FILTERING");
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn test_both_connection_ids_and_host_ids() {
+        setup_tracing();
+        let u1 = Uuid::from_u128(1);
+        let query = build_client_routes_query("'conn1'", Some(vec![u1]));
+        let expected =
+            format!("{BASE_QUERY} WHERE connection_id IN ('conn1') AND host_id IN ({u1})");
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn test_no_connection_ids_empty_host_ids() {
+        setup_tracing();
+        // No host_id clause since the iterator was empty.
+        let query = build_client_routes_query("", Some(Vec::<Uuid>::new()));
+        let expected = BASE_QUERY;
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn test_connection_ids_with_empty_host_ids() {
+        setup_tracing();
+        // When host_ids is Some but empty, only the connection_id filter appears.
+        let query = build_client_routes_query("'conn1'", Some(Vec::<Uuid>::new()));
+        let expected = format!("{BASE_QUERY} WHERE connection_id IN ('conn1')");
+        assert_eq!(query, expected);
+    }
+
+    #[test]
+    fn test_multiple_connection_ids_and_multiple_host_ids() {
+        setup_tracing();
+        let u1 = Uuid::from_u128(1);
+        let u2 = Uuid::from_u128(2);
+        let u3 = Uuid::from_u128(3);
+        let query = build_client_routes_query("'c1', 'c2'", Some(vec![u1, u2, u3]));
+        let expected = format!(
+            "{BASE_QUERY} WHERE connection_id IN ('c1', 'c2') AND host_id IN ({u1}, {u2}, {u3})"
+        );
+        assert_eq!(query, expected);
+    }
+}
+
+impl ControlConnection {
+    #[cfg(feature = "client-routes")]
+    async fn query_client_routes(
+        &self,
+        // Comma-separated list of connection ids that are accepted.
+        // If empty, all connection ids are accepted.
+        connection_ids: &str,
+        host_ids: Option<impl IntoIterator<Item = Uuid>>,
+    ) -> Result<Arc<ClientRoutes>, MetadataError> {
+        let query_str = build_client_routes_query(connection_ids, host_ids);
+        tracing::debug!("Querying system.client routes: \"{query_str}\"");
+
+        let routes = self
+            .query_iter(&query_str, &())
+            .into_stream()
+            .map(|pager_res| {
+                let pager = pager_res?;
+                let stream = pager.rows_stream::<ClientRoutesEntry>()?;
+                Ok::<_, MetadataFetchErrorKind>(stream.map_err(MetadataFetchErrorKind::from))
+            })
+            .try_flatten()
+            // Add table context to the error.
+            .map_err(|error| MetadataFetchError {
+                error,
+                table: "system.client_routes",
+            })
+            .map_err(MetadataError::from)
+            .map(|r| r.and_then(|c| ClientRoute::try_from(c).map_err(MetadataError::from)))
+            .try_collect()
+            .await?;
+
+        Ok(Arc::new(routes))
+    }
 
     fn query_filter_keyspace_name<'a, R>(
         &'a self,
@@ -393,7 +670,7 @@ impl ControlConnection {
     ) -> Result<PerKeyspaceResult<Keyspace, SingleKeyspaceMetadataError>, MetadataError> {
         let rows = self
             .query_filter_keyspace_name::<(String, HashMap<String, String>, bool)>(
-                "select keyspace_name, replication, durable_writes from system_schema.keyspaces",
+                "SELECT keyspace_name, replication, durable_writes FROM system_schema.keyspaces",
                 keyspaces_to_fetch,
             )
             .map_err(|error| MetadataFetchError {
@@ -522,7 +799,7 @@ impl ControlConnection {
         MetadataError,
     > {
         let rows = self.query_filter_keyspace_name::<UdtRow>(
-        "select keyspace_name, type_name, field_names, field_types from system_schema.types",
+        "SELECT keyspace_name, type_name, field_names, field_types FROM system_schema.types",
         keyspaces_to_fetch,
     )
     .map_err(|error| MetadataFetchError {
@@ -976,7 +1253,7 @@ impl ControlConnection {
         type RowType = (String, String, String, String, i32, String);
 
         let rows = self.query_filter_keyspace_name::<RowType>(
-        "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns",
+        "SELECT keyspace_name, table_name, column_name, kind, position, type FROM system_schema.columns",
         keyspaces_to_fetch
     ).map_err(|error| MetadataFetchError {
         error,
@@ -1354,7 +1631,7 @@ impl ControlConnection {
 
         let rows = self
             .query_iter(
-                "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
+                "SELECT keyspace_name, table_name, partitioner FROM system_schema.scylla_tables",
                 &(),
             )
             .map(|pager_res| {

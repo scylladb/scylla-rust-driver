@@ -16,6 +16,8 @@
 //! - TODO
 
 pub mod address_translator;
+#[cfg(feature = "client-routes")]
+pub(crate) mod client_routes_subscriber;
 pub mod host_filter;
 #[cfg(all(scylla_unstable, feature = "unstable-host-listener"))]
 pub mod host_listener;

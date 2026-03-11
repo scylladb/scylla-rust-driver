@@ -14,9 +14,9 @@ use crate::errors::{
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self, FrameParams, SerializedRequest,
-    request::{self, SerializableRequest, batch, execute, query, register},
-    response::{Response, ResponseOpcode, event::Event, result},
-    server_event_type::EventType,
+    request::{self, SerializableRequest, batch, execute, query},
+    response::{ResponseOpcode, ResponseV2 as Response, event::EventV2 as Event, result},
+    server_event_type::EventTypeV2 as EventType,
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
@@ -34,12 +34,15 @@ use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::CqlRequestKind;
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::request::query::QueryParameters;
+use scylla_cql::frame::request::register::RegisterV2 as Register;
 use scylla_cql::frame::response::authenticate::Authenticate;
 use scylla_cql::frame::response::result::{
     ResultMetadata, ResultWithDeserializedMetadata, TableSpec,
 };
 use scylla_cql::frame::response::{self, error};
-use scylla_cql::frame::response::{Error, ResponseWithDeserializedMetadata};
+use scylla_cql::frame::response::{
+    Error, ResponseWithDeserializedMetadataV2 as ResponseWithDeserializedMetadata,
+};
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
 use scylla_cql::serialize::raw_batch::RawBatchValuesAdapter;
@@ -289,6 +292,12 @@ pub(crate) struct ConnectionConfig {
     pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
+
+    // Makes the control connection subscribe for client routes updates,
+    // as well fetch client routes upon metadata refresh.
+    // Does nothing for ordinary connections.
+    #[cfg(feature = "client-routes")]
+    pub(crate) read_client_routes: bool,
 }
 
 impl ConnectionConfig {
@@ -320,6 +329,8 @@ impl ConnectionConfig {
             keepalive_timeout: self.keepalive_timeout,
             tablet_sender: self.tablet_sender.clone(),
             identity: self.identity.clone(),
+            #[cfg(feature = "client-routes")]
+            read_client_routes: self.read_client_routes,
         }
     }
 }
@@ -349,6 +360,12 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 
     pub(crate) identity: SelfIdentity<'static>,
+
+    // Makes the control connection subscribe for client routes updates,
+    // as well fetch client routes upon metadata refresh.
+    // Does nothing for ordinary connections.
+    #[cfg(feature = "client-routes")]
+    pub(crate) read_client_routes: bool,
 }
 
 #[cfg(test)]
@@ -376,6 +393,8 @@ impl Default for HostConnectionConfig {
             tablet_sender: None,
 
             identity: SelfIdentity::default(),
+            #[cfg(feature = "client-routes")]
+            read_client_routes: false,
         }
     }
 }
@@ -405,6 +424,8 @@ impl Default for ConnectionConfig {
             tablet_sender: None,
 
             identity: SelfIdentity::default(),
+            #[cfg(feature = "client-routes")]
+            read_client_routes: false,
         }
     }
 }
@@ -1349,7 +1370,7 @@ impl Connection {
             ConnectionSetupRequestError::new(CqlRequestKind::Register, kind)
         };
 
-        let register_frame = register::Register {
+        let register_frame = Register {
             event_types_to_register_for,
         };
 
@@ -1912,6 +1933,11 @@ impl Connection {
         self.connect_address
     }
 
+    #[cfg(feature = "client-routes")]
+    pub(crate) fn read_client_routes(&self) -> bool {
+        self.config.read_client_routes
+    }
+
     async fn update_tablets_from_response(
         &self,
         table: &TableSpec<'_>,
@@ -2091,11 +2117,16 @@ pub(crate) async fn open_connection(
 
     /* If this is a control connection, REGISTER to receive all event types. */
     if connection.config.event_sender.is_some() {
-        let all_event_types = vec![
+        #[cfg_attr(not(feature = "client-routes"), allow(unused_mut))]
+        let mut all_event_types = vec![
             EventType::TopologyChange,
             EventType::StatusChange,
             EventType::SchemaChange,
         ];
+        #[cfg(feature = "client-routes")]
+        if config.read_client_routes {
+            all_event_types.push(EventType::ClientRoutesChange)
+        }
         connection.register(all_event_types).await?;
     }
 

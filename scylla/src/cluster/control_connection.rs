@@ -25,14 +25,22 @@ pub(super) struct ControlConnection {
     /// The custom server-side timeout set for requests executed on the control connection.
     overridden_serverside_timeout: Option<Duration>,
     cache: Arc<ControlConnectionCache>,
+    #[cfg(feature = "client-routes")]
+    client_routes_connection_ids: String,
 }
 
 impl ControlConnection {
-    pub(super) fn new(conn: Arc<Connection>, cache: Arc<ControlConnectionCache>) -> Self {
+    pub(super) fn new(
+        conn: Arc<Connection>,
+        cache: Arc<ControlConnectionCache>,
+        #[cfg(feature = "client-routes")] private_link_connection_ids: String,
+    ) -> Self {
         Self {
             conn,
             overridden_serverside_timeout: None,
             cache,
+            #[cfg(feature = "client-routes")]
+            client_routes_connection_ids: private_link_connection_ids,
         }
     }
 
@@ -51,6 +59,16 @@ impl ControlConnection {
     /// Returns true iff the target node is a ScyllaDB node (and not a, e.g., Cassandra node).
     pub(super) fn is_to_scylladb(&self) -> bool {
         self.conn.get_shard_info().is_some()
+    }
+
+    #[cfg(feature = "client-routes")]
+    pub(super) fn client_routes_connection_ids(&self) -> &str {
+        &self.client_routes_connection_ids
+    }
+
+    #[cfg(feature = "client-routes")]
+    pub(super) fn read_client_routes(&self) -> bool {
+        self.conn.read_client_routes()
     }
 
     /// Appends the custom server-side timeout to the statement string, if such custom timeout
@@ -271,8 +289,12 @@ mod tests {
             .unwrap();
 
             let connected_to_scylladb = conn.get_shard_info().is_some();
-            let conn_with_default_timeout =
-                ControlConnection::new(Arc::new(conn), Arc::new(ControlConnectionCache::new()));
+            let conn_with_default_timeout = ControlConnection::new(
+                Arc::new(conn),
+                Arc::new(ControlConnectionCache::new()),
+                #[cfg(feature = "client-routes")]
+                String::new(),
+            );
 
             // No custom timeout set.
             {
