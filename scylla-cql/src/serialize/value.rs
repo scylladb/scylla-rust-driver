@@ -625,6 +625,7 @@ fn serialize_cql_value<'b>(
     typ: &ColumnType,
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
+    #[deny(clippy::wildcard_enum_match_arm)]
     match value {
         CqlValue::Ascii(a) => <_ as SerializeValue>::serialize(&a, typ, writer),
         CqlValue::Boolean(b) => <_ as SerializeValue>::serialize(&b, typ, writer),
@@ -683,7 +684,10 @@ fn serialize_cql_value<'b>(
                     }
                     fields
                 }
-                _ => {
+                ColumnType::Native(_)
+                | ColumnType::Collection { .. }
+                | ColumnType::Vector { .. }
+                | ColumnType::UserDefinedType { .. } => {
                     return Err(mk_typck_err::<CqlValue>(
                         typ,
                         TupleTypeCheckErrorKind::NotTuple,
@@ -695,6 +699,10 @@ fn serialize_cql_value<'b>(
         CqlValue::Uuid(u) => <_ as SerializeValue>::serialize(&u, typ, writer),
         CqlValue::Varint(v) => <_ as SerializeValue>::serialize(&v, typ, writer),
         CqlValue::Vector(v) => <_ as SerializeValue>::serialize(&v, typ, writer),
+        // This wildcard arm is required because CqlValue is #[non_exhaustive] (defined
+        // in scylla-cql-core).
+        // This is temporary - after serialization is moved to core, we can remove that.
+        _ => unreachable!(),
     }
 }
 

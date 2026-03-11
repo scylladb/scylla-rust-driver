@@ -110,8 +110,8 @@ pub mod value {
     //! Defines CQL values of various types and their representations,
     //! as well as conversion between them and other types.
 
-    // Every `pub` item is re-exported here, apart from `deser_cql_value`.
-    pub use scylla_cql::value::{
+    // Most types come from scylla-cql-core.
+    pub use scylla_cql_core::value::{
         Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
         CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, Emptiable, MaybeEmpty, MaybeUnset,
         Row, Unset, ValueOverflow,
