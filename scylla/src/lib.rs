@@ -131,7 +131,7 @@ pub mod frame {
     pub mod types {
         //! CQL binary protocol in-wire types.
 
-        pub use scylla_cql::frame::types::{Consistency, SerialConsistency};
+        pub use scylla_cql_core::frame::types::{Consistency, SerialConsistency};
     }
 
     pub mod response {

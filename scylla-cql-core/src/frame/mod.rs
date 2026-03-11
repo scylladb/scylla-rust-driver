@@ -1,7 +1,27 @@
+pub mod types;
+
 use std::fmt::Display;
 use std::str::FromStr;
 
 use thiserror::Error;
+
+/// An error type for parsing an enum value from a primitive.
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+#[error("No discrimant in enum `{enum_name}` matches the value `{primitive:?}`")]
+pub struct TryFromPrimitiveError<T: Copy + std::fmt::Debug> {
+    enum_name: &'static str,
+    primitive: T,
+}
+
+impl<T: Copy + std::fmt::Debug> TryFromPrimitiveError<T> {
+    /// Creates a new `TryFromPrimitiveError` with the given enum name and primitive value.
+    pub fn new(enum_name: &'static str, primitive: T) -> Self {
+        Self {
+            enum_name,
+            primitive,
+        }
+    }
+}
 
 /// All of the Authenticators supported by ScyllaDB
 #[derive(Debug, PartialEq, Eq, Clone)]
