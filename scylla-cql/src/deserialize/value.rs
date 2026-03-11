@@ -998,7 +998,7 @@ where
 ///
 /// It would be nice to have a rule to determine if the element type is fixed-length or not,
 /// however, we only have a heuristic. There are a few types that should, for all intents and purposes,
-/// be considered fixed-length, but are not, e.g TinyInt. See ColumnType::type_size() for the list.
+/// be considered fixed-length, but are not, e.g TinyInt. See ColumnType::type_size_for_vector() for the list.
 #[derive(Debug, Clone)]
 pub struct VectorIterator<'frame, 'metadata, T> {
     collection_type: &'metadata ColumnType<'metadata>,
@@ -1068,7 +1068,7 @@ where
             typ,
             element_type,
             *dimensions as usize,
-            element_type.type_size(),
+            element_type.type_size_for_vector(),
             v,
         ))
     }
