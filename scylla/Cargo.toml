@@ -85,6 +85,7 @@ unstable-client-routes = []
 # Main, public dependencies
 ###########################
 scylla-cql = { version = "1.6.0", path = "../scylla-cql" }
+scylla-cql-core = { version = "0.1.0", path = "../scylla-cql-core" }
 tokio = { version = "1.40", features = [
     "net",
     "time",
