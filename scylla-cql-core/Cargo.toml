@@ -21,5 +21,29 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 ] }
 
 [features]
+# Enables support for CQL ser/de of time/date types from time 0.3 crate.
+time-03 = ["dep:time-03"]
+# Enables support for CQL ser/de of time/date types from chrono 0.4 crate.
+chrono-04 = []
+# Enables support for CQL ser/de of arbitrary length integer types from num-bigint 0.3 crate.
+num-bigint-03 = ["dep:num-bigint-03"]
+# Enables support for CQL ser/de of arbitrary length integer types from num-bigint 0.4 crate.
+num-bigint-04 = ["dep:num-bigint-04"]
+# Enables support for CQL ser/de of arbitrary precision decimal types from bigdecimal 0.4 crate.
+bigdecimal-04 = ["dep:bigdecimal-04"]
 
 [dependencies]
+# CqlTimeuuid, ser/deser of CQL UUID
+uuid = "1.0"
+# Easier error type creation (ValueOverflow).
+thiserror = "2.0.6"
+# Used by safe_format utility (Display for CqlValue).
+itertools = "0.14.0"
+# Not optional, because it is also used by Display impl of CqlValue.
+chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, features = [
+    "alloc",
+] }
+num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
+num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
+bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
+time-03 = { package = "time", version = "0.3", optional = true }
