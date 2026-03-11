@@ -4,6 +4,7 @@
 //! public API of the `scylla` driver crate. It is re-exported by both `scylla`
 //! and `scylla-cql`, ensuring type identity is preserved across versions.
 
+pub mod frame;
 pub(crate) mod pretty;
 pub(crate) mod utils;
 
