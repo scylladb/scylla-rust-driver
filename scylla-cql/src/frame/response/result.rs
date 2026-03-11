@@ -167,7 +167,7 @@ impl NativeType {
     /// it is needed as the variable size types (`None`) are de/serialized
     /// differently than the fixed size types (`Some(size)`). Note that
     /// many fixed size types are treated as variable size by Cassandra.
-    pub(crate) fn type_size(&self) -> Option<usize> {
+    pub(crate) fn type_size_for_vector(&self) -> Option<usize> {
         match self {
             NativeType::Ascii => None,
             NativeType::Boolean => Some(1),
@@ -267,14 +267,14 @@ impl ColumnType<'_> {
     }
 
     /// Returns the size of the type in bytes, as it is seen by the vector type if it is treated as fixed size.
-    pub(crate) fn type_size(&self) -> Option<usize> {
+    pub(crate) fn type_size_for_vector(&self) -> Option<usize> {
         match self {
-            ColumnType::Native(n) => n.type_size(),
+            ColumnType::Native(n) => n.type_size_for_vector(),
             ColumnType::Tuple(_) => None,
             ColumnType::Collection { .. } => None,
-            ColumnType::Vector { typ, dimensions } => {
-                typ.type_size().map(|size| size * usize::from(*dimensions))
-            }
+            ColumnType::Vector { typ, dimensions } => typ
+                .type_size_for_vector()
+                .map(|size| size * usize::from(*dimensions)),
             ColumnType::UserDefinedType { .. } => None,
         }
     }

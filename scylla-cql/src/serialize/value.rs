@@ -1036,7 +1036,7 @@ fn serialize_vector<'t, 'b, T: SerializeValue + 't>(
         ));
     }
     let mut builder = writer.into_value_builder();
-    match element_type.type_size() {
+    match element_type.type_size_for_vector() {
         Some(_) => {
             for element in iter {
                 serialize_next_constant_length_elem(
