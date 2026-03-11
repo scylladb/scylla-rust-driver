@@ -1473,109 +1473,111 @@ mod test_utils {
 
     use super::*;
 
-    impl TableSpec<'_> {
-        pub(crate) fn serialize(&self, buf: &mut impl BufMut) -> StdResult<(), TryFromIntError> {
-            types::write_string(&self.ks_name, buf)?;
-            types::write_string(&self.table_name, buf)?;
+    pub(crate) fn serialize_table_spec(
+        table_spec: &TableSpec<'_>,
+        buf: &mut impl BufMut,
+    ) -> StdResult<(), TryFromIntError> {
+        types::write_string(table_spec.ks_name(), buf)?;
+        types::write_string(table_spec.table_name(), buf)?;
 
-            Ok(())
+        Ok(())
+    }
+
+    fn column_type_id(typ: &ColumnType<'_>) -> u16 {
+        use NativeType::*;
+        match typ {
+            ColumnType::Native(Ascii) => 0x0001,
+            ColumnType::Native(BigInt) => 0x0002,
+            ColumnType::Native(Blob) => 0x0003,
+            ColumnType::Native(Boolean) => 0x0004,
+            ColumnType::Native(Counter) => 0x0005,
+            ColumnType::Native(Decimal) => 0x0006,
+            ColumnType::Native(Double) => 0x0007,
+            ColumnType::Native(Float) => 0x0008,
+            ColumnType::Native(Int) => 0x0009,
+            ColumnType::Native(Timestamp) => 0x000B,
+            ColumnType::Native(Uuid) => 0x000C,
+            ColumnType::Native(Text) => 0x000D,
+            ColumnType::Native(Varint) => 0x000E,
+            ColumnType::Native(Timeuuid) => 0x000F,
+            ColumnType::Native(Inet) => 0x0010,
+            ColumnType::Native(Date) => 0x0011,
+            ColumnType::Native(Time) => 0x0012,
+            ColumnType::Native(SmallInt) => 0x0013,
+            ColumnType::Native(TinyInt) => 0x0014,
+            ColumnType::Native(Duration) => 0x0015,
+            ColumnType::Collection {
+                typ: CollectionType::List(_),
+                ..
+            } => 0x0020,
+            ColumnType::Collection {
+                typ: CollectionType::Map(_, _),
+                ..
+            } => 0x0021,
+            ColumnType::Collection {
+                typ: CollectionType::Set(_),
+                ..
+            } => 0x0022,
+            ColumnType::Vector { .. } => {
+                unimplemented!();
+            }
+            ColumnType::UserDefinedType { .. } => 0x0030,
+            ColumnType::Tuple(_) => 0x0031,
         }
     }
 
-    impl ColumnType<'_> {
-        fn id(&self) -> u16 {
-            use NativeType::*;
-            match self {
-                Self::Native(Ascii) => 0x0001,
-                Self::Native(BigInt) => 0x0002,
-                Self::Native(Blob) => 0x0003,
-                Self::Native(Boolean) => 0x0004,
-                Self::Native(Counter) => 0x0005,
-                Self::Native(Decimal) => 0x0006,
-                Self::Native(Double) => 0x0007,
-                Self::Native(Float) => 0x0008,
-                Self::Native(Int) => 0x0009,
-                Self::Native(Timestamp) => 0x000B,
-                Self::Native(Uuid) => 0x000C,
-                Self::Native(Text) => 0x000D,
-                Self::Native(Varint) => 0x000E,
-                Self::Native(Timeuuid) => 0x000F,
-                Self::Native(Inet) => 0x0010,
-                Self::Native(Date) => 0x0011,
-                Self::Native(Time) => 0x0012,
-                Self::Native(SmallInt) => 0x0013,
-                Self::Native(TinyInt) => 0x0014,
-                Self::Native(Duration) => 0x0015,
-                Self::Collection {
-                    typ: CollectionType::List(_),
-                    ..
-                } => 0x0020,
-                Self::Collection {
-                    typ: CollectionType::Map(_, _),
-                    ..
-                } => 0x0021,
-                Self::Collection {
-                    typ: CollectionType::Set(_),
-                    ..
-                } => 0x0022,
-                Self::Vector { .. } => {
-                    unimplemented!();
+    // Only for use in tests
+    pub(crate) fn serialize_column_type(
+        typ: &ColumnType<'_>,
+        buf: &mut impl BufMut,
+    ) -> StdResult<(), TryFromIntError> {
+        let id = column_type_id(typ);
+        types::write_short(id, buf);
+
+        match typ {
+            // Simple types
+            ColumnType::Native(_) => (),
+
+            ColumnType::Collection {
+                typ: CollectionType::List(elem_type),
+                ..
+            }
+            | ColumnType::Collection {
+                typ: CollectionType::Set(elem_type),
+                ..
+            } => {
+                serialize_column_type(elem_type, buf)?;
+            }
+            ColumnType::Collection {
+                typ: CollectionType::Map(key_type, value_type),
+                ..
+            } => {
+                serialize_column_type(key_type, buf)?;
+                serialize_column_type(value_type, buf)?;
+            }
+            ColumnType::Tuple(types) => {
+                types::write_short_length(types.len(), buf)?;
+                for typ in types.iter() {
+                    serialize_column_type(typ, buf)?;
                 }
-                Self::UserDefinedType { .. } => 0x0030,
-                Self::Tuple(_) => 0x0031,
+            }
+            ColumnType::Vector { .. } => {
+                unimplemented!()
+            }
+            ColumnType::UserDefinedType {
+                definition: udt, ..
+            } => {
+                types::write_string(&udt.keyspace, buf)?;
+                types::write_string(&udt.name, buf)?;
+                types::write_short_length(udt.field_types.len(), buf)?;
+                for (field_name, field_type) in udt.field_types.iter() {
+                    types::write_string(field_name, buf)?;
+                    serialize_column_type(field_type, buf)?;
+                }
             }
         }
 
-        // Only for use in tests
-        pub(crate) fn serialize(&self, buf: &mut impl BufMut) -> StdResult<(), TryFromIntError> {
-            let id = self.id();
-            types::write_short(id, buf);
-
-            match self {
-                // Simple types
-                ColumnType::Native(_) => (),
-
-                ColumnType::Collection {
-                    typ: CollectionType::List(elem_type),
-                    ..
-                }
-                | ColumnType::Collection {
-                    typ: CollectionType::Set(elem_type),
-                    ..
-                } => {
-                    elem_type.serialize(buf)?;
-                }
-                ColumnType::Collection {
-                    typ: CollectionType::Map(key_type, value_type),
-                    ..
-                } => {
-                    key_type.serialize(buf)?;
-                    value_type.serialize(buf)?;
-                }
-                ColumnType::Tuple(types) => {
-                    types::write_short_length(types.len(), buf)?;
-                    for typ in types.iter() {
-                        typ.serialize(buf)?;
-                    }
-                }
-                ColumnType::Vector { .. } => {
-                    unimplemented!()
-                }
-                ColumnType::UserDefinedType {
-                    definition: udt, ..
-                } => {
-                    types::write_string(&udt.keyspace, buf)?;
-                    types::write_string(&udt.name, buf)?;
-                    types::write_short_length(udt.field_types.len(), buf)?;
-                    for (field_name, field_type) in udt.field_types.iter() {
-                        types::write_string(field_name, buf)?;
-                        field_type.serialize(buf)?;
-                    }
-                }
-            }
-
-            Ok(())
-        }
+        Ok(())
     }
 
     impl<'a> ResultMetadata<'a> {
@@ -1614,16 +1616,16 @@ mod test_utils {
 
             if !no_metadata {
                 if let Some(spec) = global_table_spec {
-                    spec.serialize(buf)?;
+                    serialize_table_spec(spec, buf)?;
                 }
 
                 for col_spec in self.col_specs() {
                     if global_table_spec.is_none() {
-                        col_spec.table_spec().serialize(buf)?;
+                        serialize_table_spec(col_spec.table_spec(), buf)?;
                     }
 
                     types::write_string(col_spec.name(), buf)?;
-                    col_spec.typ().serialize(buf)?;
+                    serialize_column_type(col_spec.typ(), buf)?;
                 }
             }
 
