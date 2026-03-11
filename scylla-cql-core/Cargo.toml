@@ -31,6 +31,10 @@ num-bigint-03 = ["dep:num-bigint-03"]
 num-bigint-04 = ["dep:num-bigint-04"]
 # Enables support for CQL ser/de of arbitrary precision decimal types from bigdecimal 0.4 crate.
 bigdecimal-04 = ["dep:bigdecimal-04"]
+# Enables serde::Deserialize derives for Consistency and SerialConsistency.
+# This was used by unstable-cloud in `scylla` crate before it was removed.
+# TODO(2.0): Remove this feature
+serde = ["dep:serde"]
 
 [dependencies]
 # CqlTimeuuid, ser/deser of CQL UUID
@@ -47,3 +51,4 @@ num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
 num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
 time-03 = { package = "time", version = "0.3", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
