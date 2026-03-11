@@ -14,9 +14,9 @@ use crate::errors::{
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self, FrameParams, SerializedRequest,
-    request::{self, SerializableRequest, batch, execute, query, register},
-    response::{Response, ResponseOpcode, event::Event, result},
-    server_event_type::EventType,
+    request::{self, SerializableRequest, batch, execute, query},
+    response::{ResponseOpcode, ResponseV2 as Response, event::EventV2 as Event, result},
+    server_event_type::EventTypeV2 as EventType,
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
@@ -34,12 +34,15 @@ use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::CqlRequestKind;
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::request::query::QueryParameters;
+use scylla_cql::frame::request::register::RegisterV2 as Register;
 use scylla_cql::frame::response::authenticate::Authenticate;
 use scylla_cql::frame::response::result::{
     ResultMetadata, ResultWithDeserializedMetadata, TableSpec,
 };
 use scylla_cql::frame::response::{self, error};
-use scylla_cql::frame::response::{Error, ResponseWithDeserializedMetadata};
+use scylla_cql::frame::response::{
+    Error, ResponseWithDeserializedMetadataV2 as ResponseWithDeserializedMetadata,
+};
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
 use scylla_cql::serialize::raw_batch::RawBatchValuesAdapter;
@@ -1367,7 +1370,7 @@ impl Connection {
             ConnectionSetupRequestError::new(CqlRequestKind::Register, kind)
         };
 
-        let register_frame = register::Register {
+        let register_frame = Register {
             event_types_to_register_for,
         };
 

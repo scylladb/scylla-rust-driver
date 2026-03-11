@@ -17,7 +17,7 @@ use scylla_cql::deserialize::row::{ColumnIterator, DeserializeRow};
 use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
 use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
 use scylla_cql::frame::request::query::PagingState;
-use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
+use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
 use scylla_cql::frame::response::result::{
     DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace,
 };
