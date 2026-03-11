@@ -278,6 +278,26 @@ impl ColumnType<'_> {
             ColumnType::UserDefinedType { .. } => None,
         }
     }
+
+    /// Returns true if the type allows a special, empty value in addition to its
+    /// natural representation. For example, bigint represents a 32-bit integer,
+    /// but it can also hold a 0-bit empty value.
+    ///
+    /// It looks like Cassandra 4.1.3 rejects empty values for some more types than
+    /// Scylla: date, time, smallint and tinyint. We will only check against
+    /// Scylla's set of types supported for empty values as it's smaller;
+    /// with Cassandra, some rejects will just have to be rejected on the db side.
+    pub(crate) fn supports_special_empty_value(&self) -> bool {
+        #[expect(clippy::match_like_matches_macro)]
+        match self {
+            ColumnType::Native(NativeType::Counter)
+            | ColumnType::Native(NativeType::Duration)
+            | ColumnType::Collection { .. }
+            | ColumnType::UserDefinedType { .. } => false,
+
+            _ => true,
+        }
+    }
 }
 
 impl CollectionType<'_> {
@@ -338,28 +358,6 @@ impl TableSpec<'static> {
         Self {
             ks_name: Cow::Owned(ks_name),
             table_name: Cow::Owned(table_name),
-        }
-    }
-}
-
-impl ColumnType<'_> {
-    /// Returns true if the type allows a special, empty value in addition to its
-    /// natural representation. For example, bigint represents a 32-bit integer,
-    /// but it can also hold a 0-bit empty value.
-    ///
-    /// It looks like Cassandra 4.1.3 rejects empty values for some more types than
-    /// Scylla: date, time, smallint and tinyint. We will only check against
-    /// Scylla's set of types supported for empty values as it's smaller;
-    /// with Cassandra, some rejects will just have to be rejected on the db side.
-    pub(crate) fn supports_special_empty_value(&self) -> bool {
-        #[expect(clippy::match_like_matches_macro)]
-        match self {
-            ColumnType::Native(NativeType::Counter)
-            | ColumnType::Native(NativeType::Duration)
-            | ColumnType::Collection { .. }
-            | ColumnType::UserDefinedType { .. } => false,
-
-            _ => true,
         }
     }
 }
