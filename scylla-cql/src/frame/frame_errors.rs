@@ -3,6 +3,11 @@
 use std::error::Error;
 use std::sync::Arc;
 
+use super::TryFromPrimitiveError;
+use super::response::CqlResponseKind;
+use crate::utils::parse::ParseErrorCause;
+use thiserror::Error;
+
 pub use super::request::{
     auth_response::AuthResponseSerializationError,
     batch::{BatchSerializationError, BatchStatementSerializationError},
@@ -12,11 +17,6 @@ pub use super::request::{
     register::RegisterSerializationError,
     startup::StartupSerializationError,
 };
-
-use super::TryFromPrimitiveError;
-use super::response::CqlResponseKind;
-use crate::utils::parse::ParseErrorCause;
-use thiserror::Error;
 
 /// An error returned by `parse_response_body_extensions`.
 ///
