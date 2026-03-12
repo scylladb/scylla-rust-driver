@@ -6,6 +6,6 @@
 
 pub mod frame;
 pub(crate) mod pretty;
-pub(crate) mod utils;
+pub mod utils;
 
 pub mod value;
