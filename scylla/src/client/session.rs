@@ -2458,6 +2458,8 @@ impl Session {
 
         // Now we no longer need all the errors. We can return if there is
         // irrecoverable one, and collect the Ok values otherwise.
+        // TODO(2.0): This expect can be avoided in next major release
+        #[expect(clippy::result_large_err)]
         let versions_results: Vec<_> = versions_results
             .into_iter()
             .map(|(_, result)| result)
