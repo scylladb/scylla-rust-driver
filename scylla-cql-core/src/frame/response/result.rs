@@ -394,3 +394,17 @@ pub struct PartitionKeyIndex {
     /// Sequence number in partition key.
     pub sequence: u16,
 }
+
+/// Metadata of a prepared statement about its bound values.
+#[derive(Debug, Clone)]
+pub struct PreparedMetadata {
+    /// Currently just the `GLOBAL_TABLES_SPEC` flag.
+    pub flags: i32,
+    /// Number of bound values in the prepared statement.
+    pub col_count: usize,
+    /// pk_indexes are sorted by `index` and can be reordered in partition key order
+    /// using `sequence` field
+    pub pk_indexes: Vec<PartitionKeyIndex>,
+    /// Specifications of the bound values.
+    pub col_specs: Vec<ColumnSpec<'static>>,
+}
