@@ -556,7 +556,7 @@ wheels = [
 
 [[package]]
 name = "sphinx-docs"
-version = "0.1.0"
+version = "1.5"
 source = { virtual = "." }
 dependencies = [
     { name = "myst-parser" },
