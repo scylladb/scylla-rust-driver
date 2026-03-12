@@ -2,15 +2,18 @@
 name = "sphinx-docs"
 version = "1.5"
 description = "ScyllaDB Documentation"
-authors = [{ name = "ScyllaDB Documentation Contributors" }]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "pygments>=2.18.0",
     "redirects_cli>=0.1.3",
-    "sphinx-scylladb-theme>=1.8.10",
-    "sphinx-sitemap>=2.6.0",
-    "sphinx-autobuild>=2024.4.19",
-    "sphinx>=7.3.7",
-    "sphinx-multiversion-scylla>=0.3.4",
+    "sphinx-scylladb-theme>=1.9.1",
+    "myst-parser>=5.0.0",
+    "sphinx-autobuild>=2025.4.8",
+    "sphinx>=9.0",
+    "sphinx-multiversion-scylla>=0.3.7",
+    "sphinx-sitemap>=2.9.0",
     "sphinx-scylladb-markdown>=0.1.2",
 ]
+
+[tool.uv]
+package = false
