@@ -19,6 +19,7 @@ use crate::frame::types;
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::value::SerializeValue;
+use super::writers::WrittenCellProof;
 use super::{CellWriter, RowWriter, SerializationError};
 
 /// Contains information needed to serialize a row.
@@ -116,6 +117,25 @@ impl SerializeRow for [u8; 0] {
     impl_serialize_row_for_unit!();
 }
 
+/// Serializes a single value coming from type T into the writer
+///
+/// `T` is not used for any sanity nor logical checks; it is only used when creating an
+/// error message.
+#[inline]
+fn serialize_column<'b, T>(
+    value: &impl SerializeValue,
+    spec: &ColumnSpec,
+    writer: &'b mut RowWriter<'_>,
+) -> Result<WrittenCellProof<'b>, SerializationError> {
+    let sub_writer = writer.make_cell_writer();
+    value.serialize(spec.typ(), sub_writer).map_err(|err| {
+        mk_ser_err::<T>(BuiltinSerializationErrorKind::ColumnSerializationFailed {
+            name: spec.name().to_owned(),
+            err,
+        })
+    })
+}
+
 macro_rules! impl_serialize_row_for_slice {
     () => {
         fn serialize(
@@ -132,7 +152,7 @@ macro_rules! impl_serialize_row_for_slice {
                 ));
             }
             for (col, val) in ctx.columns().iter().zip(self.iter()) {
-                $crate::_macro_internal::ser::row::serialize_column::<Self>(val, col, writer)?;
+                serialize_column::<Self>(val, col, writer)?;
             }
             Ok(())
         }
@@ -190,9 +210,7 @@ macro_rules! impl_serialize_row_for_map {
                         ));
                     }
                     Some(v) => {
-                        $crate::_macro_internal::ser::row::serialize_column::<Self>(
-                            v, col, writer,
-                        )?;
+                        serialize_column::<Self>(v, col, writer)?;
                         let _ = unused_columns.remove(col.name());
                     }
                 }
@@ -273,7 +291,7 @@ macro_rules! impl_tuple {
                 };
                 let ($($fidents,)*) = self;
                 $(
-                    $crate::_macro_internal::ser::row::serialize_column::<Self>($fidents, $tidents, writer)?;
+                    serialize_column::<Self>($fidents, $tidents, writer)?;
                 )*
                 Ok(())
             }
