@@ -18,7 +18,7 @@ use crate::value::MaybeUnset;
 use assert_matches::assert_matches;
 
 pub(crate) fn do_serialize<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> Vec<u8> {
-    let ctx = RowSerializationContext { columns };
+    let ctx = RowSerializationContext::from_specs(columns);
     let mut ret = Vec::new();
     let mut builder = RowWriter::new(&mut ret);
     t.serialize(&ctx, &mut builder).unwrap();
@@ -26,7 +26,7 @@ pub(crate) fn do_serialize<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> Vec
 }
 
 fn do_serialize_err<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> SerializationError {
-    let ctx = RowSerializationContext { columns };
+    let ctx = RowSerializationContext::from_specs(columns);
     let mut ret = Vec::new();
     let mut builder = RowWriter::new(&mut ret);
     t.serialize(&ctx, &mut builder).unwrap_err()
@@ -41,14 +41,14 @@ fn col<'a>(name: impl Into<Cow<'a, str>>, typ: ColumnType<'a>) -> ColumnSpec<'a>
 }
 
 fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {
-    match err.0.downcast_ref() {
+    match err.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinTypeCheckError: {err}"),
     }
 }
 
 fn get_ser_err(err: &SerializationError) -> &BuiltinSerializationError {
-    match err.0.downcast_ref() {
+    match err.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinSerializationError: {err}"),
     }
@@ -62,14 +62,13 @@ fn test_dyn_serialize_row() {
         None::<i64>,
         MaybeUnset::Unset::<String>,
     );
-    let ctx = RowSerializationContext {
-        columns: &[
-            col("a", ColumnType::Native(NativeType::Int)),
-            col("b", ColumnType::Native(NativeType::Text)),
-            col("c", ColumnType::Native(NativeType::BigInt)),
-            col("d", ColumnType::Native(NativeType::Ascii)),
-        ],
-    };
+    let columns = [
+        col("a", ColumnType::Native(NativeType::Int)),
+        col("b", ColumnType::Native(NativeType::Text)),
+        col("c", ColumnType::Native(NativeType::BigInt)),
+        col("d", ColumnType::Native(NativeType::Ascii)),
+    ];
+    let ctx = RowSerializationContext::from_specs(&columns);
 
     let mut typed_data = Vec::new();
     let mut typed_data_writer = RowWriter::new(&mut typed_data);
@@ -299,11 +298,9 @@ fn test_row_serialization_failing_type_check() {
         // Missing column c
     ];
 
-    let ctx = RowSerializationContext {
-        columns: &spec_without_c,
-    };
+    let ctx = RowSerializationContext::from_specs(&spec_without_c);
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
 
     let spec_duplicate_column = [
@@ -320,11 +317,9 @@ fn test_row_serialization_failing_type_check() {
         col("d", ColumnType::Native(NativeType::Counter)),
     ];
 
-    let ctx = RowSerializationContext {
-        columns: &spec_duplicate_column,
-    };
+    let ctx = RowSerializationContext::from_specs(&spec_duplicate_column);
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
@@ -336,11 +331,9 @@ fn test_row_serialization_failing_type_check() {
         col("c", ColumnType::Native(NativeType::TinyInt)), // Wrong type
     ];
 
-    let ctx = RowSerializationContext {
-        columns: &spec_wrong_type,
-    };
+    let ctx = RowSerializationContext::from_specs(&spec_wrong_type);
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
+    let err = err.downcast_ref::<BuiltinSerializationError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinSerializationErrorKind::ColumnSerializationFailed { .. }
@@ -430,9 +423,9 @@ fn test_row_serialization_with_enforced_order_failing_type_check() {
         ),
         col("b", ColumnType::Native(NativeType::Int)),
     ];
-    let ctx = RowSerializationContext { columns: &spec };
+    let ctx = RowSerializationContext::from_specs(&spec);
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::ColumnNameMismatch { .. }
@@ -444,11 +437,9 @@ fn test_row_serialization_with_enforced_order_failing_type_check() {
         // Missing column c
     ];
 
-    let ctx = RowSerializationContext {
-        columns: &spec_without_c,
-    };
+    let ctx = RowSerializationContext::from_specs(&spec_without_c);
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
 
     let spec_duplicate_column = [
@@ -465,11 +456,9 @@ fn test_row_serialization_with_enforced_order_failing_type_check() {
         col("d", ColumnType::Native(NativeType::Counter)),
     ];
 
-    let ctx = RowSerializationContext {
-        columns: &spec_duplicate_column,
-    };
+    let ctx = RowSerializationContext::from_specs(&spec_duplicate_column);
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
@@ -481,11 +470,9 @@ fn test_row_serialization_with_enforced_order_failing_type_check() {
         col("c", ColumnType::Native(NativeType::TinyInt)), // Wrong type
     ];
 
-    let ctx = RowSerializationContext {
-        columns: &spec_wrong_type,
-    };
+    let ctx = RowSerializationContext::from_specs(&spec_wrong_type);
     let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
+    let err = err.downcast_ref::<BuiltinSerializationError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinSerializationErrorKind::ColumnSerializationFailed { .. }
@@ -880,7 +867,7 @@ fn vec_value_list() {
 }
 
 fn serialize_values<T: SerializeRow>(vl: T, columns: &[ColumnSpec]) -> SerializedValues {
-    let ctx = RowSerializationContext { columns };
+    let ctx = RowSerializationContext::from_specs(columns);
     let serialized: SerializedValues = SerializedValues::from_serializable(&ctx, &vl).unwrap();
 
     assert_eq!(<T as SerializeRow>::is_empty(&vl), serialized.is_empty());
