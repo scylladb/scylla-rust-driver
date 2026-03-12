@@ -90,14 +90,14 @@ fn do_serialize_err<T: SerializeValue>(t: T, typ: &ColumnType) -> SerializationE
 }
 
 fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {
-    match err.0.downcast_ref() {
+    match err.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinTypeCheckError: {err}"),
     }
 }
 
 pub(crate) fn get_ser_err(err: &SerializationError) -> &BuiltinSerializationError {
-    match err.0.downcast_ref() {
+    match err.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinSerializationError: {err}"),
     }
@@ -158,8 +158,7 @@ fn verify_typeck_error_in_wrapper<T: SerializeValue>(v: T) {
 
 fn verify_custom_error_in_wrapper<T: SerializeValue>(v: T) {
     let err = do_serialize_err::<T>(v, &ColumnType::Native(NativeType::BigInt));
-    err.0
-        .downcast_ref::<CustomSerializationError>()
+    err.downcast_ref::<CustomSerializationError>()
         .expect("CustomSerializationError");
 }
 
@@ -316,8 +315,7 @@ fn test_set_or_list_errors() {
     else {
         panic!("unexpected error kind: {}", ser_err.kind)
     };
-    err.0
-        .downcast_ref::<CustomSerializationError>()
+    err.downcast_ref::<CustomSerializationError>()
         .expect("CustomSerializationError");
 }
 
@@ -419,8 +417,7 @@ fn test_map_errors() {
     else {
         panic!("unexpected error kind: {}", ser_err.kind)
     };
-    err.0
-        .downcast_ref::<CustomSerializationError>()
+    err.downcast_ref::<CustomSerializationError>()
         .expect("CustomSerializationError");
 
     // Key
@@ -441,8 +438,7 @@ fn test_map_errors() {
     else {
         panic!("unexpected error kind: {}", ser_err.kind)
     };
-    err.0
-        .downcast_ref::<CustomSerializationError>()
+    err.downcast_ref::<CustomSerializationError>()
         .expect("CustomSerializationError");
 }
 
@@ -520,8 +516,7 @@ fn test_tuple_errors() {
     else {
         panic!("unexpected error kind: {}", ser_err.kind)
     };
-    err.0
-        .downcast_ref::<CustomSerializationError>()
+    err.downcast_ref::<CustomSerializationError>()
         .expect("CustomSerializationError");
 }
 
@@ -985,7 +980,7 @@ fn test_udt_serialization_failing_type_check() {
     let err = udt
         .serialize(&typ_not_udt, CellWriter::new(&mut data))
         .unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt)
@@ -1007,7 +1002,7 @@ fn test_udt_serialization_failing_type_check() {
     let err = udt
         .serialize(&typ_without_c, CellWriter::new(&mut data))
         .unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::ValueMissingForUdtField { .. })
@@ -1029,7 +1024,7 @@ fn test_udt_serialization_failing_type_check() {
     let err = udt
         .serialize(&typ_wrong_type, CellWriter::new(&mut data))
         .unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
+    let err = err.downcast_ref::<BuiltinSerializationError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinSerializationErrorKind::UdtError(
@@ -1218,7 +1213,7 @@ fn test_udt_serialization_with_enforced_order_failing_type_check() {
 
     let err = <_ as SerializeValue>::serialize(&udt, &typ_not_udt, CellWriter::new(&mut data))
         .unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt)
@@ -1245,7 +1240,7 @@ fn test_udt_serialization_with_enforced_order_failing_type_check() {
     };
 
     let err = <_ as SerializeValue>::serialize(&udt, &typ, CellWriter::new(&mut data)).unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::FieldNameMismatch { .. })
@@ -1266,7 +1261,7 @@ fn test_udt_serialization_with_enforced_order_failing_type_check() {
 
     let err = <_ as SerializeValue>::serialize(&udt, &typ_without_c, CellWriter::new(&mut data))
         .unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::ValueMissingForUdtField { .. })
@@ -1288,7 +1283,7 @@ fn test_udt_serialization_with_enforced_order_failing_type_check() {
     let err =
         <_ as SerializeValue>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
             .unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
+    let err = err.downcast_ref::<BuiltinSerializationError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinSerializationErrorKind::UdtError(
@@ -1463,7 +1458,7 @@ fn test_strict_udt_with_field_sorting_rejects_additional_field() {
     let err = udt
         .serialize(&typ_unexpected_field, CellWriter::new(&mut data))
         .unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
@@ -1493,7 +1488,7 @@ fn test_strict_udt_with_field_sorting_rejects_additional_field() {
     let err = udt
         .serialize(&typ_unexpected_field_middle, CellWriter::new(&mut data))
         .unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
@@ -1537,7 +1532,7 @@ fn test_strict_udt_with_enforced_order_rejects_additional_field() {
     let err =
         <_ as SerializeValue>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
             .unwrap_err();
-    let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+    let err = err.downcast_ref::<BuiltinTypeCheckError>().unwrap();
     assert_matches!(
         err.kind,
         BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
@@ -2836,7 +2831,6 @@ fn test_maybe_empty_with_custom_error() {
     // MaybeEmpty::Value should propagate the custom error
     let value: MaybeEmpty<CustomEmptiable> = MaybeEmpty::Value(CustomEmptiable);
     let err = do_serialize_err(value, &ColumnType::Native(NativeType::Int));
-    err.0
-        .downcast_ref::<CustomSerializationError>()
+    err.downcast_ref::<CustomSerializationError>()
         .expect("CustomSerializationError");
 }
