@@ -26,3 +26,5 @@ pub mod _macro_internal;
 
 #[cfg(test)]
 mod types_tests;
+
+mod macros_doctests;
