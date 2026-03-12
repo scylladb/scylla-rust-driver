@@ -1050,10 +1050,7 @@ fn mk_col_spec_parse_error(
     col_idx: usize,
     err: impl Into<ColumnSpecParseErrorKind>,
 ) -> ColumnSpecParseError {
-    ColumnSpecParseError {
-        column_index: col_idx,
-        kind: err.into(),
-    }
+    ColumnSpecParseError::new(col_idx, err.into())
 }
 
 fn deser_col_specs_generic<'frame, 'result>(
