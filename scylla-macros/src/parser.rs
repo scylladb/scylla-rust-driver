@@ -17,3 +17,15 @@ pub(crate) fn parse_named_fields<'a>(
         Data::Union(u) => Err(syn::Error::new_spanned(u.union_token, create_err_msg())),
     }
 }
+
+pub(crate) fn get_exactly_one<I>(iter: I) -> Option<I::Item>
+where
+    I: IntoIterator,
+{
+    let mut iter = iter.into_iter();
+    let item = iter.next()?;
+    if iter.next().is_some() {
+        return None;
+    }
+    Some(item)
+}
