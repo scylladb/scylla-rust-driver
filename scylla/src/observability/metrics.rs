@@ -231,7 +231,7 @@ pub struct Metrics {
     histogram: Arc<AtomicHistogram>,
     /// Collects rates of queries executed by the driver.
     meter: Arc<RequestRateMeter>,
-    /// Total number of connections ever opened to the cluster by the driver.
+    /// Total number of active connections to the cluster (excluding control connections).
     total_connections: AtomicU64,
     connection_timeouts: AtomicU64,
     request_timeouts: AtomicU64,
