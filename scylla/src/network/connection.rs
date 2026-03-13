@@ -99,6 +99,8 @@ pub(crate) struct Connection {
     config: HostConnectionConfig,
     features: ConnectionFeatures,
     router_handle: Arc<RouterHandle>,
+    #[cfg(test)]
+    socket: socket2::Socket,
 }
 
 struct RouterHandle {
@@ -274,6 +276,10 @@ pub(crate) struct ConnectionConfig {
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
+    pub(crate) tcp_recv_buffer_size: Option<usize>,
+    pub(crate) tcp_send_buffer_size: Option<usize>,
+    pub(crate) tcp_reuse_address: Option<bool>,
+    pub(crate) tcp_linger: Option<Duration>,
     pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     pub(crate) tls_provider: Option<TlsProvider>,
     pub(crate) connect_timeout: std::time::Duration,
@@ -308,6 +314,10 @@ impl ConnectionConfig {
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
             tcp_keepalive_interval: self.tcp_keepalive_interval,
+            tcp_recv_buffer_size: self.tcp_recv_buffer_size,
+            tcp_send_buffer_size: self.tcp_send_buffer_size,
+            tcp_reuse_address: self.tcp_reuse_address,
+            tcp_linger: self.tcp_linger,
             timestamp_generator: self.timestamp_generator.clone(),
             tls_config,
             connect_timeout: self.connect_timeout,
@@ -334,6 +344,10 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) compression: Option<Compression>,
     pub(crate) tcp_nodelay: bool,
     pub(crate) tcp_keepalive_interval: Option<Duration>,
+    pub(crate) tcp_recv_buffer_size: Option<usize>,
+    pub(crate) tcp_send_buffer_size: Option<usize>,
+    pub(crate) tcp_reuse_address: Option<bool>,
+    pub(crate) tcp_linger: Option<Duration>,
     pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     pub(crate) tls_config: Option<TlsConfig>,
     pub(crate) connect_timeout: std::time::Duration,
@@ -360,6 +374,10 @@ impl Default for HostConnectionConfig {
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
+            tcp_recv_buffer_size: None,
+            tcp_send_buffer_size: None,
+            tcp_reuse_address: None,
+            tcp_linger: None,
             timestamp_generator: None,
             event_sender: None,
             tls_config: None,
@@ -389,6 +407,10 @@ impl Default for ConnectionConfig {
             compression: None,
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
+            tcp_recv_buffer_size: None,
+            tcp_send_buffer_size: None,
+            tcp_reuse_address: None,
+            tcp_linger: None,
             timestamp_generator: None,
             event_sender: None,
             tls_provider: None,
@@ -435,7 +457,12 @@ impl Connection {
     ) -> Result<(Self, ErrorReceiver), ConnectionError> {
         let stream_connector = tokio::time::timeout(
             config.connect_timeout,
-            connect_with_source_ip_and_port(connect_address, config.local_ip_address, source_port),
+            connect_with_source_ip_and_port(
+                connect_address,
+                config.local_ip_address,
+                source_port,
+                config.tcp_reuse_address,
+            ),
         )
         .await;
         let stream = match stream_connector {
@@ -450,6 +477,19 @@ impl Connection {
             Self::setup_tcp_keepalive(&stream, tcp_keepalive_interval)?;
         }
 
+        {
+            let sf = SockRef::from(&stream);
+            if let Some(recv_buf) = config.tcp_recv_buffer_size {
+                sf.set_recv_buffer_size(recv_buf)?;
+            }
+            if let Some(send_buf) = config.tcp_send_buffer_size {
+                sf.set_send_buffer_size(send_buf)?;
+            }
+            if let Some(linger) = config.tcp_linger {
+                sf.set_linger(Some(linger))?;
+            }
+        }
+
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(1024);
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
@@ -461,6 +501,12 @@ impl Connection {
             request_id_generator: AtomicU64::new(0),
             orphan_notification_sender,
         });
+
+        #[cfg(test)]
+        let socket = {
+            use std::os::unix::io::AsFd;
+            socket2::Socket::from(stream.as_fd().try_clone_to_owned()?)
+        };
 
         let _worker_handle = Self::run_router(
             config.clone(),
@@ -479,6 +525,8 @@ impl Connection {
             features: Default::default(),
             connect_address,
             router_handle,
+            #[cfg(test)]
+            socket,
         };
 
         Ok((connection, error_receiver))
@@ -1937,6 +1985,11 @@ impl Connection {
 
         Ok(())
     }
+
+    #[cfg(test)]
+    pub(crate) fn get_sock_ref(&self) -> socket2::SockRef<'_> {
+        socket2::SockRef::from(&self.socket)
+    }
 }
 
 async fn maybe_translated_addr(
@@ -2129,6 +2182,7 @@ async fn connect_with_source_ip_and_port(
     connect_address: SocketAddr,
     source_ip: Option<IpAddr>,
     source_port: Option<u16>,
+    reuse_address: Option<bool>,
 ) -> Result<TcpStream, std::io::Error> {
     // Binding to port 0 is equivalent to choosing random ephemeral port.
     let source_port = source_port.unwrap_or(0);
@@ -2138,6 +2192,9 @@ async fn connect_with_source_ip_and_port(
             // If source_ip not provided, bind to INADDR_ANY.
             let source_ipv4 = source_ip.unwrap_or(Ipv4Addr::UNSPECIFIED.into());
             let socket = TcpSocket::new_v4()?;
+            if let Some(reuse) = reuse_address {
+                socket.set_reuseaddr(reuse)?;
+            }
             socket.bind(SocketAddr::new(source_ipv4, source_port))?;
             Ok(socket.connect(connect_address).await?)
         }
@@ -2145,6 +2202,9 @@ async fn connect_with_source_ip_and_port(
             // If source_ip not provided, bind to in6addr_any.
             let source_ipv6 = source_ip.unwrap_or(Ipv6Addr::UNSPECIFIED.into());
             let socket = TcpSocket::new_v6()?;
+            if let Some(reuse) = reuse_address {
+                socket.set_reuseaddr(reuse)?;
+            }
             socket.bind(SocketAddr::new(source_ipv6, source_port))?;
             Ok(socket.connect(connect_address).await?)
         }
@@ -2788,5 +2848,71 @@ mod tests {
             .unwrap_err();
 
         let _ = proxy.finish().await;
+    }
+
+    /// Verifies that setting tcp_recv_buffer_size, tcp_send_buffer_size, tcp_linger, and
+    /// tcp_reuse_address on the builder are propagated correctly all the way to the
+    /// underlying socket and do not prevent the driver from establishing a connection.
+    #[tokio::test]
+    async fn tcp_socket_options_do_not_break_connection() {
+        use crate::client::session_builder::SessionBuilder;
+
+        setup_tracing();
+
+        const RECV_BUFFER_SIZE: usize = 131_072;
+        const SEND_BUFFER_SIZE: usize = 65_536;
+        const LINGER_DUR: Duration = Duration::from_secs(42);
+
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
+
+        let session = SessionBuilder::new()
+            .known_node(uri)
+            .tcp_recv_buffer_size(RECV_BUFFER_SIZE)
+            .tcp_send_buffer_size(SEND_BUFFER_SIZE)
+            .tcp_linger(LINGER_DUR)
+            .tcp_reuse_address(true)
+            .build()
+            .await
+            .unwrap();
+
+        // A simple query to confirm the connection is actually usable.
+        session
+            .query_unpaged("SELECT key FROM system.local WHERE key='local'", &[])
+            .await
+            .unwrap();
+
+        let connection = session
+            .get_cluster_state()
+            .all_nodes
+            .first()
+            .unwrap()
+            .get_random_connection()
+            .unwrap();
+
+        let sock_ref = connection.get_sock_ref();
+
+        // Linux kernel doubles SO_RCVBUF and SO_SNDBUF values,
+        // so we check that the actual buffer sizes are at least as large as the requested ones.
+        assert!(
+            sock_ref
+                .recv_buffer_size()
+                .expect("failed to read SO_RCVBUF")
+                >= RECV_BUFFER_SIZE
+        );
+        assert!(
+            sock_ref
+                .send_buffer_size()
+                .expect("failed to read SO_SNDBUF")
+                >= SEND_BUFFER_SIZE
+        );
+        assert_eq!(
+            sock_ref.linger().expect("failed to read SO_LINGER"),
+            Some(LINGER_DUR)
+        );
+        assert!(
+            sock_ref
+                .reuse_address()
+                .expect("failed to read SO_REUSEADDR")
+        );
     }
 }
