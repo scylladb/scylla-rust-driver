@@ -2,7 +2,7 @@
 name = "sphinx-docs"
 version = "1.5"
 description = "ScyllaDB Documentation"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "pygments>=2.18.0",
     "redirects_cli>=0.1.3",
