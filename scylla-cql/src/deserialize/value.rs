@@ -155,25 +155,11 @@ macro_rules! impl_strict_type {
     };
 }
 
-macro_rules! impl_emptiable_strict_type {
-    ($t:ty, [$($cql:ident)|+], $conv:expr $(, $l:lifetime)?) => {
-        impl<$($l,)?> Emptiable for $t {}
-
-        impl_strict_type!($t, [$($cql)|*], $conv $(, $l)*);
-    };
-
-    // Convenience pattern for omitting brackets if type-checking as single types.
-    ($t:ty, $cql:ident, $conv:expr $(, $l:lifetime)?) => {
-        impl_emptiable_strict_type!($t, [$cql], $conv $(, $l)*);
-    };
-
-}
-
 // fixed numeric types
 
 macro_rules! impl_fixed_numeric_type {
     ($t:ty, [$($cql:ident)|+]) => {
-        impl_emptiable_strict_type!(
+        impl_strict_type!(
             $t,
             [$($cql)|*],
             |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -191,7 +177,7 @@ macro_rules! impl_fixed_numeric_type {
     };
 }
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     bool,
     Boolean,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -210,7 +196,7 @@ impl_fixed_numeric_type!(f64, Double);
 
 // other numeric types
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlVarint,
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -219,7 +205,7 @@ impl_emptiable_strict_type!(
     }
 );
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlVarintBorrowed<'b>,
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -230,7 +216,7 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "num-bigint-03")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     num_bigint_03::BigInt,
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -240,7 +226,7 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "num-bigint-04")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     num_bigint_04::BigInt,
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -249,7 +235,7 @@ impl_emptiable_strict_type!(
     }
 );
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlDecimal,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -266,7 +252,7 @@ impl_emptiable_strict_type!(
     }
 );
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlDecimalBorrowed<'b>,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -285,7 +271,7 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "bigdecimal-04")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     bigdecimal_04::BigDecimal,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -439,7 +425,7 @@ impl_strict_type!(
     }
 );
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlDate,
     Date,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -463,10 +449,10 @@ fn get_days_since_epoch_from_date_column<T>(
 }
 
 #[cfg(feature = "chrono-04")]
-impl_emptiable_strict_type!(chrono_04::NaiveDate, Date, |typ: &'metadata ColumnType<
+impl_strict_type!(chrono_04::NaiveDate, Date, |typ: &'metadata ColumnType<
     'metadata,
 >,
-                                                         v: Option<
+                                               v: Option<
     FrameSlice<'frame>,
 >| {
     let fail = || mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::ValueOverflow);
@@ -480,7 +466,7 @@ impl_emptiable_strict_type!(chrono_04::NaiveDate, Date, |typ: &'metadata ColumnT
 });
 
 #[cfg(feature = "time-03")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     time_03::Date,
     Date,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -514,7 +500,7 @@ fn get_nanos_from_time_column<T>(
     Ok(nanoseconds)
 }
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlTime,
     Time,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -525,10 +511,10 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "chrono-04")]
-impl_emptiable_strict_type!(chrono_04::NaiveTime, Time, |typ: &'metadata ColumnType<
+impl_strict_type!(chrono_04::NaiveTime, Time, |typ: &'metadata ColumnType<
     'metadata,
 >,
-                                                         v: Option<
+                                               v: Option<
     FrameSlice<'frame>,
 >| {
     let nanoseconds = get_nanos_from_time_column::<chrono_04::NaiveTime>(typ, v)?;
@@ -540,7 +526,7 @@ impl_emptiable_strict_type!(chrono_04::NaiveTime, Time, |typ: &'metadata ColumnT
 });
 
 #[cfg(feature = "time-03")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     time_03::Time,
     Time,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -564,7 +550,7 @@ fn get_millis_from_timestamp_column<T>(
     Ok(millis)
 }
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlTimestamp,
     Timestamp,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -574,7 +560,7 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "chrono-04")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     chrono_04::DateTime<chrono_04::Utc>,
     Timestamp,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -592,7 +578,7 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "time-03")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     time_03::OffsetDateTime,
     Timestamp,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -604,7 +590,7 @@ impl_emptiable_strict_type!(
 
 // inet
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     IpAddr,
     Inet,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -624,7 +610,7 @@ impl_emptiable_strict_type!(
 
 // uuid
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     Uuid,
     Uuid,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -635,7 +621,7 @@ impl_emptiable_strict_type!(
     }
 );
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlTimeuuid,
     Timeuuid,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {

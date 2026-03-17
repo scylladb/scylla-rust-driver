@@ -69,6 +69,49 @@ impl<V> MaybeUnset<V> {
 /// from it.
 pub trait Emptiable {}
 
+// Implementations of Emptiable for types that support empty CQL values.
+
+impl Emptiable for bool {}
+impl Emptiable for i8 {}
+impl Emptiable for i16 {}
+impl Emptiable for i32 {}
+impl Emptiable for i64 {}
+impl Emptiable for f32 {}
+impl Emptiable for f64 {}
+
+impl Emptiable for CqlVarint {}
+impl<'b> Emptiable for CqlVarintBorrowed<'b> {}
+impl Emptiable for CqlDecimal {}
+impl<'b> Emptiable for CqlDecimalBorrowed<'b> {}
+impl Emptiable for CqlDate {}
+impl Emptiable for CqlTime {}
+impl Emptiable for CqlTimestamp {}
+impl Emptiable for CqlTimeuuid {}
+
+impl Emptiable for std::net::IpAddr {}
+impl Emptiable for uuid::Uuid {}
+
+#[cfg(feature = "num-bigint-03")]
+impl Emptiable for num_bigint_03::BigInt {}
+#[cfg(feature = "num-bigint-04")]
+impl Emptiable for num_bigint_04::BigInt {}
+#[cfg(feature = "bigdecimal-04")]
+impl Emptiable for bigdecimal_04::BigDecimal {}
+
+#[cfg(feature = "chrono-04")]
+impl Emptiable for chrono_04::NaiveDate {}
+#[cfg(feature = "chrono-04")]
+impl Emptiable for chrono_04::NaiveTime {}
+#[cfg(feature = "chrono-04")]
+impl Emptiable for chrono_04::DateTime<chrono_04::Utc> {}
+
+#[cfg(feature = "time-03")]
+impl Emptiable for time_03::Date {}
+#[cfg(feature = "time-03")]
+impl Emptiable for time_03::Time {}
+#[cfg(feature = "time-03")]
+impl Emptiable for time_03::OffsetDateTime {}
+
 /// A value that may be empty or not.
 ///
 /// `MaybeEmpty` was introduced to help support the quirk described in [`Emptiable`]
