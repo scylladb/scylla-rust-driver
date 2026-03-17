@@ -181,6 +181,15 @@ impl<'buf> CellValueBuilder<'buf> {
         }
     }
 
+    /// Reserves additional capacity in the underlying buffer.
+    ///
+    /// This is useful when the total serialized size is known ahead of time
+    /// (e.g. for fixed-size vector elements) to avoid incremental reallocations.
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        self.buf.reserve(additional);
+    }
+
     /// Appends raw bytes to this cell.
     #[inline]
     pub fn append_bytes(&mut self, bytes: &[u8]) {

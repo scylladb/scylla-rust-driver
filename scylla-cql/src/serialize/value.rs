@@ -970,6 +970,7 @@ fn serialize_sequence<'t, 'b, T: SerializeValue + 't>(
         .map_err(|_| mk_ser_err_named(rust_name, typ, BuiltinSerializationErrorKind::SizeOverflow))
 }
 
+#[inline]
 fn serialize_next_constant_length_elem<'t, T: SerializeValue + 't>(
     rust_name: &'static str,
     element_type: &ColumnType,
@@ -992,6 +993,7 @@ fn serialize_next_constant_length_elem<'t, T: SerializeValue + 't>(
     Ok(())
 }
 
+#[inline]
 fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
     rust_name: &'static str,
     element_type: &ColumnType,
@@ -1018,6 +1020,7 @@ fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
     Ok(())
 }
 
+#[inline]
 fn serialize_vector<'t, 'b, T: SerializeValue + 't>(
     rust_name: &'static str,
     len: usize,
@@ -1036,7 +1039,8 @@ fn serialize_vector<'t, 'b, T: SerializeValue + 't>(
     }
     let mut builder = writer.into_value_builder();
     match element_type.type_size() {
-        Some(_) => {
+        Some(elem_size) => {
+            builder.reserve(dimensions as usize * elem_size);
             for element in iter {
                 serialize_next_constant_length_elem(
                     rust_name,
