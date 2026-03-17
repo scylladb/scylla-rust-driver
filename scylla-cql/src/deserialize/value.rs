@@ -1078,6 +1078,7 @@ impl<'frame, 'metadata, T> VectorIterator<'frame, 'metadata, T>
 where
     T: DeserializeValue<'frame, 'metadata>,
 {
+    #[inline]
     fn next_constant_length_elem(
         &mut self,
         element_length: usize,
@@ -1099,6 +1100,7 @@ where
         }))
     }
 
+    #[inline]
     fn next_variable_length_elem(&mut self) -> Option<<Self as Iterator>::Item> {
         self.remaining = self.remaining.checked_sub(1)?;
         let size = types::unsigned_vint_decode(self.slice.as_slice_mut()).map_err(|err| {
@@ -1144,6 +1146,7 @@ where
 {
     type Item = Result<T, DeserializationError>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         match self.element_length {
             Some(element_length) => self.next_constant_length_elem(element_length),
@@ -1674,6 +1677,7 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for Arc<str> {
 
 // Utilities
 
+#[inline]
 fn ensure_not_null_frame_slice<'frame, T>(
     typ: &ColumnType,
     v: Option<FrameSlice<'frame>>,
@@ -1681,6 +1685,7 @@ fn ensure_not_null_frame_slice<'frame, T>(
     v.ok_or_else(|| mk_deser_err::<T>(typ, BuiltinDeserializationErrorKind::ExpectedNonNull))
 }
 
+#[inline]
 fn ensure_not_null_slice<'frame, T>(
     typ: &ColumnType,
     v: Option<FrameSlice<'frame>>,
@@ -1695,6 +1700,7 @@ fn ensure_not_null_owned<T>(
     ensure_not_null_frame_slice::<T>(typ, v).map(|frame_slice| frame_slice.to_bytes())
 }
 
+#[inline]
 fn ensure_exact_length<'frame, T, const SIZE: usize>(
     typ: &ColumnType,
     v: &'frame [u8],
