@@ -909,13 +909,119 @@ where
             } => ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
                 .and_then(|it| it.collect::<Result<_, DeserializationError>>())
                 .map_err(deser_error_replace_rust_name::<Self>),
-            ColumnType::Vector { .. } => {
+            ColumnType::Vector {
+                typ: element_type,
+                dimensions,
+            } => {
+                // Try the bulk deserialization fast path for f32/f64 vectors.
+                if let Some(result) =
+                    try_bulk_deserialize_vector::<T>(typ, element_type, *dimensions, v)?
+                {
+                    return Ok(result);
+                }
+                // Fall back to the generic iterator-based path.
                 VectorIterator::<'frame, 'metadata, T>::deserialize(typ, v)
                     .and_then(|it| it.collect::<Result<_, DeserializationError>>())
                     .map_err(deser_error_replace_rust_name::<Self>)
             }
             _ => unreachable!("Should be prevented by typecheck"),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bulk vector deserialization fast path.
+//
+// For f32 and f64 vectors, we bypass the per-element VectorIterator +
+// DeserializeValue overhead by reading the raw byte buffer in one shot and
+// converting via chunks_exact + from_be_bytes. This eliminates:
+// - Per-element FrameSlice::read_n_bytes (pointer arithmetic + bounds check)
+// - Per-element ensure_not_null_slice / ensure_exact_length checks
+// - VectorIterator machinery and Iterator::collect growing the Vec
+//
+// Uses the same size_of + needs_drop + ColumnType heuristic as the
+// serialization bulk path. See the serialization comments for the full
+// correctness argument regarding type identification without TypeId.
+// ---------------------------------------------------------------------------
+
+/// Try to deserialize a vector in bulk. Returns `Ok(Some(vec))` if the fast
+/// path was used, `Ok(None)` to fall back to the generic iterator path,
+/// or `Err` on deserialization failure.
+#[inline]
+fn try_bulk_deserialize_vector<'frame, 'metadata, T: DeserializeValue<'frame, 'metadata>>(
+    typ: &'metadata ColumnType<'metadata>,
+    element_type: &'metadata ColumnType<'metadata>,
+    dimensions: u16,
+    v: Option<FrameSlice<'frame>>,
+) -> Result<Option<Vec<T>>, DeserializationError> {
+    match element_type {
+        ColumnType::Native(NativeType::Float)
+            if std::mem::size_of::<T>() == 4 && !std::mem::needs_drop::<T>() =>
+        {
+            let frame_slice = ensure_not_null_frame_slice::<Vec<T>>(typ, v)?;
+            let raw = frame_slice.as_slice();
+            let expected_len = dimensions as usize * 4;
+            if raw.len() != expected_len {
+                return Err(mk_deser_err::<Vec<T>>(
+                    typ,
+                    BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                        expected: expected_len,
+                        got: raw.len(),
+                    },
+                ));
+            }
+            let count = dimensions as usize;
+            let mut result = Vec::<T>::with_capacity(count);
+            let dst = result.as_mut_ptr() as *mut [u8; 4];
+            for (i, chunk) in raw.chunks_exact(4).enumerate() {
+                let be_bytes: [u8; 4] = chunk.try_into().unwrap();
+                let ne_bytes = f32::from_be_bytes(be_bytes).to_ne_bytes();
+                // SAFETY: size_of::<T>() == 4, so writing 4 bytes at offset
+                // i is within the allocated capacity. T has no drop glue.
+                // The CQL type is Float and size matches, so T is f32 among
+                // built-in impls (see serialization bulk path for full argument).
+                unsafe {
+                    std::ptr::write(dst.add(i), ne_bytes);
+                }
+            }
+            // SAFETY: we wrote exactly `count` elements, each of size 4.
+            unsafe {
+                result.set_len(count);
+            }
+            Ok(Some(result))
+        }
+        ColumnType::Native(NativeType::Double)
+            if std::mem::size_of::<T>() == 8 && !std::mem::needs_drop::<T>() =>
+        {
+            let frame_slice = ensure_not_null_frame_slice::<Vec<T>>(typ, v)?;
+            let raw = frame_slice.as_slice();
+            let expected_len = dimensions as usize * 8;
+            if raw.len() != expected_len {
+                return Err(mk_deser_err::<Vec<T>>(
+                    typ,
+                    BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                        expected: expected_len,
+                        got: raw.len(),
+                    },
+                ));
+            }
+            let count = dimensions as usize;
+            let mut result = Vec::<T>::with_capacity(count);
+            let dst = result.as_mut_ptr() as *mut [u8; 8];
+            for (i, chunk) in raw.chunks_exact(8).enumerate() {
+                let be_bytes: [u8; 8] = chunk.try_into().unwrap();
+                let ne_bytes = f64::from_be_bytes(be_bytes).to_ne_bytes();
+                // SAFETY: same reasoning as f32 case but for 8-byte elements.
+                unsafe {
+                    std::ptr::write(dst.add(i), ne_bytes);
+                }
+            }
+            unsafe {
+                result.set_len(count);
+            }
+            Ok(Some(result))
+        }
+        _ => Ok(None),
     }
 }
 
