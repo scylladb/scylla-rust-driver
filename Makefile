@@ -64,7 +64,7 @@ test: up
 
 .PHONY: ccm-test
 ccm-test:
-	cargo nextest run --all-features -E 'test(ccm::)' --ignore-default-filter
+	cargo nextest run --all-features -E 'test(ccm::)' --ignore-default-filter --status-level pass
 
 .PHONY: dockerized-test
 dockerized-test: up
