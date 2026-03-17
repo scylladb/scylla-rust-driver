@@ -135,14 +135,21 @@ jobs:
           RUST_LOG=trace cargo nextest run --all-features
       - name: Check for stale test keyspaces
         run: cargo run --bin find_stale_test_keyspaces
-      - name: Stop the cluster
+      - name: Stop the docker cluster
         if: ${{ always() }}
         run: docker compose -f test/cluster/docker-compose.yml stop
-      - name: Print the cluster logs
+      - name: Print the docker cluster logs
         if: ${{ always() }}
         run: docker compose -f test/cluster/docker-compose.yml logs
       - name: Remove cluster
         run: docker compose -f test/cluster/docker-compose.yml down
+      - name: Install scylla-ccm
+        run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
+      - name: Run CCM command to create the ~/.ccm dir
+        continue-on-error: true
+        run: ccm status
+      - name: Run CCM tests
+        run: RUST_LOG=trace make ccm-test
 
   # Tests that our current minimum supported rust version compiles everything sucessfully
   min_rust:
