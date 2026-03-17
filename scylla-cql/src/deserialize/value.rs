@@ -960,7 +960,8 @@ fn try_bulk_deserialize_vector<'frame, 'metadata, T: DeserializeValue<'frame, 'm
         {
             let frame_slice = ensure_not_null_frame_slice::<Vec<T>>(typ, v)?;
             let raw = frame_slice.as_slice();
-            let expected_len = dimensions as usize * 4;
+            let count = dimensions as usize;
+            let expected_len = count * 4;
             if raw.len() != expected_len {
                 return Err(mk_deser_err::<Vec<T>>(
                     typ,
@@ -970,21 +971,23 @@ fn try_bulk_deserialize_vector<'frame, 'metadata, T: DeserializeValue<'frame, 'm
                     },
                 ));
             }
-            let count = dimensions as usize;
             let mut result = Vec::<T>::with_capacity(count);
-            let dst = result.as_mut_ptr() as *mut [u8; 4];
+            // SAFETY: Vec::with_capacity(count) allocates room for `count`
+            // elements of size_of::<T>() == 4 bytes each. We cast to a
+            // &mut [[u8; 4]] of length `count`, which fits exactly in that
+            // allocation. Each [u8; 4] has alignment 1, so the pointer cast
+            // is valid. T has no drop glue, so partially-initialized state
+            // on panic is safe (though the loop body cannot panic).
+            let dst = unsafe {
+                std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut [u8; 4], count)
+            };
             for (i, chunk) in raw.chunks_exact(4).enumerate() {
+                // chunks_exact(4) guarantees each chunk is exactly 4 bytes,
+                // so try_into always succeeds.
                 let be_bytes: [u8; 4] = chunk.try_into().unwrap();
-                let ne_bytes = f32::from_be_bytes(be_bytes).to_ne_bytes();
-                // SAFETY: size_of::<T>() == 4, so writing 4 bytes at offset
-                // i is within the allocated capacity. T has no drop glue.
-                // The CQL type is Float and size matches, so T is f32 among
-                // built-in impls (see serialization bulk path for full argument).
-                unsafe {
-                    std::ptr::write(dst.add(i), ne_bytes);
-                }
+                dst[i] = f32::from_be_bytes(be_bytes).to_ne_bytes();
             }
-            // SAFETY: we wrote exactly `count` elements, each of size 4.
+            // SAFETY: all `count` elements have been initialized above.
             unsafe {
                 result.set_len(count);
             }
@@ -995,7 +998,8 @@ fn try_bulk_deserialize_vector<'frame, 'metadata, T: DeserializeValue<'frame, 'm
         {
             let frame_slice = ensure_not_null_frame_slice::<Vec<T>>(typ, v)?;
             let raw = frame_slice.as_slice();
-            let expected_len = dimensions as usize * 8;
+            let count = dimensions as usize;
+            let expected_len = count * 8;
             if raw.len() != expected_len {
                 return Err(mk_deser_err::<Vec<T>>(
                     typ,
@@ -1005,16 +1009,14 @@ fn try_bulk_deserialize_vector<'frame, 'metadata, T: DeserializeValue<'frame, 'm
                     },
                 ));
             }
-            let count = dimensions as usize;
             let mut result = Vec::<T>::with_capacity(count);
-            let dst = result.as_mut_ptr() as *mut [u8; 8];
+            // SAFETY: same reasoning as f32 case but for 8-byte elements.
+            let dst = unsafe {
+                std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut [u8; 8], count)
+            };
             for (i, chunk) in raw.chunks_exact(8).enumerate() {
                 let be_bytes: [u8; 8] = chunk.try_into().unwrap();
-                let ne_bytes = f64::from_be_bytes(be_bytes).to_ne_bytes();
-                // SAFETY: same reasoning as f32 case but for 8-byte elements.
-                unsafe {
-                    std::ptr::write(dst.add(i), ne_bytes);
-                }
+                dst[i] = f64::from_be_bytes(be_bytes).to_ne_bytes();
             }
             unsafe {
                 result.set_len(count);

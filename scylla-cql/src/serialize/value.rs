@@ -1059,31 +1059,35 @@ fn try_bulk_serialize_vector_elements<'t, T: SerializeValue + 't>(
         ColumnType::Native(NativeType::Float)
             if std::mem::size_of::<T>() == 4 && !std::mem::needs_drop::<T>() =>
         {
-            let total_bytes = slice.len() * 4;
+            let count = slice.len();
+            let total_bytes = count * 4;
             builder.reserve(total_bytes);
-            let ptr = slice.as_ptr() as *const [u8; 4];
-            for i in 0..slice.len() {
+            let dest = builder.append_zeros(total_bytes);
+            let src = slice.as_ptr() as *const [u8; 4];
+            for i in 0..count {
                 // SAFETY: size_of::<T>() == 4 and T has no drop glue, so the
                 // slice is a contiguous array of 4-byte elements. Reading 4
                 // bytes at offset i*4 from a valid &[T] is within bounds and
                 // [u8; 4] has alignment 1, so the read is always valid.
-                let ne_bytes = unsafe { *ptr.add(i) };
-                let val = f32::from_ne_bytes(ne_bytes);
-                builder.append_bytes(&val.to_be_bytes());
+                let ne_bytes = unsafe { *src.add(i) };
+                let be_bytes = f32::from_ne_bytes(ne_bytes).to_be_bytes();
+                dest[i * 4..i * 4 + 4].copy_from_slice(&be_bytes);
             }
             true
         }
         ColumnType::Native(NativeType::Double)
             if std::mem::size_of::<T>() == 8 && !std::mem::needs_drop::<T>() =>
         {
-            let total_bytes = slice.len() * 8;
+            let count = slice.len();
+            let total_bytes = count * 8;
             builder.reserve(total_bytes);
-            let ptr = slice.as_ptr() as *const [u8; 8];
-            for i in 0..slice.len() {
+            let dest = builder.append_zeros(total_bytes);
+            let src = slice.as_ptr() as *const [u8; 8];
+            for i in 0..count {
                 // SAFETY: same reasoning as f32 case but for 8-byte elements.
-                let ne_bytes = unsafe { *ptr.add(i) };
-                let val = f64::from_ne_bytes(ne_bytes);
-                builder.append_bytes(&val.to_be_bytes());
+                let ne_bytes = unsafe { *src.add(i) };
+                let be_bytes = f64::from_ne_bytes(ne_bytes).to_be_bytes();
+                dest[i * 8..i * 8 + 8].copy_from_slice(&be_bytes);
             }
             true
         }
