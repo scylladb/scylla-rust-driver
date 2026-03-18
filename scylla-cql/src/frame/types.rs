@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 // Re-export stable public types from scylla-cql-core.
 pub use scylla_cql_core::frame::types::{
-    Consistency, NonSerialConsistencyError, SerialConsistency,
+    Consistency, NonSerialConsistencyError, SerialConsistency, read_int,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -49,11 +49,6 @@ pub(crate) fn read_raw_bytes<'a>(
     let (ret, rest) = buf.split_at(count);
     *buf = rest;
     Ok(ret)
-}
-
-pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
-    let v = buf.read_i32::<BigEndian>()?;
-    Ok(v)
 }
 
 pub fn write_int(v: i32, buf: &mut impl BufMut) {
