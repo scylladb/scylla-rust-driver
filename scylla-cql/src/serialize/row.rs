@@ -559,7 +559,8 @@ impl SerializedValues {
         self.serialized_values.len()
     }
 
-    pub(crate) fn write_to_request(&self, buf: &mut impl BufMut) {
+    /// Writes the serialized values to the request buffer, including the preceding u16 element count.
+    pub fn write_to_request(&self, buf: &mut impl BufMut) {
         buf.put_u16(self.element_count);
         buf.put(self.serialized_values.as_slice())
     }
