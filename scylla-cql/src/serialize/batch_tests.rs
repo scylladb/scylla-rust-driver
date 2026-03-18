@@ -32,7 +32,7 @@ fn serialize_batch_value_iterator<'a>(
         data
     }
 
-    let ctx = RowSerializationContext { columns };
+    let ctx = RowSerializationContext::from_specs(columns);
     serialize_bvi(bvi, &ctx)
 }
 
@@ -80,7 +80,7 @@ fn slice_batch_values() {
         None
     );
 
-    let ctx = RowSerializationContext { columns: &[] };
+    let ctx = RowSerializationContext::empty();
     let mut data = Vec::new();
     let mut writer = RowWriter::new(&mut data);
     assert!(iter.serialize_next(&ctx, &mut writer).is_none());
@@ -369,7 +369,7 @@ fn check_batch_values_iterator_is_not_lending() {
         let mut it2 = bv.batch_values_iter();
 
         let columns = &[col("a", ColumnType::Native(NativeType::Int))];
-        let ctx = RowSerializationContext { columns };
+        let ctx = RowSerializationContext::from_specs(columns);
         let mut data = Vec::new();
         let mut writer = RowWriter::new(&mut data);
 
