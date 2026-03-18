@@ -9,9 +9,10 @@ use std::hash::BuildHasher;
 use std::{collections::HashMap, sync::Arc};
 
 use bytes::BufMut;
+
 use thiserror::Error;
 
-use crate::frame::request::RequestDeserializationError;
+use crate::frame::frame_errors::LowLevelDeserializationError;
 use crate::frame::response::result::ColumnType;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types;
@@ -594,7 +595,7 @@ impl SerializedValues {
 
     /// Creates value list from the request frame
     /// This is used only for testing - request deserialization.
-    pub(crate) fn new_from_frame(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
+    pub(crate) fn new_from_frame(buf: &mut &[u8]) -> Result<Self, LowLevelDeserializationError> {
         let values_num = types::read_short(buf)?;
         let values_beg = *buf;
         for _ in 0..values_num {
