@@ -162,6 +162,11 @@ pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
     Ok(v)
 }
 
+pub fn read_short(buf: &mut &[u8]) -> Result<u16, std::io::Error> {
+    let v = buf.read_u16::<BigEndian>()?;
+    Ok(v)
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RawValue<'a> {
     Null,
