@@ -1,3 +1,4 @@
+pub mod frame_errors;
 pub mod response;
 pub mod types;
 
