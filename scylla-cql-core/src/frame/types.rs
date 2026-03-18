@@ -1,5 +1,7 @@
 //! CQL binary protocol in-wire types.
 
+use byteorder::{BigEndian, ReadBytesExt};
+
 use super::TryFromPrimitiveError;
 use std::convert::TryFrom;
 use thiserror::Error;
@@ -136,4 +138,8 @@ impl std::fmt::Display for SerialConsistency {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
     }
+}
+pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
+    let v = buf.read_i32::<BigEndian>()?;
+    Ok(v)
 }
