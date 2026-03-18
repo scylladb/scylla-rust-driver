@@ -594,8 +594,7 @@ impl SerializedValues {
     }
 
     /// Creates value list from the request frame
-    /// This is used only for testing - request deserialization.
-    pub(crate) fn new_from_frame(buf: &mut &[u8]) -> Result<Self, LowLevelDeserializationError> {
+    pub fn new_from_frame(buf: &mut &[u8]) -> Result<Self, LowLevelDeserializationError> {
         let values_num = types::read_short(buf)?;
         let values_beg = *buf;
         for _ in 0..values_num {
