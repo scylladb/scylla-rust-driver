@@ -8,12 +8,11 @@ use crate::frame::response::result::{
 use crate::frame::types::RawValue;
 use crate::serialize::row::{
     BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
-    BuiltinTypeCheckErrorKind, RowSerializationContext, SerializeRow, SerializeValue,
-    SerializedValues,
+    BuiltinTypeCheckErrorKind, RowSerializationContext, SerializeRow, SerializedValues,
 };
 use crate::serialize::value::tests::get_ser_err as get_value_ser_err;
 use crate::serialize::value::{
-    BuiltinSerializationErrorKind as BuiltinValueSerializationErrorKind, mk_ser_err,
+    BuiltinSerializationErrorKind as BuiltinValueSerializationErrorKind, SerializeValue, mk_ser_err,
 };
 use crate::serialize::writers::WrittenCellProof;
 use crate::serialize::{CellWriter, RowWriter, SerializationError};
