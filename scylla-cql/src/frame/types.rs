@@ -16,25 +16,8 @@ use uuid::Uuid;
 
 // Re-export stable public types from scylla-cql-core.
 pub use scylla_cql_core::frame::types::{
-    Consistency, NonSerialConsistencyError, SerialConsistency, read_int,
+    Consistency, NonSerialConsistencyError, RawValue, SerialConsistency, read_int, read_value,
 };
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum RawValue<'a> {
-    Null,
-    Unset,
-    Value(&'a [u8]),
-}
-
-impl<'a> RawValue<'a> {
-    #[inline]
-    pub fn as_value(&self) -> Option<&'a [u8]> {
-        match self {
-            RawValue::Value(v) => Some(v),
-            RawValue::Null | RawValue::Unset => None,
-        }
-    }
-}
 
 pub(crate) fn read_raw_bytes<'a>(
     count: usize,
@@ -153,19 +136,6 @@ pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], LowLevelDeserializ
     let len = read_int_length(buf)?;
     let v = read_raw_bytes(len, buf)?;
     Ok(v)
-}
-
-pub fn read_value<'a>(buf: &mut &'a [u8]) -> Result<RawValue<'a>, LowLevelDeserializationError> {
-    let len = read_int(buf)?;
-    match len {
-        -2 => Ok(RawValue::Unset),
-        -1 => Ok(RawValue::Null),
-        len if len >= 0 => {
-            let v = read_raw_bytes(len as usize, buf)?;
-            Ok(RawValue::Value(v))
-        }
-        len => Err(LowLevelDeserializationError::InvalidValueLength(len)),
-    }
 }
 
 pub fn read_short_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], LowLevelDeserializationError> {
