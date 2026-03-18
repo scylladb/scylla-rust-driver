@@ -16,7 +16,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType};
-use crate::frame::types::{unsigned_vint_encode, vint_encode};
+use crate::frame::types::{unsigned_vint_encode_to_array, vint_encode};
 use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, Emptiable, MaybeEmpty, MaybeUnset, Unset,
@@ -1000,9 +1000,10 @@ fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
     typ: &ColumnType,
     builder: &mut CellValueBuilder,
     element: &'t T,
+    element_buffer: &mut Vec<u8>,
 ) -> Result<(), SerializationError> {
-    let mut element_buffer = Vec::new();
-    let inner_writer = CellWriter::new_without_size(&mut element_buffer);
+    element_buffer.clear();
+    let inner_writer = CellWriter::new_without_size(element_buffer);
     T::serialize(element, element_type, inner_writer).map_err(|err| {
         mk_ser_err_named(
             rust_name,
@@ -1010,12 +1011,9 @@ fn serialize_next_variable_length_elem<'t, T: SerializeValue + 't>(
             VectorSerializationErrorKind::ElementSerializationFailed(err),
         )
     })?;
-    let mut element_length_buffer = Vec::new();
-    unsigned_vint_encode(
-        element_buffer.len().try_into().unwrap(),
-        &mut element_length_buffer,
-    );
-    builder.append_bytes(element_length_buffer.as_slice());
+    let (vint_buf, vint_len) =
+        unsigned_vint_encode_to_array(element_buffer.len().try_into().unwrap());
+    builder.append_bytes(&vint_buf[..vint_len]);
     builder.append_bytes(element_buffer.as_slice());
     Ok(())
 }
@@ -1138,6 +1136,7 @@ fn serialize_vector<'t, 'b, T: SerializeValue + 't>(
             }
         }
         None => {
+            let mut element_buffer = Vec::new();
             for element in slice.iter() {
                 serialize_next_variable_length_elem(
                     rust_name,
@@ -1145,6 +1144,7 @@ fn serialize_vector<'t, 'b, T: SerializeValue + 't>(
                     typ,
                     &mut builder,
                     element,
+                    &mut element_buffer,
                 )?;
             }
         }
@@ -1473,7 +1473,7 @@ impl Display for SetOrListTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SetOrListTypeCheckErrorKind::NotSetOrList => {
-                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set, nor a list, nor a vector")
+                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set, a list, nor a vector")
             }
         }
     }

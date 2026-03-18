@@ -160,7 +160,8 @@ impl<'result> CustomTypeParser<'result> {
         self.skip_blank_and_comma();
         // This happens when no parameters are provided.
         // See: https://github.com/scylladb/scylladb/blob/f5125ffa18871ae74c08a4337c599009d5dd48a9/db/marshal/type_parser.cc#L290
-        if self.parser.accept(")").is_ok() {
+        if let Ok(parser) = self.parser.accept(")") {
+            self.parser = parser;
             return Err(CustomTypeParseError::InvalidParameterCount {
                 actual: 0,
                 expected: 2,
@@ -184,17 +185,12 @@ impl<'result> CustomTypeParser<'result> {
         if s.len() % 2 != 0 {
             return Err(CustomTypeParseError::BadHexString(s.to_owned()));
         }
-        for c in s.chars() {
-            if !c.is_ascii_hexdigit() {
-                return Err(CustomTypeParseError::BadHexString(s.to_owned()));
-            }
-        }
         let bytes: Vec<_> = s
             .as_bytes()
             .chunks_exact(2)
             .map(|chunk| {
-                // Safety: All characters were checked to be valid ASCII hexdigits,
-                // so two-byte chunks are valid ASCII strings, too.
+                // SAFETY of unwrap: chunks_exact(2) on valid UTF-8 bytes
+                // always produces valid 2-byte ASCII substrings.
                 u8::from_str_radix(std::str::from_utf8(chunk).unwrap(), 16)
             })
             .collect::<Result<_, _>>()

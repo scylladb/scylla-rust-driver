@@ -1240,7 +1240,7 @@ where
         Some(raw.and_then(|raw| {
             T::deserialize(self.element_type, raw).map_err(|err| {
                 mk_deser_err::<Self>(
-                    self.element_type,
+                    self.collection_type,
                     VectorDeserializationErrorKind::ElementDeserializationFailed(err),
                 )
             })
@@ -1265,6 +1265,15 @@ where
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<'frame, 'metadata, T> ExactSizeIterator for VectorIterator<'frame, 'metadata, T>
+where
+    T: DeserializeValue<'frame, 'metadata>,
+{
+    fn len(&self) -> usize {
+        self.remaining
     }
 }
 
@@ -2051,7 +2060,7 @@ impl Display for BuiltinTypeCheckErrorKind {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SetOrListTypeCheckErrorKind {
-    /// The CQL type is neither a set not a list.
+    /// The CQL type is neither a set, a list, nor a vector.
     NotSetOrList,
     /// The CQL type is not a set.
     NotSet,
@@ -2063,7 +2072,7 @@ impl Display for SetOrListTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SetOrListTypeCheckErrorKind::NotSetOrList => {
-                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set nor a list")
+                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set, a list, nor a vector")
             }
             SetOrListTypeCheckErrorKind::NotSet => {
                 f.write_str("the CQL type the Rust type was attempted to be type checked against was not a set")
