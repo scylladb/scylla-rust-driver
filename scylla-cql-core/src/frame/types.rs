@@ -2,6 +2,8 @@
 
 use byteorder::{BigEndian, ReadBytesExt};
 
+use crate::frame::frame_errors::LowLevelDeserializationError;
+
 use super::TryFromPrimitiveError;
 use std::convert::TryFrom;
 use thiserror::Error;
@@ -139,7 +141,53 @@ impl std::fmt::Display for SerialConsistency {
         write!(f, "{self:?}")
     }
 }
+
+pub(crate) fn read_raw_bytes<'a>(
+    count: usize,
+    buf: &mut &'a [u8],
+) -> Result<&'a [u8], LowLevelDeserializationError> {
+    if buf.len() < count {
+        return Err(LowLevelDeserializationError::TooFewBytesReceived {
+            expected: count,
+            received: buf.len(),
+        });
+    }
+    let (ret, rest) = buf.split_at(count);
+    *buf = rest;
+    Ok(ret)
+}
+
 pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
     let v = buf.read_i32::<BigEndian>()?;
     Ok(v)
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RawValue<'a> {
+    Null,
+    Unset,
+    Value(&'a [u8]),
+}
+
+impl<'a> RawValue<'a> {
+    #[inline]
+    pub fn as_value(&self) -> Option<&'a [u8]> {
+        match self {
+            RawValue::Value(v) => Some(v),
+            RawValue::Null | RawValue::Unset => None,
+        }
+    }
+}
+
+pub fn read_value<'a>(buf: &mut &'a [u8]) -> Result<RawValue<'a>, LowLevelDeserializationError> {
+    let len = read_int(buf)?;
+    match len {
+        -2 => Ok(RawValue::Unset),
+        -1 => Ok(RawValue::Null),
+        len if len >= 0 => {
+            let v = read_raw_bytes(len as usize, buf)?;
+            Ok(RawValue::Value(v))
+        }
+        len => Err(LowLevelDeserializationError::InvalidValueLength(len)),
+    }
 }
