@@ -1,0 +1,59 @@
+[package]
+edition = "2024"
+name = "benchmark"
+version = "0.0.0"
+
+[dependencies]
+scylla = { path = "../scylla", features = ["chrono-04"] }
+tokio = { version = "1.34", features = ["full"] }
+uuid = "1"
+futures = "0.3"
+chrono = "0.4"
+
+[[bin]]
+name = "select_benchmark"
+path = "src/select.rs"
+
+[[bin]]
+name = "large_select_benchmark"
+path = "src/large_select.rs"
+
+[[bin]]
+name = "insert_benchmark"
+path = "src/insert.rs"
+
+[[bin]]
+name = "concurrent_insert_benchmark"
+path = "src/concurrent_insert.rs"
+
+[[bin]]
+name = "concurrent_select_benchmark"
+path = "src/concurrent_select.rs"
+
+[[bin]]
+name = "batch_benchmark"
+path = "src/batch.rs"
+
+[[bin]]
+name = "paging_benchmark"
+path = "src/paging.rs"
+
+[[bin]]
+name = "concurrent_paging_benchmark"
+path = "src/concurrent_paging.rs"
+
+[[bin]]
+name = "deser_benchmark"
+path = "src/deser.rs"
+
+[[bin]]
+name = "concurrent_deser_benchmark"
+path = "src/concurrent_deser.rs"
+
+[[bin]]
+name = "ser_benchmark"
+path = "src/ser.rs"
+
+[[bin]]
+name = "concurrent_ser_benchmark"
+path = "src/concurrent_ser.rs"
