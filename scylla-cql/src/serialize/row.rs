@@ -594,8 +594,13 @@ impl SerializedValues {
     }
 
     /// Creates value list from the request frame
-    /// This is used only for testing - request deserialization.
-    pub(crate) fn new_from_frame(buf: &mut &[u8]) -> Result<Self, LowLevelDeserializationError> {
+    ///
+    /// Passed buffer must contain `[short]` N specifying the number of values,
+    /// and then N values, each of which is a `[value]` (`[value]` and `[value]` are
+    /// described in CQL protocol).
+    /// Buffer may contain additional data, and will be advanced past all the values.
+    /// The format is, in other words: `[<n><value_1>...<value_n>]<arbitrary data>`.
+    pub fn new_from_frame(buf: &mut &[u8]) -> Result<Self, LowLevelDeserializationError> {
         let values_num = types::read_short(buf)?;
         let values_beg = *buf;
         for _ in 0..values_num {
