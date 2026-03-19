@@ -1672,8 +1672,8 @@ fn fixed_integral_serialization() {
 fn counter_serialization() {
     assert_eq!(
         do_serialize(
-            0x0123456789abcdef_i64,
-            &ColumnType::Native(NativeType::BigInt)
+            Counter(0x0123456789abcdef_i64),
+            &ColumnType::Native(NativeType::Counter)
         ),
         vec![0, 0, 0, 8, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]
     );
