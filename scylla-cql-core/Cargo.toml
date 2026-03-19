@@ -21,6 +21,10 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 ] }
 
 [features]
+# Enables support for CQL ser/de of Secrecy type from secrecy 0.8 crate.
+secrecy-08 = ["dep:secrecy-08"]
+# Enables support for CQL ser/de of Secrecy type from secrecy 0.10 crate.
+secrecy-10 = ["dep:secrecy-10"]
 # Enables support for CQL ser/de of time/date types from time 0.3 crate.
 time-03 = ["dep:time-03"]
 # Enables support for CQL ser/de of time/date types from chrono 0.4 crate.
@@ -37,6 +41,8 @@ bigdecimal-04 = ["dep:bigdecimal-04"]
 serde = ["dep:serde"]
 
 [dependencies]
+# FrameSlice and other parts of public API (impl SerializeValue for Bytes, BufMut in vint_encode)
+bytes = "1.0.1"
 # CqlTimeuuid, ser/deser of CQL UUID
 uuid = "1.0"
 # Easier error type creation (ValueOverflow).
@@ -51,6 +57,8 @@ num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
 num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
 time-03 = { package = "time", version = "0.3", optional = true }
+secrecy-08 = { package = "secrecy", version = "0.8", optional = true }
+secrecy-10 = { package = "secrecy", version = "0.10", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 
 ####################

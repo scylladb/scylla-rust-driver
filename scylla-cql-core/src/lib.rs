@@ -8,4 +8,5 @@ pub mod frame;
 pub(crate) mod pretty;
 pub mod utils;
 
+pub mod serialize;
 pub mod value;

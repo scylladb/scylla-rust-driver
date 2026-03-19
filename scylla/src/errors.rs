@@ -37,7 +37,7 @@ pub use scylla_cql::frame::frame_errors::{
 pub use scylla_cql::frame::request::CqlRequestKind;
 pub use scylla_cql::frame::response::CqlResponseKind;
 pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
-pub use scylla_cql::serialize::SerializationError;
+pub use scylla_cql_core::serialize::SerializationError;
 
 /// Error that occurred during request execution
 #[derive(Error, Debug, Clone)]
