@@ -651,3 +651,7 @@ impl<'a> Iterator for SerializedValuesIterator<'a> {
         Some(types::read_value(&mut self.serialized_values).expect("badly encoded value"))
     }
 }
+
+#[cfg(test)]
+#[path = "row_tests.rs"]
+pub(crate) mod tests;

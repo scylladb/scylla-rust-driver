@@ -8,7 +8,3 @@ pub use scylla_cql_core::serialize::batch::{
     BatchValues, BatchValuesFromIterator, BatchValuesIterator, BatchValuesIteratorFromIterator,
     TupleValuesIter,
 };
-
-#[cfg(test)]
-#[path = "batch_tests.rs"]
-pub(crate) mod tests;

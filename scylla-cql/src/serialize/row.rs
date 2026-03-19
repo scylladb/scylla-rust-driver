@@ -8,7 +8,3 @@ pub use scylla_cql_core::serialize::row::{
     BuiltinTypeCheckErrorKind, RowSerializationContext, SerializeRow, SerializedValues,
     SerializedValuesIterator, mk_ser_err, mk_typck_err,
 };
-
-#[cfg(test)]
-#[path = "row_tests.rs"]
-pub(crate) mod tests;

@@ -323,3 +323,7 @@ impl<T: BatchValues + ?Sized> BatchValues for &T {
         <T as BatchValues>::batch_values_iter(*self)
     }
 }
+
+#[cfg(test)]
+#[path = "batch_tests.rs"]
+pub(crate) mod tests;
