@@ -20,7 +20,7 @@ use rand::rng;
 use rand::seq::{IndexedRandom, SliceRandom};
 use scylla_cql::frame::response::event::ClientRoutesChangeEvent;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
@@ -345,6 +345,12 @@ impl MetadataReader {
 
         // If metadata fetch failed, we consider the connection broken.
         if let Err(err) = &res {
+            warn!(
+                endpoint = ?endpoint,
+                error = %err,
+                "Metadata fetch failed on node reached by endpoint"
+            );
+
             self.control_connection_state = ControlConnectionState::Broken {
                 last_error: err.clone(),
                 last_endpoint: endpoint,
@@ -465,19 +471,32 @@ impl MetadataReader {
         .await;
 
         match open_result {
-            Ok((con, recv)) => ControlConnectionState::Working(WorkingControlConnection {
-                connection: ControlConnection::new(Arc::new(con), cache, client_routes_subscriber)
+            Ok((con, recv)) => {
+                info!(
+                    "Opened control connection to endpoint {endpoint:?}, connect address {}",
+                    con.get_connect_address()
+                );
+                ControlConnectionState::Working(WorkingControlConnection {
+                    connection: ControlConnection::new(
+                        Arc::new(con),
+                        cache,
+                        client_routes_subscriber,
+                    )
                     .override_serverside_timeout(request_serverside_timeout),
-                error_channel: recv,
-                events_channel: receiver,
-                endpoint,
-            }),
-            Err(conn_err) => ControlConnectionState::Broken {
-                last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
-                    last_connection_error: conn_err,
-                }),
-                last_endpoint: endpoint,
-            },
+                    error_channel: recv,
+                    events_channel: receiver,
+                    endpoint,
+                })
+            }
+            Err(conn_err) => {
+                warn!("Failed opening control connection to endpoint {endpoint:?}: {conn_err}");
+                ControlConnectionState::Broken {
+                    last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
+                        last_connection_error: conn_err,
+                    }),
+                    last_endpoint: endpoint,
+                }
+            }
         }
     }
 

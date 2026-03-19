@@ -1396,6 +1396,10 @@ impl Connection {
             ConnectionSetupRequestError::new(CqlRequestKind::Register, kind)
         };
 
+        debug!(
+            "Connection to {}: registering for events: {:?}",
+            self.connect_address, event_types_to_register_for
+        );
         let register_frame = Register {
             event_types_to_register_for,
         };
