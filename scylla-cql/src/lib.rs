@@ -25,6 +25,6 @@ pub use crate::frame::types::Consistency;
 pub mod _macro_internal;
 
 #[cfg(test)]
-mod types_tests;
+mod macros_tests;
 
 mod macros_doctests;
