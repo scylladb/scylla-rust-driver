@@ -1592,3 +1592,7 @@ impl Display for UdtSerializationErrorKind {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "value_tests.rs"]
+pub(crate) mod tests;
