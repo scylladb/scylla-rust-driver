@@ -1917,5 +1917,304 @@ mod derive_macros_integration {
                 assert_eq!(reference, row);
             }
         }
+
+        mod deserialize {
+            use bytes::Bytes;
+
+            use super::{deserialize, spec};
+            use crate::DeserializeRow;
+            use crate::deserialize::row::DeserializeRow;
+            use crate::deserialize::tests::serialize_cells;
+            use crate::frame::response::result::{ColumnSpec, TableSpec};
+            use crate::frame::response::result::{ColumnType, NativeType};
+
+            fn val_int(i: i32) -> Option<Vec<u8>> {
+                Some(i.to_be_bytes().to_vec())
+            }
+
+            fn val_str(s: &str) -> Option<Vec<u8>> {
+                Some(s.as_bytes().to_vec())
+            }
+
+            // Do not remove. It's not used in tests but we keep it here to check that
+            // we properly ignore warnings about unused variables, unnecessary `mut`s
+            // etc. that usually pop up when generating code for empty structs.
+            #[derive(DeserializeRow)]
+            #[scylla(crate = crate)]
+            struct TestUdtWithNoFieldsUnordered {}
+
+            #[derive(DeserializeRow)]
+            #[scylla(crate = crate, flavor = "enforce_order")]
+            struct TestUdtWithNoFieldsOrdered {}
+
+            // If deserialize is never called, rust warns that the struct is never constructed.
+            // We don't want to `expect(dead_code)` on struct definitions, because that could silence
+            // some warnings that this test is supposed to prevent.
+            #[expect(unreachable_code, dead_code)]
+            fn dummy_deserialize_udts() {
+                let _ = deserialize::<TestUdtWithNoFieldsUnordered>(todo!(), todo!()).unwrap();
+                let _ = deserialize::<TestUdtWithNoFieldsOrdered>(todo!(), todo!()).unwrap();
+            }
+
+            #[test]
+            fn test_struct_deserialization_loose_ordering() {
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = "crate")]
+                struct MyRow<'a> {
+                    a: &'a str,
+                    b: Option<i32>,
+                    #[scylla(skip)]
+                    c: String,
+                    #[scylla(default_when_null)]
+                    d: i32,
+                    #[scylla(default_when_null)]
+                    e: &'a str,
+                }
+
+                // Original order of columns
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("d", ColumnType::Native(NativeType::Int)),
+                    spec("e", ColumnType::Native(NativeType::Text)),
+                ];
+                let byts = serialize_cells([val_str("abc"), val_int(123), None, val_str("def")]);
+                let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: "abc",
+                        b: Some(123),
+                        c: String::new(),
+                        d: 0,
+                        e: "def",
+                    }
+                );
+
+                // Different order of columns - should still work
+                let specs = &[
+                    spec("e", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("d", ColumnType::Native(NativeType::Int)),
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                ];
+                let byts = serialize_cells([None, val_int(123), None, val_str("abc")]);
+                let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: "abc",
+                        b: Some(123),
+                        c: String::new(),
+                        d: 0,
+                        e: "",
+                    }
+                );
+
+                // Missing column
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("e", ColumnType::Native(NativeType::Text)),
+                ];
+                MyRow::type_check(specs).unwrap_err();
+
+                // Missing both default_when_null column
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                ];
+                MyRow::type_check(specs).unwrap_err();
+
+                // Wrong column type
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Int)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                ];
+                MyRow::type_check(specs).unwrap_err();
+            }
+
+            #[test]
+            fn test_struct_deserialization_strict_ordering() {
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = "crate", flavor = "enforce_order")]
+                struct MyRow<'a> {
+                    a: &'a str,
+                    b: Option<i32>,
+                    #[scylla(skip)]
+                    c: String,
+                    #[scylla(default_when_null)]
+                    d: i32,
+                    #[scylla(default_when_null)]
+                    e: &'a str,
+                }
+
+                // Correct order of columns
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("d", ColumnType::Native(NativeType::Int)),
+                    spec("e", ColumnType::Native(NativeType::Text)),
+                ];
+                let byts = serialize_cells([val_str("abc"), val_int(123), None, val_str("def")]);
+                let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: "abc",
+                        b: Some(123),
+                        c: String::new(),
+                        d: 0,
+                        e: "def",
+                    }
+                );
+
+                // Wrong order of columns
+                let specs = &[
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("d", ColumnType::Native(NativeType::Int)),
+                    spec("e", ColumnType::Native(NativeType::Text)),
+                ];
+                MyRow::type_check(specs).unwrap_err();
+
+                // Missing column
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("e", ColumnType::Native(NativeType::Text)),
+                ];
+                MyRow::type_check(specs).unwrap_err();
+
+                // Missing both default_when_null column
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                ];
+                MyRow::type_check(specs).unwrap_err();
+
+                // Wrong column type
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Int)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                ];
+                MyRow::type_check(specs).unwrap_err();
+            }
+
+            #[test]
+            fn test_struct_deserialization_no_name_check() {
+                #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = "crate", flavor = "enforce_order", skip_name_checks)]
+                struct MyRow<'a> {
+                    a: &'a str,
+                    b: Option<i32>,
+                    #[scylla(skip)]
+                    c: String,
+                }
+
+                // Correct order of columns
+                let specs = &[
+                    spec("a", ColumnType::Native(NativeType::Text)),
+                    spec("b", ColumnType::Native(NativeType::Int)),
+                ];
+                let byts = serialize_cells([val_str("abc"), val_int(123)]);
+                let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: "abc",
+                        b: Some(123),
+                        c: String::new(),
+                    }
+                );
+
+                // Correct order of columns, but different names - should still succeed
+                let specs = &[
+                    spec("z", ColumnType::Native(NativeType::Text)),
+                    spec("x", ColumnType::Native(NativeType::Int)),
+                ];
+                let byts = serialize_cells([val_str("abc"), val_int(123)]);
+                let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+                assert_eq!(
+                    row,
+                    MyRow {
+                        a: "abc",
+                        b: Some(123),
+                        c: String::new(),
+                    }
+                );
+            }
+
+            #[test]
+            fn test_struct_deserialization_cross_rename_fields() {
+                #[derive(scylla_macros::DeserializeRow, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct TestRow {
+                    #[scylla(rename = "b")]
+                    a: i32,
+                    #[scylla(rename = "a")]
+                    b: String,
+                }
+
+                // Columns switched wrt fields - should still work.
+                {
+                    let row_bytes = serialize_cells(
+                        ["The quick brown fox".as_bytes(), &42_i32.to_be_bytes()].map(Some),
+                    );
+                    let specs = [
+                        spec("a", ColumnType::Native(NativeType::Text)),
+                        spec("b", ColumnType::Native(NativeType::Int)),
+                    ];
+
+                    let row = deserialize::<TestRow>(&specs, &row_bytes).unwrap();
+                    assert_eq!(
+                        row,
+                        TestRow {
+                            a: 42,
+                            b: "The quick brown fox".to_owned(),
+                        }
+                    );
+                }
+            }
+
+            #[test]
+            fn metadata_does_not_bound_deserialized_rows() {
+                /* It's important to understand what is a _deserialized row_. It's not just
+                 * an implementor of `DeserializeRow`; there are some implementors of `DeserializeRow`
+                 * who are not yet final rows, but partially deserialized rows that support further
+                 * deserialization - _row deserializers_, such as `ColumnIterator`.
+                 * _Row deserializers_, because they still need to deserialize some row, are naturally
+                 * bound by 'metadata lifetime. However, _rows_ are completely deserialized, so they
+                 * should not be bound by 'metadata - only by 'frame. This test asserts that.
+                 */
+
+                // We don't care about the actual deserialized data - all `Err`s is OK.
+                // This test's goal is only to compile, asserting that lifetimes are correct.
+                let bytes = Bytes::new();
+
+                // By this binding, we require that the deserialized rows live longer than metadata.
+                let _decoded_results = {
+                    // Metadata's lifetime is limited to this scope.
+
+                    fn col_spec<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+                        ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
+                    }
+
+                    let row_typ = &[
+                        col_spec("bytes", ColumnType::Native(NativeType::Blob)),
+                        col_spec("text", ColumnType::Native(NativeType::Text)),
+                    ];
+
+                    #[derive(DeserializeRow)]
+                    #[scylla(crate=crate)]
+                    struct MyRow<'frame> {
+                        #[expect(dead_code)]
+                        bytes: &'frame [u8],
+                        #[expect(dead_code)]
+                        text: &'frame str,
+                    }
+
+                    deserialize::<MyRow>(row_typ, &bytes)
+                };
+            }
+        }
     }
 }
