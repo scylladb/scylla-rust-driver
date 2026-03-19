@@ -10,10 +10,7 @@ use crate::serialize::row::{
     BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
     BuiltinTypeCheckErrorKind, RowSerializationContext, SerializeRow, SerializedValues,
 };
-use crate::serialize::value::tests::get_ser_err as get_value_ser_err;
-use crate::serialize::value::{
-    BuiltinSerializationErrorKind as BuiltinValueSerializationErrorKind, SerializeValue, mk_ser_err,
-};
+use crate::serialize::value::SerializeValue;
 use crate::serialize::writers::WrittenCellProof;
 use crate::serialize::{CellWriter, RowWriter, SerializationError};
 use crate::value::MaybeUnset;
@@ -782,22 +779,23 @@ fn serialized_values() {
         );
     }
 
+    #[derive(Debug, thiserror::Error)]
+    #[error("Value too big")]
+    struct TooBigError;
+
     // Add a value that's too big, recover gracefully
     struct TooBigValue;
     impl SerializeValue for TooBigValue {
         fn serialize<'b>(
             &self,
-            typ: &ColumnType,
+            _typ: &ColumnType,
             writer: CellWriter<'b>,
         ) -> Result<WrittenCellProof<'b>, SerializationError> {
             // serialize some
             writer.into_value_builder().append_bytes(&[1u8]);
 
             // then throw an error
-            Err(mk_ser_err::<Self>(
-                typ,
-                BuiltinValueSerializationErrorKind::SizeOverflow,
-            ))
+            Err(SerializationError::new(TooBigError))
         }
     }
 
@@ -805,10 +803,7 @@ fn serialized_values() {
         .add_value(&TooBigValue, &ColumnType::Native(NativeType::Ascii))
         .unwrap_err();
 
-    assert_matches!(
-        get_value_ser_err(&err).kind,
-        BuiltinValueSerializationErrorKind::SizeOverflow
-    );
+    assert_matches!(err.downcast_ref::<TooBigError>(), Some(TooBigError));
 
     // All checks for two values should still pass
     {
