@@ -537,6 +537,7 @@ fn type_inet() {
     );
 }
 
+#[cfg(test)]
 fn zig_zag_encode(v: i64) -> u64 {
     ((v >> 63) ^ (v << 1)) as u64
 }
@@ -545,6 +546,7 @@ fn zig_zag_decode(v: u64) -> i64 {
     ((v >> 1) as i64) ^ -((v & 1) as i64)
 }
 
+#[cfg(test)]
 pub(crate) fn unsigned_vint_encode(v: u64, buf: &mut Vec<u8>) {
     let mut v = v;
     let mut number_of_bytes = (639 - 9 * v.leading_zeros()) >> 6;
@@ -581,6 +583,7 @@ pub(crate) fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Erro
     Ok(v)
 }
 
+#[cfg(test)]
 pub(crate) fn vint_encode(v: i64, buf: &mut Vec<u8>) {
     unsigned_vint_encode(zig_zag_encode(v), buf)
 }
