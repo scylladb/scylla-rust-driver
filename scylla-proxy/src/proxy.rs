@@ -1305,7 +1305,7 @@ impl ProxyWorker {
                         let mut guard = request_rules.lock().unwrap();
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
                             if request_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {} ({})).", i, driver_addr, DisplayableRealAddrOption(real_addr), DisplayableShard(shard));
+                                debug!("Applying rule no={} to request ({} -> {} ({})).", i, driver_addr, DisplayableRealAddrOption(real_addr), DisplayableShard(shard));
                                 debug!("-> Applied rule: {:?}", request_rule);
                                 debug!("-> To request: {:?}", ctx.opcode);
                                 trace!("{:?}", request);
@@ -1411,7 +1411,7 @@ impl ProxyWorker {
                         let mut guard = response_rules.lock().unwrap();
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
                             if response_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to response ({} -> {} ({})).", i, DisplayableRealAddrOption(real_addr), driver_addr, DisplayableShard(shard));
+                                debug!("Applying rule no={} to response ({} -> {} ({})).", i, DisplayableRealAddrOption(real_addr), driver_addr, DisplayableShard(shard));
                                 debug!("-> Applied rule: {:?}", response_rule);
                                 debug!("-> To response: {:?}", ctx.opcode);
                                 trace!("{:?}", response);
