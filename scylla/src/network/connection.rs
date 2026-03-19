@@ -469,7 +469,7 @@ impl Connection {
             error_sender,
             orphan_notification_receiver,
             router_handle.clone(),
-            connect_address.ip(),
+            connect_address,
         )
         .await?;
 
@@ -1457,7 +1457,7 @@ impl Connection {
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
-        node_address: IpAddr,
+        node_address: SocketAddr,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         async fn spawn_router_and_get_handle(
             config: HostConnectionConfig,
@@ -1466,7 +1466,7 @@ impl Connection {
             error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
             orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
             router_handle: Arc<RouterHandle>,
-            node_address: IpAddr,
+            node_address: SocketAddr,
         ) -> RemoteHandle<()> {
             let (task, handle) = Connection::router(
                 config,
@@ -1489,7 +1489,7 @@ impl Connection {
                 #[cfg(feature = "openssl-010")]
                 crate::network::tls::Tls::OpenSsl010(mut ssl) => {
                     ssl.param_mut()
-                        .set_ip(node_address)
+                        .set_ip(node_address.ip())
                         .map_err(crate::network::tls::TlsError::OpenSsl010)?;
                     let mut stream = tokio_openssl::SslStream::new(ssl, stream)
                         .map_err(crate::network::tls::TlsError::OpenSsl010)?;
@@ -1511,7 +1511,7 @@ impl Connection {
                 #[cfg(feature = "rustls-023")]
                 crate::network::tls::Tls::Rustls023 { connector } => {
                     use rustls::pki_types::ServerName;
-                    let server_name = ServerName::IpAddress(node_address.into());
+                    let server_name = ServerName::IpAddress(node_address.ip().into());
                     let stream = connector.connect(server_name, stream).await?;
                     return Ok(spawn_router_and_get_handle(
                         config,
@@ -1546,7 +1546,7 @@ impl Connection {
         error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
-        node_address: IpAddr,
+        node_address: SocketAddr,
     ) {
         let (read_half, write_half) = split(stream);
         // Why are we using a mutex here?
@@ -1790,7 +1790,7 @@ impl Connection {
         router_handle: Arc<RouterHandle>,
         keepalive_interval: Option<Duration>,
         keepalive_timeout: Option<Duration>,
-        node_address: IpAddr, // This address is only used to enrich the log messages
+        node_address: SocketAddr, // This address is only used to enrich the log messages
     ) -> Result<(), BrokenConnectionError> {
         async fn issue_keepalive_query(
             router_handle: &RouterHandle,
@@ -1823,9 +1823,10 @@ impl Connection {
                                 "Timed out while waiting for response to keepalive request on connection to node {}",
                                 node_address
                             );
-                            return Err(
-                                BrokenConnectionErrorKind::KeepaliveTimeout(node_address).into()
-                            );
+                            return Err(BrokenConnectionErrorKind::KeepaliveTimeout(
+                                node_address.ip(),
+                            )
+                            .into());
                         }
                     }
                 } else {
