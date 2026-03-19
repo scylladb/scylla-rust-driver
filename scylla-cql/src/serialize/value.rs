@@ -10,7 +10,3 @@ pub use scylla_cql_core::serialize::value::{
     TupleTypeCheckErrorKind, UdtSerializationErrorKind, UdtTypeCheckErrorKind,
     VectorSerializationErrorKind,
 };
-
-#[cfg(test)]
-#[path = "value_tests.rs"]
-pub(crate) mod tests;
