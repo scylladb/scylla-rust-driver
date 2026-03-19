@@ -1,0 +1,51 @@
+defaults:
+  name: rust-driver
+
+backends:
+  - benchmark-name: insert
+    build-command: cargo build -p benchmark --bin insert_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh insert_benchmark
+
+  - benchmark-name: concurrent_insert
+    build-command: cargo build -p benchmark --bin concurrent_insert_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh concurrent_insert_benchmark
+
+  - benchmark-name: select
+    build-command: cargo build -p benchmark --bin select_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh select_benchmark
+
+  - benchmark-name: concurrent_select
+    build-command: cargo build -p benchmark --bin concurrent_select_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh concurrent_select_benchmark
+
+  - benchmark-name: batch
+    build-command: cargo build -p benchmark --bin batch_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh batch_benchmark
+
+  - benchmark-name: paging
+    build-command: cargo build -p benchmark --bin paging_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh paging_benchmark
+
+  - benchmark-name: concurrent_paging
+    build-command: cargo build -p benchmark --bin concurrent_paging_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh concurrent_paging_benchmark
+
+  - benchmark-name: large_select
+    build-command: cargo build -p benchmark --bin large_select_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh large_select_benchmark
+
+  - benchmark-name: deser
+    build-command: cargo build -p benchmark --bin deser_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh deser_benchmark
+
+  - benchmark-name: concurrent_deser
+    build-command: cargo build -p benchmark --bin concurrent_deser_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh concurrent_deser_benchmark
+
+  - benchmark-name: ser
+    build-command: cargo build -p benchmark --bin ser_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh ser_benchmark
+
+  - benchmark-name: concurrent_ser
+    build-command: cargo build -p benchmark --bin concurrent_ser_benchmark -r
+    run-command: ./benchmarks/run-rust-benchmark.sh concurrent_ser_benchmark
