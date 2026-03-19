@@ -1944,38 +1944,54 @@ async fn maybe_translated_addr(
     endpoint: &UntranslatedEndpoint,
     address_translator: Option<&dyn AddressTranslator>,
 ) -> Result<SocketAddr, TranslationError> {
-    match *endpoint {
-        UntranslatedEndpoint::ContactPoint(ref addr) => Ok(addr.address),
-        UntranslatedEndpoint::Peer(PeerEndpoint {
-            host_id,
-            address,
-            ref datacenter,
-            ref rack,
-        }) => match address {
-            NodeAddr::Translatable(addr) => {
-                // In this case, addr is subject to AddressTranslator.
-                if let Some(translator) = address_translator {
-                    let res = translator
-                        .translate_address(&UntranslatedPeer {
-                            host_id,
-                            untranslated_address: addr,
-                            datacenter: datacenter.as_deref(),
-                            rack: rack.as_deref(),
-                        })
-                        .await;
-                    if let Err(ref err) = res {
-                        error!("Address translation failed for addr {}: {}", addr, err);
-                    }
-                    res
-                } else {
-                    Ok(addr)
-                }
+    match (endpoint, address_translator) {
+        (UntranslatedEndpoint::ContactPoint(addr), _) => {
+            // Contact points' addressed are not indended to be translated.
+            Ok(addr.address)
+        }
+
+        (
+            UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }),
+            None, // no translator
+        ) => {
+            // No translator -> no translation.
+            Ok(address.into_inner())
+        }
+
+        (
+            UntranslatedEndpoint::Peer(PeerEndpoint {
+                address: NodeAddr::Untranslatable(addr),
+                ..
+            }),
+            _,
+        ) => {
+            // Untranslatable address -> no translation.
+            Ok(*addr)
+        }
+
+        (
+            UntranslatedEndpoint::Peer(PeerEndpoint {
+                host_id,
+                address: NodeAddr::Translatable(addr),
+                datacenter,
+                rack,
+            }),
+            Some(translator),
+        ) => {
+            // In this case, addr is subject to AddressTranslator.
+            let res = translator
+                .translate_address(&UntranslatedPeer {
+                    host_id: *host_id,
+                    untranslated_address: *addr,
+                    datacenter: datacenter.as_deref(),
+                    rack: rack.as_deref(),
+                })
+                .await;
+            if let Err(ref err) = res {
+                error!("Address translation failed for addr {}: {}", addr, err);
             }
-            NodeAddr::Untranslatable(addr) => {
-                // In this case, addr is considered to be translated, as it is the control connection's address.
-                Ok(addr)
-            }
-        },
+            res
+        }
     }
 }
 
