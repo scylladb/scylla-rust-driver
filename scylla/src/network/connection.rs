@@ -1979,18 +1979,17 @@ async fn maybe_translated_addr(
             Some(translator),
         ) => {
             // In this case, addr is subject to AddressTranslator.
-            let res = translator
+            translator
                 .translate_address(&UntranslatedPeer {
                     host_id: *host_id,
                     untranslated_address: *addr,
                     datacenter: datacenter.as_deref(),
                     rack: rack.as_deref(),
                 })
-                .await;
-            if let Err(ref err) = res {
-                error!("Address translation failed for addr {}: {}", addr, err);
-            }
-            res
+                .await
+                .inspect_err(|err| {
+                    error!("Address translation failed for addr {}: {}", addr, err);
+                })
         }
     }
 }
