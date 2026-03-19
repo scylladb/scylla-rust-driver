@@ -31,4 +31,5 @@ claude.log
 claude_history.json
 claude_config.json
 CLAUDE.md
-
+.opencode
+.ocx
