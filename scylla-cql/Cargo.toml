@@ -29,9 +29,9 @@ harness = false
 
 [features]
 # Enables support for CQL ser/de of Secrecy type from secrecy 0.8 crate.
-secrecy-08 = ["dep:secrecy-08"]
+secrecy-08 = ["dep:secrecy-08", "scylla-cql-core/secrecy-08"]
 # Enables support for CQL ser/de of Secrecy type from secrecy 0.10 crate.
-secrecy-10 = ["dep:secrecy-10"]
+secrecy-10 = ["dep:secrecy-10", "scylla-cql-core/secrecy-10"]
 # Enables support for CQL ser/de of time/date types from time 0.3 crate.
 time-03 = ["dep:time-03", "scylla-cql-core/time-03"]
 # Enables support for CQL ser/de of time/date types from chrono 0.4 crate.
