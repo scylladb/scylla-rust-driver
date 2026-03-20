@@ -307,6 +307,12 @@ pub struct SessionConfig {
     /// between the nodes and the driver.
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
 
+    /// Routing configuration for Scylla Cloud. If set, Session will connect
+    /// to Scylla Cloud clusters using custom routing based on `system.client_routes`.
+    #[expect(unused)] // TODO: Will get used soon.
+    #[cfg(feature = "unstable-client-routes")]
+    pub(crate) client_routes_config: Option<super::client_routes::ClientRoutesConfig>,
+
     /// The host filter decides whether any connections should be opened
     /// to the node or not. The driver will also avoid filtered out nodes when
     /// re-establishing the control connection.
@@ -418,6 +424,8 @@ impl SessionConfig {
             tracing_info_fetch_consistency: Consistency::One,
             cluster_metadata_refresh_interval: Duration::from_secs(60),
             identity: SelfIdentity::default(),
+            #[cfg(feature = "unstable-client-routes")]
+            client_routes_config: None,
         }
     }
 
@@ -498,6 +506,25 @@ impl SessionConfig {
         // Ensure there is at least one known node
         if self.known_nodes.is_empty() {
             return Err(NewSessionError::EmptyKnownNodesList);
+        }
+
+        // Ensure no illegal configuration with Client Routes
+        #[cfg(feature = "unstable-client-routes")]
+        if self.client_routes_config.is_some() {
+            if self.address_translator.is_some() {
+                return Err(NewSessionError::IllegalConfig(
+                    "User-provided address translator is not supported if ClientRoutesConfig is provided, \
+                        because the driver uses its own custom translator for client routes".into(),
+                ));
+            }
+
+            if self.tls_context.is_some() {
+                return Err(NewSessionError::IllegalConfig(
+                    "TLS is not (yet) supported if ClientRoutesConfig is provided, \
+                        because of architectural limitations that are out of the driver's scope"
+                        .into(),
+                ));
+            }
         }
 
         Ok(())
