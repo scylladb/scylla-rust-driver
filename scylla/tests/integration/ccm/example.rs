@@ -20,7 +20,7 @@ async fn test_cluster_lifecycle1() {
         let session = cluster.make_session_builder().await.build().await.unwrap();
 
         let rows = session
-            .query_unpaged("select data_center from system.local", &[])
+            .query_unpaged("SELECT data_center FROM system.local", &[])
             .await
             .expect("failed to execute query")
             .into_rows_result()
