@@ -1995,7 +1995,7 @@ async fn maybe_translated_addr(
 ) -> Result<SocketAddr, TranslationError> {
     match (endpoint, address_translator) {
         (UntranslatedEndpoint::ContactPoint(addr), _) => {
-            // Contact points' addressed are not indended to be translated.
+            // Contact points' addresses are not intended to be translated.
             Ok(addr.address)
         }
 
