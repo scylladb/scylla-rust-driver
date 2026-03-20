@@ -241,7 +241,13 @@ impl GenericSessionBuilder<DefaultMode> {
         self.config.address_translator = Some(translator);
         self
     }
+}
 
+/// Constraint for session builder kinds that support setting TLS config on them.
+pub trait SessionBuilderKindSupportsTls: SessionBuilderKind {}
+impl SessionBuilderKindSupportsTls for DefaultMode {}
+
+impl<K: SessionBuilderKindSupportsTls> GenericSessionBuilder<K> {
     /// TLS feature
     ///
     /// Provide SessionBuilder with TlsContext that will be
