@@ -180,85 +180,6 @@ impl GenericSessionBuilder<DefaultMode> {
         self
     }
 
-    /// Set username and password for plain text authentication.\
-    /// If the database server will require authentication\
-    ///
-    /// # Example
-    /// ```
-    /// # use scylla::client::session::Session;
-    /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::client::Compression;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .use_keyspace("my_keyspace_name", false)
-    ///     .user("cassandra", "cassandra")
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn user(mut self, username: impl Into<String>, passwd: impl Into<String>) -> Self {
-        self.config.authenticator = Some(Arc::new(PlainTextAuthenticator::new(
-            username.into(),
-            passwd.into(),
-        )));
-        self
-    }
-
-    /// Set custom authenticator provider to create an authenticator instance during a session creation.
-    ///
-    /// # Example
-    /// ```
-    /// # use std::sync::Arc;
-    /// use bytes::Bytes;
-    /// # use scylla::client::session::Session;
-    /// # use scylla::client::session_builder::SessionBuilder;
-    /// use async_trait::async_trait;
-    /// use scylla::authentication::{AuthenticatorProvider, AuthenticatorSession, AuthError};
-    /// # use scylla::client::Compression;
-    ///
-    /// struct CustomAuthenticator;
-    ///
-    /// #[async_trait]
-    /// impl AuthenticatorSession for CustomAuthenticator {
-    ///     async fn evaluate_challenge(&mut self, token: Option<&[u8]>) -> Result<Option<Vec<u8>>, AuthError> {
-    ///         Ok(None)
-    ///     }
-    ///
-    ///     async fn success(&mut self, token: Option<&[u8]>) -> Result<(), AuthError> {
-    ///         Ok(())
-    ///     }
-    /// }
-    ///
-    /// struct CustomAuthenticatorProvider;
-    ///
-    /// #[async_trait]
-    /// impl AuthenticatorProvider for CustomAuthenticatorProvider {
-    ///     async fn start_authentication_session(&self, _authenticator_name: &str) -> Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError> {
-    ///         Ok((None, Box::new(CustomAuthenticator)))
-    ///     }
-    /// }
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .use_keyspace("my_keyspace_name", false)
-    ///     .user("cassandra", "cassandra")
-    ///     .authenticator_provider(Arc::new(CustomAuthenticatorProvider))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn authenticator_provider(
-        mut self,
-        authenticator_provider: Arc<dyn AuthenticatorProvider>,
-    ) -> Self {
-        self.config.authenticator = Some(authenticator_provider);
-        self
-    }
-
     /// Uses a custom address translator for peer addresses retrieved from the cluster.
     /// By default, no translation is performed.
     ///
@@ -373,6 +294,85 @@ impl GenericSessionBuilder<DefaultMode> {
 // This block contains configuration options that make sense both for any `Session` type.
 // If an option fit only some of them, it should be put in a specialised block.
 impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
+    /// Set username and password for plain text authentication.\
+    /// If the database server will require authentication\
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::client::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .use_keyspace("my_keyspace_name", false)
+    ///     .user("cassandra", "cassandra")
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn user(mut self, username: impl Into<String>, passwd: impl Into<String>) -> Self {
+        self.config.authenticator = Some(Arc::new(PlainTextAuthenticator::new(
+            username.into(),
+            passwd.into(),
+        )));
+        self
+    }
+
+    /// Set custom authenticator provider to create an authenticator instance during a session creation.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::sync::Arc;
+    /// use bytes::Bytes;
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// use async_trait::async_trait;
+    /// use scylla::authentication::{AuthenticatorProvider, AuthenticatorSession, AuthError};
+    /// # use scylla::client::Compression;
+    ///
+    /// struct CustomAuthenticator;
+    ///
+    /// #[async_trait]
+    /// impl AuthenticatorSession for CustomAuthenticator {
+    ///     async fn evaluate_challenge(&mut self, token: Option<&[u8]>) -> Result<Option<Vec<u8>>, AuthError> {
+    ///         Ok(None)
+    ///     }
+    ///
+    ///     async fn success(&mut self, token: Option<&[u8]>) -> Result<(), AuthError> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// struct CustomAuthenticatorProvider;
+    ///
+    /// #[async_trait]
+    /// impl AuthenticatorProvider for CustomAuthenticatorProvider {
+    ///     async fn start_authentication_session(&self, _authenticator_name: &str) -> Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError> {
+    ///         Ok((None, Box::new(CustomAuthenticator)))
+    ///     }
+    /// }
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .use_keyspace("my_keyspace_name", false)
+    ///     .user("cassandra", "cassandra")
+    ///     .authenticator_provider(Arc::new(CustomAuthenticatorProvider))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn authenticator_provider(
+        mut self,
+        authenticator_provider: Arc<dyn AuthenticatorProvider>,
+    ) -> Self {
+        self.config.authenticator = Some(authenticator_provider);
+        self
+    }
+
     /// Sets the local ip address all TCP sockets are bound to.
     ///
     /// By default, this option is set to `None`, which is equivalent to:
