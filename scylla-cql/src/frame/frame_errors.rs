@@ -261,6 +261,8 @@ pub enum CqlEventParseError {
     TopologyChangeEventParseError(ClusterChangeEventParseError),
     #[error("Failed to deserialize status change event: {0}")]
     StatusChangeEventParseError(ClusterChangeEventParseError),
+    #[error("Failed to deserialize client routes change event: {0}")]
+    ClientRoutesChangeEventParseError(ClientRoutesChangeEventParseError),
 }
 
 /// An error type returned when deserialization of
@@ -298,6 +300,29 @@ pub enum ClusterChangeEventParseError {
     NodeAddressParseError(LowLevelDeserializationError),
     #[error("Unknown type of change: {0}")]
     UnknownTypeOfChange(String),
+}
+
+/// An error type returned when deserialization of ClientRoutesChangeEvent fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum ClientRoutesChangeEventParseError {
+    #[error("Malformed type of change: {0}")]
+    TypeOfChangeParseError(LowLevelDeserializationError),
+    #[error("Unknown type of change: {0}")]
+    UnknownTypeOfChange(String),
+    #[error("Malformed connection ids: {0}")]
+    ConnectionIdsParseError(LowLevelDeserializationError),
+    #[error("Malformed host ids: {0}")]
+    HostIdsParseError(LowLevelDeserializationError),
+    #[error("Unable to parse host id as UUID: {0}")]
+    HostIdsUuidParseError(uuid::Error),
+    #[error(
+        "Connection and host ids length mismatch: there are {connection_ids_count} connection ids and {host_ids_count} host ids"
+    )]
+    ConnectionHostIdsLengthMismatch {
+        connection_ids_count: usize,
+        host_ids_count: usize,
+    },
 }
 
 /// An error type returned when deserialization

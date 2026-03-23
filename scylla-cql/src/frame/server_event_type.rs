@@ -33,6 +33,8 @@ pub enum EventTypeV2 {
     StatusChange,
     /// Represents a change in the schema, such as table creation or modification.
     SchemaChange,
+    /// Represents a change in the client routes.
+    ClientRoutesChange,
 }
 
 impl fmt::Display for EventType {
@@ -53,6 +55,7 @@ impl fmt::Display for EventTypeV2 {
             Self::TopologyChange => "TOPOLOGY_CHANGE",
             Self::StatusChange => "STATUS_CHANGE",
             Self::SchemaChange => "SCHEMA_CHANGE",
+            Self::ClientRoutesChange => "CLIENT_ROUTES_CHANGE",
         };
 
         write!(f, "{s}")
@@ -80,6 +83,7 @@ impl FromStr for EventTypeV2 {
             "TOPOLOGY_CHANGE" => Ok(Self::TopologyChange),
             "STATUS_CHANGE" => Ok(Self::StatusChange),
             "SCHEMA_CHANGE" => Ok(Self::SchemaChange),
+            "CLIENT_ROUTES_CHANGE" => Ok(Self::ClientRoutesChange),
             _ => Err(CqlEventParseError::UnknownEventType(s.to_string())),
         }
     }
