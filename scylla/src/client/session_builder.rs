@@ -179,7 +179,13 @@ impl GenericSessionBuilder<DefaultMode> {
         self.config.add_known_nodes_addr(node_addrs);
         self
     }
+}
 
+/// Constraint for session builder kinds that support setting AddressTranslator on them.
+pub trait SessionBuilderKindSupportsAddressTranslation: SessionBuilderKind {}
+impl SessionBuilderKindSupportsAddressTranslation for DefaultMode {}
+
+impl<K: SessionBuilderKindSupportsAddressTranslation> GenericSessionBuilder<K> {
     /// Uses a custom address translator for peer addresses retrieved from the cluster.
     /// By default, no translation is performed.
     ///
