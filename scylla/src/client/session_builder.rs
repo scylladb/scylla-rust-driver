@@ -328,6 +328,9 @@ impl<K: SessionBuilderKindSupportsAddressTranslation> GenericSessionBuilder<K> {
 /// Constraint for session builder kinds that support setting TLS config on them.
 pub trait SessionBuilderKindSupportsTls: SessionBuilderKind {}
 impl SessionBuilderKindSupportsTls for DefaultMode {}
+// TODO: support TLS for ClientRoutesMode once Cloud comes up with a solution.
+// #[cfg(feature = "unstable-client-routes")]
+// impl SessionBuilderKindSupportsTls for ClientRoutesMode {}
 
 impl<K: SessionBuilderKindSupportsTls> GenericSessionBuilder<K> {
     /// TLS feature
