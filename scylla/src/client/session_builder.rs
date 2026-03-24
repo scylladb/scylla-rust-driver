@@ -87,7 +87,13 @@ impl GenericSessionBuilder<DefaultMode> {
             kind: PhantomData,
         }
     }
+}
 
+/// Constraint for session builder kinds that support setting known nodes.
+pub trait SessionBuilderKindSupportsKnownNodes: SessionBuilderKind {}
+impl SessionBuilderKindSupportsKnownNodes for DefaultMode {}
+
+impl<K: SessionBuilderKindSupportsKnownNodes> GenericSessionBuilder<K> {
     /// Add a known node with a hostname
     /// # Examples
     /// ```
