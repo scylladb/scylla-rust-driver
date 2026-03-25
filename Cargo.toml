@@ -6,6 +6,7 @@ members = [
     "scylla-cql",
     "scylla-proxy",
     "utils/find_stale_test_keyspaces",
+    "utils/generate_book_tests",
 ]
 resolver = "3"
 

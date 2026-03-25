@@ -120,16 +120,14 @@ jobs:
         uses: taiki-e/install-action@nextest
       - name: Print rustc version
         run: rustc --version
-      # We need to run doctests separately, because nextest doesn't support them :(
-      # https://github.com/nextest-rs/nextest/issues/16
-      - name: Run doctests
-        run: cargo test --doc --all-features
-      # Cluster is setup after doctests to make sure that doctests
-      # don't require running DB.
       - name: Setup 3-node ScyllaDB cluster
         run: |
           sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
           docker compose -f test/cluster/docker-compose.yml up -d --wait
+      # We need to run doctests separately, because nextest doesn't support them :(
+      # https://github.com/nextest-rs/nextest/issues/16
+      - name: Run doctests
+        run: cargo test --doc --all-features
       - name: Run tests
         run: |
           RUST_LOG=trace cargo nextest run --all-features

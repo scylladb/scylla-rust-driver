@@ -13,7 +13,7 @@ Without any feature flags, the user can interact with `Varint` type by making us
 
 ```rust
 # extern crate scylla;
-# extern crate num_bigint;
+# extern crate num_bigint_04 as num_bigint;
 # extern crate futures;
 # use scylla::client::session::Session;
 # use std::error::Error;

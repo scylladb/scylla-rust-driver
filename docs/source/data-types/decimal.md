@@ -39,7 +39,7 @@ To make use of `bigdecimal::Bigdecimal` type, user should enable `bigdecimal-04`
 
 ```rust
 # extern crate scylla;
-# extern crate bigdecimal;
+# extern crate bigdecimal_04 as bigdecimal;
 # extern crate futures;
 # use scylla::client::session::Session;
 # use std::error::Error;
