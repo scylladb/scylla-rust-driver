@@ -209,7 +209,8 @@ pub mod serialize {
 pub mod deserialize {
     #![doc = include_str!("deserialize/README.md")]
 
-    pub use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+    pub use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
+    pub use scylla_cql_core::deserialize::FrameSlice;
 
     /// Deserializing the whole query result contents.
     pub mod result {
