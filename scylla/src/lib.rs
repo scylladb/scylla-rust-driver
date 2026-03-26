@@ -209,8 +209,7 @@ pub mod serialize {
 pub mod deserialize {
     #![doc = include_str!("deserialize/README.md")]
 
-    pub use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
-    pub use scylla_cql_core::deserialize::FrameSlice;
+    pub use scylla_cql_core::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 
     /// Deserializing the whole query result contents.
     pub mod result {
@@ -219,7 +218,7 @@ pub mod deserialize {
 
     /// Deserializing a row of the query result.
     pub mod row {
-        pub use scylla_cql::deserialize::row::{
+        pub use scylla_cql_core::deserialize::row::{
             BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
             BuiltinTypeCheckErrorKind, ColumnIterator, DeserializeRow, RawColumn,
         };
@@ -227,7 +226,7 @@ pub mod deserialize {
 
     /// Deserializing a single CQL value from a column of the query result row.
     pub mod value {
-        pub use scylla_cql::deserialize::value::{
+        pub use scylla_cql_core::deserialize::value::{
             BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
             BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator,
             MapDeserializationErrorKind, MapIterator, MapTypeCheckErrorKind,
@@ -240,7 +239,7 @@ pub mod deserialize {
         // Added it anyway for documentation purposes.
         // TODO(2.0): Remove those re-exports.
         #[deprecated(since = "1.5.0", note = "Moved to `scylla::value` module")]
-        pub use scylla_cql::deserialize::value::{Emptiable, MaybeEmpty};
+        pub use scylla_cql_core::deserialize::value::{Emptiable, MaybeEmpty};
     }
 
     // Shorthands for better readability.

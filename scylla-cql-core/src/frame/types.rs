@@ -163,6 +163,13 @@ pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
     Ok(v)
 }
 
+pub fn read_int_length(buf: &mut &[u8]) -> Result<usize, LowLevelDeserializationError> {
+    let v = read_int(buf)?;
+    let v: usize = v.try_into()?;
+
+    Ok(v)
+}
+
 // https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec#L208
 pub fn read_bytes_opt<'a>(
     buf: &mut &'a [u8],
@@ -259,7 +266,6 @@ pub(crate) fn vint_encode(v: i64, buf: &mut Vec<u8>) {
     unsigned_vint_encode(zig_zag_encode(v), buf)
 }
 
-#[cfg_attr(not(test), expect(unused))]
 pub(crate) fn vint_decode(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
     unsigned_vint_decode(buf).map(zig_zag_decode)
 }
