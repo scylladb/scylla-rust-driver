@@ -1,4 +1,5 @@
 pub mod frame_slice;
+pub mod result;
 pub mod row;
 pub mod value;
 
