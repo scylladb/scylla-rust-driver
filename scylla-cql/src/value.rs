@@ -2,19 +2,13 @@
 //! as well as conversion between them and other types.
 
 use std::net::IpAddr;
-use std::result::Result as StdResult;
 
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::deserialize::DeserializationError;
-use crate::deserialize::FrameSlice;
 use crate::deserialize::value::DeserializeValue;
-use crate::deserialize::value::{
-    BuiltinDeserializationErrorKind, MapIterator, UdtIterator, VectorIterator, mk_deser_err,
-};
-use crate::frame::response::result::{CollectionType, ColumnType};
-use crate::frame::types;
+use crate::deserialize::{DeserializationError, FrameSlice};
+use crate::frame::response::result::ColumnType;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
 /// Error type indicating that the value is too large to fit in the destination type.
@@ -1361,171 +1355,18 @@ impl std::fmt::Display for CqlValue {
 }
 
 /// Deserializes any CQL value from a byte slice according to the provided CQL type.
+///
+/// This delegates to the [`DeserializeValue`] implementation for [`CqlValue`].
+///
+/// The `new_borrowed` version of `FrameSlice` is deficient in that it does not hold
+/// a `Bytes` reference to the frame, only a slice.
+/// This is not a problem here, fortunately, because none of `CqlValue` variants contain
+/// any `Bytes` - only exclusively owned types - so we never call `FrameSlice::to_bytes()`.
 pub fn deser_cql_value(
     typ: &ColumnType,
     buf: &mut &[u8],
-) -> StdResult<CqlValue, DeserializationError> {
-    use crate::frame::response::result::ColumnType::*;
-    use crate::frame::response::result::NativeType::*;
-
-    if buf.is_empty() {
-        match typ {
-            Native(Ascii) | Native(Blob) | Native(Text) => {
-                // can't be empty
-            }
-            _ => return Ok(CqlValue::Empty),
-        }
-    }
-    // The `new_borrowed` version of FrameSlice is deficient in that it does not hold
-    // a `Bytes` reference to the frame, only a slice.
-    // This is not a problem here, fortunately, because none of CqlValue variants contain
-    // any `Bytes` - only exclusively owned types - so we never call FrameSlice::to_bytes().
-    let v = Some(FrameSlice::new_borrowed(buf));
-
-    Ok(match typ {
-        Native(Ascii) => {
-            let s = String::deserialize(typ, v)?;
-            CqlValue::Ascii(s)
-        }
-        Native(Boolean) => {
-            let b = bool::deserialize(typ, v)?;
-            CqlValue::Boolean(b)
-        }
-        Native(Blob) => {
-            let b = Vec::<u8>::deserialize(typ, v)?;
-            CqlValue::Blob(b)
-        }
-        Native(Date) => {
-            let d = CqlDate::deserialize(typ, v)?;
-            CqlValue::Date(d)
-        }
-        Native(Counter) => {
-            let c = crate::value::Counter::deserialize(typ, v)?;
-            CqlValue::Counter(c)
-        }
-        Native(Decimal) => {
-            let d = CqlDecimal::deserialize(typ, v)?;
-            CqlValue::Decimal(d)
-        }
-        Native(Double) => {
-            let d = f64::deserialize(typ, v)?;
-            CqlValue::Double(d)
-        }
-        Native(Float) => {
-            let f = f32::deserialize(typ, v)?;
-            CqlValue::Float(f)
-        }
-        Native(Int) => {
-            let i = i32::deserialize(typ, v)?;
-            CqlValue::Int(i)
-        }
-        Native(SmallInt) => {
-            let si = i16::deserialize(typ, v)?;
-            CqlValue::SmallInt(si)
-        }
-        Native(TinyInt) => {
-            let ti = i8::deserialize(typ, v)?;
-            CqlValue::TinyInt(ti)
-        }
-        Native(BigInt) => {
-            let bi = i64::deserialize(typ, v)?;
-            CqlValue::BigInt(bi)
-        }
-        Native(Text) => {
-            let s = String::deserialize(typ, v)?;
-            CqlValue::Text(s)
-        }
-        Native(Timestamp) => {
-            let t = CqlTimestamp::deserialize(typ, v)?;
-            CqlValue::Timestamp(t)
-        }
-        Native(Time) => {
-            let t = CqlTime::deserialize(typ, v)?;
-            CqlValue::Time(t)
-        }
-        Native(Timeuuid) => {
-            let t = CqlTimeuuid::deserialize(typ, v)?;
-            CqlValue::Timeuuid(t)
-        }
-        Native(Duration) => {
-            let d = CqlDuration::deserialize(typ, v)?;
-            CqlValue::Duration(d)
-        }
-        Native(Inet) => {
-            let i = IpAddr::deserialize(typ, v)?;
-            CqlValue::Inet(i)
-        }
-        Native(Uuid) => {
-            let uuid = uuid::Uuid::deserialize(typ, v)?;
-            CqlValue::Uuid(uuid)
-        }
-        Native(Varint) => {
-            let vi = CqlVarint::deserialize(typ, v)?;
-            CqlValue::Varint(vi)
-        }
-        Collection {
-            typ: CollectionType::List(_type_name),
-            ..
-        } => {
-            let l = Vec::<CqlValue>::deserialize(typ, v)?;
-            CqlValue::List(l)
-        }
-        Collection {
-            typ: CollectionType::Map(_key_type, _value_type),
-            ..
-        } => {
-            let iter = MapIterator::<'_, '_, CqlValue, CqlValue>::deserialize(typ, v)?;
-            let m: Vec<(CqlValue, CqlValue)> = iter.collect::<StdResult<_, _>>()?;
-            CqlValue::Map(m)
-        }
-        Collection {
-            typ: CollectionType::Set(_type_name),
-            ..
-        } => {
-            let s = Vec::<CqlValue>::deserialize(typ, v)?;
-            CqlValue::Set(s)
-        }
-        Vector { .. } => {
-            let iter = VectorIterator::deserialize(typ, v)?;
-            let v: Vec<CqlValue> = iter.collect::<StdResult<_, _>>()?;
-            CqlValue::Vector(v)
-        }
-        UserDefinedType {
-            definition: udt, ..
-        } => {
-            let iter = UdtIterator::deserialize(typ, v)?;
-            let fields: Vec<(String, Option<CqlValue>)> = iter
-                .map(|((col_name, col_type), res)| {
-                    res.and_then(|v| {
-                        let val = Option::<CqlValue>::deserialize(col_type, v.flatten())?;
-                        Ok((col_name.clone().into_owned(), val))
-                    })
-                })
-                .collect::<StdResult<_, _>>()?;
-
-            CqlValue::UserDefinedType {
-                keyspace: udt.keyspace.clone().into_owned(),
-                name: udt.name.clone().into_owned(),
-                fields,
-            }
-        }
-        Tuple(type_names) => {
-            let t = type_names
-                .iter()
-                .map(|typ| -> StdResult<_, DeserializationError> {
-                    let raw = types::read_bytes_opt(buf).map_err(|e| {
-                        mk_deser_err::<CqlValue>(
-                            typ,
-                            BuiltinDeserializationErrorKind::RawCqlBytesReadError(e),
-                        )
-                    })?;
-                    raw.map(|v| CqlValue::deserialize(typ, Some(FrameSlice::new_borrowed(v))))
-                        .transpose()
-                })
-                .collect::<StdResult<_, _>>()?;
-            CqlValue::Tuple(t)
-        }
-    })
+) -> std::result::Result<CqlValue, DeserializationError> {
+    CqlValue::deserialize(typ, Some(FrameSlice::new_borrowed(buf)))
 }
 
 /// A row in a CQL result set, containing a vector of columns.

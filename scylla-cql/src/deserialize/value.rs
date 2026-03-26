@@ -24,7 +24,7 @@ use crate::frame::types;
 use crate::value::CqlVarintBorrowed;
 use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
-    CqlTimeuuid, CqlValue, CqlVarint, deser_cql_value,
+    CqlTimeuuid, CqlValue, CqlVarint,
 };
 
 // Re-export for backwards compatibility. These types were moved to crate::value module.
@@ -74,9 +74,172 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
-        let cql = deser_cql_value(typ, &mut val).map_err(deser_error_replace_rust_name::<Self>)?;
-        Ok(cql)
+        use crate::frame::response::result::ColumnType::*;
+        use crate::frame::response::result::NativeType::*;
+
+        let mut frame_slice = ensure_not_null_frame_slice::<Self>(typ, v)?;
+
+        if frame_slice.as_slice().is_empty() {
+            match typ {
+                Native(Ascii) | Native(Blob) | Native(Text) => {
+                    // can't be empty
+                }
+                _ => return Ok(CqlValue::Empty),
+            }
+        }
+
+        // We re-create `v` from our frame_slice for delegating to other DeserializeValue impls.
+        let v = Some(frame_slice);
+
+        Ok(
+            #[deny(clippy::wildcard_enum_match_arm)]
+            match typ {
+                Native(Ascii) => {
+                    let s = String::deserialize(typ, v)?;
+                    CqlValue::Ascii(s)
+                }
+                Native(Boolean) => {
+                    let b = bool::deserialize(typ, v)?;
+                    CqlValue::Boolean(b)
+                }
+                Native(Blob) => {
+                    let b = Vec::<u8>::deserialize(typ, v)?;
+                    CqlValue::Blob(b)
+                }
+                Native(Date) => {
+                    let d = CqlDate::deserialize(typ, v)?;
+                    CqlValue::Date(d)
+                }
+                Native(Counter) => {
+                    let c = crate::value::Counter::deserialize(typ, v)?;
+                    CqlValue::Counter(c)
+                }
+                Native(Decimal) => {
+                    let d = CqlDecimal::deserialize(typ, v)?;
+                    CqlValue::Decimal(d)
+                }
+                Native(Double) => {
+                    let d = f64::deserialize(typ, v)?;
+                    CqlValue::Double(d)
+                }
+                Native(Float) => {
+                    let f = f32::deserialize(typ, v)?;
+                    CqlValue::Float(f)
+                }
+                Native(Int) => {
+                    let i = i32::deserialize(typ, v)?;
+                    CqlValue::Int(i)
+                }
+                Native(SmallInt) => {
+                    let si = i16::deserialize(typ, v)?;
+                    CqlValue::SmallInt(si)
+                }
+                Native(TinyInt) => {
+                    let ti = i8::deserialize(typ, v)?;
+                    CqlValue::TinyInt(ti)
+                }
+                Native(BigInt) => {
+                    let bi = i64::deserialize(typ, v)?;
+                    CqlValue::BigInt(bi)
+                }
+                Native(Text) => {
+                    let s = String::deserialize(typ, v)?;
+                    CqlValue::Text(s)
+                }
+                Native(Timestamp) => {
+                    let t = CqlTimestamp::deserialize(typ, v)?;
+                    CqlValue::Timestamp(t)
+                }
+                Native(Time) => {
+                    let t = CqlTime::deserialize(typ, v)?;
+                    CqlValue::Time(t)
+                }
+                Native(Timeuuid) => {
+                    let t = CqlTimeuuid::deserialize(typ, v)?;
+                    CqlValue::Timeuuid(t)
+                }
+                Native(Duration) => {
+                    let d = CqlDuration::deserialize(typ, v)?;
+                    CqlValue::Duration(d)
+                }
+                Native(Inet) => {
+                    let i = IpAddr::deserialize(typ, v)?;
+                    CqlValue::Inet(i)
+                }
+                Native(Uuid) => {
+                    let uuid = uuid::Uuid::deserialize(typ, v)?;
+                    CqlValue::Uuid(uuid)
+                }
+                Native(Varint) => {
+                    let vi = CqlVarint::deserialize(typ, v)?;
+                    CqlValue::Varint(vi)
+                }
+                Collection {
+                    typ: CollectionType::List(_type_name),
+                    ..
+                } => {
+                    let l = Vec::<CqlValue>::deserialize(typ, v)?;
+                    CqlValue::List(l)
+                }
+                Collection {
+                    typ: CollectionType::Map(_key_type, _value_type),
+                    ..
+                } => {
+                    let iter = MapIterator::<'_, '_, CqlValue, CqlValue>::deserialize(typ, v)?;
+                    let m: Vec<(CqlValue, CqlValue)> = iter.collect::<Result<_, _>>()?;
+                    CqlValue::Map(m)
+                }
+                Collection {
+                    typ: CollectionType::Set(_type_name),
+                    ..
+                } => {
+                    let s = Vec::<CqlValue>::deserialize(typ, v)?;
+                    CqlValue::Set(s)
+                }
+                Vector { .. } => {
+                    let iter = VectorIterator::deserialize(typ, v)?;
+                    let v: Vec<CqlValue> = iter.collect::<Result<_, _>>()?;
+                    CqlValue::Vector(v)
+                }
+                UserDefinedType {
+                    definition: udt, ..
+                } => {
+                    let iter = UdtIterator::deserialize(typ, v)?;
+                    let fields: Vec<(String, Option<CqlValue>)> = iter
+                        .map(|((col_name, col_type), res)| {
+                            res.and_then(|v| {
+                                let val = Option::<CqlValue>::deserialize(col_type, v.flatten())?;
+                                Ok((col_name.clone().into_owned(), val))
+                            })
+                        })
+                        .collect::<Result<_, _>>()?;
+
+                    CqlValue::UserDefinedType {
+                        keyspace: udt.keyspace.clone().into_owned(),
+                        name: udt.name.clone().into_owned(),
+                        fields,
+                    }
+                }
+                Tuple(type_names) => {
+                    let t = type_names
+                        .iter()
+                        .map(|typ| -> Result<_, DeserializationError> {
+                            let raw = frame_slice.read_cql_bytes().map_err(|e| {
+                                mk_deser_err::<CqlValue>(
+                                    typ,
+                                    BuiltinDeserializationErrorKind::RawCqlBytesReadError(e),
+                                )
+                            })?;
+                            raw.map(|v| CqlValue::deserialize(typ, Some(v))).transpose()
+                        })
+                        .collect::<Result<_, _>>()?;
+                    CqlValue::Tuple(t)
+                }
+                // Catch future variants from #[non_exhaustive] enums.
+                #[allow(unreachable_patterns)]
+                Native(_) | Collection { .. } | _ => unreachable!(),
+            },
+        )
     }
 }
 
