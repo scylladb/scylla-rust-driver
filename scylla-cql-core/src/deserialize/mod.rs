@@ -1,6 +1,7 @@
 #![doc = include_str!("README.md")]
 
 pub mod frame_slice;
+pub mod result;
 pub mod row;
 pub mod value;
 

@@ -213,7 +213,7 @@ pub mod deserialize {
 
     /// Deserializing the whole query result contents.
     pub mod result {
-        pub use scylla_cql::deserialize::result::TypedRowIterator;
+        pub use scylla_cql_core::deserialize::result::TypedRowIterator;
     }
 
     /// Deserializing a row of the query result.
