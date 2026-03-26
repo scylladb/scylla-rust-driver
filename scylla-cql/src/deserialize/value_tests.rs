@@ -547,17 +547,14 @@ fn test_deserialize_vector() {
         &mut Bytes::new(),
     );
 
-    // deser_cql_value
+    // deserialize CqlValue
 
-    let buf: Vec<u8> = vec![0, 0, 0, 1, 0, 0, 0, 2];
-    let decoded_vec = super::deser_cql_value(
-        &ColumnType::Vector {
-            typ: Box::new(ColumnType::Native(Int)),
-            dimensions: 2,
-        },
-        &mut buf.as_slice(),
-    )
-    .unwrap();
+    let typ = ColumnType::Vector {
+        typ: Box::new(ColumnType::Native(Int)),
+        dimensions: 2,
+    };
+    let buf = make_bytes(&[0, 0, 0, 1, 0, 0, 0, 2]);
+    let decoded_vec = deserialize::<CqlValue>(&typ, &buf).unwrap();
     assert_eq!(
         decoded_vec,
         CqlValue::Vector(vec![CqlValue::Int(1), CqlValue::Int(2)])
@@ -3242,9 +3239,9 @@ fn metadata_does_not_bound_deserialized_values() {
 #[test]
 fn test_deserialize_text_types() {
     let buf: Vec<u8> = vec![0x41];
-    let int_slice = &mut &buf[..];
-    let ascii_serialized = super::deser_cql_value(&ColumnType::Native(Ascii), int_slice).unwrap();
-    let text_serialized = super::deser_cql_value(&ColumnType::Native(Text), int_slice).unwrap();
+    let bytes = make_bytes(&buf);
+    let ascii_serialized = deserialize::<CqlValue>(&ColumnType::Native(Ascii), &bytes).unwrap();
+    let text_serialized = deserialize::<CqlValue>(&ColumnType::Native(Text), &bytes).unwrap();
     assert_eq!(ascii_serialized, CqlValue::Ascii("A".to_string()));
     assert_eq!(text_serialized, CqlValue::Text("A".to_string()));
 }
@@ -3253,28 +3250,26 @@ fn test_deserialize_text_types() {
 fn test_deserialize_uuid_inet_types() {
     let my_uuid = Uuid::parse_str("00000000000000000000000000000001").unwrap();
 
-    let uuid_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-    let uuid_slice = &mut &uuid_buf[..];
-    let uuid_serialize = super::deser_cql_value(&ColumnType::Native(Uuid), uuid_slice).unwrap();
+    let uuid_bytes = make_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    let uuid_serialize = deserialize::<CqlValue>(&ColumnType::Native(Uuid), &uuid_bytes).unwrap();
     assert_eq!(uuid_serialize, CqlValue::Uuid(my_uuid));
 
     let my_timeuuid = CqlTimeuuid::from_str("00000000000000000000000000000001").unwrap();
     let time_uuid_serialize =
-        super::deser_cql_value(&ColumnType::Native(Timeuuid), uuid_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(Timeuuid), &uuid_bytes).unwrap();
     assert_eq!(time_uuid_serialize, CqlValue::Timeuuid(my_timeuuid));
 
     let my_ip = "::1".parse().unwrap();
-    let ip_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-    let ip_slice = &mut &ip_buf[..];
-    let ip_serialize = super::deser_cql_value(&ColumnType::Native(Inet), ip_slice).unwrap();
+    let ip_bytes = make_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    let ip_serialize = deserialize::<CqlValue>(&ColumnType::Native(Inet), &ip_bytes).unwrap();
     assert_eq!(ip_serialize, CqlValue::Inet(my_ip));
 
     let max_ip = "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap();
-    let max_ip_buf: Vec<u8> = vec![
+    let max_ip_bytes = make_bytes(&[
         255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    ];
-    let max_ip_slice = &mut &max_ip_buf[..];
-    let max_ip_serialize = super::deser_cql_value(&ColumnType::Native(Inet), max_ip_slice).unwrap();
+    ]);
+    let max_ip_serialize =
+        deserialize::<CqlValue>(&ColumnType::Native(Inet), &max_ip_bytes).unwrap();
     assert_eq!(max_ip_serialize, CqlValue::Inet(max_ip));
 }
 
@@ -3283,15 +3278,14 @@ fn test_floating_points() {
     let float: f32 = 0.5;
     let double: f64 = 2.0;
 
-    let float_buf: Vec<u8> = vec![63, 0, 0, 0];
-    let float_slice = &mut &float_buf[..];
-    let float_serialize = super::deser_cql_value(&ColumnType::Native(Float), float_slice).unwrap();
+    let float_bytes = make_bytes(&[63, 0, 0, 0]);
+    let float_serialize =
+        deserialize::<CqlValue>(&ColumnType::Native(Float), &float_bytes).unwrap();
     assert_eq!(float_serialize, CqlValue::Float(float));
 
-    let double_buf: Vec<u8> = vec![64, 0, 0, 0, 0, 0, 0, 0];
-    let double_slice = &mut &double_buf[..];
+    let double_bytes = make_bytes(&[64, 0, 0, 0, 0, 0, 0, 0]);
     let double_serialize =
-        super::deser_cql_value(&ColumnType::Native(Double), double_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(Double), &double_bytes).unwrap();
     assert_eq!(double_serialize, CqlValue::Double(double));
 }
 
@@ -3361,7 +3355,8 @@ fn test_bigint03() {
     let tests = varint_test_cases_from_spec();
 
     for t in tests.iter() {
-        let value = super::deser_cql_value(&ColumnType::Native(Varint), &mut &*t.encoding).unwrap();
+        let bytes = make_bytes(&t.encoding);
+        let value = deserialize::<CqlValue>(&ColumnType::Native(Varint), &bytes).unwrap();
         assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
     }
 }
@@ -3374,7 +3369,8 @@ fn test_bigint04() {
     let tests = varint_test_cases_from_spec();
 
     for t in tests.iter() {
-        let value = super::deser_cql_value(&ColumnType::Native(Varint), &mut &*t.encoding).unwrap();
+        let bytes = make_bytes(&t.encoding);
+        let value = deserialize::<CqlValue>(&ColumnType::Native(Varint), &bytes).unwrap();
         assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
     }
 }
@@ -3408,8 +3404,8 @@ fn test_decimal() {
     ];
 
     for t in tests.iter() {
-        let value =
-            super::deser_cql_value(&ColumnType::Native(Decimal), &mut &*t.encoding).unwrap();
+        let bytes = make_bytes(t.encoding);
+        let value = deserialize::<CqlValue>(&ColumnType::Native(Decimal), &bytes).unwrap();
         assert_eq!(
             CqlValue::Decimal(t.value.clone().try_into().unwrap()),
             value
@@ -3419,57 +3415,52 @@ fn test_decimal() {
 
 #[test]
 fn test_deserialize_counter() {
-    let counter: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 1, 0];
-    let counter_slice = &mut &counter[..];
+    let counter_bytes = make_bytes(&[0, 0, 0, 0, 0, 0, 1, 0]);
     let counter_serialize =
-        super::deser_cql_value(&ColumnType::Native(NativeType::Counter), counter_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(NativeType::Counter), &counter_bytes).unwrap();
     assert_eq!(counter_serialize, CqlValue::Counter(Counter(256)));
 }
 
 #[test]
 fn test_deserialize_blob() {
     let blob: Vec<u8> = vec![0, 1, 2, 3];
-    let blob_slice = &mut &blob[..];
-    let blob_serialize = super::deser_cql_value(&ColumnType::Native(Blob), blob_slice).unwrap();
+    let blob_bytes = make_bytes(&blob);
+    let blob_serialize = deserialize::<CqlValue>(&ColumnType::Native(Blob), &blob_bytes).unwrap();
     assert_eq!(blob_serialize, CqlValue::Blob(blob));
 }
 
 #[test]
 fn test_deserialize_bool() {
-    let bool_buf: Vec<u8> = vec![0x00];
-    let bool_slice = &mut &bool_buf[..];
-    let bool_serialize = super::deser_cql_value(&ColumnType::Native(Boolean), bool_slice).unwrap();
+    let bool_bytes = make_bytes(&[0x00]);
+    let bool_serialize =
+        deserialize::<CqlValue>(&ColumnType::Native(Boolean), &bool_bytes).unwrap();
     assert_eq!(bool_serialize, CqlValue::Boolean(false));
 
-    let bool_buf: Vec<u8> = vec![0x01];
-    let bool_slice = &mut &bool_buf[..];
-    let bool_serialize = super::deser_cql_value(&ColumnType::Native(Boolean), bool_slice).unwrap();
+    let bool_bytes = make_bytes(&[0x01]);
+    let bool_serialize =
+        deserialize::<CqlValue>(&ColumnType::Native(Boolean), &bool_bytes).unwrap();
     assert_eq!(bool_serialize, CqlValue::Boolean(true));
 }
 
 #[test]
 fn test_deserialize_int_types() {
-    let int_buf: Vec<u8> = vec![0, 0, 0, 4];
-    let int_slice = &mut &int_buf[..];
-    let int_serialized = super::deser_cql_value(&ColumnType::Native(Int), int_slice).unwrap();
+    let int_bytes = make_bytes(&[0, 0, 0, 4]);
+    let int_serialized = deserialize::<CqlValue>(&ColumnType::Native(Int), &int_bytes).unwrap();
     assert_eq!(int_serialized, CqlValue::Int(4));
 
-    let smallint_buf: Vec<u8> = vec![0, 4];
-    let smallint_slice = &mut &smallint_buf[..];
+    let smallint_bytes = make_bytes(&[0, 4]);
     let smallint_serialized =
-        super::deser_cql_value(&ColumnType::Native(SmallInt), smallint_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(SmallInt), &smallint_bytes).unwrap();
     assert_eq!(smallint_serialized, CqlValue::SmallInt(4));
 
-    let tinyint_buf: Vec<u8> = vec![4];
-    let tinyint_slice = &mut &tinyint_buf[..];
+    let tinyint_bytes = make_bytes(&[4]);
     let tinyint_serialized =
-        super::deser_cql_value(&ColumnType::Native(TinyInt), tinyint_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(TinyInt), &tinyint_bytes).unwrap();
     assert_eq!(tinyint_serialized, CqlValue::TinyInt(4));
 
-    let bigint_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 4];
-    let bigint_slice = &mut &bigint_buf[..];
+    let bigint_bytes = make_bytes(&[0, 0, 0, 0, 0, 0, 0, 4]);
     let bigint_serialized =
-        super::deser_cql_value(&ColumnType::Native(BigInt), bigint_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(BigInt), &bigint_bytes).unwrap();
     assert_eq!(bigint_serialized, CqlValue::BigInt(4));
 }
 
@@ -3561,37 +3552,37 @@ fn test_deserialize_date() {
     // Date is correctly parsed from a 4 byte array
     let four_bytes: [u8; 4] = [12, 23, 34, 45];
     let date: CqlValue =
-        super::deser_cql_value(&ColumnType::Native(Date), &mut four_bytes.as_ref()).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(Date), &make_bytes(&four_bytes)).unwrap();
     assert_eq!(
         date,
         CqlValue::Date(CqlDate(u32::from_be_bytes(four_bytes)))
     );
 
     // Date is parsed as u32 not i32, u32::MAX is u32::MAX
-    let date: CqlValue = super::deser_cql_value(
+    let date: CqlValue = deserialize::<CqlValue>(
         &ColumnType::Native(Date),
-        &mut u32::MAX.to_be_bytes().as_ref(),
+        &make_bytes(&u32::MAX.to_be_bytes()),
     )
     .unwrap();
     assert_eq!(date, CqlValue::Date(CqlDate(u32::MAX)));
 
     // Trying to parse a 0, 3 or 5 byte array fails
-    super::deser_cql_value(&ColumnType::Native(Date), &mut [].as_ref()).unwrap();
-    super::deser_cql_value(&ColumnType::Native(Date), &mut [1, 2, 3].as_ref()).unwrap_err();
-    super::deser_cql_value(&ColumnType::Native(Date), &mut [1, 2, 3, 4, 5].as_ref()).unwrap_err();
+    deserialize::<CqlValue>(&ColumnType::Native(Date), &make_bytes(&[])).unwrap();
+    deserialize::<CqlValue>(&ColumnType::Native(Date), &make_bytes(&[1, 2, 3])).unwrap_err();
+    deserialize::<CqlValue>(&ColumnType::Native(Date), &make_bytes(&[1, 2, 3, 4, 5])).unwrap_err();
 
     // Deserialize unix epoch
     let unix_epoch_bytes = 2_u32.pow(31).to_be_bytes();
 
     let date =
-        super::deser_cql_value(&ColumnType::Native(Date), &mut unix_epoch_bytes.as_ref()).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(Date), &make_bytes(&unix_epoch_bytes)).unwrap();
     assert_eq!(date.as_cql_date(), Some(CqlDate(1 << 31)));
 
     // 2^31 - 30 when converted to NaiveDate is 1969-12-02
     let before_epoch = CqlDate((1 << 31) - 30);
-    let date: CqlValue = super::deser_cql_value(
+    let date: CqlValue = deserialize::<CqlValue>(
         &ColumnType::Native(Date),
-        &mut ((1_u32 << 31) - 30).to_be_bytes().as_ref(),
+        &make_bytes(&((1_u32 << 31) - 30).to_be_bytes()),
     )
     .unwrap();
 
@@ -3599,9 +3590,9 @@ fn test_deserialize_date() {
 
     // 2^31 + 30 when converted to NaiveDate is 1970-01-31
     let after_epoch = CqlDate((1 << 31) + 30);
-    let date = super::deser_cql_value(
+    let date = deserialize::<CqlValue>(
         &ColumnType::Native(Date),
-        &mut ((1_u32 << 31) + 30).to_be_bytes().as_ref(),
+        &make_bytes(&((1_u32 << 31) + 30).to_be_bytes()),
     )
     .unwrap();
 
@@ -3609,18 +3600,18 @@ fn test_deserialize_date() {
 
     // Min date
     let min_date = CqlDate(u32::MIN);
-    let date = super::deser_cql_value(
+    let date = deserialize::<CqlValue>(
         &ColumnType::Native(Date),
-        &mut u32::MIN.to_be_bytes().as_ref(),
+        &make_bytes(&u32::MIN.to_be_bytes()),
     )
     .unwrap();
     assert_eq!(date.as_cql_date(), Some(min_date));
 
     // Max date
     let max_date = CqlDate(u32::MAX);
-    let date = super::deser_cql_value(
+    let date = deserialize::<CqlValue>(
         &ColumnType::Native(Date),
-        &mut u32::MAX.to_be_bytes().as_ref(),
+        &make_bytes(&u32::MAX.to_be_bytes()),
     )
     .unwrap();
     assert_eq!(date.as_cql_date(), Some(max_date));
@@ -3730,17 +3721,17 @@ fn test_deserialize_time() {
 
     // Check that basic values are deserialized correctly
     for test_val in [0, 1, 18463, max_time].iter() {
-        let bytes: [u8; 8] = test_val.to_be_bytes();
+        let bytes = make_bytes(&test_val.to_be_bytes());
         let cql_value: CqlValue =
-            super::deser_cql_value(&ColumnType::Native(Time), &mut &bytes[..]).unwrap();
+            deserialize::<CqlValue>(&ColumnType::Native(Time), &bytes).unwrap();
         assert_eq!(cql_value, CqlValue::Time(CqlTime(*test_val)));
     }
 
     // Negative values cause an error
     // Values bigger than 86399999999999 cause an error
     for test_val in [-1, i64::MIN, max_time + 1, i64::MAX].iter() {
-        let bytes: [u8; 8] = test_val.to_be_bytes();
-        super::deser_cql_value(&ColumnType::Native(Time), &mut &bytes[..]).unwrap_err();
+        let bytes = make_bytes(&test_val.to_be_bytes());
+        deserialize::<CqlValue>(&ColumnType::Native(Time), &bytes).unwrap_err();
     }
 }
 
@@ -3813,9 +3804,9 @@ fn test_timestamp_deserialize() {
 
     // Check that test values are deserialized correctly
     for test_val in &[0, -1, 1, 74568745, -4584658, i64::MIN, i64::MAX] {
-        let bytes: [u8; 8] = test_val.to_be_bytes();
+        let bytes = make_bytes(&test_val.to_be_bytes());
         let cql_value: CqlValue =
-            super::deser_cql_value(&ColumnType::Native(Timestamp), &mut &bytes[..]).unwrap();
+            deserialize::<CqlValue>(&ColumnType::Native(Timestamp), &bytes).unwrap();
         assert_eq!(cql_value, CqlValue::Timestamp(CqlTimestamp(*test_val)));
     }
 }
@@ -3931,9 +3922,9 @@ fn test_serialize_empty() {
 
 #[test]
 fn test_duration_deserialize() {
-    let bytes = [0xc, 0x12, 0xe2, 0x8c, 0x39, 0xd2];
+    let bytes = make_bytes(&[0xc, 0x12, 0xe2, 0x8c, 0x39, 0xd2]);
     let cql_value: CqlValue =
-        super::deser_cql_value(&ColumnType::Native(Duration), &mut &bytes[..]).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(Duration), &bytes).unwrap();
     assert_eq!(
         cql_value,
         CqlValue::Duration(CqlDuration {
@@ -4003,7 +3994,7 @@ fn test_deserialize_empty_payload() {
         (ColumnType::Native(Uuid), CqlValue::Empty),
         (ColumnType::Native(Varint), CqlValue::Empty),
     ] {
-        let cql_value: CqlValue = super::deser_cql_value(&test_type, &mut &[][..]).unwrap();
+        let cql_value: CqlValue = deserialize::<CqlValue>(&test_type, &make_bytes(&[])).unwrap();
 
         assert_eq!(cql_value, res_cql);
     }
@@ -4035,7 +4026,8 @@ fn test_timeuuid_deserialize() {
 
     for (uuid_str, uuid_bytes) in &tests {
         let cql_val: CqlValue =
-            super::deser_cql_value(&ColumnType::Native(Timeuuid), &mut &uuid_bytes[..]).unwrap();
+            deserialize::<CqlValue>(&ColumnType::Native(Timeuuid), &make_bytes(uuid_bytes))
+                .unwrap();
 
         match cql_val {
             CqlValue::Timeuuid(uuid) => {
