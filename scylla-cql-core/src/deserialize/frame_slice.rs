@@ -192,10 +192,29 @@ impl<'frame> FrameSlice<'frame> {
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
+    use bytes::{BufMut, Bytes, BytesMut};
 
-    use super::super::tests::{CELL1, CELL2, serialize_cells};
     use super::FrameSlice;
+
+    static CELL1: &[u8] = &[1, 2, 3];
+    static CELL2: &[u8] = &[4, 5, 6, 7];
+
+    fn serialize_cells(cells: impl IntoIterator<Item = Option<impl AsRef<[u8]>>>) -> Bytes {
+        let mut bytes = BytesMut::new();
+        for cell in cells {
+            match cell {
+                Some(c) => {
+                    let c = c.as_ref();
+                    bytes.put_i32(c.len() as i32);
+                    bytes.put_slice(c);
+                }
+                None => {
+                    bytes.put_i32(-1);
+                }
+            }
+        }
+        bytes.freeze()
+    }
 
     #[test]
     fn test_cql_bytes_consumption() {
