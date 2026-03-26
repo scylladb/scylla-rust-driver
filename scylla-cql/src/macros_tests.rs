@@ -1,13 +1,56 @@
 mod derive_macros_integration {
     mod value {
 
+        use std::borrow::Cow;
+        use std::sync::Arc;
+
         use bytes::Bytes;
 
-        use crate::deserialize::value::tests::{deserialize, udt_def_with_fields};
-        use crate::frame::response::result::{ColumnType, NativeType};
+        use crate::deserialize::value::{BuiltinDeserializationErrorKind, DeserializeValue};
+        use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+        use crate::frame::response::result::{ColumnType, NativeType, UserDefinedType};
         use crate::serialize::SerializationError;
         use crate::serialize::value::SerializeValue;
         use crate::serialize::writers::CellWriter;
+
+        fn udt_def_with_fields(
+            fields: impl IntoIterator<Item = (impl Into<Cow<'static, str>>, ColumnType<'static>)>,
+        ) -> ColumnType<'static> {
+            ColumnType::UserDefinedType {
+                frozen: false,
+                definition: Arc::new(UserDefinedType {
+                    name: "udt".into(),
+                    keyspace: "ks".into(),
+                    field_types: fields.into_iter().map(|(s, t)| (s.into(), t)).collect(),
+                }),
+            }
+        }
+
+        #[derive(Debug)]
+        enum TestDeserializeError {
+            TypeCheck(#[expect(dead_code)] TypeCheckError),
+            Deserialization(DeserializationError),
+        }
+
+        fn deserialize<'frame, 'metadata, T>(
+            typ: &'metadata ColumnType<'metadata>,
+            bytes: &'frame Bytes,
+        ) -> Result<T, TestDeserializeError>
+        where
+            T: DeserializeValue<'frame, 'metadata>,
+        {
+            <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
+                .map_err(TestDeserializeError::TypeCheck)?;
+            let mut frame_slice = FrameSlice::new(bytes);
+            let value = frame_slice.read_cql_bytes().map_err(|err| {
+                TestDeserializeError::Deserialization(crate::deserialize::value::mk_deser_err::<T>(
+                    typ,
+                    BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
+                ))
+            })?;
+            <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, value)
+                .map_err(TestDeserializeError::Deserialization)
+        }
 
         fn do_serialize_result<T: SerializeValue>(
             t: T,
@@ -1172,17 +1215,1012 @@ mod derive_macros_integration {
                 assert_eq!(reference, udt);
             }
         }
+
+        mod deserialize {
+            use std::sync::Arc;
+
+            use assert_matches::assert_matches;
+            use bytes::{BufMut, Bytes, BytesMut};
+
+            use super::{TestDeserializeError, deserialize, udt_def_with_fields};
+            use crate::DeserializeValue;
+            use crate::deserialize::value::{
+                BuiltinDeserializationError, BuiltinDeserializationErrorKind,
+                BuiltinTypeCheckError, BuiltinTypeCheckErrorKind, DeserializeValue,
+                UdtDeserializationErrorKind, UdtTypeCheckErrorKind,
+            };
+            use crate::deserialize::{DeserializationError, TypeCheckError};
+            use crate::frame::response::result::{
+                CollectionType, ColumnType, NativeType, UserDefinedType,
+            };
+
+            fn append_bytes(b: &mut impl BufMut, cell: &[u8]) {
+                b.put_i32(cell.len() as i32);
+                b.put_slice(cell);
+            }
+
+            fn append_null(b: &mut impl BufMut) {
+                b.put_i32(-1);
+            }
+
+            fn make_bytes(cell: &[u8]) -> Bytes {
+                let mut b = BytesMut::new();
+                append_bytes(&mut b, cell);
+                b.freeze()
+            }
+
+            #[must_use]
+            struct UdtSerializer {
+                buf: BytesMut,
+            }
+
+            impl UdtSerializer {
+                fn new() -> Self {
+                    Self {
+                        buf: BytesMut::default(),
+                    }
+                }
+
+                fn field(mut self, field_bytes: &[u8]) -> Self {
+                    append_bytes(&mut self.buf, field_bytes);
+                    self
+                }
+
+                fn null_field(mut self) -> Self {
+                    append_null(&mut self.buf);
+                    self
+                }
+
+                fn finalize(&self) -> Bytes {
+                    make_bytes(&self.buf)
+                }
+            }
+
+            #[track_caller]
+            fn get_typeck_err_inner(err: &TypeCheckError) -> &BuiltinTypeCheckError {
+                match err.downcast_ref() {
+                    Some(err) => err,
+                    None => panic!("not a BuiltinTypeCheckError: {err:?}"),
+                }
+            }
+
+            #[track_caller]
+            fn get_deser_err_inner(err: &DeserializationError) -> &BuiltinDeserializationError {
+                match err.downcast_ref() {
+                    Some(err) => err,
+                    None => panic!("not a BuiltinDeserializationError: {err:?}"),
+                }
+            }
+
+            #[track_caller]
+            fn get_deser_err(err: &TestDeserializeError) -> &BuiltinDeserializationError {
+                match err {
+                    TestDeserializeError::Deserialization(err) => get_deser_err_inner(err),
+                    other => panic!("expected Deserialization error, got: {other:?}"),
+                }
+            }
+
+            // Do not remove. It's not used in tests but we keep it here to check that
+            // we properly ignore warnings about unused variables, unnecessary `mut`s
+            // etc. that usually pop up when generating code for empty structs.
+            #[derive(scylla_macros::DeserializeValue)]
+            #[scylla(crate = crate)]
+            struct TestUdtWithNoFieldsUnordered {}
+
+            #[derive(scylla_macros::DeserializeValue)]
+            #[scylla(crate = crate, flavor = "enforce_order")]
+            struct TestUdtWithNoFieldsOrdered {}
+
+            // If deserialize is never called, rust warns that the struct is never constructed.
+            // We don't want to `expect(dead_code)` on struct definitions, because that could silence
+            // some warnings that this test is supposed to prevent.
+            #[expect(unreachable_code, dead_code)]
+            fn dummy_deserialize_udts() {
+                let _ = deserialize::<TestUdtWithNoFieldsUnordered>(todo!(), todo!()).unwrap();
+                let _ = deserialize::<TestUdtWithNoFieldsOrdered>(todo!(), todo!()).unwrap();
+            }
+
+            #[test]
+            fn test_udt_loose_ordering() {
+                #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = "crate")]
+                struct Udt<'a> {
+                    a: &'a str,
+                    #[scylla(skip)]
+                    x: String,
+                    #[scylla(allow_missing)]
+                    b: Option<i32>,
+                    #[scylla(default_when_null)]
+                    c: i64,
+                }
+
+                // UDT fields in correct same order.
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field("The quick brown fox".as_bytes())
+                        .field(&42_i32.to_be_bytes())
+                        .field(&2137_i64.to_be_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                        ("c", ColumnType::Native(NativeType::BigInt)),
+                    ]);
+
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "The quick brown fox",
+                            x: String::new(),
+                            b: Some(42),
+                            c: 2137,
+                        }
+                    );
+                }
+
+                // The last two UDT field are missing in serialized form - it should treat it
+                // as if there were nulls at the end.
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field("The quick brown fox".as_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                        ("c", ColumnType::Native(NativeType::BigInt)),
+                    ]);
+
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "The quick brown fox",
+                            x: String::new(),
+                            b: None,
+                            c: 0,
+                        }
+                    );
+                }
+
+                // UDT fields switched - should still work.
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field(&42_i32.to_be_bytes())
+                        .field("The quick brown fox".as_bytes())
+                        .field(&2137_i64.to_be_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("b", ColumnType::Native(NativeType::Int)),
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("c", ColumnType::Native(NativeType::BigInt)),
+                    ]);
+
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "The quick brown fox",
+                            x: String::new(),
+                            b: Some(42),
+                            c: 2137,
+                        }
+                    );
+                }
+
+                // An excess UDT field - should still work.
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field(&12_i8.to_be_bytes())
+                        .field(&42_i32.to_be_bytes())
+                        .field("The quick brown fox".as_bytes())
+                        .field(&2137_i64.to_be_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("d", ColumnType::Native(NativeType::TinyInt)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("c", ColumnType::Native(NativeType::BigInt)),
+                    ]);
+
+                    Udt::type_check(&typ).unwrap();
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "The quick brown fox",
+                            x: String::new(),
+                            b: Some(42),
+                            c: 2137,
+                        }
+                    );
+                }
+
+                // Only field 'a' is present
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field("The quick brown fox".as_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("c", ColumnType::Native(NativeType::BigInt)),
+                    ]);
+
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "The quick brown fox",
+                            x: String::new(),
+                            b: None,
+                            c: 0,
+                        }
+                    );
+                }
+
+                // Wrong column type
+                {
+                    let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
+                    Udt::type_check(&typ).unwrap_err();
+                }
+
+                // Missing required column
+                {
+                    let typ = udt_def_with_fields([("b", ColumnType::Native(NativeType::Int))]);
+                    Udt::type_check(&typ).unwrap_err();
+                }
+            }
+
+            #[test]
+            fn test_udt_strict_ordering() {
+                #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = "crate", flavor = "enforce_order")]
+                struct Udt<'a> {
+                    #[scylla(default_when_null)]
+                    a: &'a str,
+                    #[scylla(skip)]
+                    x: String,
+                    #[scylla(allow_missing)]
+                    b: Option<i32>,
+                }
+
+                // UDT fields in correct same order
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field("The quick brown fox".as_bytes())
+                        .field(&42i32.to_be_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                    ]);
+
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "The quick brown fox",
+                            x: String::new(),
+                            b: Some(42),
+                        }
+                    );
+                }
+
+                // The last UDT field is missing in serialized form - it should treat
+                // as if there were null at the end
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field("The quick brown fox".as_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                    ]);
+
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "The quick brown fox",
+                            x: String::new(),
+                            b: None,
+                        }
+                    );
+                }
+
+                // An excess field at the end of UDT
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field("The quick brown fox".as_bytes())
+                        .field(&42_i32.to_be_bytes())
+                        .field(&(true as i8).to_be_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                        ("d", ColumnType::Native(NativeType::Boolean)),
+                    ]);
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "The quick brown fox",
+                            x: String::new(),
+                            b: Some(42),
+                        }
+                    );
+                }
+
+                // An excess field at the end of UDT, when such are forbidden
+                {
+                    #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+                    #[scylla(crate = "crate", flavor = "enforce_order", forbid_excess_udt_fields)]
+                    struct Udt<'a> {
+                        a: &'a str,
+                        #[scylla(skip)]
+                        x: String,
+                        b: Option<i32>,
+                    }
+
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                        ("d", ColumnType::Native(NativeType::Boolean)),
+                    ]);
+
+                    Udt::type_check(&typ).unwrap_err();
+                }
+
+                // UDT fields switched - will not work
+                {
+                    let typ = udt_def_with_fields([
+                        ("b", ColumnType::Native(NativeType::Int)),
+                        ("a", ColumnType::Native(NativeType::Text)),
+                    ]);
+                    Udt::type_check(&typ).unwrap_err();
+                }
+
+                // Wrong column type
+                {
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Int)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                    ]);
+                    Udt::type_check(&typ).unwrap_err();
+                }
+
+                // Missing required column
+                {
+                    let typ = udt_def_with_fields([("b", ColumnType::Native(NativeType::Int))]);
+                    Udt::type_check(&typ).unwrap_err();
+                }
+
+                // Missing non-required column
+                {
+                    let udt_bytes = UdtSerializer::new().field(b"kotmaale").finalize();
+                    let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
+
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "kotmaale",
+                            x: String::new(),
+                            b: None,
+                        }
+                    );
+                }
+
+                // The first field is null, but `default_when_null` prevents failure.
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .null_field()
+                        .field(&42i32.to_be_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                    ]);
+
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "",
+                            x: String::new(),
+                            b: Some(42),
+                        }
+                    );
+                }
+            }
+
+            #[test]
+            fn test_udt_no_name_check() {
+                #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = "crate", flavor = "enforce_order", skip_name_checks)]
+                struct Udt<'a> {
+                    a: &'a str,
+                    #[scylla(skip)]
+                    x: String,
+                    b: Option<i32>,
+                }
+
+                // UDT fields in correct same order
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field("The quick brown fox".as_bytes())
+                        .field(&42i32.to_be_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                    ]);
+
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "The quick brown fox",
+                            x: String::new(),
+                            b: Some(42),
+                        }
+                    );
+                }
+
+                // Correct order of UDT fields, but different names - should still succeed
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field("The quick brown fox".as_bytes())
+                        .field(&42i32.to_be_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("k", ColumnType::Native(NativeType::Text)),
+                        ("l", ColumnType::Native(NativeType::Int)),
+                    ]);
+
+                    let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        Udt {
+                            a: "The quick brown fox",
+                            x: String::new(),
+                            b: Some(42),
+                        }
+                    );
+                }
+            }
+
+            #[test]
+            fn test_udt_cross_rename_fields() {
+                #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+                #[scylla(crate = crate)]
+                struct TestUdt {
+                    #[scylla(rename = "b")]
+                    a: i32,
+                    #[scylla(rename = "a")]
+                    b: String,
+                }
+
+                // UDT fields switched - should still work.
+                {
+                    let udt_bytes = UdtSerializer::new()
+                        .field("The quick brown fox".as_bytes())
+                        .field(&42_i32.to_be_bytes())
+                        .finalize();
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Native(NativeType::Text)),
+                        ("b", ColumnType::Native(NativeType::Int)),
+                    ]);
+
+                    let udt = deserialize::<TestUdt>(&typ, &udt_bytes).unwrap();
+                    assert_eq!(
+                        udt,
+                        TestUdt {
+                            a: 42,
+                            b: "The quick brown fox".to_owned(),
+                        }
+                    );
+                }
+            }
+
+            #[test]
+            fn test_udt_errors() {
+                // Loose ordering
+                {
+                    #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+                    #[scylla(crate = "crate", forbid_excess_udt_fields)]
+                    struct Udt<'a> {
+                        a: &'a str,
+                        #[scylla(skip)]
+                        x: String,
+                        #[scylla(allow_missing)]
+                        b: Option<i32>,
+                        #[scylla(default_when_null)]
+                        c: bool,
+                    }
+
+                    // Type check errors
+                    {
+                        // Not UDT
+                        {
+                            let typ = ColumnType::Collection {
+                                frozen: false,
+                                typ: CollectionType::Map(
+                                    Box::new(ColumnType::Native(NativeType::Ascii)),
+                                    Box::new(ColumnType::Native(NativeType::Blob)),
+                                ),
+                            };
+                            let err = Udt::type_check(&typ).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt) =
+                                err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                        }
+
+                        // UDT missing fields
+                        {
+                            let typ = udt_def_with_fields([(
+                                "c",
+                                ColumnType::Native(NativeType::Boolean),
+                            )]);
+                            let err = Udt::type_check(&typ).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinTypeCheckErrorKind::UdtError(
+                                UdtTypeCheckErrorKind::ValuesMissingForUdtFields {
+                                    field_names: ref missing_fields,
+                                },
+                            ) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(missing_fields.as_slice(), &["a"]);
+                        }
+
+                        // excess fields in UDT
+                        {
+                            let typ = udt_def_with_fields([
+                                ("d", ColumnType::Native(NativeType::Boolean)),
+                                ("a", ColumnType::Native(NativeType::Text)),
+                                ("b", ColumnType::Native(NativeType::Int)),
+                            ]);
+                            let err = Udt::type_check(&typ).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinTypeCheckErrorKind::UdtError(
+                                UdtTypeCheckErrorKind::ExcessFieldInUdt { ref db_field_name },
+                            ) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(db_field_name.as_str(), "d");
+                        }
+
+                        // missing UDT field
+                        {
+                            let typ = udt_def_with_fields([
+                                ("b", ColumnType::Native(NativeType::Int)),
+                                ("a", ColumnType::Native(NativeType::Text)),
+                            ]);
+                            let err = Udt::type_check(&typ).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinTypeCheckErrorKind::UdtError(
+                                UdtTypeCheckErrorKind::ValuesMissingForUdtFields {
+                                    ref field_names,
+                                },
+                            ) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(field_names, &["c"]);
+                        }
+
+                        // UDT fields incompatible types - field type check failed
+                        {
+                            let typ = udt_def_with_fields([
+                                ("a", ColumnType::Native(NativeType::Blob)),
+                                ("b", ColumnType::Native(NativeType::Int)),
+                            ]);
+                            let err = Udt::type_check(&typ).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinTypeCheckErrorKind::UdtError(
+                                UdtTypeCheckErrorKind::FieldTypeCheckFailed {
+                                    ref field_name,
+                                    ref err,
+                                },
+                            ) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(field_name.as_str(), "a");
+                            let err = get_typeck_err_inner(err);
+                            assert_eq!(err.rust_name, std::any::type_name::<&str>());
+                            assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
+                            assert_matches!(
+                                err.kind,
+                                BuiltinTypeCheckErrorKind::MismatchedType {
+                                    expected: &[
+                                        ColumnType::Native(NativeType::Ascii),
+                                        ColumnType::Native(NativeType::Text)
+                                    ]
+                                }
+                            );
+                        }
+                    }
+
+                    // Deserialization errors
+                    {
+                        // Got null
+                        {
+                            let typ = udt_def_with_fields([
+                                ("c", ColumnType::Native(NativeType::Boolean)),
+                                ("a", ColumnType::Native(NativeType::Blob)),
+                                ("b", ColumnType::Native(NativeType::Int)),
+                            ]);
+
+                            let err = Udt::deserialize(&typ, None).unwrap_err();
+                            let err = get_deser_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            assert_matches!(
+                                err.kind,
+                                BuiltinDeserializationErrorKind::ExpectedNonNull
+                            );
+                        }
+
+                        // UDT field deserialization failed
+                        {
+                            let typ = udt_def_with_fields([
+                                ("a", ColumnType::Native(NativeType::Ascii)),
+                                ("c", ColumnType::Native(NativeType::Boolean)),
+                            ]);
+
+                            let udt_bytes = UdtSerializer::new()
+                                .field("alamakota".as_bytes())
+                                .field(&42_i16.to_be_bytes())
+                                .finalize();
+
+                            let err = deserialize::<Udt>(&typ, &udt_bytes).unwrap_err();
+
+                            let err = get_deser_err(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinDeserializationErrorKind::UdtError(
+                                UdtDeserializationErrorKind::FieldDeserializationFailed {
+                                    ref field_name,
+                                    ref err,
+                                },
+                            ) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(field_name.as_str(), "c");
+                            let err = get_deser_err_inner(err);
+                            assert_eq!(err.rust_name, std::any::type_name::<bool>());
+                            assert_eq!(err.cql_type, ColumnType::Native(NativeType::Boolean));
+                            assert_matches!(
+                                err.kind,
+                                BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                                    expected: 1,
+                                    got: 2,
+                                }
+                            );
+                        }
+                    }
+                }
+
+                // Strict ordering
+                {
+                    #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+                    #[scylla(crate = "crate", flavor = "enforce_order", forbid_excess_udt_fields)]
+                    struct Udt<'a> {
+                        a: &'a str,
+                        #[scylla(skip)]
+                        x: String,
+                        b: Option<i32>,
+                        #[scylla(allow_missing)]
+                        c: bool,
+                    }
+
+                    // Type check errors
+                    {
+                        // Not UDT
+                        {
+                            let typ = ColumnType::Collection {
+                                frozen: false,
+                                typ: CollectionType::Map(
+                                    Box::new(ColumnType::Native(NativeType::Ascii)),
+                                    Box::new(ColumnType::Native(NativeType::Blob)),
+                                ),
+                            };
+                            let err = Udt::type_check(&typ).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt) =
+                                err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                        }
+
+                        // UDT too few fields
+                        {
+                            let typ =
+                                udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
+                            let err = Udt::type_check(&typ).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinTypeCheckErrorKind::UdtError(
+                                UdtTypeCheckErrorKind::TooFewFields {
+                                    ref required_fields,
+                                    ref present_fields,
+                                },
+                            ) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(required_fields.as_slice(), &["a", "b"]);
+                            assert_eq!(present_fields.as_slice(), &["a".to_string()]);
+                        }
+
+                        // excess fields in UDT
+                        {
+                            let typ = udt_def_with_fields([
+                                ("a", ColumnType::Native(NativeType::Text)),
+                                ("b", ColumnType::Native(NativeType::Int)),
+                                ("d", ColumnType::Native(NativeType::Boolean)),
+                            ]);
+                            let err = Udt::type_check(&typ).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinTypeCheckErrorKind::UdtError(
+                                UdtTypeCheckErrorKind::ExcessFieldInUdt { ref db_field_name },
+                            ) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(db_field_name.as_str(), "d");
+                        }
+
+                        // UDT fields switched - field name mismatch
+                        {
+                            let typ = udt_def_with_fields([
+                                ("b", ColumnType::Native(NativeType::Int)),
+                                ("a", ColumnType::Native(NativeType::Text)),
+                            ]);
+                            let err = Udt::type_check(&typ).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinTypeCheckErrorKind::UdtError(
+                                UdtTypeCheckErrorKind::FieldNameMismatch {
+                                    position,
+                                    ref rust_field_name,
+                                    ref db_field_name,
+                                },
+                            ) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(position, 0);
+                            assert_eq!(rust_field_name.as_str(), "a".to_owned());
+                            assert_eq!(db_field_name.as_str(), "b".to_owned());
+                        }
+
+                        // UDT fields incompatible types - field type check failed
+                        {
+                            let typ = udt_def_with_fields([
+                                ("a", ColumnType::Native(NativeType::Blob)),
+                                ("b", ColumnType::Native(NativeType::Int)),
+                            ]);
+                            let err = Udt::type_check(&typ).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinTypeCheckErrorKind::UdtError(
+                                UdtTypeCheckErrorKind::FieldTypeCheckFailed {
+                                    ref field_name,
+                                    ref err,
+                                },
+                            ) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(field_name.as_str(), "a");
+                            let err = get_typeck_err_inner(err);
+                            assert_eq!(err.rust_name, std::any::type_name::<&str>());
+                            assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
+                            assert_matches!(
+                                err.kind,
+                                BuiltinTypeCheckErrorKind::MismatchedType {
+                                    expected: &[
+                                        ColumnType::Native(NativeType::Ascii),
+                                        ColumnType::Native(NativeType::Text)
+                                    ]
+                                }
+                            );
+                        }
+                    }
+
+                    // Deserialization errors
+                    {
+                        // Got null
+                        {
+                            let typ = udt_def_with_fields([
+                                ("a", ColumnType::Native(NativeType::Text)),
+                                ("b", ColumnType::Native(NativeType::Int)),
+                                ("c", ColumnType::Native(NativeType::Boolean)),
+                            ]);
+
+                            let err = Udt::deserialize(&typ, None).unwrap_err();
+                            let err = get_deser_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            assert_matches!(
+                                err.kind,
+                                BuiltinDeserializationErrorKind::ExpectedNonNull
+                            );
+                        }
+
+                        // Bad field format
+                        {
+                            let typ = udt_def_with_fields([
+                                ("a", ColumnType::Native(NativeType::Text)),
+                                ("b", ColumnType::Native(NativeType::Int)),
+                                ("c", ColumnType::Native(NativeType::Boolean)),
+                            ]);
+
+                            let udt_bytes = UdtSerializer::new()
+                                .field(b"alamakota")
+                                .field(&42_i64.to_be_bytes())
+                                .field(&[true as u8])
+                                .finalize();
+
+                            let udt_bytes_too_short = udt_bytes.slice(..udt_bytes.len() - 1);
+                            assert!(udt_bytes.len() > udt_bytes_too_short.len());
+
+                            let err = deserialize::<Udt>(&typ, &udt_bytes_too_short).unwrap_err();
+
+                            let err = get_deser_err(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinDeserializationErrorKind::RawCqlBytesReadError(_) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                        }
+
+                        // UDT field deserialization failed
+                        {
+                            let typ = udt_def_with_fields([
+                                ("a", ColumnType::Native(NativeType::Text)),
+                                ("b", ColumnType::Native(NativeType::Int)),
+                                ("c", ColumnType::Native(NativeType::Boolean)),
+                            ]);
+
+                            let udt_bytes = UdtSerializer::new()
+                                .field(b"alamakota")
+                                .field(&42_i64.to_be_bytes())
+                                .field(&[true as u8])
+                                .finalize();
+
+                            let err = deserialize::<Udt>(&typ, &udt_bytes).unwrap_err();
+
+                            let err = get_deser_err(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                            assert_eq!(err.cql_type, typ);
+                            let BuiltinDeserializationErrorKind::UdtError(
+                                UdtDeserializationErrorKind::FieldDeserializationFailed {
+                                    ref field_name,
+                                    ref err,
+                                },
+                            ) = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(field_name.as_str(), "b");
+                            let err = get_deser_err_inner(err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Option<i32>>());
+                            assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
+                            assert_matches!(
+                                err.kind,
+                                BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                                    expected: 4,
+                                    got: 8,
+                                }
+                            );
+                        }
+                    }
+                }
+            }
+
+            #[test]
+            fn metadata_does_not_bound_deserialized_values() {
+                /* This test covers the UDT part of the lifetime check.
+                 * The non-macro parts (blob, str, list, set, map) are tested in value_tests.rs.
+                 *
+                 * A _deserialized value_ should not be bound by 'metadata - only by 'frame.
+                 * This test's goal is only to compile, asserting that lifetimes are correct.
+                 */
+
+                // We don't care about the actual deserialized data - all `Err`s is OK.
+                // This test's goal is only to compile, asserting that lifetimes are correct.
+                let bytes = Bytes::new();
+
+                // By this binding, we require that the deserialized values live longer than metadata.
+                let _decoded_udt_res = {
+                    // Metadata's lifetime is limited to this scope.
+
+                    // UDT
+                    let udt_typ = ColumnType::UserDefinedType {
+                        frozen: false,
+                        definition: Arc::new(UserDefinedType {
+                            name: "udt".into(),
+                            keyspace: "ks".into(),
+                            field_types: vec![
+                                ("bytes".into(), ColumnType::Native(NativeType::Blob)),
+                                ("text".into(), ColumnType::Native(NativeType::Text)),
+                            ],
+                        }),
+                    };
+                    #[derive(DeserializeValue)]
+                    #[scylla(crate = crate)]
+                    struct Udt<'frame> {
+                        #[expect(dead_code)]
+                        bytes: &'frame [u8],
+                        #[expect(dead_code)]
+                        text: &'frame str,
+                    }
+                    deserialize::<Udt>(&udt_typ, &bytes)
+                };
+            }
+        }
     }
 
     mod row {
         use bytes::Bytes;
 
-        use crate::deserialize::row::tests::deserialize;
+        use crate::deserialize::row::{ColumnIterator, DeserializeRow};
         use crate::deserialize::tests::spec;
+        use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
         use crate::frame::response::result::ColumnSpec;
         use crate::frame::response::result::{ColumnType, NativeType};
         use crate::serialize::row::{RowSerializationContext, SerializeRow};
         use crate::serialize::writers::RowWriter;
+
+        #[derive(Debug)]
+        enum TestDeserializeError {
+            TypeCheck(#[expect(dead_code)] TypeCheckError),
+            Deserialization(DeserializationError),
+        }
+
+        fn deserialize<'frame, 'metadata, R>(
+            specs: &'metadata [ColumnSpec<'metadata>],
+            byts: &'frame Bytes,
+        ) -> Result<R, TestDeserializeError>
+        where
+            R: DeserializeRow<'frame, 'metadata>,
+        {
+            <R as DeserializeRow<'frame, 'metadata>>::type_check(specs)
+                .map_err(TestDeserializeError::TypeCheck)?;
+            let slice = FrameSlice::new(byts);
+            let iter = ColumnIterator::new(specs, slice);
+            <R as DeserializeRow<'frame, 'metadata>>::deserialize(iter)
+                .map_err(TestDeserializeError::Deserialization)
+        }
 
         pub(crate) fn do_serialize<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> Vec<u8> {
             let ctx = RowSerializationContext::from_specs(columns);
@@ -1919,12 +2957,18 @@ mod derive_macros_integration {
         }
 
         mod deserialize {
+            use assert_matches::assert_matches;
             use bytes::Bytes;
 
-            use super::{deserialize, spec};
+            use super::{TestDeserializeError, deserialize, spec};
             use crate::DeserializeRow;
-            use crate::deserialize::row::DeserializeRow;
+            use crate::deserialize::row::{
+                BuiltinDeserializationError, BuiltinDeserializationErrorKind,
+                BuiltinTypeCheckError, BuiltinTypeCheckErrorKind, ColumnIterator, DeserializeRow,
+            };
             use crate::deserialize::tests::serialize_cells;
+            use crate::deserialize::value;
+            use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
             use crate::frame::response::result::{ColumnSpec, TableSpec};
             use crate::frame::response::result::{ColumnType, NativeType};
 
@@ -1934,6 +2978,52 @@ mod derive_macros_integration {
 
             fn val_str(s: &str) -> Option<Vec<u8>> {
                 Some(s.as_bytes().to_vec())
+            }
+
+            #[track_caller]
+            fn get_typeck_err_inner(err: &TypeCheckError) -> &BuiltinTypeCheckError {
+                match err.downcast_ref() {
+                    Some(err) => err,
+                    None => panic!("not a BuiltinTypeCheckError: {err:?}"),
+                }
+            }
+
+            #[track_caller]
+            fn get_deser_err_inner(err: &DeserializationError) -> &BuiltinDeserializationError {
+                match err.downcast_ref() {
+                    Some(err) => err,
+                    None => panic!("not a BuiltinDeserializationError: {err:?}"),
+                }
+            }
+
+            #[track_caller]
+            fn get_deser_err(err: &TestDeserializeError) -> &BuiltinDeserializationError {
+                match err {
+                    TestDeserializeError::Deserialization(err) => get_deser_err_inner(err),
+                    other => panic!("expected Deserialization error, got: {other:?}"),
+                }
+            }
+
+            #[track_caller]
+            fn get_value_typeck_err_inner(err: &TypeCheckError) -> &value::BuiltinTypeCheckError {
+                match err.downcast_ref() {
+                    Some(err) => err,
+                    None => panic!("not a value::BuiltinTypeCheckError: {err:?}"),
+                }
+            }
+
+            #[track_caller]
+            fn get_value_deser_err_inner(
+                err: &DeserializationError,
+            ) -> &value::BuiltinDeserializationError {
+                match err.downcast_ref() {
+                    Some(err) => err,
+                    None => panic!("not a value::BuiltinDeserializationError: {err:?}"),
+                }
+            }
+
+            fn specs_to_types<'a>(specs: &[ColumnSpec<'a>]) -> Vec<ColumnType<'a>> {
+                specs.iter().map(|spec| spec.typ().clone()).collect()
             }
 
             // Do not remove. It's not used in tests but we keep it here to check that
@@ -2172,6 +3262,466 @@ mod derive_macros_integration {
                             b: "The quick brown fox".to_owned(),
                         }
                     );
+                }
+            }
+
+            #[test]
+            fn test_struct_deserialization_errors() {
+                // Loose ordering
+                {
+                    #[derive(scylla_macros::DeserializeRow, PartialEq, Eq, Debug)]
+                    #[scylla(crate = "crate")]
+                    struct MyRow<'a> {
+                        a: &'a str,
+                        #[scylla(skip)]
+                        x: String,
+                        b: Option<i32>,
+                        #[scylla(rename = "c")]
+                        d: bool,
+                        #[scylla(default_when_null)]
+                        e: Option<i32>,
+                    }
+
+                    // Type check errors
+                    {
+                        // Missing column
+                        {
+                            let specs = [
+                                spec("a", ColumnType::Native(NativeType::Ascii)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                            ];
+                            let err = MyRow::type_check(&specs).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            assert_eq!(err.cql_types, specs_to_types(&specs));
+                            let BuiltinTypeCheckErrorKind::ValuesMissingForColumns {
+                                column_names: ref missing_fields,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(missing_fields.as_slice(), &["c", "e"]);
+                        }
+
+                        // Duplicated column
+                        {
+                            let specs = [
+                                spec("a", ColumnType::Native(NativeType::Ascii)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("a", ColumnType::Native(NativeType::Ascii)),
+                            ];
+
+                            let err = MyRow::type_check(&specs).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            assert_eq!(err.cql_types, specs_to_types(&specs));
+                            let BuiltinTypeCheckErrorKind::DuplicatedColumn {
+                                column_index,
+                                column_name,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(column_index, 2);
+                            assert_eq!(column_name, "a");
+                        }
+
+                        // Unknown column
+                        {
+                            let specs = [
+                                spec("d", ColumnType::Native(NativeType::Counter)),
+                                spec("a", ColumnType::Native(NativeType::Ascii)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                            ];
+
+                            let err = MyRow::type_check(&specs).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            assert_eq!(err.cql_types, specs_to_types(&specs));
+                            let BuiltinTypeCheckErrorKind::ColumnWithUnknownName {
+                                column_index,
+                                ref column_name,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(column_index, 0);
+                            assert_eq!(column_name.as_str(), "d");
+                        }
+
+                        // Column incompatible types - column type check failed
+                        {
+                            let specs = [
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("a", ColumnType::Native(NativeType::Blob)),
+                            ];
+                            let err = MyRow::type_check(&specs).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            assert_eq!(err.cql_types, specs_to_types(&specs));
+                            let BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                                column_index,
+                                ref column_name,
+                                ref err,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(column_index, 1);
+                            assert_eq!(column_name.as_str(), "a");
+                            let err = get_value_typeck_err_inner(err);
+                            assert_eq!(err.rust_name, std::any::type_name::<&str>());
+                            assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
+                            assert_matches!(
+                                err.kind,
+                                value::BuiltinTypeCheckErrorKind::MismatchedType {
+                                    expected: &[
+                                        ColumnType::Native(NativeType::Ascii),
+                                        ColumnType::Native(NativeType::Text)
+                                    ]
+                                }
+                            );
+                        }
+                    }
+
+                    // Deserialization errors
+                    {
+                        // Got null
+                        {
+                            let specs = [
+                                spec("c", ColumnType::Native(NativeType::Boolean)),
+                                spec("a", ColumnType::Native(NativeType::Blob)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("e", ColumnType::Native(NativeType::Int)),
+                            ];
+
+                            let err = MyRow::deserialize(ColumnIterator::new(
+                                &specs,
+                                FrameSlice::new(&serialize_cells([Some([true as u8])])),
+                            ))
+                            .unwrap_err();
+                            let err = get_deser_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
+                                column_index,
+                                ref column_name,
+                                ..
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(column_index, 1);
+                            assert_eq!(column_name, "a");
+                        }
+
+                        // Column deserialization failed
+                        {
+                            let specs = [
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("a", ColumnType::Native(NativeType::Ascii)),
+                                spec("c", ColumnType::Native(NativeType::Boolean)),
+                                spec("e", ColumnType::Native(NativeType::Int)),
+                            ];
+
+                            let row_bytes = serialize_cells(
+                                [
+                                    &0_i32.to_be_bytes(),
+                                    "alamakota".as_bytes(),
+                                    &42_i16.to_be_bytes(),
+                                    &13_i32.to_be_bytes(),
+                                ]
+                                .map(Some),
+                            );
+
+                            let err = deserialize::<MyRow>(&specs, &row_bytes).unwrap_err();
+
+                            let err = get_deser_err(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            let BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
+                                column_index,
+                                ref column_name,
+                                ref err,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(column_index, 2);
+                            assert_eq!(column_name.as_str(), "c");
+                            let err = get_value_deser_err_inner(err);
+                            assert_eq!(err.rust_name, std::any::type_name::<bool>());
+                            assert_eq!(err.cql_type, ColumnType::Native(NativeType::Boolean));
+                            assert_matches!(
+                                err.kind,
+                                value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                                    expected: 1,
+                                    got: 2,
+                                }
+                            );
+                        }
+                    }
+                }
+
+                // Strict ordering
+                {
+                    #[derive(scylla_macros::DeserializeRow, PartialEq, Eq, Debug)]
+                    #[scylla(crate = "crate", flavor = "enforce_order")]
+                    struct MyRow<'a> {
+                        a: &'a str,
+                        #[scylla(skip)]
+                        x: String,
+                        b: Option<i32>,
+                        c: bool,
+                        #[scylla(default_when_null)]
+                        d: Option<i32>,
+                    }
+
+                    // Type check errors
+                    {
+                        // Too few columns
+                        {
+                            let specs = [spec("a", ColumnType::Native(NativeType::Text))];
+                            let err = MyRow::type_check(&specs).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            assert_eq!(err.cql_types, specs_to_types(&specs));
+                            let BuiltinTypeCheckErrorKind::WrongColumnCount {
+                                rust_cols,
+                                cql_cols,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(rust_cols, 4);
+                            assert_eq!(cql_cols, 1);
+                        }
+
+                        // Excess columns
+                        {
+                            let specs = [
+                                spec("a", ColumnType::Native(NativeType::Text)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("c", ColumnType::Native(NativeType::Boolean)),
+                                spec("d", ColumnType::Native(NativeType::Int)),
+                                spec("e", ColumnType::Native(NativeType::Counter)),
+                            ];
+                            let err = MyRow::type_check(&specs).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            assert_eq!(err.cql_types, specs_to_types(&specs));
+                            let BuiltinTypeCheckErrorKind::WrongColumnCount {
+                                rust_cols,
+                                cql_cols,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(rust_cols, 4);
+                            assert_eq!(cql_cols, 5);
+                        }
+
+                        // Renamed column name mismatch
+                        {
+                            let specs = [
+                                spec("a", ColumnType::Native(NativeType::Text)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("e", ColumnType::Native(NativeType::Boolean)),
+                                spec("d", ColumnType::Native(NativeType::Int)),
+                            ];
+                            let err = MyRow::type_check(&specs).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            let BuiltinTypeCheckErrorKind::ColumnNameMismatch {
+                                field_index,
+                                column_index,
+                                rust_column_name,
+                                ref db_column_name,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(field_index, 3);
+                            assert_eq!(rust_column_name, "c");
+                            assert_eq!(column_index, 2);
+                            assert_eq!(db_column_name.as_str(), "e");
+                        }
+
+                        // Columns switched - column name mismatch
+                        {
+                            let specs = [
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("a", ColumnType::Native(NativeType::Text)),
+                                spec("c", ColumnType::Native(NativeType::Boolean)),
+                                spec("d", ColumnType::Native(NativeType::Int)),
+                            ];
+                            let err = MyRow::type_check(&specs).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            assert_eq!(err.cql_types, specs_to_types(&specs));
+                            let BuiltinTypeCheckErrorKind::ColumnNameMismatch {
+                                field_index,
+                                column_index,
+                                rust_column_name,
+                                ref db_column_name,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(field_index, 0);
+                            assert_eq!(column_index, 0);
+                            assert_eq!(rust_column_name, "a");
+                            assert_eq!(db_column_name.as_str(), "b");
+                        }
+
+                        // Column incompatible types - column type check failed
+                        {
+                            let specs = [
+                                spec("a", ColumnType::Native(NativeType::Blob)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("c", ColumnType::Native(NativeType::Boolean)),
+                                spec("d", ColumnType::Native(NativeType::Int)),
+                            ];
+                            let err = MyRow::type_check(&specs).unwrap_err();
+                            let err = get_typeck_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            assert_eq!(err.cql_types, specs_to_types(&specs));
+                            let BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                                column_index,
+                                ref column_name,
+                                ref err,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(column_index, 0);
+                            assert_eq!(column_name.as_str(), "a");
+                            let err = get_value_typeck_err_inner(err);
+                            assert_eq!(err.rust_name, std::any::type_name::<&str>());
+                            assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
+                            assert_matches!(
+                                err.kind,
+                                value::BuiltinTypeCheckErrorKind::MismatchedType {
+                                    expected: &[
+                                        ColumnType::Native(NativeType::Ascii),
+                                        ColumnType::Native(NativeType::Text)
+                                    ]
+                                }
+                            );
+                        }
+                    }
+
+                    // Deserialization errors
+                    {
+                        // Too few columns
+                        {
+                            let specs = [
+                                spec("a", ColumnType::Native(NativeType::Text)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("c", ColumnType::Native(NativeType::Boolean)),
+                                spec("d", ColumnType::Native(NativeType::Int)),
+                            ];
+
+                            let err = MyRow::deserialize(ColumnIterator::new(
+                                &specs,
+                                FrameSlice::new(&serialize_cells([Some([true as u8])])),
+                            ))
+                            .unwrap_err();
+                            let err = get_deser_err_inner(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
+                                column_index,
+                                ref column_name,
+                                ..
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(column_index, 1);
+                            assert_eq!(column_name, "b");
+                        }
+
+                        // Bad field format
+                        {
+                            let typ = [
+                                spec("a", ColumnType::Native(NativeType::Text)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("c", ColumnType::Native(NativeType::Boolean)),
+                                spec("d", ColumnType::Native(NativeType::Int)),
+                            ];
+
+                            let row_bytes = serialize_cells(
+                                [
+                                    (&b"alamakota"[..]),
+                                    &42_i32.to_be_bytes(),
+                                    &[true as u8],
+                                    &13_i32.to_be_bytes(),
+                                ]
+                                .map(Some),
+                            );
+
+                            let row_bytes_too_short = row_bytes.slice(..row_bytes.len() - 1);
+                            assert!(row_bytes.len() > row_bytes_too_short.len());
+
+                            let err = deserialize::<MyRow>(&typ, &row_bytes_too_short).unwrap_err();
+
+                            let err = get_deser_err(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
+                                column_index,
+                                ref column_name,
+                                ..
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(column_index, 3);
+                            assert_eq!(column_name, "d");
+                        }
+
+                        // Column deserialization failed
+                        {
+                            let specs = [
+                                spec("a", ColumnType::Native(NativeType::Text)),
+                                spec("b", ColumnType::Native(NativeType::Int)),
+                                spec("c", ColumnType::Native(NativeType::Boolean)),
+                                spec("d", ColumnType::Native(NativeType::Int)),
+                            ];
+
+                            let row_bytes = serialize_cells(
+                                [
+                                    &b"alamakota"[..],
+                                    &42_i64.to_be_bytes(),
+                                    &[true as u8],
+                                    &13_i32.to_be_bytes(),
+                                ]
+                                .map(Some),
+                            );
+
+                            let err = deserialize::<MyRow>(&specs, &row_bytes).unwrap_err();
+
+                            let err = get_deser_err(&err);
+                            assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                            let BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
+                                column_index: field_index,
+                                ref column_name,
+                                ref err,
+                            } = err.kind
+                            else {
+                                panic!("unexpected error kind: {:?}", err.kind)
+                            };
+                            assert_eq!(column_name.as_str(), "b");
+                            assert_eq!(field_index, 2);
+                            let err = get_value_deser_err_inner(err);
+                            assert_eq!(err.rust_name, std::any::type_name::<Option<i32>>());
+                            assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
+                            assert_matches!(
+                                err.kind,
+                                value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                                    expected: 4,
+                                    got: 8,
+                                }
+                            );
+                        }
+                    }
                 }
             }
 
