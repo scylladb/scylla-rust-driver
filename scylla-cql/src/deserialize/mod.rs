@@ -32,7 +32,7 @@ use thiserror::Error;
 ///   in the [`row::BuiltinTypeCheckError`].
 #[derive(Debug, Clone, Error)]
 #[error("TypeCheckError: {0}")]
-pub struct TypeCheckError(pub(crate) Arc<dyn std::error::Error + Send + Sync>);
+pub struct TypeCheckError(Arc<dyn std::error::Error + Send + Sync>);
 
 impl TypeCheckError {
     /// Constructs a new `TypeCheckError`.

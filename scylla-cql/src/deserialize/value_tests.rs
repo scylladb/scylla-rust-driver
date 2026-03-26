@@ -1761,23 +1761,33 @@ fn test_custom_type_parser() {
     assert_eq!(tup, SwappedPair("foo", 42));
 }
 
+/// Test-only error type that keeps TypeCheckError and DeserializationError
+/// as separate variants, avoiding the need to wrap TypeCheckError into
+/// DeserializationError.
+#[derive(Debug)]
+pub(crate) enum TestDeserializeError {
+    TypeCheck(TypeCheckError),
+    Deserialization(DeserializationError),
+}
+
 pub(crate) fn deserialize<'frame, 'metadata, T>(
     typ: &'metadata ColumnType<'metadata>,
     bytes: &'frame Bytes,
-) -> Result<T, DeserializationError>
+) -> Result<T, TestDeserializeError>
 where
     T: DeserializeValue<'frame, 'metadata>,
 {
     <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
-        .map_err(|typecheck_err| DeserializationError(typecheck_err.0))?;
+        .map_err(TestDeserializeError::TypeCheck)?;
     let mut frame_slice = FrameSlice::new(bytes);
     let value = frame_slice.read_cql_bytes().map_err(|err| {
-        mk_deser_err::<T>(
+        TestDeserializeError::Deserialization(mk_deser_err::<T>(
             typ,
             BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
-        )
+        ))
     })?;
     <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, value)
+        .map_err(TestDeserializeError::Deserialization)
 }
 
 fn make_bytes(cell: &[u8]) -> Bytes {
@@ -1851,9 +1861,7 @@ fn assert_ser_de_identity<'f, T: SerializeValue + DeserializeValue<'f, 'f> + Par
 /* Errors checks */
 
 #[track_caller]
-pub(crate) fn get_typeck_err_inner<'a>(
-    err: &'a (dyn std::error::Error + 'static),
-) -> &'a BuiltinTypeCheckError {
+pub(crate) fn get_typeck_err_inner(err: &TypeCheckError) -> &BuiltinTypeCheckError {
     match err.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinTypeCheckError: {err:?}"),
@@ -1861,20 +1869,31 @@ pub(crate) fn get_typeck_err_inner<'a>(
 }
 
 #[track_caller]
-pub(crate) fn get_typeck_err(err: &DeserializationError) -> &BuiltinTypeCheckError {
-    get_typeck_err_inner(err.0.as_ref())
+fn get_typeck_err(err: &TestDeserializeError) -> &BuiltinTypeCheckError {
+    match err {
+        TestDeserializeError::TypeCheck(err) => get_typeck_err_inner(err),
+        other => panic!("expected TypeCheck error, got: {other:?}"),
+    }
 }
 
 #[track_caller]
-pub(crate) fn get_deser_err(err: &DeserializationError) -> &BuiltinDeserializationError {
-    match err.0.downcast_ref() {
+pub(crate) fn get_deser_err_inner(err: &DeserializationError) -> &BuiltinDeserializationError {
+    match err.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinDeserializationError: {err:?}"),
     }
 }
 
+#[track_caller]
+fn get_deser_err(err: &TestDeserializeError) -> &BuiltinDeserializationError {
+    match err {
+        TestDeserializeError::Deserialization(err) => get_deser_err_inner(err),
+        other => panic!("expected Deserialization error, got: {other:?}"),
+    }
+}
+
 macro_rules! assert_given_error {
-    ($get_err:ident, $bytes:expr, $DestT:ty, $cql_typ:expr, $kind:pat) => {
+    ($get_err:expr, $bytes:expr, $DestT:ty, $cql_typ:expr, $kind:pat) => {
         let cql_typ = $cql_typ.clone();
         let err = deserialize::<$DestT>(&cql_typ, $bytes).unwrap_err();
         let err = $get_err(&err);
@@ -2183,7 +2202,7 @@ fn test_set_or_list_elem_type_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_typeck_err_inner(err.0.as_ref());
+        let err = get_typeck_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::Varint));
         assert_matches!(
@@ -2229,7 +2248,7 @@ fn test_set_or_list_elem_deser_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_deser_err(err);
+        let err = get_deser_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         assert_matches!(
@@ -2249,7 +2268,7 @@ fn test_set_or_list_elem_deser_errors() {
     {
         let mut iterator = deserialize::<ListlikeIterator<i64>>(&deser_type, &bytes).unwrap();
         let err = iterator.next().unwrap().unwrap_err();
-        let err = get_deser_err(&err);
+        let err = get_deser_err_inner(&err);
         assert_eq!(
             err.rust_name,
             std::any::type_name::<ListlikeIterator<i64>>()
@@ -2261,7 +2280,7 @@ fn test_set_or_list_elem_deser_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_deser_err(err);
+        let err = get_deser_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         assert_matches!(
@@ -2322,7 +2341,7 @@ fn test_map_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_typeck_err_inner(err.0.as_ref());
+        let err = get_typeck_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::Varint));
         assert_matches!(
@@ -2364,7 +2383,7 @@ fn test_map_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_typeck_err_inner(err.0.as_ref());
+        let err = get_typeck_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<&str>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::Boolean));
         assert_matches!(
@@ -2419,7 +2438,7 @@ fn test_map_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_deser_err(err);
+        let err = get_deser_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         assert_matches!(
@@ -2472,7 +2491,7 @@ fn test_map_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_deser_err(err);
+        let err = get_deser_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i16>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::SmallInt));
         assert_matches!(
@@ -2543,7 +2562,7 @@ fn test_tuple_errors() {
                 panic!("unexpected error kind: {}", err.kind)
             };
             assert_eq!(position, 0);
-            let err = get_typeck_err_inner(err.0.as_ref());
+            let err = get_typeck_err_inner(err);
             assert_eq!(err.rust_name, std::any::type_name::<i64>());
             assert_eq!(err.cql_type, ColumnType::Native(NativeType::SmallInt));
             assert_matches!(
@@ -2591,7 +2610,7 @@ fn test_tuple_errors() {
                 panic!("unexpected error kind: {}", err.kind)
             };
             assert_eq!(index, 1);
-            let err = get_deser_err(err);
+            let err = get_deser_err_inner(err);
             assert_eq!(err.rust_name, std::any::type_name::<f64>());
             assert_eq!(err.cql_type, ColumnType::Native(NativeType::Double));
             assert_matches!(
@@ -2769,7 +2788,7 @@ fn test_udt_errors() {
                     ),
                 };
                 let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt) = err.kind
@@ -2782,7 +2801,7 @@ fn test_udt_errors() {
             {
                 let typ = udt_def_with_fields([("c", ColumnType::Native(NativeType::Boolean))]);
                 let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 let BuiltinTypeCheckErrorKind::UdtError(
@@ -2804,7 +2823,7 @@ fn test_udt_errors() {
                     ("b", ColumnType::Native(NativeType::Int)),
                 ]);
                 let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::ExcessFieldInUdt {
@@ -2823,7 +2842,7 @@ fn test_udt_errors() {
                     ("a", ColumnType::Native(NativeType::Text)),
                 ]);
                 let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 let BuiltinTypeCheckErrorKind::UdtError(
@@ -2842,7 +2861,7 @@ fn test_udt_errors() {
                     ("b", ColumnType::Native(NativeType::Int)),
                 ]);
                 let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 let BuiltinTypeCheckErrorKind::UdtError(
@@ -2855,7 +2874,7 @@ fn test_udt_errors() {
                     panic!("unexpected error kind: {:?}", err.kind)
                 };
                 assert_eq!(field_name.as_str(), "a");
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(err);
                 assert_eq!(err.rust_name, std::any::type_name::<&str>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
                 assert_matches!(
@@ -2881,7 +2900,7 @@ fn test_udt_errors() {
                 ]);
 
                 let err = Udt::deserialize(&typ, None).unwrap_err();
-                let err = get_deser_err(&err);
+                let err = get_deser_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
@@ -2914,7 +2933,7 @@ fn test_udt_errors() {
                     panic!("unexpected error kind: {:?}", err.kind)
                 };
                 assert_eq!(field_name.as_str(), "c");
-                let err = get_deser_err(err);
+                let err = get_deser_err_inner(err);
                 assert_eq!(err.rust_name, std::any::type_name::<bool>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Boolean));
                 assert_matches!(
@@ -2953,7 +2972,7 @@ fn test_udt_errors() {
                     ),
                 };
                 let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt) = err.kind
@@ -2966,7 +2985,7 @@ fn test_udt_errors() {
             {
                 let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
                 let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::TooFewFields {
@@ -2988,7 +3007,7 @@ fn test_udt_errors() {
                     ("d", ColumnType::Native(NativeType::Boolean)),
                 ]);
                 let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::ExcessFieldInUdt {
@@ -3007,7 +3026,7 @@ fn test_udt_errors() {
                     ("a", ColumnType::Native(NativeType::Text)),
                 ]);
                 let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::FieldNameMismatch {
@@ -3030,7 +3049,7 @@ fn test_udt_errors() {
                     ("b", ColumnType::Native(NativeType::Int)),
                 ]);
                 let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 let BuiltinTypeCheckErrorKind::UdtError(
@@ -3043,7 +3062,7 @@ fn test_udt_errors() {
                     panic!("unexpected error kind: {:?}", err.kind)
                 };
                 assert_eq!(field_name.as_str(), "a");
-                let err = get_typeck_err_inner(err.0.as_ref());
+                let err = get_typeck_err_inner(err);
                 assert_eq!(err.rust_name, std::any::type_name::<&str>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
                 assert_matches!(
@@ -3069,7 +3088,7 @@ fn test_udt_errors() {
                 ]);
 
                 let err = Udt::deserialize(&typ, None).unwrap_err();
-                let err = get_deser_err(&err);
+                let err = get_deser_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<Udt>());
                 assert_eq!(err.cql_type, typ);
                 assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
@@ -3131,7 +3150,7 @@ fn test_udt_errors() {
                     panic!("unexpected error kind: {:?}", err.kind)
                 };
                 assert_eq!(field_name.as_str(), "b");
-                let err = get_deser_err(err);
+                let err = get_deser_err_inner(err);
                 assert_eq!(err.rust_name, std::any::type_name::<Option<i32>>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
                 assert_matches!(
