@@ -2,12 +2,13 @@ use assert_matches::assert_matches;
 use bytes::Bytes;
 
 use crate::deserialize::row::BuiltinDeserializationErrorKind;
-use crate::deserialize::{DeserializationError, FrameSlice, value};
+use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError, value};
 use crate::frame::response::result::{ColumnSpec, ColumnType, NativeType, TableSpec};
 
 use super::super::tests::{serialize_cells, spec};
-use super::{BuiltinDeserializationError, ColumnIterator, CqlValue, DeserializeRow, Row};
+use super::{BuiltinDeserializationError, ColumnIterator, DeserializeRow};
 use super::{BuiltinTypeCheckError, BuiltinTypeCheckErrorKind};
+use crate::value::{CqlValue, Row};
 
 #[test]
 fn test_tuple_deserialization() {
@@ -88,24 +89,31 @@ fn val_str(s: &str) -> Option<Vec<u8>> {
     Some(s.as_bytes().to_vec())
 }
 
+/// Wrapper for type check vs. deserialization errors, since we no longer convert
+/// TypeCheckError into DeserializationError.
+#[derive(Debug)]
+pub(crate) enum TestDeserializeError {
+    TypeCheck(TypeCheckError),
+    Deserialization(DeserializationError),
+}
+
 pub(crate) fn deserialize<'frame, 'metadata, R>(
     specs: &'metadata [ColumnSpec<'metadata>],
     byts: &'frame Bytes,
-) -> Result<R, DeserializationError>
+) -> Result<R, TestDeserializeError>
 where
     R: DeserializeRow<'frame, 'metadata>,
 {
     <R as DeserializeRow<'frame, 'metadata>>::type_check(specs)
-        .map_err(|typecheck_err| DeserializationError(typecheck_err.0))?;
+        .map_err(TestDeserializeError::TypeCheck)?;
     let slice = FrameSlice::new(byts);
     let iter = ColumnIterator::new(specs, slice);
     <R as DeserializeRow<'frame, 'metadata>>::deserialize(iter)
+        .map_err(TestDeserializeError::Deserialization)
 }
 
 #[track_caller]
-pub(crate) fn get_typck_err_inner<'a>(
-    err: &'a (dyn std::error::Error + 'static),
-) -> &'a BuiltinTypeCheckError {
+pub(crate) fn get_typck_err_inner(err: &TypeCheckError) -> &BuiltinTypeCheckError {
     match err.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinTypeCheckError: {err:?}"),
@@ -113,15 +121,26 @@ pub(crate) fn get_typck_err_inner<'a>(
 }
 
 #[track_caller]
-fn get_typck_err(err: &DeserializationError) -> &BuiltinTypeCheckError {
-    get_typck_err_inner(err.0.as_ref())
+fn get_typck_err(err: &TestDeserializeError) -> &BuiltinTypeCheckError {
+    match err {
+        TestDeserializeError::TypeCheck(err) => get_typck_err_inner(err),
+        other => panic!("expected TypeCheck error, got: {other:?}"),
+    }
 }
 
 #[track_caller]
-fn get_deser_err(err: &DeserializationError) -> &BuiltinDeserializationError {
-    match err.0.downcast_ref() {
+fn get_deser_err_inner(err: &DeserializationError) -> &BuiltinDeserializationError {
+    match err.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinDeserializationError: {err:?}"),
+    }
+}
+
+#[track_caller]
+fn get_deser_err(err: &TestDeserializeError) -> &BuiltinDeserializationError {
+    match err {
+        TestDeserializeError::Deserialization(err) => get_deser_err_inner(err),
+        other => panic!("expected Deserialization error, got: {other:?}"),
     }
 }
 
@@ -151,7 +170,7 @@ fn test_tuple_errors() {
         };
         assert_eq!(*column_index, 0);
         assert_eq!(column_name, col_name);
-        let err = super::super::value::tests::get_typeck_err_inner(err.0.as_ref());
+        let err = super::super::value::tests::get_typeck_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
         assert_matches!(
@@ -179,7 +198,7 @@ fn test_tuple_errors() {
             panic!("unexpected error kind: {}", err.kind)
         };
         assert_eq!(column_name, col_name);
-        let err = super::super::value::tests::get_deser_err(err);
+        let err = super::super::value::tests::get_deser_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         assert_matches!(
@@ -237,7 +256,7 @@ fn test_row_errors() {
             panic!("unexpected error kind: {}", err.kind)
         };
         assert_eq!(column_name, col_name);
-        let err = super::super::value::tests::get_deser_err(err);
+        let err = super::super::value::tests::get_deser_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<Option<CqlValue>>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         let super::super::value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
@@ -301,7 +320,7 @@ fn test_struct_deserialization_errors() {
                     spec("b", ColumnType::Native(NativeType::Int)),
                 ];
                 let err = MyRow::type_check(&specs).unwrap_err();
-                let err = get_typck_err_inner(err.0.as_ref());
+                let err = get_typck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 assert_eq!(err.cql_types, specs_to_types(&specs));
                 let BuiltinTypeCheckErrorKind::ValuesMissingForColumns {
@@ -322,7 +341,7 @@ fn test_struct_deserialization_errors() {
                 ];
 
                 let err = MyRow::type_check(&specs).unwrap_err();
-                let err = get_typck_err_inner(err.0.as_ref());
+                let err = get_typck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 assert_eq!(err.cql_types, specs_to_types(&specs));
                 let BuiltinTypeCheckErrorKind::DuplicatedColumn {
@@ -345,7 +364,7 @@ fn test_struct_deserialization_errors() {
                 ];
 
                 let err = MyRow::type_check(&specs).unwrap_err();
-                let err = get_typck_err_inner(err.0.as_ref());
+                let err = get_typck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 assert_eq!(err.cql_types, specs_to_types(&specs));
                 let BuiltinTypeCheckErrorKind::ColumnWithUnknownName {
@@ -366,7 +385,7 @@ fn test_struct_deserialization_errors() {
                     spec("a", ColumnType::Native(NativeType::Blob)),
                 ];
                 let err = MyRow::type_check(&specs).unwrap_err();
-                let err = get_typck_err_inner(err.0.as_ref());
+                let err = get_typck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 assert_eq!(err.cql_types, specs_to_types(&specs));
                 let BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
@@ -379,7 +398,7 @@ fn test_struct_deserialization_errors() {
                 };
                 assert_eq!(column_index, 1);
                 assert_eq!(column_name.as_str(), "a");
-                let err = value::tests::get_typeck_err_inner(err.0.as_ref());
+                let err = value::tests::get_typeck_err_inner(err);
                 assert_eq!(err.rust_name, std::any::type_name::<&str>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
                 assert_matches!(
@@ -410,7 +429,7 @@ fn test_struct_deserialization_errors() {
                     FrameSlice::new(&serialize_cells([Some([true as u8])])),
                 ))
                 .unwrap_err();
-                let err = get_deser_err(&err);
+                let err = get_deser_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
                     column_index,
@@ -457,7 +476,7 @@ fn test_struct_deserialization_errors() {
                 };
                 assert_eq!(column_index, 2);
                 assert_eq!(column_name.as_str(), "c");
-                let err = value::tests::get_deser_err(err);
+                let err = value::tests::get_deser_err_inner(err);
                 assert_eq!(err.rust_name, std::any::type_name::<bool>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Boolean));
                 assert_matches!(
@@ -491,7 +510,7 @@ fn test_struct_deserialization_errors() {
             {
                 let specs = [spec("a", ColumnType::Native(NativeType::Text))];
                 let err = MyRow::type_check(&specs).unwrap_err();
-                let err = get_typck_err_inner(err.0.as_ref());
+                let err = get_typck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 assert_eq!(err.cql_types, specs_to_types(&specs));
                 let BuiltinTypeCheckErrorKind::WrongColumnCount {
@@ -515,7 +534,7 @@ fn test_struct_deserialization_errors() {
                     spec("e", ColumnType::Native(NativeType::Counter)),
                 ];
                 let err = MyRow::type_check(&specs).unwrap_err();
-                let err = get_typck_err_inner(err.0.as_ref());
+                let err = get_typck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 assert_eq!(err.cql_types, specs_to_types(&specs));
                 let BuiltinTypeCheckErrorKind::WrongColumnCount {
@@ -538,7 +557,7 @@ fn test_struct_deserialization_errors() {
                     spec("d", ColumnType::Native(NativeType::Int)),
                 ];
                 let err = MyRow::type_check(&specs).unwrap_err();
-                let err = get_typck_err_inner(err.0.as_ref());
+                let err = get_typck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 let BuiltinTypeCheckErrorKind::ColumnNameMismatch {
                     field_index,
@@ -564,7 +583,7 @@ fn test_struct_deserialization_errors() {
                     spec("d", ColumnType::Native(NativeType::Int)),
                 ];
                 let err = MyRow::type_check(&specs).unwrap_err();
-                let err = get_typck_err_inner(err.0.as_ref());
+                let err = get_typck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 assert_eq!(err.cql_types, specs_to_types(&specs));
                 let BuiltinTypeCheckErrorKind::ColumnNameMismatch {
@@ -591,7 +610,7 @@ fn test_struct_deserialization_errors() {
                     spec("d", ColumnType::Native(NativeType::Int)),
                 ];
                 let err = MyRow::type_check(&specs).unwrap_err();
-                let err = get_typck_err_inner(err.0.as_ref());
+                let err = get_typck_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 assert_eq!(err.cql_types, specs_to_types(&specs));
                 let BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
@@ -604,7 +623,7 @@ fn test_struct_deserialization_errors() {
                 };
                 assert_eq!(column_index, 0);
                 assert_eq!(column_name.as_str(), "a");
-                let err = value::tests::get_typeck_err_inner(err.0.as_ref());
+                let err = value::tests::get_typeck_err_inner(err);
                 assert_eq!(err.rust_name, std::any::type_name::<&str>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
                 assert_matches!(
@@ -635,7 +654,7 @@ fn test_struct_deserialization_errors() {
                     FrameSlice::new(&serialize_cells([Some([true as u8])])),
                 ))
                 .unwrap_err();
-                let err = get_deser_err(&err);
+                let err = get_deser_err_inner(&err);
                 assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
                 let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
                     column_index,
@@ -720,7 +739,7 @@ fn test_struct_deserialization_errors() {
                 };
                 assert_eq!(column_name.as_str(), "b");
                 assert_eq!(field_index, 2);
-                let err = value::tests::get_deser_err(err);
+                let err = value::tests::get_deser_err_inner(err);
                 assert_eq!(err.rust_name, std::any::type_name::<Option<i32>>());
                 assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
                 assert_matches!(
