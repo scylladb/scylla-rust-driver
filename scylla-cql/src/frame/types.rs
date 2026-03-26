@@ -16,8 +16,8 @@ use uuid::Uuid;
 
 // Re-export stable public types from scylla-cql-core.
 pub use scylla_cql_core::frame::types::{
-    Consistency, NonSerialConsistencyError, RawValue, SerialConsistency, read_int, read_short,
-    read_value,
+    Consistency, NonSerialConsistencyError, RawValue, SerialConsistency, read_bytes_opt, read_int,
+    read_short, read_value,
 };
 
 pub(crate) fn read_raw_bytes<'a>(
@@ -112,19 +112,6 @@ fn type_short() {
         write_short(*val, &mut buf);
         assert_eq!(read_short(&mut &buf[..]).unwrap(), *val);
     }
-}
-
-// https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec#L208
-pub fn read_bytes_opt<'a>(
-    buf: &mut &'a [u8],
-) -> Result<Option<&'a [u8]>, LowLevelDeserializationError> {
-    let len = read_int(buf)?;
-    if len < 0 {
-        return Ok(None);
-    }
-    let len = len as usize;
-    let v = Some(read_raw_bytes(len, buf)?);
-    Ok(v)
 }
 
 // Same as read_bytes, but we assume the value won't be `null`
