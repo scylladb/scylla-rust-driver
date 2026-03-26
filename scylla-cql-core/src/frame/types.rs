@@ -163,6 +163,19 @@ pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
     Ok(v)
 }
 
+// https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec#L208
+pub fn read_bytes_opt<'a>(
+    buf: &mut &'a [u8],
+) -> Result<Option<&'a [u8]>, LowLevelDeserializationError> {
+    let len = read_int(buf)?;
+    if len < 0 {
+        return Ok(None);
+    }
+    let len = len as usize;
+    let v = Some(read_raw_bytes(len, buf)?);
+    Ok(v)
+}
+
 pub fn read_short(buf: &mut &[u8]) -> Result<u16, std::io::Error> {
     let v = buf.read_u16::<BigEndian>()?;
     Ok(v)
