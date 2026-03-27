@@ -2599,3 +2599,7 @@ impl From<UdtDeserializationErrorKind> for BuiltinDeserializationErrorKind {
         Self::UdtError(err)
     }
 }
+
+#[cfg(test)]
+#[path = "value_tests.rs"]
+pub(crate) mod tests;
