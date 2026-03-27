@@ -2,8 +2,8 @@
 
 pub use scylla_cql_core::deserialize::frame_slice;
 pub mod result;
-pub mod row;
-pub mod value;
+pub use scylla_cql_core::deserialize::row;
+pub use scylla_cql_core::deserialize::value;
 
 pub use frame_slice::FrameSlice;
 

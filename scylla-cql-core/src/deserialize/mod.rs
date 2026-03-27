@@ -123,3 +123,33 @@ macro_rules! make_error_replace_rust_name {
     };
 }
 use make_error_replace_rust_name;
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use bytes::{BufMut, Bytes, BytesMut};
+
+    use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
+
+    pub(crate) fn serialize_cells(
+        cells: impl IntoIterator<Item = Option<impl AsRef<[u8]>>>,
+    ) -> Bytes {
+        let mut bytes = BytesMut::new();
+        for cell in cells {
+            match cell {
+                Some(bytes_ref) => {
+                    let b = bytes_ref.as_ref();
+                    bytes.put_i32(b.len() as i32);
+                    bytes.put_slice(b);
+                }
+                None => {
+                    bytes.put_i32(-1);
+                }
+            }
+        }
+        bytes.freeze()
+    }
+
+    pub(crate) const fn spec<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+        ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
+    }
+}

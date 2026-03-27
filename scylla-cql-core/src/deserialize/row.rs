@@ -517,3 +517,7 @@ impl Display for BuiltinDeserializationErrorKind {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "row_tests.rs"]
+mod tests;

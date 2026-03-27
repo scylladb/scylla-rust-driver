@@ -20,6 +20,7 @@ use crate::value::{
     CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed,
 };
 
+#[allow(deprecated)]
 use super::{
     BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
     BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator, MapDeserializationErrorKind,
