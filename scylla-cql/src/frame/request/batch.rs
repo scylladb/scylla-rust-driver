@@ -1,7 +1,7 @@
 //! CQL protocol-level representation of a `BATCH` request.
 
 use bytes::{Buf, BufMut};
-use std::{borrow::Cow, convert::TryInto, num::TryFromIntError};
+use std::{borrow::Cow, convert::TryInto};
 use thiserror::Error;
 
 use crate::frame::{
@@ -16,6 +16,9 @@ use crate::serialize::{
 };
 
 use super::{DeserializableRequest, RequestDeserializationError};
+
+// Re-export for backward compatibility.
+pub use crate::frame::frame_errors::{BatchSerializationError, BatchStatementSerializationError};
 
 // Batch flags
 const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
@@ -329,62 +332,4 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
             values,
         })
     }
-}
-
-/// An error type returned when serialization of BATCH request fails.
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum BatchSerializationError {
-    /// Maximum number of batch statements exceeded.
-    #[error(
-        "Too many statements in the batch. Received {0} statements, when u16::MAX is maximum possible value."
-    )]
-    TooManyStatements(usize),
-
-    /// Number of batch statements differs from number of provided bound value lists.
-    #[error(
-        "Number of provided value lists must be equal to number of batch statements (got {n_value_lists} value lists, {n_statements} statements)"
-    )]
-    ValuesAndStatementsLengthMismatch {
-        n_value_lists: usize,
-        n_statements: usize,
-    },
-
-    /// Failed to serialize a statement in the batch.
-    #[error("Failed to serialize batch statement. statement idx: {statement_idx}, error: {error}")]
-    StatementSerialization {
-        statement_idx: usize,
-        error: BatchStatementSerializationError,
-    },
-
-    /// Number of announced batch statements differs from actual number of batch statements.
-    #[error(
-        "Invalid Batch constructed: not as many statements serialized as announced (announced: {n_announced_statements}, serialized: {n_serialized_statements})"
-    )]
-    BadBatchConstructed {
-        n_announced_statements: usize,
-        n_serialized_statements: usize,
-    },
-}
-
-/// An error type returned when serialization of one of the
-/// batch statements fails.
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum BatchStatementSerializationError {
-    /// Failed to serialize the CQL statement string.
-    #[error("Failed to serialize unprepared statement's content: {0}")]
-    StatementStringSerialization(TryFromIntError),
-
-    /// Maximum value of statement id exceeded.
-    #[error("Malformed prepared statement's id: {0}")]
-    StatementIdSerialization(TryFromIntError),
-
-    /// Failed to serialize statement's bound values.
-    #[error("Failed to serialize statement's values: {0}")]
-    ValuesSerialiation(SerializationError),
-
-    /// Too many bound values provided.
-    #[error("Too many values provided for the statement: {0}")]
-    TooManyValues(usize),
 }

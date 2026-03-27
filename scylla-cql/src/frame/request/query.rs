@@ -1,11 +1,10 @@
 //! CQL protocol-level representation of a `QUERY` request.
 
-use std::{borrow::Cow, num::TryFromIntError, ops::ControlFlow, sync::Arc};
+use std::{borrow::Cow, ops::ControlFlow, sync::Arc};
 
 use crate::frame::{frame_errors::CqlRequestSerializationError, types::SerialConsistency};
 use crate::serialize::row::SerializedValues;
 use bytes::{Buf, BufMut};
-use thiserror::Error;
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
@@ -13,6 +12,9 @@ use crate::{
 };
 
 use super::{DeserializableRequest, RequestDeserializationError};
+
+// Re-export for backward compatibility.
+pub use crate::frame::frame_errors::{QueryParametersSerializationError, QuerySerializationError};
 
 // Query flags
 const FLAG_VALUES: u8 = 0x01;
@@ -323,26 +325,4 @@ impl Default for PagingState {
     fn default() -> Self {
         Self::start()
     }
-}
-
-/// An error type returned when serialization of QUERY request fails.
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum QuerySerializationError {
-    /// Failed to serialize query parameters.
-    #[error("Invalid query parameters: {0}")]
-    QueryParametersSerialization(QueryParametersSerializationError),
-
-    /// Failed to serialize the CQL statement string.
-    #[error("Failed to serialize a statement content: {0}")]
-    StatementStringSerialization(TryFromIntError),
-}
-
-/// An error type returned when serialization of query parameters fails.
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum QueryParametersSerializationError {
-    /// Failed to serialize paging state.
-    #[error("Malformed paging state: {0}")]
-    BadPagingState(#[from] TryFromIntError),
 }

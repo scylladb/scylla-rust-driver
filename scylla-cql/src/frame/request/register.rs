@@ -1,15 +1,14 @@
 //! CQL protocol-level representation of a `REGISTER` request.
 
-use std::num::TryFromIntError;
-
-use thiserror::Error;
-
 use crate::frame::{
     frame_errors::CqlRequestSerializationError,
     request::{RequestOpcode, SerializableRequest},
     server_event_type::EventType,
     types,
 };
+
+// Re-export for backward compatibility.
+pub use crate::frame::frame_errors::RegisterSerializationError;
 
 /// The CQL protocol-level representation of an `REGISTER` request,
 /// used to subscribe for server events.
@@ -32,13 +31,4 @@ impl SerializableRequest for Register {
             .map_err(RegisterSerializationError::EventTypesSerialization)?;
         Ok(())
     }
-}
-
-/// An error type returned when serialization of REGISTER request fails.
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum RegisterSerializationError {
-    /// Failed to serialize event types list.
-    #[error("Failed to serialize event types list: {0}")]
-    EventTypesSerialization(TryFromIntError),
 }
