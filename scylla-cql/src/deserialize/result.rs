@@ -111,159 +111,57 @@ impl RawRowLendingIterator {
 
 #[cfg(test)]
 mod tests {
-
-    use bytes::Bytes;
-    use std::ops::Deref;
-    use std::sync::LazyLock;
-
     use crate::frame::response::result::{
-        ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, NativeType, ResultMetadata,
+        ColumnType, DeserializedMetadataAndRawRows, NativeType, ResultMetadata,
     };
 
     use super::super::tests::{CELL1, CELL2, serialize_cells, spec};
-    use super::{
-        ColumnIterator, DeserializationError, FrameSlice, RawRowIterator, RawRowLendingIterator,
-        TypedRowIterator,
-    };
-
-    trait LendingIterator {
-        type Item<'borrow>
-        where
-            Self: 'borrow;
-        fn lend_next(&mut self) -> Option<Result<Self::Item<'_>, DeserializationError>>;
-    }
-
-    impl<'frame, 'metadata> LendingIterator for RawRowIterator<'frame, 'metadata> {
-        type Item<'borrow>
-            = ColumnIterator<'borrow, 'borrow>
-        where
-            Self: 'borrow;
-
-        fn lend_next(&mut self) -> Option<Result<ColumnIterator<'_, '_>, DeserializationError>> {
-            self.next()
-        }
-    }
-
-    impl LendingIterator for RawRowLendingIterator {
-        type Item<'borrow> = ColumnIterator<'borrow, 'borrow>;
-
-        fn lend_next(&mut self) -> Option<Result<ColumnIterator<'_, '_>, DeserializationError>> {
-            self.next()
-        }
-    }
+    use super::RawRowLendingIterator;
 
     #[test]
-    fn test_row_iterators_basic_parse() {
-        // Those statics are required because of a compiler bug-limitation about GATs:
-        // https://blog.rust-lang.org/2022/10/28/gats-stabilization.html#implied-static-requirement-from-higher-ranked-trait-bounds
-        // the following type higher-ranked lifetime constraint implies 'static lifetime.
-        //
-        // I: for<'item> LendingIterator<Item<'item> = ColumnIterator<'item>>,
-        //
-        // The bug is said to be a lot of effort to fix, so in tests let's just use `LazyLock`
-        // to obtain 'static references.
-
-        static SPECS: &[ColumnSpec<'static>] = &[
-            spec("b1", ColumnType::Native(NativeType::Blob)),
-            spec("b2", ColumnType::Native(NativeType::Blob)),
-        ];
-        static RAW_DATA: LazyLock<Bytes> =
-            LazyLock::new(|| serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]));
-        let raw_data = RAW_DATA.deref();
-        let specs = SPECS;
-
-        let row_iter = RawRowIterator::new(2, specs, FrameSlice::new(raw_data));
-        let lending_row_iter =
-            RawRowLendingIterator::new(DeserializedMetadataAndRawRows::new_for_test(
-                ResultMetadata::new_for_test(specs.len(), specs.to_vec()),
-                2,
-                raw_data.clone(),
-            ));
-        check(row_iter);
-        check(lending_row_iter);
-
-        fn check<I>(mut iter: I)
-        where
-            I: for<'item> LendingIterator<Item<'item> = ColumnIterator<'item, 'item>>,
-        {
-            let mut row1 = iter.lend_next().unwrap().unwrap();
-            let c11 = row1.next().unwrap().unwrap();
-            assert_eq!(c11.slice.unwrap().as_slice(), CELL1);
-            let c12 = row1.next().unwrap().unwrap();
-            assert_eq!(c12.slice.unwrap().as_slice(), CELL2);
-            assert!(row1.next().is_none());
-
-            let mut row2 = iter.lend_next().unwrap().unwrap();
-            let c21 = row2.next().unwrap().unwrap();
-            assert_eq!(c21.slice.unwrap().as_slice(), CELL2);
-            let c22 = row2.next().unwrap().unwrap();
-            assert_eq!(c22.slice.unwrap().as_slice(), CELL1);
-            assert!(row2.next().is_none());
-
-            assert!(iter.lend_next().is_none());
-        }
-    }
-
-    #[test]
-    fn test_row_iterators_too_few_rows() {
-        static SPECS: &[ColumnSpec<'static>] = &[
-            spec("b1", ColumnType::Native(NativeType::Blob)),
-            spec("b2", ColumnType::Native(NativeType::Blob)),
-        ];
-        static RAW_DATA: LazyLock<Bytes> =
-            LazyLock::new(|| serialize_cells([Some(CELL1), Some(CELL2)]));
-
-        let raw_data = RAW_DATA.deref();
-        let specs = SPECS;
-
-        let row_iter = RawRowIterator::new(2, specs, FrameSlice::new(raw_data));
-        let lending_row_iter =
-            RawRowLendingIterator::new(DeserializedMetadataAndRawRows::new_for_test(
-                ResultMetadata::new_for_test(specs.len(), specs.to_vec()),
-                2,
-                raw_data.clone(),
-            ));
-        check(row_iter);
-        check(lending_row_iter);
-
-        fn check<I>(mut iter: I)
-        where
-            I: for<'item> LendingIterator<Item<'item> = ColumnIterator<'item, 'item>>,
-        {
-            iter.lend_next().unwrap().unwrap();
-            iter.lend_next().unwrap().unwrap_err();
-        }
-    }
-
-    #[test]
-    fn test_typed_row_iterator_basic_parse() {
+    fn test_raw_row_lending_iterator_basic_parse() {
         let raw_data = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
         let specs = [
             spec("b1", ColumnType::Native(NativeType::Blob)),
             spec("b2", ColumnType::Native(NativeType::Blob)),
         ];
-        let iter = RawRowIterator::new(2, &specs, FrameSlice::new(&raw_data));
-        let mut iter = TypedRowIterator::<'_, '_, (&[u8], Vec<u8>)>::new(iter).unwrap();
+        let mut iter = RawRowLendingIterator::new(DeserializedMetadataAndRawRows::new_for_test(
+            ResultMetadata::new_for_test(specs.len(), specs.to_vec()),
+            2,
+            raw_data,
+        ));
 
-        let (c11, c12) = iter.next().unwrap().unwrap();
-        assert_eq!(c11, CELL1);
-        assert_eq!(c12, CELL2);
+        let mut row1 = iter.next().unwrap().unwrap();
+        let c11 = row1.next().unwrap().unwrap();
+        assert_eq!(c11.slice.unwrap().as_slice(), CELL1);
+        let c12 = row1.next().unwrap().unwrap();
+        assert_eq!(c12.slice.unwrap().as_slice(), CELL2);
+        assert!(row1.next().is_none());
 
-        let (c21, c22) = iter.next().unwrap().unwrap();
-        assert_eq!(c21, CELL2);
-        assert_eq!(c22, CELL1);
+        let mut row2 = iter.next().unwrap().unwrap();
+        let c21 = row2.next().unwrap().unwrap();
+        assert_eq!(c21.slice.unwrap().as_slice(), CELL2);
+        let c22 = row2.next().unwrap().unwrap();
+        assert_eq!(c22.slice.unwrap().as_slice(), CELL1);
+        assert!(row2.next().is_none());
 
         assert!(iter.next().is_none());
     }
 
     #[test]
-    fn test_typed_row_iterator_wrong_type() {
-        let raw_data = Bytes::new();
+    fn test_raw_row_lending_iterator_too_few_rows() {
+        let raw_data = serialize_cells([Some(CELL1), Some(CELL2)]);
         let specs = [
             spec("b1", ColumnType::Native(NativeType::Blob)),
             spec("b2", ColumnType::Native(NativeType::Blob)),
         ];
-        let iter = RawRowIterator::new(0, &specs, FrameSlice::new(&raw_data));
-        assert!(TypedRowIterator::<'_, '_, (i32, i64)>::new(iter).is_err());
+        let mut iter = RawRowLendingIterator::new(DeserializedMetadataAndRawRows::new_for_test(
+            ResultMetadata::new_for_test(specs.len(), specs.to_vec()),
+            2,
+            raw_data,
+        ));
+
+        iter.next().unwrap().unwrap();
+        iter.next().unwrap().unwrap_err();
     }
 }

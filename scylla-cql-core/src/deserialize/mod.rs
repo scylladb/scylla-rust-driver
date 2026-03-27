@@ -130,6 +130,9 @@ pub(crate) mod tests {
 
     use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
 
+    pub(super) const CELL1: &[u8] = &[1, 2, 3];
+    pub(super) const CELL2: &[u8] = &[4, 5, 6, 7];
+
     pub(crate) fn serialize_cells(
         cells: impl IntoIterator<Item = Option<impl AsRef<[u8]>>>,
     ) -> Bytes {

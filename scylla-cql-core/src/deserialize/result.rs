@@ -139,3 +139,84 @@ where
         self.inner.size_hint()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use crate::frame::response::result::{ColumnType, NativeType};
+
+    use super::super::tests::{CELL1, CELL2, serialize_cells, spec};
+    use super::{FrameSlice, RawRowIterator, TypedRowIterator};
+
+    #[test]
+    fn test_raw_row_iterator_basic_parse() {
+        let raw_data = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
+        let specs = [
+            spec("b1", ColumnType::Native(NativeType::Blob)),
+            spec("b2", ColumnType::Native(NativeType::Blob)),
+        ];
+        let mut iter = RawRowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+
+        let mut row1 = iter.next().unwrap().unwrap();
+        let c11 = row1.next().unwrap().unwrap();
+        assert_eq!(c11.slice.unwrap().as_slice(), CELL1);
+        let c12 = row1.next().unwrap().unwrap();
+        assert_eq!(c12.slice.unwrap().as_slice(), CELL2);
+        assert!(row1.next().is_none());
+
+        let mut row2 = iter.next().unwrap().unwrap();
+        let c21 = row2.next().unwrap().unwrap();
+        assert_eq!(c21.slice.unwrap().as_slice(), CELL2);
+        let c22 = row2.next().unwrap().unwrap();
+        assert_eq!(c22.slice.unwrap().as_slice(), CELL1);
+        assert!(row2.next().is_none());
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_raw_row_iterator_too_few_rows() {
+        let raw_data = serialize_cells([Some(CELL1), Some(CELL2)]);
+        let specs = [
+            spec("b1", ColumnType::Native(NativeType::Blob)),
+            spec("b2", ColumnType::Native(NativeType::Blob)),
+        ];
+        let mut iter = RawRowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+
+        iter.next().unwrap().unwrap();
+        iter.next().unwrap().unwrap_err();
+    }
+
+    #[test]
+    fn test_typed_row_iterator_basic_parse() {
+        let raw_data = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
+        let specs = [
+            spec("b1", ColumnType::Native(NativeType::Blob)),
+            spec("b2", ColumnType::Native(NativeType::Blob)),
+        ];
+        let iter = RawRowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+        let mut iter = TypedRowIterator::<'_, '_, (&[u8], Vec<u8>)>::new(iter).unwrap();
+
+        let (c11, c12) = iter.next().unwrap().unwrap();
+        assert_eq!(c11, CELL1);
+        assert_eq!(c12, CELL2);
+
+        let (c21, c22) = iter.next().unwrap().unwrap();
+        assert_eq!(c21, CELL2);
+        assert_eq!(c22, CELL1);
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_typed_row_iterator_wrong_type() {
+        let raw_data = Bytes::new();
+        let specs = [
+            spec("b1", ColumnType::Native(NativeType::Blob)),
+            spec("b2", ColumnType::Native(NativeType::Blob)),
+        ];
+        let iter = RawRowIterator::new(0, &specs, FrameSlice::new(&raw_data));
+        assert!(TypedRowIterator::<'_, '_, (i32, i64)>::new(iter).is_err());
+    }
+}
