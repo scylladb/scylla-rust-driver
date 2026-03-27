@@ -1,22 +1,19 @@
 //! CQL protocol-level representation of a `EXECUTE` request.
 
-use std::num::TryFromIntError;
-
 use crate::frame::frame_errors::CqlRequestSerializationError;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::response::result::cow_bytes::CowBytes;
 use bytes::Bytes;
-use thiserror::Error;
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest, query},
     frame::types,
 };
 
-use super::{
-    DeserializableRequest, RequestDeserializationError,
-    query::{QueryParameters, QueryParametersSerializationError},
-};
+use super::{DeserializableRequest, RequestDeserializationError, query::QueryParameters};
+
+// Re-export for backward compatibility.
+pub use crate::frame::frame_errors::ExecuteSerializationError;
 
 /// CQL protocol-level representation of an `EXECUTE` request,
 /// used to execute a single prepared statement.
@@ -124,22 +121,4 @@ impl DeserializableRequest for ExecuteV2<'static> {
             parameters,
         })
     }
-}
-
-/// An error type returned when serialization of EXECUTE request fails.
-// TODO(2.0): Remove "Serialization" suffix from error names.
-#[expect(clippy::enum_variant_names)]
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum ExecuteSerializationError {
-    /// Failed to serialize query parameters.
-    #[error("Malformed query parameters: {0}")]
-    QueryParametersSerialization(QueryParametersSerializationError),
-
-    /// Failed to serialize prepared statement id.
-    #[error("Malformed statement id: {0}")]
-    StatementIdSerialization(TryFromIntError),
-
-    #[error("Malformed result metadata id: {0}")]
-    ResultMetadataIdSerialization(TryFromIntError),
 }
