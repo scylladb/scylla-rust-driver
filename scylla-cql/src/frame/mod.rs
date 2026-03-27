@@ -8,7 +8,7 @@
 //! - errors that can occur during the above operations.
 //!
 
-pub mod frame_errors;
+pub use scylla_cql_core::frame::frame_errors;
 pub mod protocol_features;
 pub mod request;
 pub mod response;
