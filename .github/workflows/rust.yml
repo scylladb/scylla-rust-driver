@@ -196,3 +196,5 @@ jobs:
       - run: cargo docs-rs -p scylla
       - run: cargo docs-rs -p scylla-cql
       - run: cargo docs-rs -p scylla-macros
+      - name: Check scylla public API for scylla_cql leaks
+        run: make check-rustdoc-leaks
