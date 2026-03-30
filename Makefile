@@ -55,6 +55,11 @@ clippy-all-features:
 	RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --all-features
 
 
+.PHONY: check-rustdoc-leaks
+check-rustdoc-leaks:
+	RUSTDOCFLAGS="-Zunstable-options" cargo +nightly rustdoc -p scylla -- --output-format json
+	python3 ./scripts/check-rustdoc-cql-leaks.py target/doc/scylla.json
+
 .PHONY: test
 test: up
 	# We need to run doctests separately, because nextest doesn't support them :(
