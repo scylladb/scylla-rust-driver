@@ -35,9 +35,8 @@ pub use scylla_cql::frame::frame_errors::{
     FrameHeaderParseError,
 };
 pub use scylla_cql::frame::response::CqlResponseKind;
-pub use scylla_cql::frame::response::error::DbError;
 pub use scylla_cql_core::frame::request::CqlRequestKind;
-pub use scylla_cql_core::frame::response::error::{OperationType, WriteType};
+pub use scylla_cql_core::frame::response::error::{DbError, OperationType, WriteType};
 pub use scylla_cql_core::serialize::SerializationError;
 
 /// Error that occurred during request execution
