@@ -290,7 +290,7 @@ pub(crate) enum DnsLookupError {
     #[error("Empty address list returned by DNS for {0}")]
     EmptyAddressListForHost(String),
     #[error(transparent)]
-    IoError(#[from] std::io::Error),
+    IoError(std::io::Error),
 }
 
 /// Performs a DNS lookup with provided optional timeout.
@@ -300,12 +300,12 @@ async fn lookup_host_with_timeout(
 ) -> Result<impl Iterator<Item = SocketAddr>, DnsLookupError> {
     if let Some(timeout) = hostname_resolution_timeout {
         match tokio::time::timeout(timeout, lookup_host(host)).await {
-            Ok(res) => res.map_err(Into::into),
+            Ok(res) => res.map_err(DnsLookupError::IoError),
             // Elapsed error from tokio library does not provide any context.
             Err(_) => Err(DnsLookupError::Timeout(timeout.as_millis())),
         }
     } else {
-        lookup_host(host).await.map_err(Into::into)
+        lookup_host(host).await.map_err(DnsLookupError::IoError)
     }
 }
 
