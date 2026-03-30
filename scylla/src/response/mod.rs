@@ -15,4 +15,4 @@ pub use coordinator::Coordinator;
 pub(crate) use request_response::{
     NonErrorAuthResponse, NonErrorQueryResponse, NonErrorStartupResponse, QueryResponse,
 };
-pub use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
+pub use scylla_cql_core::frame::request::query::{PagingState, PagingStateResponse};
