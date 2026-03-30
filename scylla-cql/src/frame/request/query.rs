@@ -264,7 +264,7 @@ impl PagingStateResponse {
         matches!(*self, Self::NoMorePages)
     }
 
-    pub(crate) fn new_from_raw_bytes(raw_paging_state: Option<&[u8]>) -> Self {
+    pub fn new_from_raw_bytes(raw_paging_state: Option<&[u8]>) -> Self {
         match raw_paging_state {
             Some(raw_bytes) => Self::HasMorePages {
                 state: PagingState::new_from_raw_bytes(raw_bytes),
