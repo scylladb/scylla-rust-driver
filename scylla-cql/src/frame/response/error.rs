@@ -443,13 +443,8 @@ impl DbError {
     }
 }
 
-/// Type of the operation rejected by rate limiting
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OperationType {
-    Read,
-    Write,
-    Other(u8),
-}
+// Re-export from scylla-cql-core for backward compatibility.
+pub use scylla_cql_core::frame::response::error::OperationType;
 
 /// Type of write operation requested
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -478,16 +473,6 @@ pub enum WriteType {
 impl std::fmt::Display for WriteType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
-    }
-}
-
-impl From<u8> for OperationType {
-    fn from(operation_type: u8) -> OperationType {
-        match operation_type {
-            0 => OperationType::Read,
-            1 => OperationType::Write,
-            other => OperationType::Other(other),
-        }
     }
 }
 
