@@ -51,8 +51,7 @@ where
 }
 
 /// The type of a batch.
-#[derive(Clone, Copy)]
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BatchType {
     /// By default, all operations in the batch are performed as logged, to ensure all mutations
     /// eventually complete (or none will). See the notes on [UNLOGGED](BatchType::Unlogged) batches for more details.
