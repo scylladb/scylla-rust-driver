@@ -1,5 +1,6 @@
 //! CQL protocol-level response types.
 
+pub mod error;
 pub mod result;
 
 /// Possible CQL responses received from the server
