@@ -144,11 +144,18 @@ Or serve it on a local http server (automatically refreshes on changes)
 mdbook serve docs
 ```
 
-Test code examples (requires a running scylla instance):
+Test code examples in the book are tested as doctests in the `scylla` crate.
+See `book_tests.rs` file. To run those tests:
 ```bash
-# Make a clean debug build, otherwise mdbook has problems with multiple versions
-cargo clean
-cargo build --examples
+cargo test --doc -p scylla --all-features
+```
 
-mdbook test -L target/debug/deps/ docs
+If you add, remove, move, or rename book chapters, regenerate the book test module:
+```bash
+make regenerate-book-tests
+```
+
+To check whether the generated file is up to date:
+```bash
+make check-book-tests
 ```

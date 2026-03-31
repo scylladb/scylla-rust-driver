@@ -1,0 +1,8 @@
+[package]
+edition = "2024"
+name = "generate_book_tests"
+publish = false
+version = "0.0.0"
+
+[package.metadata.cargo-semver-checks.lints]
+workspace = true

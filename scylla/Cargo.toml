@@ -158,3 +158,5 @@ time = "0.3"
 anyhow = "1.0.98"
 tempfile = "3.19"
 rcgen = "0.14"
+uuid = { version = "1.0", features = ["v1"] }
+env_logger = "0.11"

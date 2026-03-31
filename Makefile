@@ -6,7 +6,7 @@ export RUSTFLAGS
 all: test
 
 .PHONY: static
-static: fmt-check check check-without-features check-without-unstable check-without-unstable-and-features check-all-features clippy clippy-all-features
+static: fmt-check check check-without-features check-without-unstable check-without-unstable-and-features check-all-features clippy clippy-all-features check-book-tests
 
 .PHONY: ci
 ci: static test
@@ -77,6 +77,14 @@ build:
 .PHONY: docs
 docs:
 	mdbook build docs
+
+.PHONY: check-book-tests
+check-book-tests:
+	cargo run -p generate_book_tests -- --check
+
+.PHONY: regenerate-book-tests
+regenerate-book-tests:
+	cargo run -p generate_book_tests
 
 .PHONY: semver-rev
 semver-rev:

@@ -1,4 +1,7 @@
-# This workflow builds the book with documentation and runs book tests
+# This workflow builds the book with documentation and checks that
+# book_tests.rs is up to date with the book chapters.
+# Book code examples are now tested via `cargo test --doc` as part of
+# the normal test suite (see the book_tests module in scylla crate).
 name: Book
 
 on:
@@ -15,35 +18,20 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: full
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v3
-    - name: Setup 3-node ScyllaDB cluster
-      run: |
-        sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
-        docker compose -f test/cluster/docker-compose.yml up -d --wait
     - name: Setup rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        # We can't use cache here, or mdbook will complain about multiple candidates for dependency.
-        cache: false
-    # This is a workaround for https://github.com/actions-rust-lang/setup-rust-toolchain/issues/79
-    # and https://github.com/rust-lang/mdBook/issues/2501
-    # When either mdbook or setup-rust-toolchain fix the issue, we can remove this.
-    - name: Set default toolchain globally
-      run: rustup default stable
     - name: Install mdbook
       uses: taiki-e/install-action@v2
       with:
         tool: mdbook
-    - name: Build the project
-      run: cargo build --examples
     - name: Build the book
       run: mdbook build docs
-    - name: Run book tests
-      run: mdbook test -L target/debug/deps docs
+    - name: Check book_tests.rs is up to date
+      run: make check-book-tests
