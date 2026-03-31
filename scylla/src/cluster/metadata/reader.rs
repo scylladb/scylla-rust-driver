@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use rand::rng;
 use rand::seq::{IndexedRandom, SliceRandom};
+use scylla_cql::frame::response::event::ClientRoutesChangeEvent;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
 
@@ -478,5 +479,68 @@ impl MetadataReader {
                 last_endpoint: endpoint,
             },
         }
+    }
+
+    /// Performs a partial fetch of `system.client_routes`. Partial means that filtering is done
+    /// not only by connection ids known to the driver (which is always the case), but also
+    /// by host ids - only for the hosts whose ids are present in the event payload.
+    ///
+    /// Then, the updates are fed to the [`ClientRoutesSubscriber`] for merging with previous knowledge.
+    pub(in super::super) async fn fetch_client_route_updates_on_event(
+        &mut self,
+        evt: &ClientRoutesChangeEvent,
+    ) -> Result<(), MetadataError> {
+        let working_connection = match &self.control_connection_state {
+            ControlConnectionState::Working(working_connection) => working_connection,
+            ControlConnectionState::Broken { last_error: e, .. } => {
+                return Err(e.clone());
+            }
+        };
+
+        let Some(subscriber) = &self.client_routes_subscriber else {
+            // No subscriber, but received an event? Strange enough, but nothing to be done here.
+            warn!("BUG: Received ClientRoutesChange event, but no ClientRoutesSubscriber was set!");
+            return Ok(());
+        };
+
+        #[deny(clippy::wildcard_enum_match_arm)]
+        let (connection_ids, host_ids) = match evt {
+            ClientRoutesChangeEvent::UpdateNodes {
+                connection_ids,
+                host_ids,
+            } => (connection_ids, host_ids),
+            _ => unreachable!("clippy testifies that the match is exhaustive"),
+        };
+
+        // TODO: this is wasteful - it allocates both strings and a vec.
+        // This won't be a performance problem, because UPDATE_NODES events are not frequent.
+        // As an optimization, we can implement ser/de for some special new iterator type,
+        // to avoid the need to allocate when serializing collections.
+        let connection_ids: Vec<String> = connection_ids
+            .iter()
+            .filter(|&conn_id| subscriber.get_connection_ids().contains(conn_id))
+            .cloned()
+            .collect();
+
+        if connection_ids.is_empty() {
+            // The event contained no relevant connection IDs.
+            // Nothing to be done.
+            return Ok(());
+        }
+
+        // Although this is vaguely documented, the semantics of an event with connection ids [A, B, C] and host ids [X, Y, Z]
+        // is that the following entries were added/updated/removed: `[(A, X), (B, Y), (C, Z)]`.
+        // Unfortunately, we can't really query Scylla this way. Therefore, we do the query: `WHERE connection id IN ? AND host id IN ?`,
+        // which fetches possibly more routes than necessary, for example `(A, Z)` or `(C, Y)`.
+        // This is a tradeoff - the only alternative is issuing multiple queries, one per connection id.
+        // I believe the tradeoff here is correct.
+        let client_routes = working_connection
+            .connection
+            .query_client_routes(&connection_ids, host_ids)
+            .await?;
+
+        subscriber.merge_client_routes_update(evt, client_routes);
+
+        Ok(())
     }
 }

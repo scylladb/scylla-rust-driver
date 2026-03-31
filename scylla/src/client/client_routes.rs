@@ -106,9 +106,6 @@ pub(crate) trait ClientRoutesSubscriber: Send + Sync {
     /// fetched in response to a CLIENT_ROUTES_CHANGE:UPDATE_NODES event.
     /// The snapshot contains all entries that match connection ids and host ids
     /// present in the event.
-    // Note: I can't use `expect`, because then the compiler yells that it's not met...
-    // But when I use no attribute, then `dead_code` get triggered...
-    #[allow(dead_code)] // TODO: remove once event handling is added in a further commit.
     fn merge_client_routes_update(
         &self,
         event: &ClientRoutesChangeEvent,

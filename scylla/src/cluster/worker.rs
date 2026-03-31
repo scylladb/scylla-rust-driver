@@ -358,6 +358,20 @@ impl ClusterWorker {
                             debug!("Received server event: {:?}", event);
                             match event {
                                 Event::TopologyChange(_) => (), // Refresh immediately
+                                Event::ClientRoutesChange(evt) => {
+                                    let res = self.metadata_reader.fetch_client_route_updates_on_event(&evt).await;
+                                    match res {
+                                        Ok(()) => continue, // Don't go to refreshing.
+                                        Err(err) =>
+                                        {
+                                            error!(
+                                                "Error when fetching client route updates: {err}. \
+                                                Proceeding with metadata refresh, because the control connection is likely defunct."
+                                            );
+                                            // Refresh immediately.
+                                        }
+                                    }
+                                }
                                 Event::StatusChange(_status) => {
                                     // TODO: Tracking status using events is unreliable because of
                                     // the possibility of losing events when control connection is broken.
