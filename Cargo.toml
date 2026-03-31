@@ -5,7 +5,7 @@ members = [
     "scylla-macros",
     "scylla-cql",
     "scylla-proxy",
-    "utils",
+    "utils/find_stale_test_keyspaces",
 ]
 resolver = "3"
 
