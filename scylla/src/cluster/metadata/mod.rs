@@ -293,6 +293,30 @@ pub(crate) struct ClientRoute {
     pub(crate) tls_port: Option<u16>,
 }
 
+/// A subset of client routes present in the `system.client_routes` table.
+/// This is always filtered by specified connection ids, and may be filtered by
+/// host ids, too.
+#[derive(Debug, Default)] // Default is needed for `try_collect()`.
+#[expect(unused)] // temporarily, removed in further commit
+pub(crate) struct ClientRoutes {
+    // Routes are grouped by host id first, because this is how AddressTranslator
+    // looks them up. Then, routes for given host id are grouped by connection id,
+    // because it's the AddressTranslator's responsibility to choose the proper connection id.
+    pub(crate) routes: HashMap<Uuid, HashMap<String, ClientRoute>>,
+}
+
+// Needed for `Stream::try_collect()` to work.
+impl Extend<ClientRoute> for ClientRoutes {
+    fn extend<T: IntoIterator<Item = ClientRoute>>(&mut self, into_iter: T) {
+        for route in into_iter {
+            self.routes
+                .entry(route.host_id)
+                .or_default() // Insert empty HashMap.
+                .insert(route.connection_id.clone(), route);
+        }
+    }
+}
+
 impl Metadata {
     /// Creates new, dummy metadata from a given list of peers.
     ///
