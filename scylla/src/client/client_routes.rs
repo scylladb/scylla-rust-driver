@@ -6,7 +6,6 @@ use scylla_cql::frame::response::event::ClientRoutesChangeEvent;
 
 use crate::cluster::metadata::ClientRoutes;
 
-#[expect(dead_code)] // TODO: removed in a next commit.
 pub(crate) trait ClientRoutesSubscriber: Send + Sync {
     /// Specifies connection IDs that are to be monitored, i.e., whose entries
     /// shall be fetched from `system.client_routes`.
@@ -21,6 +20,7 @@ pub(crate) trait ClientRoutesSubscriber: Send + Sync {
     /// fetched in response to a CLIENT_ROUTES_CHANGE:UPDATE_NODES event.
     /// The snapshot contains all entries that match connection ids and host ids
     /// present in the event.
+    #[expect(dead_code)] // TODO: remove once event handling is added in a further commit.
     fn merge_client_routes_update(
         &self,
         event: &ClientRoutesChangeEvent,

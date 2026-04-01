@@ -40,6 +40,7 @@ use crate::DeserializeRow;
 use crate::client::pager::QueryPager;
 use crate::cluster::NodeAddr;
 use crate::cluster::control_connection::ControlConnection;
+use crate::cluster::metadata::ClientRoutes;
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
     ClientRoutesMetadataError, DbError, KeyspaceStrategyError, KeyspacesMetadataError,
@@ -163,8 +164,24 @@ impl ControlConnection {
     ) -> Result<Metadata, MetadataError> {
         let peers_query = self.query_peers(connect_port);
         let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, fetch_schema);
+        let client_routes_query = async {
+            let Some(subscriber) = self.client_routes_subscriber() else {
+                return Ok(ClientRoutes::default());
+            };
+            let connection_ids = subscriber.get_connection_ids();
+            self.query_client_routes(connection_ids, &[]).await
+        };
 
-        let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
+        let peers: Vec<Peer>;
+        let client_routes: ClientRoutes;
+        let keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>;
+
+        (peers, client_routes, keyspaces) =
+            tokio::try_join!(peers_query, client_routes_query, keyspaces_query)?;
+
+        if let Some(client_routes_subscriber) = self.client_routes_subscriber() {
+            client_routes_subscriber.replace_client_routes(client_routes);
+        }
 
         // There must be at least one peer
         if peers.is_empty() {
@@ -415,6 +432,69 @@ impl TryFrom<ClientRoutesEntry> for super::ClientRoute {
 }
 
 impl ControlConnection {
+    pub(super) async fn query_client_routes(
+        &self,
+        // List of connection ids that are accepted.
+        // If empty, all connection ids are accepted.
+        connection_ids: &[String],
+        // List of host ids that are accepted.
+        // If empty, all host ids are accepted.
+        host_ids: &[Uuid],
+    ) -> Result<ClientRoutes, MetadataError> {
+        async fn query_client_routes_with_values(
+            conn: &ControlConnection,
+            query_str: &str,
+            values: &(dyn scylla_cql::serialize::row::SerializeRow + Sync),
+        ) -> Result<ClientRoutes, MetadataError> {
+            conn.query_iter(query_str, values)
+                .into_stream()
+                .map(|pager_res| {
+                    let pager = pager_res?;
+                    let stream = pager.rows_stream::<ClientRoutesEntry>()?;
+                    Ok::<_, MetadataFetchErrorKind>(stream.map_err(MetadataFetchErrorKind::from))
+                })
+                .try_flatten()
+                // Add table context to the error.
+                .map_err(|error| MetadataFetchError {
+                    error,
+                    table: "system.client_routes",
+                })
+                .map_err(MetadataError::from)
+                .map(|r| {
+                    r.and_then(|c| super::ClientRoute::try_from(c).map_err(MetadataError::from))
+                })
+                .try_collect()
+                .await
+        }
+
+        let filter_by_connection_ids = !connection_ids.is_empty();
+        let filter_by_host_ids = !host_ids.is_empty();
+
+        let (query_str, values): (&str, &(dyn scylla_cql::serialize::row::SerializeRow + Sync)) =
+            match (filter_by_connection_ids, filter_by_host_ids) {
+                (true, true) => (
+                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE connection_id IN ? AND host_id IN ?",
+                    &(connection_ids, host_ids),
+                ),
+                (true, false) => (
+                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE connection_id IN ?",
+                    &(connection_ids,),
+                ),
+                (false, true) => (
+                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE host_id IN ? ALLOW FILTERING",
+                    &(host_ids,),
+                ),
+                (false, false) => (
+                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes ALLOW FILTERING",
+                    &(),
+                ),
+            };
+
+        let routes = query_client_routes_with_values(self, query_str, values).await?;
+
+        Ok(routes)
+    }
+
     fn query_filter_keyspace_name<'a, R>(
         &'a self,
         query_str: &'a str,
