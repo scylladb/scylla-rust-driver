@@ -283,14 +283,14 @@ pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub(crate) enum DnsLookupError {
     #[error("Failed to perform DNS lookup within {0}ms")]
     Timeout(u128),
     #[error("Empty address list returned by DNS for {0}")]
     EmptyAddressListForHost(String),
     #[error(transparent)]
-    IoError(std::io::Error),
+    IoError(Arc<std::io::Error>),
 }
 
 /// Performs a DNS lookup with provided optional timeout.
@@ -300,12 +300,14 @@ async fn lookup_host_with_timeout(
 ) -> Result<impl Iterator<Item = SocketAddr>, DnsLookupError> {
     if let Some(timeout) = hostname_resolution_timeout {
         match tokio::time::timeout(timeout, lookup_host(host)).await {
-            Ok(res) => res.map_err(DnsLookupError::IoError),
+            Ok(res) => res.map_err(|io_err| DnsLookupError::IoError(Arc::new(io_err))),
             // Elapsed error from tokio library does not provide any context.
             Err(_) => Err(DnsLookupError::Timeout(timeout.as_millis())),
         }
     } else {
-        lookup_host(host).await.map_err(DnsLookupError::IoError)
+        lookup_host(host)
+            .await
+            .map_err(|io_err| DnsLookupError::IoError(Arc::new(io_err)))
     }
 }
 
