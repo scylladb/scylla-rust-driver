@@ -283,13 +283,17 @@ pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
 }
 
+/// Error that occurred during DNS lookup.
 #[derive(Error, Debug, Clone)]
 pub(crate) enum DnsLookupError {
+    /// Timed out during DNS lookup.
     #[error("Failed to perform DNS lookup within {0}ms")]
     Timeout(u128),
+    /// DNS lookup returned an empty address list for a given hostname.
     #[error("Empty address list returned by DNS for {0}")]
     EmptyAddressListForHost(String),
-    #[error(transparent)]
+    /// I/O error occurred during DNS lookup.
+    #[error("An I/O error occurred during DNS lookup: {0}")]
     IoError(Arc<std::io::Error>),
 }
 
