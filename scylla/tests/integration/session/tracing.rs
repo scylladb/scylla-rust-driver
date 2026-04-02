@@ -118,10 +118,47 @@ async fn test_get_tracing_info(session: &Session, ks: String) {
     let traced_query_result: QueryResult = session.query_unpaged(traced_query, &[]).await.unwrap();
     let tracing_id: Uuid = traced_query_result.tracing_id().unwrap();
 
-    // Getting tracing info from session using this uuid works
+    // Getting tracing info from session using this uuid works.
     let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
     assert!(!tracing_info.events.is_empty());
     assert!(!tracing_info.nodes().is_empty());
+
+    // Check if the request type matches
+    assert_eq!(tracing_info.request.as_deref(), Some("Execute CQL3 query"));
+
+    // Duration should be available - the session builder's tracing wait parameters
+    // ensure we wait long enough for both Scylla and Cassandra.
+    let duration = tracing_info
+        .duration
+        .expect("tracing_info.duration should be present for a traced query");
+    assert!(duration > 0);
+
+    // Verify started_at timestamp is present
+    let started_at = tracing_info
+        .started_at
+        .expect("tracing_info.started_at should be present for a traced query");
+    assert!(started_at.0 > 0);
+
+    // Check parameters
+    let parameters = tracing_info
+        .parameters
+        .as_ref()
+        .expect("tracing_info.parameters should be present for a traced query");
+    assert!(parameters.contains_key("consistency_level"));
+    assert!(parameters.contains_key("query"));
+
+    // Check events
+    for event in &tracing_info.events {
+        let activity = event
+            .activity
+            .as_ref()
+            .expect("tracing event activity should be present");
+        assert!(!activity.is_empty());
+        assert!(event.source.is_some());
+        let source_elapsed = event
+            .source_elapsed
+            .expect("tracing event source_elapsed should be present");
+        assert!(source_elapsed >= 0);
 }
 
 async fn test_tracing_query_iter(session: &Session, ks: String) {
