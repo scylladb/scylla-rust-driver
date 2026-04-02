@@ -1,0 +1,15 @@
+[package]
+edition = "2024"
+name = "analyze_errors_size"
+publish = false
+version = "0.0.0"
+build = "build.rs"
+
+[build-dependencies]
+syn = { version = "2", features = ["full", "visit"] }
+
+[dependencies]
+scylla = { path = "../../scylla" }
+
+[package.metadata.cargo-semver-checks.lints]
+workspace = true
