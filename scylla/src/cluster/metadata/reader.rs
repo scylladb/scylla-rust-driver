@@ -446,11 +446,15 @@ impl MetadataReader {
         // setting event_sender field in connection config will cause control connection to
         // - send REGISTER message to receive server events
         // - send received events via server_event_sender
-        let events_to_register_for = vec![
+        let mut events_to_register_for = vec![
             EventType::TopologyChange,
             EventType::StatusChange,
             EventType::SchemaChange,
         ];
+        if client_routes_subscriber.is_some() {
+            events_to_register_for.push(EventType::ClientRoutesChange);
+        }
+
         config.event_sender = Some((sender, events_to_register_for));
         let open_result = open_connection(
             &endpoint,
