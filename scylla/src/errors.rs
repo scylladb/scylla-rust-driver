@@ -650,6 +650,10 @@ pub enum TranslationError {
     #[error("No rule for address {0}")]
     NoRuleForAddress(SocketAddr),
 
+    /// Driver failed to find a translation rule for a provided host id.
+    #[error("No rule for host with id {0}")]
+    NoRuleForHost(Uuid),
+
     /// A translation rule for a provided address was found, but the translated address was invalid.
     #[error("Failed to parse translated address: {translated_addr_str}, reason: {reason}")]
     InvalidAddressInRule {
@@ -666,6 +670,10 @@ pub enum TranslationError {
     /// DNS lookup failed during address translation.
     #[error("DNS lookup failed: {0}")]
     DnsLookupFailed(DnsLookupError),
+
+    /// system.client_routes is missing a port for a host.
+    #[error("Missing port for host {0} in system.client_routes")]
+    MissingPortForHost(Uuid),
 
     /// Custom error, for example from user-implemented policy.
     #[error(transparent)]

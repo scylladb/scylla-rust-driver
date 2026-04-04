@@ -5,6 +5,7 @@ use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, Executi
 use super::pager::{PreparedPagerConfig, QueryPager};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
+use crate::client::client_routes::ClientRoutesConfig;
 use crate::cluster::node::{KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
@@ -309,7 +310,6 @@ pub struct SessionConfig {
 
     /// Routing configuration for Scylla Cloud. If set, Session will connect
     /// to Scylla Cloud clusters using custom routing based on `system.client_routes`.
-    #[expect(unused)] // TODO: Will get used soon.
     #[cfg(feature = "unstable-client-routes")]
     pub(crate) client_routes_config: Option<super::client_routes::ClientRoutesConfig>,
 
@@ -1129,6 +1129,17 @@ impl Session {
             }
         };
 
+        let client_routes_config: Option<ClientRoutesConfig> = {
+            #[cfg(feature = "unstable-client-routes")]
+            {
+                config.client_routes_config
+            }
+            #[cfg(not(feature = "unstable-client-routes"))]
+            {
+                None
+            }
+        };
+
         let cluster = Cluster::new(
             known_nodes,
             pool_config,
@@ -1142,6 +1153,7 @@ impl Session {
             tablet_receiver,
             #[cfg(feature = "metrics")]
             Arc::clone(&metrics),
+            client_routes_config,
         )
         .await?;
 

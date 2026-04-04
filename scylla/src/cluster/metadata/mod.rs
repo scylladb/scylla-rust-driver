@@ -280,7 +280,6 @@ pub enum Strategy {
 
 /// Represents an entry of `system.client_routes` table, in a more refined form (port as u16).
 #[derive(Debug, Clone)]
-#[expect(unused)] // temporarily, removed in further commit
 pub(crate) struct ClientRoute {
     pub(crate) connection_id: String,
     pub(crate) host_id: Uuid,
