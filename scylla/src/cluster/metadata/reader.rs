@@ -27,6 +27,7 @@ use crate::cluster::metadata::{Metadata, PeerEndpoint, UntranslatedEndpoint};
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
 use crate::frame::response::event::EventV2 as Event;
+use crate::frame::server_event_type::EventTypeV2 as EventType;
 use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
 use crate::utils::safe_format::IteratorSafeFormatExt;
@@ -436,7 +437,12 @@ impl MetadataReader {
         // setting event_sender field in connection config will cause control connection to
         // - send REGISTER message to receive server events
         // - send received events via server_event_sender
-        config.event_sender = Some(sender);
+        let events_to_register_for = vec![
+            EventType::TopologyChange,
+            EventType::StatusChange,
+            EventType::SchemaChange,
+        ];
+        config.event_sender = Some((sender, events_to_register_for));
         let open_result = open_connection(
             &endpoint,
             None,

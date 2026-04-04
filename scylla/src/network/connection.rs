@@ -287,7 +287,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) tls_provider: Option<TlsProvider>,
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
-    pub(crate) event_sender: Option<mpsc::Sender<Event>>,
+    pub(crate) event_sender: Option<(mpsc::Sender<Event>, Vec<EventType>)>,
     pub(crate) default_consistency: Consistency,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
@@ -355,7 +355,7 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) tls_config: Option<TlsConfig>,
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
-    pub(crate) event_sender: Option<mpsc::Sender<Event>>,
+    pub(crate) event_sender: Option<(mpsc::Sender<Event>, Vec<EventType>)>,
     pub(crate) default_consistency: Consistency,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
@@ -1622,7 +1622,7 @@ impl Connection {
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
             &handler_map,
-            config.event_sender,
+            config.event_sender.map(|(sender, _)| sender),
             config.compression,
         );
         let w = Self::writer(
@@ -2158,13 +2158,8 @@ pub(crate) async fn open_connection(
     }
 
     /* If this is a control connection, REGISTER to receive all event types. */
-    if connection.config.event_sender.is_some() {
-        let all_event_types = vec![
-            EventType::TopologyChange,
-            EventType::StatusChange,
-            EventType::SchemaChange,
-        ];
-        connection.register(all_event_types).await?;
+    if let Some((_, ref event_types)) = connection.config.event_sender {
+        connection.register(event_types.clone()).await?;
     }
 
     Ok((connection, error_receiver))
