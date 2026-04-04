@@ -171,6 +171,10 @@ pub enum NewSessionError {
     /// 'USE KEYSPACE <>' request failed.
     #[error("'USE KEYSPACE <>' request failed: {0}")]
     UseKeyspaceError(#[from] UseKeyspaceError),
+
+    /// Provided combination of Session configuration options is unsupported.
+    #[error("Provided combination of Session configuration options is unsupported: {0}")]
+    IllegalConfig(Box<str>),
 }
 
 /// An error that occurred during `USE KEYSPACE <>` request.

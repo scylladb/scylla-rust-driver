@@ -490,6 +490,20 @@ impl Default for SessionConfig {
     }
 }
 
+impl SessionConfig {
+    /// [SessionConfig] may unfortunately represent invalid configurations. We need to rule them out
+    /// at runtime by running validation.
+    #[expect(clippy::result_large_err)] // TODO(2.0): Make NewSessionError smaller.
+    fn validate(&self) -> Result<(), NewSessionError> {
+        // Ensure there is at least one known node
+        if self.known_nodes.is_empty() {
+            return Err(NewSessionError::EmptyKnownNodesList);
+        }
+
+        Ok(())
+    }
+}
+
 pub(crate) enum RunRequestResult<ResT> {
     IgnoredWriteError,
     Completed(ResT),
@@ -1013,12 +1027,9 @@ impl Session {
     /// # }
     /// ```
     pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
-        let known_nodes = config.known_nodes;
+        config.validate()?;
 
-        // Ensure there is at least one known node
-        if known_nodes.is_empty() {
-            return Err(NewSessionError::EmptyKnownNodesList);
-        }
+        let known_nodes = config.known_nodes;
 
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
 
