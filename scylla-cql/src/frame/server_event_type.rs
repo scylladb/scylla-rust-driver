@@ -24,7 +24,7 @@ pub enum EventType {
 // about changes in the cluster, so it makes sense to use the same postfix for all of them.
 // If we add a new event type that is not about changes, then clippy will no longer complain.
 #[expect(clippy::enum_variant_names)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum EventTypeV2 {
     /// Represents a change in the cluster topology, such as node addition or removal.
