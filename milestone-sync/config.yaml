@@ -1,0 +1,5 @@
+# Minimal milestone-sync config for scylladb/scylla-rust-driver.
+# Add optional Jira fields here after their exact values are confirmed.
+Project: "DRIVER"
+Issue Type: "Epic"
+Summary Prefix: "scylla-rust-driver:"
