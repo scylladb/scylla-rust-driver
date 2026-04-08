@@ -1,0 +1,6 @@
+# Milestone-sync config for scylladb/scylla-rust-driver.
+Project: "DRIVER"
+Issue Type: "Epic"
+Summary Prefix: "rust-driver:"
+Scylla Components: "Driver - rust-driver"
+Assignee: "Karol Baryła"

@@ -1,0 +1,38 @@
+name: Milestone Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      milestone:
+        description: GitHub milestone number or exact title
+        required: true
+        type: string
+  milestone:
+    types: [created, edited, opened, closed]
+  issues:
+    types: [opened, closed, reopened, milestoned, demilestoned]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  sync-manual:
+    if: github.event_name == 'workflow_dispatch'
+    uses: scylladb-actions/workflows/.github/workflows/milestone-sync-reusable.yml@main
+    with:
+      milestone: ${{ inputs.milestone }}
+      config-path: milestone-sync/config.yaml
+    secrets:
+      USER_AND_KEY_FOR_JIRA_AUTOMATION: ${{ secrets.USER_AND_KEY_FOR_JIRA_AUTOMATION }}
+
+  sync-automatic:
+    if: github.event_name != 'workflow_dispatch'
+    uses: scylladb-actions/workflows/.github/workflows/milestone-sync-reusable.yml@main
+    with:
+      config-path: milestone-sync/config.yaml
+      github-event-name: ${{ github.event_name }}
+      github-event-payload: ${{ toJson(github.event) }}
+    secrets:
+      USER_AND_KEY_FOR_JIRA_AUTOMATION: ${{ secrets.USER_AND_KEY_FOR_JIRA_AUTOMATION }}
