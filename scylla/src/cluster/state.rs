@@ -202,10 +202,10 @@ impl ClusterState {
             let recreated_nodes = {
                 let mut recreated_nodes = HashMap::new();
                 for (old_peer_id, old_peer_node) in known_peers {
-                    if let Some(new_peer_node) = new_known_peers.get(old_peer_id) {
-                        if !Arc::ptr_eq(old_peer_node, new_peer_node) {
-                            recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
-                        }
+                    if let Some(new_peer_node) = new_known_peers.get(old_peer_id)
+                        && !Arc::ptr_eq(old_peer_node, new_peer_node)
+                    {
+                        recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
                     }
                 }
 

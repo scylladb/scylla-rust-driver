@@ -724,17 +724,17 @@ impl<'a> Iterator for ReplicasOrderedNTSIterator<'a> {
                 let nodes_on_ring = locator.replication_data.get_global_ring().ring_range(token);
                 for node in nodes_on_ring {
                     // If this node's DC has some replicas in this NTS...
-                    if let Some(dc) = &node.datacenter {
-                        if datacenter_repfactors.get(dc).is_some() {
-                            // ...then this node must be the primary replica.
-                            self.inner = ReplicasOrderedNTSIteratorInner::Picked {
-                                datacenter_repfactors,
-                                locator,
-                                token,
-                                picked: node,
-                            };
-                            return Some(with_computed_shard(node, self.token));
-                        }
+                    if let Some(dc) = &node.datacenter
+                        && datacenter_repfactors.get(dc).is_some()
+                    {
+                        // ...then this node must be the primary replica.
+                        self.inner = ReplicasOrderedNTSIteratorInner::Picked {
+                            datacenter_repfactors,
+                            locator,
+                            token,
+                            picked: node,
+                        };
+                        return Some(with_computed_shard(node, self.token));
                     }
                 }
                 None

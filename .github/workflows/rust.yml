@@ -16,7 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings --cfg scylla_unstable
   RUST_BACKTRACE: full
-  rust_min: 1.85.0 # <- Update this when bumping up MSRV
+  rust_min: 1.88.0 # <- Update this when bumping up MSRV
 
 jobs:
   static_checks:

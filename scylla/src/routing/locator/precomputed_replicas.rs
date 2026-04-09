@@ -61,10 +61,10 @@ struct DatacenterPrecomputedReplicas {
 
 impl DatacenterPrecomputedReplicas {
     fn get_replica_ring_for_rf(&self, replication_factor: usize) -> Option<&TokenRing<Replicas>> {
-        if let Some(compressed) = &self.compressed_replica_ring {
-            if compressed.max_rep_factor >= replication_factor {
-                return Some(&compressed.replicas_for_token);
-            }
+        if let Some(compressed) = &self.compressed_replica_ring
+            && compressed.max_rep_factor >= replication_factor
+        {
+            return Some(&compressed.replicas_for_token);
         }
 
         self.above_rack_count_replica_rings.get(&replication_factor)

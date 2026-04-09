@@ -56,16 +56,16 @@ impl ControlConnection {
     /// Appends the custom server-side timeout to the statement string, if such custom timeout
     /// is provided and we are connected to ScyllaDB (since custom timeouts is ScyllaDB-only feature).
     fn maybe_append_timeout_override(&self, statement: &mut Statement) {
-        if let Some(timeout) = self.overridden_serverside_timeout {
-            if self.is_to_scylladb() {
-                // SAFETY: io::fmt::Write impl for String is infallible.
-                write!(
-                    statement.contents,
-                    " USING TIMEOUT {}ms",
-                    timeout.as_millis()
-                )
-                .unwrap()
-            }
+        if let Some(timeout) = self.overridden_serverside_timeout
+            && self.is_to_scylladb()
+        {
+            // SAFETY: io::fmt::Write impl for String is infallible.
+            write!(
+                statement.contents,
+                " USING TIMEOUT {}ms",
+                timeout.as_millis()
+            )
+            .unwrap()
         }
     }
 

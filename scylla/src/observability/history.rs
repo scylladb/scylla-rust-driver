@@ -411,18 +411,18 @@ impl From<&HistoryCollectorData> for StructuredHistory {
 
         // Move attempts to their speculative fibers
         for (event, _) in &data.events {
-            if let HistoryEvent::NewAttempt(attempt_id, request_id, speculative_id, _) = event {
-                if let Some(attempt) = attempts.remove(attempt_id) {
-                    match speculative_id {
-                        Some(spec_id) => {
-                            if let Some(spec_fiber) = fibers.get_mut(spec_id) {
-                                spec_fiber.attempts.push(attempt);
-                            }
+            if let HistoryEvent::NewAttempt(attempt_id, request_id, speculative_id, _) = event
+                && let Some(attempt) = attempts.remove(attempt_id)
+            {
+                match speculative_id {
+                    Some(spec_id) => {
+                        if let Some(spec_fiber) = fibers.get_mut(spec_id) {
+                            spec_fiber.attempts.push(attempt);
                         }
-                        None => {
-                            if let Some(request) = requests.get_mut(request_id) {
-                                request.non_speculative_fiber.attempts.push(attempt);
-                            }
+                    }
+                    None => {
+                        if let Some(request) = requests.get_mut(request_id) {
+                            request.non_speculative_fiber.attempts.push(attempt);
                         }
                     }
                 }
@@ -431,12 +431,11 @@ impl From<&HistoryCollectorData> for StructuredHistory {
 
         // Move speculative fibers to their requests
         for (event, _) in &data.events {
-            if let HistoryEvent::NewSpeculativeFiber(speculative_id, request_id) = event {
-                if let Some(fiber) = fibers.remove(speculative_id) {
-                    if let Some(request) = requests.get_mut(request_id) {
-                        request.speculative_fibers.push(fiber);
-                    }
-                }
+            if let HistoryEvent::NewSpeculativeFiber(speculative_id, request_id) = event
+                && let Some(fiber) = fibers.remove(speculative_id)
+                && let Some(request) = requests.get_mut(request_id)
+            {
+                request.speculative_fibers.push(fiber);
             }
         }
 

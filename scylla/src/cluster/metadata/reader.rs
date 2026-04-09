@@ -342,17 +342,15 @@ impl MetadataReader {
             }
         }
 
-        if initial {
-            if let Err(err) = res {
-                warn!(
-                    error = ?err,
-                    "Initial metadata read failed, proceeding with metadata \
-                    consisting only of the initial peer list and dummy tokens. \
-                    This might result in suboptimal performance and schema \
-                    information not being available."
-                );
-                return Ok(Metadata::new_dummy(&self.known_peers));
-            }
+        if initial && let Err(err) = res {
+            warn!(
+                error = ?err,
+                "Initial metadata read failed, proceeding with metadata \
+                consisting only of the initial peer list and dummy tokens. \
+                This might result in suboptimal performance and schema \
+                information not being available."
+            );
+            return Ok(Metadata::new_dummy(&self.known_peers));
         }
 
         res
@@ -390,40 +388,40 @@ impl MetadataReader {
             .peers
             .iter()
             .find(|peer| matches!(self.control_connection_state.endpoint(), UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if *address == peer.address));
-        if let Some(peer) = control_connection_peer {
-            if !self.host_filter.as_ref().is_none_or(|f| f.accept(peer)) {
-                warn!(
-                    filtered_node_ips = tracing::field::display(metadata
-                        .peers
-                        .iter()
-                        .filter(|peer| self.host_filter.as_ref().is_none_or(|p| p.accept(peer)))
-                        .map(|peer| peer.address)
-                        .safe_format(", ")
-                    ),
-                    control_connection_address = ?self.control_connection_state.endpoint().address(),
-                    "The node that the control connection is established to \
-                    is not accepted by the host filter. Please verify that \
-                    the nodes in your initial peers list are accepted by the \
-                    host filter. The driver will try to re-establish the \
-                    control connection to a different node."
-                );
+        if let Some(peer) = control_connection_peer
+            && !self.host_filter.as_ref().is_none_or(|f| f.accept(peer))
+        {
+            warn!(
+                filtered_node_ips = tracing::field::display(metadata
+                    .peers
+                    .iter()
+                    .filter(|peer| self.host_filter.as_ref().is_none_or(|p| p.accept(peer)))
+                    .map(|peer| peer.address)
+                    .safe_format(", ")
+                ),
+                control_connection_address = ?self.control_connection_state.endpoint().address(),
+                "The node that the control connection is established to \
+                is not accepted by the host filter. Please verify that \
+                the nodes in your initial peers list are accepted by the \
+                host filter. The driver will try to re-establish the \
+                control connection to a different node."
+            );
 
-                // Assuming here that known_peers are up-to-date
-                if !self.known_peers.is_empty() {
-                    let control_connection_endpoint = self
-                        .known_peers
-                        .choose(&mut rng())
-                        .expect("known_peers is empty - should be impossible")
-                        .clone();
+            // Assuming here that known_peers are up-to-date
+            if !self.known_peers.is_empty() {
+                let control_connection_endpoint = self
+                    .known_peers
+                    .choose(&mut rng())
+                    .expect("known_peers is empty - should be impossible")
+                    .clone();
 
-                    self.control_connection_state = Self::make_control_connection(
-                        control_connection_endpoint,
-                        self.control_connection_config.clone(),
-                        self.request_serverside_timeout,
-                        Arc::clone(&self.cc_cache),
-                    )
-                    .await;
-                }
+                self.control_connection_state = Self::make_control_connection(
+                    control_connection_endpoint,
+                    self.control_connection_config.clone(),
+                    self.request_serverside_timeout,
+                    Arc::clone(&self.cc_cache),
+                )
+                .await;
             }
         }
     }
