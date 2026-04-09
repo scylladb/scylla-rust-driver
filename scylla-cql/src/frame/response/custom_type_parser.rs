@@ -181,7 +181,7 @@ impl<'result> CustomTypeParser<'result> {
 
     /// Parse a string of hexadecimal representation of bytes into a byte vector.
     fn from_hex(s: &'result str) -> Result<Vec<u8>, CustomTypeParseError> {
-        if s.len() % 2 != 0 {
+        if !s.len().is_multiple_of(2) {
             return Err(CustomTypeParseError::BadHexString(s.to_owned()));
         }
         for c in s.chars() {

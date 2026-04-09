@@ -90,7 +90,7 @@ async fn measure(
                 if i >= reqs {
                     break;
                 }
-                if i % 10000 == 0 {
+                if i.is_multiple_of(10000) {
                     print!(".");
                     std::io::stdout().flush().unwrap();
                 }

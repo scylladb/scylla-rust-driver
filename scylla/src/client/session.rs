@@ -1636,12 +1636,12 @@ impl Session {
             serialized_values.buffer_size(),
         );
 
-        if !span.span().is_disabled() {
-            if let (Some(table_spec), Some(token)) = (statement_info.table, token) {
-                let cluster_state = self.get_cluster_state();
-                let replicas = cluster_state.get_token_endpoints_iter(table_spec, token);
-                span.record_replicas(replicas)
-            }
+        if !span.span().is_disabled()
+            && let (Some(table_spec), Some(token)) = (statement_info.table, token)
+        {
+            let cluster_state = self.get_cluster_state();
+            let replicas = cluster_state.get_token_endpoints_iter(table_spec, token);
+            span.record_replicas(replicas)
         }
 
         let (run_request_result, coordinator): (

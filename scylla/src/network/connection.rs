@@ -1134,13 +1134,12 @@ impl Connection {
             )
             .await?;
 
-        if let Some(spec) = prepared_statement.get_table_spec() {
-            if let Err(e) = self
+        if let Some(spec) = prepared_statement.get_table_spec()
+            && let Err(e) = self
                 .update_tablets_from_response(spec, &query_response)
                 .await
-            {
-                tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
-            }
+        {
+            tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
         }
 
         Self::handle_result_metadata_new_id(prepared_statement, &query_response);
@@ -1179,13 +1178,10 @@ impl Connection {
                     )
                     .await?;
 
-                if let Some(spec) = prepared_statement.get_table_spec() {
-                    if let Err(e) = self.update_tablets_from_response(spec, &new_response).await {
-                        tracing::warn!(
-                            "Error while parsing tablet info from custom payload: {}",
-                            e
-                        );
-                    }
+                if let Some(spec) = prepared_statement.get_table_spec()
+                    && let Err(e) = self.update_tablets_from_response(spec, &new_response).await
+                {
+                    tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
                 }
 
                 Self::handle_result_metadata_new_id(prepared_statement, &new_response);

@@ -2,7 +2,7 @@
 name = "scylla-proxy"
 version = "0.0.5"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Proxy layer between ScyllaDB driver and cluster that enables testing ScyllaDB drivers' behaviour in unfavourable conditions"
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"

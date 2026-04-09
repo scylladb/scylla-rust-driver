@@ -788,20 +788,20 @@ impl PoolRefiller {
 
                 // Before the connection can be put to the pool, we need
                 // to make sure that it uses appropriate keyspace
-                if let Some(keyspace) = &self.current_keyspace {
-                    if evt.keyspace_name.as_ref() != Some(keyspace) {
-                        // Asynchronously start setting keyspace for this
-                        // connection. It will be received on the ready
-                        // connections channel and will travel through
-                        // this logic again, to be finally put into
-                        // the conns.
-                        self.start_setting_keyspace_for_connection(
-                            connection,
-                            error_receiver,
-                            evt.requested_shard,
-                        );
-                        return;
-                    }
+                if let Some(keyspace) = &self.current_keyspace
+                    && evt.keyspace_name.as_ref() != Some(keyspace)
+                {
+                    // Asynchronously start setting keyspace for this
+                    // connection. It will be received on the ready
+                    // connections channel and will travel through
+                    // this logic again, to be finally put into
+                    // the conns.
+                    self.start_setting_keyspace_for_connection(
+                        connection,
+                        error_receiver,
+                        evt.requested_shard,
+                    );
+                    return;
                 }
 
                 // Decide if the connection can be accepted, according to

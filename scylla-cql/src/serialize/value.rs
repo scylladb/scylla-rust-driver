@@ -718,21 +718,22 @@ fn fix_rust_name_in_err<RustT>(mut err: SerializationError) -> SerializationErro
             // The `None` case shouldn't happen considering how we are using
             // the function in the code now, but let's provide it here anyway
             // for correctness.
-            if let Some(err) = err.0.downcast_ref::<BuiltinTypeCheckError>() {
-                if err.rust_name != rust_name {
-                    return SerializationError::new(BuiltinTypeCheckError {
-                        rust_name,
-                        ..err.clone()
-                    });
-                }
+            if let Some(err) = err.0.downcast_ref::<BuiltinTypeCheckError>()
+                && err.rust_name != rust_name
+            {
+                return SerializationError::new(BuiltinTypeCheckError {
+                    rust_name,
+                    ..err.clone()
+                });
             }
-            if let Some(err) = err.0.downcast_ref::<BuiltinSerializationError>() {
-                if err.rust_name != rust_name {
-                    return SerializationError::new(BuiltinSerializationError {
-                        rust_name,
-                        ..err.clone()
-                    });
-                }
+
+            if let Some(err) = err.0.downcast_ref::<BuiltinSerializationError>()
+                && err.rust_name != rust_name
+            {
+                return SerializationError::new(BuiltinSerializationError {
+                    rust_name,
+                    ..err.clone()
+                });
             }
         }
     };
