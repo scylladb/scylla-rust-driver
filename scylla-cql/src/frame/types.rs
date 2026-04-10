@@ -16,8 +16,9 @@ use uuid::Uuid;
 
 // Re-export stable public types from scylla-cql-core.
 pub use scylla_cql_core::frame::types::{
-    Consistency, NonSerialConsistencyError, RawValue, SerialConsistency, read_bytes_opt, read_int,
-    read_int_length, read_short, read_value,
+    Consistency, NonSerialConsistencyError, RawValue, SerialConsistency, read_bytes_opt,
+    read_consistency, read_int, read_int_length, read_short, read_short_bytes, read_short_length,
+    read_string, read_string_list, read_value,
 };
 
 pub(crate) fn read_raw_bytes<'a>(
@@ -82,12 +83,6 @@ pub fn write_short(v: u16, buf: &mut impl BufMut) {
     buf.put_u16(v);
 }
 
-pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, std::io::Error> {
-    let v = read_short(buf)?;
-    let v: usize = v.into();
-    Ok(v)
-}
-
 pub(crate) fn write_short_length(
     v: usize,
     buf: &mut impl BufMut,
@@ -110,12 +105,6 @@ fn type_short() {
 // Same as read_bytes, but we assume the value won't be `null`
 pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], LowLevelDeserializationError> {
     let len = read_int_length(buf)?;
-    let v = read_raw_bytes(len, buf)?;
-    Ok(v)
-}
-
-pub fn read_short_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], LowLevelDeserializationError> {
-    let len = read_short_length(buf)?;
     let v = read_raw_bytes(len, buf)?;
     Ok(v)
 }
@@ -185,13 +174,6 @@ fn type_bytes_map() {
     let mut buf = BytesMut::new();
     write_bytes_map(&val, &mut buf).unwrap();
     assert_eq!(read_bytes_map(&mut &*buf).unwrap(), val);
-}
-
-pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, LowLevelDeserializationError> {
-    let len = read_short_length(buf)?;
-    let raw = read_raw_bytes(len, buf)?;
-    let v = str::from_utf8(raw)?;
-    Ok(v)
 }
 
 pub fn write_string(v: &str, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
@@ -271,15 +253,6 @@ fn type_string_map() {
     let mut buf = Vec::new();
     write_string_map(&val, &mut buf).unwrap();
     assert_eq!(read_string_map(&mut &buf[..]).unwrap(), val);
-}
-
-pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>, LowLevelDeserializationError> {
-    let len = read_short_length(buf)?;
-    let mut v = Vec::with_capacity(len);
-    for _ in 0..len {
-        v.push(read_string(buf)?.to_owned());
-    }
-    Ok(v)
 }
 
 pub fn write_string_list(
@@ -369,11 +342,6 @@ fn type_uuid() {
     write_uuid(&u, &mut buf);
     let u2 = read_uuid(&mut &*buf).unwrap();
     assert_eq!(u, u2);
-}
-
-pub fn read_consistency(buf: &mut &[u8]) -> Result<Consistency, LowLevelDeserializationError> {
-    let raw = read_short(buf)?;
-    Consistency::try_from(raw).map_err(LowLevelDeserializationError::UnknownConsistency)
 }
 
 pub fn write_consistency(c: Consistency, buf: &mut impl BufMut) {
