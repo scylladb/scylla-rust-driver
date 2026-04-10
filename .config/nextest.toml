@@ -19,6 +19,25 @@ final-status-level = "slow"
 filter = 'binary_id(scylla) & (test(network::connection::) | test(client::caching_session::) | test(network::connection_pool::))'
 slow-timeout = { period = "20s", terminate-after = 6 }
 
+# Client-routes topology-change tests do decommission + add or
+# stop + resume which can easily exceed the default timeout.
+[[profile.default.overrides]]
+filter = '(binary_id(scylla::integration) & test(ccm::client_routes::test_client_routes_multi_dc_topology_change))'
+slow-timeout = { period = "60s", terminate-after = 6 }
+
+[[profile.default.overrides]]
+filter = '(binary_id(scylla::integration) & test(ccm::client_routes::test_client_routes_node_stop_resume))'
+slow-timeout = { period = "60s", terminate-after = 6 }
+
+# Rolling restart does 3 stop+start cycles; scale-out adds 3 nodes.
+[[profile.default.overrides]]
+filter = '(binary_id(scylla::integration) & test(ccm::client_routes::test_client_routes_rolling_restart))'
+slow-timeout = { period = "60s", terminate-after = 10 }
+
+[[profile.default.overrides]]
+filter = '(binary_id(scylla::integration) & test(ccm::client_routes::test_client_routes_scale_out))'
+slow-timeout = { period = "60s", terminate-after = 10 }
+
 # CCM tests may need to configure cluster. This takes even
 # more time than typical integration test.
 [[profile.default.overrides]]
