@@ -65,5 +65,6 @@ However, you can set the `cluster_metadata_refresh_interval` to a non-negative v
    compression
    authentication
    tls
+   client-routes
 
 ```
