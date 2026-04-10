@@ -7,6 +7,7 @@ use crate::frame::frame_errors::LowLevelDeserializationError;
 
 use super::TryFromPrimitiveError;
 use std::convert::TryFrom;
+use std::str;
 use thiserror::Error;
 
 /// A setting that defines a successful write or read by the number of cluster replicas
@@ -143,6 +144,33 @@ impl std::fmt::Display for SerialConsistency {
     }
 }
 
+pub fn read_consistency(buf: &mut &[u8]) -> Result<Consistency, LowLevelDeserializationError> {
+    let raw = read_short(buf)?;
+    Consistency::try_from(raw).map_err(LowLevelDeserializationError::UnknownConsistency)
+}
+
+pub fn read_short_length(buf: &mut &[u8]) -> Result<usize, std::io::Error> {
+    let v = read_short(buf)?;
+    let v: usize = v.into();
+    Ok(v)
+}
+
+pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, LowLevelDeserializationError> {
+    let len = read_short_length(buf)?;
+    let raw = read_raw_bytes(len, buf)?;
+    let v = str::from_utf8(raw)?;
+    Ok(v)
+}
+
+pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>, LowLevelDeserializationError> {
+    let len = read_short_length(buf)?;
+    let mut v = Vec::with_capacity(len);
+    for _ in 0..len {
+        v.push(read_string(buf)?.to_owned());
+    }
+    Ok(v)
+}
+
 pub(crate) fn read_raw_bytes<'a>(
     count: usize,
     buf: &mut &'a [u8],
@@ -156,6 +184,12 @@ pub(crate) fn read_raw_bytes<'a>(
     let (ret, rest) = buf.split_at(count);
     *buf = rest;
     Ok(ret)
+}
+
+pub fn read_short_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], LowLevelDeserializationError> {
+    let len = read_short_length(buf)?;
+    let v = read_raw_bytes(len, buf)?;
+    Ok(v)
 }
 
 pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {

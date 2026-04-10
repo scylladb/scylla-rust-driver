@@ -2,7 +2,7 @@
 
 pub mod authenticate;
 pub mod custom_type_parser;
-pub mod error;
+pub use scylla_cql_core::frame::response::error;
 pub mod event;
 pub mod result;
 pub mod supported;
