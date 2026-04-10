@@ -9,8 +9,8 @@ use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::response::result::Result as CqlResult;
 use scylla_cql::frame::response::{Response, Supported};
 use scylla_proxy::{
-    Condition, Node, Proxy, Reaction, RequestReaction, RequestRule, ResponseReaction, ResponseRule,
-    RunningProxy, ShardAwareness,
+    Condition, Node, Proxy, ProxyError, Reaction, RequestReaction, RequestRule, ResponseReaction,
+    ResponseRule, RunningProxy, ShardAwareness, WorkerError,
 };
 
 use crate::ccm::lib::cluster::{Cluster, ClusterOptions};
@@ -224,12 +224,19 @@ async fn test_special_query_behavior(
 #[tokio::test]
 async fn test_result_metadata_extension() {
     setup_tracing();
+    fn process_proxy_result(res: Result<(), ProxyError>) {
+        match res {
+            Ok(()) => (),
+            Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+            Err(err) => panic!("{}", err),
+        }
+    }
     async fn test(cluster: &mut Cluster) {
         let (session, mut running_proxy, features) = setup_proxy_and_session(cluster).await;
 
         if !features.scylla_metadata_id_supported {
             tracing::info!("Metadata ID extension not supported, skipping test");
-            running_proxy.finish().await.unwrap();
+            process_proxy_result(running_proxy.finish().await);
             return;
         }
 
@@ -237,7 +244,7 @@ async fn test_result_metadata_extension() {
             test_special_query_behavior(&session, &mut running_proxy, &features, query_str).await
         }
 
-        running_proxy.finish().await.unwrap();
+        process_proxy_result(running_proxy.finish().await);
     }
 
     run_ccm_test_with_configuration(
