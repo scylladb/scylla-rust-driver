@@ -9,7 +9,7 @@
 //!
 
 pub use scylla_cql_core::frame::frame_errors;
-pub mod protocol_features;
+pub use scylla_cql_core::frame::protocol_features;
 pub mod request;
 pub mod response;
 pub mod server_event_type;
