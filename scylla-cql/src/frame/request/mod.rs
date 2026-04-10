@@ -348,9 +348,10 @@ mod tests {
             let mut buf = Vec::new();
             execute_with_id.serialize(&mut buf).unwrap();
 
-            let features = ProtocolFeatures {
-                scylla_metadata_id_supported: true,
-                ..Default::default()
+            let features = {
+                let mut default = ProtocolFeatures::default();
+                default.scylla_metadata_id_supported = true;
+                default
             };
             let execute_deserialized =
                 ExecuteV2::deserialize_with_features(&mut &buf[..], &features).unwrap();

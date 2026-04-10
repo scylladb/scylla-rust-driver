@@ -1,4 +1,5 @@
 pub mod frame_errors;
+pub mod protocol_features;
 pub mod request;
 pub mod response;
 pub mod types;
