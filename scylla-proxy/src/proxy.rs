@@ -1,7 +1,8 @@
 use crate::actions::{EvaluationContext, RequestRule, ResponseRule};
 use crate::errors::{DoorkeeperError, ProxyError, WorkerError};
 use crate::frame::{
-    self, FrameOpcode, FrameParams, RequestFrame, ResponseFrame, read_response_frame, write_frame,
+    self, FrameOpcode, FrameParams, RequestFrame, ResponseFrame, ResponseOpcode,
+    read_response_frame, write_frame,
 };
 use crate::{RequestOpcode, TargetShard};
 use bytes::Bytes;
@@ -391,6 +392,7 @@ impl Proxy {
                     active_count: std::sync::atomic::AtomicUsize::new(0),
                     notify: tokio::sync::Notify::new(),
                 });
+                let cc_event_sender = Arc::new(Mutex::new(HashMap::new()));
                 let running = {
                     let (request_rules, response_rules) = match node {
                         InternalNode::Real {
@@ -406,6 +408,7 @@ impl Proxy {
                         request_rules: request_rules.clone(),
                         response_rules: response_rules.cloned(),
                         connection_tracker: connection_tracker.clone(),
+                        cc_event_sender: cc_event_sender.clone(),
                     }
                 };
                 (
@@ -415,6 +418,7 @@ impl Proxy {
                         finish_guard.clone(),
                         error_propagator.clone(),
                         connection_tracker,
+                        cc_event_sender,
                     ),
                     running,
                 )
@@ -439,6 +443,17 @@ pub struct RunningNode {
     request_rules: Arc<Mutex<Vec<RequestRule>>>,
     response_rules: Option<Arc<Mutex<Vec<ResponseRule>>>>,
     connection_tracker: Arc<ConnectionTracker>,
+
+    /// Senders to the driver-facing sockets of all control connections (those
+    /// that sent REGISTER). Keyed by `connection_no` so that each connection
+    /// can be individually removed on close without affecting others.
+    ///
+    /// Populated by `request_processor` when it sees a REGISTER frame,
+    /// entries removed when the corresponding connection closes.
+    ///
+    /// Used by [`inject_event_to_cc`](Self::inject_event_to_cc) to push
+    /// unsolicited EVENT frames to every registered control connection.
+    cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
 }
 
 impl RunningNode {
@@ -509,6 +524,41 @@ impl RunningNode {
             }
             notified.await;
         }
+    }
+
+    /// Injects a CQL EVENT frame into all registered control connections.
+    ///
+    /// Builds an EVENT frame (stream = −1, flags = 0, opcode = Event) with the
+    /// supplied `body` and sends it to every driver that has sent REGISTER on
+    /// this node. Dead senders (closed connections) are pruned automatically.
+    ///
+    /// Returns `true` if the frame was successfully enqueued to at least one
+    /// control connection, `false` if no control connections are currently
+    /// registered or all sends failed.
+    pub fn inject_event_to_cc(&self, body: Bytes) -> bool {
+        let mut guard = self.cc_event_sender.lock().unwrap();
+        if guard.is_empty() {
+            return false;
+        }
+        let mut any_sent = false;
+        guard.retain(|_conn_no, tx| {
+            let frame = ResponseFrame {
+                params: FrameParams {
+                    version: 4,
+                    flags: 0,
+                    stream: -1,
+                }
+                .for_response(),
+                opcode: ResponseOpcode::Event,
+                body: body.clone(),
+            };
+            let ok = tx.send(frame).is_ok();
+            any_sent |= ok;
+            // Remove dead senders (connection already closed on the
+            // receiving end).
+            ok
+        });
+        any_sent
     }
 }
 
@@ -610,6 +660,7 @@ struct Doorkeeper {
     shards_count: Option<u16>,
     error_propagator: ErrorPropagator,
     connection_tracker: Arc<ConnectionTracker>,
+    cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
 }
 
 impl Doorkeeper {
@@ -619,6 +670,7 @@ impl Doorkeeper {
         finish_guard: FinishGuard,
         error_propagator: ErrorPropagator,
         connection_tracker: Arc<ConnectionTracker>,
+        cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
     ) -> Result<(), DoorkeeperError> {
         let listener = TcpListener::bind(node.proxy_addr())
             .await
@@ -655,6 +707,7 @@ impl Doorkeeper {
             finish_guard,
             error_propagator,
             connection_tracker,
+            cc_event_sender,
         };
         tokio::task::spawn(doorkeeper.run());
         Ok(())
@@ -810,6 +863,7 @@ impl Doorkeeper {
             let event_flag = Arc::clone(&event_register_flag);
             let tx_driver_clone = tx_driver.clone();
             let tx_cluster_clone = tx_cluster.clone();
+            let cc_sender = Arc::clone(&self.cc_event_sender);
             tokio::task::spawn(async move {
                 let _conn = guard;
                 worker
@@ -822,6 +876,7 @@ impl Doorkeeper {
                         conn_close,
                         event_flag,
                         compression_writer_request_processor,
+                        cc_sender,
                     )
                     .await;
             });
@@ -1433,6 +1488,7 @@ impl ProxyWorker {
         connection_close_signaler: ConnectionCloseSignaler,
         event_registered_flag: Arc<AtomicBool>,
         compression: CompressionWriter,
+        cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
     ) {
         let shard = self.shard;
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
@@ -1441,6 +1497,17 @@ impl ProxyWorker {
                     Some(request) => {
                         if request.opcode == RequestOpcode::Register {
                             event_registered_flag.store(true, Ordering::Relaxed);
+                            // Expose this connection's driver-facing sender so
+                            // that RunningNode::inject_event_to_cc() can push
+                            // unsolicited EVENT frames to this control connection.
+                            cc_event_sender.lock().unwrap().insert(connection_no, driver_tx.clone());
+                            info!(
+                                "REGISTER seen on connection {} ({} →  {} ({})); registered cc_event_sender",
+                                connection_no,
+                                driver_addr,
+                                DisplayableRealAddrOption(real_addr),
+                                DisplayableShard(shard),
+                            );
                         } else if request.opcode == RequestOpcode::Startup {
                             match compression.set_from_startup(&request.body) {
                                 Err(err) => error!("Failed to deserialize STARTUP frame: {}", err),
@@ -1537,7 +1604,22 @@ impl ProxyWorker {
                         }
                         let _ = cluster_tx.send(request); // default action
                     }
-                    None => return Ok(()),
+                    None => {
+                        // Connection closed. If this was the control
+                        // connection (REGISTER was seen), remove only this
+                        // connection's sender from the shared map.
+                        if event_registered_flag.load(Ordering::Relaxed) {
+                            cc_event_sender.lock().unwrap().remove(&connection_no);
+                            info!(
+                                "Control connection {} ({} →  {} ({})) closed; removed cc_event_sender",
+                                connection_no,
+                                driver_addr,
+                                DisplayableRealAddrOption(real_addr),
+                                DisplayableShard(shard),
+                            );
+                        }
+                        return Ok(());
+                    }
                 }
             }
         })
@@ -1710,7 +1792,7 @@ mod tests {
     use super::compression::no_compression;
     use super::*;
     use crate::errors::ReadFrameError;
-    use crate::frame::{FrameType, read_frame, read_request_frame};
+    use crate::frame::{FrameType, read_frame, read_request_frame, read_response_frame};
     use crate::proxy::compression::with_compression;
     use crate::{
         Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction, setup_tracing,
@@ -3264,5 +3346,210 @@ mod tests {
         .expect("wait_for_connection timed out after driver connected");
 
         running_proxy.finish().await.unwrap();
+    }
+
+    /// Helper: send a REGISTER frame from the driver side and wait until
+    /// the mock node receives it. This is enough for the proxy's
+    /// request_processor to register the cc_event_sender for that
+    /// connection — no response is needed.
+    async fn send_register(driver_conn: &mut TcpStream, node_conn: &mut TcpStream) {
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        write_frame(
+            params,
+            FrameOpcode::Request(RequestOpcode::Register),
+            b"",
+            driver_conn,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+
+        // Wait until the mock node receives the REGISTER so we know the
+        // proxy has already processed it and registered the sender.
+        let _req = read_request_frame(node_conn, &no_compression())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn inject_event_to_cc_returns_false_when_no_control_connections() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let _mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        // No connections at all — inject should return false.
+        assert!(
+            !running_proxy.running_nodes[0].inject_event_to_cc(Bytes::from_static(b"test")),
+            "inject_event_to_cc should return false with no control connections"
+        );
+
+        // finish() may report errors because no real node accepted connections.
+        let _ = running_proxy.finish().await;
+    }
+
+    #[tokio::test]
+    async fn inject_event_to_cc_returns_false_when_connection_did_not_register() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        // Connect but do NOT send REGISTER.
+        let _driver_conn = TcpStream::connect(node_proxy_addr).await.unwrap();
+        let (_node_conn, _) = mock_node_listener.accept().await.unwrap();
+
+        // Connection exists but hasn't sent REGISTER — inject should return false.
+        assert!(
+            !running_proxy.running_nodes[0].inject_event_to_cc(Bytes::from_static(b"test")),
+            "inject_event_to_cc should return false when no REGISTER was sent"
+        );
+
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn inject_event_to_cc_delivers_event_after_register() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        let (mut driver_conn, mut node_conn) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+
+        // Complete the REGISTER handshake so the proxy registers the cc sender.
+        send_register(&mut driver_conn, &mut node_conn).await;
+
+        // Inject an event.
+        let event_body = Bytes::from_static(b"injected_event_payload");
+        assert!(
+            running_proxy.running_nodes[0].inject_event_to_cc(event_body.clone()),
+            "inject_event_to_cc should return true after REGISTER"
+        );
+
+        // Read the injected frame on the driver side.
+        let frame = tokio::time::timeout(
+            Duration::from_millis(100),
+            read_response_frame(&mut driver_conn, &no_compression()),
+        )
+        .await
+        .expect("timed out waiting for injected event")
+        .expect("failed to read injected event frame");
+
+        assert_eq!(frame.opcode, ResponseOpcode::Event);
+        assert_eq!(frame.body, event_body);
+        assert_eq!(frame.params.stream, -1);
+
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn inject_event_to_cc_prunes_closed_connections() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        // Establish first control connection.
+        let (mut driver_conn1, mut node_conn1) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        send_register(&mut driver_conn1, &mut node_conn1).await;
+
+        // Establish second control connection.
+        let (mut driver_conn2, mut node_conn2) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        send_register(&mut driver_conn2, &mut node_conn2).await;
+
+        // Both connections registered — inject should succeed.
+        assert!(running_proxy.running_nodes[0].inject_event_to_cc(Bytes::from_static(b"ev1")));
+
+        // Read event from both.
+        let f1 = read_response_frame(&mut driver_conn1, &no_compression())
+            .await
+            .unwrap();
+        let f2 = read_response_frame(&mut driver_conn2, &no_compression())
+            .await
+            .unwrap();
+        assert_eq!(f1.body, Bytes::from_static(b"ev1"));
+        assert_eq!(f2.body, Bytes::from_static(b"ev1"));
+
+        // Close connection 1 (both sides).
+        drop(driver_conn1);
+        drop(node_conn1);
+
+        // Give the proxy a moment to detect the closed connection and clean up
+        // its cc_event_sender entry.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Inject again — should still succeed via connection 2, and prune
+        // the dead sender for connection 1.
+        assert!(running_proxy.running_nodes[0].inject_event_to_cc(Bytes::from_static(b"ev2")));
+
+        let f2 = read_response_frame(&mut driver_conn2, &no_compression())
+            .await
+            .unwrap();
+        assert_eq!(f2.body, Bytes::from_static(b"ev2"));
+
+        // Close connection 2 as well.
+        drop(driver_conn2);
+        drop(node_conn2);
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Now all control connections are gone — inject should return false.
+        assert!(
+            !running_proxy.running_nodes[0].inject_event_to_cc(Bytes::from_static(b"ev3")),
+            "inject_event_to_cc should return false after all control connections closed"
+        );
+
+        // finish() may report DriverDisconnected errors from the intentionally
+        // dropped connections — that's expected.
+        let _ = running_proxy.finish().await;
     }
 }
