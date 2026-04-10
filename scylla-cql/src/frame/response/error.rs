@@ -717,9 +717,10 @@ mod tests {
 
     #[test]
     fn deserialize_rate_limit_error() {
-        let features = ProtocolFeatures {
-            rate_limit_error: Some(0x4321),
-            ..Default::default()
+        let features = {
+            let mut default = ProtocolFeatures::default();
+            default.rate_limit_error = Some(0x4321);
+            default
         };
         let mut bytes = make_error_request_bytes(0x4321, "message 1");
         bytes.extend([0u8]); // Read type
@@ -735,9 +736,10 @@ mod tests {
         );
         assert_eq!(error.reason, "message 1");
 
-        let features = ProtocolFeatures {
-            rate_limit_error: Some(0x8765),
-            ..Default::default()
+        let features = {
+            let mut default = ProtocolFeatures::default();
+            default.rate_limit_error = Some(0x8765);
+            default
         };
         let mut bytes = make_error_request_bytes(0x8765, "message 2");
         bytes.extend([1u8]); // Write type

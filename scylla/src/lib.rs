@@ -122,10 +122,11 @@ pub mod frame {
     //! Abstractions of the CQL wire protocol.
 
     pub(crate) use scylla_cql::frame::{
-        FrameParams, SerializedRequest, parse_response_body_extensions, protocol_features,
-        read_response_frame, request, server_event_type,
+        FrameParams, SerializedRequest, parse_response_body_extensions, read_response_frame,
+        request, server_event_type,
     };
     pub use scylla_cql_core::frame::frame_errors;
+    pub use scylla_cql_core::frame::protocol_features;
     pub use scylla_cql_core::frame::{Authenticator, Compression};
 
     pub mod types {
