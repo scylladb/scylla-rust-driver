@@ -276,7 +276,14 @@ impl Cluster {
     // Consider making it accept an enum in the future. Supported authenticators:
     // https://github.com/scylladb/scylladb/blob/529ff3efa57553eef6b0239b03b81581b70fb9ed/db/config.cc#L1045-L1051.
     pub(crate) async fn enable_password_authentication(&mut self) -> Result<(), Error> {
-        let args = [("authenticator", "PasswordAuthenticator")];
+        let args = [
+            ("authenticator", "PasswordAuthenticator"),
+            ("auth_superuser_name", "cassandra"),
+            (
+                "auth_superuser_salted_password",
+                "$6$x7IFjiX5VCpvNiFk$2IfjTvSyGL7zerpV.wbY7mJjaRCrJ/68dtT3UpT.sSmNYz1bPjtn3mH.kJKFvaZ2T4SbVeBijjmwGjcb83LlV/",
+            ),
+        ];
 
         self.updateconf(args).await
     }
