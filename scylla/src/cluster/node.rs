@@ -26,19 +26,22 @@ use std::{
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
-/// This enum is introduced to support address translation only upon opening a connection,
-/// as well as to cope with a bug present in older Cassandra and ScyllaDB releases.
-/// The bug involves misconfiguration of rpc_address and/or broadcast_rpc_address
-/// in system.local to 0.0.0.0. Mitigation involves replacing the faulty address
-/// with connection's address, but then that address must not be subject to `AddressTranslator`,
-/// so we carry that information using this enum. Address translation is never performed
-/// on `Untranslatable` variant.
+/// This enum is introduced to support address translation only upon opening a connection.
+///
+/// Address translation is never performed on `Untranslatable` variant, which is intended for
+/// contact points. The `Translatable` variant is used for addresses broadcast by nodes themselves.
+///
+/// Historically, this enum had another use: to cope with a bug present in older Cassandra and ScyllaDB
+/// releases: <https://github.com/scylladb/scylladb/issues/11201>. The bug involved misconfiguration
+/// of rpc_address and/or broadcast_rpc_address in system.local to 0.0.0.0. Mitigation involved
+/// replacing the faulty address with connection's address, but then that address had to not be subject
+/// to `AddressTranslator`, so we carried that information using this enum.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum NodeAddr {
     /// Fetched in Metadata with `query_peers()` (broadcast by a node itself).
     Translatable(SocketAddr),
-    /// Built from control connection's address upon `query_peers()` in order to mitigate the bug described above.
+    /// Stores contact points, because they are provided as already translated addresses.
     Untranslatable(SocketAddr),
 }
 

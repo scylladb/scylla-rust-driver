@@ -300,20 +300,8 @@ impl ControlConnection {
 
         let connect_port = local_address.port();
         let untranslated_address = SocketAddr::new(untranslated_ip_addr, connect_port);
-
-        let node_addr = match source {
-            NodeInfoSource::Local => {
-                // For the local node we should use connection's address instead of rpc_address.
-                // (The reason is that rpc_address in system.local can be wrong.)
-                // Thus, we replace address in local_rows with connection's address.
-                // We need to replace rpc_address with control connection address.
-                NodeAddr::Untranslatable(local_address)
-            }
-            NodeInfoSource::Peer => {
-                // The usual case - no translation.
-                NodeAddr::Translatable(untranslated_address)
-            }
-        };
+        // The fetched private addresses are subject to optional address translation.
+        let node_addr = NodeAddr::Translatable(untranslated_address);
 
         let tokens_str: Vec<String> = tokens.unwrap_or_default();
 
