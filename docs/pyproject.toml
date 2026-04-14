@@ -10,7 +10,7 @@ dependencies = [
     "myst-parser>=5.0.0",
     "sphinx-autobuild>=2025.4.8",
     "sphinx>=9.0",
-    "sphinx-multiversion-scylla>=0.3.7",
+    "sphinx-multiversion-scylla>=0.3.8",
     "sphinx-sitemap>=2.9.0",
     "sphinx-scylladb-markdown>=0.1.2",
 ]
