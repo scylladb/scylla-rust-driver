@@ -1,3 +1,4 @@
+pub mod batch;
 pub mod query;
 
 /// Possible requests sent by the client.
