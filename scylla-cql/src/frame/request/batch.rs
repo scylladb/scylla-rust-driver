@@ -19,7 +19,7 @@ use super::{DeserializableRequest, RequestDeserializationError};
 // Re-export for backward compatibility.
 pub use crate::frame::frame_errors::{BatchSerializationError, BatchStatementSerializationError};
 
-pub use scylla_cql_core::frame::request::batch::{BatchType, BatchTypeParseError};
+pub use scylla_cql_core::frame::request::batch::{BatchStatement, BatchType, BatchTypeParseError};
 
 // Batch flags
 const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
@@ -52,21 +52,6 @@ where
 
     /// The bound values for the batch statements.
     pub values: Values,
-}
-
-/// A single statement in a batch, which can either be a statement string or a prepared statement ID.
-#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
-pub enum BatchStatement<'a> {
-    /// Unprepared CQL statement.
-    Query {
-        /// CQL statement string.
-        text: Cow<'a, str>,
-    },
-    /// Prepared CQL statement.
-    Prepared {
-        /// Prepared CQL statement's ID.
-        id: Cow<'a, [u8]>,
-    },
 }
 
 impl<Statement, Values> Batch<'_, Statement, Values>
@@ -225,15 +210,6 @@ fn serialize_batch_statement(
     }
 
     Ok(())
-}
-
-impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
-    fn from(value: &'s BatchStatement) -> Self {
-        match value {
-            BatchStatement::Query { text } => BatchStatement::Query { text: text.clone() },
-            BatchStatement::Prepared { id } => BatchStatement::Prepared { id: id.clone() },
-        }
-    }
 }
 
 impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedValues>> {

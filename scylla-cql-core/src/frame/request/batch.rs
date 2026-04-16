@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use thiserror::Error;
 
 /// The type of a batch.
@@ -36,6 +37,30 @@ impl TryFrom<u8> for BatchType {
             1 => Ok(Self::Unlogged),
             2 => Ok(Self::Counter),
             _ => Err(BatchTypeParseError { value }),
+        }
+    }
+}
+
+/// A single statement in a batch, which can either be a statement string or a prepared statement ID.
+#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
+pub enum BatchStatement<'a> {
+    /// Unprepared CQL statement.
+    Query {
+        /// CQL statement string.
+        text: Cow<'a, str>,
+    },
+    /// Prepared CQL statement.
+    Prepared {
+        /// Prepared CQL statement's ID.
+        id: Cow<'a, [u8]>,
+    },
+}
+
+impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
+    fn from(value: &'s BatchStatement) -> Self {
+        match value {
+            BatchStatement::Query { text } => BatchStatement::Query { text: text.clone() },
+            BatchStatement::Prepared { id } => BatchStatement::Prepared { id: id.clone() },
         }
     }
 }
