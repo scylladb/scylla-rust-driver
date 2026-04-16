@@ -55,6 +55,10 @@ clippy-all-features:
 	RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --all-features
 
 
+.PHONY: check-cql-imports
+check-cql-imports:
+	./scripts/check-cql-imports.sh
+
 .PHONY: check-rustdoc-leaks
 check-rustdoc-leaks:
 	RUSTDOCFLAGS="-Zunstable-options" cargo +nightly rustdoc -p scylla -- --output-format json

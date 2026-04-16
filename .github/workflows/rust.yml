@@ -39,6 +39,10 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+      # Verify scylla-cql[-core] imports
+      - name: scylla-cql-[core] imports
+        run: make check-cql-imports
+
       # Basic clippy checks
       - name: Clippy check
         run: cargo clippy --all-targets
