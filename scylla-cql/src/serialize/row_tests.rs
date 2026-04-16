@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::SerializeRow;
@@ -32,12 +31,12 @@ fn do_serialize_err<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> Serializat
     t.serialize(&ctx, &mut builder).unwrap_err()
 }
 
-fn col<'a>(name: impl Into<Cow<'a, str>>, typ: ColumnType<'a>) -> ColumnSpec<'a> {
-    ColumnSpec {
-        name: name.into(),
-        typ,
-        table_spec: TableSpec::borrowed("ks", "tbl"),
-    }
+fn col<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+    ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
+}
+
+fn col_owned(name: String, typ: ColumnType<'static>) -> ColumnSpec<'static> {
+    ColumnSpec::owned(name, typ, TableSpec::borrowed("ks", "tbl"))
 }
 
 fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {
@@ -881,7 +880,7 @@ fn tuple_value_list() {
         let typs = expected
             .clone()
             .enumerate()
-            .map(|(i, _)| col(format!("col_{i}"), ColumnType::Native(NativeType::TinyInt)))
+            .map(|(i, _)| col_owned(format!("col_{i}"), ColumnType::Native(NativeType::TinyInt)))
             .collect::<Vec<_>>();
         let serialized = serialize_values(tuple, &typs);
         assert_eq!(serialized.element_count() as usize, expected.len());

@@ -7,14 +7,8 @@ use crate::serialize::row::RowSerializationContext;
 use assert_matches::assert_matches;
 use bytes::BufMut;
 
-use std::{borrow::Cow, convert::TryInto};
-
-fn col<'a>(name: impl Into<Cow<'a, str>>, typ: ColumnType<'a>) -> ColumnSpec<'a> {
-    ColumnSpec {
-        name: name.into(),
-        typ,
-        table_spec: TableSpec::borrowed("ks", "tbl"),
-    }
+fn col<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+    ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
 }
 
 fn make_batch_value_iter<BV: BatchValues>(bv: &BV) -> BV::BatchValuesIter<'_> {
