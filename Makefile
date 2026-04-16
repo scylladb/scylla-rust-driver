@@ -6,7 +6,7 @@ export RUSTFLAGS
 all: test
 
 .PHONY: static
-static: fmt-check check check-without-features check-without-unstable check-without-unstable-and-features check-all-features clippy clippy-all-features check-book-tests check-rustdoc-leaks
+static: fmt-check check check-without-features check-without-unstable check-without-unstable-and-features check-all-features clippy clippy-all-features check-book-tests check-rustdoc-leaks check-cql-imports
 
 .PHONY: ci
 ci: static test
@@ -54,6 +54,10 @@ clippy:
 clippy-all-features:
 	RUSTFLAGS="${RUSTFLAGS} -Dwarnings" cargo clippy --all-targets --all-features
 
+
+.PHONY: check-cql-imports
+check-cql-imports:
+	./scripts/check-cql-imports.sh
 
 .PHONY: check-rustdoc-leaks
 check-rustdoc-leaks:
