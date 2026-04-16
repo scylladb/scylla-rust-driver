@@ -678,54 +678,108 @@ impl Doorkeeper {
             compression_reader_sender_to_cluster,
         ) = compression::make_compression_infra();
 
-        tokio::task::spawn(new_worker().receiver_from_driver(
-            driver_read,
-            tx_request,
-            compression_reader_receiver_from_driver,
-        ));
-        tokio::task::spawn(new_worker().sender_to_driver(
-            driver_write,
-            rx_driver,
-            connection_close_tx.subscribe(),
-            self.terminate_signaler.subscribe(),
-            compression_reader_sender_to_driver,
-        ));
-        tokio::task::spawn(new_worker().request_processor(
-            rx_request,
-            tx_driver.clone(),
-            tx_cluster.clone(),
-            connection_no,
-            self.node.request_rules().clone(),
-            connection_close_tx.clone(),
-            event_register_flag.clone(),
-            compression_writer_request_processor,
-        ));
+        {
+            let worker = new_worker();
+            tokio::task::spawn(async move {
+                worker
+                    .receiver_from_driver(
+                        driver_read,
+                        tx_request,
+                        compression_reader_receiver_from_driver,
+                    )
+                    .await;
+            });
+        }
+        {
+            let worker = new_worker();
+            let conn_close_sub = connection_close_tx.subscribe();
+            let term_sub = self.terminate_signaler.subscribe();
+            tokio::task::spawn(async move {
+                worker
+                    .sender_to_driver(
+                        driver_write,
+                        rx_driver,
+                        conn_close_sub,
+                        term_sub,
+                        compression_reader_sender_to_driver,
+                    )
+                    .await;
+            });
+        }
+        {
+            let worker = new_worker();
+            let request_rules = Arc::clone(self.node.request_rules());
+            let conn_close = connection_close_tx.clone();
+            let event_flag = Arc::clone(&event_register_flag);
+            let tx_driver_clone = tx_driver.clone();
+            let tx_cluster_clone = tx_cluster.clone();
+            tokio::task::spawn(async move {
+                worker
+                    .request_processor(
+                        rx_request,
+                        tx_driver_clone,
+                        tx_cluster_clone,
+                        connection_no,
+                        request_rules,
+                        conn_close,
+                        event_flag,
+                        compression_writer_request_processor,
+                    )
+                    .await;
+            });
+        }
         if let InternalNode::Real {
             ref response_rules, ..
         } = self.node
         {
             let (cluster_read, cluster_write) = cluster_stream.unwrap().into_split();
-            tokio::task::spawn(new_worker().sender_to_cluster(
-                cluster_write,
-                rx_cluster,
-                connection_close_tx.subscribe(),
-                self.terminate_signaler.subscribe(),
-                compression_reader_sender_to_cluster,
-            ));
-            tokio::task::spawn(new_worker().receiver_from_cluster(
-                cluster_read,
-                tx_response,
-                compression_reader_receiver_from_cluster,
-            ));
-            tokio::task::spawn(new_worker().response_processor(
-                rx_response,
-                tx_driver,
-                tx_cluster,
-                connection_no,
-                response_rules.clone(),
-                connection_close_tx.clone(),
-                event_register_flag.clone(),
-            ));
+            {
+                let worker = new_worker();
+                let conn_close_sub = connection_close_tx.subscribe();
+                let term_sub = self.terminate_signaler.subscribe();
+                tokio::task::spawn(async move {
+                    worker
+                        .sender_to_cluster(
+                            cluster_write,
+                            rx_cluster,
+                            conn_close_sub,
+                            term_sub,
+                            compression_reader_sender_to_cluster,
+                        )
+                        .await;
+                });
+            }
+            {
+                let worker = new_worker();
+                tokio::task::spawn(async move {
+                    worker
+                        .receiver_from_cluster(
+                            cluster_read,
+                            tx_response,
+                            compression_reader_receiver_from_cluster,
+                        )
+                        .await;
+                });
+            }
+            {
+                let worker = new_worker();
+                let response_rules = Arc::clone(response_rules);
+                let conn_close = connection_close_tx.clone();
+                let event_flag = Arc::clone(&event_register_flag);
+                tokio::task::spawn(async move {
+                    worker
+                        .response_processor(
+                            rx_response,
+                            tx_driver,
+                            tx_cluster,
+                            connection_no,
+                            response_rules,
+                            conn_close,
+                            event_flag,
+                        )
+                        .await;
+                });
+            }
         }
         debug!(
             "Doorkeeper with addr {} of node {} spawned workers.",
