@@ -322,21 +322,34 @@ impl Cluster {
         not(all(scylla_unstable, feature = "unstable-host-listener")),
         expect(dead_code)
     )]
+    /// Add a new node to the cluster in the given datacenter.
+    ///
+    /// `datacenter_id` uses **1-based** CCM naming: `1` →  `dc1`, `2` →  `dc2`, etc.
+    /// The value stored in [`NodeOptions::datacenter_id`] is **0-based** (matching
+    /// the convention used by [`Cluster::new`]).
     pub(crate) async fn add_node(
         &mut self,
         datacenter_id: Option<u16>,
     ) -> Result<&mut Node, Error> {
         let id = self.nodes.get_free_node_id().expect("No available node id");
-        let datacenter_id = datacenter_id.unwrap_or(1);
+        // CCM uses 1-based DC names: dc1, dc2, …
+        let ccm_dc_id = datacenter_id.unwrap_or(1);
         let node_options = NodeOptions {
             id,
-            datacenter_id,
+            // Store as 0-based to match the convention from Cluster::new().
+            datacenter_id: ccm_dc_id - 1,
             ..NodeOptions::from_cluster_opts(&self.opts)
         };
-        let datacenter_name = format!("dc{datacenter_id}");
+        let datacenter_name = format!("dc{ccm_dc_id}");
+        // Pass the node's IP explicitly via `-i`. Without it, CCM
+        // auto-assigns based on `len(nodelist) + 1`, which diverges from
+        // our `get_free_node_id()` when there are gaps (e.g., after a
+        // decommission reuses a lower ID).
+        let node_ip = self.opts.ip_prefix.to_ipaddress(id).to_string();
         self.ccm_cmd
             .cluster_add_node(self.opts.db_type, node_options.name())
             .dc(datacenter_name)
+            .address(node_ip)
             .run()
             .await?;
         Ok(self.append_node(node_options))
