@@ -23,10 +23,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::frame::response::result::{ColumnSpec, TableSpec};
+use crate::parse_utils::{ParseErrorCause, ParseResult, ParserState};
 use futures::{FutureExt, Stream, StreamExt, TryStreamExt, future, stream};
 use rand::Rng;
-use scylla_cql::frame::response::result::{ColumnSpec, TableSpec};
-use scylla_cql::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
@@ -494,7 +494,7 @@ impl ControlConnection {
         async fn query_client_routes_with_values(
             conn: &ControlConnection,
             query_str: &str,
-            values: &(dyn scylla_cql::serialize::row::SerializeRow + Sync),
+            values: &(dyn crate::serialize::row::SerializeRow + Sync),
         ) -> Result<ClientRoutes, MetadataError> {
             conn.query_iter(query_str, values)
                 .into_stream()
@@ -520,25 +520,27 @@ impl ControlConnection {
         let filter_by_connection_ids = !connection_ids.is_empty();
         let filter_by_host_ids = !host_ids.is_empty();
 
-        let (query_str, values): (&str, &(dyn scylla_cql::serialize::row::SerializeRow + Sync)) =
-            match (filter_by_connection_ids, filter_by_host_ids) {
-                (true, true) => (
-                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE connection_id IN ? AND host_id IN ?",
-                    &(connection_ids, host_ids),
-                ),
-                (true, false) => (
-                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE connection_id IN ?",
-                    &(connection_ids,),
-                ),
-                (false, true) => (
-                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE host_id IN ? ALLOW FILTERING",
-                    &(host_ids,),
-                ),
-                (false, false) => (
-                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes ALLOW FILTERING",
-                    &(),
-                ),
-            };
+        let (query_str, values): (&str, &(dyn crate::serialize::row::SerializeRow + Sync)) = match (
+            filter_by_connection_ids,
+            filter_by_host_ids,
+        ) {
+            (true, true) => (
+                "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE connection_id IN ? AND host_id IN ?",
+                &(connection_ids, host_ids),
+            ),
+            (true, false) => (
+                "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE connection_id IN ?",
+                &(connection_ids,),
+            ),
+            (false, true) => (
+                "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE host_id IN ? ALLOW FILTERING",
+                &(host_ids,),
+            ),
+            (false, false) => (
+                "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes ALLOW FILTERING",
+                &(),
+            ),
+        };
 
         let routes = query_client_routes_with_values(self, query_str, values).await?;
 

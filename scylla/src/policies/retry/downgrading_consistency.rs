@@ -1,4 +1,4 @@
-use scylla_cql::Consistency;
+use crate::frame::types::Consistency;
 use tracing::debug;
 
 use super::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
@@ -220,8 +220,8 @@ impl RetrySession for DowngradingConsistencyRetrySession {
 
 #[cfg(test)]
 mod tests {
+    use crate::frame::frame_errors::{BatchSerializationError, CqlRequestSerializationError};
     use bytes::Bytes;
-    use scylla_cql::frame::frame_errors::{BatchSerializationError, CqlRequestSerializationError};
 
     use crate::errors::{BrokenConnectionErrorKind, RequestAttemptError};
     use crate::test_utils::setup_tracing;
