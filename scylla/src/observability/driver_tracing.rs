@@ -1,11 +1,11 @@
 use crate::cluster::node::Node;
+use crate::frame::response::result::{ColumnSpec, DeserializedMetadataAndRawRows};
 use crate::network::Connection;
 use crate::response::query_result::QueryResult;
 use crate::routing::{Shard, Token};
 use crate::utils::safe_format::IteratorSafeFormatExt;
+use crate::value::deser_cql_value;
 use itertools::Either;
-use scylla_cql::frame::response::result::{ColumnSpec, DeserializedMetadataAndRawRows};
-use scylla_cql::value::deser_cql_value;
 use std::borrow::Borrow;
 use std::fmt::Display;
 use std::sync::Arc;

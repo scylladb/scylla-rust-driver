@@ -18,7 +18,6 @@ use std::time::Duration;
 
 use rand::rng;
 use rand::seq::{IndexedRandom, SliceRandom};
-use scylla_cql::frame::response::event::ClientRoutesChangeEvent;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
 
@@ -28,6 +27,7 @@ use crate::cluster::control_connection::{ControlConnection, ControlConnectionCac
 use crate::cluster::metadata::{Metadata, PeerEndpoint, UntranslatedEndpoint};
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
+use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::frame::response::event::EventV2 as Event;
 use crate::frame::server_event_type::EventTypeV2 as EventType;
 use crate::network::{ConnectionConfig, open_connection};

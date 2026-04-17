@@ -164,8 +164,8 @@
 
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
+use crate::frame::types::{Consistency, SerialConsistency};
 use arc_swap::ArcSwap;
-use scylla_cql::{Consistency, frame::types::SerialConsistency};
 
 use crate::policies::load_balancing::LoadBalancingPolicy;
 use crate::policies::retry::RetryPolicy;
@@ -173,11 +173,10 @@ use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
 
 pub(crate) mod defaults {
     use super::ExecutionProfileInner;
+    use crate::frame::types::{Consistency, SerialConsistency};
     use crate::policies::load_balancing::{self, LoadBalancingPolicy};
     use crate::policies::retry::{DefaultRetryPolicy, RetryPolicy};
     use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
-    use scylla_cql::Consistency;
-    use scylla_cql::frame::types::SerialConsistency;
     use std::sync::Arc;
     use std::time::Duration;
     pub(crate) fn consistency() -> Consistency {

@@ -6,11 +6,11 @@ use std::fmt::Debug;
 use thiserror::Error;
 use uuid::Uuid;
 
-use scylla_cql::deserialize::result::TypedRowIterator;
-use scylla_cql::deserialize::row::DeserializeRow;
-use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
-use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
-use scylla_cql::frame::response::result::{ColumnSpec, DeserializedMetadataAndRawRows};
+use crate::deserialize::result::TypedRowIterator;
+use crate::deserialize::row::DeserializeRow;
+use crate::deserialize::{DeserializationError, TypeCheckError};
+use crate::frame::frame_errors::ResultMetadataAndRowsCountParseError;
+use crate::frame::response::result::{ColumnSpec, DeserializedMetadataAndRawRows};
 
 use crate::response::Coordinator;
 
@@ -491,11 +491,11 @@ pub struct ResultNotRowsError;
 
 #[cfg(test)]
 mod tests {
+    use crate::frame::response::result::{ColumnType, NativeType, ResultMetadata, TableSpec};
+    use crate::frame::types;
     use assert_matches::assert_matches;
     use bytes::{Bytes, BytesMut};
     use itertools::Itertools as _;
-    use scylla_cql::frame::response::result::{ColumnType, NativeType, ResultMetadata, TableSpec};
-    use scylla_cql::frame::types;
 
     use super::*;
 

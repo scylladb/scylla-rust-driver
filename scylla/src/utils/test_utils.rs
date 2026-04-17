@@ -1,4 +1,4 @@
-use scylla_cql::frame::response::error::DbError;
+use crate::errors::DbError;
 use tracing::{error, warn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;

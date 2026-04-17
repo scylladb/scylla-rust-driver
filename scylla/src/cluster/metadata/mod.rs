@@ -23,16 +23,14 @@ pub(super) mod reader;
 use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 use crate::routing::Token;
 
-use scylla_cql::frame::response::result::ColumnSpec;
+use crate::frame::response::result::ColumnSpec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
 // Re-export of CQL types.
-pub use scylla_cql_core::frame::response::result::{
-    CollectionType, ColumnType, NativeType, UserDefinedType,
-};
+pub use crate::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
 
 /// Indicates that reading metadata failed, but in a way
 /// that we can handle, by throwing out data for a keyspace.

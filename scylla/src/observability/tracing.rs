@@ -10,8 +10,8 @@
 
 use crate::DeserializeRow;
 use crate::value::CqlTimestamp;
+use crate::value::CqlTimeuuid;
 use itertools::Itertools;
-use scylla_cql::value::CqlTimeuuid;
 use std::collections::HashMap;
 use std::net::IpAddr;
 

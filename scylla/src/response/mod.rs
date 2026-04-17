@@ -11,8 +11,8 @@ mod coordinator;
 pub mod query_result;
 mod request_response;
 
+pub use crate::frame::request::query::{PagingState, PagingStateResponse};
 pub use coordinator::Coordinator;
 pub(crate) use request_response::{
     NonErrorAuthResponse, NonErrorQueryResponse, NonErrorStartupResponse, QueryResponse,
 };
-pub use scylla_cql_core::frame::request::query::{PagingState, PagingStateResponse};

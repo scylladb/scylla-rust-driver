@@ -111,6 +111,7 @@ pub mod value {
     //! as well as conversion between them and other types.
 
     // Most types come from scylla-cql-core.
+    pub(crate) use scylla_cql::value::deser_cql_value;
     pub use scylla_cql_core::value::{
         Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
         CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, Emptiable, MaybeEmpty, MaybeUnset,
@@ -132,12 +133,16 @@ pub mod frame {
     pub mod types {
         //! CQL binary protocol in-wire types.
 
+        #[cfg(test)]
+        pub(crate) use scylla_cql::frame::types::{read_string_map, write_bytes_opt};
+        pub(crate) use scylla_cql_core::frame::types::RawValue;
         pub use scylla_cql_core::frame::types::{Consistency, SerialConsistency};
     }
 
     pub mod response {
         //! CQL responses sent by the server.
 
+        pub use scylla_cql::frame::response::CqlResponseKind;
         pub(crate) use scylla_cql::frame::response::*;
 
         pub mod result {
@@ -175,6 +180,7 @@ pub mod serialize {
     /// Contains the [SerializeRow][row::SerializeRow] trait and its implementations.
     pub mod row {
         // Main types
+        pub(crate) use scylla_cql_core::serialize::row::SerializedValues;
         pub use scylla_cql_core::serialize::row::{RowSerializationContext, SerializeRow};
 
         // Errors
@@ -205,6 +211,10 @@ pub mod serialize {
             CellOverflowError, CellValueBuilder, CellWriter, RowWriter, WrittenCellProof,
         };
     }
+
+    pub(crate) mod raw_batch {
+        pub(crate) use scylla_cql::serialize::raw_batch::RawBatchValuesAdapter;
+    }
 }
 
 pub mod deserialize {
@@ -214,6 +224,7 @@ pub mod deserialize {
 
     /// Deserializing the whole query result contents.
     pub mod result {
+        pub(crate) use scylla_cql::deserialize::result::RawRowLendingIterator;
         pub use scylla_cql_core::deserialize::result::TypedRowIterator;
     }
 
@@ -268,6 +279,10 @@ pub mod statement;
 
 pub(crate) mod utils;
 
+pub(crate) mod parse_utils {
+    pub(crate) use scylla_cql::utils::parse::{ParseErrorCause, ParseResult, ParserState};
+}
+
 #[cfg(test)]
 pub(crate) use utils::test_utils;
 
@@ -277,7 +292,7 @@ mod book_tests;
 #[cfg(all(scylla_unstable, feature = "unstable-testing"))]
 #[doc(hidden)]
 pub mod internal_testing {
-    use scylla_cql::serialize::row::SerializedValues;
+    use crate::serialize::row::SerializedValues;
 
     use crate::routing::Token;
     use crate::routing::partitioner::PartitionerName;

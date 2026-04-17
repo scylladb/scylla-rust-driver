@@ -3,6 +3,7 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterState;
+use crate::frame::response::result::TableSpec;
 use crate::{
     cluster::metadata::Strategy,
     cluster::node::Node,
@@ -13,7 +14,6 @@ use crate::{
 use itertools::{Either, Itertools};
 use rand::{Rng, prelude::SliceRandom, rng};
 use rand_pcg::Pcg32;
-use scylla_cql::frame::response::result::TableSpec;
 use std::hash::{Hash, Hasher};
 use std::{fmt, sync::Arc, time::Duration};
 use tracing::{debug, warn};
@@ -1146,7 +1146,7 @@ impl<'a> TokenWithStrategy<'a> {
 mod tests {
     use std::collections::HashMap;
 
-    use scylla_cql::{Consistency, frame::types::SerialConsistency};
+    use crate::frame::types::{Consistency, SerialConsistency};
     use tracing::info;
 
     use self::framework::{
@@ -3174,7 +3174,7 @@ mod latency_awareness {
 
     #[cfg(test)]
     mod tests {
-        use scylla_cql::Consistency;
+        use crate::frame::types::Consistency;
 
         use super::{
             super::DefaultPolicy,

@@ -1,6 +1,6 @@
+use crate::frame::response::result::TableSpec;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use scylla_cql::frame::response::result::TableSpec;
 use uuid::Uuid;
 
 use super::tablets::TabletsInfo;
