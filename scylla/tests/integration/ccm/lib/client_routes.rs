@@ -33,6 +33,7 @@ use std::panic::AssertUnwindSafe;
 use std::time::Duration;
 
 use anyhow::{Context, Error, bail};
+use bytes::Bytes;
 use futures::FutureExt;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;
@@ -693,6 +694,202 @@ impl ClientRoutesCluster {
         Ok(new_node_id)
     }
 
+    /// Build the body of a `CLIENT_ROUTES_CHANGE` / `UPDATE_NODES` event for
+    /// the specified nodes.
+    ///
+    /// The resulting body contains parallel `connection_ids` and `host_ids`
+    /// arrays — one entry per target node, using each node's DC-specific
+    /// connection ID paired with its host UUID.
+    ///
+    /// Panics if any `node_id` is missing from `self.host_ids` or does not
+    /// belong to any DC.
+    pub(crate) fn build_event_body_for_nodes(&self, target_node_ids: &[NodeId]) -> Bytes {
+        let mut connection_ids: Vec<String> = Vec::new();
+        let mut host_id_strings: Vec<String> = Vec::new();
+
+        for &node_id in target_node_ids {
+            let uuid = self
+                .host_ids
+                .get(&node_id)
+                .unwrap_or_else(|| panic!("Node {} not found in host_ids", node_id));
+
+            let dc_cfg = self
+                .dc_configs
+                .values()
+                .find(|dc| dc.per_node_chains.contains_key(&node_id))
+                .unwrap_or_else(|| panic!("Node {} not found in any DC", node_id));
+
+            connection_ids.push(dc_cfg.connection_id.clone());
+            host_id_strings.push(uuid.to_string());
+        }
+
+        build_client_routes_change_body(&connection_ids, &host_id_strings)
+    }
+
+    /// Set up re-query detection rules on all proxy nodes.
+    ///
+    /// Installs a single request rule on every proxy that detects the driver's
+    /// event-triggered re-query of `system.client_routes`. The detection uses
+    /// `EXECUTE` opcode with `BodyContainsCaseSensitive(b"rust-driver-test")`
+    /// because the event-triggered query uses `WHERE connection_id IN ?`,
+    /// which serializes the connection ID string in the EXECUTE body.
+    ///
+    /// The actual event injection is performed separately via
+    /// [`inject_event`](Self::inject_event).
+    ///
+    /// Returns a map from `NodeId` to the feedback receiver. The test should
+    /// await a message on *any* receiver (only the proxy hosting the control
+    /// connection will produce one).
+    pub(crate) fn setup_event_requery_detection(
+        &mut self,
+    ) -> HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>> {
+        let mut receivers = HashMap::new();
+
+        for dc_cfg in self.dc_configs.values_mut() {
+            for (&node_id, chain) in dc_cfg.per_node_chains.iter_mut() {
+                let (tx, rx) = mpsc::unbounded_channel();
+
+                // Detect the driver's re-query of system.client_routes after
+                // receiving the injected event. The driver uses PREPARE+EXECUTE;
+                // the EXECUTE body contains the serialized connection_id string
+                // (e.g. "rust-driver-test-dc1") as a query parameter.
+                let requery_condition = Condition::RequestOpcode(RequestOpcode::Execute)
+                    .and(Condition::ConnectionRegisteredAnyEvent)
+                    .and(Condition::BodyContainsCaseSensitive(
+                        CONNECTION_ID_BASE.as_bytes().to_vec().into_boxed_slice(),
+                    ));
+
+                let requery_rule = RequestRule(
+                    requery_condition,
+                    RequestReaction::noop().with_feedback_when_performed(tx),
+                );
+
+                chain.running_proxy.running_nodes[0].change_request_rules(Some(vec![requery_rule]));
+
+                receivers.insert(node_id, rx);
+            }
+        }
+
+        receivers
+    }
+
+    /// Inject a well-formed `CLIENT_ROUTES_CHANGE` event into the control
+    /// connection via the proxy's proactive injection API.
+    ///
+    /// `target_node_ids` specifies which nodes appear in the event body's
+    /// parallel `(connection_id, host_id)` arrays.
+    ///
+    /// Returns the number of proxy nodes that successfully injected the event
+    /// (expected to be 1 — only the CC's proxy has a registered sender).
+    pub(crate) fn inject_event(&self, target_node_ids: &[NodeId]) -> usize {
+        let event_body = self.build_event_body_for_nodes(target_node_ids);
+
+        let mut injected = 0;
+        for dc_cfg in self.dc_configs.values() {
+            for chain in dc_cfg.per_node_chains.values() {
+                if chain.running_proxy.running_nodes[0].inject_event_to_cc(event_body.clone()) {
+                    injected += 1;
+                }
+            }
+        }
+
+        info!(
+            "inject_event: injected CLIENT_ROUTES_CHANGE on {} proxy node(s) for target nodes {:?}",
+            injected, target_node_ids,
+        );
+        injected
+    }
+
+    /// Set up metadata-refresh detection rules on all proxy nodes for
+    /// post-malformed-event recovery.
+    ///
+    /// Installs a single request rule on every proxy that detects an `EXECUTE`
+    /// on the control connection whose body contains the connection ID base
+    /// string. After a malformed event breaks the CC, the driver reconnects
+    /// and performs a full metadata refresh which re-fetches
+    /// `system.client_routes` via `WHERE connection_id IN ?`. The serialized
+    /// connection ID appears in the EXECUTE body.
+    ///
+    /// We match on EXECUTE (not PREPARE) because in the current driver's
+    /// implementation, `ControlConnectionCache` is shared across CC reconnections,
+    /// so the prepared statement from the old CC is reused — no PREPARE is sent.
+    ///
+    /// The actual malformed event injection is performed separately via
+    /// [`inject_malformed_event`](Self::inject_malformed_event).
+    ///
+    /// Returns a map from `NodeId` to the feedback receiver.
+    pub(crate) fn setup_malformed_event_requery_detection(
+        &mut self,
+    ) -> HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>> {
+        let mut receivers = HashMap::new();
+
+        for dc_cfg in self.dc_configs.values_mut() {
+            for (&node_id, chain) in dc_cfg.per_node_chains.iter_mut() {
+                let (tx, rx) = mpsc::unbounded_channel();
+
+                // Detect the metadata refresh (EXECUTE for
+                // system.client_routes on the new control connection).
+                // The EXECUTE body contains the serialized connection_id
+                // string as a query parameter.
+                let requery_condition = Condition::RequestOpcode(RequestOpcode::Execute)
+                    .and(Condition::ConnectionRegisteredAnyEvent)
+                    .and(Condition::BodyContainsCaseSensitive(
+                        CONNECTION_ID_BASE.as_bytes().to_vec().into_boxed_slice(),
+                    ));
+
+                let requery_rule = RequestRule(
+                    requery_condition,
+                    RequestReaction::noop().with_feedback_when_performed(tx),
+                );
+
+                chain.running_proxy.running_nodes[0].change_request_rules(Some(vec![requery_rule]));
+
+                receivers.insert(node_id, rx);
+            }
+        }
+
+        receivers
+    }
+
+    /// Inject a malformed `CLIENT_ROUTES_CHANGE` event into the control
+    /// connection via the proxy's proactive injection API.
+    ///
+    /// The event body has mismatched array lengths (3 connection_ids, 2
+    /// host_ids), which causes the driver's event parser to fail with
+    /// `ConnectionHostIdsLengthMismatch`, killing the reader task and
+    /// breaking the control connection.
+    ///
+    /// Returns the number of proxy nodes that successfully injected the event
+    /// (expected to be 1).
+    pub(crate) fn inject_malformed_event(&self) -> usize {
+        let malformed_body = build_client_routes_change_body(
+            &[
+                "bogus-conn-1".to_string(),
+                "bogus-conn-2".to_string(),
+                "bogus-conn-3".to_string(),
+            ],
+            &[
+                "00000000-0000-0000-0000-000000000001".to_string(),
+                "00000000-0000-0000-0000-000000000002".to_string(),
+            ],
+        );
+
+        let mut injected = 0;
+        for dc_cfg in self.dc_configs.values() {
+            for chain in dc_cfg.per_node_chains.values() {
+                if chain.running_proxy.running_nodes[0].inject_event_to_cc(malformed_body.clone()) {
+                    injected += 1;
+                }
+            }
+        }
+
+        info!(
+            "inject_malformed_event: injected malformed CLIENT_ROUTES_CHANGE on {} proxy node(s)",
+            injected,
+        );
+        injected
+    }
+
     async fn post_routes_to_all_nodes(&self) -> Result<(), Error> {
         let routes = self.build_route_entries();
         let route_json = serde_json_routes(&routes);
@@ -1041,6 +1238,30 @@ pub(crate) fn drain_feedback(
     }
 
     (per_node, total)
+}
+
+// ---------------------------------------------------------------------------
+// Event body construction
+// ---------------------------------------------------------------------------
+
+/// Build the body of a `CLIENT_ROUTES_CHANGE` / `UPDATE_NODES` CQL event frame.
+///
+/// The on-wire layout (CQL protocol v2 events) is:
+/// ```text
+/// [string: "CLIENT_ROUTES_CHANGE"]   -- event type
+/// [string: "UPDATE_NODES"]           -- type of change
+/// [string_list: connection_ids]      -- affected connection IDs
+/// [string_list: host_ids]            -- affected host IDs (UUID strings)
+/// ```
+fn build_client_routes_change_body(connection_ids: &[String], host_ids: &[String]) -> Bytes {
+    use scylla_cql::frame::types::{write_string, write_string_list};
+
+    let mut buf = Vec::new();
+    write_string("CLIENT_ROUTES_CHANGE", &mut buf).unwrap();
+    write_string("UPDATE_NODES", &mut buf).unwrap();
+    write_string_list(connection_ids, &mut buf).unwrap();
+    write_string_list(host_ids, &mut buf).unwrap();
+    Bytes::from(buf)
 }
 
 // ---------------------------------------------------------------------------
