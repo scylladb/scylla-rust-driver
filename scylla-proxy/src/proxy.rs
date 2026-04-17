@@ -1,7 +1,8 @@
 use crate::actions::{EvaluationContext, RequestRule, ResponseRule};
 use crate::errors::{DoorkeeperError, ProxyError, WorkerError};
 use crate::frame::{
-    self, FrameOpcode, FrameParams, RequestFrame, ResponseFrame, read_response_frame, write_frame,
+    self, FrameOpcode, FrameParams, RequestFrame, ResponseFrame, ResponseOpcode,
+    read_response_frame, write_frame,
 };
 use crate::{RequestOpcode, TargetShard};
 use bytes::Bytes;
@@ -37,6 +38,47 @@ type ConnectionCloseSignaler = tokio::sync::broadcast::Sender<()>;
 // returning the first of them from [RunningProxy::finish()].
 type ErrorPropagator = mpsc::UnboundedSender<ProxyError>;
 type ErrorSink = mpsc::UnboundedReceiver<ProxyError>;
+
+/// Tracks the number of active driver connections to a proxy node.
+///
+/// Shared between the [`Doorkeeper`] (which increments on accept) and
+/// [`RunningNode`] (which exposes [`RunningNode::wait_for_connection`]).
+/// Each accepted connection gets an [`Arc<ConnectionLifetime>`] guard that
+/// decrements the count when the last worker for that connection exits.
+struct ConnectionTracker {
+    active_count: std::sync::atomic::AtomicUsize,
+    notify: tokio::sync::Notify,
+}
+
+impl ConnectionTracker {
+    /// Track a new connection.
+    ///
+    /// Increments active count and creates a per-connection lifetime guard.
+    /// When the guard ([ConnectionLifetime]) is Drop'ed,
+    /// the active count is decremented.
+    fn register_connection(self: &Arc<Self>) -> Arc<ConnectionLifetime> {
+        self.active_count.fetch_add(1, Ordering::Relaxed);
+        self.notify.notify_waiters();
+        Arc::new(ConnectionLifetime {
+            tracker: Arc::clone(self),
+        })
+    }
+}
+
+/// Per-connection guard that decrements the active connection count on drop.
+///
+/// Wrapped in [`Arc`] and cloned to each worker task spawned for a connection.
+/// When the last worker finishes and drops its clone, the inner value drops
+/// and the active count is decremented.
+struct ConnectionLifetime {
+    tracker: Arc<ConnectionTracker>,
+}
+
+impl Drop for ConnectionLifetime {
+    fn drop(&mut self) {
+        self.tracker.active_count.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 
 static HARDCODED_OPTIONS_PARAMS: FrameParams = FrameParams {
     flags: 0,
@@ -346,6 +388,11 @@ impl Proxy {
             .nodes
             .into_iter()
             .map(|node| {
+                let connection_tracker = Arc::new(ConnectionTracker {
+                    active_count: std::sync::atomic::AtomicUsize::new(0),
+                    notify: tokio::sync::Notify::new(),
+                });
+                let cc_event_sender = Arc::new(Mutex::new(HashMap::new()));
                 let running = {
                     let (request_rules, response_rules) = match node {
                         InternalNode::Real {
@@ -360,6 +407,8 @@ impl Proxy {
                     RunningNode {
                         request_rules: request_rules.clone(),
                         response_rules: response_rules.cloned(),
+                        connection_tracker: connection_tracker.clone(),
+                        cc_event_sender: cc_event_sender.clone(),
                     }
                 };
                 (
@@ -368,6 +417,8 @@ impl Proxy {
                         terminate_signaler.clone(),
                         finish_guard.clone(),
                         error_propagator.clone(),
+                        connection_tracker,
+                        cc_event_sender,
                     ),
                     running,
                 )
@@ -391,6 +442,18 @@ impl Proxy {
 pub struct RunningNode {
     request_rules: Arc<Mutex<Vec<RequestRule>>>,
     response_rules: Option<Arc<Mutex<Vec<ResponseRule>>>>,
+    connection_tracker: Arc<ConnectionTracker>,
+
+    /// Senders to the driver-facing sockets of all control connections (those
+    /// that sent REGISTER). Keyed by `connection_no` so that each connection
+    /// can be individually removed on close without affecting others.
+    ///
+    /// Populated by `request_processor` when it sees a REGISTER frame,
+    /// entries removed when the corresponding connection closes.
+    ///
+    /// Used by [`inject_event_to_cc`](Self::inject_event_to_cc) to push
+    /// unsolicited EVENT frames to every registered control connection.
+    cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
 }
 
 impl RunningNode {
@@ -443,6 +506,59 @@ impl RunningNode {
         let mut new_rules = rules;
         new_rules.append(&mut *old_rules_guard);
         *old_rules_guard = new_rules;
+    }
+
+    /// Waits until at least one driver connection is active on this node.
+    ///
+    /// Returns immediately if there is already an active connection.
+    /// Otherwise blocks until a new connection is accepted by the
+    /// node's doorkeeper.
+    pub async fn wait_for_connection(&self) {
+        loop {
+            // Prepare the notification future BEFORE checking the count
+            // to avoid a race where a connection arrives between the check
+            // and the await.
+            let notified = self.connection_tracker.notify.notified();
+            if self.connection_tracker.active_count.load(Ordering::Relaxed) > 0 {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Injects a CQL EVENT frame into all registered control connections.
+    ///
+    /// Builds an EVENT frame (stream = −1, flags = 0, opcode = Event) with the
+    /// supplied `body` and sends it to every driver that has sent REGISTER on
+    /// this node. Dead senders (closed connections) are pruned automatically.
+    ///
+    /// Returns `true` if the frame was successfully enqueued to at least one
+    /// control connection, `false` if no control connections are currently
+    /// registered or all sends failed.
+    pub fn inject_event_to_cc(&self, body: Bytes) -> bool {
+        let mut guard = self.cc_event_sender.lock().unwrap();
+        if guard.is_empty() {
+            return false;
+        }
+        let mut any_sent = false;
+        guard.retain(|_conn_no, tx| {
+            let frame = ResponseFrame {
+                params: FrameParams {
+                    version: 4,
+                    flags: 0,
+                    stream: -1,
+                }
+                .for_response(),
+                opcode: ResponseOpcode::Event,
+                body: body.clone(),
+            };
+            let ok = tx.send(frame).is_ok();
+            any_sent |= ok;
+            // Remove dead senders (connection already closed on the
+            // receiving end).
+            ok
+        });
+        any_sent
     }
 }
 
@@ -514,6 +630,22 @@ impl RunningProxy {
             }
         }
     }
+
+    /// Waits until at least one driver connection is active on any node
+    /// in this proxy.
+    ///
+    /// For single-node proxies (typical in client-routes tests), this waits
+    /// until a driver has connected to the sole node. For multi-node
+    /// proxies, returns as soon as any node receives a connection.
+    pub async fn wait_for_connection(&self) {
+        // Build a future for each node and race them.
+        futures::future::select_all(
+            self.running_nodes
+                .iter()
+                .map(|n| Box::pin(n.wait_for_connection())),
+        )
+        .await;
+    }
 }
 
 /// A worker corresponding to a particular node. It listens in a loop for driver's connections
@@ -527,6 +659,8 @@ struct Doorkeeper {
     finish_guard: FinishGuard,
     shards_count: Option<u16>,
     error_propagator: ErrorPropagator,
+    connection_tracker: Arc<ConnectionTracker>,
+    cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
 }
 
 impl Doorkeeper {
@@ -535,6 +669,8 @@ impl Doorkeeper {
         terminate_signaler: TerminateSignaler,
         finish_guard: FinishGuard,
         error_propagator: ErrorPropagator,
+        connection_tracker: Arc<ConnectionTracker>,
+        cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
     ) -> Result<(), DoorkeeperError> {
         let listener = TcpListener::bind(node.proxy_addr())
             .await
@@ -570,6 +706,8 @@ impl Doorkeeper {
             terminate_signaler,
             finish_guard,
             error_propagator,
+            connection_tracker,
+            cc_event_sender,
         };
         tokio::task::spawn(doorkeeper.run());
         Ok(())
@@ -651,6 +789,13 @@ impl Doorkeeper {
         cluster_stream: Option<TcpStream>,
         shard: Option<TargetShard>,
     ) {
+        // Track a new connection: increment active count and create a
+        // per-connection lifetime guard. The guard is wrapped in Arc and
+        // cloned to each spawned worker task. When the last worker for this
+        // connection exits, the Arc's inner ConnectionLifetime drops and
+        // decrements the active count.
+        let conn_lifetime = self.connection_tracker.register_connection();
+
         let (driver_read, driver_write) = driver_stream.into_split();
 
         let new_worker = || ProxyWorker {
@@ -678,54 +823,122 @@ impl Doorkeeper {
             compression_reader_sender_to_cluster,
         ) = compression::make_compression_infra();
 
-        tokio::task::spawn(new_worker().receiver_from_driver(
-            driver_read,
-            tx_request,
-            compression_reader_receiver_from_driver,
-        ));
-        tokio::task::spawn(new_worker().sender_to_driver(
-            driver_write,
-            rx_driver,
-            connection_close_tx.subscribe(),
-            self.terminate_signaler.subscribe(),
-            compression_reader_sender_to_driver,
-        ));
-        tokio::task::spawn(new_worker().request_processor(
-            rx_request,
-            tx_driver.clone(),
-            tx_cluster.clone(),
-            connection_no,
-            self.node.request_rules().clone(),
-            connection_close_tx.clone(),
-            event_register_flag.clone(),
-            compression_writer_request_processor,
-        ));
+        {
+            let guard = Arc::clone(&conn_lifetime);
+            let worker = new_worker();
+            tokio::task::spawn(async move {
+                let _conn = guard;
+                worker
+                    .receiver_from_driver(
+                        driver_read,
+                        tx_request,
+                        compression_reader_receiver_from_driver,
+                    )
+                    .await;
+            });
+        }
+        {
+            let guard = Arc::clone(&conn_lifetime);
+            let worker = new_worker();
+            let conn_close_sub = connection_close_tx.subscribe();
+            let term_sub = self.terminate_signaler.subscribe();
+            tokio::task::spawn(async move {
+                let _conn = guard;
+                worker
+                    .sender_to_driver(
+                        driver_write,
+                        rx_driver,
+                        conn_close_sub,
+                        term_sub,
+                        compression_reader_sender_to_driver,
+                    )
+                    .await;
+            });
+        }
+        {
+            let guard = Arc::clone(&conn_lifetime);
+            let worker = new_worker();
+            let request_rules = Arc::clone(self.node.request_rules());
+            let conn_close = connection_close_tx.clone();
+            let event_flag = Arc::clone(&event_register_flag);
+            let tx_driver_clone = tx_driver.clone();
+            let tx_cluster_clone = tx_cluster.clone();
+            let cc_sender = Arc::clone(&self.cc_event_sender);
+            tokio::task::spawn(async move {
+                let _conn = guard;
+                worker
+                    .request_processor(
+                        rx_request,
+                        tx_driver_clone,
+                        tx_cluster_clone,
+                        connection_no,
+                        request_rules,
+                        conn_close,
+                        event_flag,
+                        compression_writer_request_processor,
+                        cc_sender,
+                    )
+                    .await;
+            });
+        }
         if let InternalNode::Real {
             ref response_rules, ..
         } = self.node
         {
             let (cluster_read, cluster_write) = cluster_stream.unwrap().into_split();
-            tokio::task::spawn(new_worker().sender_to_cluster(
-                cluster_write,
-                rx_cluster,
-                connection_close_tx.subscribe(),
-                self.terminate_signaler.subscribe(),
-                compression_reader_sender_to_cluster,
-            ));
-            tokio::task::spawn(new_worker().receiver_from_cluster(
-                cluster_read,
-                tx_response,
-                compression_reader_receiver_from_cluster,
-            ));
-            tokio::task::spawn(new_worker().response_processor(
-                rx_response,
-                tx_driver,
-                tx_cluster,
-                connection_no,
-                response_rules.clone(),
-                connection_close_tx.clone(),
-                event_register_flag.clone(),
-            ));
+            {
+                let guard = Arc::clone(&conn_lifetime);
+                let worker = new_worker();
+                let conn_close_sub = connection_close_tx.subscribe();
+                let term_sub = self.terminate_signaler.subscribe();
+                tokio::task::spawn(async move {
+                    let _conn = guard;
+                    worker
+                        .sender_to_cluster(
+                            cluster_write,
+                            rx_cluster,
+                            conn_close_sub,
+                            term_sub,
+                            compression_reader_sender_to_cluster,
+                        )
+                        .await;
+                });
+            }
+            {
+                let guard = Arc::clone(&conn_lifetime);
+                let worker = new_worker();
+                tokio::task::spawn(async move {
+                    let _conn = guard;
+                    worker
+                        .receiver_from_cluster(
+                            cluster_read,
+                            tx_response,
+                            compression_reader_receiver_from_cluster,
+                        )
+                        .await;
+                });
+            }
+            {
+                let guard = conn_lifetime;
+                let worker = new_worker();
+                let response_rules = Arc::clone(response_rules);
+                let conn_close = connection_close_tx.clone();
+                let event_flag = Arc::clone(&event_register_flag);
+                tokio::task::spawn(async move {
+                    let _conn = guard;
+                    worker
+                        .response_processor(
+                            rx_response,
+                            tx_driver,
+                            tx_cluster,
+                            connection_no,
+                            response_rules,
+                            conn_close,
+                            event_flag,
+                        )
+                        .await;
+                });
+            }
         }
         debug!(
             "Doorkeeper with addr {} of node {} spawned workers.",
@@ -1275,6 +1488,7 @@ impl ProxyWorker {
         connection_close_signaler: ConnectionCloseSignaler,
         event_registered_flag: Arc<AtomicBool>,
         compression: CompressionWriter,
+        cc_event_sender: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<ResponseFrame>>>>,
     ) {
         let shard = self.shard;
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
@@ -1283,6 +1497,17 @@ impl ProxyWorker {
                     Some(request) => {
                         if request.opcode == RequestOpcode::Register {
                             event_registered_flag.store(true, Ordering::Relaxed);
+                            // Expose this connection's driver-facing sender so
+                            // that RunningNode::inject_event_to_cc() can push
+                            // unsolicited EVENT frames to this control connection.
+                            cc_event_sender.lock().unwrap().insert(connection_no, driver_tx.clone());
+                            info!(
+                                "REGISTER seen on connection {} ({} →  {} ({})); registered cc_event_sender",
+                                connection_no,
+                                driver_addr,
+                                DisplayableRealAddrOption(real_addr),
+                                DisplayableShard(shard),
+                            );
                         } else if request.opcode == RequestOpcode::Startup {
                             match compression.set_from_startup(&request.body) {
                                 Err(err) => error!("Failed to deserialize STARTUP frame: {}", err),
@@ -1305,7 +1530,7 @@ impl ProxyWorker {
                         let mut guard = request_rules.lock().unwrap();
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
                             if request_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {} ({})).", i, driver_addr, DisplayableRealAddrOption(real_addr), DisplayableShard(shard));
+                                debug!("Applying rule no={} to request ({} -> {} ({})).", i, driver_addr, DisplayableRealAddrOption(real_addr), DisplayableShard(shard));
                                 debug!("-> Applied rule: {:?}", request_rule);
                                 debug!("-> To request: {:?}", ctx.opcode);
                                 trace!("{:?}", request);
@@ -1379,7 +1604,22 @@ impl ProxyWorker {
                         }
                         let _ = cluster_tx.send(request); // default action
                     }
-                    None => return Ok(()),
+                    None => {
+                        // Connection closed. If this was the control
+                        // connection (REGISTER was seen), remove only this
+                        // connection's sender from the shared map.
+                        if event_registered_flag.load(Ordering::Relaxed) {
+                            cc_event_sender.lock().unwrap().remove(&connection_no);
+                            info!(
+                                "Control connection {} ({} →  {} ({})) closed; removed cc_event_sender",
+                                connection_no,
+                                driver_addr,
+                                DisplayableRealAddrOption(real_addr),
+                                DisplayableShard(shard),
+                            );
+                        }
+                        return Ok(());
+                    }
                 }
             }
         })
@@ -1411,7 +1651,7 @@ impl ProxyWorker {
                         let mut guard = response_rules.lock().unwrap();
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
                             if response_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to response ({} -> {} ({})).", i, DisplayableRealAddrOption(real_addr), driver_addr, DisplayableShard(shard));
+                                debug!("Applying rule no={} to response ({} -> {} ({})).", i, DisplayableRealAddrOption(real_addr), driver_addr, DisplayableShard(shard));
                                 debug!("-> Applied rule: {:?}", response_rule);
                                 debug!("-> To response: {:?}", ctx.opcode);
                                 trace!("{:?}", response);
@@ -1552,7 +1792,7 @@ mod tests {
     use super::compression::no_compression;
     use super::*;
     use crate::errors::ReadFrameError;
-    use crate::frame::{FrameType, read_frame, read_request_frame};
+    use crate::frame::{FrameType, read_frame, read_request_frame, read_response_frame};
     use crate::proxy::compression::with_compression;
     use crate::{
         Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction, setup_tracing,
@@ -2977,5 +3217,339 @@ mod tests {
         }
 
         running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn connection_tracker_register_increments_and_drop_decrements() {
+        let tracker = Arc::new(ConnectionTracker {
+            active_count: std::sync::atomic::AtomicUsize::new(0),
+            notify: tokio::sync::Notify::new(),
+        });
+
+        assert_eq!(tracker.active_count.load(Ordering::Relaxed), 0);
+
+        let guard1 = tracker.register_connection();
+        assert_eq!(tracker.active_count.load(Ordering::Relaxed), 1);
+
+        let guard2 = tracker.register_connection();
+        assert_eq!(tracker.active_count.load(Ordering::Relaxed), 2);
+
+        // Cloning the Arc does NOT increment the count — only register_connection does.
+        let guard1_clone = Arc::clone(&guard1);
+        assert_eq!(tracker.active_count.load(Ordering::Relaxed), 2);
+
+        // Dropping the clone doesn't decrement yet (the original is still alive).
+        drop(guard1_clone);
+        assert_eq!(tracker.active_count.load(Ordering::Relaxed), 2);
+
+        // Dropping the last Arc for connection 1 decrements.
+        drop(guard1);
+        assert_eq!(tracker.active_count.load(Ordering::Relaxed), 1);
+
+        drop(guard2);
+        assert_eq!(tracker.active_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn connection_tracker_register_notifies_waiters() {
+        let tracker = Arc::new(ConnectionTracker {
+            active_count: std::sync::atomic::AtomicUsize::new(0),
+            notify: tokio::sync::Notify::new(),
+        });
+
+        // Set up a waiter BEFORE registering a connection.
+        let notified = tracker.notify.notified();
+
+        // register_connection should notify.
+        let _guard = tracker.register_connection();
+
+        // The notification should resolve immediately (no timeout needed).
+        tokio::time::timeout(Duration::from_millis(200), notified)
+            .await
+            .expect("notify was not triggered by register_connection");
+    }
+
+    #[tokio::test]
+    async fn wait_for_connection_returns_immediately_when_connected() {
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        // Connect a driver and accept the backend connection.
+        let _driver_conn = TcpStream::connect(node_proxy_addr).await.unwrap();
+        let (_backend_conn, _) = mock_node_listener.accept().await.unwrap();
+
+        // wait_for_connection should return promptly (connection is already active).
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            running_proxy.running_nodes[0].wait_for_connection(),
+        )
+        .await
+        .expect("wait_for_connection timed out despite active connection");
+
+        // Same via RunningProxy::wait_for_connection.
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            running_proxy.wait_for_connection(),
+        )
+        .await
+        .expect("RunningProxy::wait_for_connection timed out despite active connection");
+
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wait_for_connection_blocks_until_driver_connects() {
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        // Before any driver connects, wait_for_connection should NOT return.
+        let result = tokio::time::timeout(
+            Duration::from_millis(20),
+            running_proxy.running_nodes[0].wait_for_connection(),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "wait_for_connection returned before any driver connected"
+        );
+
+        // Now connect a driver and accept the backend side.
+        let _driver_conn = TcpStream::connect(node_proxy_addr).await.unwrap();
+        let (_backend_conn, _) = mock_node_listener.accept().await.unwrap();
+
+        // wait_for_connection should now resolve.
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            running_proxy.running_nodes[0].wait_for_connection(),
+        )
+        .await
+        .expect("wait_for_connection timed out after driver connected");
+
+        running_proxy.finish().await.unwrap();
+    }
+
+    /// Helper: send a REGISTER frame from the driver side and wait until
+    /// the mock node receives it. This is enough for the proxy's
+    /// request_processor to register the cc_event_sender for that
+    /// connection — no response is needed.
+    async fn send_register(driver_conn: &mut TcpStream, node_conn: &mut TcpStream) {
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        write_frame(
+            params,
+            FrameOpcode::Request(RequestOpcode::Register),
+            b"",
+            driver_conn,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+
+        // Wait until the mock node receives the REGISTER so we know the
+        // proxy has already processed it and registered the sender.
+        let _req = read_request_frame(node_conn, &no_compression())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn inject_event_to_cc_returns_false_when_no_control_connections() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let _mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        // No connections at all — inject should return false.
+        assert!(
+            !running_proxy.running_nodes[0].inject_event_to_cc(Bytes::from_static(b"test")),
+            "inject_event_to_cc should return false with no control connections"
+        );
+
+        // finish() may report errors because no real node accepted connections.
+        let _ = running_proxy.finish().await;
+    }
+
+    #[tokio::test]
+    async fn inject_event_to_cc_returns_false_when_connection_did_not_register() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        // Connect but do NOT send REGISTER.
+        let _driver_conn = TcpStream::connect(node_proxy_addr).await.unwrap();
+        let (_node_conn, _) = mock_node_listener.accept().await.unwrap();
+
+        // Connection exists but hasn't sent REGISTER — inject should return false.
+        assert!(
+            !running_proxy.running_nodes[0].inject_event_to_cc(Bytes::from_static(b"test")),
+            "inject_event_to_cc should return false when no REGISTER was sent"
+        );
+
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn inject_event_to_cc_delivers_event_after_register() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        let (mut driver_conn, mut node_conn) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+
+        // Complete the REGISTER handshake so the proxy registers the cc sender.
+        send_register(&mut driver_conn, &mut node_conn).await;
+
+        // Inject an event.
+        let event_body = Bytes::from_static(b"injected_event_payload");
+        assert!(
+            running_proxy.running_nodes[0].inject_event_to_cc(event_body.clone()),
+            "inject_event_to_cc should return true after REGISTER"
+        );
+
+        // Read the injected frame on the driver side.
+        let frame = tokio::time::timeout(
+            Duration::from_millis(100),
+            read_response_frame(&mut driver_conn, &no_compression()),
+        )
+        .await
+        .expect("timed out waiting for injected event")
+        .expect("failed to read injected event frame");
+
+        assert_eq!(frame.opcode, ResponseOpcode::Event);
+        assert_eq!(frame.body, event_body);
+        assert_eq!(frame.params.stream, -1);
+
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn inject_event_to_cc_prunes_closed_connections() {
+        setup_tracing();
+        let node_real_addr = next_local_address_with_port(9876);
+        let node_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node_real_addr,
+            node_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        // Establish first control connection.
+        let (mut driver_conn1, mut node_conn1) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        send_register(&mut driver_conn1, &mut node_conn1).await;
+
+        // Establish second control connection.
+        let (mut driver_conn2, mut node_conn2) = join(
+            async { TcpStream::connect(node_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+        send_register(&mut driver_conn2, &mut node_conn2).await;
+
+        // Both connections registered — inject should succeed.
+        assert!(running_proxy.running_nodes[0].inject_event_to_cc(Bytes::from_static(b"ev1")));
+
+        // Read event from both.
+        let f1 = read_response_frame(&mut driver_conn1, &no_compression())
+            .await
+            .unwrap();
+        let f2 = read_response_frame(&mut driver_conn2, &no_compression())
+            .await
+            .unwrap();
+        assert_eq!(f1.body, Bytes::from_static(b"ev1"));
+        assert_eq!(f2.body, Bytes::from_static(b"ev1"));
+
+        // Close connection 1 (both sides).
+        drop(driver_conn1);
+        drop(node_conn1);
+
+        // Give the proxy a moment to detect the closed connection and clean up
+        // its cc_event_sender entry.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Inject again — should still succeed via connection 2, and prune
+        // the dead sender for connection 1.
+        assert!(running_proxy.running_nodes[0].inject_event_to_cc(Bytes::from_static(b"ev2")));
+
+        let f2 = read_response_frame(&mut driver_conn2, &no_compression())
+            .await
+            .unwrap();
+        assert_eq!(f2.body, Bytes::from_static(b"ev2"));
+
+        // Close connection 2 as well.
+        drop(driver_conn2);
+        drop(node_conn2);
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Now all control connections are gone — inject should return false.
+        assert!(
+            !running_proxy.running_nodes[0].inject_event_to_cc(Bytes::from_static(b"ev3")),
+            "inject_event_to_cc should return false after all control connections closed"
+        );
+
+        // finish() may report DriverDisconnected errors from the intentionally
+        // dropped connections — that's expected.
+        let _ = running_proxy.finish().await;
     }
 }
