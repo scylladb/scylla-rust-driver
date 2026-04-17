@@ -21,8 +21,7 @@ pub(crate) struct NodeOptions {
     /// Examples: `release:6.2.2`, `unstable:master/2021-05-24T17:16:53Z`
     #[expect(dead_code)]
     pub(crate) version: String,
-    /// Datacenter ID
-    #[expect(dead_code)]
+    /// Datacenter ID (0-based index matching position in `ClusterOptions::nodes_per_dc`).
     pub(crate) datacenter_id: u16,
     /// CCM allocates node ip addresses based on this prefix:
     /// if ip_prefix = `127.0.1.`, then `node1` address is `127.0.1.1`, `node2` address is `127.0.1.2`
@@ -102,6 +101,15 @@ impl Node {
         9042
     }
 
+    /// Returns the 0-based datacenter index for this node.
+    ///
+    /// Corresponds to the position in [`ClusterOptions::nodes_per_dc`].
+    /// CCM names these `dc1`, `dc2`, … (1-based), so CCM DC name = `dc{datacenter_id + 1}`.
+    #[cfg_attr(not(feature = "unstable-client-routes"), expect(dead_code))]
+    pub(crate) fn datacenter_id(&self) -> u16 {
+        self.opts.datacenter_id
+    }
+
     /// Executes `ccm updateconf` and applies it for this node.
     /// It accepts the key-value pairs to update the configuration.
     ///
@@ -150,7 +158,10 @@ impl Node {
     /// This method starts the node. User can provide optional [`NodeStartOptions`] to control the behavior of the node start.
     /// If `None` is provided, the default options are used (see the implementation of Default for [`NodeStartOptions`]).
     #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        not(any(
+            all(scylla_unstable, feature = "unstable-host-listener"),
+            feature = "unstable-client-routes",
+        )),
         expect(dead_code)
     )]
     pub(crate) async fn start(&mut self, opts: Option<NodeStartOptions>) -> Result<(), Error> {
@@ -166,7 +177,10 @@ impl Node {
     }
 
     #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        not(any(
+            all(scylla_unstable, feature = "unstable-host-listener"),
+            feature = "unstable-client-routes",
+        )),
         expect(dead_code)
     )]
     pub(crate) async fn stop(&mut self, opts: Option<NodeStopOptions>) -> Result<(), Error> {
@@ -176,7 +190,10 @@ impl Node {
     }
 
     #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        not(any(
+            all(scylla_unstable, feature = "unstable-host-listener"),
+            feature = "unstable-client-routes",
+        )),
         expect(dead_code)
     )]
     pub(crate) async fn decommission(&mut self) -> Result<(), Error> {
@@ -189,7 +206,10 @@ impl Node {
     }
 
     #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        not(any(
+            all(scylla_unstable, feature = "unstable-host-listener"),
+            feature = "unstable-client-routes",
+        )),
         expect(dead_code)
     )]
     pub(crate) async fn delete(&mut self) -> Result<(), Error> {

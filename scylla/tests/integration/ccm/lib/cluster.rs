@@ -85,15 +85,12 @@ impl NodeList {
         self.0.iter_mut()
     }
 
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     pub(crate) fn get_by_id(&self, id: NodeId) -> Option<&Node> {
         self.iter().find(|node| node.id() == id)
     }
 
-    #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
-        expect(dead_code)
-    )]
+    #[allow(dead_code)]
     pub(crate) fn get_mut_by_id(&mut self, id: NodeId) -> Option<&mut Node> {
         self.iter_mut().find(|node| node.id() == id)
     }
@@ -106,13 +103,7 @@ impl NodeList {
         self.iter().map(|node| node.contact_endpoint()).collect()
     }
 
-    #[cfg_attr(
-        not(any(
-            all(scylla_unstable, feature = "unstable-host-listener"),
-            all(feature = "openssl-010", feature = "rustls-023")
-        )),
-        expect(dead_code)
-    )]
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
@@ -319,7 +310,10 @@ impl Cluster {
     }
 
     #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        not(any(
+            all(scylla_unstable, feature = "unstable-host-listener"),
+            feature = "unstable-client-routes",
+        )),
         expect(dead_code)
     )]
     /// Add a new node to the cluster in the given datacenter.
@@ -403,7 +397,8 @@ impl Cluster {
     #[cfg_attr(
         not(any(
             all(scylla_unstable, feature = "unstable-host-listener"),
-            all(feature = "openssl-010", feature = "rustls-023")
+            all(feature = "openssl-010", feature = "rustls-023"),
+            feature = "unstable-client-routes",
         )),
         expect(dead_code)
     )]

@@ -1,4 +1,6 @@
 mod cli_wrapper;
+#[cfg(feature = "unstable-client-routes")]
+pub(crate) mod client_routes;
 pub(crate) mod cluster;
 mod ip_allocator;
 mod logged_cmd;
