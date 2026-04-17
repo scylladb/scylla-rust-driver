@@ -8,9 +8,9 @@
 //! - CDCPartitioner
 //!     - the partitioner employed when using CDC (_Change Data Capture_).
 
+use crate::frame::types::RawValue;
+use crate::serialize::row::SerializedValues;
 use bytes::Buf;
-use scylla_cql::frame::types::RawValue;
-use scylla_cql::serialize::row::SerializedValues;
 use std::num::Wrapping;
 
 use crate::routing::Token;

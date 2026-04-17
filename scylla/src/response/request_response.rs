@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use bytes::Bytes;
-use scylla_cql::frame::request::query::PagingStateResponse;
-use scylla_cql::frame::response::{
+use crate::frame::request::query::PagingStateResponse;
+use crate::frame::response::{
     NonErrorResponseWithDeserializedMetadata, ResponseWithDeserializedMetadata,
 };
+use bytes::Bytes;
 use tracing::error;
 use uuid::Uuid;
 

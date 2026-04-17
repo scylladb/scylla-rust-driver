@@ -9,9 +9,9 @@ use crate::routing::partitioner::{PartitionerName, calculate_token_for_partition
 use crate::routing::{Shard, Token};
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
+use crate::frame::response::result::TableSpec;
+use crate::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use itertools::Itertools;
-use scylla_cql::frame::response::result::TableSpec;
-use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::mpsc;
