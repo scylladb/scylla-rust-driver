@@ -1,13 +1,12 @@
 //! CQL protocol-level representation of a `AUTH_RESPONSE` request.
 
-use std::num::TryFromIntError;
-
-use thiserror::Error;
-
 use crate::frame::frame_errors::CqlRequestSerializationError;
 
 use crate::frame::request::{RequestOpcode, SerializableRequest};
 use crate::frame::types::write_bytes_opt;
+
+// Re-export for backward compatibility.
+pub use crate::frame::frame_errors::AuthResponseSerializationError;
 
 /// Represents AUTH_RESPONSE CQL request.
 ///
@@ -24,13 +23,4 @@ impl SerializableRequest for AuthResponse {
         Ok(write_bytes_opt(self.response.as_ref(), buf)
             .map_err(AuthResponseSerializationError::ResponseSerialization)?)
     }
-}
-
-/// An error type returned when serialization of AUTH_RESPONSE request fails.
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum AuthResponseSerializationError {
-    /// Maximum response's body length exceeded.
-    #[error("AUTH_RESPONSE body bytes length too big: {0}")]
-    ResponseSerialization(TryFromIntError),
 }

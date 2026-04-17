@@ -23,10 +23,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::frame::response::result::{ColumnSpec, TableSpec};
+use crate::parse_utils::{ParseErrorCause, ParseResult, ParserState};
 use futures::{FutureExt, Stream, StreamExt, TryStreamExt, future, stream};
 use rand::Rng;
-use scylla_cql::frame::response::result::{ColumnSpec, TableSpec};
-use scylla_cql::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 use tracing::{debug, trace, warn};
 use uuid::Uuid;
 

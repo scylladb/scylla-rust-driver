@@ -7,14 +7,8 @@ use crate::serialize::row::RowSerializationContext;
 use assert_matches::assert_matches;
 use bytes::BufMut;
 
-use std::{borrow::Cow, convert::TryInto};
-
-fn col<'a>(name: impl Into<Cow<'a, str>>, typ: ColumnType<'a>) -> ColumnSpec<'a> {
-    ColumnSpec {
-        name: name.into(),
-        typ,
-        table_spec: TableSpec::borrowed("ks", "tbl"),
-    }
+fn col<'a>(name: &'a str, typ: ColumnType<'a>) -> ColumnSpec<'a> {
+    ColumnSpec::borrowed(name, typ, TableSpec::borrowed("ks", "tbl"))
 }
 
 fn make_batch_value_iter<BV: BatchValues>(bv: &BV) -> BV::BatchValuesIter<'_> {
@@ -38,7 +32,7 @@ fn serialize_batch_value_iterator<'a>(
         data
     }
 
-    let ctx = RowSerializationContext { columns };
+    let ctx = RowSerializationContext::from_specs(columns);
     serialize_bvi(bvi, &ctx)
 }
 
@@ -86,7 +80,7 @@ fn slice_batch_values() {
         None
     );
 
-    let ctx = RowSerializationContext { columns: &[] };
+    let ctx = RowSerializationContext::empty();
     let mut data = Vec::new();
     let mut writer = RowWriter::new(&mut data);
     assert!(iter.serialize_next(&ctx, &mut writer).is_none());
@@ -375,7 +369,7 @@ fn check_batch_values_iterator_is_not_lending() {
         let mut it2 = bv.batch_values_iter();
 
         let columns = &[col("a", ColumnType::Native(NativeType::Int))];
-        let ctx = RowSerializationContext { columns };
+        let ctx = RowSerializationContext::from_specs(columns);
         let mut data = Vec::new();
         let mut writer = RowWriter::new(&mut data);
 

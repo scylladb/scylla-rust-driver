@@ -1,4 +1,4 @@
-use scylla_cql::frame::response::error::{DbError, WriteType};
+use crate::errors::{DbError, WriteType};
 
 use crate::errors::RequestAttemptError;
 
@@ -179,10 +179,10 @@ mod tests {
     use super::{DefaultRetryPolicy, RequestInfo, RetryDecision, RetryPolicy};
     use crate::errors::{BrokenConnectionErrorKind, RequestAttemptError};
     use crate::errors::{DbError, WriteType};
+    use crate::frame::frame_errors::{BatchSerializationError, CqlRequestSerializationError};
     use crate::statement::Consistency;
     use crate::test_utils::setup_tracing;
     use bytes::Bytes;
-    use scylla_cql::frame::frame_errors::{BatchSerializationError, CqlRequestSerializationError};
 
     fn make_request_info(error: &RequestAttemptError, is_idempotent: bool) -> RequestInfo<'_> {
         RequestInfo {

@@ -1,22 +1,186 @@
 //! Low-level errors that can occur during CQL frame parsing and serialization.
 
 use std::error::Error;
+use std::num::TryFromIntError;
 use std::sync::Arc;
 
-pub use super::request::{
-    auth_response::AuthResponseSerializationError,
-    batch::{BatchSerializationError, BatchStatementSerializationError},
-    execute::ExecuteSerializationError,
-    prepare::PrepareSerializationError,
-    query::{QueryParametersSerializationError, QuerySerializationError},
-    register::RegisterSerializationError,
-    startup::StartupSerializationError,
-};
-
-use super::TryFromPrimitiveError;
-use super::response::CqlResponseKind;
-use crate::utils::parse::ParseErrorCause;
 use thiserror::Error;
+
+use crate::frame::TryFromPrimitiveError;
+use crate::frame::response::CqlResponseKind;
+use crate::serialize::SerializationError;
+use crate::utils::parse::ParseErrorCause;
+
+/// A low level deserialization error.
+///
+/// This type of error is returned when deserialization
+/// of some primitive value fails.
+///
+/// Possible error kinds:
+/// - generic io error - reading from buffer failed
+/// - out of range integer conversion
+/// - conversion errors - e.g. slice-to-array or primitive-to-enum
+/// - not enough bytes in the buffer to deserialize a value
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum LowLevelDeserializationError {
+    #[error(transparent)]
+    IoError(Arc<std::io::Error>),
+    #[error(transparent)]
+    TryFromIntError(#[from] std::num::TryFromIntError),
+    #[error(transparent)]
+    TryFromSliceError(#[from] std::array::TryFromSliceError),
+    #[error("Not enough bytes! expected: {expected}, received: {received}")]
+    TooFewBytesReceived { expected: usize, received: usize },
+    #[error("Invalid value length: {0}")]
+    InvalidValueLength(i32),
+    #[error("Unknown consistency: {0}")]
+    UnknownConsistency(#[from] TryFromPrimitiveError<u16>),
+    #[error("Invalid inet bytes length: {0}. Accepted lengths are 4 and 16 bytes.")]
+    InvalidInetLength(u8),
+    #[error("UTF8 deserialization failed: {0}")]
+    UTF8DeserializationError(#[from] std::str::Utf8Error),
+}
+
+impl From<std::io::Error> for LowLevelDeserializationError {
+    fn from(value: std::io::Error) -> Self {
+        Self::IoError(Arc::new(value))
+    }
+}
+
+/// An error type returned when serialization of AUTH_RESPONSE request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum AuthResponseSerializationError {
+    /// Maximum response's body length exceeded.
+    #[error("AUTH_RESPONSE body bytes length too big: {0}")]
+    ResponseSerialization(TryFromIntError),
+}
+
+/// An error type returned when serialization of BATCH request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum BatchSerializationError {
+    /// Maximum number of batch statements exceeded.
+    #[error(
+        "Too many statements in the batch. Received {0} statements, when u16::MAX is maximum possible value."
+    )]
+    TooManyStatements(usize),
+
+    /// Number of batch statements differs from number of provided bound value lists.
+    #[error(
+        "Number of provided value lists must be equal to number of batch statements (got {n_value_lists} value lists, {n_statements} statements)"
+    )]
+    ValuesAndStatementsLengthMismatch {
+        n_value_lists: usize,
+        n_statements: usize,
+    },
+
+    /// Failed to serialize a statement in the batch.
+    #[error("Failed to serialize batch statement. statement idx: {statement_idx}, error: {error}")]
+    StatementSerialization {
+        statement_idx: usize,
+        error: BatchStatementSerializationError,
+    },
+
+    /// Number of announced batch statements differs from actual number of batch statements.
+    #[error(
+        "Invalid Batch constructed: not as many statements serialized as announced (announced: {n_announced_statements}, serialized: {n_serialized_statements})"
+    )]
+    BadBatchConstructed {
+        n_announced_statements: usize,
+        n_serialized_statements: usize,
+    },
+}
+
+/// An error type returned when serialization of one of the
+/// batch statements fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum BatchStatementSerializationError {
+    /// Failed to serialize the CQL statement string.
+    #[error("Failed to serialize unprepared statement's content: {0}")]
+    StatementStringSerialization(TryFromIntError),
+
+    /// Maximum value of statement id exceeded.
+    #[error("Malformed prepared statement's id: {0}")]
+    StatementIdSerialization(TryFromIntError),
+
+    /// Failed to serialize statement's bound values.
+    #[error("Failed to serialize statement's values: {0}")]
+    ValuesSerialiation(SerializationError),
+
+    /// Too many bound values provided.
+    #[error("Too many values provided for the statement: {0}")]
+    TooManyValues(usize),
+}
+
+/// An error type returned when serialization of EXECUTE request fails.
+// TODO(2.0): Remove "Serialization" suffix from error names.
+#[expect(clippy::enum_variant_names)]
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum ExecuteSerializationError {
+    /// Failed to serialize query parameters.
+    #[error("Malformed query parameters: {0}")]
+    QueryParametersSerialization(QueryParametersSerializationError),
+
+    /// Failed to serialize prepared statement id.
+    #[error("Malformed statement id: {0}")]
+    StatementIdSerialization(TryFromIntError),
+
+    #[error("Malformed result metadata id: {0}")]
+    ResultMetadataIdSerialization(TryFromIntError),
+}
+
+/// An error type returned when serialization of PREPARE request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum PrepareSerializationError {
+    /// Failed to serialize the CQL statement string.
+    #[error("Failed to serialize statement contents: {0}")]
+    StatementStringSerialization(TryFromIntError),
+}
+
+/// An error type returned when serialization of QUERY request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum QuerySerializationError {
+    /// Failed to serialize query parameters.
+    #[error("Invalid query parameters: {0}")]
+    QueryParametersSerialization(QueryParametersSerializationError),
+
+    /// Failed to serialize the CQL statement string.
+    #[error("Failed to serialize a statement content: {0}")]
+    StatementStringSerialization(TryFromIntError),
+}
+
+/// An error type returned when serialization of query parameters fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum QueryParametersSerializationError {
+    /// Failed to serialize paging state.
+    #[error("Malformed paging state: {0}")]
+    BadPagingState(#[from] TryFromIntError),
+}
+
+/// An error type returned when serialization of REGISTER request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum RegisterSerializationError {
+    /// Failed to serialize event types list.
+    #[error("Failed to serialize event types list: {0}")]
+    EventTypesSerialization(TryFromIntError),
+}
+
+/// An error type returned when serialization of STARTUP request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum StartupSerializationError {
+    /// Failed to serialize startup options.
+    #[error("Malformed startup options: {0}")]
+    OptionsSerialization(TryFromIntError),
+}
 
 /// An error returned by `parse_response_body_extensions`.
 ///
@@ -448,6 +612,13 @@ pub struct ColumnSpecParseError {
     pub kind: ColumnSpecParseErrorKind,
 }
 
+impl ColumnSpecParseError {
+    /// Creates a new `ColumnSpecParseError` with the given column index and error kind.
+    pub fn new(column_index: usize, kind: ColumnSpecParseErrorKind) -> Self {
+        Self { column_index, kind }
+    }
+}
+
 /// The type of error that appeared during deserialization
 /// of a column specification.
 #[non_exhaustive]
@@ -510,41 +681,4 @@ pub enum CqlTypeParseError {
     TypeNotImplemented(u16),
     #[error("Failed to parse custom CQL type: {0}")]
     CustomTypeParseError(CustomTypeParseError),
-}
-
-/// A low level deserialization error.
-///
-/// This type of error is returned when deserialization
-/// of some primitive value fails.
-///
-/// Possible error kinds:
-/// - generic io error - reading from buffer failed
-/// - out of range integer conversion
-/// - conversion errors - e.g. slice-to-array or primitive-to-enum
-/// - not enough bytes in the buffer to deserialize a value
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum LowLevelDeserializationError {
-    #[error(transparent)]
-    IoError(Arc<std::io::Error>),
-    #[error(transparent)]
-    TryFromIntError(#[from] std::num::TryFromIntError),
-    #[error(transparent)]
-    TryFromSliceError(#[from] std::array::TryFromSliceError),
-    #[error("Not enough bytes! expected: {expected}, received: {received}")]
-    TooFewBytesReceived { expected: usize, received: usize },
-    #[error("Invalid value length: {0}")]
-    InvalidValueLength(i32),
-    #[error("Unknown consistency: {0}")]
-    UnknownConsistency(#[from] TryFromPrimitiveError<u16>),
-    #[error("Invalid inet bytes length: {0}. Accepted lengths are 4 and 16 bytes.")]
-    InvalidInetLength(u8),
-    #[error("UTF8 deserialization failed: {0}")]
-    UTF8DeserializationError(#[from] std::str::Utf8Error),
-}
-
-impl From<std::io::Error> for LowLevelDeserializationError {
-    fn from(value: std::io::Error) -> Self {
-        Self::IoError(Arc::new(value))
-    }
 }

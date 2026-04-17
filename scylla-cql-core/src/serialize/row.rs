@@ -11,13 +11,14 @@ use std::{collections::HashMap, sync::Arc};
 use bytes::BufMut;
 use thiserror::Error;
 
-use crate::frame::request::RequestDeserializationError;
+use crate::frame::frame_errors::LowLevelDeserializationError;
 use crate::frame::response::result::ColumnType;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types;
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::value::SerializeValue;
+use super::writers::WrittenCellProof;
 use super::{CellWriter, RowWriter, SerializationError};
 
 /// Contains information needed to serialize a row.
@@ -115,6 +116,25 @@ impl SerializeRow for [u8; 0] {
     impl_serialize_row_for_unit!();
 }
 
+/// Serializes a single value coming from type T into the writer
+///
+/// `T` is not used for any sanity nor logical checks; it is only used when creating an
+/// error message.
+#[inline]
+fn serialize_column<'b, T>(
+    value: &impl SerializeValue,
+    spec: &ColumnSpec,
+    writer: &'b mut RowWriter<'_>,
+) -> Result<WrittenCellProof<'b>, SerializationError> {
+    let sub_writer = writer.make_cell_writer();
+    value.serialize(spec.typ(), sub_writer).map_err(|err| {
+        mk_ser_err::<T>(BuiltinSerializationErrorKind::ColumnSerializationFailed {
+            name: spec.name().to_owned(),
+            err,
+        })
+    })
+}
+
 macro_rules! impl_serialize_row_for_slice {
     () => {
         fn serialize(
@@ -131,7 +151,7 @@ macro_rules! impl_serialize_row_for_slice {
                 ));
             }
             for (col, val) in ctx.columns().iter().zip(self.iter()) {
-                $crate::_macro_internal::ser::row::serialize_column::<Self>(val, col, writer)?;
+                serialize_column::<Self>(val, col, writer)?;
             }
             Ok(())
         }
@@ -189,9 +209,7 @@ macro_rules! impl_serialize_row_for_map {
                         ));
                     }
                     Some(v) => {
-                        $crate::_macro_internal::ser::row::serialize_column::<Self>(
-                            v, col, writer,
-                        )?;
+                        serialize_column::<Self>(v, col, writer)?;
                         let _ = unused_columns.remove(col.name());
                     }
                 }
@@ -272,7 +290,7 @@ macro_rules! impl_tuple {
                 };
                 let ($($fidents,)*) = self;
                 $(
-                    $crate::_macro_internal::ser::row::serialize_column::<Self>($fidents, $tidents, writer)?;
+                    serialize_column::<Self>($fidents, $tidents, writer)?;
                 )*
                 Ok(())
             }
@@ -327,7 +345,7 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-#[doc(hidden)]
+/// Creates a [`BuiltinTypeCheckError`] with the given kind.
 pub fn mk_typck_err<T>(kind: impl Into<BuiltinTypeCheckErrorKind>) -> SerializationError {
     mk_typck_err_named(std::any::type_name::<T>(), kind)
 }
@@ -354,7 +372,8 @@ pub struct BuiltinSerializationError {
     pub kind: BuiltinSerializationErrorKind,
 }
 
-pub(crate) fn mk_ser_err<T>(kind: impl Into<BuiltinSerializationErrorKind>) -> SerializationError {
+/// Creates a [`BuiltinSerializationError`] with the given kind.
+pub fn mk_ser_err<T>(kind: impl Into<BuiltinSerializationErrorKind>) -> SerializationError {
     mk_ser_err_named(std::any::type_name::<T>(), kind)
 }
 
@@ -557,7 +576,8 @@ impl SerializedValues {
         self.serialized_values.len()
     }
 
-    pub(crate) fn write_to_request(&self, buf: &mut impl BufMut) {
+    /// Writes the serialized values to the request buffer, including the preceding u16 element count.
+    pub fn write_to_request(&self, buf: &mut impl BufMut) {
         buf.put_u16(self.element_count);
         buf.put(self.serialized_values.as_slice())
     }
@@ -592,8 +612,7 @@ impl SerializedValues {
     }
 
     /// Creates value list from the request frame
-    /// This is used only for testing - request deserialization.
-    pub(crate) fn new_from_frame(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
+    pub fn new_from_frame(buf: &mut &[u8]) -> Result<Self, LowLevelDeserializationError> {
         let values_num = types::read_short(buf)?;
         let values_beg = *buf;
         for _ in 0..values_num {
@@ -631,53 +650,6 @@ impl<'a> Iterator for SerializedValuesIterator<'a> {
 
         Some(types::read_value(&mut self.serialized_values).expect("badly encoded value"))
     }
-}
-
-mod doctests {
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeRow)]
-    /// #[scylla(crate = scylla_cql, skip_name_checks)]
-    /// struct TestRow {}
-    /// ```
-    fn _test_struct_deserialization_name_check_skip_requires_enforce_order() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeRow)]
-    /// #[scylla(crate = scylla_cql, skip_name_checks)]
-    /// struct TestRow {
-    ///     #[scylla(rename = "b")]
-    ///     a: i32,
-    /// }
-    /// ```
-    fn _test_struct_deserialization_skip_name_check_conflicts_with_rename() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeRow)]
-    /// #[scylla(crate = scylla_cql)]
-    /// struct TestRow {
-    ///     #[scylla(rename = "b")]
-    ///     a: i32,
-    ///     b: String,
-    /// }
-    /// ```
-    fn _test_struct_deserialization_skip_rename_collision_with_field() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeRow)]
-    /// #[scylla(crate = scylla_cql)]
-    /// struct TestRow {
-    ///     #[scylla(rename = "c")]
-    ///     a: i32,
-    ///     #[scylla(rename = "c")]
-    ///     b: String,
-    /// }
-    /// ```
-    fn _test_struct_deserialization_rename_collision_with_another_rename() {}
 }
 
 #[cfg(test)]

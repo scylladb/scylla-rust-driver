@@ -10,10 +10,10 @@ use crate::policies::host_filter::HostFilter;
 use crate::policies::host_listener::{HostEvent, HostEventContext, HostListener};
 use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
 
+use crate::frame::response::result::TableSpec;
 use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{FutureExt, future::RemoteHandle};
-use scylla_cql::frame::response::result::TableSpec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

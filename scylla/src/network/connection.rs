@@ -11,7 +11,16 @@ use crate::errors::{
     InternalRequestError, RequestAttemptError, ResponseParseError, TranslationError,
     UseKeyspaceError,
 };
+use crate::frame::frame_errors::CqlResponseParseError;
 use crate::frame::protocol_features::ProtocolFeatures;
+use crate::frame::request::CqlRequestKind;
+use crate::frame::request::options::{self, Options};
+use crate::frame::request::query::QueryParameters;
+use crate::frame::response::authenticate::Authenticate;
+use crate::frame::response::result::{ResultMetadata, ResultWithDeserializedMetadata, TableSpec};
+use crate::frame::response::{self, error};
+use crate::frame::response::{Error, ResponseWithDeserializedMetadata};
+use crate::frame::types::SerialConsistency;
 use crate::frame::{
     self, FrameParams, SerializedRequest,
     request::{self, SerializableRequest, batch, execute, query, register},
@@ -24,26 +33,15 @@ use crate::response::query_result::QueryResult;
 use crate::response::{NonErrorAuthResponse, NonErrorStartupResponse, PagingState, QueryResponse};
 use crate::routing::locator::tablets::{RawTablet, TabletParsingError};
 use crate::routing::{Shard, ShardAwarePortRange, ShardInfo, Sharder, ShardingError};
+use crate::serialize::batch::{BatchValues, BatchValuesIterator};
+use crate::serialize::raw_batch::RawBatchValuesAdapter;
+use crate::serialize::row::{RowSerializationContext, SerializedValues};
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::{PreparedStatement, RawPreparedStatement};
 use crate::statement::unprepared::Statement;
 use crate::statement::{Consistency, PageSize};
 use bytes::Bytes;
 use futures::{FutureExt, future::RemoteHandle};
-use scylla_cql::frame::frame_errors::CqlResponseParseError;
-use scylla_cql::frame::request::CqlRequestKind;
-use scylla_cql::frame::request::options::{self, Options};
-use scylla_cql::frame::request::query::QueryParameters;
-use scylla_cql::frame::response::authenticate::Authenticate;
-use scylla_cql::frame::response::result::{
-    ResultMetadata, ResultWithDeserializedMetadata, TableSpec,
-};
-use scylla_cql::frame::response::{self, error};
-use scylla_cql::frame::response::{Error, ResponseWithDeserializedMetadata};
-use scylla_cql::frame::types::SerialConsistency;
-use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
-use scylla_cql::serialize::raw_batch::RawBatchValuesAdapter;
-use scylla_cql::serialize::row::{RowSerializationContext, SerializedValues};
 use socket2::{SockRef, TcpKeepalive};
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -2442,12 +2440,12 @@ impl VerifiedKeyspaceName {
 
 #[cfg(test)]
 mod tests {
-    use assert_matches::assert_matches;
-    use scylla_cql::frame::protocol_features::{
+    use crate::frame::protocol_features::{
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };
-    use scylla_cql::frame::types;
-    use scylla_cql::serialize::row::SerializedValues;
+    use crate::frame::types;
+    use crate::serialize::row::SerializedValues;
+    use assert_matches::assert_matches;
     use scylla_proxy::{
         Condition, Node, Proxy, Reaction, RequestFrame, RequestOpcode, RequestReaction,
         RequestRule, ResponseFrame, ShardAwareness,

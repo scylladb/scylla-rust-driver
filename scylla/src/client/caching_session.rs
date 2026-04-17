@@ -4,13 +4,13 @@
 use crate::errors::{ExecutionError, PagerExecutionError, PrepareError};
 use crate::response::query_result::QueryResult;
 use crate::response::{PagingState, PagingStateResponse};
+use crate::serialize::batch::BatchValues;
+use crate::serialize::row::SerializeRow;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::{PreparedStatement, UnconfiguredPreparedStatement};
 use crate::statement::unprepared::Statement;
 use dashmap::DashMap;
 use futures::future::try_join_all;
-use scylla_cql::serialize::batch::BatchValues;
-use scylla_cql::serialize::row::SerializeRow;
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::BuildHasher;

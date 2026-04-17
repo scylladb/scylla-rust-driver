@@ -7,11 +7,13 @@ use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
 use crate::cluster::node::{KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
+use crate::errors::DbError;
 use crate::errors::{
     BadQuery, BrokenConnectionError, ExecutionError, MetadataError, NewSessionError,
     PagerExecutionError, PrepareError, RequestAttemptError, RequestError, SchemaAgreementError,
     TracingError, UseKeyspaceError,
 };
+use crate::frame::response::NonErrorResponseWithDeserializedMetadata;
 use crate::frame::response::result;
 use crate::network::tls::TlsProvider;
 use crate::network::{Connection, ConnectionConfig, PoolConfig, VerifiedKeyspaceName};
@@ -35,6 +37,8 @@ use crate::response::{
 };
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, ShardAwarePortRange};
+use crate::serialize::batch::BatchValues;
+use crate::serialize::row::{SerializeRow, SerializedValues};
 use crate::statement::batch::batch_values;
 use crate::statement::batch::{Batch, BatchStatement};
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
@@ -44,10 +48,6 @@ use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
-use scylla_cql::frame::response::error::DbError;
-use scylla_cql::serialize::batch::BatchValues;
-use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
 use std::borrow::Borrow;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};

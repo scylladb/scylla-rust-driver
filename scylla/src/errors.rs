@@ -27,17 +27,17 @@ pub use crate::authentication::AuthError;
 pub use crate::network::tls::TlsError;
 
 // Re-export error types from scylla-cql.
-pub use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
-pub use scylla_cql::frame::frame_errors::{
+pub use crate::deserialize::{DeserializationError, TypeCheckError};
+pub use crate::frame::frame_errors::{
     CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
     CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError, CqlResponseParseError,
     CqlResultParseError, CqlSupportedParseError, FrameBodyExtensionsParseError,
     FrameHeaderParseError,
 };
-pub use scylla_cql::frame::request::CqlRequestKind;
-pub use scylla_cql::frame::response::CqlResponseKind;
-pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
-pub use scylla_cql::serialize::SerializationError;
+pub use crate::frame::request::CqlRequestKind;
+pub use crate::frame::response::CqlResponseKind;
+pub use crate::frame::response::error::{DbError, OperationType, WriteType};
+pub use crate::serialize::SerializationError;
 
 /// Error that occurred during request execution
 #[derive(Error, Debug, Clone)]
@@ -1072,7 +1072,7 @@ pub enum ClusterStateTokenError {
 
 #[cfg(test)]
 mod tests {
-    use scylla_cql::Consistency;
+    use crate::frame::types::Consistency;
 
     use super::{DbError, ExecutionError, RequestAttemptError, WriteType};
 

@@ -6,7 +6,8 @@ use scylla_cql::frame::protocol_features::ProtocolFeatures;
 pub use scylla_cql::frame::request::RequestOpcode;
 use scylla_cql::frame::request::{RequestDeserializationError, RequestV2};
 pub use scylla_cql::frame::response::ResponseOpcode;
-use scylla_cql::frame::{response::error::DbError, types};
+use scylla_cql::frame::response::error::DbError;
+use scylla_cql::frame::types;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use tracing::warn;

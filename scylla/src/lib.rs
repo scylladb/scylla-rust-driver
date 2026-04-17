@@ -110,8 +110,9 @@ pub mod value {
     //! Defines CQL values of various types and their representations,
     //! as well as conversion between them and other types.
 
-    // Every `pub` item is re-exported here, apart from `deser_cql_value`.
-    pub use scylla_cql::value::{
+    // Most types come from scylla-cql-core.
+    pub(crate) use scylla_cql::value::deser_cql_value;
+    pub use scylla_cql_core::value::{
         Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
         CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed, Emptiable, MaybeEmpty, MaybeUnset,
         Row, Unset, ValueOverflow,
@@ -121,21 +122,27 @@ pub mod value {
 pub mod frame {
     //! Abstractions of the CQL wire protocol.
 
-    pub use scylla_cql::frame::{Authenticator, Compression, frame_errors};
     pub(crate) use scylla_cql::frame::{
-        FrameParams, SerializedRequest, parse_response_body_extensions, protocol_features,
-        read_response_frame, request, server_event_type,
+        FrameParams, SerializedRequest, parse_response_body_extensions, read_response_frame,
+        request, server_event_type,
     };
+    pub use scylla_cql_core::frame::frame_errors;
+    pub use scylla_cql_core::frame::protocol_features;
+    pub use scylla_cql_core::frame::{Authenticator, Compression};
 
     pub mod types {
         //! CQL binary protocol in-wire types.
 
-        pub use scylla_cql::frame::types::{Consistency, SerialConsistency};
+        #[cfg(test)]
+        pub(crate) use scylla_cql::frame::types::{read_string_map, write_bytes_opt};
+        pub(crate) use scylla_cql_core::frame::types::RawValue;
+        pub use scylla_cql_core::frame::types::{Consistency, SerialConsistency};
     }
 
     pub mod response {
         //! CQL responses sent by the server.
 
+        pub use scylla_cql::frame::response::CqlResponseKind;
         pub(crate) use scylla_cql::frame::response::*;
 
         pub mod result {
@@ -147,7 +154,7 @@ pub mod frame {
             pub use scylla_cql::frame::response::result::DeserializedMetadataAndRawRows;
 
             pub(crate) use scylla_cql::frame::response::result::*;
-            pub use scylla_cql::frame::response::result::{
+            pub use scylla_cql_core::frame::response::result::{
                 CollectionType, ColumnSpec, ColumnType, NativeType, PartitionKeyIndex, TableSpec,
                 UserDefinedType,
             };
@@ -159,12 +166,12 @@ pub mod frame {
 // Note: When editing comment on submodules here edit corresponding comments
 // on scylla-cql modules too.
 pub mod serialize {
-    pub use scylla_cql::serialize::SerializationError;
+    pub use scylla_cql_core::serialize::SerializationError;
     /// Contains the [BatchValues][batch::BatchValues] and [BatchValuesIterator][batch::BatchValuesIterator] trait and their
     /// implementations.
     pub mod batch {
         // Main types
-        pub use scylla_cql::serialize::batch::{
+        pub use scylla_cql_core::serialize::batch::{
             BatchValues, BatchValuesFromIterator, BatchValuesIterator,
             BatchValuesIteratorFromIterator, TupleValuesIter,
         };
@@ -173,10 +180,11 @@ pub mod serialize {
     /// Contains the [SerializeRow][row::SerializeRow] trait and its implementations.
     pub mod row {
         // Main types
-        pub use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow};
+        pub(crate) use scylla_cql_core::serialize::row::SerializedValues;
+        pub use scylla_cql_core::serialize::row::{RowSerializationContext, SerializeRow};
 
         // Errors
-        pub use scylla_cql::serialize::row::{
+        pub use scylla_cql_core::serialize::row::{
             BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
             BuiltinTypeCheckErrorKind,
         };
@@ -185,10 +193,10 @@ pub mod serialize {
     /// Contains the [SerializeValue][value::SerializeValue] trait and its implementations.
     pub mod value {
         // Main types
-        pub use scylla_cql::serialize::value::SerializeValue;
+        pub use scylla_cql_core::serialize::value::SerializeValue;
 
         // Errors
-        pub use scylla_cql::serialize::value::{
+        pub use scylla_cql_core::serialize::value::{
             BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
             BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind,
             SetOrListSerializationErrorKind, SetOrListTypeCheckErrorKind,
@@ -199,25 +207,30 @@ pub mod serialize {
 
     /// Contains types and traits used for safe serialization of values for a CQL statement.
     pub mod writers {
-        pub use scylla_cql::serialize::writers::{
+        pub use scylla_cql_core::serialize::writers::{
             CellOverflowError, CellValueBuilder, CellWriter, RowWriter, WrittenCellProof,
         };
+    }
+
+    pub(crate) mod raw_batch {
+        pub(crate) use scylla_cql::serialize::raw_batch::RawBatchValuesAdapter;
     }
 }
 
 pub mod deserialize {
     #![doc = include_str!("deserialize/README.md")]
 
-    pub use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+    pub use scylla_cql_core::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 
     /// Deserializing the whole query result contents.
     pub mod result {
-        pub use scylla_cql::deserialize::result::TypedRowIterator;
+        pub(crate) use scylla_cql::deserialize::result::RawRowLendingIterator;
+        pub use scylla_cql_core::deserialize::result::TypedRowIterator;
     }
 
     /// Deserializing a row of the query result.
     pub mod row {
-        pub use scylla_cql::deserialize::row::{
+        pub use scylla_cql_core::deserialize::row::{
             BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
             BuiltinTypeCheckErrorKind, ColumnIterator, DeserializeRow, RawColumn,
         };
@@ -225,7 +238,7 @@ pub mod deserialize {
 
     /// Deserializing a single CQL value from a column of the query result row.
     pub mod value {
-        pub use scylla_cql::deserialize::value::{
+        pub use scylla_cql_core::deserialize::value::{
             BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
             BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator,
             MapDeserializationErrorKind, MapIterator, MapTypeCheckErrorKind,
@@ -238,7 +251,7 @@ pub mod deserialize {
         // Added it anyway for documentation purposes.
         // TODO(2.0): Remove those re-exports.
         #[deprecated(since = "1.5.0", note = "Moved to `scylla::value` module")]
-        pub use scylla_cql::deserialize::value::{Emptiable, MaybeEmpty};
+        pub use scylla_cql_core::deserialize::value::{Emptiable, MaybeEmpty};
     }
 
     // Shorthands for better readability.
@@ -266,6 +279,10 @@ pub mod statement;
 
 pub(crate) mod utils;
 
+pub(crate) mod parse_utils {
+    pub(crate) use scylla_cql::utils::parse::{ParseErrorCause, ParseResult, ParserState};
+}
+
 #[cfg(test)]
 pub(crate) use utils::test_utils;
 
@@ -275,7 +292,7 @@ mod book_tests;
 #[cfg(all(scylla_unstable, feature = "unstable-testing"))]
 #[doc(hidden)]
 pub mod internal_testing {
-    use scylla_cql::serialize::row::SerializedValues;
+    use crate::serialize::row::SerializedValues;
 
     use crate::routing::Token;
     use crate::routing::partitioner::PartitionerName;

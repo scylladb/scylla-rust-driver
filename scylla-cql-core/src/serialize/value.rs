@@ -625,6 +625,7 @@ fn serialize_cql_value<'b>(
     typ: &ColumnType,
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
+    #[deny(clippy::wildcard_enum_match_arm)]
     match value {
         CqlValue::Ascii(a) => <_ as SerializeValue>::serialize(&a, typ, writer),
         CqlValue::Boolean(b) => <_ as SerializeValue>::serialize(&b, typ, writer),
@@ -670,24 +671,30 @@ fn serialize_cql_value<'b>(
         CqlValue::Tuple(t) => {
             // We allow serializing tuples that have less fields
             // than the database tuple, but not the other way around.
-            let fields = match typ {
-                ColumnType::Tuple(fields) => {
-                    if fields.len() < t.len() {
+            let fields = {
+                #[deny(clippy::wildcard_enum_match_arm)]
+                match typ {
+                    ColumnType::Tuple(fields) => {
+                        if fields.len() < t.len() {
+                            return Err(mk_typck_err::<CqlValue>(
+                                typ,
+                                TupleTypeCheckErrorKind::WrongElementCount {
+                                    rust_type_el_count: t.len(),
+                                    cql_type_el_count: fields.len(),
+                                },
+                            ));
+                        }
+                        fields
+                    }
+                    ColumnType::Native(_)
+                    | ColumnType::Collection { .. }
+                    | ColumnType::Vector { .. }
+                    | ColumnType::UserDefinedType { .. } => {
                         return Err(mk_typck_err::<CqlValue>(
                             typ,
-                            TupleTypeCheckErrorKind::WrongElementCount {
-                                rust_type_el_count: t.len(),
-                                cql_type_el_count: fields.len(),
-                            },
+                            TupleTypeCheckErrorKind::NotTuple,
                         ));
                     }
-                    fields
-                }
-                _ => {
-                    return Err(mk_typck_err::<CqlValue>(
-                        typ,
-                        TupleTypeCheckErrorKind::NotTuple,
-                    ));
                 }
             };
             serialize_tuple_like(typ, fields.iter(), t.iter(), writer)
@@ -726,7 +733,6 @@ fn fix_rust_name_in_err<RustT>(mut err: SerializationError) -> SerializationErro
                     ..err.clone()
                 });
             }
-
             if let Some(err) = err.0.downcast_ref::<BuiltinSerializationError>()
                 && err.rust_name != rust_name
             {
@@ -1036,7 +1042,7 @@ fn serialize_vector<'t, 'b, T: SerializeValue + 't>(
         ));
     }
     let mut builder = writer.into_value_builder();
-    match element_type.type_size() {
+    match element_type.type_size_for_vector() {
         Some(_) => {
             for element in iter {
                 serialize_next_constant_length_elem(
@@ -1130,7 +1136,8 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-fn mk_typck_err<T: ?Sized>(
+/// Creates a [`BuiltinTypeCheckError`] with the given kind.
+pub fn mk_typck_err<T: ?Sized>(
     got: &ColumnType,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
 ) -> SerializationError {
@@ -1163,7 +1170,8 @@ pub struct BuiltinSerializationError {
     pub kind: BuiltinSerializationErrorKind,
 }
 
-pub(crate) fn mk_ser_err<T: ?Sized>(
+/// Creates a [`BuiltinSerializationError`] with the given kind.
+pub fn mk_ser_err<T: ?Sized>(
     got: &ColumnType,
     kind: impl Into<BuiltinSerializationErrorKind>,
 ) -> SerializationError {
@@ -1583,103 +1591,6 @@ impl Display for UdtSerializationErrorKind {
             }
         }
     }
-}
-
-mod doctests {
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, skip_name_checks)]
-    /// struct TestUdt {}
-    /// ```
-    fn _test_udt_bad_attributes_skip_name_check_requires_enforce_order() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
-    /// struct TestUdt {
-    ///     #[scylla(rename = "b")]
-    ///     a: i32,
-    /// }
-    /// ```
-    fn _test_udt_bad_attributes_skip_name_check_conflicts_with_rename() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
-    /// struct TestUdt {
-    ///     #[scylla(rename = "b")]
-    ///     a: i32,
-    ///     b: String,
-    /// }
-    /// ```
-    fn _test_udt_bad_attributes_rename_collision_with_field() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
-    /// struct TestUdt {
-    ///     #[scylla(rename = "c")]
-    ///     a: i32,
-    ///     #[scylla(rename = "c")]
-    ///     b: String,
-    /// }
-    /// ```
-    fn _test_udt_bad_attributes_rename_collision_with_another_rename() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
-    /// struct TestUdt {
-    ///     a: i32,
-    ///     #[scylla(allow_missing)]
-    ///     b: bool,
-    ///     c: String,
-    /// }
-    /// ```
-    fn _test_udt_bad_attributes_name_skip_name_checks_limitations_on_allow_missing() {}
-
-    /// ```
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
-    /// struct TestUdt {
-    ///     a: i32,
-    ///     #[scylla(allow_missing)]
-    ///     b: bool,
-    ///     #[scylla(allow_missing)]
-    ///     c: String,
-    /// }
-    /// ```
-    fn _test_udt_good_attributes_name_skip_name_checks_limitations_on_allow_missing() {}
-
-    /// ```
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
-    /// struct TestUdt {
-    ///     a: i32,
-    ///     #[scylla(allow_missing)]
-    ///     b: bool,
-    ///     c: String,
-    /// }
-    /// ```
-    fn _test_udt_unordered_flavour_no_limitations_on_allow_missing() {}
-
-    /// ```
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
-    /// struct TestUdt {
-    ///     a: i32,
-    ///     #[scylla(default_when_null)]
-    ///     b: bool,
-    ///     c: String,
-    /// }
-    /// ```
-    fn _test_udt_default_when_null_is_accepted() {}
 }
 
 #[cfg(test)]

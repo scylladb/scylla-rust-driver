@@ -10,19 +10,16 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use crate::deserialize::result::RawRowLendingIterator;
+use crate::deserialize::row::{ColumnIterator, DeserializeRow};
+use crate::deserialize::{DeserializationError, TypeCheckError};
+use crate::frame::frame_errors::ResultMetadataAndRowsCountParseError;
+use crate::frame::request::query::PagingState;
+use crate::frame::response::NonErrorResponseWithDeserializedMetadata;
+use crate::frame::response::result::{DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace};
+use crate::frame::types::{Consistency, SerialConsistency};
+use crate::serialize::row::SerializedValues;
 use futures::Stream;
-use scylla_cql::Consistency;
-use scylla_cql::deserialize::result::RawRowLendingIterator;
-use scylla_cql::deserialize::row::{ColumnIterator, DeserializeRow};
-use scylla_cql::deserialize::{DeserializationError, TypeCheckError};
-use scylla_cql::frame::frame_errors::ResultMetadataAndRowsCountParseError;
-use scylla_cql::frame::request::query::PagingState;
-use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
-use scylla_cql::frame::response::result::{
-    DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace,
-};
-use scylla_cql::frame::types::SerialConsistency;
-use scylla_cql::serialize::row::SerializedValues;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
@@ -117,7 +114,7 @@ type ResultNextPage = Result<NextReceivedPage, NextPageError>;
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_oneshot_sender {
-    use scylla_cql::frame::response::result::DeserializedMetadataAndRawRows;
+    use crate::frame::response::result::DeserializedMetadataAndRawRows;
     use std::marker::PhantomData;
     use tokio::sync::{mpsc, oneshot};
     use uuid::Uuid;

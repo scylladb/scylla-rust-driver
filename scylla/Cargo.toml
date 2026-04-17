@@ -42,15 +42,15 @@ secrecy-08 = ["scylla-cql/secrecy-08"]
 # Enables support for CQL ser/de of Secrecy type from secrecy 0.10 crate.
 secrecy-10 = ["scylla-cql/secrecy-10"]
 # Enables support for CQL ser/de of time/date types from chrono 0.4 crate.
-chrono-04 = ["scylla-cql/chrono-04"]
+chrono-04 = ["scylla-cql/chrono-04", "scylla-cql-core/chrono-04"]
 # Enables support for CQL ser/de of time/date types from time 0.3 crate.
-time-03 = ["scylla-cql/time-03"]
+time-03 = ["scylla-cql/time-03", "scylla-cql-core/time-03"]
 # Enables support for CQL ser/de of arbitrary length integer types from num-bigint 0.3 crate.
-num-bigint-03 = ["scylla-cql/num-bigint-03"]
+num-bigint-03 = ["scylla-cql/num-bigint-03", "scylla-cql-core/num-bigint-03"]
 # Enables support for CQL ser/de of arbitrary length integer types from num-bigint 0.4 crate.
-num-bigint-04 = ["scylla-cql/num-bigint-04"]
+num-bigint-04 = ["scylla-cql/num-bigint-04", "scylla-cql-core/num-bigint-04"]
 # Enables support for CQL ser/de of arbitrary precision decimal types from bigdecimal 0.4 crate.
-bigdecimal-04 = ["scylla-cql/bigdecimal-04"]
+bigdecimal-04 = ["scylla-cql/bigdecimal-04", "scylla-cql-core/bigdecimal-04"]
 # Enables support for CQL ser/de of all supported external types.
 full-serialization = [
     "chrono-04",
@@ -82,6 +82,7 @@ unstable-reconnect-policy = []
 # Main, public dependencies
 ###########################
 scylla-cql = { version = "1.5.0", path = "../scylla-cql" }
+scylla-cql-core = { version = "1.5.0", path = "../scylla-cql-core" }
 tokio = { version = "1.40", features = [
     "net",
     "time",

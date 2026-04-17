@@ -87,9 +87,9 @@ Some types don't borrow anything and fully own their data, e.g. `i32` or
 the respective trait for _all_ lifetimes, i.e.:
 
 ```rust
-# use scylla_cql::frame::response::result::{NativeType, ColumnType};
-# use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-# use scylla_cql::deserialize::value::DeserializeValue;
+# use scylla_cql_core::frame::response::result::{NativeType, ColumnType};
+# use scylla_cql_core::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+# use scylla_cql_core::deserialize::value::DeserializeValue;
 use thiserror::Error;
 struct MyVec(Vec<u8>);
 #[derive(Debug, Error)]
@@ -128,9 +128,9 @@ type definition should be constrained with the generic lifetime parameter.
 For example:
 
 ```rust
-# use scylla_cql::frame::response::result::{NativeType, ColumnType};
-# use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-# use scylla_cql::deserialize::value::DeserializeValue;
+# use scylla_cql_core::frame::response::result::{NativeType, ColumnType};
+# use scylla_cql_core::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+# use scylla_cql_core::deserialize::value::DeserializeValue;
 use thiserror::Error;
 struct MySlice<'a>(&'a [u8]);
 #[derive(Debug, Error)]
@@ -179,9 +179,9 @@ it can introduce space leaks.
 Example:
 
 ```rust
-# use scylla_cql::frame::response::result::{NativeType, ColumnType};
-# use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-# use scylla_cql::deserialize::value::DeserializeValue;
+# use scylla_cql_core::frame::response::result::{NativeType, ColumnType};
+# use scylla_cql_core::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+# use scylla_cql_core::deserialize::value::DeserializeValue;
 # use bytes::Bytes;
 use thiserror::Error;
 struct MyBytes(Bytes);

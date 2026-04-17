@@ -1,12 +1,12 @@
-//! CQL protocol-level representation of an `ERROR` response.
+//! CQL protocol-level error types.
 
-use crate::Consistency;
-use crate::frame::frame_errors::{CqlErrorParseError, LowLevelDeserializationError};
-use crate::frame::protocol_features::ProtocolFeatures;
-use crate::frame::types;
 use byteorder::ReadBytesExt;
 use bytes::Bytes;
 use thiserror::Error;
+
+use crate::frame::frame_errors::{CqlErrorParseError, LowLevelDeserializationError};
+use crate::frame::protocol_features::ProtocolFeatures;
+use crate::frame::types::{self, Consistency};
 
 /// Represents a CQL protocol-level error that is sent by the database in response to a query
 /// that failed to execute successfully.
@@ -153,6 +153,87 @@ impl Error {
         };
 
         Ok(Error { error, reason })
+    }
+}
+
+/// Type of the operation rejected by rate limiting
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperationType {
+    Read,
+    Write,
+    Other(u8),
+}
+
+impl From<u8> for OperationType {
+    fn from(operation_type: u8) -> OperationType {
+        match operation_type {
+            0 => OperationType::Read,
+            1 => OperationType::Write,
+            other => OperationType::Other(other),
+        }
+    }
+}
+
+/// Type of write operation requested
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteType {
+    /// Non-batched non-counter write
+    Simple,
+    /// Logged batch write. If this type is received, it means the batch log has been successfully written
+    /// (otherwise BatchLog type would be present)
+    Batch,
+    /// Unlogged batch. No batch log write has been attempted.
+    UnloggedBatch,
+    /// Counter write (batched or not)
+    Counter,
+    /// Timeout occurred during the write to the batch log when a logged batch was requested
+    BatchLog,
+    /// Timeout occurred during Compare And Set write/update
+    Cas,
+    /// Write involves VIEW update and failure to acquire local view(MV) lock for key within timeout
+    View,
+    /// Timeout occurred when a cdc_total_space_in_mb is exceeded when doing a write to data tracked by cdc
+    Cdc,
+    /// Other type not specified in the specification
+    Other(String),
+}
+
+impl std::fmt::Display for WriteType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl From<&str> for WriteType {
+    fn from(write_type_str: &str) -> WriteType {
+        match write_type_str {
+            "SIMPLE" => WriteType::Simple,
+            "BATCH" => WriteType::Batch,
+            "UNLOGGED_BATCH" => WriteType::UnloggedBatch,
+            "COUNTER" => WriteType::Counter,
+            "BATCH_LOG" => WriteType::BatchLog,
+            "CAS" => WriteType::Cas,
+            "VIEW" => WriteType::View,
+            "CDC" => WriteType::Cdc,
+            _ => WriteType::Other(write_type_str.to_string()),
+        }
+    }
+}
+
+impl WriteType {
+    /// Returns the string representation of the write type as defined in the CQL protocol specification.
+    pub fn as_str(&self) -> &str {
+        match self {
+            WriteType::Simple => "SIMPLE",
+            WriteType::Batch => "BATCH",
+            WriteType::UnloggedBatch => "UNLOGGED_BATCH",
+            WriteType::Counter => "COUNTER",
+            WriteType::BatchLog => "BATCH_LOG",
+            WriteType::Cas => "CAS",
+            WriteType::View => "VIEW",
+            WriteType::Cdc => "CDC",
+            WriteType::Other(write_type) => write_type.as_str(),
+        }
     }
 }
 
@@ -345,59 +426,23 @@ impl DbError {
             DbError::ServerError => 0x0000,
             DbError::ProtocolError => 0x000A,
             DbError::AuthenticationError => 0x0100,
-            DbError::Unavailable {
-                consistency: _,
-                required: _,
-                alive: _,
-            } => 0x1000,
+            DbError::Unavailable { .. } => 0x1000,
             DbError::Overloaded => 0x1001,
             DbError::IsBootstrapping => 0x1002,
             DbError::TruncateError => 0x1003,
-            DbError::WriteTimeout {
-                consistency: _,
-                received: _,
-                required: _,
-                write_type: _,
-            } => 0x1100,
-            DbError::ReadTimeout {
-                consistency: _,
-                received: _,
-                required: _,
-                data_present: _,
-            } => 0x1200,
-            DbError::ReadFailure {
-                consistency: _,
-                received: _,
-                required: _,
-                numfailures: _,
-                data_present: _,
-            } => 0x1300,
-            DbError::FunctionFailure {
-                keyspace: _,
-                function: _,
-                arg_types: _,
-            } => 0x1400,
-            DbError::WriteFailure {
-                consistency: _,
-                received: _,
-                required: _,
-                numfailures: _,
-                write_type: _,
-            } => 0x1500,
+            DbError::WriteTimeout { .. } => 0x1100,
+            DbError::ReadTimeout { .. } => 0x1200,
+            DbError::ReadFailure { .. } => 0x1300,
+            DbError::FunctionFailure { .. } => 0x1400,
+            DbError::WriteFailure { .. } => 0x1500,
             DbError::SyntaxError => 0x2000,
             DbError::Unauthorized => 0x2100,
             DbError::Invalid => 0x2200,
             DbError::ConfigError => 0x2300,
-            DbError::AlreadyExists {
-                keyspace: _,
-                table: _,
-            } => 0x2400,
-            DbError::Unprepared { statement_id: _ } => 0x2500,
+            DbError::AlreadyExists { .. } => 0x2400,
+            DbError::Unprepared { .. } => 0x2500,
             DbError::Other(code) => *code,
-            DbError::RateLimitReached {
-                op_type: _,
-                rejected_by_coordinator: _,
-            } => protocol_features.rate_limit_error.unwrap(),
+            DbError::RateLimitReached { .. } => protocol_features.rate_limit_error.unwrap(),
         }
     }
 
@@ -443,92 +488,11 @@ impl DbError {
     }
 }
 
-/// Type of the operation rejected by rate limiting
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OperationType {
-    Read,
-    Write,
-    Other(u8),
-}
-
-/// Type of write operation requested
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WriteType {
-    /// Non-batched non-counter write
-    Simple,
-    /// Logged batch write. If this type is received, it means the batch log has been successfully written
-    /// (otherwise BatchLog type would be present)
-    Batch,
-    /// Unlogged batch. No batch log write has been attempted.
-    UnloggedBatch,
-    /// Counter write (batched or not)
-    Counter,
-    /// Timeout occurred during the write to the batch log when a logged batch was requested
-    BatchLog,
-    /// Timeout occurred during Compare And Set write/update
-    Cas,
-    /// Write involves VIEW update and failure to acquire local view(MV) lock for key within timeout
-    View,
-    /// Timeout occurred when a cdc_total_space_in_mb is exceeded when doing a write to data tracked by cdc
-    Cdc,
-    /// Other type not specified in the specification
-    Other(String),
-}
-
-impl std::fmt::Display for WriteType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
-impl From<u8> for OperationType {
-    fn from(operation_type: u8) -> OperationType {
-        match operation_type {
-            0 => OperationType::Read,
-            1 => OperationType::Write,
-            other => OperationType::Other(other),
-        }
-    }
-}
-
-impl From<&str> for WriteType {
-    fn from(write_type_str: &str) -> WriteType {
-        match write_type_str {
-            "SIMPLE" => WriteType::Simple,
-            "BATCH" => WriteType::Batch,
-            "UNLOGGED_BATCH" => WriteType::UnloggedBatch,
-            "COUNTER" => WriteType::Counter,
-            "BATCH_LOG" => WriteType::BatchLog,
-            "CAS" => WriteType::Cas,
-            "VIEW" => WriteType::View,
-            "CDC" => WriteType::Cdc,
-            _ => WriteType::Other(write_type_str.to_string()),
-        }
-    }
-}
-
-impl WriteType {
-    /// Returns the string representation of the write type as defined in the CQL protocol specification.
-    pub fn as_str(&self) -> &str {
-        match self {
-            WriteType::Simple => "SIMPLE",
-            WriteType::Batch => "BATCH",
-            WriteType::UnloggedBatch => "UNLOGGED_BATCH",
-            WriteType::Counter => "COUNTER",
-            WriteType::BatchLog => "BATCH_LOG",
-            WriteType::Cas => "CAS",
-            WriteType::View => "VIEW",
-            WriteType::Cdc => "CDC",
-            WriteType::Other(write_type) => write_type.as_str(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{DbError, Error, OperationType, WriteType};
-    use crate::Consistency;
     use crate::frame::protocol_features::ProtocolFeatures;
+    use crate::frame::types::Consistency;
     use bytes::Bytes;
     use std::convert::TryInto;
 
