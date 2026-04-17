@@ -1,6 +1,6 @@
 [package]
 name = "scylla-cql-core"
-version = "0.1.0"
+version = "1.5.0"
 edition = "2024"
 rust-version = "1.88"
 description = "CQL data types and primitives that form the stable public API of the ScyllaDB Rust driver."
