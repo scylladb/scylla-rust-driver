@@ -430,6 +430,269 @@ impl ClientRoutesCluster {
         Ok(())
     }
 
+    /// Decommission a node and tear down its proxy chain.
+    ///
+    /// Steps:
+    /// 1. Remove node from the contact-point NLB backends (no new connections)
+    /// 2. Decommission + delete the node via CCM (existing connections drain)
+    /// 3. Remove chain from dc_configs, post updated routes (cleanup)
+    /// 4. Shut down the node's proxy chain (proxy + NLB)
+    ///
+    /// The route entry is removed *after* the node leaves the cluster, not
+    /// before. Stale entries are harmless (the driver won't use a route for
+    /// a node that no longer exists in its topology), whereas removing the
+    /// route while the node is still alive would leave the driver without a
+    /// translated address for in-flight reconnection attempts.
+    pub(crate) async fn decommission_node(&mut self, node_id: NodeId) -> Result<(), Error> {
+        // Find which DC this node belongs to.
+        let dc_id = self
+            .cluster
+            .nodes()
+            .get_by_id(node_id)
+            .map(|n| n.datacenter_id())
+            .with_context(|| format!("Node {} not found in cluster", node_id))?;
+
+        // Step 1: remove from contact-point NLB so no new connections target it.
+        if let Some(dc_cfg) = self.dc_configs.get(&dc_id) {
+            // Temporarily rebuild the backend list without this node.
+            let backends: Vec<SocketAddr> = dc_cfg
+                .per_node_chains
+                .iter()
+                .filter(|(id, _)| **id != node_id)
+                .map(|(_, chain)| chain.proxy_addr())
+                .collect();
+            dc_cfg.contact_point_nlb.set_backends(backends);
+        }
+
+        // Step 2: decommission and delete from CCM.
+        // We avoid `inspect_err(|_| self.cluster.mark_as_failed())` because
+        // `node` already borrows `self.cluster` mutably. Instead, mark as
+        // failed explicitly on the error path.
+        let decommission_result: Result<(), Error> = async {
+            let node = self
+                .cluster
+                .nodes_mut()
+                .get_mut_by_id(node_id)
+                .expect("node must exist");
+            node.decommission()
+                .await
+                .with_context(|| format!("Failed to decommission node {}", node_id))?;
+            node.delete()
+                .await
+                .with_context(|| format!("Failed to delete node {}", node_id))?;
+            Ok(())
+        }
+        .await;
+        if let Err(e) = decommission_result {
+            self.cluster.mark_as_failed();
+            return Err(e);
+        }
+
+        // Step 3: remove chain from dc_configs + host_id, then post updated routes.
+        self.host_ids.remove(&node_id);
+        let chain = self
+            .dc_configs
+            .get_mut(&dc_id)
+            .and_then(|dc| dc.per_node_chains.remove(&node_id))
+            .with_context(|| format!("Node {} chain not found in DC {}", node_id, dc_id))?;
+
+        self.post_routes_to_all_nodes()
+            .await
+            .context("Failed to post updated routes after decommission")?;
+
+        // Step 4: shut down the proxy chain.
+        info!("Shutting down chain for decommissioned node {}", node_id);
+        shutdown_node_chain(chain, node_id).await;
+
+        Ok(())
+    }
+
+    /// Tear down the proxy chain for a stopped node.
+    ///
+    /// When a CCM node is stopped, the proxy worker loses its backend
+    /// connection and dies. Leaving the NLB alive is harmful: the driver
+    /// can still connect to the NLB, which forwards to the dead proxy,
+    /// which tries to connect to the dead backend and eventually times out.
+    ///
+    /// This method:
+    /// 1. Shuts down the NLB + proxy chain for the stopped node
+    /// 2. Re-posts routes *without* this node so the driver doesn't try to
+    ///    route queries to it
+    ///
+    /// The host_id mapping is preserved so `restart_node_chain()` can
+    /// re-establish everything later.
+    pub(crate) async fn stop_node_chain(&mut self, node_id: NodeId) -> Result<(), Error> {
+        let dc_id = self
+            .cluster
+            .nodes()
+            .get_by_id(node_id)
+            .map(|n| n.datacenter_id())
+            .with_context(|| format!("Node {} not found in cluster", node_id))?;
+
+        if let Some(old_chain) = self
+            .dc_configs
+            .get_mut(&dc_id)
+            .and_then(|dc| dc.per_node_chains.remove(&node_id))
+        {
+            shutdown_node_chain(old_chain, node_id).await;
+        }
+
+        // Re-post routes without this node so the driver stops routing to it.
+        self.post_routes_to_all_nodes()
+            .await
+            .context("Failed to re-post routes after stopping node chain")?;
+
+        // Update the per-DC contact-point NLB to exclude the stopped node.
+        if let Some(dc_cfg) = self.dc_configs.get(&dc_id) {
+            dc_cfg.refresh_contact_point_backends();
+        }
+
+        Ok(())
+    }
+
+    /// Restart the proxy chain for a node after it has been stopped and started
+    /// again via CCM.
+    ///
+    /// When a CCM node is stopped, the proxy worker loses its backend
+    /// connection and dies. After the CCM node restarts, we need a fresh proxy
+    /// chain. This method:
+    /// 1. Shuts down the old proxy chain if still present (ignoring expected errors)
+    /// 2. Starts a new proxy chain with a fresh proxy address + NLB
+    /// 3. Re-posts routes with the new NLB address
+    pub(crate) async fn restart_node_chain(&mut self, node_id: NodeId) -> Result<(), Error> {
+        // Find which DC this node belongs to.
+        let dc_id = self
+            .cluster
+            .nodes()
+            .get_by_id(node_id)
+            .map(|n| n.datacenter_id())
+            .with_context(|| format!("Node {} not found in cluster", node_id))?;
+
+        let real_ip = {
+            let node = self.cluster.nodes().get_by_id(node_id).unwrap();
+            node.broadcast_rpc_address()
+        };
+
+        // Shut down the old chain if still present (it may already have
+        // been removed by stop_node_chain).
+        if let Some(old_chain) = self
+            .dc_configs
+            .get_mut(&dc_id)
+            .and_then(|dc| dc.per_node_chains.remove(&node_id))
+        {
+            shutdown_node_chain(old_chain, node_id).await;
+        }
+
+        // Start fresh chain.
+        let new_chain = start_node_chain(SocketAddr::new(real_ip, 9042))
+            .await
+            .with_context(|| format!("Failed to start new chain for restarted node {}", node_id))?;
+        info!(
+            "Restarted chain for node {}: NLB {}",
+            node_id,
+            new_chain.nlb_addr(),
+        );
+
+        self.dc_configs
+            .get_mut(&dc_id)
+            .expect("DC must exist")
+            .per_node_chains
+            .insert(node_id, new_chain);
+
+        // Re-post routes so the driver picks up the new NLB port.
+        self.post_routes_to_all_nodes()
+            .await
+            .context("Failed to re-post routes after chain restart")?;
+
+        // Update the per-DC contact-point NLB to include the restarted node.
+        if let Some(dc_cfg) = self.dc_configs.get(&dc_id) {
+            dc_cfg.refresh_contact_point_backends();
+        }
+
+        Ok(())
+    }
+
+    /// Add a new node to a DC and start its proxy chain.
+    ///
+    /// `dc_id` uses **1-based** CCM DC naming: `Some(2)` →  DC2, `None` →  DC1.
+    ///
+    /// Steps:
+    /// 1. CCM add + start the node (needed to discover its host_id)
+    /// 2. Discover the new node's host_id
+    /// 3. Start proxy chain (needed so the route has an NLB address)
+    /// 4. Post updated routes (with the new node) to all nodes
+    /// 5. Add the new node to the contact-point NLB
+    ///
+    /// Routes are posted before the NLB update so the driver has a valid
+    /// translated address before new connections can reach the node through
+    /// the DC contact-point NLB.
+    ///
+    /// Returns the new node's ID.
+    pub(crate) async fn add_node(&mut self, dc_id: Option<u16>) -> Result<NodeId, Error> {
+        // Step 1: CCM add + start.
+        let new_node_id = {
+            let add_result = self.cluster.add_node(dc_id).await;
+            let node = match add_result {
+                Ok(node) => node,
+                Err(e) => {
+                    self.cluster.mark_as_failed();
+                    return Err(e.context("Failed to add node via CCM"));
+                }
+            };
+            let id = node.id();
+
+            // Step 2: start the node.
+            let start_result = node.start(None).await;
+            if let Err(e) = start_result {
+                self.cluster.mark_as_failed();
+                return Err(e.context(format!("Failed to start new node {}", id)));
+            }
+            id
+        };
+
+        // Step 3: discover host_id.
+        let node_ref = self
+            .cluster
+            .nodes()
+            .get_by_id(new_node_id)
+            .expect("just added node must exist");
+        let real_ip = node_ref.broadcast_rpc_address();
+        let real_addr = SocketAddr::new(real_ip, node_ref.native_transport_port());
+        let actual_dc_id = node_ref.datacenter_id();
+
+        let host_id = discover_single_host_id(real_addr)
+            .await
+            .with_context(|| format!("Failed to discover host_id for new node {}", new_node_id))?;
+        info!(
+            "New node {} host_id={}, DC={}",
+            new_node_id, host_id, actual_dc_id
+        );
+        self.host_ids.insert(new_node_id, host_id);
+
+        // Step 4: start proxy chain.
+        let chain = start_node_chain(SocketAddr::new(real_ip, 9042))
+            .await
+            .with_context(|| format!("Failed to start chain for new node {}", new_node_id))?;
+
+        self.dc_configs
+            .get_mut(&actual_dc_id)
+            .with_context(|| format!("DC {} not found in dc_configs", actual_dc_id))?
+            .per_node_chains
+            .insert(new_node_id, chain);
+
+        // Step 5: post updated routes (with the new node).
+        self.post_routes_to_all_nodes()
+            .await
+            .context("Failed to post updated routes after adding node")?;
+
+        // Update the per-DC contact-point NLB to include the new node.
+        if let Some(dc_cfg) = self.dc_configs.get(&actual_dc_id) {
+            dc_cfg.refresh_contact_point_backends();
+        }
+
+        Ok(new_node_id)
+    }
+
     async fn post_routes_to_all_nodes(&self) -> Result<(), Error> {
         let routes = self.build_route_entries();
         let route_json = serde_json_routes(&routes);
