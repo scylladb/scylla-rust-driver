@@ -283,6 +283,7 @@ pub(crate) struct ClusterAddNode<'ccm> {
     name: String,
     db_type: DBType,
     dc: Option<String>,
+    address: Option<String>,
 }
 
 impl Ccm {
@@ -292,6 +293,7 @@ impl Ccm {
             db_type,
             name,
             dc: None,
+            address: None,
         }
     }
 }
@@ -299,6 +301,11 @@ impl Ccm {
 impl ClusterAddNode<'_> {
     pub(crate) fn dc(mut self, dc: String) -> Self {
         self.dc = Some(dc);
+        self
+    }
+
+    pub(crate) fn address(mut self, addr: String) -> Self {
+        self.address = Some(addr);
         self
     }
 
@@ -313,6 +320,11 @@ impl ClusterAddNode<'_> {
         if let Some(dc) = self.dc.as_ref() {
             args.push("--data-center");
             args.push(dc.as_str())
+        }
+
+        if let Some(addr) = self.address.as_ref() {
+            args.push("-i");
+            args.push(addr.as_str());
         }
 
         match self.db_type {
