@@ -222,6 +222,27 @@ impl Batch {
     pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
         self.config.execution_profile_handle.as_ref()
     }
+
+    /// Returns a Debug displayer for strings of statements contained in the batch.
+    pub(crate) fn debug_statements(&self) -> impl std::fmt::Debug {
+        struct DebugBatchStatements<'a>(&'a [BatchStatement]);
+        impl<'a> std::fmt::Debug for DebugBatchStatements<'a> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                fn get_statement(stmt: &BatchStatement) -> &str {
+                    match stmt {
+                        BatchStatement::Query(statement) => &statement.contents,
+                        BatchStatement::PreparedStatement(prepared_statement) => {
+                            prepared_statement.get_statement()
+                        }
+                    }
+                }
+                f.debug_list()
+                    .entries(self.0.iter().map(get_statement))
+                    .finish()
+            }
+        }
+        DebugBatchStatements(&self.statements)
+    }
 }
 
 impl Default for Batch {
