@@ -1153,8 +1153,9 @@ impl Connection {
                 ..
             }) => {
                 debug!(
-                    "Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}",
-                    statement_id
+                    "Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}, statement string: {}",
+                    statement_id,
+                    prepared_statement.get_statement()
                 );
                 // Repreparation of a statement is needed
                 self.reprepare(prepared_statement.get_statement(), prepared_statement)
@@ -1267,8 +1268,9 @@ impl Connection {
                 ResponseWithDeserializedMetadata::Error(err) => match err.error {
                     DbError::Unprepared { statement_id } => {
                         debug!(
-                            "Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}",
-                            statement_id
+                            "Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}, statement strings: {:?}",
+                            statement_id,
+                            batch.debug_statements()
                         );
                         let prepared_statement = batch.statements.iter().find_map(|s| match s {
                             BatchStatement::PreparedStatement(s) if *s.get_id() == statement_id => {
