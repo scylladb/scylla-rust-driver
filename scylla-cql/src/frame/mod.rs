@@ -379,6 +379,16 @@ pub struct TryFromPrimitiveError<T: Copy + std::fmt::Debug> {
     primitive: T,
 }
 
+impl<T: Copy + std::fmt::Debug> TryFromPrimitiveError<T> {
+    /// Creates a new `TryFromPrimitiveError` with the given enum name and primitive value.
+    pub fn new(enum_name: &'static str, primitive: T) -> Self {
+        Self {
+            enum_name,
+            primitive,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

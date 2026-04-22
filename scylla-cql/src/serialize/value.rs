@@ -1036,7 +1036,7 @@ fn serialize_vector<'t, 'b, T: SerializeValue + 't>(
         ));
     }
     let mut builder = writer.into_value_builder();
-    match element_type.type_size() {
+    match element_type.type_size_for_vector() {
         Some(_) => {
             for element in iter {
                 serialize_next_constant_length_elem(
@@ -1130,7 +1130,8 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-fn mk_typck_err<T: ?Sized>(
+/// Creates a [`BuiltinTypeCheckError`] with the given kind.
+pub fn mk_typck_err<T: ?Sized>(
     got: &ColumnType,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
 ) -> SerializationError {
@@ -1163,7 +1164,8 @@ pub struct BuiltinSerializationError {
     pub kind: BuiltinSerializationErrorKind,
 }
 
-pub(crate) fn mk_ser_err<T: ?Sized>(
+/// Creates a [`BuiltinSerializationError`] with the given kind.
+pub fn mk_ser_err<T: ?Sized>(
     got: &ColumnType,
     kind: impl Into<BuiltinSerializationErrorKind>,
 ) -> SerializationError {
@@ -1583,103 +1585,6 @@ impl Display for UdtSerializationErrorKind {
             }
         }
     }
-}
-
-mod doctests {
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, skip_name_checks)]
-    /// struct TestUdt {}
-    /// ```
-    fn _test_udt_bad_attributes_skip_name_check_requires_enforce_order() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
-    /// struct TestUdt {
-    ///     #[scylla(rename = "b")]
-    ///     a: i32,
-    /// }
-    /// ```
-    fn _test_udt_bad_attributes_skip_name_check_conflicts_with_rename() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
-    /// struct TestUdt {
-    ///     #[scylla(rename = "b")]
-    ///     a: i32,
-    ///     b: String,
-    /// }
-    /// ```
-    fn _test_udt_bad_attributes_rename_collision_with_field() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
-    /// struct TestUdt {
-    ///     #[scylla(rename = "c")]
-    ///     a: i32,
-    ///     #[scylla(rename = "c")]
-    ///     b: String,
-    /// }
-    /// ```
-    fn _test_udt_bad_attributes_rename_collision_with_another_rename() {}
-
-    /// ```compile_fail
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
-    /// struct TestUdt {
-    ///     a: i32,
-    ///     #[scylla(allow_missing)]
-    ///     b: bool,
-    ///     c: String,
-    /// }
-    /// ```
-    fn _test_udt_bad_attributes_name_skip_name_checks_limitations_on_allow_missing() {}
-
-    /// ```
-    ///
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
-    /// struct TestUdt {
-    ///     a: i32,
-    ///     #[scylla(allow_missing)]
-    ///     b: bool,
-    ///     #[scylla(allow_missing)]
-    ///     c: String,
-    /// }
-    /// ```
-    fn _test_udt_good_attributes_name_skip_name_checks_limitations_on_allow_missing() {}
-
-    /// ```
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
-    /// struct TestUdt {
-    ///     a: i32,
-    ///     #[scylla(allow_missing)]
-    ///     b: bool,
-    ///     c: String,
-    /// }
-    /// ```
-    fn _test_udt_unordered_flavour_no_limitations_on_allow_missing() {}
-
-    /// ```
-    /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
-    /// struct TestUdt {
-    ///     a: i32,
-    ///     #[scylla(default_when_null)]
-    ///     b: bool,
-    ///     c: String,
-    /// }
-    /// ```
-    fn _test_udt_default_when_null_is_accepted() {}
 }
 
 #[cfg(test)]

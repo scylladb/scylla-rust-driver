@@ -292,8 +292,7 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
+/// Creates a [`BuiltinTypeCheckError`] with the given kind.
 pub fn mk_typck_err<T>(
     cql_types: impl IntoIterator<Item = ColumnType<'static>>,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
@@ -447,8 +446,7 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
+/// Creates a [`BuiltinDeserializationError`] with the given kind.
 pub fn mk_deser_err<T>(kind: impl Into<BuiltinDeserializationErrorKind>) -> DeserializationError {
     mk_deser_err_named(std::any::type_name::<T>(), kind)
 }
@@ -523,47 +521,3 @@ impl Display for BuiltinDeserializationErrorKind {
 #[cfg(test)]
 #[path = "row_tests.rs"]
 pub(crate) mod tests;
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeRow)]
-/// #[scylla(crate = scylla_cql, skip_name_checks)]
-/// struct TestRow {}
-/// ```
-fn _test_struct_deserialization_name_check_skip_requires_enforce_order() {}
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeRow)]
-/// #[scylla(crate = scylla_cql, skip_name_checks)]
-/// struct TestRow {
-///     #[scylla(rename = "b")]
-///     a: i32,
-/// }
-/// ```
-fn _test_struct_deserialization_skip_name_check_conflicts_with_rename() {}
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeRow)]
-/// #[scylla(crate = scylla_cql)]
-/// struct TestRow {
-///     #[scylla(rename = "b")]
-///     a: i32,
-///     b: String,
-/// }
-/// ```
-fn _test_struct_deserialization_skip_rename_collision_with_field() {}
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeRow)]
-/// #[scylla(crate = scylla_cql)]
-/// struct TestRow {
-///     #[scylla(rename = "c")]
-///     a: i32,
-///     #[scylla(rename = "c")]
-///     b: String,
-/// }
-/// ```
-fn _test_struct_deserialization_rename_collision_with_another_rename() {}

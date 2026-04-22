@@ -24,7 +24,7 @@ use crate::frame::types;
 use crate::value::CqlVarintBorrowed;
 use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
-    CqlTimeuuid, CqlValue, CqlVarint, deser_cql_value,
+    CqlTimeuuid, CqlValue, CqlVarint,
 };
 
 // Re-export for backwards compatibility. These types were moved to crate::value module.
@@ -74,9 +74,172 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
         typ: &'metadata ColumnType<'metadata>,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
-        let cql = deser_cql_value(typ, &mut val).map_err(deser_error_replace_rust_name::<Self>)?;
-        Ok(cql)
+        use crate::frame::response::result::ColumnType::*;
+        use crate::frame::response::result::NativeType::*;
+
+        let mut frame_slice = ensure_not_null_frame_slice::<Self>(typ, v)?;
+
+        if frame_slice.as_slice().is_empty() {
+            match typ {
+                Native(Ascii) | Native(Blob) | Native(Text) => {
+                    // can't be empty
+                }
+                _ => return Ok(CqlValue::Empty),
+            }
+        }
+
+        // We re-create `v` from our frame_slice for delegating to other DeserializeValue impls.
+        let v = Some(frame_slice);
+
+        Ok(
+            #[deny(clippy::wildcard_enum_match_arm)]
+            match typ {
+                Native(Ascii) => {
+                    let s = String::deserialize(typ, v)?;
+                    CqlValue::Ascii(s)
+                }
+                Native(Boolean) => {
+                    let b = bool::deserialize(typ, v)?;
+                    CqlValue::Boolean(b)
+                }
+                Native(Blob) => {
+                    let b = Vec::<u8>::deserialize(typ, v)?;
+                    CqlValue::Blob(b)
+                }
+                Native(Date) => {
+                    let d = CqlDate::deserialize(typ, v)?;
+                    CqlValue::Date(d)
+                }
+                Native(Counter) => {
+                    let c = crate::value::Counter::deserialize(typ, v)?;
+                    CqlValue::Counter(c)
+                }
+                Native(Decimal) => {
+                    let d = CqlDecimal::deserialize(typ, v)?;
+                    CqlValue::Decimal(d)
+                }
+                Native(Double) => {
+                    let d = f64::deserialize(typ, v)?;
+                    CqlValue::Double(d)
+                }
+                Native(Float) => {
+                    let f = f32::deserialize(typ, v)?;
+                    CqlValue::Float(f)
+                }
+                Native(Int) => {
+                    let i = i32::deserialize(typ, v)?;
+                    CqlValue::Int(i)
+                }
+                Native(SmallInt) => {
+                    let si = i16::deserialize(typ, v)?;
+                    CqlValue::SmallInt(si)
+                }
+                Native(TinyInt) => {
+                    let ti = i8::deserialize(typ, v)?;
+                    CqlValue::TinyInt(ti)
+                }
+                Native(BigInt) => {
+                    let bi = i64::deserialize(typ, v)?;
+                    CqlValue::BigInt(bi)
+                }
+                Native(Text) => {
+                    let s = String::deserialize(typ, v)?;
+                    CqlValue::Text(s)
+                }
+                Native(Timestamp) => {
+                    let t = CqlTimestamp::deserialize(typ, v)?;
+                    CqlValue::Timestamp(t)
+                }
+                Native(Time) => {
+                    let t = CqlTime::deserialize(typ, v)?;
+                    CqlValue::Time(t)
+                }
+                Native(Timeuuid) => {
+                    let t = CqlTimeuuid::deserialize(typ, v)?;
+                    CqlValue::Timeuuid(t)
+                }
+                Native(Duration) => {
+                    let d = CqlDuration::deserialize(typ, v)?;
+                    CqlValue::Duration(d)
+                }
+                Native(Inet) => {
+                    let i = IpAddr::deserialize(typ, v)?;
+                    CqlValue::Inet(i)
+                }
+                Native(Uuid) => {
+                    let uuid = uuid::Uuid::deserialize(typ, v)?;
+                    CqlValue::Uuid(uuid)
+                }
+                Native(Varint) => {
+                    let vi = CqlVarint::deserialize(typ, v)?;
+                    CqlValue::Varint(vi)
+                }
+                Collection {
+                    typ: CollectionType::List(_type_name),
+                    ..
+                } => {
+                    let l = Vec::<CqlValue>::deserialize(typ, v)?;
+                    CqlValue::List(l)
+                }
+                Collection {
+                    typ: CollectionType::Map(_key_type, _value_type),
+                    ..
+                } => {
+                    let iter = MapIterator::<'_, '_, CqlValue, CqlValue>::deserialize(typ, v)?;
+                    let m: Vec<(CqlValue, CqlValue)> = iter.collect::<Result<_, _>>()?;
+                    CqlValue::Map(m)
+                }
+                Collection {
+                    typ: CollectionType::Set(_type_name),
+                    ..
+                } => {
+                    let s = Vec::<CqlValue>::deserialize(typ, v)?;
+                    CqlValue::Set(s)
+                }
+                Vector { .. } => {
+                    let iter = VectorIterator::deserialize(typ, v)?;
+                    let v: Vec<CqlValue> = iter.collect::<Result<_, _>>()?;
+                    CqlValue::Vector(v)
+                }
+                UserDefinedType {
+                    definition: udt, ..
+                } => {
+                    let iter = UdtIterator::deserialize(typ, v)?;
+                    let fields: Vec<(String, Option<CqlValue>)> = iter
+                        .map(|((col_name, col_type), res)| {
+                            res.and_then(|v| {
+                                let val = Option::<CqlValue>::deserialize(col_type, v.flatten())?;
+                                Ok((col_name.clone().into_owned(), val))
+                            })
+                        })
+                        .collect::<Result<_, _>>()?;
+
+                    CqlValue::UserDefinedType {
+                        keyspace: udt.keyspace.clone().into_owned(),
+                        name: udt.name.clone().into_owned(),
+                        fields,
+                    }
+                }
+                Tuple(type_names) => {
+                    let t = type_names
+                        .iter()
+                        .map(|typ| -> Result<_, DeserializationError> {
+                            let raw = frame_slice.read_cql_bytes().map_err(|e| {
+                                mk_deser_err::<CqlValue>(
+                                    typ,
+                                    BuiltinDeserializationErrorKind::RawCqlBytesReadError(e),
+                                )
+                            })?;
+                            raw.map(|v| CqlValue::deserialize(typ, Some(v))).transpose()
+                        })
+                        .collect::<Result<_, _>>()?;
+                    CqlValue::Tuple(t)
+                }
+                // Catch future variants from #[non_exhaustive] enums.
+                #[allow(unreachable_patterns)]
+                Native(_) | Collection { .. } | _ => unreachable!(),
+            },
+        )
     }
 }
 
@@ -155,25 +318,11 @@ macro_rules! impl_strict_type {
     };
 }
 
-macro_rules! impl_emptiable_strict_type {
-    ($t:ty, [$($cql:ident)|+], $conv:expr $(, $l:lifetime)?) => {
-        impl<$($l,)?> Emptiable for $t {}
-
-        impl_strict_type!($t, [$($cql)|*], $conv $(, $l)*);
-    };
-
-    // Convenience pattern for omitting brackets if type-checking as single types.
-    ($t:ty, $cql:ident, $conv:expr $(, $l:lifetime)?) => {
-        impl_emptiable_strict_type!($t, [$cql], $conv $(, $l)*);
-    };
-
-}
-
 // fixed numeric types
 
 macro_rules! impl_fixed_numeric_type {
     ($t:ty, [$($cql:ident)|+]) => {
-        impl_emptiable_strict_type!(
+        impl_strict_type!(
             $t,
             [$($cql)|*],
             |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -191,7 +340,7 @@ macro_rules! impl_fixed_numeric_type {
     };
 }
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     bool,
     Boolean,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -210,7 +359,7 @@ impl_fixed_numeric_type!(f64, Double);
 
 // other numeric types
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlVarint,
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -219,7 +368,7 @@ impl_emptiable_strict_type!(
     }
 );
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlVarintBorrowed<'b>,
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -230,7 +379,7 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "num-bigint-03")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     num_bigint_03::BigInt,
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -240,7 +389,7 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "num-bigint-04")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     num_bigint_04::BigInt,
     Varint,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -249,7 +398,7 @@ impl_emptiable_strict_type!(
     }
 );
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlDecimal,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -266,7 +415,7 @@ impl_emptiable_strict_type!(
     }
 );
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlDecimalBorrowed<'b>,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -285,7 +434,7 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "bigdecimal-04")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     bigdecimal_04::BigDecimal,
     Decimal,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -439,7 +588,7 @@ impl_strict_type!(
     }
 );
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlDate,
     Date,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -463,10 +612,10 @@ fn get_days_since_epoch_from_date_column<T>(
 }
 
 #[cfg(feature = "chrono-04")]
-impl_emptiable_strict_type!(chrono_04::NaiveDate, Date, |typ: &'metadata ColumnType<
+impl_strict_type!(chrono_04::NaiveDate, Date, |typ: &'metadata ColumnType<
     'metadata,
 >,
-                                                         v: Option<
+                                               v: Option<
     FrameSlice<'frame>,
 >| {
     let fail = || mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::ValueOverflow);
@@ -480,7 +629,7 @@ impl_emptiable_strict_type!(chrono_04::NaiveDate, Date, |typ: &'metadata ColumnT
 });
 
 #[cfg(feature = "time-03")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     time_03::Date,
     Date,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -514,7 +663,7 @@ fn get_nanos_from_time_column<T>(
     Ok(nanoseconds)
 }
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlTime,
     Time,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -525,10 +674,10 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "chrono-04")]
-impl_emptiable_strict_type!(chrono_04::NaiveTime, Time, |typ: &'metadata ColumnType<
+impl_strict_type!(chrono_04::NaiveTime, Time, |typ: &'metadata ColumnType<
     'metadata,
 >,
-                                                         v: Option<
+                                               v: Option<
     FrameSlice<'frame>,
 >| {
     let nanoseconds = get_nanos_from_time_column::<chrono_04::NaiveTime>(typ, v)?;
@@ -540,7 +689,7 @@ impl_emptiable_strict_type!(chrono_04::NaiveTime, Time, |typ: &'metadata ColumnT
 });
 
 #[cfg(feature = "time-03")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     time_03::Time,
     Time,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -564,7 +713,7 @@ fn get_millis_from_timestamp_column<T>(
     Ok(millis)
 }
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlTimestamp,
     Timestamp,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -574,7 +723,7 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "chrono-04")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     chrono_04::DateTime<chrono_04::Utc>,
     Timestamp,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -592,7 +741,7 @@ impl_emptiable_strict_type!(
 );
 
 #[cfg(feature = "time-03")]
-impl_emptiable_strict_type!(
+impl_strict_type!(
     time_03::OffsetDateTime,
     Timestamp,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -604,7 +753,7 @@ impl_emptiable_strict_type!(
 
 // inet
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     IpAddr,
     Inet,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -624,7 +773,7 @@ impl_emptiable_strict_type!(
 
 // uuid
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     Uuid,
     Uuid,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -635,7 +784,7 @@ impl_emptiable_strict_type!(
     }
 );
 
-impl_emptiable_strict_type!(
+impl_strict_type!(
     CqlTimeuuid,
     Timeuuid,
     |typ: &'metadata ColumnType<'metadata>, v: Option<FrameSlice<'frame>>| {
@@ -998,7 +1147,7 @@ where
 ///
 /// It would be nice to have a rule to determine if the element type is fixed-length or not,
 /// however, we only have a heuristic. There are a few types that should, for all intents and purposes,
-/// be considered fixed-length, but are not, e.g TinyInt. See ColumnType::type_size() for the list.
+/// be considered fixed-length, but are not, e.g TinyInt. See ColumnType::type_size_for_vector() for the list.
 #[derive(Debug, Clone)]
 pub struct VectorIterator<'frame, 'metadata, T> {
     collection_type: &'metadata ColumnType<'metadata>,
@@ -1068,7 +1217,7 @@ where
             typ,
             element_type,
             *dimensions as usize,
-            element_type.type_size(),
+            element_type.type_size_for_vector(),
             v,
         ))
     }
@@ -1815,8 +1964,7 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
+/// Creates a [`BuiltinTypeCheckError`] with the given kind.
 pub fn mk_typck_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
@@ -2164,8 +2312,7 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
+/// Creates a [`BuiltinDeserializationError`] with the given kind.
 pub fn mk_deser_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinDeserializationErrorKind>,
@@ -2435,72 +2582,3 @@ impl From<UdtDeserializationErrorKind> for BuiltinDeserializationErrorKind {
 #[cfg(test)]
 #[path = "value_tests.rs"]
 pub(crate) mod tests;
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeValue)]
-/// #[scylla(crate = scylla_cql, skip_name_checks)]
-/// struct TestUdt {}
-/// ```
-fn _test_udt_bad_attributes_skip_name_check_requires_enforce_order() {}
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeValue)]
-/// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
-/// struct TestUdt {
-///     #[scylla(rename = "b")]
-///     a: i32,
-/// }
-/// ```
-fn _test_udt_bad_attributes_skip_name_check_conflicts_with_rename() {}
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeValue)]
-/// #[scylla(crate = scylla_cql)]
-/// struct TestUdt {
-///     #[scylla(rename = "b")]
-///     a: i32,
-///     b: String,
-/// }
-/// ```
-fn _test_udt_bad_attributes_rename_collision_with_field() {}
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeValue)]
-/// #[scylla(crate = scylla_cql)]
-/// struct TestUdt {
-///     #[scylla(rename = "c")]
-///     a: i32,
-///     #[scylla(rename = "c")]
-///     b: String,
-/// }
-/// ```
-fn _test_udt_bad_attributes_rename_collision_with_another_rename() {}
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeValue)]
-/// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
-/// struct TestUdt {
-///     a: i32,
-///     #[scylla(allow_missing)]
-///     b: bool,
-///     c: String,
-/// }
-/// ```
-fn _test_udt_bad_attributes_name_skip_name_checks_limitations_on_allow_missing() {}
-
-/// ```
-/// #[derive(scylla_macros::DeserializeValue)]
-/// #[scylla(crate = scylla_cql)]
-/// struct TestUdt {
-///     a: i32,
-///     #[scylla(allow_missing)]
-///     b: bool,
-///     c: String,
-/// }
-/// ```
-fn _test_udt_unordered_flavour_no_limitations_on_allow_missing() {}

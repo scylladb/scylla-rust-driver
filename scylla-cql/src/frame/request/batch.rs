@@ -51,8 +51,7 @@ where
 }
 
 /// The type of a batch.
-#[derive(Clone, Copy)]
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BatchType {
     /// By default, all operations in the batch are performed as logged, to ensure all mutations
     /// eventually complete (or none will). See the notes on [UNLOGGED](BatchType::Unlogged) batches for more details.
@@ -134,12 +133,12 @@ where
         let mut n_serialized_statements = 0usize;
         let mut value_lists = self.values.batch_values_iter();
         for (idx, statement) in self.statements.iter().enumerate() {
-            BatchStatement::from(statement)
-                .serialize(buf)
-                .map_err(|err| BatchSerializationError::StatementSerialization {
+            serialize_batch_statement(&BatchStatement::from(statement), buf).map_err(|err| {
+                BatchSerializationError::StatementSerialization {
                     statement_idx: idx,
                     error: err,
-                })?;
+                }
+            })?;
 
             // Reserve two bytes for length
             let length_pos = buf.len();
@@ -225,42 +224,43 @@ where
     }
 }
 
-impl BatchStatement<'_> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
-        let kind = buf.get_u8();
-        match kind {
-            0 => {
-                let text = Cow::Owned(types::read_long_string(buf)?.to_owned());
-                Ok(BatchStatement::Query { text })
-            }
-            1 => {
-                let id = types::read_short_bytes(buf)?.to_vec().into();
-                Ok(BatchStatement::Prepared { id })
-            }
-            _ => Err(RequestDeserializationError::UnexpectedBatchStatementKind(
-                kind,
-            )),
+fn deserialize_batch_statement(
+    buf: &mut &[u8],
+) -> Result<BatchStatement<'static>, RequestDeserializationError> {
+    let kind = buf.get_u8();
+    match kind {
+        0 => {
+            let text = Cow::Owned(types::read_long_string(buf)?.to_owned());
+            Ok(BatchStatement::Query { text })
         }
+        1 => {
+            let id = types::read_short_bytes(buf)?.to_vec().into();
+            Ok(BatchStatement::Prepared { id })
+        }
+        _ => Err(RequestDeserializationError::UnexpectedBatchStatementKind(
+            kind,
+        )),
     }
 }
 
-impl BatchStatement<'_> {
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), BatchStatementSerializationError> {
-        match self {
-            Self::Query { text } => {
-                buf.put_u8(0);
-                types::write_long_string(text, buf)
-                    .map_err(BatchStatementSerializationError::StatementStringSerialization)?;
-            }
-            Self::Prepared { id } => {
-                buf.put_u8(1);
-                types::write_short_bytes(id, buf)
-                    .map_err(BatchStatementSerializationError::StatementIdSerialization)?;
-            }
+fn serialize_batch_statement(
+    statement: &BatchStatement<'_>,
+    buf: &mut impl BufMut,
+) -> Result<(), BatchStatementSerializationError> {
+    match statement {
+        BatchStatement::Query { text } => {
+            buf.put_u8(0);
+            types::write_long_string(text, buf)
+                .map_err(BatchStatementSerializationError::StatementStringSerialization)?;
         }
-
-        Ok(())
+        BatchStatement::Prepared { id } => {
+            buf.put_u8(1);
+            types::write_short_bytes(id, buf)
+                .map_err(BatchStatementSerializationError::StatementIdSerialization)?;
+        }
     }
+
+    Ok(())
 }
 
 impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
@@ -279,7 +279,7 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
         let statements_count: usize = types::read_short(buf)?.into();
         let statements_with_values = (0..statements_count)
             .map(|_| {
-                let batch_statement = BatchStatement::deserialize(buf)?;
+                let batch_statement = deserialize_batch_statement(buf)?;
 
                 // As stated in CQL protocol v4 specification, values names in Batch are broken and should be never used.
                 let values = SerializedValues::new_from_frame(buf)?;

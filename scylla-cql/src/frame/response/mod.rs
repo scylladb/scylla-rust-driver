@@ -134,10 +134,7 @@ impl TryFrom<u8> for ResponseOpcode {
             0x0C => Ok(Self::Event),
             0x0E => Ok(Self::AuthChallenge),
             0x10 => Ok(Self::AuthSuccess),
-            _ => Err(TryFromPrimitiveError {
-                enum_name: "ResponseOpcode",
-                primitive: value,
-            }),
+            _ => Err(TryFromPrimitiveError::new("ResponseOpcode", value)),
         }
     }
 }
