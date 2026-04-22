@@ -217,6 +217,16 @@ impl Node {
         self.pool.is_some()
     }
 
+    /// Signals the node's connection pool to retry connecting immediately,
+    /// resetting its exponential backoff.
+    ///
+    /// This is a no-op if the node has no pool (disabled by host filter).
+    pub(crate) fn trigger_pool_refill(&self) {
+        if let Some(pool) = &self.pool {
+            pool.trigger_immediate_refill();
+        }
+    }
+
     pub(crate) async fn use_keyspace(
         &self,
         keyspace_name: VerifiedKeyspaceName,
