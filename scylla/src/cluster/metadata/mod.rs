@@ -24,7 +24,7 @@ use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 use crate::routing::Token;
 
 use scylla_cql::frame::response::result::ColumnSpec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
@@ -54,6 +54,11 @@ pub(crate) enum SingleKeyspaceMetadataError {
 pub(crate) struct Metadata {
     pub(crate) peers: Vec<Peer>,
     pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
+
+    /// Host IDs whose client routes were added or updated during this metadata fetch.
+    /// Used to trigger immediate pool refills for nodes that may have been in backoff
+    /// due to `TranslationError::NoRuleForHost`.
+    pub(crate) client_routes_updated_hosts: HashSet<Uuid>,
 }
 
 /// Represents a node in the cluster, as fetched from the `system.{peers,local}` tables.
@@ -342,6 +347,7 @@ impl Metadata {
         Metadata {
             peers,
             keyspaces: HashMap::new(),
+            client_routes_updated_hosts: HashSet::new(),
         }
     }
 }

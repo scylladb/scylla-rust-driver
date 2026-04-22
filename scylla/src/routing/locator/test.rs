@@ -164,6 +164,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
     Metadata {
         peers: Vec::from(peers),
         keyspaces,
+        client_routes_updated_hosts: Default::default(),
     }
 }
 

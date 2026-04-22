@@ -100,17 +100,23 @@ pub(crate) trait ClientRoutesSubscriber: Send + Sync {
     /// Replaces the old knowledge about client routes with a new full snapshot.
     /// The snapshot contains all entries that match any of connection ids yielded by
     /// [Self::get_connection_ids]. In particular, no filtering by host ids is done.
-    fn replace_client_routes(&self, client_routes: ClientRoutes);
+    ///
+    /// Returns the set of host IDs that are present in the new snapshot
+    /// (i.e., hosts that now have a route and may need pool refill).
+    fn replace_client_routes(&self, client_routes: ClientRoutes) -> HashSet<Uuid>;
 
     /// Merges existing knowledge about client routes with a partial snapshot,
     /// fetched in response to a CLIENT_ROUTES_CHANGE:UPDATE_NODES event.
     /// The snapshot contains all entries that match connection ids and host ids
     /// present in the event.
+    ///
+    /// Returns the set of host IDs that were added or updated (i.e., hosts
+    /// that now have a route and may need pool refill).
     fn merge_client_routes_update(
         &self,
         event: &ClientRoutesChangeEvent,
         client_routes: ClientRoutes,
-    );
+    ) -> HashSet<Uuid>;
 }
 
 /// Translator for client routes: uses content of system.client_routes
@@ -202,8 +208,10 @@ impl ClientRoutesSubscriber for ClientRoutesAddressTranslator {
         &self.connection_ids
     }
 
-    fn replace_client_routes(&self, mut new_routes: ClientRoutes) {
+    fn replace_client_routes(&self, mut new_routes: ClientRoutes) -> HashSet<Uuid> {
         let mut guard = self.client_routes.write().unwrap();
+
+        let mut added_or_updated_host_ids: HashSet<Uuid> = HashSet::new();
 
         // Handle existing entries, i.e. ones for hosts that we already had routes to:
         // - remove dangling routes;
@@ -235,6 +243,17 @@ impl ClientRoutesSubscriber for ClientRoutesAddressTranslator {
                         }
                     };
 
+                    // Detect if the route actually changed — if so, the pool may
+                    // need an immediate refill (e.g. it could be in exponential
+                    // backoff due to a stale address).
+                    let old = &known_host_routes.sticky_route;
+                    if old.hostname != new_sticky_route.hostname
+                        || old.port != new_sticky_route.port
+                        || old.tls_port != new_sticky_route.tls_port
+                    {
+                        added_or_updated_host_ids.insert(*host_id);
+                    }
+
                     // We always replace the sticky route because it could get updated
                     // (wrt hostname or ports, for example).
                     known_host_routes.sticky_route = new_sticky_route;
@@ -255,6 +274,7 @@ impl ClientRoutesSubscriber for ClientRoutesAddressTranslator {
 
         // Add entries for hosts that weren't present in the map before.
         // Entries for previously present hosts have already been removed from the new entries map.
+        // These are newly routable hosts — their pools may need an immediate refill.
         guard.extend(
             new_routes
                 .routes
@@ -274,16 +294,19 @@ impl ClientRoutesSubscriber for ClientRoutesAddressTranslator {
                         sticky_route,
                         other_routes,
                     };
+                    added_or_updated_host_ids.insert(host_id);
                     Some((host_id, host_routes))
                 }),
         );
+
+        added_or_updated_host_ids
     }
 
     fn merge_client_routes_update(
         &self,
         event: &ClientRoutesChangeEvent,
         new_routes: ClientRoutes,
-    ) {
+    ) -> HashSet<Uuid> {
         #[deny(clippy::wildcard_enum_match_arm)]
         let (connection_ids, host_ids) = match event {
             ClientRoutesChangeEvent::UpdateNodes {
@@ -295,6 +318,7 @@ impl ClientRoutesSubscriber for ClientRoutesAddressTranslator {
         };
 
         let mut guard = self.client_routes.write().unwrap();
+        let mut added_or_updated_host_ids = HashSet::new();
 
         // Iterate over all entries listed in the event.
         // Filter only those with connection ids that the driver cares about.
@@ -337,6 +361,7 @@ impl ClientRoutesSubscriber for ClientRoutesAddressTranslator {
                 Some(new_route) => {
                     // Route specified in the event is present, which means that the event reported route creation or update.
                     // In both cases, we just insert it. Let's just handle the sticky route update separately.
+                    added_or_updated_host_ids.insert(host_id);
                     match guard.get_mut(&host_id) {
                         // There have already been routes for that host.
                         Some(host_routes) => {
@@ -363,6 +388,8 @@ impl ClientRoutesSubscriber for ClientRoutesAddressTranslator {
                 }
             }
         }
+
+        added_or_updated_host_ids
     }
 }
 
@@ -1599,5 +1626,464 @@ mod tests {
             translator.translate_address(&peer).await.unwrap(),
             localhost_addr(9099),
         );
+    }
+
+    // ---------------------------------------------------------------
+    // Tests for the returned HashSet<Uuid> (pool refill triggering)
+    // ---------------------------------------------------------------
+
+    // `replace_client_routes`: adding a brand-new host returns its id.
+    #[test]
+    fn replace_returns_newly_added_host() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        let routes = make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]);
+        let returned = translator.replace_client_routes(routes);
+        assert_eq!(returned, HashSet::from([host]));
+    }
+
+    // `replace_client_routes`: when an existing host's route is unchanged,
+    // its id must NOT be in the returned set (no refill needed).
+    #[test]
+    fn replace_omits_unchanged_host() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        let route = || {
+            make_client_routes(vec![ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9042),
+                tls_port: Some(9142),
+            }])
+        };
+
+        // First call adds the host.
+        translator.replace_client_routes(route());
+        // Second call with identical data → no change.
+        let returned = translator.replace_client_routes(route());
+        assert!(
+            returned.is_empty(),
+            "Unchanged host should not be returned, got: {:?}",
+            returned
+        );
+    }
+
+    // `replace_client_routes`: changing the port of an existing host
+    // returns its id.
+    #[test]
+    fn replace_returns_host_with_changed_port() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]));
+
+        let returned = translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9099),
+            tls_port: None,
+        }]));
+        assert_eq!(returned, HashSet::from([host]));
+    }
+
+    // `replace_client_routes`: changing the tls_port of an existing host
+    // returns its id.
+    #[test]
+    fn replace_returns_host_with_changed_tls_port() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: Some(9142),
+        }]));
+
+        let returned = translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: Some(9199),
+        }]));
+        assert_eq!(returned, HashSet::from([host]));
+    }
+
+    // `replace_client_routes`: changing the hostname of an existing host
+    // returns its id.
+    #[test]
+    fn replace_returns_host_with_changed_hostname() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]));
+
+        let returned = translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.2".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]));
+        assert_eq!(returned, HashSet::from([host]));
+    }
+
+    // `replace_client_routes`: a host removed from the snapshot (present
+    // before, absent now) must NOT be in the returned set — its pool is
+    // about to be torn down, not refilled.
+    #[test]
+    fn replace_omits_removed_host() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host_a = Uuid::new_v4();
+        let host_b = Uuid::new_v4();
+        translator.replace_client_routes(make_client_routes(vec![
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_a,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9042),
+                tls_port: None,
+            },
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_b,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9043),
+                tls_port: None,
+            },
+        ]));
+
+        // Second snapshot: only host_a remains, unchanged.
+        let returned = translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host_a,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]));
+        assert!(
+            returned.is_empty(),
+            "Removed and unchanged hosts should not be returned, got: {:?}",
+            returned
+        );
+    }
+
+    // `replace_client_routes`: mixed scenario — one host added, one updated,
+    // one unchanged, one removed. Only added and updated appear in the result.
+    #[test]
+    fn replace_returns_correct_subset_for_mixed_changes() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host_unchanged = Uuid::new_v4();
+        let host_updated = Uuid::new_v4();
+        let host_removed = Uuid::new_v4();
+        let host_added = Uuid::new_v4();
+
+        translator.replace_client_routes(make_client_routes(vec![
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_unchanged,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9042),
+                tls_port: None,
+            },
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_updated,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9043),
+                tls_port: None,
+            },
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_removed,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9044),
+                tls_port: None,
+            },
+        ]));
+
+        let returned = translator.replace_client_routes(make_client_routes(vec![
+            // unchanged
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_unchanged,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9042),
+                tls_port: None,
+            },
+            // updated port
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_updated,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9099),
+                tls_port: None,
+            },
+            // host_removed absent
+            // newly added
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_added,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9050),
+                tls_port: None,
+            },
+        ]));
+        assert_eq!(returned, HashSet::from([host_updated, host_added]));
+    }
+
+    // `replace_client_routes`: when the sticky connection_id disappears and
+    // a different connection_id takes over, the host is reported as updated
+    // if the new route differs from the old sticky route.
+    #[test]
+    fn replace_returns_host_when_sticky_connection_id_changes() {
+        let config = make_config(vec![
+            ClientRoutesProxy::new_with_connection_id("conn-1".to_string()),
+            ClientRoutesProxy::new_with_connection_id("conn-2".to_string()),
+        ]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        // Initial: sticky route is conn-1 at port 9042.
+        translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]));
+
+        // Second snapshot: only conn-2 available, different port.
+        let returned = translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-2".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9099),
+            tls_port: None,
+        }]));
+        assert_eq!(returned, HashSet::from([host]));
+    }
+
+    // `merge_client_routes_update`: a new host added via event is returned.
+    #[test]
+    fn merge_returns_newly_added_host() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        let event = ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids: vec!["conn-1".to_owned()],
+            host_ids: vec![host],
+        };
+        let routes = make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]);
+        let returned = translator.merge_client_routes_update(&event, routes);
+        assert_eq!(returned, HashSet::from([host]));
+    }
+
+    // `merge_client_routes_update`: an existing host updated via event
+    // is returned.
+    #[test]
+    fn merge_returns_updated_host() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]));
+
+        let event = ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids: vec!["conn-1".to_owned()],
+            host_ids: vec![host],
+        };
+        let routes = make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9099),
+            tls_port: None,
+        }]);
+        let returned = translator.merge_client_routes_update(&event, routes);
+        assert_eq!(returned, HashSet::from([host]));
+    }
+
+    // `merge_client_routes_update`: a host deleted by the event (route
+    // absent from re-fetch) must NOT be in the returned set.
+    #[test]
+    fn merge_omits_deleted_host() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        translator.replace_client_routes(make_client_routes(vec![ClientRoute {
+            connection_id: "conn-1".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]));
+
+        // Event references the host, but re-fetch is empty → deletion.
+        let event = ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids: vec!["conn-1".to_owned()],
+            host_ids: vec![host],
+        };
+        let returned = translator.merge_client_routes_update(&event, make_client_routes(vec![]));
+        assert!(
+            returned.is_empty(),
+            "Deleted host should not be returned, got: {:?}",
+            returned
+        );
+    }
+
+    // `merge_client_routes_update`: an event entry whose connection_id is
+    // not in the translator's list is ignored entirely.
+    #[test]
+    fn merge_ignores_irrelevant_connection_id() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host = Uuid::new_v4();
+        let event = ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids: vec!["conn-other".to_owned()],
+            host_ids: vec![host],
+        };
+        let routes = make_client_routes(vec![ClientRoute {
+            connection_id: "conn-other".to_owned(),
+            host_id: host,
+            hostname: "127.0.0.1".to_string(),
+            port: Some(9042),
+            tls_port: None,
+        }]);
+        let returned = translator.merge_client_routes_update(&event, routes);
+        assert!(
+            returned.is_empty(),
+            "Irrelevant connection_id should be ignored, got: {:?}",
+            returned
+        );
+    }
+
+    // `merge_client_routes_update`: mixed scenario — one host added, one
+    // updated, one deleted. Only added and updated appear in the result.
+    #[test]
+    fn merge_returns_correct_subset_for_mixed_changes() {
+        let config = make_config(vec![ClientRoutesProxy::new_with_connection_id(
+            "conn-1".to_string(),
+        )]);
+        let translator = ClientRoutesAddressTranslator::new(config, None, false);
+
+        let host_updated = Uuid::new_v4();
+        let host_deleted = Uuid::new_v4();
+        let host_added = Uuid::new_v4();
+
+        translator.replace_client_routes(make_client_routes(vec![
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_updated,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9042),
+                tls_port: None,
+            },
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_deleted,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9043),
+                tls_port: None,
+            },
+        ]));
+
+        let event = ClientRoutesChangeEvent::UpdateNodes {
+            connection_ids: vec![
+                "conn-1".to_owned(),
+                "conn-1".to_owned(),
+                "conn-1".to_owned(),
+            ],
+            host_ids: vec![host_updated, host_deleted, host_added],
+        };
+        let routes = make_client_routes(vec![
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_updated,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9099),
+                tls_port: None,
+            },
+            // host_deleted absent from re-fetch
+            ClientRoute {
+                connection_id: "conn-1".to_owned(),
+                host_id: host_added,
+                hostname: "127.0.0.1".to_string(),
+                port: Some(9050),
+                tls_port: None,
+            },
+        ]);
+        let returned = translator.merge_client_routes_update(&event, routes);
+        assert_eq!(returned, HashSet::from([host_updated, host_added]));
     }
 }

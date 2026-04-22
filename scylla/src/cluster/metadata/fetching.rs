@@ -16,7 +16,7 @@
 
 use std::borrow::BorrowMut;
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Formatter};
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
@@ -179,9 +179,12 @@ impl ControlConnection {
         (peers, client_routes, keyspaces) =
             tokio::try_join!(peers_query, client_routes_query, keyspaces_query)?;
 
-        if let Some(client_routes_subscriber) = self.client_routes_subscriber() {
-            client_routes_subscriber.replace_client_routes(client_routes);
-        }
+        let client_routes_updated_hosts =
+            if let Some(client_routes_subscriber) = self.client_routes_subscriber() {
+                client_routes_subscriber.replace_client_routes(client_routes)
+            } else {
+                HashSet::new()
+            };
 
         // There must be at least one peer
         if peers.is_empty() {
@@ -193,7 +196,11 @@ impl ControlConnection {
             return Err(MetadataError::Peers(PeersMetadataError::EmptyTokenLists));
         }
 
-        Ok(Metadata { peers, keyspaces })
+        Ok(Metadata {
+            peers,
+            keyspaces,
+            client_routes_updated_hosts,
+        })
     }
 }
 
