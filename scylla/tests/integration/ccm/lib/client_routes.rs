@@ -1430,9 +1430,7 @@ where
     };
 
     let result = AssertUnwindSafe(test_body(&mut plc)).catch_unwind().await;
-
-    let cluster_failed = result.is_err();
-    if cluster_failed {
+    if result.is_err() {
         plc.cluster.mark_as_failed();
     }
 
