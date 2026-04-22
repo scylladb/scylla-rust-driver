@@ -43,6 +43,18 @@ impl SessionBuilderKind for DefaultMode {}
 /// Builder for regular sessions.
 pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
 
+/// Session builder kind used to create sessions connected to clusters with custom routing based on `system.client_routes`.
+#[cfg(feature = "unstable-client-routes")]
+#[derive(Clone)]
+pub enum ClientRoutesMode {}
+#[cfg(feature = "unstable-client-routes")]
+impl sealed::Sealed for ClientRoutesMode {}
+#[cfg(feature = "unstable-client-routes")]
+impl SessionBuilderKind for ClientRoutesMode {}
+/// Builder for ClientRoutes sessions.
+#[cfg(feature = "unstable-client-routes")]
+pub type ClientRoutesSessionBuilder = GenericSessionBuilder<ClientRoutesMode>;
+
 /// Used to conveniently configure new Session instances.
 ///
 /// Most likely you will want to use [`SessionBuilder`]
@@ -72,10 +84,10 @@ pub struct GenericSessionBuilder<Kind: SessionBuilderKind> {
 
 // NOTE: this `impl` block contains configuration options specific for default mode.
 // This includes: list of contact points, address translation, and TLS configuration.
-// Alternative ways to connect to the cluster, like legacy Scylla Cloud Serverless, or
-// AWS Private Link (if we introduce it in the future), may internally utilize address translation,
-// or TLS configuration (for example for SNI). We don't want users to be able to create invalid
-// configuration, so such options should not be available for those builder types.
+// Alternative ways to connect to the cluster, like AWS Private Link, may internally
+// utilize address translation, or TLS configuration (for example for SNI).
+// We don't want users to be able to create invalid configuration, so such options
+// should not be available for those builder types.
 impl GenericSessionBuilder<DefaultMode> {
     /// Creates new SessionBuilder with default configuration
     /// # Default configuration
@@ -87,7 +99,71 @@ impl GenericSessionBuilder<DefaultMode> {
             kind: PhantomData,
         }
     }
+}
 
+// NOTE: this `impl` block contains configuration options specific for ClientRoutes mode.
+// We don't want users to be able to create invalid configuration, so some options available
+// in the default builder, like address translator configuration, should not be available for
+// this builder type. On the other hand, if there are some options specific for ClientRoutes sessions,
+// they should be added to this block as well.
+#[cfg(feature = "unstable-client-routes")]
+impl GenericSessionBuilder<ClientRoutesMode> {
+    /// Creates new [`ClientRoutesSessionBuilder`] with given config.
+    ///
+    /// This SessionBuilder kind is used to create sessions connected to ClientRoutes clusters.
+    /// It requires [`ClientRoutesConfig`], which contains at least contact points and connection ids,
+    /// which are both used to establish the connection to the cluster.
+    ///
+    /// **Note:** Mixed clusters (with both nodes reachable only through ClientRoutes and nodes
+    /// reachable only directly) **are not supported**. All nodes must be reachable through ClientRoutes,
+    /// in particular have corresponding entries in `system.client_routes`. Otherwise, the driver will
+    /// fail to contact them.
+    ///
+    /// **Note:** Advanced shard awareness (clever port setting by the driver to target
+    /// a desired shard) is not yet supported in ClientRoutes Scylla Cloud deployments
+    /// at the moment of writing, so using shard-aware port is disabled by default.
+    ///
+    /// # Example
+    /// ```
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use scylla::client::session::Session;
+    /// use scylla::client::session_builder::ClientRoutesSessionBuilder;
+    /// use scylla::client::client_routes::{ClientRoutesConfig, ClientRoutesProxy};
+    ///
+    /// let contact_points = ["my-ClientRoutes-contact-point.amazonaws.com:9042".to_owned()];
+    /// let proxies = vec![
+    ///     ClientRoutesProxy::new_with_connection_id("my-ClientRoutes-connection-id".to_owned()),
+    /// ];
+    /// let client_routes_config = ClientRoutesConfig::new(proxies)?;
+    /// let session: Session = ClientRoutesSessionBuilder::new(client_routes_config)
+    ///     .known_nodes(contact_points)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn new(config: super::client_routes::ClientRoutesConfig) -> Self {
+        ClientRoutesSessionBuilder {
+            config: SessionConfig {
+                client_routes_config: Some(config),
+                // Advanced shard awareness (clever port setting by the driver to target
+                // a desired shard) is not yet supported in ClientRoutes Cloud deployments
+                // at the moment of writing, so this is disabled by default.
+                disallow_shard_aware_port: true,
+                ..SessionConfig::new()
+            },
+            kind: PhantomData,
+        }
+    }
+}
+
+/// Constraint for session builder kinds that support setting known nodes.
+pub trait SessionBuilderKindSupportsKnownNodes: SessionBuilderKind {}
+impl SessionBuilderKindSupportsKnownNodes for DefaultMode {}
+#[cfg(feature = "unstable-client-routes")]
+impl SessionBuilderKindSupportsKnownNodes for ClientRoutesMode {}
+
+impl<K: SessionBuilderKindSupportsKnownNodes> GenericSessionBuilder<K> {
     /// Add a known node with a hostname
     /// # Examples
     /// ```
@@ -179,7 +255,136 @@ impl GenericSessionBuilder<DefaultMode> {
         self.config.add_known_nodes_addr(node_addrs);
         self
     }
+}
 
+/// Constraint for session builder kinds that support setting AddressTranslator on them.
+pub trait SessionBuilderKindSupportsAddressTranslation: SessionBuilderKind {}
+impl SessionBuilderKindSupportsAddressTranslation for DefaultMode {}
+
+impl<K: SessionBuilderKindSupportsAddressTranslation> GenericSessionBuilder<K> {
+    /// Uses a custom address translator for peer addresses retrieved from the cluster.
+    /// By default, no translation is performed.
+    ///
+    /// # Example
+    /// ```
+    /// # use async_trait::async_trait;
+    /// # use std::net::SocketAddr;
+    /// # use std::sync::Arc;
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::errors::TranslationError;
+    /// # use scylla::policies::address_translator::{AddressTranslator, UntranslatedPeer};
+    /// struct IdentityTranslator;
+    ///
+    /// #[async_trait]
+    /// impl AddressTranslator for IdentityTranslator {
+    ///     async fn translate_address(
+    ///         &self,
+    ///         untranslated_peer: &UntranslatedPeer,
+    ///     ) -> Result<SocketAddr, TranslationError> {
+    ///         Ok(untranslated_peer.untranslated_address())
+    ///     }
+    /// }
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .address_translator(Arc::new(IdentityTranslator))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    /// # Example
+    /// ```
+    /// # use std::net::SocketAddr;
+    /// # use std::sync::Arc;
+    /// # use std::collections::HashMap;
+    /// # use std::str::FromStr;
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::errors::TranslationError;
+    /// # use scylla::policies::address_translator::AddressTranslator;
+    /// #
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut translation_rules = HashMap::new();
+    /// let addr_before_translation = SocketAddr::from_str("192.168.0.42:19042").unwrap();
+    /// let addr_after_translation = SocketAddr::from_str("157.123.12.42:23203").unwrap();
+    /// translation_rules.insert(addr_before_translation, addr_after_translation);
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .address_translator(Arc::new(translation_rules))
+    ///     .build()
+    ///     .await?;
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub fn address_translator(mut self, translator: Arc<dyn AddressTranslator>) -> Self {
+        self.config.address_translator = Some(translator);
+        self
+    }
+}
+
+/// Constraint for session builder kinds that support setting TLS config on them.
+pub trait SessionBuilderKindSupportsTls: SessionBuilderKind {}
+impl SessionBuilderKindSupportsTls for DefaultMode {}
+// TODO: support TLS for ClientRoutesMode once Cloud comes up with a solution.
+// #[cfg(feature = "unstable-client-routes")]
+// impl SessionBuilderKindSupportsTls for ClientRoutesMode {}
+
+impl<K: SessionBuilderKindSupportsTls> GenericSessionBuilder<K> {
+    /// TLS feature
+    ///
+    /// Provide SessionBuilder with TlsContext that will be
+    /// used to create a TLS connection to the database.
+    /// If set to None TLS connection won't be used.
+    ///
+    /// Default is None.
+    ///
+    #[cfg_attr(
+        feature = "openssl-010",
+        doc = r#"
+# Example
+
+```
+    # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+    use std::path::PathBuf;
+    use scylla::client::session::Session;
+    use scylla::client::session_builder::SessionBuilder;
+    use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
+
+    let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
+    let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
+    context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
+    context_builder.set_verify(SslVerifyMode::NONE);
+
+    let session: Session = SessionBuilder::new()
+        .known_node("127.0.0.1:9042")
+        .tls_context(Some(context_builder.build()))
+        .build()
+        .await?;
+    # Ok(())
+    # }
+```
+"#
+    )]
+    pub fn tls_context(mut self, tls_context: Option<impl Into<TlsContext>>) -> Self {
+        #[cfg_attr(
+            not(any(feature = "openssl-010", feature = "rustls-023")),
+            // TODO: make this expect() once MSRV is 1.92+.
+            allow(unreachable_code)
+        )]
+        {
+            self.config.tls_context = tls_context.map(|t| t.into());
+        }
+        self
+    }
+}
+
+// This block contains configuration options that make sense both for any `Session` type.
+// If an option fit only some of them, it should be put in a specialised block.
+impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Set username and password for plain text authentication.\
     /// If the database server will require authentication\
     ///
@@ -259,120 +464,6 @@ impl GenericSessionBuilder<DefaultMode> {
         self
     }
 
-    /// Uses a custom address translator for peer addresses retrieved from the cluster.
-    /// By default, no translation is performed.
-    ///
-    /// # Example
-    /// ```
-    /// # use async_trait::async_trait;
-    /// # use std::net::SocketAddr;
-    /// # use std::sync::Arc;
-    /// # use scylla::client::session::Session;
-    /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::errors::TranslationError;
-    /// # use scylla::policies::address_translator::{AddressTranslator, UntranslatedPeer};
-    /// struct IdentityTranslator;
-    ///
-    /// #[async_trait]
-    /// impl AddressTranslator for IdentityTranslator {
-    ///     async fn translate_address(
-    ///         &self,
-    ///         untranslated_peer: &UntranslatedPeer,
-    ///     ) -> Result<SocketAddr, TranslationError> {
-    ///         Ok(untranslated_peer.untranslated_address())
-    ///     }
-    /// }
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .address_translator(Arc::new(IdentityTranslator))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    /// # Example
-    /// ```
-    /// # use std::net::SocketAddr;
-    /// # use std::sync::Arc;
-    /// # use std::collections::HashMap;
-    /// # use std::str::FromStr;
-    /// # use scylla::client::session::Session;
-    /// # use scylla::client::session_builder::SessionBuilder;
-    /// # use scylla::errors::TranslationError;
-    /// # use scylla::policies::address_translator::AddressTranslator;
-    /// #
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut translation_rules = HashMap::new();
-    /// let addr_before_translation = SocketAddr::from_str("192.168.0.42:19042").unwrap();
-    /// let addr_after_translation = SocketAddr::from_str("157.123.12.42:23203").unwrap();
-    /// translation_rules.insert(addr_before_translation, addr_after_translation);
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .address_translator(Arc::new(translation_rules))
-    ///     .build()
-    ///     .await?;
-    /// #    Ok(())
-    /// # }
-    /// ```
-    pub fn address_translator(mut self, translator: Arc<dyn AddressTranslator>) -> Self {
-        self.config.address_translator = Some(translator);
-        self
-    }
-
-    /// TLS feature
-    ///
-    /// Provide SessionBuilder with TlsContext that will be
-    /// used to create a TLS connection to the database.
-    /// If set to None TLS connection won't be used.
-    ///
-    /// Default is None.
-    ///
-    #[cfg_attr(
-        feature = "openssl-010",
-        doc = r#"
-# Example
-
-```
-    # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    use std::fs;
-    use std::path::PathBuf;
-    use scylla::client::session::Session;
-    use scylla::client::session_builder::SessionBuilder;
-    use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
-
-    let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
-    let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
-    context_builder.set_verify(SslVerifyMode::NONE);
-
-    let session: Session = SessionBuilder::new()
-        .known_node("127.0.0.1:9042")
-        .tls_context(Some(context_builder.build()))
-        .build()
-        .await?;
-    # Ok(())
-    # }
-```
-"#
-    )]
-    pub fn tls_context(mut self, tls_context: Option<impl Into<TlsContext>>) -> Self {
-        #[cfg_attr(
-            not(any(feature = "openssl-010", feature = "rustls-023")),
-            // TODO: make this expect() once MSRV is 1.92+.
-            allow(unreachable_code)
-        )]
-        {
-            self.config.tls_context = tls_context.map(|t| t.into());
-        }
-        self
-    }
-}
-
-// This block contains configuration options that make sense both for any `Session` type.
-// If an option fit only some of them, it should be put in a specialised block.
-impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Sets the local ip address all TCP sockets are bound to.
     ///
     /// By default, this option is set to `None`, which is equivalent to:

@@ -1,10 +1,9 @@
 use itertools::Itertools;
-use thiserror::Error;
 use tokio::net::{ToSocketAddrs, lookup_host};
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::errors::{ConnectionPoolError, UseKeyspaceError};
+use crate::errors::{ConnectionPoolError, DnsLookupError, UseKeyspaceError};
 use crate::network::VerifiedKeyspaceName;
 use crate::network::{Connection, ConnectivityChangeEvent};
 use crate::network::{NodeConnectionPool, PoolConfig};
@@ -283,16 +282,6 @@ pub(crate) struct ResolvedContactPoint {
     pub(crate) address: SocketAddr,
 }
 
-#[derive(Error, Debug)]
-pub(crate) enum DnsLookupError {
-    #[error("Failed to perform DNS lookup within {0}ms")]
-    Timeout(u128),
-    #[error("Empty address list returned by DNS for {0}")]
-    EmptyAddressListForHost(String),
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
-}
-
 /// Performs a DNS lookup with provided optional timeout.
 async fn lookup_host_with_timeout(
     host: impl ToSocketAddrs,
@@ -300,12 +289,14 @@ async fn lookup_host_with_timeout(
 ) -> Result<impl Iterator<Item = SocketAddr>, DnsLookupError> {
     if let Some(timeout) = hostname_resolution_timeout {
         match tokio::time::timeout(timeout, lookup_host(host)).await {
-            Ok(res) => res.map_err(Into::into),
+            Ok(res) => res.map_err(|io_err| DnsLookupError::IoError(Arc::new(io_err))),
             // Elapsed error from tokio library does not provide any context.
             Err(_) => Err(DnsLookupError::Timeout(timeout.as_millis())),
         }
     } else {
-        lookup_host(host).await.map_err(Into::into)
+        lookup_host(host)
+            .await
+            .map_err(|io_err| DnsLookupError::IoError(Arc::new(io_err)))
     }
 }
 
@@ -337,7 +328,7 @@ pub(crate) async fn resolve_hostname(
 
     addrs
         .find_or_last(|addr| matches!(addr, SocketAddr::V4(_)))
-        .ok_or_else(|| DnsLookupError::EmptyAddressListForHost(hostname.to_owned()))
+        .ok_or_else(|| DnsLookupError::EmptyAddressListForHost(hostname.into()))
 }
 
 /// Transforms the given [`InternalKnownNode`]s into [`ContactPoint`]s.

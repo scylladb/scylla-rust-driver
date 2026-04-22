@@ -1,11 +1,15 @@
+use crate::client::client_routes::{
+    ClientRoutesAddressTranslator, ClientRoutesConfig, ClientRoutesSubscriber,
+};
 use crate::client::session::TABLET_CHANNEL_SIZE;
 use crate::cluster::metadata::reader::ControlConnectionEvent;
 use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
-use crate::frame::response::event::Event;
+use crate::frame::response::event::EventV2 as Event;
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
+use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::host_listener::{HostEvent, HostEventContext, HostListener};
 use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
@@ -121,7 +125,7 @@ impl Cluster {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
         known_nodes: Vec<KnownNode>,
-        pool_config: PoolConfig,
+        mut pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         metadata_request_serverside_timeout: Option<Duration>,
@@ -131,6 +135,7 @@ impl Cluster {
         cluster_metadata_refresh_interval: Duration,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        client_routes_config: Option<ClientRoutesConfig>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -142,6 +147,18 @@ impl Cluster {
         let (connectivity_events_sender, connectivity_events_receiver) =
             tokio::sync::mpsc::unbounded_channel();
 
+        let client_routes_address_translator = client_routes_config.as_ref().map(|config| {
+            let translator = Arc::new(ClientRoutesAddressTranslator::new(
+                config.clone(),
+                hostname_resolution_timeout,
+                pool_config.connection_config.tls_provider.is_some(),
+            ));
+            pool_config.connection_config.address_translator =
+                Some(Arc::clone(&translator) as Arc<dyn AddressTranslator>);
+
+            translator
+        });
+
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
             hostname_resolution_timeout,
@@ -150,12 +167,15 @@ impl Cluster {
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
+            client_routes_address_translator
+                .map(|translator| translator as Arc<dyn ClientRoutesSubscriber>),
         )
         .await?;
 
         let mut node_status = HashMap::new();
 
         let metadata = metadata_reader.read_metadata(true).await?;
+
         let cluster_state = ClusterState::new(
             metadata,
             &pool_config,
@@ -338,6 +358,20 @@ impl ClusterWorker {
                             debug!("Received server event: {:?}", event);
                             match event {
                                 Event::TopologyChange(_) => (), // Refresh immediately
+                                Event::ClientRoutesChange(evt) => {
+                                    let res = self.metadata_reader.fetch_client_route_updates_on_event(&evt).await;
+                                    match res {
+                                        Ok(()) => continue, // Don't go to refreshing.
+                                        Err(err) =>
+                                        {
+                                            error!(
+                                                "Error when fetching client route updates: {err}. \
+                                                Proceeding with metadata refresh, because the control connection is likely defunct."
+                                            );
+                                            // Refresh immediately.
+                                        }
+                                    }
+                                }
                                 Event::StatusChange(_status) => {
                                     // TODO: Tracking status using events is unreliable because of
                                     // the possibility of losing events when control connection is broken.
@@ -426,6 +460,7 @@ impl ClusterWorker {
     async fn perform_refresh(&mut self) -> Result<(), MetadataError> {
         // Read latest Metadata
         let metadata = self.metadata_reader.read_metadata(false).await?;
+
         let cluster_state: Arc<ClusterState> = self.cluster_state.load_full();
 
         let new_cluster_state = Arc::new(

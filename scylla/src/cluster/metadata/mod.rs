@@ -14,11 +14,13 @@
 //!     - [NativeType],
 //!     - [UserDefinedType],
 //!     - [CollectionType],
-//!
+//  - client routes:
+//    - [ClientRoute]
 
 mod fetching;
 pub(super) mod reader;
 
+use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 use crate::routing::Token;
 
 use scylla_cql::frame::response::result::ColumnSpec;
@@ -26,8 +28,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
-
-use crate::cluster::node::{NodeAddr, ResolvedContactPoint};
 
 // Re-export of CQL types.
 pub use scylla_cql::frame::response::result::{
@@ -276,6 +276,43 @@ pub enum Strategy {
         /// Additional parameters of the strategy, which the driver does not understand.
         data: HashMap<String, String>,
     },
+}
+
+/// Represents an entry of `system.client_routes` table, in a more refined form (port as u16).
+#[derive(Debug, Clone)]
+pub(crate) struct ClientRoute {
+    pub(crate) connection_id: String,
+    pub(crate) host_id: Uuid,
+    pub(crate) hostname: String,
+    // At least one of `port` and `tls_port` must be non-null, as per the REST API constraints.
+    // This is not validated by the driver, as it anyway requires specific one to be non-null
+    // based on the `use_tls` setting, so the non-nullability of _any_ of them is not helpful
+    // for the driver.
+    pub(crate) port: Option<u16>,
+    pub(crate) tls_port: Option<u16>,
+}
+
+/// A subset of client routes present in the `system.client_routes` table.
+/// This is always filtered by specified connection ids, and may be filtered by
+/// host ids, too.
+#[derive(Debug, Default)] // Default is needed for `try_collect()`.
+pub(crate) struct ClientRoutes {
+    // Routes are grouped by host id first, because this is how AddressTranslator
+    // looks them up. Then, routes for given host id are grouped by connection id,
+    // because it's the AddressTranslator's responsibility to choose the proper connection id.
+    pub(crate) routes: HashMap<Uuid, HashMap<String, ClientRoute>>,
+}
+
+// Needed for `Stream::try_collect()` to work.
+impl Extend<ClientRoute> for ClientRoutes {
+    fn extend<T: IntoIterator<Item = ClientRoute>>(&mut self, into_iter: T) {
+        for route in into_iter {
+            self.routes
+                .entry(route.host_id)
+                .or_default() // Insert empty HashMap.
+                .insert(route.connection_id.clone(), route);
+        }
+    }
 }
 
 impl Metadata {

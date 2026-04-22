@@ -14,9 +14,9 @@ use crate::errors::{
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self, FrameParams, SerializedRequest,
-    request::{self, SerializableRequest, batch, execute, query, register},
-    response::{Response, ResponseOpcode, event::Event, result},
-    server_event_type::EventType,
+    request::{self, SerializableRequest, batch, execute, query},
+    response::{ResponseOpcode, ResponseV2 as Response, event::EventV2 as Event, result},
+    server_event_type::EventTypeV2 as EventType,
 };
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 use crate::policies::timestamp_generator::TimestampGenerator;
@@ -34,12 +34,15 @@ use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::CqlRequestKind;
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::request::query::QueryParameters;
+use scylla_cql::frame::request::register::RegisterV2 as Register;
 use scylla_cql::frame::response::authenticate::Authenticate;
 use scylla_cql::frame::response::result::{
     ResultMetadata, ResultWithDeserializedMetadata, TableSpec,
 };
 use scylla_cql::frame::response::{self, error};
-use scylla_cql::frame::response::{Error, ResponseWithDeserializedMetadata};
+use scylla_cql::frame::response::{
+    Error, ResponseWithDeserializedMetadataV2 as ResponseWithDeserializedMetadata,
+};
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::serialize::batch::{BatchValues, BatchValuesIterator};
 use scylla_cql::serialize::raw_batch::RawBatchValuesAdapter;
@@ -284,7 +287,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) tls_provider: Option<TlsProvider>,
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
-    pub(crate) event_sender: Option<mpsc::Sender<Event>>,
+    pub(crate) event_sender: Option<(mpsc::Sender<Event>, Vec<EventType>)>,
     pub(crate) default_consistency: Consistency,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
@@ -352,7 +355,7 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) tls_config: Option<TlsConfig>,
     pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
-    pub(crate) event_sender: Option<mpsc::Sender<Event>>,
+    pub(crate) event_sender: Option<(mpsc::Sender<Event>, Vec<EventType>)>,
     pub(crate) default_consistency: Consistency,
     pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
@@ -1393,7 +1396,7 @@ impl Connection {
             ConnectionSetupRequestError::new(CqlRequestKind::Register, kind)
         };
 
-        let register_frame = register::Register {
+        let register_frame = Register {
             event_types_to_register_for,
         };
 
@@ -1619,7 +1622,7 @@ impl Connection {
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
             &handler_map,
-            config.event_sender,
+            config.event_sender.map(|(sender, _)| sender),
             config.compression,
         );
         let w = Self::writer(
@@ -1995,7 +1998,7 @@ async fn maybe_translated_addr(
 ) -> Result<SocketAddr, TranslationError> {
     match (endpoint, address_translator) {
         (UntranslatedEndpoint::ContactPoint(addr), _) => {
-            // Contact points' addressed are not indended to be translated.
+            // Contact points' addresses are not intended to be translated.
             Ok(addr.address)
         }
 
@@ -2155,13 +2158,8 @@ pub(crate) async fn open_connection(
     }
 
     /* If this is a control connection, REGISTER to receive all event types. */
-    if connection.config.event_sender.is_some() {
-        let all_event_types = vec![
-            EventType::TopologyChange,
-            EventType::StatusChange,
-            EventType::SchemaChange,
-        ];
-        connection.register(all_event_types).await?;
+    if let Some((_, ref event_types)) = connection.config.event_sender {
+        connection.register(event_types.clone()).await?;
     }
 
     Ok((connection, error_receiver))

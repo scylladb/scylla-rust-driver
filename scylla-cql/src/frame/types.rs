@@ -478,6 +478,35 @@ pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>, LowLevelDeserial
     Ok(v)
 }
 
+/// Creates an iterator over CQL string list.
+/// Returns pair (list length, list iterator).
+pub(crate) fn read_string_list_iter<'buf>(
+    buf: &mut &'buf [u8],
+) -> Result<
+    (
+        usize,
+        impl Iterator<Item = Result<&'buf str, LowLevelDeserializationError>>,
+    ),
+    LowLevelDeserializationError,
+> {
+    let mut remaining = read_short_length(buf)?;
+
+    Ok((
+        remaining,
+        std::iter::from_fn(move || {
+            if remaining == 0 {
+                return None;
+            }
+            let res = read_string(buf);
+            match res {
+                Ok(_) => remaining -= 1,
+                Err(_) => remaining = 0,
+            }
+            Some(res)
+        }),
+    ))
+}
+
 pub fn write_string_list(
     v: &[String],
     buf: &mut impl BufMut,

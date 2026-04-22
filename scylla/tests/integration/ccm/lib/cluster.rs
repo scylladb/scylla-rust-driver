@@ -85,15 +85,12 @@ impl NodeList {
         self.0.iter_mut()
     }
 
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     pub(crate) fn get_by_id(&self, id: NodeId) -> Option<&Node> {
         self.iter().find(|node| node.id() == id)
     }
 
-    #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
-        expect(dead_code)
-    )]
+    #[allow(dead_code)]
     pub(crate) fn get_mut_by_id(&mut self, id: NodeId) -> Option<&mut Node> {
         self.iter_mut().find(|node| node.id() == id)
     }
@@ -106,13 +103,7 @@ impl NodeList {
         self.iter().map(|node| node.contact_endpoint()).collect()
     }
 
-    #[cfg_attr(
-        not(any(
-            all(scylla_unstable, feature = "unstable-host-listener"),
-            all(feature = "openssl-010", feature = "rustls-023")
-        )),
-        expect(dead_code)
-    )]
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
@@ -319,24 +310,40 @@ impl Cluster {
     }
 
     #[cfg_attr(
-        not(all(scylla_unstable, feature = "unstable-host-listener")),
+        not(any(
+            all(scylla_unstable, feature = "unstable-host-listener"),
+            feature = "unstable-client-routes",
+        )),
         expect(dead_code)
     )]
+    /// Add a new node to the cluster in the given datacenter.
+    ///
+    /// `datacenter_id` uses **1-based** CCM naming: `1` →  `dc1`, `2` →  `dc2`, etc.
+    /// The value stored in [`NodeOptions::datacenter_id`] is **0-based** (matching
+    /// the convention used by [`Cluster::new`]).
     pub(crate) async fn add_node(
         &mut self,
         datacenter_id: Option<u16>,
     ) -> Result<&mut Node, Error> {
         let id = self.nodes.get_free_node_id().expect("No available node id");
-        let datacenter_id = datacenter_id.unwrap_or(1);
+        // CCM uses 1-based DC names: dc1, dc2, …
+        let ccm_dc_id = datacenter_id.unwrap_or(1);
         let node_options = NodeOptions {
             id,
-            datacenter_id,
+            // Store as 0-based to match the convention from Cluster::new().
+            datacenter_id: ccm_dc_id - 1,
             ..NodeOptions::from_cluster_opts(&self.opts)
         };
-        let datacenter_name = format!("dc{datacenter_id}");
+        let datacenter_name = format!("dc{ccm_dc_id}");
+        // Pass the node's IP explicitly via `-i`. Without it, CCM
+        // auto-assigns based on `len(nodelist) + 1`, which diverges from
+        // our `get_free_node_id()` when there are gaps (e.g., after a
+        // decommission reuses a lower ID).
+        let node_ip = self.opts.ip_prefix.to_ipaddress(id).to_string();
         self.ccm_cmd
             .cluster_add_node(self.opts.db_type, node_options.name())
             .dc(datacenter_name)
+            .address(node_ip)
             .run()
             .await?;
         Ok(self.append_node(node_options))
@@ -390,7 +397,8 @@ impl Cluster {
     #[cfg_attr(
         not(any(
             all(scylla_unstable, feature = "unstable-host-listener"),
-            all(feature = "openssl-010", feature = "rustls-023")
+            all(feature = "openssl-010", feature = "rustls-023"),
+            feature = "unstable-client-routes",
         )),
         expect(dead_code)
     )]

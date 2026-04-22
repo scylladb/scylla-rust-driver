@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 
+use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::client::pager::QueryPager;
 use crate::errors::{NextPageError, NextRowError, RequestAttemptError, RequestError};
 use crate::network::Connection;
@@ -25,14 +26,20 @@ pub(super) struct ControlConnection {
     /// The custom server-side timeout set for requests executed on the control connection.
     overridden_serverside_timeout: Option<Duration>,
     cache: Arc<ControlConnectionCache>,
+    client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
 }
 
 impl ControlConnection {
-    pub(super) fn new(conn: Arc<Connection>, cache: Arc<ControlConnectionCache>) -> Self {
+    pub(super) fn new(
+        conn: Arc<Connection>,
+        cache: Arc<ControlConnectionCache>,
+        client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
+    ) -> Self {
         Self {
             conn,
             overridden_serverside_timeout: None,
             cache,
+            client_routes_subscriber,
         }
     }
 
@@ -42,6 +49,10 @@ impl ControlConnection {
             overridden_serverside_timeout: overridden_timeout,
             ..self
         }
+    }
+
+    pub(super) fn client_routes_subscriber(&self) -> Option<&Arc<dyn ClientRoutesSubscriber>> {
+        self.client_routes_subscriber.as_ref()
     }
 
     pub(super) fn get_connect_address(&self) -> SocketAddr {
@@ -271,8 +282,11 @@ mod tests {
             .unwrap();
 
             let connected_to_scylladb = conn.get_shard_info().is_some();
-            let conn_with_default_timeout =
-                ControlConnection::new(Arc::new(conn), Arc::new(ControlConnectionCache::new()));
+            let conn_with_default_timeout = ControlConnection::new(
+                Arc::new(conn),
+                Arc::new(ControlConnectionCache::new()),
+                None,
+            );
 
             // No custom timeout set.
             {

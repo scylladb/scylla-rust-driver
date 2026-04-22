@@ -1,6 +1,7 @@
 mod actions;
 mod errors;
 mod frame;
+pub mod nlb;
 mod proxy;
 
 pub type TargetShard = u16;

@@ -1,9 +1,12 @@
 //! CQL protocol-level representation of an `EVENT` response.
 
+use uuid::Uuid;
+
 use crate::frame::frame_errors::{
-    ClusterChangeEventParseError, CqlEventParseError, SchemaChangeEventParseError,
+    ClientRoutesChangeEventParseError, ClusterChangeEventParseError, CqlEventParseError,
+    SchemaChangeEventParseError,
 };
-use crate::frame::server_event_type::EventType;
+use crate::frame::server_event_type::{EventType, EventTypeV2};
 use crate::frame::types;
 use std::net::SocketAddr;
 
@@ -19,6 +22,24 @@ pub enum Event {
     StatusChange(StatusChangeEvent),
     /// Schema changed.
     SchemaChange(SchemaChangeEvent),
+}
+
+/// Event that the server notified the client about.
+#[derive(Debug)]
+// The postfix "Change" is used in all variants just because all currently existing events happen to be
+// about changes in the cluster, so it makes sense to use the same postfix for all of them.
+// If we add a new event type that is not about changes, then clippy will no longer complain.
+#[expect(clippy::enum_variant_names)]
+#[non_exhaustive]
+pub enum EventV2 {
+    /// Topology changed.
+    TopologyChange(TopologyChangeEvent),
+    /// Status of a node changed.
+    StatusChange(StatusChangeEvent),
+    /// Schema changed.
+    SchemaChange(SchemaChangeEvent),
+    /// Client routes changed.
+    ClientRoutesChange(ClientRoutesChangeEvent),
 }
 
 /// Event that notifies about changes in the cluster topology.
@@ -110,6 +131,20 @@ pub enum SchemaChangeType {
     Invalid,
 }
 
+/// Event that notifies about changes in the client routes.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ClientRoutesChangeEvent {
+    /// Client routes were updated for the specified connection and host IDs.
+    UpdateNodes {
+        /// Affected connection IDs.
+        connection_ids: Vec<String>,
+
+        /// Affected host IDs.
+        host_ids: Vec<Uuid>,
+    },
+}
+
 impl Event {
     /// Deserialize an event from the provided buffer.
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlEventParseError> {
@@ -126,6 +161,32 @@ impl Event {
                     .map_err(CqlEventParseError::StatusChangeEventParseError)?,
             )),
             EventType::SchemaChange => Ok(Self::SchemaChange(SchemaChangeEvent::deserialize(buf)?)),
+        }
+    }
+}
+
+impl EventV2 {
+    /// Deserialize an event from the provided buffer.
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlEventParseError> {
+        let event_type: EventTypeV2 = types::read_string(buf)
+            .map_err(CqlEventParseError::EventTypeParseError)?
+            .parse()?;
+        match event_type {
+            EventTypeV2::TopologyChange => Ok(Self::TopologyChange(
+                TopologyChangeEvent::deserialize(buf)
+                    .map_err(CqlEventParseError::TopologyChangeEventParseError)?,
+            )),
+            EventTypeV2::StatusChange => Ok(Self::StatusChange(
+                StatusChangeEvent::deserialize(buf)
+                    .map_err(CqlEventParseError::StatusChangeEventParseError)?,
+            )),
+            EventTypeV2::SchemaChange => {
+                Ok(Self::SchemaChange(SchemaChangeEvent::deserialize(buf)?))
+            }
+            EventTypeV2::ClientRoutesChange => Ok(Self::ClientRoutesChange(
+                ClientRoutesChangeEvent::deserialize(buf)
+                    .map_err(CqlEventParseError::ClientRoutesChangeEventParseError)?,
+            )),
         }
     }
 }
@@ -264,5 +325,55 @@ impl StatusChangeEvent {
                 type_of_change.to_string(),
             )),
         }
+    }
+}
+
+impl ClientRoutesChangeEvent {
+    /// Deserialize a client routes change event from the provided buffer.
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ClientRoutesChangeEventParseError> {
+        let type_of_change = types::read_string(buf)
+            .map_err(ClientRoutesChangeEventParseError::TypeOfChangeParseError)?;
+
+        match type_of_change {
+            "UPDATE_NODES" => {
+                // The only client routes change event type defined in the protocol is "UPDATE_NODES",
+                // so let's continue.
+            }
+            _ => {
+                return Err(ClientRoutesChangeEventParseError::UnknownTypeOfChange(
+                    type_of_change.to_string(),
+                ));
+            }
+        }
+
+        let connection_ids = types::read_string_list(buf)
+            .map_err(ClientRoutesChangeEventParseError::ConnectionIdsParseError)?;
+        let connection_ids_count = connection_ids.len();
+
+        let (host_ids_count, host_ids_str_iter) = types::read_string_list_iter(buf)
+            .map_err(ClientRoutesChangeEventParseError::HostIdsParseError)?;
+
+        if connection_ids_count != host_ids_count {
+            return Err(
+                ClientRoutesChangeEventParseError::ConnectionHostIdsLengthMismatch {
+                    connection_ids_count,
+                    host_ids_count,
+                },
+            );
+        }
+
+        let host_ids: Vec<Uuid> = host_ids_str_iter
+            .map(|r| {
+                let host_id_str =
+                    r.map_err(ClientRoutesChangeEventParseError::HostIdsParseError)?;
+                Uuid::try_parse(host_id_str)
+                    .map_err(ClientRoutesChangeEventParseError::HostIdsUuidParseError)
+            })
+            .collect::<Result<_, _>>()?;
+
+        Ok(Self::UpdateNodes {
+            connection_ids,
+            host_ids,
+        })
     }
 }

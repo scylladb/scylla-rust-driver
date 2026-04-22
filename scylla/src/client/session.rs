@@ -5,6 +5,7 @@ use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, Executi
 use super::pager::{PreparedPagerConfig, QueryPager};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
+use crate::client::client_routes::ClientRoutesConfig;
 use crate::cluster::node::{KnownNode, NodeRef};
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
 use crate::errors::{
@@ -44,7 +45,7 @@ use arc_swap::ArcSwapOption;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Itertools;
-use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadata;
+use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
 use scylla_cql::frame::response::error::DbError;
 use scylla_cql::serialize::batch::BatchValues;
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
@@ -307,6 +308,11 @@ pub struct SessionConfig {
     /// between the nodes and the driver.
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
 
+    /// Routing configuration for Scylla Cloud. If set, Session will connect
+    /// to Scylla Cloud clusters using custom routing based on `system.client_routes`.
+    #[cfg(feature = "unstable-client-routes")]
+    pub(crate) client_routes_config: Option<super::client_routes::ClientRoutesConfig>,
+
     /// The host filter decides whether any connections should be opened
     /// to the node or not. The driver will also avoid filtered out nodes when
     /// re-establishing the control connection.
@@ -418,6 +424,8 @@ impl SessionConfig {
             tracing_info_fetch_consistency: Consistency::One,
             cluster_metadata_refresh_interval: Duration::from_secs(60),
             identity: SelfIdentity::default(),
+            #[cfg(feature = "unstable-client-routes")]
+            client_routes_config: None,
         }
     }
 
@@ -487,6 +495,39 @@ impl SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl SessionConfig {
+    /// [SessionConfig] may unfortunately represent invalid configurations. We need to rule them out
+    /// at runtime by running validation.
+    #[expect(clippy::result_large_err)] // TODO(2.0): Make NewSessionError smaller.
+    fn validate(&self) -> Result<(), NewSessionError> {
+        // Ensure there is at least one known node
+        if self.known_nodes.is_empty() {
+            return Err(NewSessionError::EmptyKnownNodesList);
+        }
+
+        // Ensure no illegal configuration with Client Routes
+        #[cfg(feature = "unstable-client-routes")]
+        if self.client_routes_config.is_some() {
+            if self.address_translator.is_some() {
+                return Err(NewSessionError::IllegalConfig(
+                    "User-provided address translator is not supported if ClientRoutesConfig is provided, \
+                        because the driver uses its own custom translator for client routes".into(),
+                ));
+            }
+
+            if self.tls_context.is_some() {
+                return Err(NewSessionError::IllegalConfig(
+                    "TLS is not (yet) supported if ClientRoutesConfig is provided, \
+                        because of architectural limitations that are out of the driver's scope"
+                        .into(),
+                ));
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -1013,12 +1054,9 @@ impl Session {
     /// # }
     /// ```
     pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
-        let known_nodes = config.known_nodes;
+        config.validate()?;
 
-        // Ensure there is at least one known node
-        if known_nodes.is_empty() {
-            return Err(NewSessionError::EmptyKnownNodesList);
-        }
+        let known_nodes = config.known_nodes;
 
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
 
@@ -1091,6 +1129,17 @@ impl Session {
             }
         };
 
+        let client_routes_config: Option<ClientRoutesConfig> = {
+            #[cfg(feature = "unstable-client-routes")]
+            {
+                config.client_routes_config
+            }
+            #[cfg(not(feature = "unstable-client-routes"))]
+            {
+                None
+            }
+        };
+
         let cluster = Cluster::new(
             known_nodes,
             pool_config,
@@ -1104,6 +1153,7 @@ impl Session {
             tablet_receiver,
             #[cfg(feature = "metrics")]
             Arc::clone(&metrics),
+            client_routes_config,
         )
         .await?;
 

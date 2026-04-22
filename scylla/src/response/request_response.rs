@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use scylla_cql::frame::request::query::PagingStateResponse;
 use scylla_cql::frame::response::{
-    NonErrorResponseWithDeserializedMetadata, ResponseWithDeserializedMetadata,
+    NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata,
+    ResponseWithDeserializedMetadataV2 as ResponseWithDeserializedMetadata,
 };
 use tracing::error;
 use uuid::Uuid;

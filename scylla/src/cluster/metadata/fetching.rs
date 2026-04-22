@@ -30,20 +30,22 @@ use scylla_cql::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 use tracing::{debug, trace, warn};
 use uuid::Uuid;
 
-use crate::DeserializeRow;
-use crate::client::pager::QueryPager;
-use crate::cluster::NodeAddr;
-use crate::cluster::control_connection::ControlConnection;
-use crate::cluster::metadata::{
+use super::{
     CollectionType, Column, ColumnKind, ColumnType, Keyspace, MaterializedView, Metadata,
     MissingUserDefinedType, NativeType, Peer, SingleKeyspaceMetadataError, Strategy, Table,
     UserDefinedType,
 };
+
+use crate::DeserializeRow;
+use crate::client::pager::QueryPager;
+use crate::cluster::NodeAddr;
+use crate::cluster::control_connection::ControlConnection;
+use crate::cluster::metadata::ClientRoutes;
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
-    DbError, KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, MetadataFetchError,
-    MetadataFetchErrorKind, NextPageError, NextRowError, PeersMetadataError, RequestAttemptError,
-    RequestError, TablesMetadataError, UdtMetadataError,
+    ClientRoutesMetadataError, DbError, KeyspaceStrategyError, KeyspacesMetadataError,
+    MetadataError, MetadataFetchError, MetadataFetchErrorKind, NextPageError, NextRowError,
+    PeersMetadataError, RequestAttemptError, RequestError, TablesMetadataError, UdtMetadataError,
 };
 use crate::routing::Token;
 
@@ -162,8 +164,24 @@ impl ControlConnection {
     ) -> Result<Metadata, MetadataError> {
         let peers_query = self.query_peers(connect_port);
         let keyspaces_query = self.query_keyspaces(keyspace_to_fetch, fetch_schema);
+        let client_routes_query = async {
+            let Some(subscriber) = self.client_routes_subscriber() else {
+                return Ok(ClientRoutes::default());
+            };
+            let connection_ids = subscriber.get_connection_ids();
+            self.query_client_routes(connection_ids, &[]).await
+        };
 
-        let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
+        let peers: Vec<Peer>;
+        let client_routes: ClientRoutes;
+        let keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>;
+
+        (peers, client_routes, keyspaces) =
+            tokio::try_join!(peers_query, client_routes_query, keyspaces_query)?;
+
+        if let Some(client_routes_subscriber) = self.client_routes_subscriber() {
+            client_routes_subscriber.replace_client_routes(client_routes);
+        }
 
         // There must be at least one peer
         if peers.is_empty() {
@@ -333,6 +351,150 @@ impl ControlConnection {
             rack,
         })
     }
+}
+
+/*
+ * CREATE TABLE system.client_routes (
+ *     connection_id text,
+ *     host_id uuid,
+ *     address text,          -- DNS hostname of the proxy reachable via client_routes routing
+ *     port int,              -- CQL plaintext port
+ *     tls_port int,          -- CQL TLS port
+ *     alternator_port int,
+ *     alternator_https_port int,
+ *     PRIMARY KEY (connection_id, host_id)
+ * );
+ */
+
+/* There are two separate structs:
+ * 1. ClientRoutesEntry
+ * 2. ClientRoute
+ * They differ just by types to represent ports: i32 in ClientRoutesEntry and u16 for ClientRoute.
+ * The reason is that only signed integers implement DeserializeValue.
+ * So, we utilise the derive macro to implement DeserializeRow automatically on ClientRoutesEntry,
+ * and then convert ClientRoutesEntry to a ClientRoute.
+ */
+
+/// Represents an entry of `system.client_routes` table, in a more raw form (ports as i32).
+#[derive(DeserializeRow)]
+#[scylla(crate = "crate")]
+pub(crate) struct ClientRoutesEntry {
+    // PRIMARY KEY (connection_id, host_id)
+    pub(crate) connection_id: String,
+    // DB's REST API throws HTTP 500 if `host_id` is invalid UUID.
+    pub(crate) host_id: Uuid,
+
+    // DB's REST API throws HTTP 400 if `address` is null.
+    #[scylla(rename = "address")]
+    pub(crate) hostname: String,
+
+    // DB's REST API throws HTTP 400 if both `port` and `tls_port` are null,
+    // allows inserting either of them as null as long as the other is not null.
+
+    // Nullable, not part of the primary key. DB's REST API allows inserting null.
+    pub(crate) port: Option<i32>,
+    // Nullable, not part of the primary key. DB's REST API allows inserting null.
+    pub(crate) tls_port: Option<i32>,
+}
+
+impl TryFrom<ClientRoutesEntry> for super::ClientRoute {
+    type Error = ClientRoutesMetadataError;
+
+    fn try_from(
+        ClientRoutesEntry {
+            connection_id,
+            host_id,
+            hostname,
+            port,
+            tls_port,
+        }: ClientRoutesEntry,
+    ) -> Result<Self, Self::Error> {
+        fn parse_port(
+            port: Option<i32>,
+            is_tls: bool,
+        ) -> Result<Option<u16>, ClientRoutesMetadataError> {
+            port.map(|port| {
+                u16::try_from(port)
+                    .map_err(|_| ClientRoutesMetadataError::InvalidPortValue { port, is_tls })
+            })
+            .transpose()
+        }
+        let port = parse_port(port, false)?;
+        let tls_port = parse_port(tls_port, true)?;
+        Ok(Self {
+            connection_id,
+            host_id,
+            hostname,
+            port,
+            tls_port,
+        })
+    }
+}
+
+impl ControlConnection {
+    pub(super) async fn query_client_routes(
+        &self,
+        // List of connection ids that are accepted.
+        // If empty, all connection ids are accepted.
+        connection_ids: &[String],
+        // List of host ids that are accepted.
+        // If empty, all host ids are accepted.
+        host_ids: &[Uuid],
+    ) -> Result<ClientRoutes, MetadataError> {
+        #[expect(clippy::result_large_err)]
+        async fn query_client_routes_with_values(
+            conn: &ControlConnection,
+            query_str: &str,
+            values: &(dyn scylla_cql::serialize::row::SerializeRow + Sync),
+        ) -> Result<ClientRoutes, MetadataError> {
+            conn.query_iter(query_str, values)
+                .into_stream()
+                .map(|pager_res| {
+                    let pager = pager_res?;
+                    let stream = pager.rows_stream::<ClientRoutesEntry>()?;
+                    Ok::<_, MetadataFetchErrorKind>(stream.map_err(MetadataFetchErrorKind::from))
+                })
+                .try_flatten()
+                // Add table context to the error.
+                .map_err(|error| MetadataFetchError {
+                    error,
+                    table: "system.client_routes",
+                })
+                .map_err(MetadataError::from)
+                .map(|r| {
+                    r.and_then(|c| super::ClientRoute::try_from(c).map_err(MetadataError::from))
+                })
+                .try_collect()
+                .await
+        }
+
+        let filter_by_connection_ids = !connection_ids.is_empty();
+        let filter_by_host_ids = !host_ids.is_empty();
+
+        let (query_str, values): (&str, &(dyn scylla_cql::serialize::row::SerializeRow + Sync)) =
+            match (filter_by_connection_ids, filter_by_host_ids) {
+                (true, true) => (
+                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE connection_id IN ? AND host_id IN ?",
+                    &(connection_ids, host_ids),
+                ),
+                (true, false) => (
+                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE connection_id IN ?",
+                    &(connection_ids,),
+                ),
+                (false, true) => (
+                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes WHERE host_id IN ? ALLOW FILTERING",
+                    &(host_ids,),
+                ),
+                (false, false) => (
+                    "SELECT connection_id, host_id, address, port, tls_port FROM system.client_routes ALLOW FILTERING",
+                    &(),
+                ),
+            };
+
+        let routes = query_client_routes_with_values(self, query_str, values).await?;
+
+        Ok(routes)
+    }
 
     fn query_filter_keyspace_name<'a, R>(
         &'a self,
@@ -374,6 +536,7 @@ impl ControlConnection {
             .try_flatten()
     }
 
+    #[expect(clippy::result_large_err)]
     async fn query_keyspaces(
         &self,
         keyspaces_to_fetch: &[String],
@@ -502,6 +665,7 @@ impl TryFrom<UdtRow> for UdtRowWithParsedFieldTypes {
 }
 
 impl ControlConnection {
+    #[expect(clippy::result_large_err)]
     async fn query_user_defined_types(
         &self,
         keyspaces_to_fetch: &[String],
@@ -845,6 +1009,7 @@ mod toposort_tests {
 }
 
 impl ControlConnection {
+    #[expect(clippy::result_large_err)]
     async fn query_tables(
         &self,
         keyspaces_to_fetch: &[String],
@@ -892,6 +1057,7 @@ impl ControlConnection {
         Ok(result)
     }
 
+    #[expect(clippy::result_large_err)]
     async fn query_views(
         &self,
         keyspaces_to_fetch: &[String],
@@ -951,6 +1117,7 @@ impl ControlConnection {
         Ok(result)
     }
 
+    #[expect(clippy::result_large_err)]
     async fn query_tables_schema(
         &self,
         keyspaces_to_fetch: &[String],
@@ -1330,6 +1497,7 @@ fn freeze_type(typ: PreColumnType) -> PreColumnType {
 }
 
 impl ControlConnection {
+    #[expect(clippy::result_large_err)]
     async fn query_table_partitioners(
         &self,
     ) -> Result<PerKsTable<Option<String>>, MetadataFetchError> {

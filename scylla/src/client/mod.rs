@@ -19,6 +19,8 @@ pub mod execution_profile;
 
 pub mod pager;
 
+pub mod client_routes;
+
 pub mod caching_session;
 
 mod self_identity;

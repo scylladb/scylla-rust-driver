@@ -18,15 +18,18 @@ use std::time::Duration;
 
 use rand::rng;
 use rand::seq::{IndexedRandom, SliceRandom};
+use scylla_cql::frame::response::event::ClientRoutesChangeEvent;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
 
+use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
 use crate::cluster::control_connection::{ControlConnection, ControlConnectionCache};
 use crate::cluster::metadata::{Metadata, PeerEndpoint, UntranslatedEndpoint};
 use crate::cluster::node::resolve_contact_points;
 use crate::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
-use crate::frame::response::event::Event;
+use crate::frame::response::event::EventV2 as Event;
+use crate::frame::server_event_type::EventTypeV2 as EventType;
 use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
 use crate::utils::safe_format::IteratorSafeFormatExt;
@@ -74,6 +77,7 @@ pub(crate) struct MetadataReader {
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
     initial_known_nodes: Vec<KnownNode>,
+    client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
 
     // ====================================================================
     // Mutable state of MetadataReader. It will change during its lifetime.
@@ -86,6 +90,7 @@ pub(crate) struct MetadataReader {
 
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn new(
         initial_known_nodes: Vec<KnownNode>,
         hostname_resolution_timeout: Option<Duration>,
@@ -94,6 +99,7 @@ impl MetadataReader {
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
+        client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
     ) -> Result<Self, NewSessionError> {
         let (initial_peers, resolved_hostnames) =
             resolve_contact_points(&initial_known_nodes, hostname_resolution_timeout).await;
@@ -118,6 +124,7 @@ impl MetadataReader {
             connection_config.clone(),
             request_serverside_timeout,
             Arc::clone(&cc_cache),
+            client_routes_subscriber.as_ref().map(Arc::clone),
         )
         .await;
 
@@ -135,6 +142,7 @@ impl MetadataReader {
             host_filter: host_filter.clone(),
             initial_known_nodes,
             cc_cache,
+            client_routes_subscriber,
         })
     }
 
@@ -308,6 +316,7 @@ impl MetadataReader {
                 self.control_connection_config.clone(),
                 self.request_serverside_timeout,
                 Arc::clone(&self.cc_cache),
+                self.client_routes_subscriber.as_ref().map(Arc::clone),
             )
             .await;
 
@@ -420,6 +429,7 @@ impl MetadataReader {
                     self.control_connection_config.clone(),
                     self.request_serverside_timeout,
                     Arc::clone(&self.cc_cache),
+                    self.client_routes_subscriber.as_ref().map(Arc::clone),
                 )
                 .await;
             }
@@ -431,12 +441,22 @@ impl MetadataReader {
         mut config: ConnectionConfig,
         request_serverside_timeout: Option<Duration>,
         cache: Arc<ControlConnectionCache>,
+        client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
     ) -> ControlConnectionState {
         let (sender, receiver) = tokio::sync::mpsc::channel(32);
         // setting event_sender field in connection config will cause control connection to
         // - send REGISTER message to receive server events
         // - send received events via server_event_sender
-        config.event_sender = Some(sender);
+        let mut events_to_register_for = vec![
+            EventType::TopologyChange,
+            EventType::StatusChange,
+            EventType::SchemaChange,
+        ];
+        if client_routes_subscriber.is_some() {
+            events_to_register_for.push(EventType::ClientRoutesChange);
+        }
+
+        config.event_sender = Some((sender, events_to_register_for));
         let open_result = open_connection(
             &endpoint,
             None,
@@ -446,7 +466,7 @@ impl MetadataReader {
 
         match open_result {
             Ok((con, recv)) => ControlConnectionState::Working(WorkingControlConnection {
-                connection: ControlConnection::new(Arc::new(con), cache)
+                connection: ControlConnection::new(Arc::new(con), cache, client_routes_subscriber)
                     .override_serverside_timeout(request_serverside_timeout),
                 error_channel: recv,
                 events_channel: receiver,
@@ -459,5 +479,68 @@ impl MetadataReader {
                 last_endpoint: endpoint,
             },
         }
+    }
+
+    /// Performs a partial fetch of `system.client_routes`. Partial means that filtering is done
+    /// not only by connection ids known to the driver (which is always the case), but also
+    /// by host ids - only for the hosts whose ids are present in the event payload.
+    ///
+    /// Then, the updates are fed to the [`ClientRoutesSubscriber`] for merging with previous knowledge.
+    pub(in super::super) async fn fetch_client_route_updates_on_event(
+        &mut self,
+        evt: &ClientRoutesChangeEvent,
+    ) -> Result<(), MetadataError> {
+        let working_connection = match &self.control_connection_state {
+            ControlConnectionState::Working(working_connection) => working_connection,
+            ControlConnectionState::Broken { last_error: e, .. } => {
+                return Err(e.clone());
+            }
+        };
+
+        let Some(subscriber) = &self.client_routes_subscriber else {
+            // No subscriber, but received an event? Strange enough, but nothing to be done here.
+            warn!("BUG: Received ClientRoutesChange event, but no ClientRoutesSubscriber was set!");
+            return Ok(());
+        };
+
+        #[deny(clippy::wildcard_enum_match_arm)]
+        let (connection_ids, host_ids) = match evt {
+            ClientRoutesChangeEvent::UpdateNodes {
+                connection_ids,
+                host_ids,
+            } => (connection_ids, host_ids),
+            _ => unreachable!("clippy testifies that the match is exhaustive"),
+        };
+
+        // TODO: this is wasteful - it allocates both strings and a vec.
+        // This won't be a performance problem, because UPDATE_NODES events are not frequent.
+        // As an optimization, we can implement ser/de for some special new iterator type,
+        // to avoid the need to allocate when serializing collections.
+        let connection_ids: Vec<String> = connection_ids
+            .iter()
+            .filter(|&conn_id| subscriber.get_connection_ids().contains(conn_id))
+            .cloned()
+            .collect();
+
+        if connection_ids.is_empty() {
+            // The event contained no relevant connection IDs.
+            // Nothing to be done.
+            return Ok(());
+        }
+
+        // Although this is vaguely documented, the semantics of an event with connection ids [A, B, C] and host ids [X, Y, Z]
+        // is that the following entries were added/updated/removed: `[(A, X), (B, Y), (C, Z)]`.
+        // Unfortunately, we can't really query Scylla this way. Therefore, we do the query: `WHERE connection id IN ? AND host id IN ?`,
+        // which fetches possibly more routes than necessary, for example `(A, Z)` or `(C, Y)`.
+        // This is a tradeoff - the only alternative is issuing multiple queries, one per connection id.
+        // I believe the tradeoff here is correct.
+        let client_routes = working_connection
+            .connection
+            .query_client_routes(&connection_ids, host_ids)
+            .await?;
+
+        subscriber.merge_client_routes_update(evt, client_routes);
+
+        Ok(())
     }
 }
