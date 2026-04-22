@@ -91,41 +91,41 @@ impl NodeChain {
     fn proxy_addr(&self) -> SocketAddr {
         self.proxy_addr
     }
-}
 
-/// Start a proxy + NLB chain for a single Scylla node (plaintext).
-///
-/// 1. Allocate a unique proxy address via `get_exclusive_local_address()`
-/// 2. Build and run a single-node `Proxy` (proxy_addr →  real_addr)
-/// 3. Build and run an NLB frontend (OS-assigned port →  proxy_addr)
-async fn start_node_chain(real_addr: SocketAddr) -> Result<NodeChain, Error> {
-    let proxy_ip = get_exclusive_local_address();
-    let proxy_addr = SocketAddr::new(proxy_ip, 9042);
+    /// Start a proxy + NLB chain for a single Scylla node (plaintext).
+    ///
+    /// 1. Allocate a unique proxy address via `get_exclusive_local_address()`
+    /// 2. Build and run a single-node `Proxy` (proxy_addr →  real_addr)
+    /// 3. Build and run an NLB frontend (OS-assigned port →  proxy_addr)
+    async fn start(real_addr: SocketAddr) -> Result<Self, Error> {
+        let proxy_ip = get_exclusive_local_address();
+        let proxy_addr = SocketAddr::new(proxy_ip, 9042);
 
-    let node = ProxyNode::builder()
-        .real_address(real_addr)
-        .proxy_address(proxy_addr)
-        .shard_awareness(ShardAwareness::QueryNode)
-        .build();
+        let node = ProxyNode::builder()
+            .real_address(real_addr)
+            .proxy_address(proxy_addr)
+            .shard_awareness(ShardAwareness::QueryNode)
+            .build();
 
-    let running_proxy = Proxy::new([node])
-        .run()
-        .await
-        .with_context(|| format!("Failed to start proxy for real node {}", real_addr))?;
+        let running_proxy = Proxy::new([node])
+            .run()
+            .await
+            .with_context(|| format!("Failed to start proxy for real node {}", real_addr))?;
 
-    let nlb = NlbFrontend::builder()
-        .listen_addr("127.0.0.1:0".parse().unwrap())
-        .backend(proxy_addr)
-        .build()
-        .run()
-        .await
-        .with_context(|| format!("Failed to start NLB for proxy {}", proxy_addr))?;
+        let nlb = NlbFrontend::builder()
+            .listen_addr("127.0.0.1:0".parse().unwrap())
+            .backend(proxy_addr)
+            .build()
+            .run()
+            .await
+            .with_context(|| format!("Failed to start NLB for proxy {}", proxy_addr))?;
 
-    Ok(NodeChain {
-        running_proxy,
-        proxy_addr,
-        nlb,
-    })
+        Ok(NodeChain {
+            running_proxy,
+            proxy_addr,
+            nlb,
+        })
+    }
 }
 
 /// Shut down a proxy chain for a node.
@@ -585,7 +585,7 @@ impl ClientRoutesCluster {
         }
 
         // Start fresh chain.
-        let new_chain = start_node_chain(SocketAddr::new(real_ip, 9042))
+        let new_chain = NodeChain::start(SocketAddr::new(real_ip, 9042))
             .await
             .with_context(|| format!("Failed to start new chain for restarted node {}", node_id))?;
         info!(
@@ -671,7 +671,7 @@ impl ClientRoutesCluster {
         self.host_ids.insert(new_node_id, host_id);
 
         // Step 4: start proxy chain.
-        let chain = start_node_chain(SocketAddr::new(real_ip, 9042))
+        let chain = NodeChain::start(SocketAddr::new(real_ip, 9042))
             .await
             .with_context(|| format!("Failed to start chain for new node {}", new_node_id))?;
 
@@ -1011,7 +1011,7 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
             // Start per-node proxy chains.
             let mut per_node_chains = HashMap::new();
             for (node_id, real_ip) in &nodes {
-                let chain = start_node_chain(SocketAddr::new(*real_ip, 9042))
+                let chain = NodeChain::start(SocketAddr::new(*real_ip, 9042))
                     .await
                     .with_context(|| {
                         format!("Failed to start chain for DC {} node {}", dc_id, node_id)
