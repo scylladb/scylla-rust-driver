@@ -37,6 +37,7 @@ use std::time::Duration;
 use anyhow::{Context, Error, bail};
 use bytes::Bytes;
 use futures::FutureExt;
+use rand::seq::IteratorRandom;
 use scylla::client::PoolSize;
 use scylla::client::client_routes::{ClientRoutesConfig, ClientRoutesProxy};
 use scylla::client::session::Session;
@@ -275,14 +276,14 @@ impl ClientRoutesCluster {
             host_ids,
         };
 
-        // Step 5: POST client routes to all nodes.
-        info!("POSTing client routes to all nodes");
-        plc.post_routes_to_all_nodes()
+        // Step 5: POST client routes to the cluster.
+        info!("POSTing client routes to the cluster");
+        plc.post_client_routes_to_cluster()
             .await
             .inspect_err(|_| plc.cluster.mark_as_failed())
             .context("Failed to post client routes")?;
 
-        info!("Finished POSTing client routes to all nodes");
+        info!("Finished POSTing client routes to the cluster");
 
         Ok(Some(plc))
     }
@@ -504,7 +505,7 @@ impl ClientRoutesCluster {
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
             .with_context(|| format!("Node {} chain not found in DC {}", node_id, dc_id))?;
 
-        self.post_routes_to_all_nodes()
+        self.post_client_routes_to_cluster()
             .await
             .context("Failed to post updated routes after decommission")?;
 
@@ -546,7 +547,7 @@ impl ClientRoutesCluster {
         }
 
         // Re-post routes without this node so the driver stops routing to it.
-        self.post_routes_to_all_nodes()
+        self.post_client_routes_to_cluster()
             .await
             .context("Failed to re-post routes after stopping node chain")?;
 
@@ -608,7 +609,7 @@ impl ClientRoutesCluster {
             .insert(node_id, new_chain);
 
         // Re-post routes so the driver picks up the new NLB port.
-        self.post_routes_to_all_nodes()
+        self.post_client_routes_to_cluster()
             .await
             .context("Failed to re-post routes after chain restart")?;
 
@@ -689,7 +690,7 @@ impl ClientRoutesCluster {
             .insert(new_node_id, chain);
 
         // Step 5: post updated routes (with the new node).
-        self.post_routes_to_all_nodes()
+        self.post_client_routes_to_cluster()
             .await
             .context("Failed to post updated routes after adding node")?;
 
@@ -897,38 +898,33 @@ impl ClientRoutesCluster {
         injected
     }
 
-    async fn post_routes_to_all_nodes(&self) -> Result<(), Error> {
+    async fn post_client_routes_to_cluster(&self) -> Result<(), Error> {
         let routes = self.build_route_entries();
         let route_json = serde_json_routes(&routes);
         info!("Posting client routes: {}", route_json);
 
-        // Collect the set of node IDs that have active proxy chains.
-        let active_ids: std::collections::HashSet<NodeId> = self
+        // Randomly choose any node that has active proxy chain.
+        let active_id = self
             .dc_configs
             .values()
-            .flat_map(|dc| dc.per_node_chains.keys().copied())
-            .collect();
+            .find_map(|dc| dc.per_node_chains.keys().copied().choose(&mut rand::rng()));
 
-        for node in self.cluster.nodes().iter() {
-            if !active_ids.contains(&node.id()) {
-                debug!(
-                    "Skipping route POST to node {} ({}) — no active chain",
+        let Some(node_id) = active_id else {
+            panic!("No active nodes with proxy chains found to post routes");
+        };
+
+        let node = self.cluster.nodes().get_by_id(node_id).unwrap();
+
+        let node_ip = node.broadcast_rpc_address();
+        post_client_routes_raw(node_ip, &route_json)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to POST client routes to node {} ({})",
                     node.id(),
-                    node.broadcast_rpc_address()
-                );
-                continue;
-            }
-            let node_ip = node.broadcast_rpc_address();
-            post_client_routes_raw(node_ip, &route_json)
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to POST client routes to node {} ({})",
-                        node.id(),
-                        node_ip
-                    )
-                })?;
-        }
+                    node_ip
+                )
+            })?;
 
         Ok(())
     }
