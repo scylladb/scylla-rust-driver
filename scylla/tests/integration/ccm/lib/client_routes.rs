@@ -1148,12 +1148,6 @@ async fn make_cheap_session(contact_point: SocketAddr) -> Result<Session, NewSes
 
 /// Uses the driver's cluster metadata (via `Session::get_cluster_state()`) to
 /// reliably discover host_ids for all CCM nodes.
-///
-/// This avoids querying `system.local` / `system.peers` directly, which is
-/// unreliable because queries go through the load balancer and `system.local`
-/// returns the *queried* node's data (not necessarily the contact point's).
-/// The Session already discovers all nodes during initialization, so we can
-/// simply read the metadata it has collected.
 async fn discover_host_ids(cluster: &Cluster) -> Result<HashMap<NodeId, Uuid>, Error> {
     // Connect to the first node — the session will discover the whole cluster.
     let first_node = cluster
