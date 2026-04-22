@@ -13,7 +13,7 @@
 //! it necessarily went through the NLB (since the driver only knows NLB
 //! addresses from `client_routes` and real node addresses, but not proxy addresses).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -950,16 +950,17 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
     }
 
     // Wait for the driver to connect through the new NLB ports.
-    for &node_id in &dc1_nodes {
-        plc.wait_for_connections_to_node(node_id, CONNECTION_WAIT_TIMEOUT)
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Phase 3: driver did not reconnect to node {}: {}",
-                    node_id, e
-                )
-            });
-    }
+    plc.wait_for_connections_to_nodes(
+        Some(&HashSet::from_iter(dc1_nodes.iter().copied())),
+        CONNECTION_WAIT_TIMEOUT,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        panic!(
+            "Phase 3: driver did not reconnect to all nodes from dc1: {}",
+            e
+        )
+    });
 
     // Verify traffic reaches all 4 nodes through the new ports.
     let mut rxs = plc.setup_query_feedback();
@@ -990,16 +991,12 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
             .unwrap_or_else(|e| panic!("Failed to restart chain for node {}: {}", node_id, e));
     }
 
-    for &node_id in &cross_dc_nodes {
-        plc.wait_for_connections_to_node(node_id, CONNECTION_WAIT_TIMEOUT)
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Phase 4: driver did not reconnect to node {}: {}",
-                    node_id, e
-                )
-            });
-    }
+    plc.wait_for_connections_to_nodes(
+        Some(&HashSet::from(cross_dc_nodes)),
+        CONNECTION_WAIT_TIMEOUT,
+    )
+    .await
+    .unwrap_or_else(|e| panic!("Phase 4: driver did not reconnect to cross-dc nodes: {}", e));
 
     let mut rxs = plc.setup_query_feedback();
     run_queries(&session, &ks, QUERIES_PER_PHASE).await;

@@ -27,7 +27,7 @@
 //! adding a node = start a new proxy; removing = finish one, without disrupting
 //! others.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZero;
 use std::panic::AssertUnwindSafe;
@@ -360,6 +360,53 @@ impl ClientRoutesCluster {
             .collect()
     }
 
+    /// Waits until every specified proxy node has at least one driver connection.
+    ///
+    /// After topology changes (restart, add node), the driver takes time to
+    /// discover the new/restarted node and open a connection. Calling this
+    /// before issuing queries prevents races where all queries miss the
+    /// new node because the driver hasn't connected yet.
+    ///
+    /// Times out after `timeout` to avoid hanging forever if the driver fails to connect.
+    pub(crate) async fn wait_for_connections_to_nodes(
+        &self,
+        node_ids: Option<&HashSet<u16>>,
+        timeout: Duration,
+    ) -> Result<(), Error> {
+        let futs: Vec<_> = self
+            .dc_configs
+            .values()
+            .flat_map(|dc| {
+                dc.per_node_chains.iter().filter_map(|(node_id, chain)| {
+                    let wait_fn = || {
+                        let proxy = &chain.running_proxy;
+                        async move {
+                            proxy.wait_for_connection().await;
+                            info!("Proxy for node {} has a driver connection", node_id);
+                        }
+                    };
+                    match node_ids {
+                        // Filter to a specific set of nodes if provided.
+                        Some(ids) => ids.contains(node_id).then(wait_fn),
+                        // No filter, wait for all nodes.
+                        None => Some(wait_fn()),
+                    }
+                })
+            })
+            .collect();
+
+        tokio::time::timeout(timeout, futures::future::join_all(futs))
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Timed out waiting for driver connections to proxy nodes: {:?}.",
+                    node_ids
+                )
+            })?;
+
+        Ok(())
+    }
+
     /// Waits until every active proxy node has at least one driver connection.
     ///
     /// After topology changes (restart, add node), the driver takes time to
@@ -372,31 +419,7 @@ impl ClientRoutesCluster {
         &self,
         timeout: Duration,
     ) -> Result<(), Error> {
-        let futs: Vec<_> = self
-            .dc_configs
-            .values()
-            .flat_map(|dc| {
-                dc.per_node_chains.iter().map(move |(&node_id, chain)| {
-                    let proxy = &chain.running_proxy;
-                    async move {
-                        proxy.wait_for_connection().await;
-                        info!("Proxy for node {} has a driver connection", node_id);
-                    }
-                })
-            })
-            .collect();
-
-        tokio::time::timeout(timeout, futures::future::join_all(futs))
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "Timed out waiting for driver connections to all proxy nodes. \
-                     Active node IDs: {:?}",
-                    self.active_node_ids()
-                )
-            })?;
-
-        Ok(())
+        self.wait_for_connections_to_nodes(None, timeout).await
     }
 
     /// Waits until the proxy responsible for given node has at least one driver
@@ -413,30 +436,8 @@ impl ClientRoutesCluster {
         node_id: NodeId,
         timeout: Duration,
     ) -> Result<(), Error> {
-        let fut = self
-            .dc_configs
-            .values()
-            .find_map(|dc| {
-                dc.per_node_chains.get(&node_id).map(|chain| {
-                    let proxy = &chain.running_proxy;
-                    async move {
-                        proxy.wait_for_connection().await;
-                        info!("Proxy for node {} has a driver connection", node_id);
-                    }
-                })
-            })
-            .unwrap_or_else(|| panic!("Node {} not present in the DcConfigs", node_id));
-
-        tokio::time::timeout(timeout, fut).await.map_err(|_| {
-            anyhow::anyhow!(
-                "Timed out waiting for driver connection to node {}. \
-                     Active node IDs: {:?}",
-                node_id,
-                self.active_node_ids()
-            )
-        })?;
-
-        Ok(())
+        self.wait_for_connections_to_nodes(Some(&HashSet::from([node_id])), timeout)
+            .await
     }
 
     /// Decommission a node and tear down its proxy chain.
