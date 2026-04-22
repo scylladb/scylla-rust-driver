@@ -126,16 +126,16 @@ impl NodeChain {
             nlb,
         })
     }
-}
 
-/// Shut down a proxy chain for a node.
-///
-/// The NLB is shut down first, then the proxy. Proxy errors are expected
-/// (the backend may already be dead) and are logged rather than propagated.
-async fn shutdown_node_chain(chain: NodeChain, node_id: NodeId) {
-    chain.nlb.finish().await;
-    if let Err(e) = chain.running_proxy.finish().await {
-        info!("Proxy for node {} reported (expected): {}", node_id, e);
+    /// Shut down a proxy chain for a node.
+    ///
+    /// The NLB is shut down first, then the proxy. Proxy errors are expected
+    /// (the backend may already be dead) and are logged rather than propagated.
+    async fn shutdown(self, node_id: NodeId) {
+        self.nlb.finish().await;
+        if let Err(e) = self.running_proxy.finish().await {
+            info!("Proxy for node {} reported (expected): {}", node_id, e);
+        }
     }
 }
 
@@ -503,7 +503,7 @@ impl ClientRoutesCluster {
 
         // Step 4: shut down the proxy chain.
         info!("Shutting down chain for decommissioned node {}", node_id);
-        shutdown_node_chain(chain, node_id).await;
+        chain.shutdown(node_id).await;
 
         Ok(())
     }
@@ -535,7 +535,7 @@ impl ClientRoutesCluster {
             .get_mut(&dc_id)
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
         {
-            shutdown_node_chain(old_chain, node_id).await;
+            old_chain.shutdown(node_id).await;
         }
 
         // Re-post routes without this node so the driver stops routing to it.
@@ -581,7 +581,7 @@ impl ClientRoutesCluster {
             .get_mut(&dc_id)
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
         {
-            shutdown_node_chain(old_chain, node_id).await;
+            old_chain.shutdown(node_id).await;
         }
 
         // Start fresh chain.
@@ -969,7 +969,7 @@ impl ClientRoutesCluster {
 
             for (node_id, chain) in dc_cfg.per_node_chains {
                 debug!("Shutting down chain for DC {} node {}", dc_id, node_id);
-                shutdown_node_chain(chain, node_id).await;
+                chain.shutdown(node_id).await;
             }
         }
         info!("All proxy chains and NLBs shut down");
