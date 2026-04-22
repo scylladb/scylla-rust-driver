@@ -1,4 +1,6 @@
-use crate::utils::{PerformDDL as _, create_new_session_builder, unique_keyspace_name};
+use crate::utils::{
+    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, unique_keyspace_name,
+};
 
 /// It's recommended to use NetworkTopologyStrategy everywhere, so most tests use only NetworkTopologyStrategy.
 /// We still support SimpleStrategy, so to make sure that SimpleStrategy works correctly this test runs
@@ -8,10 +10,16 @@ async fn simple_strategy_test() {
     let ks = unique_keyspace_name();
     let session = create_new_session_builder().build().await.unwrap();
 
+    let disable_tablets_str = if scylla_supports_tablets(&session).await {
+        " AND TABLETS = {'enabled': false}"
+    } else {
+        ""
+    };
+
     session
         .ddl(format!(
             "CREATE KEYSPACE {ks} WITH REPLICATION = \
-                {{'class': 'SimpleStrategy', 'replication_factor': 1}}"
+                {{'class': 'SimpleStrategy', 'replication_factor': 1}}{disable_tablets_str}"
         ))
         .await
         .unwrap();
