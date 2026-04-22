@@ -72,6 +72,8 @@ const CONNECTION_ID_BASE: &str = "rust-driver-test";
 /// NLB (nlb_addr) →  Proxy (proxy_addr) →  Real ScyllaDB (real_addr)
 /// ```
 struct NodeChain {
+    /// CCM ID of the node.
+    node_id: u16,
     /// The running CQL-aware proxy (single-node). Provides feedback channels.
     running_proxy: RunningProxy,
     /// The proxy's listen address (used as backend for both per-node NLB
@@ -97,7 +99,7 @@ impl NodeChain {
     /// 1. Allocate a unique proxy address via `get_exclusive_local_address()`
     /// 2. Build and run a single-node `Proxy` (proxy_addr →  real_addr)
     /// 3. Build and run an NLB frontend (OS-assigned port →  proxy_addr)
-    async fn start(real_addr: SocketAddr) -> Result<Self, Error> {
+    async fn start(real_addr: SocketAddr, node_id: u16) -> Result<Self, Error> {
         let proxy_ip = get_exclusive_local_address();
         let proxy_addr = SocketAddr::new(proxy_ip, 9042);
 
@@ -121,6 +123,7 @@ impl NodeChain {
             .with_context(|| format!("Failed to start NLB for proxy {}", proxy_addr))?;
 
         Ok(NodeChain {
+            node_id,
             running_proxy,
             proxy_addr,
             nlb,
@@ -131,10 +134,10 @@ impl NodeChain {
     ///
     /// The NLB is shut down first, then the proxy. Proxy errors are expected
     /// (the backend may already be dead) and are logged rather than propagated.
-    async fn shutdown(self, node_id: NodeId) {
+    async fn shutdown(self) {
         self.nlb.finish().await;
         if let Err(e) = self.running_proxy.finish().await {
-            info!("Proxy for node {} reported (expected): {}", node_id, e);
+            info!("Proxy for node {} reported (expected): {}", self.node_id, e);
         }
     }
 }
@@ -503,7 +506,7 @@ impl ClientRoutesCluster {
 
         // Step 4: shut down the proxy chain.
         info!("Shutting down chain for decommissioned node {}", node_id);
-        chain.shutdown(node_id).await;
+        chain.shutdown().await;
 
         Ok(())
     }
@@ -535,7 +538,7 @@ impl ClientRoutesCluster {
             .get_mut(&dc_id)
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
         {
-            old_chain.shutdown(node_id).await;
+            old_chain.shutdown().await;
         }
 
         // Re-post routes without this node so the driver stops routing to it.
@@ -581,11 +584,11 @@ impl ClientRoutesCluster {
             .get_mut(&dc_id)
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
         {
-            old_chain.shutdown(node_id).await;
+            old_chain.shutdown().await;
         }
 
         // Start fresh chain.
-        let new_chain = NodeChain::start(SocketAddr::new(real_ip, 9042))
+        let new_chain = NodeChain::start(SocketAddr::new(real_ip, 9042), node_id)
             .await
             .with_context(|| format!("Failed to start new chain for restarted node {}", node_id))?;
         info!(
@@ -671,7 +674,7 @@ impl ClientRoutesCluster {
         self.host_ids.insert(new_node_id, host_id);
 
         // Step 4: start proxy chain.
-        let chain = NodeChain::start(SocketAddr::new(real_ip, 9042))
+        let chain = NodeChain::start(SocketAddr::new(real_ip, 9042), new_node_id)
             .await
             .with_context(|| format!("Failed to start chain for new node {}", new_node_id))?;
 
@@ -969,7 +972,7 @@ impl ClientRoutesCluster {
 
             for (node_id, chain) in dc_cfg.per_node_chains {
                 debug!("Shutting down chain for DC {} node {}", dc_id, node_id);
-                chain.shutdown(node_id).await;
+                chain.shutdown().await;
             }
         }
         info!("All proxy chains and NLBs shut down");
@@ -1010,13 +1013,13 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
 
             // Start per-node proxy chains.
             let mut per_node_chains = HashMap::new();
-            for (node_id, real_ip) in &nodes {
-                let chain = NodeChain::start(SocketAddr::new(*real_ip, 9042))
+            for (node_id, real_ip) in nodes.iter().copied() {
+                let chain = NodeChain::start(SocketAddr::new(real_ip, 9042), node_id)
                     .await
                     .with_context(|| {
                         format!("Failed to start chain for DC {} node {}", dc_id, node_id)
                     })?;
-                per_node_chains.insert(*node_id, chain);
+                per_node_chains.insert(node_id, chain);
             }
 
             // Start per-DC round-robin NLB.
