@@ -6,7 +6,6 @@ from datetime import date
 from pygments.lexers.configs import TOMLLexer
 from pygments.lexers.rust import RustLexer
 from sphinx.highlighting import lexers
-
 from sphinx_scylladb_theme.utils import multiversion_regex_builder
 
 sys.path.insert(0, os.path.abspath(".."))
@@ -14,14 +13,14 @@ sys.path.insert(0, os.path.abspath(".."))
 # -- Global variables
 
 # Build documentation for the following tags and branches
-TAGS = ["v1.2.0", "v1.3.0", "v1.3.1", "v1.4.0", "v1.4.1", "v1.5.0"]
+TAGS = ["v1.2.0", "v1.3.0", "v1.3.1", "v1.4.0", "v1.4.1", "v1.5.0", "v1.6.0"]
 BRANCHES = ["main"]
 # Set the latest version.
-LATEST_VERSION = "v1.5.0"
+LATEST_VERSION = "v1.6.0"
 # Set which versions are not released yet.
 UNSTABLE_VERSIONS = ["main"]
 # Set which versions are deprecated
-DEPRECATED_VERSIONS = ["v1.2.0", "v1.3.0", "v1.3.1", "v1.4.0", "v1.4.1"]
+DEPRECATED_VERSIONS = ["v1.2.0", "v1.3.0", "v1.3.1", "v1.4.0", "v1.4.1", "v1.5.0"]
 
 # -- General configuration
 
