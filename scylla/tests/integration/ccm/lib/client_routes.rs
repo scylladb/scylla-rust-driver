@@ -29,16 +29,20 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZero;
 use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Error, bail};
 use bytes::Bytes;
 use futures::FutureExt;
-use futures::StreamExt as _;
-use futures::TryStreamExt as _;
+use scylla::client::PoolSize;
 use scylla::client::client_routes::{ClientRoutesConfig, ClientRoutesProxy};
-use scylla::client::session_builder::ClientRoutesSessionBuilder;
+use scylla::client::session::Session;
+use scylla::client::session_builder::{ClientRoutesSessionBuilder, SessionBuilder};
+use scylla::errors::NewSessionError;
+use scylla::policies::host_filter::AllowListHostFilter;
 use scylla_proxy::nlb::{NlbFrontend, RunningNlbFrontend};
 use scylla_proxy::{
     Condition, Node as ProxyNode, Proxy, Reaction, RequestOpcode, RequestReaction, RequestRule,
@@ -1007,22 +1011,38 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
                 acc
             });
 
-    futures::stream::iter(dc_nodes)
-        .then(|(dc_id, nodes)| async move {
+    // Start all per-node proxy chains concurrently (across all DCs).
+    let chain_futs: Vec<_> = dc_nodes
+        .iter()
+        .flat_map(|(&dc_id, nodes)| {
+            nodes
+                .iter()
+                .copied()
+                .map(move |(node_id, real_ip)| async move {
+                    let chain = NodeChain::start(SocketAddr::new(real_ip, 9042), node_id)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to start chain for DC {} node {}", dc_id, node_id)
+                        })?;
+                    Ok::<_, Error>((dc_id, node_id, chain))
+                })
+        })
+        .collect();
+
+    let chains = futures::future::try_join_all(chain_futs).await?;
+
+    // Group started chains by DC.
+    let mut dc_chains: BTreeMap<u16, HashMap<NodeId, NodeChain>> = BTreeMap::new();
+    for (dc_id, node_id, chain) in chains {
+        dc_chains.entry(dc_id).or_default().insert(node_id, chain);
+    }
+
+    // Start per-DC contact-point NLBs concurrently.
+    let nlb_futs: Vec<_> = dc_chains
+        .into_iter()
+        .map(|(dc_id, per_node_chains)| async move {
             let connection_id = format!("{}-dc{}", CONNECTION_ID_BASE, dc_id);
 
-            // Start per-node proxy chains.
-            let mut per_node_chains = HashMap::new();
-            for (node_id, real_ip) in nodes.iter().copied() {
-                let chain = NodeChain::start(SocketAddr::new(real_ip, 9042), node_id)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to start chain for DC {} node {}", dc_id, node_id)
-                    })?;
-                per_node_chains.insert(node_id, chain);
-            }
-
-            // Start per-DC round-robin NLB.
             let backends: Vec<SocketAddr> = per_node_chains
                 .values()
                 .map(|chain| chain.proxy_addr())
@@ -1054,8 +1074,11 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
                 },
             ))
         })
-        .try_collect()
+        .collect();
+
+    futures::future::try_join_all(nlb_futs)
         .await
+        .map(|v| v.into_iter().collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,6 +1125,27 @@ async fn client_routes_table_exists(cluster: &Cluster) -> Result<bool, Error> {
 // Host-ID discovery
 // ---------------------------------------------------------------------------
 
+/// Creates a lightweight session, optimised for the only goal of executing
+/// some queries once.
+async fn make_cheap_session(contact_point: SocketAddr) -> Result<Session, NewSessionError> {
+    SessionBuilder::new()
+        .known_node_addr(contact_point)
+        // The following settings are here to make the session lighter,
+        // speeding the tests.
+        //
+        // Contact points will always be Untranslatable, which is always accepted
+        // by the AllowListHostFilter, so we don't need to create the allowlist.
+        .host_filter(Arc::new(
+            AllowListHostFilter::new(std::iter::empty::<&str>()).unwrap(),
+        ))
+        .fetch_schema_metadata(false)
+        .keyspaces_to_fetch(std::iter::empty::<String>())
+        .pool_size(PoolSize::PerHost(NonZero::new(1).unwrap()))
+        .disallow_shard_aware_port(true)
+        .build()
+        .await
+}
+
 /// Uses the driver's cluster metadata (via `Session::get_cluster_state()`) to
 /// reliably discover host_ids for all CCM nodes.
 ///
@@ -1111,8 +1155,6 @@ async fn client_routes_table_exists(cluster: &Cluster) -> Result<bool, Error> {
 /// The Session already discovers all nodes during initialization, so we can
 /// simply read the metadata it has collected.
 async fn discover_host_ids(cluster: &Cluster) -> Result<HashMap<NodeId, Uuid>, Error> {
-    use scylla::client::session_builder::SessionBuilder;
-
     // Connect to the first node — the session will discover the whole cluster.
     let first_node = cluster
         .nodes()
@@ -1123,9 +1165,7 @@ async fn discover_host_ids(cluster: &Cluster) -> Result<HashMap<NodeId, Uuid>, E
         first_node.broadcast_rpc_address(),
         first_node.native_transport_port(),
     );
-    let session = SessionBuilder::new()
-        .known_node(contact.to_string())
-        .build()
+    let session = make_cheap_session(contact)
         .await
         .with_context(|| format!("Failed to connect to cluster via {}", contact))?;
 
@@ -1171,17 +1211,11 @@ async fn discover_host_ids(cluster: &Cluster) -> Result<HashMap<NodeId, Uuid>, E
 /// Retries with backoff because a newly-added CCM node may not be ready
 /// immediately after `node.start()`.
 async fn discover_single_host_id(addr: SocketAddr) -> Result<Uuid, Error> {
-    use scylla::client::session_builder::SessionBuilder;
-
     let max_attempts = 10;
     let mut last_err = None;
 
     for attempt in 1..=max_attempts {
-        match SessionBuilder::new()
-            .known_node(addr.to_string())
-            .build()
-            .await
-        {
+        match make_cheap_session(addr).await {
             Ok(session) => {
                 let state = session.get_cluster_state();
                 let nodes_info = state.get_nodes_info();
