@@ -106,7 +106,7 @@ async fn run_queries(session: &Session, ks_name: &str, count: i32) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: Basic connectivity (1 DC, 3 nodes)
+// Basic connectivity (1 DC, 3 nodes)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify that the driver can connect to all nodes through the
@@ -166,7 +166,7 @@ async fn test_client_routes_basic_connectivity() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: Node stop/resume (1 DC, 3 nodes)
+// Node stop/resume (1 DC, 3 nodes)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify the driver gracefully handles a node going down and
@@ -348,7 +348,7 @@ async fn test_client_routes_multi_dc_basic() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: Multi-DC topology change (2 DCs, decommission + add)
+// Multi-DC topology change (2 DCs, decommission + add)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify the driver correctly handles decommissioning a node and
@@ -482,7 +482,7 @@ async fn test_client_routes_multi_dc_topology_change() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: Rolling restart (1 DC, 3 nodes)
+// Rolling restart (1 DC, 3 nodes)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify the driver survives a rolling restart of all nodes,
@@ -607,7 +607,7 @@ async fn test_client_routes_rolling_restart() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 6: NLB port remap without Scylla restart (1 DC, 3 nodes)
+// NLB port remap without Scylla restart (1 DC, 3 nodes)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify the driver detects route changes and reconnects through
@@ -696,7 +696,7 @@ async fn test_client_routes_nlb_port_remap() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7: Scale out (1 DC, 3 →  6 nodes)
+// Scale out (1 DC, 3 →  6 nodes)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify the driver correctly discovers and routes to dynamically
@@ -790,7 +790,7 @@ async fn test_client_routes_scale_out() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 8: Event-driven reroute (2 DCs, 2+2 nodes)
+// Event-driven reroute (2 DCs, 2+2 nodes)
 // ---------------------------------------------------------------------------
 
 /// Wait for any of the given feedback receivers to produce a message.
