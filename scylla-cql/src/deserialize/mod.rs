@@ -45,6 +45,15 @@ impl TypeCheckError {
     pub fn downcast_ref<T: std::error::Error + 'static>(&self) -> Option<&T> {
         self.0.downcast_ref()
     }
+
+    /// Try to get a mutable reference to the inner error by downcasting.
+    ///
+    /// This will only succeed if the `Arc` holding the error has no other
+    /// outstanding clones (i.e. the strong count is 1 and there are no weak
+    /// references).
+    pub fn try_downcast_mut<T: std::error::Error + 'static>(&mut self) -> Option<&mut T> {
+        Arc::get_mut(&mut self.0)?.downcast_mut()
+    }
 }
 
 /// An error indicating that a failure happened during deserialization.
@@ -77,6 +86,15 @@ impl DeserializationError {
     pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
         self.0.downcast_ref()
     }
+
+    /// Try to get a mutable reference to the inner error by downcasting.
+    ///
+    /// This will only succeed if the `Arc` holding the error has no other
+    /// outstanding clones (i.e. the strong count is 1 and there are no weak
+    /// references).
+    pub fn try_downcast_mut<T: Error + 'static>(&mut self) -> Option<&mut T> {
+        Arc::get_mut(&mut self.0)?.downcast_mut()
+    }
 }
 
 // This is a hack to enable setting the proper Rust type name in error messages,
@@ -86,26 +104,17 @@ impl DeserializationError {
 // - BEFORE an error is cloned (because otherwise the Arc::get_mut fails).
 macro_rules! make_error_replace_rust_name {
     ($privacy: vis, $fn_name: ident, $outer_err: ty, $inner_err: ident) => {
-        // Not part of the public API; used in derive macros.
-        #[doc(hidden)]
         #[allow(clippy::needless_pub_self)]
         $privacy fn $fn_name<RustT>(mut err: $outer_err) -> $outer_err {
             let rust_name = std::any::type_name::<RustT>();
-            match std::sync::Arc::get_mut(&mut err.0) {
-                Some(arc_mut) => {
-                    if let Some(err) = arc_mut.downcast_mut::<$inner_err>() {
-                        err.rust_name = rust_name;
-                    }
-                },
-                None => {
-                    if let Some(err) = err.0.downcast_ref::<$inner_err>() {
-                        if err.rust_name != rust_name {
-                            return <$outer_err>::new($inner_err {
-                                rust_name,
-                                ..err.clone()
-                            });
-                        }
-                    }
+            if let Some(inner) = err.try_downcast_mut::<$inner_err>() {
+                inner.rust_name = rust_name;
+            } else if let Some(inner) = err.downcast_ref::<$inner_err>() {
+                if inner.rust_name != rust_name {
+                    return <$outer_err>::new($inner_err {
+                        rust_name,
+                        ..inner.clone()
+                    });
                 }
             }
 

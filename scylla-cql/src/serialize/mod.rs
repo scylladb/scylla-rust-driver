@@ -43,4 +43,13 @@ impl SerializationError {
     pub fn downcast_ref<T: Error + 'static>(&self) -> Option<&T> {
         self.0.downcast_ref()
     }
+
+    /// Try to get a mutable reference to the inner error by downcasting.
+    ///
+    /// This will only succeed if the `Arc` holding the error has no other
+    /// outstanding clones (i.e. the strong count is 1 and there are no weak
+    /// references).
+    pub fn try_downcast_mut<T: Error + 'static>(&mut self) -> Option<&mut T> {
+        Arc::get_mut(&mut self.0)?.downcast_mut()
+    }
 }

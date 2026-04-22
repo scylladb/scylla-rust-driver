@@ -9,9 +9,10 @@ use std::hash::BuildHasher;
 use std::{collections::HashMap, sync::Arc};
 
 use bytes::BufMut;
+
 use thiserror::Error;
 
-use crate::frame::request::RequestDeserializationError;
+use crate::frame::frame_errors::LowLevelDeserializationError;
 use crate::frame::response::result::ColumnType;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types;
@@ -327,7 +328,7 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-#[doc(hidden)]
+/// Creates a [`BuiltinTypeCheckError`] with the given kind.
 pub fn mk_typck_err<T>(kind: impl Into<BuiltinTypeCheckErrorKind>) -> SerializationError {
     mk_typck_err_named(std::any::type_name::<T>(), kind)
 }
@@ -354,7 +355,8 @@ pub struct BuiltinSerializationError {
     pub kind: BuiltinSerializationErrorKind,
 }
 
-pub(crate) fn mk_ser_err<T>(kind: impl Into<BuiltinSerializationErrorKind>) -> SerializationError {
+/// Creates a [`BuiltinSerializationError`] with the given kind.
+pub fn mk_ser_err<T>(kind: impl Into<BuiltinSerializationErrorKind>) -> SerializationError {
     mk_ser_err_named(std::any::type_name::<T>(), kind)
 }
 
@@ -557,7 +559,8 @@ impl SerializedValues {
         self.serialized_values.len()
     }
 
-    pub(crate) fn write_to_request(&self, buf: &mut impl BufMut) {
+    /// Writes the serialized values to the request buffer, including the preceding u16 element count.
+    pub fn write_to_request(&self, buf: &mut impl BufMut) {
         buf.put_u16(self.element_count);
         buf.put(self.serialized_values.as_slice())
     }
@@ -592,8 +595,7 @@ impl SerializedValues {
     }
 
     /// Creates value list from the request frame
-    /// This is used only for testing - request deserialization.
-    pub(crate) fn new_from_frame(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
+    pub fn new_from_frame(buf: &mut &[u8]) -> Result<Self, LowLevelDeserializationError> {
         let values_num = types::read_short(buf)?;
         let values_beg = *buf;
         for _ in 0..values_num {

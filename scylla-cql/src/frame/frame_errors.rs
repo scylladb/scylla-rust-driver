@@ -473,6 +473,13 @@ pub struct ColumnSpecParseError {
     pub kind: ColumnSpecParseErrorKind,
 }
 
+impl ColumnSpecParseError {
+    /// Creates a new `ColumnSpecParseError` with the given column index and error kind.
+    pub fn new(column_index: usize, kind: ColumnSpecParseErrorKind) -> Self {
+        Self { column_index, kind }
+    }
+}
+
 /// The type of error that appeared during deserialization
 /// of a column specification.
 #[non_exhaustive]

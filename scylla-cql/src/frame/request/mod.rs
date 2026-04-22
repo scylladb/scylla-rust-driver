@@ -141,10 +141,7 @@ impl TryFrom<u8> for RequestOpcode {
             0x0B => Ok(Self::Register),
             0x0D => Ok(Self::Batch),
             0x0F => Ok(Self::AuthResponse),
-            _ => Err(TryFromPrimitiveError {
-                enum_name: "RequestOpcode",
-                primitive: value,
-            }),
+            _ => Err(TryFromPrimitiveError::new("RequestOpcode", value)),
         }
     }
 }
