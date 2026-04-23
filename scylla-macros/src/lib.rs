@@ -46,12 +46,10 @@ impl FromMeta for Flavor {
 mod serialize;
 
 /// Derive macro for the [`SerializeValue`](./serialize/value/trait.SerializeValue.html) trait
-/// which serializes given Rust structure as a User Defined Type (UDT).
-///
-/// At the moment, only structs with named fields are supported.
+/// which serializes given Rust structure as a User Defined Type (UDT) or as a transparent wrapper.
 ///
 /// Serialization will fail if there are some fields in the Rust struct that don't match
-/// to any of the UDT fields.
+/// to any of the UDT fields (unless `transparent` is used).
 ///
 /// If there are fields in UDT that are not present in Rust definition:
 /// - serialization will succeed in "match_by_name" flavor (default). Missing
@@ -86,6 +84,22 @@ mod serialize;
 ///     b: Option<String>,
 ///     // No "c" field - it is not mandatory by default for all fields to be present
 /// }
+/// ```
+///
+/// # Transparent Attribute
+///
+/// If you are using the newtype pattern (wrapping a type in a struct), you can use
+/// `#[scylla(transparent)]` to delegate serialization to the inner type.
+///
+/// This is supported for:
+/// * Structs with exactly one field.
+/// * Enums with exactly one variant (which has exactly one field).
+///
+/// ```rust,ignore
+/// # use scylla::macros::SerializeValue;
+/// #[derive(SerializeValue)]
+/// #[scylla(transparent)]
+/// struct MyInt(i32); // Serializes as a standard Int
 /// ```
 ///
 /// # Struct attributes
@@ -142,6 +156,11 @@ mod serialize;
 ///
 /// Forces Rust struct to have all the fields present in UDT, otherwise
 /// serialization fails.
+///
+/// `#[scylla(transparent)]`
+///
+/// Enables the transparent serialization mode (delegating to the inner field).
+/// See "Transparent Attribute" section above.
 ///
 /// # Field attributes
 ///
@@ -405,9 +424,9 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 
 /// Derive macro for the [`DeserializeValue`](./deserialize/value/trait.DeserializeValue.html)
 /// trait that generates an implementation which deserializes a User Defined Type
-/// with the same layout as the Rust struct.
+/// with the same layout as the Rust struct, or deserializes a transparent wrapper.
 ///
-/// At the moment, only structs with named fields are supported.
+/// At the moment, only structs with named fields are supported (unless `transparent` is used).
 ///
 /// This macro properly supports structs with lifetimes, meaning that you can
 /// deserialize UDTs with fields that borrow memory from the serialized response.
@@ -431,6 +450,25 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 ///     b: Option<String>,
 ///     c: &'a [u8],
 /// }
+/// ```
+///
+/// # `transparent` Attribute
+///
+/// If you are using the newtype pattern (wrapping a type in a struct), you can use
+/// `#[scylla(transparent)]` to delegate deserialization and type checking to the inner type.
+///
+/// The wrapper will "inherit" the column type requirements of the inner type.
+/// For example, a transparent wrapper around `i32` will require an `Int` column, not a UDT.
+///
+/// This is supported for:
+/// * Structs with exactly one field.
+/// * Enums with exactly one variant (which has exactly one field).
+///
+/// ```rust,ignore
+/// # use scylla::macros::DeserializeValue;
+/// #[derive(DeserializeValue)]
+/// #[scylla(transparent)]
+/// struct MyInt(i32); // Deserializes from a standard Int column
 /// ```
 ///
 /// # Attributes
@@ -500,6 +538,10 @@ pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
 /// UDT fields anywhere.
 /// If more strictness is desired, this flag makes sure that no excess fields
 /// are present and forces error in case there are some.
+///
+/// `#[scylla(transparent)]`
+///
+/// Enables the transparent deserialization mode. See "Transparent Attribute" section above.
 ///
 /// ## Field attributes
 ///
