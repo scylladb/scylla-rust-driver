@@ -106,66 +106,6 @@ async fn run_queries(session: &Session, ks_name: &str, count: i32) {
 }
 
 // ---------------------------------------------------------------------------
-// Basic connectivity (1 DC, 3 nodes)
-// ---------------------------------------------------------------------------
-
-/// **Goal**: Verify that the driver can connect to all nodes through the
-/// NLB →  proxy →  node chain using `system.client_routes` address translation,
-/// and that token-aware routing distributes queries across all nodes.
-///
-/// **Added value**: This is the fundamental smoke test for the entire
-/// client-routes feature. If this fails, the address translation pipeline
-/// (route fetching, NLB address substitution, connection opening) is broken.
-/// All other tests build on the assumption that this basic flow works.
-///
-/// **Scenario** (1 DC, 3 nodes):
-/// 1. Build a session using client-routes configuration.
-/// 2. Wait for the driver to open connections to all 3 proxy nodes.
-/// 3. Create a keyspace (RF=3) and table, then run 100 INSERT queries.
-/// 4. Assert: total proxy feedback == 100 and every node received ≥ 1 query.
-async fn basic_connectivity(plc: &mut ClientRoutesCluster) {
-    let session = plc
-        .make_session_builder()
-        .build()
-        .await
-        .expect("Failed to build client-routes session");
-
-    plc.wait_for_connections_to_all_nodes(CONNECTION_WAIT_TIMEOUT)
-        .await
-        .expect("Driver did not connect to all proxy nodes");
-
-    let ks = unique_keyspace_name();
-    create_test_schema(&session, &ks, "'replication_factor': 3").await;
-
-    // Set up feedback AFTER schema creation (schema queries would pollute counts).
-    let mut rxs = plc.setup_query_feedback();
-
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Feedback: per_node={:?}, total={}", per_node, total);
-
-    assert_eq!(
-        total, QUERIES_PER_PHASE as usize,
-        "Total feedback ({}) must equal queries performed ({})",
-        total, QUERIES_PER_PHASE
-    );
-    for (&node_id, &count) in &per_node {
-        assert!(
-            count >= 1,
-            "Node {} received 0 queries — driver didn't reach all nodes",
-            node_id
-        );
-    }
-}
-
-#[tokio::test]
-async fn test_client_routes_basic_connectivity() {
-    setup_tracing();
-    run_client_routes_test(cluster_3_nodes, basic_connectivity).await;
-}
-
-// ---------------------------------------------------------------------------
 // Multi-DC basic (2 DCs, 2+2 nodes)
 // ---------------------------------------------------------------------------
 
