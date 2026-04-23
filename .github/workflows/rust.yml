@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - name: Setup rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -118,7 +118,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - name: Setup rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install cargo-nextest
@@ -158,7 +158,7 @@ jobs:
   min_rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - name: Install Rust ${{ env.rust_min }}
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -174,7 +174,7 @@ jobs:
   cargo_docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - name: Setup rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Compile docs
@@ -185,7 +185,7 @@ jobs:
     env:
       RUSTDOCFLAGS: -Dwarnings
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install Rust Nightly
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
