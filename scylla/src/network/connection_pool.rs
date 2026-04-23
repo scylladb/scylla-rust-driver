@@ -190,6 +190,10 @@ pub(crate) struct NodeConnectionPool {
     use_keyspace_request_sender: mpsc::Sender<UseKeyspaceRequest>,
     _refiller_handle: Arc<RemoteHandle<()>>,
     pool_updated_notify: Arc<Notify>,
+    /// Signaled to make the pool refiller retry immediately, resetting
+    /// its backoff. Used when client routes change makes previously
+    /// untranslatable addresses translatable.
+    refill_now_notify: Arc<Notify>,
     endpoint: Arc<RwLock<UntranslatedEndpoint>>,
 }
 
@@ -223,6 +227,7 @@ impl NodeConnectionPool {
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
+        let refill_now_notify = Arc::new(Notify::new());
 
         let (host_pool_config, host_reconnect_policy) = pool_config.to_host_pool_config(&endpoint);
 
@@ -234,6 +239,7 @@ impl NodeConnectionPool {
             connectivity_events_sender,
             current_keyspace,
             pool_updated_notify.clone(),
+            refill_now_notify.clone(),
             pool_empty_notifier,
             #[cfg(feature = "metrics")]
             metrics,
@@ -249,6 +255,7 @@ impl NodeConnectionPool {
             use_keyspace_request_sender,
             _refiller_handle: Arc::new(refiller_handle),
             pool_updated_notify,
+            refill_now_notify,
             endpoint: arced_endpoint,
         }
     }
@@ -265,6 +272,15 @@ impl NodeConnectionPool {
 
     pub(crate) fn update_endpoint(&self, new_endpoint: PeerEndpoint) {
         *self.endpoint.write().unwrap() = UntranslatedEndpoint::Peer(new_endpoint);
+    }
+
+    /// Signals the pool refiller to retry immediately, resetting its backoff.
+    ///
+    /// Used when client routes are updated: previously untranslatable addresses
+    /// may now be translatable, so the pool should retry without waiting for
+    /// the exponential backoff timer.
+    pub(crate) fn trigger_immediate_refill(&self) {
+        self.refill_now_notify.notify_one();
     }
 
     pub(crate) fn sharder(&self) -> Option<Sharder> {
@@ -496,6 +512,9 @@ struct PoolRefiller {
     // Signaled when the connection pool is updated
     pool_updated_notify: Arc<Notify>,
 
+    // Signaled to make the refiller retry immediately with reset backoff
+    refill_now_notify: Arc<Notify>,
+
     // Signaled when the connection pool becomes empty
     pool_empty_notifier: mpsc::Sender<()>,
 
@@ -518,6 +537,7 @@ impl PoolRefiller {
         connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
+        refill_now_notify: Arc<Notify>,
         pool_empty_notifier: mpsc::Sender<()>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
         reconnect_policy: Box<dyn ReconnectPolicySession>,
@@ -549,6 +569,7 @@ impl PoolRefiller {
             current_keyspace,
 
             pool_updated_notify,
+            refill_now_notify,
             pool_empty_notifier,
 
             #[cfg(feature = "metrics")]
@@ -616,6 +637,17 @@ impl PoolRefiller {
                         trace!("[{}] Keyspace request channel dropped, stopping asynchronous pool worker", self.endpoint_description());
                         return;
                     }
+                }
+
+                _ = self.refill_now_notify.notified() => {
+                    debug!(
+                        "[{}] Immediate refill requested, resetting backoff",
+                        self.endpoint_description()
+                    );
+                    self.refill_delay_strategy.on_successful_fill();
+                    self.had_error_since_last_refill = false;
+                    self.start_filling();
+                    refill_scheduled = false;
                 }
             }
             trace!(

@@ -361,7 +361,10 @@ impl ClusterWorker {
                                 Event::ClientRoutesChange(evt) => {
                                     let res = self.metadata_reader.fetch_client_route_updates_on_event(&evt).await;
                                     match res {
-                                        Ok(()) => continue, // Don't go to refreshing.
+                                        Ok(updated_hosts) => {
+                                            self.cluster_state.load().trigger_pool_refills_for_hosts(updated_hosts.iter().cloned());
+                                            continue; // Don't go to refreshing.
+                                        }
                                         Err(err) =>
                                         {
                                             error!(
@@ -460,6 +463,7 @@ impl ClusterWorker {
     async fn perform_refresh(&mut self) -> Result<(), MetadataError> {
         // Read latest Metadata
         let metadata = self.metadata_reader.read_metadata(false).await?;
+        let client_routes_updated_hosts = metadata.client_routes_updated_hosts.clone();
 
         let cluster_state: Arc<ClusterState> = self.cluster_state.load_full();
 
@@ -486,6 +490,9 @@ impl ClusterWorker {
             )
             .await,
         );
+
+        new_cluster_state
+            .trigger_pool_refills_for_hosts(client_routes_updated_hosts.iter().cloned());
 
         new_cluster_state
             .wait_until_all_pools_are_initialized()

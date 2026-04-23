@@ -27,18 +27,23 @@
 //! adding a node = start a new proxy; removing = finish one, without disrupting
 //! others.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZero;
 use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Error, bail};
 use bytes::Bytes;
 use futures::FutureExt;
-use futures::StreamExt as _;
-use futures::TryStreamExt as _;
+use rand::seq::IteratorRandom;
+use scylla::client::PoolSize;
 use scylla::client::client_routes::{ClientRoutesConfig, ClientRoutesProxy};
-use scylla::client::session_builder::ClientRoutesSessionBuilder;
+use scylla::client::session::Session;
+use scylla::client::session_builder::{ClientRoutesSessionBuilder, SessionBuilder};
+use scylla::errors::NewSessionError;
+use scylla::policies::host_filter::AllowListHostFilter;
 use scylla_proxy::nlb::{NlbFrontend, RunningNlbFrontend};
 use scylla_proxy::{
     Condition, Node as ProxyNode, Proxy, Reaction, RequestOpcode, RequestReaction, RequestRule,
@@ -72,6 +77,8 @@ const CONNECTION_ID_BASE: &str = "rust-driver-test";
 /// NLB (nlb_addr) →  Proxy (proxy_addr) →  Real ScyllaDB (real_addr)
 /// ```
 struct NodeChain {
+    /// CCM ID of the node.
+    node_id: u16,
     /// The running CQL-aware proxy (single-node). Provides feedback channels.
     running_proxy: RunningProxy,
     /// The proxy's listen address (used as backend for both per-node NLB
@@ -91,51 +98,52 @@ impl NodeChain {
     fn proxy_addr(&self) -> SocketAddr {
         self.proxy_addr
     }
-}
 
-/// Start a proxy + NLB chain for a single Scylla node (plaintext).
-///
-/// 1. Allocate a unique proxy address via `get_exclusive_local_address()`
-/// 2. Build and run a single-node `Proxy` (proxy_addr →  real_addr)
-/// 3. Build and run an NLB frontend (OS-assigned port →  proxy_addr)
-async fn start_node_chain(real_addr: SocketAddr) -> Result<NodeChain, Error> {
-    let proxy_ip = get_exclusive_local_address();
-    let proxy_addr = SocketAddr::new(proxy_ip, 9042);
+    /// Start a proxy + NLB chain for a single Scylla node (plaintext).
+    ///
+    /// 1. Allocate a unique proxy address via `get_exclusive_local_address()`
+    /// 2. Build and run a single-node `Proxy` (proxy_addr →  real_addr)
+    /// 3. Build and run an NLB frontend (OS-assigned port →  proxy_addr)
+    async fn start(real_addr: SocketAddr, node_id: u16) -> Result<Self, Error> {
+        let proxy_ip = get_exclusive_local_address();
+        let proxy_addr = SocketAddr::new(proxy_ip, 9042);
 
-    let node = ProxyNode::builder()
-        .real_address(real_addr)
-        .proxy_address(proxy_addr)
-        .shard_awareness(ShardAwareness::QueryNode)
-        .build();
+        let node = ProxyNode::builder()
+            .real_address(real_addr)
+            .proxy_address(proxy_addr)
+            .shard_awareness(ShardAwareness::QueryNode)
+            .build();
 
-    let running_proxy = Proxy::new([node])
-        .run()
-        .await
-        .with_context(|| format!("Failed to start proxy for real node {}", real_addr))?;
+        let running_proxy = Proxy::new([node])
+            .run()
+            .await
+            .with_context(|| format!("Failed to start proxy for real node {}", real_addr))?;
 
-    let nlb = NlbFrontend::builder()
-        .listen_addr("127.0.0.1:0".parse().unwrap())
-        .backend(proxy_addr)
-        .build()
-        .run()
-        .await
-        .with_context(|| format!("Failed to start NLB for proxy {}", proxy_addr))?;
+        let nlb = NlbFrontend::builder()
+            .listen_addr("127.0.0.1:0".parse().unwrap())
+            .backend(proxy_addr)
+            .build()
+            .run()
+            .await
+            .with_context(|| format!("Failed to start NLB for proxy {}", proxy_addr))?;
 
-    Ok(NodeChain {
-        running_proxy,
-        proxy_addr,
-        nlb,
-    })
-}
+        Ok(NodeChain {
+            node_id,
+            running_proxy,
+            proxy_addr,
+            nlb,
+        })
+    }
 
-/// Shut down a proxy chain for a node.
-///
-/// The NLB is shut down first, then the proxy. Proxy errors are expected
-/// (the backend may already be dead) and are logged rather than propagated.
-async fn shutdown_node_chain(chain: NodeChain, node_id: NodeId) {
-    chain.nlb.finish().await;
-    if let Err(e) = chain.running_proxy.finish().await {
-        info!("Proxy for node {} reported (expected): {}", node_id, e);
+    /// Shut down a proxy chain for a node.
+    ///
+    /// The NLB is shut down first, then the proxy. Proxy errors are expected
+    /// (the backend may already be dead) and are logged rather than propagated.
+    async fn shutdown(self) {
+        self.nlb.finish().await;
+        if let Err(e) = self.running_proxy.finish().await {
+            info!("Proxy for node {} reported (expected): {}", self.node_id, e);
+        }
     }
 }
 
@@ -268,14 +276,14 @@ impl ClientRoutesCluster {
             host_ids,
         };
 
-        // Step 5: POST client routes to all nodes.
-        info!("POSTing client routes to all nodes");
-        plc.post_routes_to_all_nodes()
+        // Step 5: POST client routes to the cluster.
+        info!("POSTing client routes to the cluster");
+        plc.post_client_routes_to_cluster()
             .await
             .inspect_err(|_| plc.cluster.mark_as_failed())
             .context("Failed to post client routes")?;
 
-        info!("Finished POSTing client routes to all nodes");
+        info!("Finished POSTing client routes to the cluster");
 
         Ok(Some(plc))
     }
@@ -352,6 +360,53 @@ impl ClientRoutesCluster {
             .collect()
     }
 
+    /// Waits until every specified proxy node has at least one driver connection.
+    ///
+    /// After topology changes (restart, add node), the driver takes time to
+    /// discover the new/restarted node and open a connection. Calling this
+    /// before issuing queries prevents races where all queries miss the
+    /// new node because the driver hasn't connected yet.
+    ///
+    /// Times out after `timeout` to avoid hanging forever if the driver fails to connect.
+    pub(crate) async fn wait_for_connections_to_nodes(
+        &self,
+        node_ids: Option<&HashSet<u16>>,
+        timeout: Duration,
+    ) -> Result<(), Error> {
+        let futs: Vec<_> = self
+            .dc_configs
+            .values()
+            .flat_map(|dc| {
+                dc.per_node_chains.iter().filter_map(|(node_id, chain)| {
+                    let wait_fn = || {
+                        let proxy = &chain.running_proxy;
+                        async move {
+                            proxy.wait_for_connection().await;
+                            info!("Proxy for node {} has a driver connection", node_id);
+                        }
+                    };
+                    match node_ids {
+                        // Filter to a specific set of nodes if provided.
+                        Some(ids) => ids.contains(node_id).then(wait_fn),
+                        // No filter, wait for all nodes.
+                        None => Some(wait_fn()),
+                    }
+                })
+            })
+            .collect();
+
+        tokio::time::timeout(timeout, futures::future::join_all(futs))
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Timed out waiting for driver connections to proxy nodes: {:?}.",
+                    node_ids
+                )
+            })?;
+
+        Ok(())
+    }
+
     /// Waits until every active proxy node has at least one driver connection.
     ///
     /// After topology changes (restart, add node), the driver takes time to
@@ -364,31 +419,7 @@ impl ClientRoutesCluster {
         &self,
         timeout: Duration,
     ) -> Result<(), Error> {
-        let futs: Vec<_> = self
-            .dc_configs
-            .values()
-            .flat_map(|dc| {
-                dc.per_node_chains.iter().map(move |(&node_id, chain)| {
-                    let proxy = &chain.running_proxy;
-                    async move {
-                        proxy.wait_for_connection().await;
-                        info!("Proxy for node {} has a driver connection", node_id);
-                    }
-                })
-            })
-            .collect();
-
-        tokio::time::timeout(timeout, futures::future::join_all(futs))
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "Timed out waiting for driver connections to all proxy nodes. \
-                     Active node IDs: {:?}",
-                    self.active_node_ids()
-                )
-            })?;
-
-        Ok(())
+        self.wait_for_connections_to_nodes(None, timeout).await
     }
 
     /// Waits until the proxy responsible for given node has at least one driver
@@ -405,30 +436,8 @@ impl ClientRoutesCluster {
         node_id: NodeId,
         timeout: Duration,
     ) -> Result<(), Error> {
-        let fut = self
-            .dc_configs
-            .values()
-            .find_map(|dc| {
-                dc.per_node_chains.get(&node_id).map(|chain| {
-                    let proxy = &chain.running_proxy;
-                    async move {
-                        proxy.wait_for_connection().await;
-                        info!("Proxy for node {} has a driver connection", node_id);
-                    }
-                })
-            })
-            .unwrap_or_else(|| panic!("Node {} not present in the DcConfigs", node_id));
-
-        tokio::time::timeout(timeout, fut).await.map_err(|_| {
-            anyhow::anyhow!(
-                "Timed out waiting for driver connection to node {}. \
-                     Active node IDs: {:?}",
-                node_id,
-                self.active_node_ids()
-            )
-        })?;
-
-        Ok(())
+        self.wait_for_connections_to_nodes(Some(&HashSet::from([node_id])), timeout)
+            .await
     }
 
     /// Decommission a node and tear down its proxy chain.
@@ -497,13 +506,13 @@ impl ClientRoutesCluster {
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
             .with_context(|| format!("Node {} chain not found in DC {}", node_id, dc_id))?;
 
-        self.post_routes_to_all_nodes()
+        self.post_client_routes_to_cluster()
             .await
             .context("Failed to post updated routes after decommission")?;
 
         // Step 4: shut down the proxy chain.
         info!("Shutting down chain for decommissioned node {}", node_id);
-        shutdown_node_chain(chain, node_id).await;
+        chain.shutdown().await;
 
         Ok(())
     }
@@ -535,11 +544,11 @@ impl ClientRoutesCluster {
             .get_mut(&dc_id)
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
         {
-            shutdown_node_chain(old_chain, node_id).await;
+            old_chain.shutdown().await;
         }
 
         // Re-post routes without this node so the driver stops routing to it.
-        self.post_routes_to_all_nodes()
+        self.post_client_routes_to_cluster()
             .await
             .context("Failed to re-post routes after stopping node chain")?;
 
@@ -581,11 +590,11 @@ impl ClientRoutesCluster {
             .get_mut(&dc_id)
             .and_then(|dc| dc.per_node_chains.remove(&node_id))
         {
-            shutdown_node_chain(old_chain, node_id).await;
+            old_chain.shutdown().await;
         }
 
         // Start fresh chain.
-        let new_chain = start_node_chain(SocketAddr::new(real_ip, 9042))
+        let new_chain = NodeChain::start(SocketAddr::new(real_ip, 9042), node_id)
             .await
             .with_context(|| format!("Failed to start new chain for restarted node {}", node_id))?;
         info!(
@@ -601,7 +610,7 @@ impl ClientRoutesCluster {
             .insert(node_id, new_chain);
 
         // Re-post routes so the driver picks up the new NLB port.
-        self.post_routes_to_all_nodes()
+        self.post_client_routes_to_cluster()
             .await
             .context("Failed to re-post routes after chain restart")?;
 
@@ -671,7 +680,7 @@ impl ClientRoutesCluster {
         self.host_ids.insert(new_node_id, host_id);
 
         // Step 4: start proxy chain.
-        let chain = start_node_chain(SocketAddr::new(real_ip, 9042))
+        let chain = NodeChain::start(SocketAddr::new(real_ip, 9042), new_node_id)
             .await
             .with_context(|| format!("Failed to start chain for new node {}", new_node_id))?;
 
@@ -682,7 +691,7 @@ impl ClientRoutesCluster {
             .insert(new_node_id, chain);
 
         // Step 5: post updated routes (with the new node).
-        self.post_routes_to_all_nodes()
+        self.post_client_routes_to_cluster()
             .await
             .context("Failed to post updated routes after adding node")?;
 
@@ -890,38 +899,33 @@ impl ClientRoutesCluster {
         injected
     }
 
-    async fn post_routes_to_all_nodes(&self) -> Result<(), Error> {
+    async fn post_client_routes_to_cluster(&self) -> Result<(), Error> {
         let routes = self.build_route_entries();
         let route_json = serde_json_routes(&routes);
         info!("Posting client routes: {}", route_json);
 
-        // Collect the set of node IDs that have active proxy chains.
-        let active_ids: std::collections::HashSet<NodeId> = self
+        // Randomly choose any node that has active proxy chain.
+        let active_id = self
             .dc_configs
             .values()
-            .flat_map(|dc| dc.per_node_chains.keys().copied())
-            .collect();
+            .find_map(|dc| dc.per_node_chains.keys().copied().choose(&mut rand::rng()));
 
-        for node in self.cluster.nodes().iter() {
-            if !active_ids.contains(&node.id()) {
-                debug!(
-                    "Skipping route POST to node {} ({}) — no active chain",
+        let Some(node_id) = active_id else {
+            panic!("No active nodes with proxy chains found to post routes");
+        };
+
+        let node = self.cluster.nodes().get_by_id(node_id).unwrap();
+
+        let node_ip = node.broadcast_rpc_address();
+        post_client_routes_raw(node_ip, &route_json)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to POST client routes to node {} ({})",
                     node.id(),
-                    node.broadcast_rpc_address()
-                );
-                continue;
-            }
-            let node_ip = node.broadcast_rpc_address();
-            post_client_routes_raw(node_ip, &route_json)
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to POST client routes to node {} ({})",
-                        node.id(),
-                        node_ip
-                    )
-                })?;
-        }
+                    node_ip
+                )
+            })?;
 
         Ok(())
     }
@@ -969,7 +973,7 @@ impl ClientRoutesCluster {
 
             for (node_id, chain) in dc_cfg.per_node_chains {
                 debug!("Shutting down chain for DC {} node {}", dc_id, node_id);
-                shutdown_node_chain(chain, node_id).await;
+                chain.shutdown().await;
             }
         }
         info!("All proxy chains and NLBs shut down");
@@ -1004,22 +1008,38 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
                 acc
             });
 
-    futures::stream::iter(dc_nodes)
-        .then(|(dc_id, nodes)| async move {
+    // Start all per-node proxy chains concurrently (across all DCs).
+    let chain_futs: Vec<_> = dc_nodes
+        .iter()
+        .flat_map(|(&dc_id, nodes)| {
+            nodes
+                .iter()
+                .copied()
+                .map(move |(node_id, real_ip)| async move {
+                    let chain = NodeChain::start(SocketAddr::new(real_ip, 9042), node_id)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to start chain for DC {} node {}", dc_id, node_id)
+                        })?;
+                    Ok::<_, Error>((dc_id, node_id, chain))
+                })
+        })
+        .collect();
+
+    let chains = futures::future::try_join_all(chain_futs).await?;
+
+    // Group started chains by DC.
+    let mut dc_chains: BTreeMap<u16, HashMap<NodeId, NodeChain>> = BTreeMap::new();
+    for (dc_id, node_id, chain) in chains {
+        dc_chains.entry(dc_id).or_default().insert(node_id, chain);
+    }
+
+    // Start per-DC contact-point NLBs concurrently.
+    let nlb_futs: Vec<_> = dc_chains
+        .into_iter()
+        .map(|(dc_id, per_node_chains)| async move {
             let connection_id = format!("{}-dc{}", CONNECTION_ID_BASE, dc_id);
 
-            // Start per-node proxy chains.
-            let mut per_node_chains = HashMap::new();
-            for (node_id, real_ip) in &nodes {
-                let chain = start_node_chain(SocketAddr::new(*real_ip, 9042))
-                    .await
-                    .with_context(|| {
-                        format!("Failed to start chain for DC {} node {}", dc_id, node_id)
-                    })?;
-                per_node_chains.insert(*node_id, chain);
-            }
-
-            // Start per-DC round-robin NLB.
             let backends: Vec<SocketAddr> = per_node_chains
                 .values()
                 .map(|chain| chain.proxy_addr())
@@ -1051,8 +1071,11 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
                 },
             ))
         })
-        .try_collect()
+        .collect();
+
+    futures::future::try_join_all(nlb_futs)
         .await
+        .map(|v| v.into_iter().collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -1099,17 +1122,30 @@ async fn client_routes_table_exists(cluster: &Cluster) -> Result<bool, Error> {
 // Host-ID discovery
 // ---------------------------------------------------------------------------
 
+/// Creates a lightweight session, optimised for the only goal of executing
+/// some queries once.
+async fn make_cheap_session(contact_point: SocketAddr) -> Result<Session, NewSessionError> {
+    SessionBuilder::new()
+        .known_node_addr(contact_point)
+        // The following settings are here to make the session lighter,
+        // speeding the tests.
+        //
+        // Contact points will always be Untranslatable, which is always accepted
+        // by the AllowListHostFilter, so we don't need to create the allowlist.
+        .host_filter(Arc::new(
+            AllowListHostFilter::new(std::iter::empty::<&str>()).unwrap(),
+        ))
+        .fetch_schema_metadata(false)
+        .keyspaces_to_fetch(std::iter::empty::<String>())
+        .pool_size(PoolSize::PerHost(NonZero::new(1).unwrap()))
+        .disallow_shard_aware_port(true)
+        .build()
+        .await
+}
+
 /// Uses the driver's cluster metadata (via `Session::get_cluster_state()`) to
 /// reliably discover host_ids for all CCM nodes.
-///
-/// This avoids querying `system.local` / `system.peers` directly, which is
-/// unreliable because queries go through the load balancer and `system.local`
-/// returns the *queried* node's data (not necessarily the contact point's).
-/// The Session already discovers all nodes during initialization, so we can
-/// simply read the metadata it has collected.
 async fn discover_host_ids(cluster: &Cluster) -> Result<HashMap<NodeId, Uuid>, Error> {
-    use scylla::client::session_builder::SessionBuilder;
-
     // Connect to the first node — the session will discover the whole cluster.
     let first_node = cluster
         .nodes()
@@ -1120,9 +1156,7 @@ async fn discover_host_ids(cluster: &Cluster) -> Result<HashMap<NodeId, Uuid>, E
         first_node.broadcast_rpc_address(),
         first_node.native_transport_port(),
     );
-    let session = SessionBuilder::new()
-        .known_node(contact.to_string())
-        .build()
+    let session = make_cheap_session(contact)
         .await
         .with_context(|| format!("Failed to connect to cluster via {}", contact))?;
 
@@ -1168,17 +1202,11 @@ async fn discover_host_ids(cluster: &Cluster) -> Result<HashMap<NodeId, Uuid>, E
 /// Retries with backoff because a newly-added CCM node may not be ready
 /// immediately after `node.start()`.
 async fn discover_single_host_id(addr: SocketAddr) -> Result<Uuid, Error> {
-    use scylla::client::session_builder::SessionBuilder;
-
     let max_attempts = 10;
     let mut last_err = None;
 
     for attempt in 1..=max_attempts {
-        match SessionBuilder::new()
-            .known_node(addr.to_string())
-            .build()
-            .await
-        {
+        match make_cheap_session(addr).await {
             Ok(session) => {
                 let state = session.get_cluster_state();
                 let nodes_info = state.get_nodes_info();
@@ -1399,9 +1427,7 @@ where
     };
 
     let result = AssertUnwindSafe(test_body(&mut plc)).catch_unwind().await;
-
-    let cluster_failed = result.is_err();
-    if cluster_failed {
+    if result.is_err() {
         plc.cluster.mark_as_failed();
     }
 

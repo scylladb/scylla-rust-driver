@@ -13,7 +13,7 @@
 //! it necessarily went through the NLB (since the driver only knows NLB
 //! addresses from `client_routes` and real node addresses, but not proxy addresses).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -37,7 +37,7 @@ const QUERIES_PER_PHASE: i32 = 100;
 /// Must be generous enough for the driver to discover new/restarted nodes,
 /// but short enough to fail promptly if the driver has a bug (e.g.,
 /// `Untranslatable` marking prevents address translation for a node).
-const CONNECTION_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECTION_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
 
 // ---------------------------------------------------------------------------
 // Cluster option factories
@@ -106,7 +106,7 @@ async fn run_queries(session: &Session, ks_name: &str, count: i32) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: Basic connectivity (1 DC, 3 nodes)
+// Basic connectivity (1 DC, 3 nodes)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify that the driver can connect to all nodes through the
@@ -166,7 +166,7 @@ async fn test_client_routes_basic_connectivity() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: Node stop/resume (1 DC, 3 nodes)
+// Node stop/resume (1 DC, 3 nodes)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify the driver gracefully handles a node going down and
@@ -348,7 +348,7 @@ async fn test_client_routes_multi_dc_basic() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: Multi-DC topology change (2 DCs, decommission + add)
+// Multi-DC topology change (2 DCs, decommission + add)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify the driver correctly handles decommissioning a node and
@@ -482,7 +482,7 @@ async fn test_client_routes_multi_dc_topology_change() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: Rolling restart (1 DC, 3 nodes)
+// Rolling restart (1 DC, 3 nodes)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify the driver survives a rolling restart of all nodes,
@@ -607,7 +607,7 @@ async fn test_client_routes_rolling_restart() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 6: NLB port remap without Scylla restart (1 DC, 3 nodes)
+// NLB port remap without Scylla restart (1 DC, 3 nodes)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify the driver detects route changes and reconnects through
@@ -696,7 +696,7 @@ async fn test_client_routes_nlb_port_remap() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7: Scale out (1 DC, 3 →  6 nodes)
+// Scale out (1 DC, 3 →  6 nodes)
 // ---------------------------------------------------------------------------
 
 /// **Goal**: Verify the driver correctly discovers and routes to dynamically
@@ -790,7 +790,7 @@ async fn test_client_routes_scale_out() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 8: Event-driven reroute (2 DCs, 2+2 nodes)
+// Event-driven reroute (2 DCs, 2+2 nodes)
 // ---------------------------------------------------------------------------
 
 /// Wait for any of the given feedback receivers to produce a message.
@@ -950,16 +950,17 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
     }
 
     // Wait for the driver to connect through the new NLB ports.
-    for &node_id in &dc1_nodes {
-        plc.wait_for_connections_to_node(node_id, CONNECTION_WAIT_TIMEOUT)
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Phase 3: driver did not reconnect to node {}: {}",
-                    node_id, e
-                )
-            });
-    }
+    plc.wait_for_connections_to_nodes(
+        Some(&HashSet::from_iter(dc1_nodes.iter().copied())),
+        CONNECTION_WAIT_TIMEOUT,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        panic!(
+            "Phase 3: driver did not reconnect to all nodes from dc1: {}",
+            e
+        )
+    });
 
     // Verify traffic reaches all 4 nodes through the new ports.
     let mut rxs = plc.setup_query_feedback();
@@ -990,16 +991,12 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
             .unwrap_or_else(|e| panic!("Failed to restart chain for node {}: {}", node_id, e));
     }
 
-    for &node_id in &cross_dc_nodes {
-        plc.wait_for_connections_to_node(node_id, CONNECTION_WAIT_TIMEOUT)
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Phase 4: driver did not reconnect to node {}: {}",
-                    node_id, e
-                )
-            });
-    }
+    plc.wait_for_connections_to_nodes(
+        Some(&HashSet::from(cross_dc_nodes)),
+        CONNECTION_WAIT_TIMEOUT,
+    )
+    .await
+    .unwrap_or_else(|e| panic!("Phase 4: driver did not reconnect to cross-dc nodes: {}", e));
 
     let mut rxs = plc.setup_query_feedback();
     run_queries(&session, &ks, QUERIES_PER_PHASE).await;
