@@ -438,6 +438,8 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
     .await
 }
 
+pub(crate) const HEALTHCHECK_QUERY: &str = "SELECT host_id FROM system.local WHERE key='local'";
+
 /// Checks that the session is connected to a cluster with expected number of nodes,
 /// that all nodes are connected (UP) and that a simple query can be executed everywhere.
 #[cfg_attr(
@@ -467,14 +469,9 @@ pub(crate) async fn check_session_works_and_fully_connected(
             })
             .all(|node| node.is_connected())
     );
-    execute_unprepared_statement_everywhere(
-        session,
-        &state,
-        &"SELECT * FROM system.local WHERE key='local'".into(),
-        &(),
-    )
-    .await
-    .unwrap();
+    execute_unprepared_statement_everywhere(session, &state, &HEALTHCHECK_QUERY.into(), &())
+        .await
+        .unwrap();
 }
 
 pub(crate) struct SerializeValueWithFakeType<'typ, T> {
