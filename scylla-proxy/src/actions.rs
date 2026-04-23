@@ -11,6 +11,8 @@ use crate::{
     TargetShard,
     frame::{FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode},
 };
+use scylla_cql::Consistency;
+use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::response::error::DbError;
 
 /// Specifies when an associated [Reaction] will be performed.
@@ -51,6 +53,13 @@ pub enum Condition {
 
     /// True if any REGISTER was sent on this connection. Useful to filter out control connection messages.
     ConnectionRegisteredAnyEvent,
+
+    /// True iff the request frame has the given consistency level.
+    /// Only applicable to request frames (Query, Execute, Batch).
+    /// Returns false for response frames or requests that cannot be deserialized.
+    /// The provided [ProtocolFeatures] must match the features negotiated between
+    /// the driver and the server for correct deserialization of the frame.
+    RequestConsistency(Consistency, ProtocolFeatures),
 }
 
 /// The context in which [`Conditions`](Condition) are evaluated.
@@ -115,6 +124,26 @@ impl Condition {
             }
 
             Condition::ConnectionRegisteredAnyEvent => ctx.connection_has_events,
+
+            Condition::RequestConsistency(expected_cl, features) => match ctx.opcode {
+                FrameOpcode::Request(opcode) => {
+                    let frame = RequestFrame {
+                        params: FrameParams {
+                            version: 0x04,
+                            flags: 0,
+                            stream: 0,
+                        },
+                        opcode,
+                        body: ctx.frame_body.clone(),
+                    };
+                    frame
+                        .deserialize(features)
+                        .ok()
+                        .and_then(|req| req.get_consistency())
+                        == Some(*expected_cl)
+                }
+                FrameOpcode::Response(_) => false,
+            },
         }
     }
 
