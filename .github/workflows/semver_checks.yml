@@ -43,7 +43,7 @@ jobs:
       output: ${{ steps.semver-pr-check.outputs.output }}
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v6
       with:
         fetch-depth: "2"
         ref: "refs/pull/${{ env.PR_ID }}/merge"
@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 3
     steps:
     - name: Get ID of comment if posted previously.
-      uses: peter-evans/find-comment@v3
+      uses: peter-evans/find-comment@v4
       id: find-comment
       with:
           issue-number: ${{ env.PR_ID }}
@@ -102,7 +102,7 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
     - name: Report that there were no breaks
-      uses: peter-evans/create-or-update-comment@v4
+      uses: peter-evans/create-or-update-comment@v5
       with:
           issue-number: ${{ env.PR_ID }}
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
@@ -118,7 +118,7 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
     - name: Post report on semver break
-      uses: peter-evans/create-or-update-comment@v4
+      uses: peter-evans/create-or-update-comment@v5
       with:
           issue-number: ${{ env.PR_ID }}
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
@@ -145,7 +145,7 @@ jobs:
       contents: read
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v6
     - name: Setup rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
     - name: Install semver-checks
