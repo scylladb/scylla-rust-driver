@@ -106,66 +106,6 @@ async fn run_queries(session: &Session, ks_name: &str, count: i32) {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-DC basic (2 DCs, 2+2 nodes)
-// ---------------------------------------------------------------------------
-
-/// **Goal**: Verify that client-routes address translation works correctly
-/// across multiple datacenters, each with its own connection ID and
-/// contact-point NLB.
-///
-/// **Added value**: Multi-DC is the primary production use case for
-/// client-routes (cloud deployments with per-DC NLBs). This test ensures
-/// the driver fetches and applies per-DC route entries with distinct
-/// connection IDs, and that token-aware routing distributes queries to
-/// nodes in both DCs. A single-DC test would miss bugs in connection-ID
-/// scoping or DC-aware NLB aggregation.
-///
-/// **Scenario** (2 DCs, 2+2 nodes):
-/// 1. Build a session using client-routes with 2 DCs.
-/// 2. Wait for connections to all 4 proxy nodes.
-/// 3. Create a keyspace (RF: dc1=2, dc2=2) and table, run 100 queries.
-/// 4. Assert: total == 100, each of the 4 nodes received ≥ 1 query.
-async fn multi_dc_basic(plc: &mut ClientRoutesCluster) {
-    let session = plc
-        .make_session_builder()
-        .build()
-        .await
-        .expect("Failed to build client-routes session");
-
-    // Wait for the driver to open connections to all proxy nodes.
-    plc.wait_for_connections_to_all_nodes(CONNECTION_WAIT_TIMEOUT)
-        .await
-        .expect("Driver did not connect to all proxy nodes");
-
-    let ks = unique_keyspace_name();
-    create_test_schema(&session, &ks, "'dc1': 2, 'dc2': 2").await;
-
-    let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Feedback: per_node={:?}, total={}", per_node, total);
-
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    let active_nodes = plc.active_node_ids();
-    assert_eq!(active_nodes.len(), 4, "Expected 4 active nodes");
-    for &node_id in &active_nodes {
-        let count = *per_node.get(&node_id).unwrap_or(&0);
-        assert!(
-            count >= 1,
-            "Node {} received 0 queries — driver didn't reach all nodes across DCs",
-            node_id
-        );
-    }
-}
-
-#[tokio::test]
-async fn test_client_routes_multi_dc_basic() {
-    setup_tracing();
-    run_client_routes_test(cluster_2dc_2_2, multi_dc_basic).await;
-}
-
-// ---------------------------------------------------------------------------
 // Multi-DC topology change (2 DCs, decommission + add)
 // ---------------------------------------------------------------------------
 
@@ -209,6 +149,24 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
     let initial_nodes = plc.active_node_ids();
     assert_eq!(initial_nodes.len(), 4, "Expected 4 initial nodes");
     info!("Initial nodes: {:?}", initial_nodes);
+
+    let mut rxs = plc.setup_query_feedback();
+    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
+
+    let (per_node, total) = drain_feedback(&mut rxs);
+    info!("Feedback: per_node={:?}, total={}", per_node, total);
+
+    assert_eq!(total, QUERIES_PER_PHASE as usize);
+    let active_nodes = plc.active_node_ids();
+    assert_eq!(active_nodes.len(), 4, "Expected 4 active nodes");
+    for &node_id in &active_nodes {
+        let count = *per_node.get(&node_id).unwrap_or(&0);
+        assert!(
+            count >= 1,
+            "Node {} received 0 queries — driver didn't reach all nodes across DCs",
+            node_id
+        );
+    }
 
     // The node to decommission: the highest ID in DC2 (should be node 4).
     let node_to_decommission = *initial_nodes.iter().max().expect("non-empty");
