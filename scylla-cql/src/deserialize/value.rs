@@ -909,13 +909,121 @@ where
             } => ListlikeIterator::<'frame, 'metadata, T>::deserialize(typ, v)
                 .and_then(|it| it.collect::<Result<_, DeserializationError>>())
                 .map_err(deser_error_replace_rust_name::<Self>),
-            ColumnType::Vector { .. } => {
+            ColumnType::Vector {
+                typ: element_type,
+                dimensions,
+            } => {
+                // Try the bulk deserialization fast path for f32/f64 vectors.
+                if let Some(result) =
+                    try_bulk_deserialize_vector::<T>(typ, element_type, *dimensions, v)?
+                {
+                    return Ok(result);
+                }
+                // Fall back to the generic iterator-based path.
                 VectorIterator::<'frame, 'metadata, T>::deserialize(typ, v)
                     .and_then(|it| it.collect::<Result<_, DeserializationError>>())
                     .map_err(deser_error_replace_rust_name::<Self>)
             }
             _ => unreachable!("Should be prevented by typecheck"),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bulk vector deserialization fast path.
+//
+// For f32 and f64 vectors, we bypass the per-element VectorIterator +
+// DeserializeValue overhead by reading the raw byte buffer in one shot and
+// converting via chunks_exact + from_be_bytes. This eliminates:
+// - Per-element FrameSlice::read_n_bytes (pointer arithmetic + bounds check)
+// - Per-element ensure_not_null_slice / ensure_exact_length checks
+// - VectorIterator machinery and Iterator::collect growing the Vec
+//
+// Uses the same size_of + needs_drop + ColumnType heuristic as the
+// serialization bulk path. See the serialization comments for the full
+// correctness argument regarding type identification without TypeId.
+// ---------------------------------------------------------------------------
+
+/// Try to deserialize a vector in bulk. Returns `Ok(Some(vec))` if the fast
+/// path was used, `Ok(None)` to fall back to the generic iterator path,
+/// or `Err` on deserialization failure.
+#[inline]
+fn try_bulk_deserialize_vector<'frame, 'metadata, T: DeserializeValue<'frame, 'metadata>>(
+    typ: &'metadata ColumnType<'metadata>,
+    element_type: &'metadata ColumnType<'metadata>,
+    dimensions: u16,
+    v: Option<FrameSlice<'frame>>,
+) -> Result<Option<Vec<T>>, DeserializationError> {
+    match element_type {
+        ColumnType::Native(NativeType::Float)
+            if std::mem::size_of::<T>() == 4 && !std::mem::needs_drop::<T>() =>
+        {
+            let frame_slice = ensure_not_null_frame_slice::<Vec<T>>(typ, v)?;
+            let raw = frame_slice.as_slice();
+            let count = dimensions as usize;
+            let expected_len = count * 4;
+            if raw.len() != expected_len {
+                return Err(mk_deser_err::<Vec<T>>(
+                    typ,
+                    BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                        expected: expected_len,
+                        got: raw.len(),
+                    },
+                ));
+            }
+            let mut result = Vec::<T>::with_capacity(count);
+            // SAFETY: Vec::with_capacity(count) allocates room for `count`
+            // elements of size_of::<T>() == 4 bytes each. We cast to a
+            // &mut [[u8; 4]] of length `count`, which fits exactly in that
+            // allocation. Each [u8; 4] has alignment 1, so the pointer cast
+            // is valid. T has no drop glue, so partially-initialized state
+            // on panic is safe (though the loop body cannot panic).
+            let dst = unsafe {
+                std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut [u8; 4], count)
+            };
+            for (i, chunk) in raw.chunks_exact(4).enumerate() {
+                // chunks_exact(4) guarantees each chunk is exactly 4 bytes,
+                // so try_into always succeeds.
+                let be_bytes: [u8; 4] = chunk.try_into().unwrap();
+                dst[i] = f32::from_be_bytes(be_bytes).to_ne_bytes();
+            }
+            // SAFETY: all `count` elements have been initialized above.
+            unsafe {
+                result.set_len(count);
+            }
+            Ok(Some(result))
+        }
+        ColumnType::Native(NativeType::Double)
+            if std::mem::size_of::<T>() == 8 && !std::mem::needs_drop::<T>() =>
+        {
+            let frame_slice = ensure_not_null_frame_slice::<Vec<T>>(typ, v)?;
+            let raw = frame_slice.as_slice();
+            let count = dimensions as usize;
+            let expected_len = count * 8;
+            if raw.len() != expected_len {
+                return Err(mk_deser_err::<Vec<T>>(
+                    typ,
+                    BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                        expected: expected_len,
+                        got: raw.len(),
+                    },
+                ));
+            }
+            let mut result = Vec::<T>::with_capacity(count);
+            // SAFETY: same reasoning as f32 case but for 8-byte elements.
+            let dst = unsafe {
+                std::slice::from_raw_parts_mut(result.as_mut_ptr() as *mut [u8; 8], count)
+            };
+            for (i, chunk) in raw.chunks_exact(8).enumerate() {
+                let be_bytes: [u8; 8] = chunk.try_into().unwrap();
+                dst[i] = f64::from_be_bytes(be_bytes).to_ne_bytes();
+            }
+            unsafe {
+                result.set_len(count);
+            }
+            Ok(Some(result))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -1078,6 +1186,7 @@ impl<'frame, 'metadata, T> VectorIterator<'frame, 'metadata, T>
 where
     T: DeserializeValue<'frame, 'metadata>,
 {
+    #[inline]
     fn next_constant_length_elem(
         &mut self,
         element_length: usize,
@@ -1099,6 +1208,7 @@ where
         }))
     }
 
+    #[inline]
     fn next_variable_length_elem(&mut self) -> Option<<Self as Iterator>::Item> {
         self.remaining = self.remaining.checked_sub(1)?;
         let size = types::unsigned_vint_decode(self.slice.as_slice_mut()).map_err(|err| {
@@ -1130,7 +1240,7 @@ where
         Some(raw.and_then(|raw| {
             T::deserialize(self.element_type, raw).map_err(|err| {
                 mk_deser_err::<Self>(
-                    self.element_type,
+                    self.collection_type,
                     VectorDeserializationErrorKind::ElementDeserializationFailed(err),
                 )
             })
@@ -1144,6 +1254,7 @@ where
 {
     type Item = Result<T, DeserializationError>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         match self.element_length {
             Some(element_length) => self.next_constant_length_elem(element_length),
@@ -1154,6 +1265,15 @@ where
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<'frame, 'metadata, T> ExactSizeIterator for VectorIterator<'frame, 'metadata, T>
+where
+    T: DeserializeValue<'frame, 'metadata>,
+{
+    fn len(&self) -> usize {
+        self.remaining
     }
 }
 
@@ -1674,6 +1794,7 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for Arc<str> {
 
 // Utilities
 
+#[inline]
 fn ensure_not_null_frame_slice<'frame, T>(
     typ: &ColumnType,
     v: Option<FrameSlice<'frame>>,
@@ -1681,6 +1802,7 @@ fn ensure_not_null_frame_slice<'frame, T>(
     v.ok_or_else(|| mk_deser_err::<T>(typ, BuiltinDeserializationErrorKind::ExpectedNonNull))
 }
 
+#[inline]
 fn ensure_not_null_slice<'frame, T>(
     typ: &ColumnType,
     v: Option<FrameSlice<'frame>>,
@@ -1695,6 +1817,7 @@ fn ensure_not_null_owned<T>(
     ensure_not_null_frame_slice::<T>(typ, v).map(|frame_slice| frame_slice.to_bytes())
 }
 
+#[inline]
 fn ensure_exact_length<'frame, T, const SIZE: usize>(
     typ: &ColumnType,
     v: &'frame [u8],
@@ -1937,7 +2060,7 @@ impl Display for BuiltinTypeCheckErrorKind {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SetOrListTypeCheckErrorKind {
-    /// The CQL type is neither a set not a list.
+    /// The CQL type is neither a set, a list, nor a vector.
     NotSetOrList,
     /// The CQL type is not a set.
     NotSet,
@@ -1949,7 +2072,7 @@ impl Display for SetOrListTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SetOrListTypeCheckErrorKind::NotSetOrList => {
-                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set nor a list")
+                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set, a list, nor a vector")
             }
             SetOrListTypeCheckErrorKind::NotSet => {
                 f.write_str("the CQL type the Rust type was attempted to be type checked against was not a set")
