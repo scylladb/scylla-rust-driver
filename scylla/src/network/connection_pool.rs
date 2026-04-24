@@ -1292,12 +1292,7 @@ mod tests {
             open_connection_to_shard_aware_port(&endpoint, 0, sharder.clone(), &connection_config)
         });
 
-        let joined = futures::future::join_all(conns).await;
-
-        // Check that each connection managed to connect successfully
-        for res in joined {
-            res.unwrap();
-        }
+        let _joined = futures::future::try_join_all(conns).await.unwrap();
     }
 
     // Open many connections to a node
