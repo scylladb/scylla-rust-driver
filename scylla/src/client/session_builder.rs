@@ -742,6 +742,33 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
+    /// Sets the `SO_LINGER` options with a zero timeout.
+    ///
+    /// From Tokio docs:
+    /// > This causes the connection to be forcefully aborted (“abortive close”) when the socket is dropped or closed.
+    /// > Instead of the normal TCP shutdown handshake (FIN/ACK), a TCP RST (reset) segment is sent to the peer,
+    /// > and the socket immediately discards any unsent data residing in the socket send buffer.
+    /// > This prevents the socket from entering the TIME_WAIT state after closing it.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tcp_zero_linger()
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tcp_zero_linger(mut self) -> Self {
+        self.config.tcp_linger = Some(Duration::ZERO);
+        self
+    }
+
     /// Set keyspace to be used on all connections.\
     /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
     /// This can be later changed with [`crate::client::session::Session::use_keyspace`]
