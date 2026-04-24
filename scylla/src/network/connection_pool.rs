@@ -1312,5 +1312,17 @@ mod tests {
             ..Default::default()
         })
         .await;
+
+        test_many_connections_with_config(HostConnectionConfig {
+            compression: None,
+            tcp_socket_options: TcpSocketOptions {
+                nodelay: true,
+                reuse_address: Some(true),
+                ..Default::default()
+            },
+            tls_config: None,
+            ..Default::default()
+        })
+        .await;
     }
 }
