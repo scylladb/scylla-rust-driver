@@ -2935,6 +2935,7 @@ mod tests {
             .await
             .unwrap();
 
+        #[expect(deprecated)]
         let session = SessionBuilder::new()
             .known_node_addr(proxy_addr)
             .tcp_recv_buffer_size(RECV_BUFFER_SIZE)
