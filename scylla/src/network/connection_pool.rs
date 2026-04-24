@@ -1263,6 +1263,7 @@ mod tests {
     use super::super::connection::{HostConnectionConfig, open_connection_to_shard_aware_port};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
+    use crate::network::TcpSocketOptions;
     use crate::routing::{ShardCount, Sharder};
     use crate::test_utils::setup_tracing;
     use std::net::{SocketAddr, ToSocketAddrs};
@@ -1284,7 +1285,10 @@ mod tests {
 
         let connection_config = HostConnectionConfig {
             compression: None,
-            tcp_nodelay: true,
+            tcp_socket_options: TcpSocketOptions {
+                nodelay: true,
+                ..Default::default()
+            },
             tls_config: None,
             ..Default::default()
         };
