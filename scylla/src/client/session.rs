@@ -15,7 +15,9 @@ use crate::errors::{
 };
 use crate::frame::response::result;
 use crate::network::tls::TlsProvider;
-use crate::network::{Connection, ConnectionConfig, PoolConfig, VerifiedKeyspaceName};
+use crate::network::{
+    Connection, ConnectionConfig, PoolConfig, TcpSocketOptions, VerifiedKeyspaceName,
+};
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
 #[cfg(feature = "metrics")]
@@ -1083,12 +1085,14 @@ impl Session {
             local_ip_address: config.local_ip_address,
             shard_aware_local_port_range: config.shard_aware_local_port_range,
             compression: config.compression,
-            tcp_nodelay: config.tcp_nodelay,
-            tcp_keepalive_interval: config.tcp_keepalive_interval,
-            tcp_recv_buffer_size: config.tcp_recv_buffer_size,
-            tcp_send_buffer_size: config.tcp_send_buffer_size,
-            tcp_reuse_address: config.tcp_reuse_address,
-            tcp_linger: config.tcp_linger,
+            tcp_socket_options: TcpSocketOptions {
+                nodelay: config.tcp_nodelay,
+                keepalive_interval: config.tcp_keepalive_interval,
+                recv_buffer_size: config.tcp_recv_buffer_size,
+                send_buffer_size: config.tcp_send_buffer_size,
+                reuse_address: config.tcp_reuse_address,
+                linger: config.tcp_linger,
+            },
             timestamp_generator: config.timestamp_generator,
             tls_provider,
             authenticator: config.authenticator,
