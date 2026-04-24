@@ -731,6 +731,12 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[deprecated(
+        since = "1.7.0",
+        note = "This option is deprecated because setting SO_LINGER on a socket used with Tokio is always incorrect
+        as it leads to blocking the thread when the socket is closed.
+        See https://docs.rs/tokio/latest/tokio/net/struct.TcpSocket.html#method.set_linger for more information."
+    )]
     pub fn tcp_linger(mut self, duration: Duration) -> Self {
         self.config.tcp_linger = Some(duration);
         self
