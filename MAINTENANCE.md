@@ -200,6 +200,21 @@ The difference is that instead of `main` you need to use a version branch, which
 Backport the necessary changes to this branch before making version bump commits.
 Please note that in step 9 you still need to use `main`, as described in the section about documentation.
 
+### Updating workflows
+
+Note: There is no need to update workflows every release - this is used only for development purposes.
+This part should only be done if the current setup is insufficient
+(ex. there is a discovered vulnerability in current version, or there is a new feature).
+
+Currently GitHub workflows are fixed to specific commits. This is done to reduce the supply chain attack surface in this repository.
+When updating those workflows, to find the correct commit SHA for a new version, go to the action's repository on GitHub,
+navigate to the desired release tag, and copy the full commit SHA from the tag's commit page.
+Remember to ensure the commit you are pinning to is not
+an [impostor commit](https://www.chainguard.dev/unchained/what-the-fork-imposter-commits-in-github-actions-and-ci-cd) - open the commit on GitHub page
+and ensure there is no `This commit does not belong to any branch on this repository` message at the top of the page.
+When updating the workflow you need to update both the `uses:` directive in workflow files and
+`Actions -> General -> Allow or block specified actions and reusable workflows` option in repository options.
+In the repository setting you also need to specify nested requirements for actions.
 
 ## Writing release notes
 
