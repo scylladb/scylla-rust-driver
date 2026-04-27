@@ -20,7 +20,7 @@ permissions:
 jobs:
   sync-manual:
     if: github.event_name == 'workflow_dispatch'
-    uses: scylladb-actions/workflows/.github/workflows/milestone-sync-reusable.yml@main
+    uses: scylladb-actions/workflows/.github/workflows/milestone-sync-reusable.yml@80b35e1904224052222a4f876fbe33d8a867e50e
     with:
       milestone: ${{ inputs.milestone }}
       config-path: milestone-sync/config.yaml
@@ -29,7 +29,7 @@ jobs:
 
   sync-automatic:
     if: github.event_name != 'workflow_dispatch'
-    uses: scylladb-actions/workflows/.github/workflows/milestone-sync-reusable.yml@main
+    uses: scylladb-actions/workflows/.github/workflows/milestone-sync-reusable.yml@80b35e1904224052222a4f876fbe33d8a867e50e
     with:
       config-path: milestone-sync/config.yaml
       github-event-name: ${{ github.event_name }}

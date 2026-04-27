@@ -43,7 +43,7 @@ jobs:
       output: ${{ steps.semver-pr-check.outputs.output }}
     steps:
     - name: Checkout
-      uses: actions/checkout@v6
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         fetch-depth: "2"
         ref: "refs/pull/${{ env.PR_ID }}/merge"
@@ -56,7 +56,7 @@ jobs:
     - name: Fetch PR base
       run: git fetch origin "$PR_BASE"
     - name: Setup rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
+      uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
     - name: Install semver-checks
     # This is a temporary workaround because current cargo-semver-checks doesn't work with this repo,
     # and needs a fix. After the bug is fixed, we should revert to using taiki-e/install-action.
@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 3
     steps:
     - name: Get ID of comment if posted previously.
-      uses: peter-evans/find-comment@v4
+      uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
       id: find-comment
       with:
           issue-number: ${{ env.PR_ID }}
@@ -102,7 +102,7 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
     - name: Report that there were no breaks
-      uses: peter-evans/create-or-update-comment@v5
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
           issue-number: ${{ env.PR_ID }}
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
@@ -118,7 +118,7 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
     - name: Post report on semver break
-      uses: peter-evans/create-or-update-comment@v5
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
           issue-number: ${{ env.PR_ID }}
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
@@ -145,11 +145,11 @@ jobs:
       contents: read
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
     - name: Setup rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
+      uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
     - name: Install semver-checks
-      uses: taiki-e/install-action@v2
+      uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1 # v2.75.2
       with:
         tool: cargo-semver-checks
     - name: Run semver-checks to see if it agrees with version updates
