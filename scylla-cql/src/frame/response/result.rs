@@ -1248,6 +1248,93 @@ fn deser_prepared_metadata(
     })
 }
 
+/// Cassandra advertises `vector<inner, dim>` over the native protocol as
+/// a `Custom` type whose class name is
+/// `org.apache.cassandra.db.marshal.VectorType(<inner_class>, <dim>)`.
+/// Returns `Some((inner_class, dim))` on a successful parse.
+fn parse_cassandra_vector_type(class: &str) -> Option<(&str, usize)> {
+    const PREFIX: &str = "org.apache.cassandra.db.marshal.VectorType(";
+    let inner = class.strip_prefix(PREFIX)?.strip_suffix(')')?;
+    let (inner_class, dim_str) = inner.rsplit_once(", ")?;
+    let dim: usize = dim_str.parse().ok()?;
+    Some((inner_class.trim(), dim))
+}
+
+/// Read one fixed-size big-endian primitive from `buf`, advancing it by N
+/// bytes. Returns `None` if the buffer is short — caller surfaces this as
+/// a `DeserializationError` so a malformed frame never panics.
+fn vector_read_f32(buf: &mut &[u8]) -> Option<CqlValue> {
+    if buf.len() < 4 {
+        return None;
+    }
+    let v = f32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    *buf = &buf[4..];
+    Some(CqlValue::Float(v))
+}
+
+fn vector_read_f64(buf: &mut &[u8]) -> Option<CqlValue> {
+    if buf.len() < 8 {
+        return None;
+    }
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&buf[..8]);
+    *buf = &buf[8..];
+    Some(CqlValue::Double(f64::from_be_bytes(bytes)))
+}
+
+fn vector_read_i32(buf: &mut &[u8]) -> Option<CqlValue> {
+    if buf.len() < 4 {
+        return None;
+    }
+    let v = i32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    *buf = &buf[4..];
+    Some(CqlValue::Int(v))
+}
+
+fn vector_read_i64(buf: &mut &[u8]) -> Option<CqlValue> {
+    if buf.len() < 8 {
+        return None;
+    }
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&buf[..8]);
+    *buf = &buf[8..];
+    Some(CqlValue::BigInt(i64::from_be_bytes(bytes)))
+}
+
+fn vector_read_i16(buf: &mut &[u8]) -> Option<CqlValue> {
+    if buf.len() < 2 {
+        return None;
+    }
+    let v = i16::from_be_bytes([buf[0], buf[1]]);
+    *buf = &buf[2..];
+    Some(CqlValue::SmallInt(v))
+}
+
+fn vector_read_i8(buf: &mut &[u8]) -> Option<CqlValue> {
+    if buf.is_empty() {
+        return None;
+    }
+    let v = buf[0] as i8;
+    *buf = &buf[1..];
+    Some(CqlValue::TinyInt(v))
+}
+
+/// Map a Cassandra inner-type marshaller class to a per-element reader.
+/// Returns `None` for inner types we don't yet support (UDTs, text,
+/// variable-size encodings) — those fall back to the existing
+/// `CustomTypeNotSupported` error path.
+fn vector_element_reader(inner_class: &str) -> Option<fn(&mut &[u8]) -> Option<CqlValue>> {
+    match inner_class {
+        "org.apache.cassandra.db.marshal.FloatType" => Some(vector_read_f32),
+        "org.apache.cassandra.db.marshal.DoubleType" => Some(vector_read_f64),
+        "org.apache.cassandra.db.marshal.Int32Type" => Some(vector_read_i32),
+        "org.apache.cassandra.db.marshal.LongType" => Some(vector_read_i64),
+        "org.apache.cassandra.db.marshal.ShortType" => Some(vector_read_i16),
+        "org.apache.cassandra.db.marshal.ByteType" => Some(vector_read_i8),
+        _ => None,
+    }
+}
+
 pub fn deser_cql_value(
     typ: &ColumnType,
     buf: &mut &[u8],
@@ -1270,10 +1357,31 @@ pub fn deser_cql_value(
 
     Ok(match typ {
         Custom(type_str) => {
+            // CEP-30: vectors over the C* native protocol arrive as a Custom
+            // marshaller class. Decode fixed-size element types by parsing
+            // the class name and unpacking `dim` contiguous primitives.
+            if let Some((inner_class, dim)) = parse_cassandra_vector_type(type_str) {
+                if let Some(read_one) = vector_element_reader(inner_class) {
+                    let mut values = Vec::with_capacity(dim);
+                    for _ in 0..dim {
+                        let elem = read_one(buf).ok_or_else(|| {
+                            mk_deser_err::<CqlValue>(
+                                typ,
+                                BuiltinDeserializationErrorKind::CustomTypeNotSupported(format!(
+                                    "{} (truncated buffer reading vector element)",
+                                    type_str
+                                )),
+                            )
+                        })?;
+                        values.push(elem);
+                    }
+                    return Ok(CqlValue::List(values));
+                }
+            }
             return Err(mk_deser_err::<CqlValue>(
                 typ,
                 BuiltinDeserializationErrorKind::CustomTypeNotSupported(type_str.to_string()),
-            ))
+            ));
         }
         Ascii => {
             let s = String::deserialize(typ, v)?;
@@ -1712,6 +1820,112 @@ mod tests {
         let text_serialized = super::deser_cql_value(&ColumnType::Text, int_slice).unwrap();
         assert_eq!(ascii_serialized, CqlValue::Ascii("A".to_string()));
         assert_eq!(text_serialized, CqlValue::Text("A".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_cassandra_vector_of_floats() {
+        // CEP-30 vectors over the C* native protocol arrive typed as
+        // Custom("org.apache.cassandra.db.marshal.VectorType(<inner>, <dim>)")
+        // and contain `dim` packed elements of the inner fixed-size type
+        // with no per-element length prefix.
+        let typ = ColumnType::Custom(
+            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.FloatType, 3)"
+                .into(),
+        );
+        let mut buf = Vec::new();
+        for f in [1.0f32, 2.5, -3.25] {
+            buf.extend_from_slice(&f.to_be_bytes());
+        }
+        let value = super::deser_cql_value(&typ, &mut &buf[..]).expect("vector should decode");
+        assert_eq!(
+            value,
+            CqlValue::List(vec![
+                CqlValue::Float(1.0),
+                CqlValue::Float(2.5),
+                CqlValue::Float(-3.25),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_deserialize_cassandra_vector_of_ints() {
+        let typ = ColumnType::Custom(
+            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, 4)"
+                .into(),
+        );
+        let mut buf = Vec::new();
+        for i in [1i32, -2, 3, 1_000_000] {
+            buf.extend_from_slice(&i.to_be_bytes());
+        }
+        let value = super::deser_cql_value(&typ, &mut &buf[..]).expect("vector should decode");
+        assert_eq!(
+            value,
+            CqlValue::List(vec![
+                CqlValue::Int(1),
+                CqlValue::Int(-2),
+                CqlValue::Int(3),
+                CqlValue::Int(1_000_000),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_deserialize_cassandra_vector_of_doubles() {
+        let typ = ColumnType::Custom(
+            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.DoubleType, 2)"
+                .into(),
+        );
+        let mut buf = Vec::new();
+        for d in [1.5f64, -0.25] {
+            buf.extend_from_slice(&d.to_be_bytes());
+        }
+        let value = super::deser_cql_value(&typ, &mut &buf[..]).expect("vector should decode");
+        assert_eq!(
+            value,
+            CqlValue::List(vec![CqlValue::Double(1.5), CqlValue::Double(-0.25)])
+        );
+    }
+
+    #[test]
+    fn test_deserialize_cassandra_vector_unknown_custom_still_errors() {
+        let typ = ColumnType::Custom("org.example.UnknownType".into());
+        let buf: Vec<u8> = vec![0, 0, 0, 0];
+        let res = super::deser_cql_value(&typ, &mut &buf[..]);
+        assert!(res.is_err(), "unrelated custom types must still error");
+    }
+
+    #[test]
+    fn test_deserialize_cassandra_vector_truncated_buffer_errors() {
+        // Declares 3 floats (12 bytes) but only supplies 8.
+        let typ = ColumnType::Custom(
+            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.FloatType, 3)"
+                .into(),
+        );
+        let buf: Vec<u8> = vec![0u8; 8];
+        let res = super::deser_cql_value(&typ, &mut &buf[..]);
+        assert!(res.is_err(), "truncated vector buffer must error, not panic");
+    }
+
+    #[test]
+    fn test_deserialize_cassandra_vector_of_768_floats() {
+        // Real-world dimensionality used by ferrosa-memory embeddings.
+        let typ = ColumnType::Custom(
+            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.FloatType, 768)"
+                .into(),
+        );
+        let mut buf = Vec::with_capacity(768 * 4);
+        for i in 0..768u32 {
+            buf.extend_from_slice(&(i as f32).to_be_bytes());
+        }
+        let value = super::deser_cql_value(&typ, &mut &buf[..]).expect("768-dim vector decodes");
+        match value {
+            CqlValue::List(values) => {
+                assert_eq!(values.len(), 768);
+                assert_eq!(values[0], CqlValue::Float(0.0));
+                assert_eq!(values[767], CqlValue::Float(767.0));
+            }
+            other => panic!("expected List, got {other:?}"),
+        }
     }
 
     #[test]
