@@ -24,14 +24,10 @@ use crate::ccm::lib::client_routes::{
 };
 use crate::ccm::lib::cluster::ClusterOptions;
 use crate::ccm::lib::node::NodeId;
-use crate::utils::{setup_tracing, unique_keyspace_name};
+use crate::utils::{HEALTHCHECK_QUERY, execute_unprepared_statement_on_every_node, setup_tracing};
 
 use scylla::client::session::Session;
 use tracing::info;
-
-/// Number of queries per test phase. Must be large enough to statistically
-/// hit all nodes via random-replica token-aware routing.
-const QUERIES_PER_PHASE: i32 = 100;
 
 /// Timeout for waiting for the driver to open connections to all proxy nodes.
 /// Must be generous enough for the driver to discover new/restarted nodes,
@@ -62,46 +58,41 @@ fn cluster_2dc_2_2() -> ClusterOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: create keyspace + table and run N queries, returning the session
+// Helper: verify all active nodes receive queries via proxy feedback
 // ---------------------------------------------------------------------------
 
-async fn create_test_schema(session: &Session, ks_name: &str, rf: &str) {
-    session
-        .query_unpaged(
-            format!(
-                "CREATE KEYSPACE IF NOT EXISTS {} \
-                 WITH replication = {{'class': 'NetworkTopologyStrategy', {}}}",
-                ks_name, rf
-            ),
-            &[],
-        )
-        .await
-        .expect("Failed to create keyspace");
+/// Executes a query on every node in the cluster and verifies via proxy
+/// feedback that each node with a feedback channel actually received traffic.
+///
+/// This combines `execute_unprepared_statement_on_every_node` (which sends
+/// one query per node, targeting any shard) with proxy feedback verification
+/// (which proves the traffic went through the NLB →  proxy path).
+///
+/// We deliberately target nodes rather than individual shards: after a client
+/// routes update the pool may not be fully filled yet (only one shard
+/// connected), and targeting a specific missing shard would fail with
+/// `ConnectionPoolError(Broken)`.
+async fn assert_queries_reach_all_nodes(
+    session: &Session,
+    rxs: &mut HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>>,
+) {
+    execute_unprepared_statement_on_every_node(
+        session,
+        &session.get_cluster_state(),
+        &HEALTHCHECK_QUERY.into(),
+        &(),
+    )
+    .await
+    .unwrap();
 
-    session
-        .query_unpaged(
-            format!(
-                "CREATE TABLE IF NOT EXISTS {}.data (id int PRIMARY KEY, value text)",
-                ks_name
-            ),
-            &[],
-        )
-        .await
-        .expect("Failed to create table");
-}
-
-async fn run_queries(session: &Session, ks_name: &str, count: i32) {
-    for i in 0..count {
-        session
-            .query_unpaged(
-                format!(
-                    "INSERT INTO {}.data (id, value) VALUES ({}, 'v{}')",
-                    ks_name, i, i
-                ),
-                &[],
-            )
-            .await
-            .unwrap_or_else(|e| panic!("Query {} failed: {}", i, e));
+    let (per_node, _total) = drain_feedback(rxs);
+    for (&node_id, _rx) in rxs.iter() {
+        let count = *per_node.get(&node_id).unwrap_or(&0);
+        assert!(
+            count >= 1,
+            "Node {} received 0 queries — driver didn't reach it via proxy",
+            node_id
+        );
     }
 }
 
@@ -122,14 +113,14 @@ async fn run_queries(session: &Session, ks_name: &str, count: i32) {
 /// stays consistent across node removals and additions in a multi-DC setup.
 ///
 /// **Scenario** (2 DCs, 2+2 nodes):
-/// 1. **Phase 1** — all 4 nodes: 100 queries →  total == 100, all 4 ≥ 1.
+/// 1. **Phase 1** — all 4 nodes: queries reach all 4.
 /// 2. Decommission the highest-ID node in DC2 (routes posted without it
 ///    before the actual CCM decommission).
-/// 3. **Phase 2** — 3 nodes: 100 queries →  total == 100, decommissioned
-///    node absent from feedback, remaining 3 ≥ 1.
+/// 3. **Phase 2** — 3 nodes: queries reach remaining 3, decommissioned
+///    node absent from feedback.
 /// 4. Add a new node to DC2, discover its host ID, start its proxy chain.
-/// 5. **Phase 3** — 4 nodes again: 100 queries →  total == 100, all 4 ≥ 1
-///    (including the newly added node).
+/// 5. **Phase 3** — 4 nodes again: queries reach all 4 (including the
+///    newly added node).
 async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
     let session = plc
         .make_session_builder()
@@ -142,50 +133,19 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
         .await
         .expect("Driver did not connect to all nodes");
 
-    let ks = unique_keyspace_name();
-    create_test_schema(&session, &ks, "'dc1': 1, 'dc2': 1").await;
-
     // Identify nodes. In a 2+2 setup, CCM node IDs are 1,2 (DC1) and 3,4 (DC2).
     let initial_nodes = plc.active_node_ids();
     assert_eq!(initial_nodes.len(), 4, "Expected 4 initial nodes");
     info!("Initial nodes: {:?}", initial_nodes);
 
+    // --- Phase 1: all 4 nodes ---
+    info!("=== Phase 1: all 4 nodes ===");
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Feedback: per_node={:?}, total={}", per_node, total);
-
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    let active_nodes = plc.active_node_ids();
-    assert_eq!(active_nodes.len(), 4, "Expected 4 active nodes");
-    for &node_id in &active_nodes {
-        let count = *per_node.get(&node_id).unwrap_or(&0);
-        assert!(
-            count >= 1,
-            "Node {} received 0 queries — driver didn't reach all nodes across DCs",
-            node_id
-        );
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 
     // The node to decommission: the highest ID in DC2 (should be node 4).
     let node_to_decommission = *initial_nodes.iter().max().expect("non-empty");
     info!("Will decommission node {}", node_to_decommission);
-
-    // --- Phase 1: all 4 nodes ---
-    info!("=== Phase 1: all 4 nodes ===");
-    let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 1: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for &node_id in &initial_nodes {
-        assert!(
-            *per_node.get(&node_id).unwrap_or(&0) >= 1,
-            "Phase 1: node {} got 0 queries",
-            node_id
-        );
-    }
 
     // --- Decommission node from DC2 ---
     // Routes are posted (without this node) BEFORE the actual topology change.
@@ -200,23 +160,7 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
     assert_eq!(remaining_nodes.len(), 3);
 
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 2: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    // Decommissioned node should not have a feedback channel at all.
-    assert!(
-        !per_node.contains_key(&node_to_decommission),
-        "Phase 2: decommissioned node {} should not have feedback",
-        node_to_decommission
-    );
-    for &node_id in &remaining_nodes {
-        assert!(
-            *per_node.get(&node_id).unwrap_or(&0) >= 1,
-            "Phase 2: node {} got 0 queries",
-            node_id
-        );
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 
     // --- Add new node to DC2 ---
     // Cluster::add_node() uses 1-based CCM DC naming: 2 = dc2.
@@ -239,17 +183,7 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
         new_node_id
     );
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 3: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for &node_id in &final_nodes {
-        assert!(
-            *per_node.get(&node_id).unwrap_or(&0) >= 1,
-            "Phase 3: node {} got 0 queries (including new node)",
-            node_id
-        );
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 }
 
 #[tokio::test]
@@ -274,12 +208,12 @@ async fn test_client_routes_multi_dc_topology_change() {
 /// query failures during the rolling window.
 ///
 /// **Scenario** (1 DC, 3 nodes):
-/// 1. **Phase 0** (baseline): 100 queries →  total == 100, all 3 ≥ 1.
+/// 1. **Phase 0** (baseline): queries reach all 3.
 /// 2. For each node 1, 2, 3 in turn:
 ///    a. Stop the node via CCM, tear down its proxy chain.
 ///    b. Start the node via CCM, rebuild proxy chain (new NLB port).
 ///    c. Wait for the driver to connect through the new chain.
-///    d. 100 queries →  total == 100, all 3 ≥ 1.
+///    d. Queries reach all 3.
 async fn rolling_restart(plc: &mut ClientRoutesCluster) {
     let session = plc
         .make_session_builder()
@@ -291,19 +225,10 @@ async fn rolling_restart(plc: &mut ClientRoutesCluster) {
         .await
         .expect("Driver did not connect to all nodes");
 
-    let ks = unique_keyspace_name();
-    create_test_schema(&session, &ks, "'replication_factor': 3").await;
-
     // --- Phase 0: baseline ---
     info!("=== Phase 0: baseline (all 3 nodes) ===");
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 0: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for (&node_id, &count) in &per_node {
-        assert!(count >= 1, "Phase 0: node {} got 0 queries", node_id);
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 
     // --- Rolling restart: stop + start each node in turn ---
     for target_node in 1..=3u16 {
@@ -355,25 +280,7 @@ async fn rolling_restart(plc: &mut ClientRoutesCluster) {
             target_node
         );
         let mut rxs = plc.setup_query_feedback();
-        run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-        let (per_node, total) = drain_feedback(&mut rxs);
-        info!(
-            "After restarting node {}: per_node={:?}, total={}",
-            target_node, per_node, total
-        );
-        assert_eq!(
-            total, QUERIES_PER_PHASE as usize,
-            "After restarting node {}: total mismatch",
-            target_node
-        );
-        for (&node_id, &count) in &per_node {
-            assert!(
-                count >= 1,
-                "After restarting node {}: node {} got 0 queries",
-                target_node,
-                node_id
-            );
-        }
+        assert_queries_reach_all_nodes(&session, &mut rxs).await;
     }
 }
 
@@ -401,11 +308,11 @@ async fn test_client_routes_rolling_restart() {
 /// route-only changes.
 ///
 /// **Scenario** (1 DC, 3 nodes):
-/// 1. **Phase 1** (baseline): 100 queries →  total == 100, all 3 ≥ 1.
+/// 1. **Phase 1** (baseline): queries reach all 3.
 /// 2. Rebuild proxy chains for nodes 1 and 2 (Scylla stays up). New
 ///    OS-assigned NLB ports, updated routes posted to ScyllaDB.
 /// 3. Wait for the driver to connect through the new NLB ports.
-/// 4. **Phase 2**: 100 queries →  total == 100, all 3 ≥ 1.
+/// 4. **Phase 2**: queries reach all 3.
 async fn nlb_port_remap(plc: &mut ClientRoutesCluster) {
     let session = plc
         .make_session_builder()
@@ -417,19 +324,10 @@ async fn nlb_port_remap(plc: &mut ClientRoutesCluster) {
         .await
         .expect("Driver did not connect to all nodes");
 
-    let ks = unique_keyspace_name();
-    create_test_schema(&session, &ks, "'replication_factor': 3").await;
-
     // --- Phase 1: baseline ---
     info!("=== Phase 1: baseline (all 3 nodes) ===");
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 1: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for (&node_id, &count) in &per_node {
-        assert!(count >= 1, "Phase 1: node {} got 0 queries", node_id);
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 
     // --- Remap: rebuild proxy chains for nodes 1 and 2 ---
     // Scylla nodes stay up; only the proxy + NLB are replaced, giving
@@ -453,17 +351,7 @@ async fn nlb_port_remap(plc: &mut ClientRoutesCluster) {
     // --- Phase 2: verify traffic goes through new ports ---
     info!("=== Phase 2: after NLB port remap ===");
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 2: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for (&node_id, &count) in &per_node {
-        assert!(
-            count >= 1,
-            "Phase 2: node {} got 0 queries — driver didn't follow route update",
-            node_id
-        );
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 }
 
 #[tokio::test]
@@ -487,11 +375,11 @@ async fn test_client_routes_nlb_port_remap() {
 /// driver ignores newly added nodes or fails to translate their addresses.
 ///
 /// **Scenario** (1 DC, starts with 3 nodes):
-/// 1. **Phase 1** (3 nodes): 100 queries →  total == 100, all 3 ≥ 1.
+/// 1. **Phase 1** (3 nodes): queries reach all 3.
 /// 2. Add 3 new nodes to DC1 one at a time (CCM add + start, discover
 ///    host ID, start proxy chain, post updated routes).
 /// 3. Wait for the driver to connect to all 6 nodes.
-/// 4. **Phase 2** (6 nodes): 100 queries →  total == 100, all 6 ≥ 1.
+/// 4. **Phase 2** (6 nodes): queries reach all 6.
 async fn scale_out(plc: &mut ClientRoutesCluster) {
     let session = plc
         .make_session_builder()
@@ -503,19 +391,10 @@ async fn scale_out(plc: &mut ClientRoutesCluster) {
         .await
         .expect("Driver did not connect to all nodes");
 
-    let ks = unique_keyspace_name();
-    create_test_schema(&session, &ks, "'replication_factor': 3").await;
-
     // --- Phase 1: initial 3 nodes ---
     info!("=== Phase 1: initial 3 nodes ===");
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 1: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for (&node_id, &count) in &per_node {
-        assert!(count >= 1, "Phase 1: node {} got 0 queries", node_id);
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 
     // --- Add 3 new nodes ---
     let mut new_node_ids = Vec::new();
@@ -541,18 +420,7 @@ async fn scale_out(plc: &mut ClientRoutesCluster) {
     assert_eq!(active.len(), 6, "Expected 6 active nodes, got {:?}", active);
 
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 2: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for &node_id in &active {
-        let count = *per_node.get(&node_id).unwrap_or(&0);
-        assert!(
-            count >= 1,
-            "Phase 2: node {} got 0 queries — driver didn't discover new node",
-            node_id
-        );
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 }
 
 #[tokio::test]
@@ -611,15 +479,14 @@ async fn wait_for_any_feedback(
 /// reconnection logic, and metadata refresh pipeline work end-to-end.
 ///
 /// **Scenario** (2 DCs, 2+2 nodes):
-/// 1. **Phase 1** (baseline): build session, create schema (RF dc1=2,
-///    dc2=2), 100 queries →  all 4 ≥ 1.
+/// 1. **Phase 1** (baseline): queries reach all 4.
 /// 2. **Phase 2** (event injection, no route change): inject a
 ///    `CLIENT_ROUTES_CHANGE` event for DC1 nodes. Verify the driver
 ///    re-queries `system.client_routes` (detected via EXECUTE body
 ///    matching). Verify all 4 nodes still work.
 /// 3. **Phase 3** (full-DC reroute): restart proxy chains for both DC1
 ///    nodes (new NLB ports). ScyllaDB emits a real event. Wait for
-///    connections, verify all 4 ≥ 1.
+///    connections, verify all 4 receive queries.
 /// 4. **Phase 4** (cross-DC reroute): restart one node from each DC.
 ///    Same verification.
 /// 5. **Phase 5** (malformed event recovery): inject a malformed event
@@ -636,9 +503,6 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
     plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
         .await
         .expect("Driver did not connect to all nodes");
-
-    let ks = unique_keyspace_name();
-    create_test_schema(&session, &ks, "'dc1': 2, 'dc2': 2").await;
 
     // Identify nodes by DC. In a 2+2 setup, CCM node IDs are 1,2 (DC1)
     // and 3,4 (DC2).
@@ -657,17 +521,7 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
     // ---------------------------------------------------------------
     info!("=== Phase 1: baseline ===");
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 1: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for &node_id in &all_nodes {
-        assert!(
-            *per_node.get(&node_id).unwrap_or(&0) >= 1,
-            "Phase 1: node {} got 0 queries",
-            node_id
-        );
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 
     // ---------------------------------------------------------------
     // Phase 2: Event injection — verify event processing
@@ -692,17 +546,7 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
 
     // Verify all nodes still work after event processing.
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 2: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for &node_id in &all_nodes {
-        assert!(
-            *per_node.get(&node_id).unwrap_or(&0) >= 1,
-            "Phase 2: node {} got 0 queries",
-            node_id
-        );
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 
     // ---------------------------------------------------------------
     // Phase 3: Full-DC reroute (both DC1 nodes)
@@ -733,17 +577,7 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
 
     // Verify traffic reaches all 4 nodes through the new ports.
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 3: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for &node_id in &all_nodes {
-        assert!(
-            *per_node.get(&node_id).unwrap_or(&0) >= 1,
-            "Phase 3: node {} got 0 queries",
-            node_id
-        );
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 
     // ---------------------------------------------------------------
     // Phase 4: Cross-DC reroute (one node from each DC)
@@ -765,17 +599,7 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
         .unwrap_or_else(|e| panic!("Phase 4: driver did not reconnect to cross-dc nodes: {}", e));
 
     let mut rxs = plc.setup_query_feedback();
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 4: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for &node_id in &all_nodes {
-        assert!(
-            *per_node.get(&node_id).unwrap_or(&0) >= 1,
-            "Phase 4: node {} got 0 queries",
-            node_id
-        );
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 
     // ---------------------------------------------------------------
     // Phase 5: Malformed event recovery
@@ -807,19 +631,7 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
     .await;
 
     let mut rxs = plc.setup_query_feedback();
-
-    // Verify all 4 nodes still receive traffic.
-    run_queries(&session, &ks, QUERIES_PER_PHASE).await;
-    let (per_node, total) = drain_feedback(&mut rxs);
-    info!("Phase 5: per_node={:?}, total={}", per_node, total);
-    assert_eq!(total, QUERIES_PER_PHASE as usize);
-    for &node_id in &all_nodes {
-        assert!(
-            *per_node.get(&node_id).unwrap_or(&0) >= 1,
-            "Phase 5: node {} got 0 queries after malformed event recovery",
-            node_id
-        );
-    }
+    assert_queries_reach_all_nodes(&session, &mut rxs).await;
 
     info!("All phases passed — event-driven reroute works correctly");
 }
