@@ -24,7 +24,7 @@ use crate::ccm::lib::client_routes::{
 };
 use crate::ccm::lib::cluster::ClusterOptions;
 use crate::ccm::lib::node::NodeId;
-use crate::utils::{HEALTHCHECK_QUERY, execute_unprepared_statement_everywhere, setup_tracing};
+use crate::utils::{HEALTHCHECK_QUERY, execute_unprepared_statement_on_every_node, setup_tracing};
 
 use scylla::client::session::Session;
 use tracing::info;
@@ -64,14 +64,19 @@ fn cluster_2dc_2_2() -> ClusterOptions {
 /// Executes a query on every node in the cluster and verifies via proxy
 /// feedback that each node with a feedback channel actually received traffic.
 ///
-/// This combines `execute_unprepared_statement_everywhere` (which sends one
-/// query per node/shard) with proxy feedback verification (which proves the
-/// traffic went through the NLB →  proxy path).
+/// This combines `execute_unprepared_statement_on_every_node` (which sends
+/// one query per node, targeting any shard) with proxy feedback verification
+/// (which proves the traffic went through the NLB →  proxy path).
+///
+/// We deliberately target nodes rather than individual shards: after a client
+/// routes update the pool may not be fully filled yet (only one shard
+/// connected), and targeting a specific missing shard would fail with
+/// `ConnectionPoolError(Broken)`.
 async fn assert_queries_reach_all_nodes(
     session: &Session,
     rxs: &mut HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>>,
 ) {
-    execute_unprepared_statement_everywhere(
+    execute_unprepared_statement_on_every_node(
         session,
         &session.get_cluster_state(),
         &HEALTHCHECK_QUERY.into(),
