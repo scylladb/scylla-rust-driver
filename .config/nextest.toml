@@ -25,10 +25,6 @@ slow-timeout = { period = "20s", terminate-after = 6 }
 filter = '(binary_id(scylla::integration) & test(ccm::client_routes::test_client_routes_multi_dc_topology_change))'
 slow-timeout = { period = "60s", terminate-after = 6 }
 
-[[profile.default.overrides]]
-filter = '(binary_id(scylla::integration) & test(ccm::client_routes::test_client_routes_node_stop_resume))'
-slow-timeout = { period = "60s", terminate-after = 6 }
-
 # Rolling restart does 3 stop+start cycles; scale-out adds 3 nodes.
 [[profile.default.overrides]]
 filter = '(binary_id(scylla::integration) & test(ccm::client_routes::test_client_routes_rolling_restart))'
