@@ -35,8 +35,6 @@ use std::time::Duration;
 use anyhow::{Context, Error, bail};
 use bytes::Bytes;
 use futures::FutureExt;
-use futures::StreamExt as _;
-use futures::TryStreamExt as _;
 use scylla::client::client_routes::{ClientRoutesConfig, ClientRoutesProxy};
 use scylla::client::session_builder::ClientRoutesSessionBuilder;
 use scylla_proxy::nlb::{NlbFrontend, RunningNlbFrontend};
@@ -162,6 +160,14 @@ impl DcConfig {
     /// Returns the per-DC contact-point NLB address.
     fn contact_point_addr(&self) -> SocketAddr {
         self.contact_point_nlb.listen_addr()
+    }
+
+    /// Shut down the contact-point NLB and all per-node chains.
+    async fn shutdown(self) {
+        self.contact_point_nlb.finish().await;
+        for (_node_id, chain) in self.per_node_chains {
+            chain.shutdown().await;
+        }
     }
 
     /// Update the per-DC contact-point NLB's backends to reflect the current
@@ -967,13 +973,8 @@ impl ClientRoutesCluster {
     /// Shut down all proxy chains and per-DC contact-point NLBs.
     async fn shutdown_all(self) {
         for (dc_id, dc_cfg) in self.dc_configs {
-            debug!("Shutting down per-DC contact-point NLB for DC {}", dc_id);
-            dc_cfg.contact_point_nlb.finish().await;
-
-            for (node_id, chain) in dc_cfg.per_node_chains {
-                debug!("Shutting down chain for DC {} node {}", dc_id, node_id);
-                chain.shutdown().await;
-            }
+            debug!("Shutting down DC {}", dc_id);
+            dc_cfg.shutdown().await;
         }
         info!("All proxy chains and NLBs shut down");
     }
@@ -1007,28 +1008,58 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
                 acc
             });
 
-    futures::stream::iter(dc_nodes)
-        .then(|(dc_id, nodes)| async move {
+    // Start all per-node proxy chains concurrently (across all DCs).
+    let chain_futs: Vec<_> = dc_nodes
+        .iter()
+        .flat_map(|(&dc_id, nodes)| {
+            nodes
+                .iter()
+                .copied()
+                .map(move |(node_id, real_ip)| async move {
+                    let chain = NodeChain::start(SocketAddr::new(real_ip, 9042), node_id)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to start chain for DC {} node {}", dc_id, node_id)
+                        })?;
+                    Ok::<_, Error>((dc_id, node_id, chain))
+                })
+        })
+        .collect();
+
+    let chain_results: Vec<_> = futures::future::join_all(chain_futs).await;
+
+    // If any chain failed, shut down all that succeeded and return the error.
+    if chain_results.iter().any(Result::is_err) {
+        let mut first_err = None;
+        for result in chain_results {
+            match result {
+                Ok((_dc_id, _node_id, chain)) => chain.shutdown().await,
+                Err(e) if first_err.is_none() => first_err = Some(e),
+                Err(_) => {}
+            }
+        }
+        return Err(first_err.unwrap());
+    }
+
+    // All chains started successfully — group by DC.
+    let mut dc_chains: BTreeMap<u16, HashMap<NodeId, NodeChain>> = BTreeMap::new();
+    for result in chain_results {
+        let (dc_id, node_id, chain) = result.unwrap();
+        dc_chains.entry(dc_id).or_default().insert(node_id, chain);
+    }
+
+    // Start per-DC contact-point NLBs concurrently.
+    let nlb_futs: Vec<_> = dc_chains
+        .into_iter()
+        .map(|(dc_id, per_node_chains)| async move {
             let connection_id = format!("{}-dc{}", CONNECTION_ID_BASE, dc_id);
 
-            // Start per-node proxy chains.
-            let mut per_node_chains = HashMap::new();
-            for (node_id, real_ip) in nodes.iter().copied() {
-                let chain = NodeChain::start(SocketAddr::new(real_ip, 9042), node_id)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to start chain for DC {} node {}", dc_id, node_id)
-                    })?;
-                per_node_chains.insert(node_id, chain);
-            }
-
-            // Start per-DC round-robin NLB.
             let backends: Vec<SocketAddr> = per_node_chains
                 .values()
                 .map(|chain| chain.proxy_addr())
                 .collect();
 
-            let contact_point_nlb = NlbFrontend::builder()
+            let nlb_result = NlbFrontend::builder()
                 .listen_addr("127.0.0.1:0".parse().unwrap())
                 .backends(backends.iter().copied())
                 .build()
@@ -1036,7 +1067,19 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
                 .await
                 .with_context(|| {
                     format!("Failed to start per-DC contact-point NLB for DC {}", dc_id)
-                })?;
+                });
+
+            let contact_point_nlb = match nlb_result {
+                Ok(nlb) => nlb,
+                Err(e) => {
+                    // NLB failed to start — shut down the chains that were
+                    // moved into this future before propagating the error.
+                    for (_node_id, chain) in per_node_chains {
+                        chain.shutdown().await;
+                    }
+                    return Err(e);
+                }
+            };
 
             info!(
                 "DC {} contact-point NLB: {} →  {:?}",
@@ -1054,8 +1097,25 @@ async fn build_dc_configs(cluster: &Cluster) -> Result<BTreeMap<u16, DcConfig>, 
                 },
             ))
         })
-        .try_collect()
-        .await
+        .collect();
+
+    let nlb_results: Vec<_> = futures::future::join_all(nlb_futs).await;
+
+    // If any NLB failed, shut down all successfully-built DcConfigs
+    // (which own both the NLB and the per-node chains).
+    if nlb_results.iter().any(Result::is_err) {
+        let mut first_err = None;
+        for result in nlb_results {
+            match result {
+                Ok((_dc_id, dc_config)) => dc_config.shutdown().await,
+                Err(e) if first_err.is_none() => first_err = Some(e),
+                Err(_) => {}
+            }
+        }
+        return Err(first_err.unwrap());
+    }
+
+    Ok(nlb_results.into_iter().map(|r| r.unwrap()).collect())
 }
 
 // ---------------------------------------------------------------------------
