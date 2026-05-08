@@ -29,14 +29,20 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZero;
 use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Error, bail};
 use bytes::Bytes;
 use futures::FutureExt;
+use scylla::client::PoolSize;
 use scylla::client::client_routes::{ClientRoutesConfig, ClientRoutesProxy};
-use scylla::client::session_builder::ClientRoutesSessionBuilder;
+use scylla::client::session::Session;
+use scylla::client::session_builder::{ClientRoutesSessionBuilder, SessionBuilder};
+use scylla::errors::NewSessionError;
+use scylla::policies::host_filter::AllowListHostFilter;
 use scylla_proxy::nlb::{NlbFrontend, RunningNlbFrontend};
 use scylla_proxy::{
     Condition, Node as ProxyNode, Proxy, Reaction, RequestOpcode, RequestReaction, RequestRule,
@@ -1162,6 +1168,31 @@ async fn client_routes_table_exists(cluster: &Cluster) -> Result<bool, Error> {
 // Host-ID discovery
 // ---------------------------------------------------------------------------
 
+/// Creates a lightweight session, optimised for the only goal of fetching metadata
+/// from the cluster and examining it, e.g., to discover host_ids for CCM nodes.
+///
+/// The session is expected to not open any ordinary connections, so the connection
+/// pools will be empty and the session will not be able to execute queries.
+/// This is done by the AllowListHostFilter with an empty allowlist.
+async fn make_cheap_session(contact_point: SocketAddr) -> Result<Session, NewSessionError> {
+    SessionBuilder::new()
+        .known_node_addr(contact_point)
+        // The following settings are here to make the session lighter,
+        // speeding the tests.
+        //
+        // Contact points will always be Untranslatable, which is always accepted
+        // by the AllowListHostFilter, so we don't need to create the allowlist.
+        .host_filter(Arc::new(
+            AllowListHostFilter::new(std::iter::empty::<&str>()).unwrap(),
+        ))
+        .fetch_schema_metadata(false)
+        .keyspaces_to_fetch(std::iter::empty::<String>())
+        .pool_size(PoolSize::PerHost(NonZero::new(1).unwrap()))
+        .disallow_shard_aware_port(true)
+        .build()
+        .await
+}
+
 /// Uses the driver's cluster metadata (via `Session::get_cluster_state()`) to
 /// reliably discover host_ids for all CCM nodes.
 ///
@@ -1171,8 +1202,6 @@ async fn client_routes_table_exists(cluster: &Cluster) -> Result<bool, Error> {
 /// The Session already discovers all nodes during initialization, so we can
 /// simply read the metadata it has collected.
 async fn discover_host_ids(cluster: &Cluster) -> Result<HashMap<NodeId, Uuid>, Error> {
-    use scylla::client::session_builder::SessionBuilder;
-
     // Connect to the first node — the session will discover the whole cluster.
     let first_node = cluster
         .nodes()
@@ -1183,9 +1212,7 @@ async fn discover_host_ids(cluster: &Cluster) -> Result<HashMap<NodeId, Uuid>, E
         first_node.broadcast_rpc_address(),
         first_node.native_transport_port(),
     );
-    let session = SessionBuilder::new()
-        .known_node(contact.to_string())
-        .build()
+    let session = make_cheap_session(contact)
         .await
         .with_context(|| format!("Failed to connect to cluster via {}", contact))?;
 
@@ -1231,17 +1258,11 @@ async fn discover_host_ids(cluster: &Cluster) -> Result<HashMap<NodeId, Uuid>, E
 /// Retries with backoff because a newly-added CCM node may not be ready
 /// immediately after `node.start()`.
 async fn discover_single_host_id(addr: SocketAddr) -> Result<Uuid, Error> {
-    use scylla::client::session_builder::SessionBuilder;
-
     let max_attempts = 10;
     let mut last_err = None;
 
     for attempt in 1..=max_attempts {
-        match SessionBuilder::new()
-            .known_node(addr.to_string())
-            .build()
-            .await
-        {
+        match make_cheap_session(addr).await {
             Ok(session) => {
                 let state = session.get_cluster_state();
                 let nodes_info = state.get_nodes_info();
