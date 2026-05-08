@@ -45,13 +45,23 @@ type ErrorSink = mpsc::UnboundedReceiver<ProxyError>;
 /// [`RunningNode`] (which exposes [`RunningNode::wait_for_connection`]).
 /// Each accepted connection gets an [`Arc<ConnectionLifetime>`] guard that
 /// decrements the count when the last worker for that connection exits.
+///
+/// Two levels of tracking are maintained:
+/// - `active_count` / `notify`: incremented when a TCP connection is accepted
+///   (pre-CQL handshake).
+/// - `cql_active_count` / `cql_notify`: incremented when the CQL STARTUP
+///   frame is seen on a connection (post-handshake). This is what
+///   [`RunningNode::wait_for_connection`] waits for, because a connection
+///   is only usable by the driver after the CQL handshake completes.
 struct ConnectionTracker {
     active_count: std::sync::atomic::AtomicUsize,
     notify: tokio::sync::Notify,
+    cql_active_count: std::sync::atomic::AtomicUsize,
+    cql_notify: tokio::sync::Notify,
 }
 
 impl ConnectionTracker {
-    /// Track a new connection.
+    /// Track a new connection at TCP level.
     ///
     /// Increments active count and creates a per-connection lifetime guard.
     /// When the guard ([ConnectionLifetime]) is Drop'ed,
@@ -61,6 +71,7 @@ impl ConnectionTracker {
         self.notify.notify_waiters();
         Arc::new(ConnectionLifetime {
             tracker: Arc::clone(self),
+            cql_started: AtomicBool::new(false),
         })
     }
 }
@@ -72,11 +83,34 @@ impl ConnectionTracker {
 /// and the active count is decremented.
 struct ConnectionLifetime {
     tracker: Arc<ConnectionTracker>,
+    /// Whether [`ConnectionTracker::cql_active_count`] was incremented for
+    /// this connection (i.e., STARTUP was seen).
+    cql_started: AtomicBool,
+}
+
+impl ConnectionLifetime {
+    /// Signal that the CQL STARTUP frame has been seen on this connection.
+    ///
+    /// Increments `cql_active_count` (at most once per connection) and
+    /// notifies waiters on [`ConnectionTracker::cql_notify`].
+    fn signal_cql_startup(&self) {
+        if !self.cql_started.swap(true, Ordering::Relaxed) {
+            self.tracker
+                .cql_active_count
+                .fetch_add(1, Ordering::Relaxed);
+            self.tracker.cql_notify.notify_waiters();
+        }
+    }
 }
 
 impl Drop for ConnectionLifetime {
     fn drop(&mut self) {
         self.tracker.active_count.fetch_sub(1, Ordering::Relaxed);
+        if *self.cql_started.get_mut() {
+            self.tracker
+                .cql_active_count
+                .fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -391,6 +425,8 @@ impl Proxy {
                 let connection_tracker = Arc::new(ConnectionTracker {
                     active_count: std::sync::atomic::AtomicUsize::new(0),
                     notify: tokio::sync::Notify::new(),
+                    cql_active_count: std::sync::atomic::AtomicUsize::new(0),
+                    cql_notify: tokio::sync::Notify::new(),
                 });
                 let cc_event_sender = Arc::new(Mutex::new(HashMap::new()));
                 let running = {
@@ -508,18 +544,23 @@ impl RunningNode {
         *old_rules_guard = new_rules;
     }
 
-    /// Waits until at least one driver connection is active on this node.
+    /// Waits until at least one driver connection has completed the CQL
+    /// handshake (STARTUP frame seen) on this node.
     ///
-    /// Returns immediately if there is already an active connection.
-    /// Otherwise blocks until a new connection is accepted by the
-    /// node's doorkeeper.
+    /// Returns immediately if there is already an active CQL connection.
+    /// Otherwise blocks until a connection completes its CQL handshake.
     pub async fn wait_for_connection(&self) {
         loop {
             // Prepare the notification future BEFORE checking the count
             // to avoid a race where a connection arrives between the check
             // and the await.
-            let notified = self.connection_tracker.notify.notified();
-            if self.connection_tracker.active_count.load(Ordering::Relaxed) > 0 {
+            let notified = self.connection_tracker.cql_notify.notified();
+            if self
+                .connection_tracker
+                .cql_active_count
+                .load(Ordering::Relaxed)
+                > 0
+            {
                 return;
             }
             notified.await;
@@ -924,6 +965,7 @@ impl Doorkeeper {
                 let response_rules = Arc::clone(response_rules);
                 let conn_close = connection_close_tx.clone();
                 let event_flag = Arc::clone(&event_register_flag);
+                let conn_lifetime_for_response = Arc::clone(&guard);
                 tokio::task::spawn(async move {
                     let _conn = guard;
                     worker
@@ -935,6 +977,7 @@ impl Doorkeeper {
                             response_rules,
                             conn_close,
                             event_flag,
+                            conn_lifetime_for_response,
                         )
                         .await;
                 });
@@ -1636,12 +1679,16 @@ impl ProxyWorker {
         response_rules: Arc<Mutex<Vec<ResponseRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
         event_registered_flag: Arc<AtomicBool>,
+        conn_lifetime: Arc<ConnectionLifetime>,
     ) {
         let shard = self.shard;
         self.run_until_interrupted("response_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match responses_rx.recv().await {
                     Some(response) => {
+                        if response.opcode == ResponseOpcode::Ready {
+                            conn_lifetime.signal_cql_startup();
+                        }
                         let ctx = EvaluationContext {
                             connection_seq_no: connection_no,
                             opcode: FrameOpcode::Response(response.opcode),
@@ -3224,6 +3271,8 @@ mod tests {
         let tracker = Arc::new(ConnectionTracker {
             active_count: std::sync::atomic::AtomicUsize::new(0),
             notify: tokio::sync::Notify::new(),
+            cql_active_count: std::sync::atomic::AtomicUsize::new(0),
+            cql_notify: tokio::sync::Notify::new(),
         });
 
         assert_eq!(tracker.active_count.load(Ordering::Relaxed), 0);
@@ -3246,8 +3295,21 @@ mod tests {
         drop(guard1);
         assert_eq!(tracker.active_count.load(Ordering::Relaxed), 1);
 
+        // cql_active_count starts at 0 (no STARTUP signalled yet).
+        assert_eq!(tracker.cql_active_count.load(Ordering::Relaxed), 0);
+
+        // Signal CQL startup on guard2.
+        guard2.signal_cql_startup();
+        assert_eq!(tracker.cql_active_count.load(Ordering::Relaxed), 1);
+
+        // Calling signal_cql_startup again on the same guard is idempotent.
+        guard2.signal_cql_startup();
+        assert_eq!(tracker.cql_active_count.load(Ordering::Relaxed), 1);
+
+        // Dropping guard2 decrements both active_count and cql_active_count.
         drop(guard2);
         assert_eq!(tracker.active_count.load(Ordering::Relaxed), 0);
+        assert_eq!(tracker.cql_active_count.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
@@ -3255,6 +3317,8 @@ mod tests {
         let tracker = Arc::new(ConnectionTracker {
             active_count: std::sync::atomic::AtomicUsize::new(0),
             notify: tokio::sync::Notify::new(),
+            cql_active_count: std::sync::atomic::AtomicUsize::new(0),
+            cql_notify: tokio::sync::Notify::new(),
         });
 
         // Set up a waiter BEFORE registering a connection.
@@ -3267,6 +3331,13 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(200), notified)
             .await
             .expect("notify was not triggered by register_connection");
+
+        // Also test that signal_cql_startup triggers cql_notify.
+        let cql_notified = tracker.cql_notify.notified();
+        _guard.signal_cql_startup();
+        tokio::time::timeout(Duration::from_millis(200), cql_notified)
+            .await
+            .expect("cql_notify was not triggered by signal_cql_startup");
     }
 
     #[tokio::test]
@@ -3285,8 +3356,11 @@ mod tests {
         let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
 
         // Connect a driver and accept the backend connection.
-        let _driver_conn = TcpStream::connect(node_proxy_addr).await.unwrap();
-        let (_backend_conn, _) = mock_node_listener.accept().await.unwrap();
+        let mut driver_conn = TcpStream::connect(node_proxy_addr).await.unwrap();
+        let (mut backend_conn, _) = mock_node_listener.accept().await.unwrap();
+
+        // Send a STARTUP frame and receive READY so the proxy signals cql_active_count.
+        send_startup_and_ready(&mut driver_conn, &mut backend_conn).await;
 
         // wait_for_connection should return promptly (connection is already active).
         tokio::time::timeout(
@@ -3334,8 +3408,11 @@ mod tests {
         );
 
         // Now connect a driver and accept the backend side.
-        let _driver_conn = TcpStream::connect(node_proxy_addr).await.unwrap();
-        let (_backend_conn, _) = mock_node_listener.accept().await.unwrap();
+        let mut driver_conn = TcpStream::connect(node_proxy_addr).await.unwrap();
+        let (mut backend_conn, _) = mock_node_listener.accept().await.unwrap();
+
+        // Send a STARTUP frame and receive READY so the proxy signals cql_active_count.
+        send_startup_and_ready(&mut driver_conn, &mut backend_conn).await;
 
         // wait_for_connection should now resolve.
         tokio::time::timeout(
@@ -3346,6 +3423,56 @@ mod tests {
         .expect("wait_for_connection timed out after driver connected");
 
         running_proxy.finish().await.unwrap();
+    }
+
+    /// Helper: send a CQL STARTUP frame from the driver side, wait for the
+    /// mock node to receive it, then send a READY response back. This
+    /// causes the proxy's response_processor to signal `cql_active_count`,
+    /// which is what `wait_for_connection` waits for.
+    async fn send_startup_and_ready(driver_conn: &mut TcpStream, node_conn: &mut TcpStream) {
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        // STARTUP body is a string map; an empty one is fine for the proxy.
+        let body = vec![0u8, 0]; // empty string map (length = 0)
+        write_frame(
+            params,
+            FrameOpcode::Request(RequestOpcode::Startup),
+            &body,
+            driver_conn,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+
+        // Wait until the mock node receives the STARTUP.
+        let _req = read_request_frame(node_conn, &no_compression())
+            .await
+            .unwrap();
+
+        // Send READY response back from the mock node.
+        let response_params = FrameParams {
+            flags: 0,
+            version: 0x84, // response bit set
+            stream: 0,
+        };
+        write_frame(
+            response_params,
+            FrameOpcode::Response(ResponseOpcode::Ready),
+            b"",
+            node_conn,
+            &no_compression(),
+        )
+        .await
+        .unwrap();
+
+        // Wait until the driver receives the READY response so we know
+        // the proxy has processed it and signalled cql_active_count.
+        let _resp = read_response_frame(driver_conn, &no_compression())
+            .await
+            .unwrap();
     }
 
     /// Helper: send a REGISTER frame from the driver side and wait until
