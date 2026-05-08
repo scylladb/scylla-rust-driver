@@ -34,7 +34,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{env, iter};
 use tokio::sync::mpsc;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -468,6 +468,7 @@ pub(crate) async fn execute_unprepared_statement_on_every_node(
     values: &dyn SerializeRow,
 ) -> Result<Vec<QueryResult>, ExecutionError> {
     for_each_node_execute(cluster, |node| async move {
+        debug!("Executing on node {} - {}", node.host_id, node.address);
         let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), None);
         let execution_profile = ExecutionProfile::builder()
             .load_balancing_policy(policy)
