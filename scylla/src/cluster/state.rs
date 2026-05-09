@@ -82,6 +82,23 @@ impl ClusterState {
         }
     }
 
+    /// Triggers immediate pool refills for given nodes. This resets exponential
+    /// backoff for those nodes, so they will be retried immediately instead of
+    /// waiting for the next retry timeout.
+    ///
+    /// Suitable, among others, for nodes whose client routes were added or updated.
+    pub(super) fn trigger_pool_refills_for_hosts(&self, host_ids: impl Iterator<Item = Uuid>) {
+        for host_id in host_ids {
+            if let Some(node) = self.known_peers.get(&host_id) {
+                debug!(
+                    host_id = %host_id,
+                    "Triggering immediate pool refill for relevant Node"
+                );
+                node.trigger_pool_refill();
+            }
+        }
+    }
+
     /// Creates new ClusterState using information about topology held in `metadata`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
     #[allow(clippy::too_many_arguments)]
