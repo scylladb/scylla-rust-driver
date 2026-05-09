@@ -13,6 +13,7 @@
 //! - Host filtering to ensure the control connection is established to an accepted node
 //!
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,6 +22,7 @@ use rand::seq::{IndexedRandom, SliceRandom};
 use scylla_cql::frame::response::event::ClientRoutesChangeEvent;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
+use uuid::Uuid;
 
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
@@ -489,7 +491,7 @@ impl MetadataReader {
     pub(in super::super) async fn fetch_client_route_updates_on_event(
         &mut self,
         evt: &ClientRoutesChangeEvent,
-    ) -> Result<(), MetadataError> {
+    ) -> Result<HashSet<Uuid>, MetadataError> {
         let working_connection = match &self.control_connection_state {
             ControlConnectionState::Working(working_connection) => working_connection,
             ControlConnectionState::Broken { last_error: e, .. } => {
@@ -500,7 +502,7 @@ impl MetadataReader {
         let Some(subscriber) = &self.client_routes_subscriber else {
             // No subscriber, but received an event? Strange enough, but nothing to be done here.
             warn!("BUG: Received ClientRoutesChange event, but no ClientRoutesSubscriber was set!");
-            return Ok(());
+            return Ok(HashSet::new());
         };
 
         #[deny(clippy::wildcard_enum_match_arm)]
@@ -525,7 +527,7 @@ impl MetadataReader {
         if connection_ids.is_empty() {
             // The event contained no relevant connection IDs.
             // Nothing to be done.
-            return Ok(());
+            return Ok(HashSet::new());
         }
 
         // Although this is vaguely documented, the semantics of an event with connection ids [A, B, C] and host ids [X, Y, Z]
@@ -539,8 +541,8 @@ impl MetadataReader {
             .query_client_routes(&connection_ids, host_ids)
             .await?;
 
-        subscriber.merge_client_routes_update(evt, client_routes);
+        let updated_hosts = subscriber.merge_client_routes_update(evt, client_routes);
 
-        Ok(())
+        Ok(updated_hosts)
     }
 }
