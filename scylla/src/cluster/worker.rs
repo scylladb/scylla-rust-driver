@@ -361,7 +361,7 @@ impl ClusterWorker {
                                 Event::ClientRoutesChange(evt) => {
                                     let res = self.metadata_reader.fetch_client_route_updates_on_event(&evt).await;
                                     match res {
-                                        Ok(()) => continue, // Don't go to refreshing.
+                                        Ok(_updated_hosts) => continue, // Don't go to refreshing.
                                         Err(err) =>
                                         {
                                             error!(
