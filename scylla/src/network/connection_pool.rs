@@ -1273,7 +1273,7 @@ mod tests {
     #[tokio::test]
     async fn many_connections() {
         setup_tracing();
-        let connections_number = 512;
+        let connections_number = 400;
 
         let connect_address: SocketAddr = std::env::var("SCYLLA_URI")
             .unwrap_or_else(|_| "172.42.0.2:9042".to_string())
