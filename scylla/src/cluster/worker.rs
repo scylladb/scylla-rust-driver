@@ -375,16 +375,14 @@ impl ClusterWorker {
                                         }
                                     }
                                 }
-                                Event::StatusChange(_status) => {
-                                    // TODO: Tracking status using events is unreliable because of
-                                    // the possibility of losing events when control connection is broken.
-                                    // Maybe a better thing to do here is to treat those events as hints?
-                                    // What I mean by that?
-                                    // - Don't store the status at all.
-                                    // - When receiving down event, and the driver still sees the node
-                                    //   as connected, then try to send a keepalive query to its connections.
-                                    // - When receiving up event, and we have no connections to the node,
-                                    //   then try to open new connections.
+                                Event::StatusChange(status) => {
+                                    use scylla_cql::frame::response::event::StatusChangeEvent;
+                                    if let StatusChangeEvent::Up(addr) = status {
+                                        self.cluster_state.load().trigger_pool_refill_for_addr(addr);
+                                    }
+                                    // TODO: When receiving a DOWN event, and the driver
+                                    // still sees the node as connected, send a keepalive
+                                    // query to its connections to verify liveness.
                                     continue;
                                 },
                                 _ => continue, // Don't go to refreshing
