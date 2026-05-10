@@ -17,6 +17,7 @@ use crate::routing::locator::tablets::{RawTablet, TabletsInfo};
 use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{FutureExt, future::RemoteHandle};
+use scylla_cql::frame::response::event::StatusChangeEvent;
 use scylla_cql::frame::response::result::TableSpec;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -375,19 +376,40 @@ impl ClusterWorker {
                                         }
                                     }
                                 }
-                                Event::StatusChange(_status) => {
-                                    // TODO: Tracking status using events is unreliable because of
-                                    // the possibility of losing events when control connection is broken.
-                                    // Maybe a better thing to do here is to treat those events as hints?
-                                    // What I mean by that?
-                                    // - Don't store the status at all.
-                                    // - When receiving down event, and the driver still sees the node
-                                    //   as connected, then try to send a keepalive query to its connections.
-                                    // - When receiving up event, and we have no connections to the node,
-                                    //   then try to open new connections.
-                                    continue;
+                                Event::StatusChange(status) => {
+                                    // Tracking node status using events is unreliable because of the possibility of losing events
+                                    // when control connection is broken. A better thing to do here is to treat those events as hints
+                                    // for:
+                                    // - PoolRefiller - UP triggers immediate pool refill attempt, and
+                                    // - Keepaliver - DOWN triggers immediate keepalive query attempt.
+
+                                    match status {
+                                        StatusChangeEvent::Up(addr) => {
+                                            // When receiving an UP event, it is likely that the node just came back up and is now reachable.
+                                            // We optimistically trigger pool refill for this node.
+                                            // This is not guaranteed to be correct. It is for example possible that a network partition happened,
+                                            // the node lost connectivity to the cluster and driver; then it regained connectivity to the cluster,
+                                            // but not to the driver, and thus is still unreachable from the driver's perspective.
+                                            // However, in this case triggering pool refill is not harmful - if the node is actually reachable,
+                                            // then new connections will be opened to it, and if it is not reachable,
+                                            // then connection attempts will fail and the node will be marked as unreachable by `PoolRefiller`,
+                                            // so it won't be targeted by the load balancing policy.
+                                            self.cluster_state.load().trigger_pool_refill_for_addr(addr);
+                                        },
+                                        StatusChangeEvent::Down(_addr) => {
+                                            // TODO: When receiving a DOWN event, and the driver still sees the node as connected,
+                                            // send a keepalive query to its connections to verify liveness.
+                                            // The node is supposedly DOWN, so connections to this node are likely defunct.
+                                            // We expect that the keepalive query fails, in which case connections will be closed.
+                                            // As a result, the connection pool will report 0 connections to this node,
+                                            // and thus the node will not be targeted by the LoadBalancingPolicy,
+                                            // which is the desired behaviour. However, if the keepalive query succeeds,
+                                            // then the node is likely still alive (got stale event?), and we can keep targeting it.
+                                        },
+                                    }
+                                    continue; // Don't go to refreshing.
                                 },
-                                _ => continue, // Don't go to refreshing
+                                _ => continue, // Don't go to refreshing.
                             }
                         }
                     }
