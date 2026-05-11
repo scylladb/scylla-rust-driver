@@ -13,7 +13,7 @@
 //! it necessarily went through the NLB (since the driver only knows NLB
 //! addresses from `client_routes` and real node addresses, but not proxy addresses).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -137,10 +137,10 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
         .await
         .expect("Failed to build client-routes session");
 
-    // Wait for the driver to open connections to all proxy nodes.
-    plc.wait_for_connections_to_all_nodes(CONNECTION_WAIT_TIMEOUT)
+    // Wait for the driver to load routes and connect to all proxy nodes.
+    plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
         .await
-        .expect("Driver did not connect to all proxy nodes");
+        .expect("Driver did not connect to all nodes");
 
     let ks = unique_keyspace_name();
     create_test_schema(&session, &ks, "'dc1': 1, 'dc2': 1").await;
@@ -198,6 +198,7 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
     info!("=== Phase 2: 3 nodes remaining ===");
     let remaining_nodes = plc.active_node_ids();
     assert_eq!(remaining_nodes.len(), 3);
+
     let mut rxs = plc.setup_query_feedback();
     run_queries(&session, &ks, QUERIES_PER_PHASE).await;
     let (per_node, total) = drain_feedback(&mut rxs);
@@ -224,9 +225,9 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
     info!("New node added: {}", new_node_id);
     // Wait for the driver to discover the new node and open a connection
     // through the new proxy chain.
-    plc.wait_for_connections_to_node(new_node_id, CONNECTION_WAIT_TIMEOUT)
+    plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
         .await
-        .expect("Driver did not connect to newly added node");
+        .expect("Driver did not connect to all nodes after adding node");
 
     // --- Phase 3: 4 nodes again (with new node) ---
     info!("=== Phase 3: 4 nodes with new node ===");
@@ -286,9 +287,9 @@ async fn rolling_restart(plc: &mut ClientRoutesCluster) {
         .await
         .expect("Failed to build client-routes session");
 
-    plc.wait_for_connections_to_all_nodes(CONNECTION_WAIT_TIMEOUT)
+    plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
         .await
-        .expect("Driver did not connect to all proxy nodes");
+        .expect("Driver did not connect to all nodes");
 
     let ks = unique_keyspace_name();
     create_test_schema(&session, &ks, "'replication_factor': 3").await;
@@ -339,11 +340,11 @@ async fn rolling_restart(plc: &mut ClientRoutesCluster) {
             .await
             .unwrap_or_else(|e| panic!("Failed to restart chain for node {}: {}", target_node, e));
 
-        plc.wait_for_connections_to_node(target_node, CONNECTION_WAIT_TIMEOUT)
+        plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
             .await
             .unwrap_or_else(|e| {
                 panic!(
-                    "Driver did not reconnect to restarted node {}: {}",
+                    "Driver did not reconnect to all nodes after restarting node {}: {}",
                     target_node, e
                 )
             });
@@ -412,9 +413,9 @@ async fn nlb_port_remap(plc: &mut ClientRoutesCluster) {
         .await
         .expect("Failed to build client-routes session");
 
-    plc.wait_for_connections_to_all_nodes(CONNECTION_WAIT_TIMEOUT)
+    plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
         .await
-        .expect("Driver did not connect to all proxy nodes");
+        .expect("Driver did not connect to all nodes");
 
     let ks = unique_keyspace_name();
     create_test_schema(&session, &ks, "'replication_factor': 3").await;
@@ -445,7 +446,7 @@ async fn nlb_port_remap(plc: &mut ClientRoutesCluster) {
 
     // Wait for the driver to connect through the new NLB ports using
     // the freshly-read routes.
-    plc.wait_for_connections_to_all_nodes(CONNECTION_WAIT_TIMEOUT)
+    plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
         .await
         .expect("Driver did not reconnect through new NLB ports");
 
@@ -498,9 +499,9 @@ async fn scale_out(plc: &mut ClientRoutesCluster) {
         .await
         .expect("Failed to build client-routes session");
 
-    plc.wait_for_connections_to_all_nodes(CONNECTION_WAIT_TIMEOUT)
+    plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
         .await
-        .expect("Driver did not connect to all proxy nodes");
+        .expect("Driver did not connect to all nodes");
 
     let ks = unique_keyspace_name();
     create_test_schema(&session, &ks, "'replication_factor': 3").await;
@@ -528,14 +529,9 @@ async fn scale_out(plc: &mut ClientRoutesCluster) {
         new_node_ids.push(new_id);
     }
 
-    // Expedite driver's connection to new nodes by triggering immediate metadata refresh.
-    session
-        .refresh_metadata()
-        .await
-        .expect("Driver failed to refresh metadata");
-
-    // Wait for the driver to discover all 6 nodes and open connections.
-    plc.wait_for_connections_to_all_nodes(CONNECTION_WAIT_TIMEOUT)
+    // Wait for the driver to discover all 6 nodes, load their routes,
+    // and open data pool connections.
+    plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
         .await
         .expect("Driver did not connect to all 6 nodes");
 
@@ -637,9 +633,9 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
         .await
         .expect("Failed to build client-routes session");
 
-    plc.wait_for_connections_to_all_nodes(CONNECTION_WAIT_TIMEOUT)
+    plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
         .await
-        .expect("Driver did not connect to all proxy nodes");
+        .expect("Driver did not connect to all nodes");
 
     let ks = unique_keyspace_name();
     create_test_schema(&session, &ks, "'dc1': 2, 'dc2': 2").await;
@@ -726,17 +722,14 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
     }
 
     // Wait for the driver to connect through the new NLB ports.
-    plc.wait_for_connections_to_nodes(
-        Some(&HashSet::from_iter(dc1_nodes.iter().copied())),
-        CONNECTION_WAIT_TIMEOUT,
-    )
-    .await
-    .unwrap_or_else(|e| {
-        panic!(
-            "Phase 3: driver did not reconnect to all nodes from dc1: {}",
-            e
-        )
-    });
+    plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
+        .await
+        .unwrap_or_else(|e| {
+            panic!(
+                "Phase 3: driver did not reconnect to all nodes after dc1 chain restarts: {}",
+                e
+            )
+        });
 
     // Verify traffic reaches all 4 nodes through the new ports.
     let mut rxs = plc.setup_query_feedback();
@@ -767,12 +760,9 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
             .unwrap_or_else(|e| panic!("Failed to restart chain for node {}: {}", node_id, e));
     }
 
-    plc.wait_for_connections_to_nodes(
-        Some(&HashSet::from(cross_dc_nodes)),
-        CONNECTION_WAIT_TIMEOUT,
-    )
-    .await
-    .unwrap_or_else(|e| panic!("Phase 4: driver did not reconnect to cross-dc nodes: {}", e));
+    plc.wait_for_pools_connected(&session, CONNECTION_WAIT_TIMEOUT)
+        .await
+        .unwrap_or_else(|e| panic!("Phase 4: driver did not reconnect to cross-dc nodes: {}", e));
 
     let mut rxs = plc.setup_query_feedback();
     run_queries(&session, &ks, QUERIES_PER_PHASE).await;
