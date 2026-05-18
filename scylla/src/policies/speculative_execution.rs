@@ -28,6 +28,12 @@ pub struct Context {
 
 /// The policy that decides if the driver will send speculative queries to the
 /// next targets when the current target takes too long to respond.
+///
+/// Speculative execution only fires for statements explicitly marked as
+/// idempotent (`Statement::set_is_idempotent(true)` or
+/// `PreparedStatement::set_is_idempotent(true)`). Non-idempotent statements
+/// bypass this policy entirely so the driver does not duplicate side-effecting
+/// writes across racing fibers.
 // TODO(2.0): Consider renaming the methods to get rid of "retry" naming.
 pub trait SpeculativeExecutionPolicy: std::fmt::Debug + Send + Sync {
     /// The maximum number of speculative executions that will be triggered

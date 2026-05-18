@@ -12,6 +12,29 @@ By default there are three retry policies:
 
 It's possible to implement a custom `Retry Policy` by implementing the traits `RetryPolicy` and `RetrySession`.
 
+### Idempotence and retry policies
+
+Retry policies and [speculative execution](../speculative-execution/speculative.md)
+treat idempotence differently:
+
+* **Speculative execution** strictly requires `is_idempotent = true`.
+  Without it, speculative fibers do not start at all, even if a
+  `SpeculativeExecutionPolicy` is configured on the `Session`.
+* **Retry policies** receive `is_idempotent` as one input on `RequestInfo`
+  and decide for themselves. They can - and the bundled policies do -
+  retry some non-idempotent statements when the failure mode makes
+  re-execution safe (for example, the [Default Retry Policy](default.md)
+  retries on `IsBootstrapping` and `UnableToAllocStreamId` regardless of
+  idempotence, because the request is known not to have reached the
+  server). Conversely, on errors where the request may have already
+  partially executed (broken connection, `Overloaded`, `ServerError`,
+  `TruncateError`), retries only happen when the statement is marked
+  idempotent.
+
+Marking a statement idempotent therefore unlocks speculative execution
+entirely *and* widens the set of error classes the retry policies will act
+on.
+
 ### Query idempotence
 A query is idempotent if it can be applied multiple times without changing the result of the initial application
 
