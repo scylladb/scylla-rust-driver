@@ -615,7 +615,9 @@ impl ConnectionError {
     pub fn is_address_unavailable_for_use(&self) -> bool {
         if let ConnectionError::IoError(io_error) = self {
             match io_error.kind() {
-                ErrorKind::AddrInUse | ErrorKind::PermissionDenied => return true,
+                ErrorKind::AddrInUse
+                | ErrorKind::PermissionDenied
+                | ErrorKind::AddrNotAvailable => return true,
                 _ => {}
             }
         }

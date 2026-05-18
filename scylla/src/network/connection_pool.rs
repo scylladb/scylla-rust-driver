@@ -1268,12 +1268,7 @@ mod tests {
     use crate::test_utils::setup_tracing;
     use std::net::{SocketAddr, ToSocketAddrs};
 
-    // Open many connections to a node
-    // Port collision should occur
-    // If they are not handled this test will most likely fail
-    #[tokio::test]
-    async fn many_connections() {
-        setup_tracing();
+    async fn test_many_connections_with_config(connection_config: HostConnectionConfig) {
         let connections_number = 400;
 
         let connect_address: SocketAddr = std::env::var("SCYLLA_URI")
@@ -1282,16 +1277,6 @@ mod tests {
             .unwrap()
             .next()
             .unwrap();
-
-        let connection_config = HostConnectionConfig {
-            compression: None,
-            tcp_socket_options: TcpSocketOptions {
-                nodelay: true,
-                ..Default::default()
-            },
-            tls_config: None,
-            ..Default::default()
-        };
 
         // This does not have to be the real sharder,
         // the test is only about port collisions, not connecting
@@ -1307,11 +1292,37 @@ mod tests {
             open_connection_to_shard_aware_port(&endpoint, 0, sharder.clone(), &connection_config)
         });
 
-        let joined = futures::future::join_all(conns).await;
+        let _joined = futures::future::try_join_all(conns).await.unwrap();
+    }
 
-        // Check that each connection managed to connect successfully
-        for res in joined {
-            res.unwrap();
-        }
+    // Open many connections to a node
+    // Port collision should occur
+    // If they are not handled this test will most likely fail
+    #[tokio::test]
+    async fn many_connections() {
+        setup_tracing();
+
+        test_many_connections_with_config(HostConnectionConfig {
+            compression: None,
+            tcp_socket_options: TcpSocketOptions {
+                nodelay: true,
+                ..Default::default()
+            },
+            tls_config: None,
+            ..Default::default()
+        })
+        .await;
+
+        test_many_connections_with_config(HostConnectionConfig {
+            compression: None,
+            tcp_socket_options: TcpSocketOptions {
+                nodelay: true,
+                reuse_address: Some(true),
+                ..Default::default()
+            },
+            tls_config: None,
+            ..Default::default()
+        })
+        .await;
     }
 }
