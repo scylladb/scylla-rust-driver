@@ -731,8 +731,41 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Ok(())
     /// # }
     /// ```
+    #[deprecated(
+        since = "1.7.0",
+        note = "This option is deprecated because setting SO_LINGER on a socket used with Tokio is always incorrect
+        as it leads to blocking the thread when the socket is closed.
+        See https://docs.rs/tokio/latest/tokio/net/struct.TcpSocket.html#method.set_linger for more information."
+    )]
     pub fn tcp_linger(mut self, duration: Duration) -> Self {
         self.config.tcp_linger = Some(duration);
+        self
+    }
+
+    /// Sets the `SO_LINGER` options with a zero timeout.
+    ///
+    /// From Tokio docs:
+    /// > This causes the connection to be forcefully aborted (“abortive close”) when the socket is dropped or closed.
+    /// > Instead of the normal TCP shutdown handshake (FIN/ACK), a TCP RST (reset) segment is sent to the peer,
+    /// > and the socket immediately discards any unsent data residing in the socket send buffer.
+    /// > This prevents the socket from entering the TIME_WAIT state after closing it.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tcp_zero_linger()
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tcp_zero_linger(mut self) -> Self {
+        self.config.tcp_linger = Some(Duration::ZERO);
         self
     }
 

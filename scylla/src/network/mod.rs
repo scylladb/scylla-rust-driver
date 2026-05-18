@@ -8,7 +8,7 @@ mod connection;
 
 pub(crate) use connection::open_connection;
 
-pub(crate) use connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
+pub(crate) use connection::{Connection, ConnectionConfig, TcpSocketOptions, VerifiedKeyspaceName};
 
 mod connection_pool;
 

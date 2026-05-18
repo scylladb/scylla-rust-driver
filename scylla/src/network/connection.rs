@@ -267,6 +267,45 @@ impl<'id: 'map, 'map> SelfIdentity<'id> {
     }
 }
 
+/// Options for configuring the TCP socket used for a connection.
+///
+/// These options are applied to the socket before binding and connecting.
+#[derive(Clone, Debug)]
+pub(crate) struct TcpSocketOptions {
+    /// Whether to set the `TCP_NODELAY` flag on the socket.
+    pub(crate) nodelay: bool,
+
+    /// TCP keepalive interval — time after which the OS begins sending
+    /// keepalive probes on an idle connection. `None` disables TCP keepalive.
+    pub(crate) keepalive_interval: Option<Duration>,
+
+    /// Size of the TCP receive buffer (`SO_RCVBUF`). `None` keeps the OS default.
+    pub(crate) recv_buffer_size: Option<usize>,
+
+    /// Size of the TCP send buffer (`SO_SNDBUF`). `None` keeps the OS default.
+    pub(crate) send_buffer_size: Option<usize>,
+
+    /// Whether to set the `SO_REUSEADDR` socket option.
+    /// `None` keeps the OS default (typically `false`).
+    pub(crate) reuse_address: Option<bool>,
+
+    /// Linger duration (`SO_LINGER`). `None` keeps the OS default (disabled).
+    pub(crate) linger: Option<Duration>,
+}
+
+impl Default for TcpSocketOptions {
+    fn default() -> Self {
+        Self {
+            nodelay: true,
+            keepalive_interval: None,
+            recv_buffer_size: None,
+            send_buffer_size: None,
+            reuse_address: None,
+            linger: None,
+        }
+    }
+}
+
 /// Configuration used for new connections.
 ///
 /// Before being used for a particular connection, should be customized
@@ -277,12 +316,7 @@ pub(crate) struct ConnectionConfig {
     pub(crate) local_ip_address: Option<IpAddr>,
     pub(crate) shard_aware_local_port_range: ShardAwarePortRange,
     pub(crate) compression: Option<Compression>,
-    pub(crate) tcp_nodelay: bool,
-    pub(crate) tcp_keepalive_interval: Option<Duration>,
-    pub(crate) tcp_recv_buffer_size: Option<usize>,
-    pub(crate) tcp_send_buffer_size: Option<usize>,
-    pub(crate) tcp_reuse_address: Option<bool>,
-    pub(crate) tcp_linger: Option<Duration>,
+    pub(crate) tcp_socket_options: TcpSocketOptions,
     pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     pub(crate) tls_provider: Option<TlsProvider>,
     pub(crate) connect_timeout: std::time::Duration,
@@ -315,12 +349,7 @@ impl ConnectionConfig {
             local_ip_address: self.local_ip_address,
             shard_aware_local_port_range: self.shard_aware_local_port_range.clone(),
             compression: self.compression,
-            tcp_nodelay: self.tcp_nodelay,
-            tcp_keepalive_interval: self.tcp_keepalive_interval,
-            tcp_recv_buffer_size: self.tcp_recv_buffer_size,
-            tcp_send_buffer_size: self.tcp_send_buffer_size,
-            tcp_reuse_address: self.tcp_reuse_address,
-            tcp_linger: self.tcp_linger,
+            tcp_socket_options: self.tcp_socket_options.clone(),
             timestamp_generator: self.timestamp_generator.clone(),
             tls_config,
             connect_timeout: self.connect_timeout,
@@ -345,12 +374,7 @@ pub(crate) struct HostConnectionConfig {
     pub(crate) local_ip_address: Option<IpAddr>,
     pub(crate) shard_aware_local_port_range: ShardAwarePortRange,
     pub(crate) compression: Option<Compression>,
-    pub(crate) tcp_nodelay: bool,
-    pub(crate) tcp_keepalive_interval: Option<Duration>,
-    pub(crate) tcp_recv_buffer_size: Option<usize>,
-    pub(crate) tcp_send_buffer_size: Option<usize>,
-    pub(crate) tcp_reuse_address: Option<bool>,
-    pub(crate) tcp_linger: Option<Duration>,
+    pub(crate) tcp_socket_options: TcpSocketOptions,
     pub(crate) timestamp_generator: Option<Arc<dyn TimestampGenerator>>,
     pub(crate) tls_config: Option<TlsConfig>,
     pub(crate) connect_timeout: std::time::Duration,
@@ -375,12 +399,7 @@ impl Default for HostConnectionConfig {
             local_ip_address: None,
             shard_aware_local_port_range: ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
             compression: None,
-            tcp_nodelay: true,
-            tcp_keepalive_interval: None,
-            tcp_recv_buffer_size: None,
-            tcp_send_buffer_size: None,
-            tcp_reuse_address: None,
-            tcp_linger: None,
+            tcp_socket_options: TcpSocketOptions::default(),
             timestamp_generator: None,
             event_sender: None,
             tls_config: None,
@@ -408,12 +427,7 @@ impl Default for ConnectionConfig {
             local_ip_address: None,
             shard_aware_local_port_range: ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
             compression: None,
-            tcp_nodelay: true,
-            tcp_keepalive_interval: None,
-            tcp_recv_buffer_size: None,
-            tcp_send_buffer_size: None,
-            tcp_reuse_address: None,
-            tcp_linger: None,
+            tcp_socket_options: TcpSocketOptions::default(),
             timestamp_generator: None,
             event_sender: None,
             tls_provider: None,
@@ -464,7 +478,7 @@ impl Connection {
                 connect_address,
                 config.local_ip_address,
                 source_port,
-                config.tcp_reuse_address,
+                &config.tcp_socket_options,
             ),
         )
         .await;
@@ -474,24 +488,6 @@ impl Connection {
                 return Err(ConnectionError::ConnectTimeout);
             }
         };
-        stream.set_nodelay(config.tcp_nodelay)?;
-
-        if let Some(tcp_keepalive_interval) = config.tcp_keepalive_interval {
-            Self::setup_tcp_keepalive(&stream, tcp_keepalive_interval)?;
-        }
-
-        {
-            let sf = SockRef::from(&stream);
-            if let Some(recv_buf) = config.tcp_recv_buffer_size {
-                sf.set_recv_buffer_size(recv_buf)?;
-            }
-            if let Some(send_buf) = config.tcp_send_buffer_size {
-                sf.set_send_buffer_size(send_buf)?;
-            }
-            if let Some(linger) = config.tcp_linger {
-                sf.set_linger(Some(linger))?;
-            }
-        }
 
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(1024);
@@ -533,58 +529,6 @@ impl Connection {
         };
 
         Ok((connection, error_receiver))
-    }
-
-    fn setup_tcp_keepalive(
-        stream: &TcpStream,
-        tcp_keepalive_interval: Duration,
-    ) -> std::io::Result<()> {
-        // It may be surprising why we call `with_time()` with `tcp_keepalive_interval`
-        // and `with_interval() with some other value. This is due to inconsistent naming:
-        // our interval means time after connection becomes idle until keepalives
-        // begin to be sent (they call it "time"), and their interval is time between
-        // sending keepalives.
-        // We insist on our naming due to other drivers following the same convention.
-        let mut tcp_keepalive = TcpKeepalive::new().with_time(tcp_keepalive_interval);
-
-        // These cfg values are taken from socket2 library, which uses the same constraints.
-        #[cfg(any(
-            target_os = "android",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "netbsd",
-            target_os = "tvos",
-            target_os = "watchos",
-            target_os = "windows",
-        ))]
-        {
-            tcp_keepalive = tcp_keepalive.with_interval(Duration::from_secs(1));
-        }
-
-        #[cfg(any(
-            target_os = "android",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "fuchsia",
-            target_os = "illumos",
-            target_os = "ios",
-            target_os = "linux",
-            target_os = "macos",
-            target_os = "netbsd",
-            target_os = "tvos",
-            target_os = "watchos",
-        ))]
-        {
-            tcp_keepalive = tcp_keepalive.with_retries(10);
-        }
-
-        let sf = SockRef::from(&stream);
-        sf.set_tcp_keepalive(&tcp_keepalive)
     }
 
     async fn startup(
@@ -2192,7 +2136,7 @@ async fn connect_with_source_ip_and_port(
     connect_address: SocketAddr,
     source_ip: Option<IpAddr>,
     source_port: Option<u16>,
-    reuse_address: Option<bool>,
+    socket_options: &TcpSocketOptions,
 ) -> Result<TcpStream, std::io::Error> {
     // Binding to port 0 is equivalent to choosing random ephemeral port.
     let source_port = source_port.unwrap_or(0);
@@ -2202,9 +2146,7 @@ async fn connect_with_source_ip_and_port(
             // If source_ip not provided, bind to INADDR_ANY.
             let source_ipv4 = source_ip.unwrap_or(Ipv4Addr::UNSPECIFIED.into());
             let socket = TcpSocket::new_v4()?;
-            if let Some(reuse) = reuse_address {
-                socket.set_reuseaddr(reuse)?;
-            }
+            apply_socket_options(&socket, socket_options)?;
             socket.bind(SocketAddr::new(source_ipv4, source_port))?;
             Ok(socket.connect(connect_address).await?)
         }
@@ -2212,13 +2154,90 @@ async fn connect_with_source_ip_and_port(
             // If source_ip not provided, bind to in6addr_any.
             let source_ipv6 = source_ip.unwrap_or(Ipv6Addr::UNSPECIFIED.into());
             let socket = TcpSocket::new_v6()?;
-            if let Some(reuse) = reuse_address {
-                socket.set_reuseaddr(reuse)?;
-            }
+            apply_socket_options(&socket, socket_options)?;
             socket.bind(SocketAddr::new(source_ipv6, source_port))?;
             Ok(socket.connect(connect_address).await?)
         }
     }
+}
+
+/// Applies all TCP socket options to the socket before bind/connect.
+///
+/// Uses Tokio's built-in `TcpSocket` methods where possible. TCP keepalive
+/// and `SO_LINGER` are configured via `socket2` since Tokio does not expose a
+/// keepalive API on `TcpSocket`, and `TcpSocket::set_linger` is deprecated.
+fn apply_socket_options(
+    socket: &TcpSocket,
+    options: &TcpSocketOptions,
+) -> Result<(), std::io::Error> {
+    if let Some(reuse) = options.reuse_address {
+        socket.set_reuseaddr(reuse)?;
+    }
+    socket.set_nodelay(options.nodelay)?;
+    if let Some(recv_buf) = options.recv_buffer_size {
+        socket.set_recv_buffer_size(recv_buf as u32)?;
+    }
+    if let Some(send_buf) = options.send_buffer_size {
+        socket.set_send_buffer_size(send_buf as u32)?;
+    }
+
+    let sf = SockRef::from(&socket);
+    if let Some(linger) = options.linger {
+        #[expect(deprecated)]
+        socket.set_linger(Some(linger))?;
+    }
+    if let Some(keepalive_interval) = options.keepalive_interval {
+        setup_tcp_keepalive(&sf, keepalive_interval)?;
+    }
+    Ok(())
+}
+
+fn setup_tcp_keepalive(sf: &SockRef<'_>, tcp_keepalive_interval: Duration) -> std::io::Result<()> {
+    // It may be surprising why we call `with_time()` with `tcp_keepalive_interval`
+    // and `with_interval() with some other value. This is due to inconsistent naming:
+    // our interval means time after connection becomes idle until keepalives
+    // begin to be sent (they call it "time"), and their interval is time between
+    // sending keepalives.
+    // We insist on our naming due to other drivers following the same convention.
+    let mut tcp_keepalive = TcpKeepalive::new().with_time(tcp_keepalive_interval);
+
+    // These cfg values are taken from socket2 library, which uses the same constraints.
+    #[cfg(any(
+        target_os = "android",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "netbsd",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "windows",
+    ))]
+    {
+        tcp_keepalive = tcp_keepalive.with_interval(Duration::from_secs(1));
+    }
+
+    #[cfg(any(
+        target_os = "android",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "netbsd",
+        target_os = "tvos",
+        target_os = "watchos",
+    ))]
+    {
+        tcp_keepalive = tcp_keepalive.with_retries(10);
+    }
+
+    sf.set_tcp_keepalive(&tcp_keepalive)
 }
 
 struct OrphanageTracker {
@@ -2916,6 +2935,7 @@ mod tests {
             .await
             .unwrap();
 
+        #[expect(deprecated)]
         let session = SessionBuilder::new()
             .known_node_addr(proxy_addr)
             .tcp_recv_buffer_size(RECV_BUFFER_SIZE)
