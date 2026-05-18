@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+use std::env;
 use std::sync::Arc;
 
 use itertools::Itertools as _;
@@ -549,4 +551,30 @@ async fn test_durable_writes_in_metadata() {
         .ddl(format!("DROP KEYSPACE {ks_non_durable}"))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn test_session_should_have_topology_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let state = session.get_cluster_state();
+
+    let expected_addresses: HashSet<String> = [
+        env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string()),
+        env::var("SCYLLA_URI2").unwrap_or_else(|_| "172.42.0.3:9042".to_string()),
+        env::var("SCYLLA_URI3").unwrap_or_else(|_| "172.42.0.4:9042".to_string()),
+    ]
+    .into_iter()
+    .collect();
+
+    let got_addresses: HashSet<String> = state
+        .get_nodes_info()
+        .iter()
+        .map(|node| node.address.to_string())
+        .collect();
+
+    assert_eq!(
+        got_addresses, expected_addresses,
+        "Cluster node addresses do not match environment variables"
+    );
 }
