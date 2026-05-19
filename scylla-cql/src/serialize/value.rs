@@ -1036,7 +1036,7 @@ fn serialize_vector<'t, 'b, T: SerializeValue + 't>(
         ));
     }
     let mut builder = writer.into_value_builder();
-    match element_type.type_size() {
+    match element_type.type_size_for_vector() {
         Some(_) => {
             for element in iter {
                 serialize_next_constant_length_elem(
@@ -1130,7 +1130,8 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-fn mk_typck_err<T: ?Sized>(
+/// Creates a [`BuiltinTypeCheckError`] with the given kind.
+pub fn mk_typck_err<T: ?Sized>(
     got: &ColumnType,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
 ) -> SerializationError {
@@ -1163,7 +1164,8 @@ pub struct BuiltinSerializationError {
     pub kind: BuiltinSerializationErrorKind,
 }
 
-pub(crate) fn mk_ser_err<T: ?Sized>(
+/// Creates a [`BuiltinSerializationError`] with the given kind.
+pub fn mk_ser_err<T: ?Sized>(
     got: &ColumnType,
     kind: impl Into<BuiltinSerializationErrorKind>,
 ) -> SerializationError {

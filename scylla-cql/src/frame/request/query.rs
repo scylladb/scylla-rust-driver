@@ -264,7 +264,13 @@ impl PagingStateResponse {
         matches!(*self, Self::NoMorePages)
     }
 
-    pub(crate) fn new_from_raw_bytes(raw_paging_state: Option<&[u8]>) -> Self {
+    /// Creates a [PagingStateResponse] from raw paging state bytes as returned by the server.
+    ///
+    /// If `raw_paging_state` is `Some`, the response will indicate that there are more pages
+    /// to fetch, and the provided bytes will be used as the [PagingState] for resuming the query.
+    /// If `raw_paging_state` is `None`, the response will indicate that there are no more pages
+    /// to fetch.
+    pub fn new_from_raw_bytes(raw_paging_state: Option<&[u8]>) -> Self {
         match raw_paging_state {
             Some(raw_bytes) => Self::HasMorePages {
                 state: PagingState::new_from_raw_bytes(raw_bytes),

@@ -730,6 +730,18 @@ where
 // collections
 
 make_error_replace_rust_name!(
+    /// Replaces the Rust type name in a [`BuiltinTypeCheckError`] wrapped inside
+    /// a [`TypeCheckError`] with the name of `RustT`.
+    ///
+    /// This is used to ensure that error messages report the correct Rust type name
+    /// even when the error originates from a helper/inner type used during deserialization,
+    /// rather than the top-level type being deserialized.
+    ///
+    /// # Assumptions
+    /// - This function should **only** be called inside a proper `type_check()` implementation.
+    /// - It should be called **before** the error is cloned, as it attempts to mutably access
+    ///   the inner error via [`Arc::get_mut`]; if the `Arc` has already been cloned,
+    ///   a new [`BuiltinTypeCheckError`] will be allocated with the updated name instead.
     pub(crate),
     typck_error_replace_rust_name,
     TypeCheckError,
@@ -737,6 +749,18 @@ make_error_replace_rust_name!(
 );
 
 make_error_replace_rust_name!(
+    /// Replaces the Rust type name in a [`BuiltinDeserializationError`] wrapped inside
+    /// a [`DeserializationError`] with the name of `RustT`.
+    ///
+    /// This is used to ensure that error messages report the correct Rust type name
+    /// even when the error originates from a helper/inner type used during deserialization,
+    /// rather than the top-level type being deserialized.
+    ///
+    /// # Assumptions
+    /// - This function should **only** be called inside a proper `deserialize()` implementation.
+    /// - It should be called **before** the error is cloned, as it attempts to mutably access
+    ///   the inner error via [`Arc::get_mut`]; if the `Arc` has already been cloned,
+    ///   a new [`BuiltinDeserializationError`] will be allocated with the updated name instead.
     pub,
     deser_error_replace_rust_name,
     DeserializationError,
@@ -998,7 +1022,7 @@ where
 ///
 /// It would be nice to have a rule to determine if the element type is fixed-length or not,
 /// however, we only have a heuristic. There are a few types that should, for all intents and purposes,
-/// be considered fixed-length, but are not, e.g TinyInt. See ColumnType::type_size() for the list.
+/// be considered fixed-length, but are not, e.g TinyInt. See ColumnType::type_size_for_vector() for the list.
 #[derive(Debug, Clone)]
 pub struct VectorIterator<'frame, 'metadata, T> {
     collection_type: &'metadata ColumnType<'metadata>,
@@ -1068,7 +1092,7 @@ where
             typ,
             element_type,
             *dimensions as usize,
-            element_type.type_size(),
+            element_type.type_size_for_vector(),
             v,
         ))
     }
@@ -1815,8 +1839,7 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
+/// Creates a [`BuiltinTypeCheckError`] with the given kind.
 pub fn mk_typck_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
@@ -2164,8 +2187,7 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
+/// Creates a [`BuiltinDeserializationError`] with the given kind.
 pub fn mk_deser_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinDeserializationErrorKind>,
