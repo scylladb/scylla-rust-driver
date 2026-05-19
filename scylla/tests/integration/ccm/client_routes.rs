@@ -37,7 +37,7 @@ const QUERIES_PER_PHASE: i32 = 100;
 /// Must be generous enough for the driver to discover new/restarted nodes,
 /// but short enough to fail promptly if the driver has a bug (e.g.,
 /// `Untranslatable` marking prevents address translation for a node).
-const CONNECTION_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECTION_WAIT_TIMEOUT: Duration = Duration::from_secs(3);
 
 // ---------------------------------------------------------------------------
 // Cluster option factories

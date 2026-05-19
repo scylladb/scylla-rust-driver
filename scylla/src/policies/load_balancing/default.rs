@@ -1434,6 +1434,7 @@ mod tests {
             let info = Metadata {
                 peers,
                 keyspaces: HashMap::new(),
+                client_routes_updated_hosts: Default::default(),
             };
 
             let (connectivity_events_sender, _) = tokio::sync::mpsc::unbounded_channel();

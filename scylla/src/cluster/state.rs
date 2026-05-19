@@ -13,6 +13,7 @@ use itertools::Itertools;
 use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -80,6 +81,44 @@ impl ClusterState {
         for node in self.locator.unique_nodes_in_global_ring().iter() {
             node.wait_until_pool_initialized().await;
         }
+    }
+
+    /// Triggers immediate pool refills for given nodes. This resets exponential
+    /// backoff for those nodes, so they will be retried immediately instead of
+    /// waiting for the next retry timeout.
+    ///
+    /// Suitable, among others, for nodes whose client routes were added or updated.
+    pub(super) fn trigger_pool_refills_for_hosts(&self, host_ids: impl Iterator<Item = Uuid>) {
+        for host_id in host_ids {
+            if let Some(node) = self.known_peers.get(&host_id) {
+                debug!(
+                    host_id = %host_id,
+                    "Triggering immediate pool refill for relevant Node"
+                );
+                node.trigger_pool_refill();
+            }
+        }
+    }
+
+    /// Triggers an immediate pool refill for the node with the given broadcast
+    /// address. Used when a `STATUS_CHANGE UP` event hints that a node is back
+    /// and its pool (likely in exponential backoff) should retry immediately.
+    pub(super) fn trigger_pool_refill_for_addr(&self, addr: SocketAddr) {
+        for node in self.known_peers.values() {
+            if node.address.into_inner() == addr {
+                debug!(
+                    address = %addr,
+                    host_id = %node.host_id,
+                    "STATUS_CHANGE UP: triggering immediate pool refill"
+                );
+                node.trigger_pool_refill();
+                return;
+            }
+        }
+        debug!(
+            address = %addr,
+            "STATUS_CHANGE UP: no known node with this address"
+        );
     }
 
     /// Creates new ClusterState using information about topology held in `metadata`.
