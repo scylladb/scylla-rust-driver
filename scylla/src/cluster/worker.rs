@@ -21,7 +21,7 @@ use scylla_cql::frame::response::result::TableSpec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 use super::metadata::reader::MetadataReader;
@@ -353,6 +353,7 @@ impl ClusterWorker {
                             // The first reconnect attempt will be immediate (by attempting metadata refresh below),
                             // and if it does not succeed, then `ControlConnectionState` will be set to `Broken`, so
                             // subsequent attempts will be issued every second.
+                            warn!("Got broken control connection event");
                         },
                         ControlConnectionEvent::ServerEvent(event) => {
                             debug!("Received server event: {:?}", event);
