@@ -1,10 +1,8 @@
 //! CQL protocol-level representation of a `STARTUP` request.
 
-use thiserror::Error;
-
 use crate::frame::frame_errors::CqlRequestSerializationError;
 
-use std::{borrow::Cow, collections::HashMap, num::TryFromIntError};
+use std::{borrow::Cow, collections::HashMap};
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
@@ -12,6 +10,9 @@ use crate::{
 };
 
 use super::DeserializableRequest;
+
+// Re-export for backward compatibility.
+pub use crate::frame::frame_errors::StartupSerializationError;
 
 /// The CQL protocol-level representation of an `STARTUP` request,
 /// used to finalise connection negotiation phase and establish the CQL connection.
@@ -28,15 +29,6 @@ impl SerializableRequest for Startup<'_> {
             .map_err(StartupSerializationError::OptionsSerialization)?;
         Ok(())
     }
-}
-
-/// An error type returned when serialization of STARTUP request fails.
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum StartupSerializationError {
-    /// Failed to serialize startup options.
-    #[error("Malformed startup options: {0}")]
-    OptionsSerialization(TryFromIntError),
 }
 
 impl DeserializableRequest for Startup<'_> {

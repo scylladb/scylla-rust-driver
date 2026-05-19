@@ -148,6 +148,18 @@ impl<'frame, 'metadata> DeserializeRow<'frame, 'metadata> for ColumnIterator<'fr
 }
 
 make_error_replace_rust_name!(
+    /// Replaces the Rust type name in a [`BuiltinTypeCheckError`] wrapped inside
+    /// a [`TypeCheckError`] with the name of `RustT`.
+    ///
+    /// This is used to ensure that error messages report the correct Rust type name
+    /// even when the error originates from a helper/inner type used during deserialization,
+    /// rather than the top-level type being deserialized.
+    ///
+    /// # Assumptions
+    /// - This function should **only** be called inside a proper `deserialize()` implementation.
+    /// - It should be called **before** the error is cloned, as it attempts to mutably access
+    ///   the inner error via [`Arc::get_mut`]; if the `Arc` has already been cloned,
+    ///   a new [`BuiltinTypeCheckError`] will be allocated with the updated name instead.
     pub(self),
     _typck_error_replace_rust_name,
     TypeCheckError,
@@ -155,6 +167,18 @@ make_error_replace_rust_name!(
 );
 
 make_error_replace_rust_name!(
+    /// Replaces the Rust type name in a [`BuiltinDeserializationError`] wrapped inside
+    /// a [`DeserializationError`] with the name of `RustT`.
+    ///
+    /// This is used to ensure that error messages report the correct Rust type name
+    /// even when the error originates from a helper/inner type used during deserialization,
+    /// rather than the top-level type being deserialized.
+    ///
+    /// # Assumptions
+    /// - This function should **only** be called inside a proper `type_check()` implementation.
+    /// - It should be called **before** the error is cloned, as it attempts to mutably access
+    ///   the inner error via [`Arc::get_mut`]; if the `Arc` has already been cloned,
+    ///   a new [`BuiltinDeserializationError`] will be allocated with the updated name instead.
     pub,
     deser_error_replace_rust_name,
     DeserializationError,
@@ -292,8 +316,7 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
+/// Creates a [`BuiltinTypeCheckError`] with the given kind.
 pub fn mk_typck_err<T>(
     cql_types: impl IntoIterator<Item = ColumnType<'static>>,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
@@ -447,8 +470,7 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-// Not part of the public API; used in derive macros.
-#[doc(hidden)]
+/// Creates a [`BuiltinDeserializationError`] with the given kind.
 pub fn mk_deser_err<T>(kind: impl Into<BuiltinDeserializationErrorKind>) -> DeserializationError {
     mk_deser_err_named(std::any::type_name::<T>(), kind)
 }
@@ -522,48 +544,4 @@ impl Display for BuiltinDeserializationErrorKind {
 
 #[cfg(test)]
 #[path = "row_tests.rs"]
-pub(crate) mod tests;
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeRow)]
-/// #[scylla(crate = scylla_cql, skip_name_checks)]
-/// struct TestRow {}
-/// ```
-fn _test_struct_deserialization_name_check_skip_requires_enforce_order() {}
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeRow)]
-/// #[scylla(crate = scylla_cql, skip_name_checks)]
-/// struct TestRow {
-///     #[scylla(rename = "b")]
-///     a: i32,
-/// }
-/// ```
-fn _test_struct_deserialization_skip_name_check_conflicts_with_rename() {}
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeRow)]
-/// #[scylla(crate = scylla_cql)]
-/// struct TestRow {
-///     #[scylla(rename = "b")]
-///     a: i32,
-///     b: String,
-/// }
-/// ```
-fn _test_struct_deserialization_skip_rename_collision_with_field() {}
-
-/// ```compile_fail
-///
-/// #[derive(scylla_macros::DeserializeRow)]
-/// #[scylla(crate = scylla_cql)]
-/// struct TestRow {
-///     #[scylla(rename = "c")]
-///     a: i32,
-///     #[scylla(rename = "c")]
-///     b: String,
-/// }
-/// ```
-fn _test_struct_deserialization_rename_collision_with_another_rename() {}
+mod tests;

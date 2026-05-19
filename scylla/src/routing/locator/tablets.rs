@@ -1,7 +1,7 @@
+use crate::deserialize::value::{DeserializeValue, ListlikeIterator};
+use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
+use crate::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
 use bytes::Bytes;
-use scylla_cql::deserialize::value::{DeserializeValue, ListlikeIterator};
-use scylla_cql::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-use scylla_cql::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
 use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
@@ -603,10 +603,10 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
+    use crate::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
+    use crate::serialize::value::SerializeValue;
+    use crate::serialize::writers::CellWriter;
     use bytes::Bytes;
-    use scylla_cql::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
-    use scylla_cql::serialize::CellWriter;
-    use scylla_cql::serialize::value::SerializeValue;
     use tracing::debug;
     use uuid::Uuid;
 

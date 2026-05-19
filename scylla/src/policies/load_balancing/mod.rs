@@ -3,11 +3,12 @@
 //! See [the book](https://rust-driver.docs.scylladb.com/stable/load-balancing/load-balancing.html) for more information
 
 use crate::cluster::{ClusterState, NodeRef};
+use crate::frame::response::result::TableSpec;
+use crate::frame::types;
 use crate::{
     errors::RequestAttemptError,
     routing::{Shard, Token},
 };
-use scylla_cql::frame::{response::result::TableSpec, types};
 
 use std::time::Duration;
 

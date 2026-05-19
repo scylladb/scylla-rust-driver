@@ -17,7 +17,6 @@ use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types;
 use bytes::Bytes;
 use std::borrow::Cow;
-use std::fmt::Debug;
 use std::sync::Arc;
 use std::{result::Result as StdResult, str};
 
@@ -52,368 +51,10 @@ pub struct SchemaChange {
     pub event: SchemaChangeEvent,
 }
 
-/// Specification of a table in a keyspace.
-///
-/// For a given cluster, [TableSpec] uniquely identifies a table.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TableSpec<'a> {
-    ks_name: Cow<'a, str>,
-    table_name: Cow<'a, str>,
-}
-
-/// A type of:
-/// - a column in schema metadata
-/// - a bind marker in a prepared statement
-/// - a column a in query result set
-///
-/// Some of the variants contain a `frozen` flag. This flag is only used
-/// in schema metadata. For prepared statement bind markers and query result
-/// types those fields will always be set to `false` (even if the DB column
-/// corresponding to given marker / result type is frozen).
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ColumnType<'frame> {
-    /// Types that are "simple" (non-recursive).
-    Native(NativeType),
-
-    /// Collection types: Map, Set, and List. Those are composite types with
-    /// dynamic size but constant predefined element types.
-    Collection {
-        /// If a collection is not frozen, elements in the collection can be updated individually.
-        /// If it is frozen, the entire collection will be overwritten when it is updated.
-        /// A collection cannot contain another collection unless the inner collection is frozen.
-        /// The frozen type will be treated as a blob.
-        frozen: bool,
-        /// Type of the collection's elements.
-        typ: CollectionType<'frame>,
-    },
-
-    /// A composite list-like type that has a defined size and all its elements
-    /// are of the same type. Intuitively, it can be viewed as a list with constant
-    /// predefined size, or as a tuple which has all elements of the same type.
-    Vector {
-        /// Type of the vector's elements.
-        typ: Box<ColumnType<'frame>>,
-        /// Length of the vector.
-        dimensions: u16,
-    },
-
-    /// A C-struct-like type defined by the user.
-    UserDefinedType {
-        /// Analogous to [ColumnType::Collection::frozen].
-        /// If a UDT is not frozen, elements in the UDT can be updated individually.
-        /// If it is frozen, the entire UDT will be overwritten when it is updated.
-        /// A UDT cannot contain another UDT unless the inner UDT is frozen.
-        /// The frozen type will be treated as a blob.
-        frozen: bool,
-        /// Definition of the user-defined type.
-        definition: Arc<UserDefinedType<'frame>>,
-    },
-
-    /// A composite type with a defined size and elements of possibly different,
-    /// but predefined, types.
-    Tuple(Vec<ColumnType<'frame>>),
-}
-
-/// A [ColumnType] variants that are "simple" (non-recursive).
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum NativeType {
-    /// ASCII-only string.
-    Ascii,
-    /// Boolean value.
-    Boolean,
-    /// Binary data of any length.
-    Blob,
-    /// Counter value, represented as a 64-bit integer.
-    Counter,
-    /// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
-    Date,
-    /// Variable-precision decimal.
-    Decimal,
-    /// 64-bit IEEE-754 floating point number.
-    Double,
-    /// A duration with nanosecond precision.
-    Duration,
-    /// 32-bit IEEE-754 floating point number.
-    Float,
-    /// 32-bit signed integer.
-    Int,
-    /// 64-bit signed integer.
-    BigInt,
-    /// UTF-8 encoded string.
-    Text,
-    /// Milliseconds since unix epoch.
-    Timestamp,
-    /// IPv4 or IPv6 address.
-    Inet,
-    /// 16-bit signed integer.
-    SmallInt,
-    /// 8-bit signed integer.
-    TinyInt,
-    /// Nanoseconds since midnight.
-    Time,
-    /// Version 1 UUID, generally used as a “conflict-free” timestamp.
-    Timeuuid,
-    /// Universally unique identifier (UUID) of any version.
-    Uuid,
-    /// Arbitrary-precision integer.
-    Varint,
-}
-
-impl NativeType {
-    /// This function returns the size of the type as it is used by Cassandra
-    /// for the purposes of serialization and deserialization of vectors,
-    /// it is needed as the variable size types (`None`) are de/serialized
-    /// differently than the fixed size types (`Some(size)`). Note that
-    /// many fixed size types are treated as variable size by Cassandra.
-    pub(crate) fn type_size(&self) -> Option<usize> {
-        match self {
-            NativeType::Ascii => None,
-            NativeType::Boolean => Some(1),
-            NativeType::Blob => None,
-            NativeType::Counter => None,
-            NativeType::Date => None,
-            NativeType::Decimal => None,
-            NativeType::Double => Some(8),
-            NativeType::Duration => None,
-            NativeType::Float => Some(4),
-            NativeType::Int => Some(4),
-            NativeType::BigInt => Some(8),
-            NativeType::Text => None,
-            NativeType::Timestamp => Some(8),
-            NativeType::Inet => None,
-            NativeType::SmallInt => None,
-            NativeType::TinyInt => None,
-            NativeType::Time => None,
-            NativeType::Timeuuid => Some(16),
-            NativeType::Uuid => Some(16),
-            NativeType::Varint => None,
-        }
-    }
-}
-
-/// Collection variants of [ColumnType]. A collection is a composite type that
-/// has dynamic size, so it is possible to add and remove values to/from it.
-///
-/// Tuple and vector are not collections because they have predefined size.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CollectionType<'frame> {
-    /// A list of CQL values of the same types.
-    List(Box<ColumnType<'frame>>),
-    /// A map of CQL values, whose all keys have the same type
-    /// and all values have the same type.
-    Map(Box<ColumnType<'frame>>, Box<ColumnType<'frame>>),
-    /// A set of CQL values of the same types.
-    Set(Box<ColumnType<'frame>>),
-}
-
-/// Definition of a user-defined type (UDT).
-/// UDT is composed of fields, each with a name and an optional value of its own type.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UserDefinedType<'frame> {
-    /// Name of the user-defined type.
-    pub name: Cow<'frame, str>,
-    /// Keyspace the type belongs to.
-    pub keyspace: Cow<'frame, str>,
-    /// Fields of the user-defined type - (name, type) pairs.
-    pub field_types: Vec<(Cow<'frame, str>, ColumnType<'frame>)>,
-}
-
-impl ColumnType<'_> {
-    /// Converts a [ColumnType] to an owned version, where all
-    /// references are replaced with owned values.
-    ///
-    /// Unfortunately, this allocates even if the type is already owned.
-    pub fn into_owned(self) -> ColumnType<'static> {
-        match self {
-            ColumnType::Native(b) => ColumnType::Native(b),
-            ColumnType::Collection { frozen, typ: t } => ColumnType::Collection {
-                frozen,
-                typ: t.into_owned(),
-            },
-            ColumnType::Vector {
-                typ: type_,
-                dimensions,
-            } => ColumnType::Vector {
-                typ: Box::new(type_.into_owned()),
-                dimensions,
-            },
-            ColumnType::UserDefinedType {
-                frozen,
-                definition: udt,
-            } => {
-                let udt = Arc::try_unwrap(udt).unwrap_or_else(|e| e.as_ref().clone());
-                ColumnType::UserDefinedType {
-                    frozen,
-                    definition: Arc::new(UserDefinedType {
-                        name: udt.name.into_owned().into(),
-                        keyspace: udt.keyspace.into_owned().into(),
-                        field_types: udt
-                            .field_types
-                            .into_iter()
-                            .map(|(cow, column_type)| {
-                                (cow.into_owned().into(), column_type.into_owned())
-                            })
-                            .collect(),
-                    }),
-                }
-            }
-            ColumnType::Tuple(vec) => {
-                ColumnType::Tuple(vec.into_iter().map(ColumnType::into_owned).collect())
-            }
-        }
-    }
-}
-
-impl CollectionType<'_> {
-    /// Converts a [CollectionType] to an owned version, where all
-    /// references are replaced with owned values.
-    ///
-    /// Unfortunately, this allocates even if the type is already owned.
-    fn into_owned(self) -> CollectionType<'static> {
-        match self {
-            CollectionType::List(elem_type) => {
-                CollectionType::List(Box::new(elem_type.into_owned()))
-            }
-            CollectionType::Map(key, value) => {
-                CollectionType::Map(Box::new(key.into_owned()), Box::new(value.into_owned()))
-            }
-            CollectionType::Set(elem_type) => CollectionType::Set(Box::new(elem_type.into_owned())),
-        }
-    }
-}
-
-impl<'a> TableSpec<'a> {
-    /// Creates a new borrowed [TableSpec] with the given keyspace and table names.
-    pub const fn borrowed(ks: &'a str, table: &'a str) -> Self {
-        Self {
-            ks_name: Cow::Borrowed(ks),
-            table_name: Cow::Borrowed(table),
-        }
-    }
-
-    /// Retrieves the keyspace name.
-    pub fn ks_name(&'a self) -> &'a str {
-        self.ks_name.as_ref()
-    }
-
-    /// Retrieves the table name.
-    pub fn table_name(&'a self) -> &'a str {
-        self.table_name.as_ref()
-    }
-
-    /// Converts the [TableSpec] to an owned version, where all references are replaced with owned values.
-    ///
-    /// Does not allocate if the [TableSpec] is already owned.
-    pub fn into_owned(self) -> TableSpec<'static> {
-        TableSpec::owned(self.ks_name.into_owned(), self.table_name.into_owned())
-    }
-
-    /// Converts the [TableSpec] to an owned version, where all references are replaced with owned values.
-    ///
-    /// Allocates a new [TableSpec] even if the original is already owned.
-    pub fn to_owned(&self) -> TableSpec<'static> {
-        TableSpec::owned(self.ks_name().to_owned(), self.table_name().to_owned())
-    }
-}
-
-impl TableSpec<'static> {
-    /// Creates a new owned [TableSpec] with the given keyspace and table names.
-    pub fn owned(ks_name: String, table_name: String) -> Self {
-        Self {
-            ks_name: Cow::Owned(ks_name),
-            table_name: Cow::Owned(table_name),
-        }
-    }
-}
-
-impl ColumnType<'_> {
-    /// Returns true if the type allows a special, empty value in addition to its
-    /// natural representation. For example, bigint represents a 32-bit integer,
-    /// but it can also hold a 0-bit empty value.
-    ///
-    /// It looks like Cassandra 4.1.3 rejects empty values for some more types than
-    /// Scylla: date, time, smallint and tinyint. We will only check against
-    /// Scylla's set of types supported for empty values as it's smaller;
-    /// with Cassandra, some rejects will just have to be rejected on the db side.
-    pub(crate) fn supports_special_empty_value(&self) -> bool {
-        #[expect(clippy::match_like_matches_macro)]
-        match self {
-            ColumnType::Native(NativeType::Counter)
-            | ColumnType::Native(NativeType::Duration)
-            | ColumnType::Collection { .. }
-            | ColumnType::UserDefinedType { .. } => false,
-
-            _ => true,
-        }
-    }
-}
-
-/// Specification of a column of a table.
-///
-/// For a given cluster, [ColumnSpec] uniquely identifies a column.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ColumnSpec<'frame> {
-    pub(crate) table_spec: TableSpec<'frame>,
-    pub(crate) name: Cow<'frame, str>,
-    pub(crate) typ: ColumnType<'frame>,
-}
-
-impl ColumnSpec<'static> {
-    /// Creates a new owned [ColumnSpec] with the given name, type, and table specification.
-    #[inline]
-    pub fn owned(name: String, typ: ColumnType<'static>, table_spec: TableSpec<'static>) -> Self {
-        Self {
-            table_spec,
-            name: Cow::Owned(name),
-            typ,
-        }
-    }
-}
-
-impl<'frame> ColumnSpec<'frame> {
-    /// Creates a new borrowed [ColumnSpec] with the given name, type, and table specification.
-    #[inline]
-    pub const fn borrowed(
-        name: &'frame str,
-        typ: ColumnType<'frame>,
-        table_spec: TableSpec<'frame>,
-    ) -> Self {
-        Self {
-            table_spec,
-            name: Cow::Borrowed(name),
-            typ,
-        }
-    }
-
-    /// Retrieves the table specification associated with this column.
-    #[inline]
-    pub fn table_spec(&self) -> &TableSpec<'frame> {
-        &self.table_spec
-    }
-
-    /// Retrieves the name of the column.
-    #[inline]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Retrieves the type of the column.
-    #[inline]
-    pub fn typ(&self) -> &ColumnType<'frame> {
-        &self.typ
-    }
-
-    pub fn into_owned(self) -> ColumnSpec<'static> {
-        ColumnSpec::owned(
-            self.name.into_owned(),
-            self.typ.into_owned(),
-            self.table_spec.into_owned(),
-        )
-    }
-}
+pub use scylla_cql_core::frame::response::result::{
+    CollectionType, ColumnSpec, ColumnType, NativeType, PartitionKeyIndex, PreparedMetadata,
+    TableSpec, UserDefinedType,
+};
 
 pub mod cow_bytes {
     use bytes::Bytes;
@@ -552,35 +193,6 @@ impl ResultMetadataHolder {
     pub fn mock_empty() -> Self {
         Self::SelfBorrowed(SelfBorrowedMetadataContainer::mock_empty())
     }
-}
-
-/// Represents the relationship between partition key columns and bind markers.
-/// This allows implementations with token-aware routing to correctly
-/// construct the partition key without needing to inspect table
-/// metadata.
-///
-/// For example, `PartitionKeyIndex { index: 2, sequence: 1 }` means
-/// that the third bind marker is the second column of the partition key.
-#[derive(Debug, Copy, Clone)]
-pub struct PartitionKeyIndex {
-    /// Index of the bind marker.
-    pub index: u16,
-    /// Sequence number in partition key.
-    pub sequence: u16,
-}
-
-/// Metadata of a prepared statement about its bound values.
-#[derive(Debug, Clone)]
-pub struct PreparedMetadata {
-    /// Currently just the `GLOBAL_TABLES_SPEC` flag.
-    pub flags: i32,
-    /// Number of bound values in the prepared statement.
-    pub col_count: usize,
-    /// pk_indexes are sorted by `index` and can be reordered in partition key order
-    /// using `sequence` field
-    pub pk_indexes: Vec<PartitionKeyIndex>,
-    /// Specifications of the bound values.
-    pub col_specs: Vec<ColumnSpec<'static>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1037,10 +649,7 @@ fn mk_col_spec_parse_error(
     col_idx: usize,
     err: impl Into<ColumnSpecParseErrorKind>,
 ) -> ColumnSpecParseError {
-    ColumnSpecParseError {
-        column_index: col_idx,
-        kind: err.into(),
-    }
+    ColumnSpecParseError::new(col_idx, err.into())
 }
 
 fn deser_col_specs_generic<'frame, 'result>(
@@ -1465,122 +1074,117 @@ mod test_utils {
 
     use super::*;
 
-    impl TableSpec<'_> {
-        pub(crate) fn serialize(&self, buf: &mut impl BufMut) -> StdResult<(), TryFromIntError> {
-            types::write_string(&self.ks_name, buf)?;
-            types::write_string(&self.table_name, buf)?;
+    pub(crate) fn serialize_table_spec(
+        table_spec: &TableSpec<'_>,
+        buf: &mut impl BufMut,
+    ) -> StdResult<(), TryFromIntError> {
+        types::write_string(table_spec.ks_name(), buf)?;
+        types::write_string(table_spec.table_name(), buf)?;
 
-            Ok(())
+        Ok(())
+    }
+
+    fn column_type_id(typ: &ColumnType<'_>) -> u16 {
+        use NativeType::*;
+        #[deny(clippy::wildcard_enum_match_arm)]
+        match typ {
+            ColumnType::Native(Ascii) => 0x0001,
+            ColumnType::Native(BigInt) => 0x0002,
+            ColumnType::Native(Blob) => 0x0003,
+            ColumnType::Native(Boolean) => 0x0004,
+            ColumnType::Native(Counter) => 0x0005,
+            ColumnType::Native(Decimal) => 0x0006,
+            ColumnType::Native(Double) => 0x0007,
+            ColumnType::Native(Float) => 0x0008,
+            ColumnType::Native(Int) => 0x0009,
+            ColumnType::Native(Timestamp) => 0x000B,
+            ColumnType::Native(Uuid) => 0x000C,
+            ColumnType::Native(Text) => 0x000D,
+            ColumnType::Native(Varint) => 0x000E,
+            ColumnType::Native(Timeuuid) => 0x000F,
+            ColumnType::Native(Inet) => 0x0010,
+            ColumnType::Native(Date) => 0x0011,
+            ColumnType::Native(Time) => 0x0012,
+            ColumnType::Native(SmallInt) => 0x0013,
+            ColumnType::Native(TinyInt) => 0x0014,
+            ColumnType::Native(Duration) => 0x0015,
+            ColumnType::Collection {
+                typ: CollectionType::List(_),
+                ..
+            } => 0x0020,
+            ColumnType::Collection {
+                typ: CollectionType::Map(_, _),
+                ..
+            } => 0x0021,
+            ColumnType::Collection {
+                typ: CollectionType::Set(_),
+                ..
+            } => 0x0022,
+            ColumnType::Vector { .. } => {
+                unimplemented!();
+            }
+            ColumnType::UserDefinedType { .. } => 0x0030,
+            ColumnType::Tuple(_) => 0x0031,
+            // Catch future variants from #[non_exhaustive] enums.
+            ColumnType::Native(_) | ColumnType::Collection { .. } | _ => unreachable!(),
         }
     }
 
-    impl ColumnType<'_> {
-        fn id(&self) -> u16 {
-            use NativeType::*;
-            match self {
-                Self::Native(Ascii) => 0x0001,
-                Self::Native(BigInt) => 0x0002,
-                Self::Native(Blob) => 0x0003,
-                Self::Native(Boolean) => 0x0004,
-                Self::Native(Counter) => 0x0005,
-                Self::Native(Decimal) => 0x0006,
-                Self::Native(Double) => 0x0007,
-                Self::Native(Float) => 0x0008,
-                Self::Native(Int) => 0x0009,
-                Self::Native(Timestamp) => 0x000B,
-                Self::Native(Uuid) => 0x000C,
-                Self::Native(Text) => 0x000D,
-                Self::Native(Varint) => 0x000E,
-                Self::Native(Timeuuid) => 0x000F,
-                Self::Native(Inet) => 0x0010,
-                Self::Native(Date) => 0x0011,
-                Self::Native(Time) => 0x0012,
-                Self::Native(SmallInt) => 0x0013,
-                Self::Native(TinyInt) => 0x0014,
-                Self::Native(Duration) => 0x0015,
-                Self::Collection {
-                    typ: CollectionType::List(_),
-                    ..
-                } => 0x0020,
-                Self::Collection {
-                    typ: CollectionType::Map(_, _),
-                    ..
-                } => 0x0021,
-                Self::Collection {
-                    typ: CollectionType::Set(_),
-                    ..
-                } => 0x0022,
-                Self::Vector { .. } => {
-                    unimplemented!();
-                }
-                Self::UserDefinedType { .. } => 0x0030,
-                Self::Tuple(_) => 0x0031,
+    // Only for use in tests
+    pub(crate) fn serialize_column_type(
+        typ: &ColumnType<'_>,
+        buf: &mut impl BufMut,
+    ) -> StdResult<(), TryFromIntError> {
+        let id = column_type_id(typ);
+        types::write_short(id, buf);
+
+        #[deny(clippy::wildcard_enum_match_arm)]
+        match typ {
+            // Simple types
+            ColumnType::Native(_) => (),
+
+            ColumnType::Collection {
+                typ: CollectionType::List(elem_type),
+                ..
             }
-        }
-
-        /// Returns the size of the type in bytes, as it is seen by the vector type if it is treated as fixed size.
-        pub(crate) fn type_size(&self) -> Option<usize> {
-            match self {
-                ColumnType::Native(n) => n.type_size(),
-                ColumnType::Tuple(_) => None,
-                ColumnType::Collection { .. } => None,
-                ColumnType::Vector { typ, dimensions } => {
-                    typ.type_size().map(|size| size * usize::from(*dimensions))
-                }
-                ColumnType::UserDefinedType { .. } => None,
+            | ColumnType::Collection {
+                typ: CollectionType::Set(elem_type),
+                ..
+            } => {
+                serialize_column_type(elem_type, buf)?;
             }
-        }
-
-        // Only for use in tests
-        pub(crate) fn serialize(&self, buf: &mut impl BufMut) -> StdResult<(), TryFromIntError> {
-            let id = self.id();
-            types::write_short(id, buf);
-
-            match self {
-                // Simple types
-                ColumnType::Native(_) => (),
-
-                ColumnType::Collection {
-                    typ: CollectionType::List(elem_type),
-                    ..
-                }
-                | ColumnType::Collection {
-                    typ: CollectionType::Set(elem_type),
-                    ..
-                } => {
-                    elem_type.serialize(buf)?;
-                }
-                ColumnType::Collection {
-                    typ: CollectionType::Map(key_type, value_type),
-                    ..
-                } => {
-                    key_type.serialize(buf)?;
-                    value_type.serialize(buf)?;
-                }
-                ColumnType::Tuple(types) => {
-                    types::write_short_length(types.len(), buf)?;
-                    for typ in types.iter() {
-                        typ.serialize(buf)?;
-                    }
-                }
-                ColumnType::Vector { .. } => {
-                    unimplemented!()
-                }
-                ColumnType::UserDefinedType {
-                    definition: udt, ..
-                } => {
-                    types::write_string(&udt.keyspace, buf)?;
-                    types::write_string(&udt.name, buf)?;
-                    types::write_short_length(udt.field_types.len(), buf)?;
-                    for (field_name, field_type) in udt.field_types.iter() {
-                        types::write_string(field_name, buf)?;
-                        field_type.serialize(buf)?;
-                    }
+            ColumnType::Collection {
+                typ: CollectionType::Map(key_type, value_type),
+                ..
+            } => {
+                serialize_column_type(key_type, buf)?;
+                serialize_column_type(value_type, buf)?;
+            }
+            ColumnType::Tuple(types) => {
+                types::write_short_length(types.len(), buf)?;
+                for typ in types.iter() {
+                    serialize_column_type(typ, buf)?;
                 }
             }
-
-            Ok(())
+            ColumnType::Vector { .. } => {
+                unimplemented!()
+            }
+            ColumnType::UserDefinedType {
+                definition: udt, ..
+            } => {
+                types::write_string(&udt.keyspace, buf)?;
+                types::write_string(&udt.name, buf)?;
+                types::write_short_length(udt.field_types.len(), buf)?;
+                for (field_name, field_type) in udt.field_types.iter() {
+                    types::write_string(field_name, buf)?;
+                    serialize_column_type(field_type, buf)?;
+                }
+            }
+            // Catch future variants from #[non_exhaustive] enums.
+            ColumnType::Collection { .. } | _ => unreachable!(),
         }
+
+        Ok(())
     }
 
     impl<'a> ResultMetadata<'a> {
@@ -1619,16 +1223,16 @@ mod test_utils {
 
             if !no_metadata {
                 if let Some(spec) = global_table_spec {
-                    spec.serialize(buf)?;
+                    serialize_table_spec(spec, buf)?;
                 }
 
                 for col_spec in self.col_specs() {
                     if global_table_spec.is_none() {
-                        col_spec.table_spec().serialize(buf)?;
+                        serialize_table_spec(col_spec.table_spec(), buf)?;
                     }
 
                     types::write_string(col_spec.name(), buf)?;
-                    col_spec.typ().serialize(buf)?;
+                    serialize_column_type(col_spec.typ(), buf)?;
                 }
             }
 

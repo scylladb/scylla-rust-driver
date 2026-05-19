@@ -387,3 +387,210 @@ impl<'result> CustomTypeParser<'result> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::frame::frame_errors::CustomTypeParseError;
+    use crate::frame::response::custom_type_parser::CustomTypeParser;
+    use crate::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
+    use crate::utils::parse::ParseErrorCause;
+
+    #[test]
+    fn test_custom_cassandra_type_parser() {
+        let tests = vec![
+            (
+                "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, 5)",
+                ColumnType::Vector {
+                    typ: Box::new(ColumnType::Native(NativeType::Int)),
+                    dimensions: 5,
+                },
+            ),
+            (
+                "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)",
+                ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
+                },
+            ),
+            (
+                "org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)",
+                ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                },
+            ),
+            (
+                "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)",
+                ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::Map(
+                        Box::new(ColumnType::Native(NativeType::Int)),
+                        Box::new(ColumnType::Native(NativeType::Int)),
+                    ),
+                },
+            ),
+            (
+                "org.apache.cassandra.db.marshal.DurationType",
+                ColumnType::Native(NativeType::Duration),
+            ),
+            (
+                "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)",
+                ColumnType::Tuple(vec![
+                    ColumnType::Native(NativeType::Int),
+                    ColumnType::Native(NativeType::Int),
+                ]),
+            ),
+            (
+                "org.apache.cassandra.db.marshal.UserType(keyspace1,61646472657373,737472656574:org.apache.cassandra.db.marshal.UTF8Type,63697479:org.apache.cassandra.db.marshal.UTF8Type,7a6970:org.apache.cassandra.db.marshal.Int32Type)",
+                ColumnType::UserDefinedType {
+                    frozen: false,
+                    definition: Arc::new(UserDefinedType {
+                        name: "address".into(),
+                        keyspace: "keyspace1".into(),
+                        field_types: vec![
+                            ("street".into(), ColumnType::Native(NativeType::Text)),
+                            ("city".into(), ColumnType::Native(NativeType::Text)),
+                            ("zip".into(), ColumnType::Native(NativeType::Int)),
+                        ],
+                    }),
+                },
+            ),
+            (
+                "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type, org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type))",
+                ColumnType::Collection {
+                    frozen: false,
+                    typ: CollectionType::Map(
+                        Box::new(ColumnType::Native(NativeType::Int)),
+                        Box::new(ColumnType::Tuple(vec![
+                            ColumnType::Native(NativeType::Int),
+                            ColumnType::Native(NativeType::Int),
+                        ])),
+                    ),
+                },
+            ),
+            // Frozen collection inside vector.
+            (
+                "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)), 3)",
+                ColumnType::Vector {
+                    typ: Box::new(ColumnType::Collection {
+                        frozen: true,
+                        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                    }),
+                    dimensions: 3,
+                },
+            ),
+            // Frozen collection inside another frozen collection, inside vector.
+            (
+                "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)))), 3)",
+                ColumnType::Vector {
+                    typ: Box::new(ColumnType::Collection {
+                        frozen: true,
+                        typ: CollectionType::Set(Box::new(ColumnType::Collection {
+                            frozen: true,
+                            typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                        })),
+                    }),
+                    dimensions: 3,
+                },
+            ),
+            // Tuple: non-frozen collection, frozen collection, non-frozen collection, frozen collection.
+            // Tests that frozen context is correctly set and unset.
+            (
+                "org.apache.cassandra.db.marshal.TupleType(\
+                   org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type),\
+                   org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)),\
+                   org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type),\
+                   org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)),\
+                )",
+                ColumnType::Tuple(vec![
+                    ColumnType::Collection {
+                        frozen: false,
+                        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                    },
+                    ColumnType::Collection {
+                        frozen: true,
+                        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                    },
+                    ColumnType::Collection {
+                        frozen: false,
+                        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                    },
+                    ColumnType::Collection {
+                        frozen: true,
+                        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
+                    },
+                ]),
+            ),
+        ];
+
+        for (input, expected) in tests {
+            assert_eq!(CustomTypeParser::parse(input), Ok(expected));
+        }
+    }
+
+    #[test]
+    fn test_custom_cassandra_type_parser_errors() {
+        assert_eq!(
+            CustomTypeParser::parse("org.apache.cassandra.db.marshal.RandomType"),
+            Err(CustomTypeParseError::UnknownSimpleCustomTypeName(
+                "RandomType".to_string()
+            ))
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse("org.apache.cassandra.db.marshal.RandomType()"),
+            Err(CustomTypeParseError::UnknownComplexCustomTypeName(
+                "RandomType".to_string()
+            ))
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type)"
+            ),
+            Err(CustomTypeParseError::InvalidParameterCount {
+                actual: 1,
+                expected: 2
+            })
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.UserType(keyspace1,gg,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.Int32Type)"
+            ),
+            Err(CustomTypeParseError::BadHexString("gg".to_string()))
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.UserType(keyspace1,ff,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.Int32Type)"
+            ),
+            Err(CustomTypeParseError::InvalidUtf8(vec![0xff]))
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type"
+            ),
+            Err(CustomTypeParseError::UnexpectedEndOfInput)
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.UserType(keyspace1,61646472657373,737472656574#org.apache.cassandra.db.marshal.UTF8Type)"
+            ),
+            Err(CustomTypeParseError::UnexpectedCharacter('#', ':'))
+        );
+
+        assert_eq!(
+            CustomTypeParser::parse(
+                "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, asdf)"
+            ),
+            Err(CustomTypeParseError::IntegerParseError(
+                ParseErrorCause::Other("Expected 16-bit unsigned integer")
+            ))
+        )
+    }
+}

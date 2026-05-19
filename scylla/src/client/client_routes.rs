@@ -3,7 +3,6 @@
 //! Enables connecting to Scylla Cloud clusters using AWS PrivateLink or GCP Private Service Connect, among others.
 
 use async_trait::async_trait;
-use scylla_cql::frame::response::event::ClientRoutesChangeEvent;
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -16,6 +15,7 @@ use uuid::Uuid;
 use crate::cluster::metadata::{ClientRoute, ClientRoutes};
 use crate::cluster::node::resolve_hostname;
 use crate::errors::TranslationError;
+use crate::frame::response::event::ClientRoutesChangeEvent;
 use crate::policies::address_translator::{AddressTranslator, UntranslatedPeer};
 
 /// Represents a single ClientRoutes proxy, identified by a connection ID.
@@ -429,11 +429,10 @@ impl AddressTranslator for ClientRoutesAddressTranslator {
 mod tests {
     use super::*;
     use crate::cluster::metadata::{ClientRoute, ClientRoutes};
+    use crate::frame::response::event::ClientRoutesChangeEvent;
     use assert_matches::assert_matches;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use uuid::Uuid;
-
-    use scylla_cql::frame::response::event::ClientRoutesChangeEvent;
 
     fn make_peer(host_id: Uuid, addr: SocketAddr) -> UntranslatedPeer<'static> {
         UntranslatedPeer {

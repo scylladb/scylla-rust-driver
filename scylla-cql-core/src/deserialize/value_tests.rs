@@ -1,6 +1,5 @@
 use assert_matches::assert_matches;
 use bytes::{BufMut, Bytes, BytesMut};
-use scylla_macros::DeserializeValue;
 use uuid::Uuid;
 
 use std::borrow::Cow;
@@ -12,221 +11,22 @@ use std::sync::Arc;
 
 use crate::deserialize::value::{TupleDeserializationErrorKind, TupleTypeCheckErrorKind};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::frame_errors::CustomTypeParseError;
-use crate::frame::response::custom_type_parser::CustomTypeParser;
 use crate::frame::response::result::NativeType::*;
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType, UserDefinedType};
 use crate::serialize::CellWriter;
 use crate::serialize::value::SerializeValue;
-use crate::utils::parse::ParseErrorCause;
 use crate::value::{
     Counter, CqlDate, CqlDecimal, CqlDecimalBorrowed, CqlDuration, CqlTime, CqlTimestamp,
     CqlTimeuuid, CqlValue, CqlVarint, CqlVarintBorrowed,
 };
 
+#[allow(deprecated)]
 use super::{
     BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
     BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator, MapDeserializationErrorKind,
     MapIterator, MapTypeCheckErrorKind, MaybeEmpty, SetOrListDeserializationErrorKind,
-    SetOrListTypeCheckErrorKind, UdtDeserializationErrorKind, UdtTypeCheckErrorKind, mk_deser_err,
+    SetOrListTypeCheckErrorKind, mk_deser_err,
 };
-
-#[test]
-fn test_custom_cassandra_type_parser() {
-    let tests = vec![
-        (
-            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, 5)",
-            ColumnType::Vector {
-                typ: Box::new(ColumnType::Native(NativeType::Int)),
-                dimensions: 5,
-            },
-        ),
-        (
-            "636f6c756d6e:org.apache.cassandra.db.marshal.ListType(org.apache.cassandra.db.marshal.Int32Type)",
-            ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::List(Box::new(ColumnType::Native(NativeType::Int))),
-            },
-        ),
-        (
-            "org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)",
-            ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
-            },
-        ),
-        (
-            "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)",
-            ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::Map(
-                    Box::new(ColumnType::Native(NativeType::Int)),
-                    Box::new(ColumnType::Native(NativeType::Int)),
-                ),
-            },
-        ),
-        (
-            "org.apache.cassandra.db.marshal.DurationType",
-            ColumnType::Native(NativeType::Duration),
-        ),
-        (
-            "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type)",
-            ColumnType::Tuple(vec![
-                ColumnType::Native(NativeType::Int),
-                ColumnType::Native(NativeType::Int),
-            ]),
-        ),
-        (
-            "org.apache.cassandra.db.marshal.UserType(keyspace1,61646472657373,737472656574:org.apache.cassandra.db.marshal.UTF8Type,63697479:org.apache.cassandra.db.marshal.UTF8Type,7a6970:org.apache.cassandra.db.marshal.Int32Type)",
-            ColumnType::UserDefinedType {
-                frozen: false,
-                definition: Arc::new(UserDefinedType {
-                    name: "address".into(),
-                    keyspace: "keyspace1".into(),
-                    field_types: vec![
-                        ("street".into(), ColumnType::Native(NativeType::Text)),
-                        ("city".into(), ColumnType::Native(NativeType::Text)),
-                        ("zip".into(), ColumnType::Native(NativeType::Int)),
-                    ],
-                }),
-            },
-        ),
-        (
-            "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type, org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type,org.apache.cassandra.db.marshal.Int32Type))",
-            ColumnType::Collection {
-                frozen: false,
-                typ: CollectionType::Map(
-                    Box::new(ColumnType::Native(NativeType::Int)),
-                    Box::new(ColumnType::Tuple(vec![
-                        ColumnType::Native(NativeType::Int),
-                        ColumnType::Native(NativeType::Int),
-                    ])),
-                ),
-            },
-        ),
-        // Frozen collection inside vector.
-        (
-            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)), 3)",
-            ColumnType::Vector {
-                typ: Box::new(ColumnType::Collection {
-                    frozen: true,
-                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
-                }),
-                dimensions: 3,
-            },
-        ),
-        // Frozen collection inside another frozen collection, inside vector.
-        (
-            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)))), 3)",
-            ColumnType::Vector {
-                typ: Box::new(ColumnType::Collection {
-                    frozen: true,
-                    typ: CollectionType::Set(Box::new(ColumnType::Collection {
-                        frozen: true,
-                        typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
-                    })),
-                }),
-                dimensions: 3,
-            },
-        ),
-        // Tuple: non-frozen collection, frozen collection, non-frozen collection, frozen collection.
-        // Tests that frozen context is correctly set and unset.
-        (
-            "org.apache.cassandra.db.marshal.TupleType(\
-               org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type),\
-               org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)),\
-               org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type),\
-               org.apache.cassandra.db.marshal.FrozenType(org.apache.cassandra.db.marshal.SetType(org.apache.cassandra.db.marshal.Int32Type)),\
-            )",
-            ColumnType::Tuple(vec![
-                ColumnType::Collection {
-                    frozen: false,
-                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
-                },
-                ColumnType::Collection {
-                    frozen: true,
-                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
-                },
-                ColumnType::Collection {
-                    frozen: false,
-                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
-                },
-                ColumnType::Collection {
-                    frozen: true,
-                    typ: CollectionType::Set(Box::new(ColumnType::Native(NativeType::Int))),
-                },
-            ]),
-        ),
-    ];
-
-    for (input, expected) in tests {
-        assert_eq!(CustomTypeParser::parse(input), Ok(expected));
-    }
-}
-
-#[test]
-fn test_custom_cassandra_type_parser_errors() {
-    assert_eq!(
-        CustomTypeParser::parse("org.apache.cassandra.db.marshal.RandomType"),
-        Err(CustomTypeParseError::UnknownSimpleCustomTypeName(
-            "RandomType".to_string()
-        ))
-    );
-
-    assert_eq!(
-        CustomTypeParser::parse("org.apache.cassandra.db.marshal.RandomType()"),
-        Err(CustomTypeParseError::UnknownComplexCustomTypeName(
-            "RandomType".to_string()
-        ))
-    );
-
-    assert_eq!(
-        CustomTypeParser::parse(
-            "org.apache.cassandra.db.marshal.MapType(org.apache.cassandra.db.marshal.Int32Type)"
-        ),
-        Err(CustomTypeParseError::InvalidParameterCount {
-            actual: 1,
-            expected: 2
-        })
-    );
-
-    assert_eq!(
-        CustomTypeParser::parse(
-            "org.apache.cassandra.db.marshal.UserType(keyspace1,gg,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.Int32Type)"
-        ),
-        Err(CustomTypeParseError::BadHexString("gg".to_string()))
-    );
-
-    assert_eq!(
-        CustomTypeParser::parse(
-            "org.apache.cassandra.db.marshal.UserType(keyspace1,ff,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.UTF8Type,org.apache.cassandra.db.marshal.Int32Type)"
-        ),
-        Err(CustomTypeParseError::InvalidUtf8(vec![0xff]))
-    );
-
-    assert_eq!(
-        CustomTypeParser::parse(
-            "org.apache.cassandra.db.marshal.TupleType(org.apache.cassandra.db.marshal.Int32Type"
-        ),
-        Err(CustomTypeParseError::UnexpectedEndOfInput)
-    );
-
-    assert_eq!(
-        CustomTypeParser::parse(
-            "org.apache.cassandra.db.marshal.UserType(keyspace1,61646472657373,737472656574#org.apache.cassandra.db.marshal.UTF8Type)"
-        ),
-        Err(CustomTypeParseError::UnexpectedCharacter('#', ':'))
-    );
-
-    assert_eq!(
-        CustomTypeParser::parse(
-            "org.apache.cassandra.db.marshal.VectorType(org.apache.cassandra.db.marshal.Int32Type, asdf)"
-        ),
-        Err(CustomTypeParseError::IntegerParseError(
-            ParseErrorCause::Other("Expected 16-bit unsigned integer")
-        ))
-    )
-}
 
 #[test]
 fn test_deserialize_bytes() {
@@ -547,17 +347,14 @@ fn test_deserialize_vector() {
         &mut Bytes::new(),
     );
 
-    // deser_cql_value
+    // deserialize CqlValue
 
-    let buf: Vec<u8> = vec![0, 0, 0, 1, 0, 0, 0, 2];
-    let decoded_vec = super::deser_cql_value(
-        &ColumnType::Vector {
-            typ: Box::new(ColumnType::Native(Int)),
-            dimensions: 2,
-        },
-        &mut buf.as_slice(),
-    )
-    .unwrap();
+    let typ = ColumnType::Vector {
+        typ: Box::new(ColumnType::Native(Int)),
+        dimensions: 2,
+    };
+    let buf = make_bytes(&[0, 0, 0, 1, 0, 0, 0, 2]);
+    let decoded_vec = deserialize::<CqlValue>(&typ, &buf).unwrap();
     assert_eq!(
         decoded_vec,
         CqlValue::Vector(vec![CqlValue::Int(1), CqlValue::Int(2)])
@@ -1265,469 +1062,6 @@ fn test_cow() {
     }
 }
 
-pub(crate) fn udt_def_with_fields(
-    fields: impl IntoIterator<Item = (impl Into<Cow<'static, str>>, ColumnType<'static>)>,
-) -> ColumnType<'static> {
-    ColumnType::UserDefinedType {
-        frozen: false,
-        definition: Arc::new(UserDefinedType {
-            name: "udt".into(),
-            keyspace: "ks".into(),
-            field_types: fields.into_iter().map(|(s, t)| (s.into(), t)).collect(),
-        }),
-    }
-}
-
-#[must_use]
-struct UdtSerializer {
-    buf: BytesMut,
-}
-
-impl UdtSerializer {
-    fn new() -> Self {
-        Self {
-            buf: BytesMut::default(),
-        }
-    }
-
-    fn field(mut self, field_bytes: &[u8]) -> Self {
-        append_bytes(&mut self.buf, field_bytes);
-        self
-    }
-
-    fn null_field(mut self) -> Self {
-        append_null(&mut self.buf);
-        self
-    }
-
-    fn finalize(&self) -> Bytes {
-        make_bytes(&self.buf)
-    }
-}
-
-// Do not remove. It's not used in tests but we keep it here to check that
-// we properly ignore warnings about unused variables, unnecessary `mut`s
-// etc. that usually pop up when generating code for empty structs.
-#[derive(scylla_macros::DeserializeValue)]
-#[scylla(crate = crate)]
-struct TestUdtWithNoFieldsUnordered {}
-
-#[derive(scylla_macros::DeserializeValue)]
-#[scylla(crate = crate, flavor = "enforce_order")]
-struct TestUdtWithNoFieldsOrdered {}
-
-// If deserialize is never called, rust warns that the struct is never constructed.
-// We don't want to `expect(dead_code)` on struct definitions, because that could silence
-// some warnings that this test is supposed to prevent.
-#[expect(unreachable_code, dead_code)]
-fn dummy_deserialize_udts() {
-    let _ = deserialize::<TestUdtWithNoFieldsUnordered>(todo!(), todo!()).unwrap();
-    let _ = deserialize::<TestUdtWithNoFieldsOrdered>(todo!(), todo!()).unwrap();
-}
-
-#[test]
-fn test_udt_loose_ordering() {
-    #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-    #[scylla(crate = "crate")]
-    struct Udt<'a> {
-        a: &'a str,
-        #[scylla(skip)]
-        x: String,
-        #[scylla(allow_missing)]
-        b: Option<i32>,
-        #[scylla(default_when_null)]
-        c: i64,
-    }
-
-    // UDT fields in correct same order.
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field("The quick brown fox".as_bytes())
-            .field(&42_i32.to_be_bytes())
-            .field(&2137_i64.to_be_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("b", ColumnType::Native(NativeType::Int)),
-            ("c", ColumnType::Native(NativeType::BigInt)),
-        ]);
-
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "The quick brown fox",
-                x: String::new(),
-                b: Some(42),
-                c: 2137,
-            }
-        );
-    }
-
-    // The last two UDT field are missing in serialized form - it should treat it
-    // as if there were nulls at the end.
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field("The quick brown fox".as_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("b", ColumnType::Native(NativeType::Int)),
-            ("c", ColumnType::Native(NativeType::BigInt)),
-        ]);
-
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "The quick brown fox",
-                x: String::new(),
-                b: None,
-                c: 0,
-            }
-        );
-    }
-
-    // UDT fields switched - should still work.
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field(&42_i32.to_be_bytes())
-            .field("The quick brown fox".as_bytes())
-            .field(&2137_i64.to_be_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("b", ColumnType::Native(NativeType::Int)),
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("c", ColumnType::Native(NativeType::BigInt)),
-        ]);
-
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "The quick brown fox",
-                x: String::new(),
-                b: Some(42),
-                c: 2137,
-            }
-        );
-    }
-
-    // An excess UDT field - should still work.
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field(&12_i8.to_be_bytes())
-            .field(&42_i32.to_be_bytes())
-            .field("The quick brown fox".as_bytes())
-            .field(&2137_i64.to_be_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("d", ColumnType::Native(NativeType::TinyInt)),
-            ("b", ColumnType::Native(NativeType::Int)),
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("c", ColumnType::Native(NativeType::BigInt)),
-        ]);
-
-        Udt::type_check(&typ).unwrap();
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "The quick brown fox",
-                x: String::new(),
-                b: Some(42),
-                c: 2137,
-            }
-        );
-    }
-
-    // Only field 'a' is present
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field("The quick brown fox".as_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("c", ColumnType::Native(NativeType::BigInt)),
-        ]);
-
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "The quick brown fox",
-                x: String::new(),
-                b: None,
-                c: 0,
-            }
-        );
-    }
-
-    // Wrong column type
-    {
-        let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
-        Udt::type_check(&typ).unwrap_err();
-    }
-
-    // Missing required column
-    {
-        let typ = udt_def_with_fields([("b", ColumnType::Native(NativeType::Int))]);
-        Udt::type_check(&typ).unwrap_err();
-    }
-}
-
-#[test]
-fn test_udt_strict_ordering() {
-    #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-    #[scylla(crate = "crate", flavor = "enforce_order")]
-    struct Udt<'a> {
-        #[scylla(default_when_null)]
-        a: &'a str,
-        #[scylla(skip)]
-        x: String,
-        #[scylla(allow_missing)]
-        b: Option<i32>,
-    }
-
-    // UDT fields in correct same order
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field("The quick brown fox".as_bytes())
-            .field(&42i32.to_be_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("b", ColumnType::Native(NativeType::Int)),
-        ]);
-
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "The quick brown fox",
-                x: String::new(),
-                b: Some(42),
-            }
-        );
-    }
-
-    // The last UDT field is missing in serialized form - it should treat
-    // as if there were null at the end
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field("The quick brown fox".as_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("b", ColumnType::Native(NativeType::Int)),
-        ]);
-
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "The quick brown fox",
-                x: String::new(),
-                b: None,
-            }
-        );
-    }
-
-    // An excess field at the end of UDT
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field("The quick brown fox".as_bytes())
-            .field(&42_i32.to_be_bytes())
-            .field(&(true as i8).to_be_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("b", ColumnType::Native(NativeType::Int)),
-            ("d", ColumnType::Native(NativeType::Boolean)),
-        ]);
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "The quick brown fox",
-                x: String::new(),
-                b: Some(42),
-            }
-        );
-    }
-
-    // An excess field at the end of UDT, when such are forbidden
-    {
-        #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-        #[scylla(crate = "crate", flavor = "enforce_order", forbid_excess_udt_fields)]
-        struct Udt<'a> {
-            a: &'a str,
-            #[scylla(skip)]
-            x: String,
-            b: Option<i32>,
-        }
-
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("b", ColumnType::Native(NativeType::Int)),
-            ("d", ColumnType::Native(NativeType::Boolean)),
-        ]);
-
-        Udt::type_check(&typ).unwrap_err();
-    }
-
-    // UDT fields switched - will not work
-    {
-        let typ = udt_def_with_fields([
-            ("b", ColumnType::Native(NativeType::Int)),
-            ("a", ColumnType::Native(NativeType::Text)),
-        ]);
-        Udt::type_check(&typ).unwrap_err();
-    }
-
-    // Wrong column type
-    {
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Int)),
-            ("b", ColumnType::Native(NativeType::Int)),
-        ]);
-        Udt::type_check(&typ).unwrap_err();
-    }
-
-    // Missing required column
-    {
-        let typ = udt_def_with_fields([("b", ColumnType::Native(NativeType::Int))]);
-        Udt::type_check(&typ).unwrap_err();
-    }
-
-    // Missing non-required column
-    {
-        let udt_bytes = UdtSerializer::new().field(b"kotmaale").finalize();
-        let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
-
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "kotmaale",
-                x: String::new(),
-                b: None,
-            }
-        );
-    }
-
-    // The first field is null, but `default_when_null` prevents failure.
-    {
-        let udt_bytes = UdtSerializer::new()
-            .null_field()
-            .field(&42i32.to_be_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("b", ColumnType::Native(NativeType::Int)),
-        ]);
-
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "",
-                x: String::new(),
-                b: Some(42),
-            }
-        );
-    }
-}
-
-#[test]
-fn test_udt_no_name_check() {
-    #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-    #[scylla(crate = "crate", flavor = "enforce_order", skip_name_checks)]
-    struct Udt<'a> {
-        a: &'a str,
-        #[scylla(skip)]
-        x: String,
-        b: Option<i32>,
-    }
-
-    // UDT fields in correct same order
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field("The quick brown fox".as_bytes())
-            .field(&42i32.to_be_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("b", ColumnType::Native(NativeType::Int)),
-        ]);
-
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "The quick brown fox",
-                x: String::new(),
-                b: Some(42),
-            }
-        );
-    }
-
-    // Correct order of UDT fields, but different names - should still succeed
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field("The quick brown fox".as_bytes())
-            .field(&42i32.to_be_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("k", ColumnType::Native(NativeType::Text)),
-            ("l", ColumnType::Native(NativeType::Int)),
-        ]);
-
-        let udt = deserialize::<Udt<'_>>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            Udt {
-                a: "The quick brown fox",
-                x: String::new(),
-                b: Some(42),
-            }
-        );
-    }
-}
-
-#[test]
-fn test_udt_cross_rename_fields() {
-    #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-    #[scylla(crate = crate)]
-    struct TestUdt {
-        #[scylla(rename = "b")]
-        a: i32,
-        #[scylla(rename = "a")]
-        b: String,
-    }
-
-    // UDT fields switched - should still work.
-    {
-        let udt_bytes = UdtSerializer::new()
-            .field("The quick brown fox".as_bytes())
-            .field(&42_i32.to_be_bytes())
-            .finalize();
-        let typ = udt_def_with_fields([
-            ("a", ColumnType::Native(NativeType::Text)),
-            ("b", ColumnType::Native(NativeType::Int)),
-        ]);
-
-        let udt = deserialize::<TestUdt>(&typ, &udt_bytes).unwrap();
-        assert_eq!(
-            udt,
-            TestUdt {
-                a: 42,
-                b: "The quick brown fox".to_owned(),
-            }
-        );
-    }
-}
-
 #[test]
 fn test_custom_type_parser() {
     #[derive(Default, Debug, PartialEq, Eq)]
@@ -1764,29 +1098,62 @@ fn test_custom_type_parser() {
     assert_eq!(tup, SwappedPair("foo", 42));
 }
 
-pub(crate) fn deserialize<'frame, 'metadata, T>(
+/// Test-only error type that keeps TypeCheckError and DeserializationError
+/// as separate variants, avoiding the need to wrap TypeCheckError into
+/// DeserializationError.
+#[derive(Debug)]
+enum TestDeserializeError {
+    TypeCheck(TypeCheckError),
+    Deserialization(DeserializationError),
+}
+
+fn deserialize<'frame, 'metadata, T>(
     typ: &'metadata ColumnType<'metadata>,
     bytes: &'frame Bytes,
-) -> Result<T, DeserializationError>
+) -> Result<T, TestDeserializeError>
 where
     T: DeserializeValue<'frame, 'metadata>,
 {
     <T as DeserializeValue<'frame, 'metadata>>::type_check(typ)
-        .map_err(|typecheck_err| DeserializationError(typecheck_err.0))?;
+        .map_err(TestDeserializeError::TypeCheck)?;
     let mut frame_slice = FrameSlice::new(bytes);
     let value = frame_slice.read_cql_bytes().map_err(|err| {
-        mk_deser_err::<T>(
+        TestDeserializeError::Deserialization(mk_deser_err::<T>(
             typ,
             BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
-        )
+        ))
     })?;
     <T as DeserializeValue<'frame, 'metadata>>::deserialize(typ, value)
+        .map_err(TestDeserializeError::Deserialization)
 }
 
 fn make_bytes(cell: &[u8]) -> Bytes {
     let mut b = BytesMut::new();
     append_bytes(&mut b, cell);
     b.freeze()
+}
+
+/// Asserts that two deserialization paths (direct and via CQL intermediate type)
+/// both produce the same expected result.
+fn assert_conversion<T: PartialEq + std::fmt::Debug>(
+    raw_bytes: &[u8],
+    direct: impl Fn(&Bytes) -> Option<T>,
+    via_cql: impl Fn(&Bytes) -> Option<T>,
+    expected: Option<T>,
+) {
+    let bytes = make_bytes(raw_bytes);
+    assert_eq!(
+        direct(&bytes),
+        expected,
+        "direct deserialization mismatch for raw bytes: {:?}",
+        raw_bytes
+    );
+    assert_eq!(
+        via_cql(&bytes),
+        expected,
+        "deserialization via CQL type mismatch for raw bytes: {:?}",
+        raw_bytes
+    );
 }
 
 fn serialize(typ: &ColumnType, value: &dyn SerializeValue) -> Bytes {
@@ -1831,9 +1198,7 @@ fn assert_ser_de_identity<'f, T: SerializeValue + DeserializeValue<'f, 'f> + Par
 /* Errors checks */
 
 #[track_caller]
-pub(crate) fn get_typeck_err_inner<'a>(
-    err: &'a (dyn std::error::Error + 'static),
-) -> &'a BuiltinTypeCheckError {
+pub(crate) fn get_typeck_err_inner(err: &TypeCheckError) -> &BuiltinTypeCheckError {
     match err.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinTypeCheckError: {err:?}"),
@@ -1841,20 +1206,31 @@ pub(crate) fn get_typeck_err_inner<'a>(
 }
 
 #[track_caller]
-pub(crate) fn get_typeck_err(err: &DeserializationError) -> &BuiltinTypeCheckError {
-    get_typeck_err_inner(err.0.as_ref())
+fn get_typeck_err(err: &TestDeserializeError) -> &BuiltinTypeCheckError {
+    match err {
+        TestDeserializeError::TypeCheck(err) => get_typeck_err_inner(err),
+        other => panic!("expected TypeCheck error, got: {other:?}"),
+    }
 }
 
 #[track_caller]
-pub(crate) fn get_deser_err(err: &DeserializationError) -> &BuiltinDeserializationError {
-    match err.0.downcast_ref() {
+pub(crate) fn get_deser_err_inner(err: &DeserializationError) -> &BuiltinDeserializationError {
+    match err.downcast_ref() {
         Some(err) => err,
         None => panic!("not a BuiltinDeserializationError: {err:?}"),
     }
 }
 
+#[track_caller]
+fn get_deser_err(err: &TestDeserializeError) -> &BuiltinDeserializationError {
+    match err {
+        TestDeserializeError::Deserialization(err) => get_deser_err_inner(err),
+        other => panic!("expected Deserialization error, got: {other:?}"),
+    }
+}
+
 macro_rules! assert_given_error {
-    ($get_err:ident, $bytes:expr, $DestT:ty, $cql_typ:expr, $kind:pat) => {
+    ($get_err:expr, $bytes:expr, $DestT:ty, $cql_typ:expr, $kind:pat) => {
         let cql_typ = $cql_typ.clone();
         let err = deserialize::<$DestT>(&cql_typ, $bytes).unwrap_err();
         let err = $get_err(&err);
@@ -2163,7 +1539,7 @@ fn test_set_or_list_elem_type_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_typeck_err_inner(err.0.as_ref());
+        let err = get_typeck_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::Varint));
         assert_matches!(
@@ -2209,7 +1585,7 @@ fn test_set_or_list_elem_deser_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_deser_err(err);
+        let err = get_deser_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         assert_matches!(
@@ -2229,7 +1605,7 @@ fn test_set_or_list_elem_deser_errors() {
     {
         let mut iterator = deserialize::<ListlikeIterator<i64>>(&deser_type, &bytes).unwrap();
         let err = iterator.next().unwrap().unwrap_err();
-        let err = get_deser_err(&err);
+        let err = get_deser_err_inner(&err);
         assert_eq!(
             err.rust_name,
             std::any::type_name::<ListlikeIterator<i64>>()
@@ -2241,7 +1617,7 @@ fn test_set_or_list_elem_deser_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_deser_err(err);
+        let err = get_deser_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         assert_matches!(
@@ -2302,7 +1678,7 @@ fn test_map_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_typeck_err_inner(err.0.as_ref());
+        let err = get_typeck_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::Varint));
         assert_matches!(
@@ -2344,7 +1720,7 @@ fn test_map_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_typeck_err_inner(err.0.as_ref());
+        let err = get_typeck_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<&str>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::Boolean));
         assert_matches!(
@@ -2399,7 +1775,7 @@ fn test_map_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_deser_err(err);
+        let err = get_deser_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i64>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::BigInt));
         assert_matches!(
@@ -2452,7 +1828,7 @@ fn test_map_errors() {
         else {
             panic!("unexpected error kind: {}", err.kind)
         };
-        let err = get_deser_err(err);
+        let err = get_deser_err_inner(err);
         assert_eq!(err.rust_name, std::any::type_name::<i16>());
         assert_eq!(err.cql_type, ColumnType::Native(NativeType::SmallInt));
         assert_matches!(
@@ -2523,7 +1899,7 @@ fn test_tuple_errors() {
                 panic!("unexpected error kind: {}", err.kind)
             };
             assert_eq!(position, 0);
-            let err = get_typeck_err_inner(err.0.as_ref());
+            let err = get_typeck_err_inner(err);
             assert_eq!(err.rust_name, std::any::type_name::<i64>());
             assert_eq!(err.cql_type, ColumnType::Native(NativeType::SmallInt));
             assert_matches!(
@@ -2571,7 +1947,7 @@ fn test_tuple_errors() {
                 panic!("unexpected error kind: {}", err.kind)
             };
             assert_eq!(index, 1);
-            let err = get_deser_err(err);
+            let err = get_deser_err_inner(err);
             assert_eq!(err.rust_name, std::any::type_name::<f64>());
             assert_eq!(err.cql_type, ColumnType::Native(NativeType::Double));
             assert_matches!(
@@ -2722,411 +2098,6 @@ fn test_cow_errors() {
 }
 
 #[test]
-fn test_udt_errors() {
-    // Loose ordering
-    {
-        #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-        #[scylla(crate = "crate", forbid_excess_udt_fields)]
-        struct Udt<'a> {
-            a: &'a str,
-            #[scylla(skip)]
-            x: String,
-            #[scylla(allow_missing)]
-            b: Option<i32>,
-            #[scylla(default_when_null)]
-            c: bool,
-        }
-
-        // Type check errors
-        {
-            // Not UDT
-            {
-                let typ = ColumnType::Collection {
-                    frozen: false,
-                    typ: CollectionType::Map(
-                        Box::new(ColumnType::Native(NativeType::Ascii)),
-                        Box::new(ColumnType::Native(NativeType::Blob)),
-                    ),
-                };
-                let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-            }
-
-            // UDT missing fields
-            {
-                let typ = udt_def_with_fields([("c", ColumnType::Native(NativeType::Boolean))]);
-                let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinTypeCheckErrorKind::UdtError(
-                    UdtTypeCheckErrorKind::ValuesMissingForUdtFields {
-                        field_names: ref missing_fields,
-                    },
-                ) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-                assert_eq!(missing_fields.as_slice(), &["a"]);
-            }
-
-            // excess fields in UDT
-            {
-                let typ = udt_def_with_fields([
-                    ("d", ColumnType::Native(NativeType::Boolean)),
-                    ("a", ColumnType::Native(NativeType::Text)),
-                    ("b", ColumnType::Native(NativeType::Int)),
-                ]);
-                let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::ExcessFieldInUdt {
-                    ref db_field_name,
-                }) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-                assert_eq!(db_field_name.as_str(), "d");
-            }
-
-            // missing UDT field
-            {
-                let typ = udt_def_with_fields([
-                    ("b", ColumnType::Native(NativeType::Int)),
-                    ("a", ColumnType::Native(NativeType::Text)),
-                ]);
-                let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinTypeCheckErrorKind::UdtError(
-                    UdtTypeCheckErrorKind::ValuesMissingForUdtFields { ref field_names },
-                ) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-                assert_eq!(field_names, &["c"]);
-            }
-
-            // UDT fields incompatible types - field type check failed
-            {
-                let typ = udt_def_with_fields([
-                    ("a", ColumnType::Native(NativeType::Blob)),
-                    ("b", ColumnType::Native(NativeType::Int)),
-                ]);
-                let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinTypeCheckErrorKind::UdtError(
-                    UdtTypeCheckErrorKind::FieldTypeCheckFailed {
-                        ref field_name,
-                        ref err,
-                    },
-                ) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-                assert_eq!(field_name.as_str(), "a");
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<&str>());
-                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
-                assert_matches!(
-                    err.kind,
-                    BuiltinTypeCheckErrorKind::MismatchedType {
-                        expected: &[
-                            ColumnType::Native(NativeType::Ascii),
-                            ColumnType::Native(NativeType::Text)
-                        ]
-                    }
-                );
-            }
-        }
-
-        // Deserialization errors
-        {
-            // Got null
-            {
-                let typ = udt_def_with_fields([
-                    ("c", ColumnType::Native(NativeType::Boolean)),
-                    ("a", ColumnType::Native(NativeType::Blob)),
-                    ("b", ColumnType::Native(NativeType::Int)),
-                ]);
-
-                let err = Udt::deserialize(&typ, None).unwrap_err();
-                let err = get_deser_err(&err);
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
-            }
-
-            // UDT field deserialization failed
-            {
-                let typ = udt_def_with_fields([
-                    ("a", ColumnType::Native(NativeType::Ascii)),
-                    ("c", ColumnType::Native(NativeType::Boolean)),
-                ]);
-
-                let udt_bytes = UdtSerializer::new()
-                    .field("alamakota".as_bytes())
-                    .field(&42_i16.to_be_bytes())
-                    .finalize();
-
-                let err = deserialize::<Udt>(&typ, &udt_bytes).unwrap_err();
-
-                let err = get_deser_err(&err);
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinDeserializationErrorKind::UdtError(
-                    UdtDeserializationErrorKind::FieldDeserializationFailed {
-                        ref field_name,
-                        ref err,
-                    },
-                ) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-                assert_eq!(field_name.as_str(), "c");
-                let err = get_deser_err(err);
-                assert_eq!(err.rust_name, std::any::type_name::<bool>());
-                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Boolean));
-                assert_matches!(
-                    err.kind,
-                    BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                        expected: 1,
-                        got: 2,
-                    }
-                );
-            }
-        }
-    }
-
-    // Strict ordering
-    {
-        #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-        #[scylla(crate = "crate", flavor = "enforce_order", forbid_excess_udt_fields)]
-        struct Udt<'a> {
-            a: &'a str,
-            #[scylla(skip)]
-            x: String,
-            b: Option<i32>,
-            #[scylla(allow_missing)]
-            c: bool,
-        }
-
-        // Type check errors
-        {
-            // Not UDT
-            {
-                let typ = ColumnType::Collection {
-                    frozen: false,
-                    typ: CollectionType::Map(
-                        Box::new(ColumnType::Native(NativeType::Ascii)),
-                        Box::new(ColumnType::Native(NativeType::Blob)),
-                    ),
-                };
-                let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-            }
-
-            // UDT too few fields
-            {
-                let typ = udt_def_with_fields([("a", ColumnType::Native(NativeType::Text))]);
-                let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::TooFewFields {
-                    ref required_fields,
-                    ref present_fields,
-                }) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-                assert_eq!(required_fields.as_slice(), &["a", "b"]);
-                assert_eq!(present_fields.as_slice(), &["a".to_string()]);
-            }
-
-            // excess fields in UDT
-            {
-                let typ = udt_def_with_fields([
-                    ("a", ColumnType::Native(NativeType::Text)),
-                    ("b", ColumnType::Native(NativeType::Int)),
-                    ("d", ColumnType::Native(NativeType::Boolean)),
-                ]);
-                let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::ExcessFieldInUdt {
-                    ref db_field_name,
-                }) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-                assert_eq!(db_field_name.as_str(), "d");
-            }
-
-            // UDT fields switched - field name mismatch
-            {
-                let typ = udt_def_with_fields([
-                    ("b", ColumnType::Native(NativeType::Int)),
-                    ("a", ColumnType::Native(NativeType::Text)),
-                ]);
-                let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::FieldNameMismatch {
-                    position,
-                    ref rust_field_name,
-                    ref db_field_name,
-                }) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-                assert_eq!(position, 0);
-                assert_eq!(rust_field_name.as_str(), "a".to_owned());
-                assert_eq!(db_field_name.as_str(), "b".to_owned());
-            }
-
-            // UDT fields incompatible types - field type check failed
-            {
-                let typ = udt_def_with_fields([
-                    ("a", ColumnType::Native(NativeType::Blob)),
-                    ("b", ColumnType::Native(NativeType::Int)),
-                ]);
-                let err = Udt::type_check(&typ).unwrap_err();
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinTypeCheckErrorKind::UdtError(
-                    UdtTypeCheckErrorKind::FieldTypeCheckFailed {
-                        ref field_name,
-                        ref err,
-                    },
-                ) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-                assert_eq!(field_name.as_str(), "a");
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<&str>());
-                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Blob));
-                assert_matches!(
-                    err.kind,
-                    BuiltinTypeCheckErrorKind::MismatchedType {
-                        expected: &[
-                            ColumnType::Native(NativeType::Ascii),
-                            ColumnType::Native(NativeType::Text)
-                        ]
-                    }
-                );
-            }
-        }
-
-        // Deserialization errors
-        {
-            // Got null
-            {
-                let typ = udt_def_with_fields([
-                    ("a", ColumnType::Native(NativeType::Text)),
-                    ("b", ColumnType::Native(NativeType::Int)),
-                    ("c", ColumnType::Native(NativeType::Boolean)),
-                ]);
-
-                let err = Udt::deserialize(&typ, None).unwrap_err();
-                let err = get_deser_err(&err);
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
-            }
-
-            // Bad field format
-            {
-                let typ = udt_def_with_fields([
-                    ("a", ColumnType::Native(NativeType::Text)),
-                    ("b", ColumnType::Native(NativeType::Int)),
-                    ("c", ColumnType::Native(NativeType::Boolean)),
-                ]);
-
-                let udt_bytes = UdtSerializer::new()
-                    .field(b"alamakota")
-                    .field(&42_i64.to_be_bytes())
-                    .field(&[true as u8])
-                    .finalize();
-
-                let udt_bytes_too_short = udt_bytes.slice(..udt_bytes.len() - 1);
-                assert!(udt_bytes.len() > udt_bytes_too_short.len());
-
-                let err = deserialize::<Udt>(&typ, &udt_bytes_too_short).unwrap_err();
-
-                let err = get_deser_err(&err);
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinDeserializationErrorKind::RawCqlBytesReadError(_) = err.kind else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-            }
-
-            // UDT field deserialization failed
-            {
-                let typ = udt_def_with_fields([
-                    ("a", ColumnType::Native(NativeType::Text)),
-                    ("b", ColumnType::Native(NativeType::Int)),
-                    ("c", ColumnType::Native(NativeType::Boolean)),
-                ]);
-
-                let udt_bytes = UdtSerializer::new()
-                    .field(b"alamakota")
-                    .field(&42_i64.to_be_bytes())
-                    .field(&[true as u8])
-                    .finalize();
-
-                let err = deserialize::<Udt>(&typ, &udt_bytes).unwrap_err();
-
-                let err = get_deser_err(&err);
-                assert_eq!(err.rust_name, std::any::type_name::<Udt>());
-                assert_eq!(err.cql_type, typ);
-                let BuiltinDeserializationErrorKind::UdtError(
-                    UdtDeserializationErrorKind::FieldDeserializationFailed {
-                        ref field_name,
-                        ref err,
-                    },
-                ) = err.kind
-                else {
-                    panic!("unexpected error kind: {:?}", err.kind)
-                };
-                assert_eq!(field_name.as_str(), "b");
-                let err = get_deser_err(err);
-                assert_eq!(err.rust_name, std::any::type_name::<Option<i32>>());
-                assert_eq!(err.cql_type, ColumnType::Native(NativeType::Int));
-                assert_matches!(
-                    err.kind,
-                    BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                        expected: 4,
-                        got: 8,
-                    }
-                );
-            }
-        }
-    }
-}
-
-#[test]
 fn metadata_does_not_bound_deserialized_values() {
     /* It's important to understand what is a _deserialized value_. It's not just
      * an implementor of DeserializeValue; there are some implementors of DeserializeValue
@@ -3179,28 +2150,6 @@ fn metadata_does_not_bound_deserialized_values() {
         };
         let decoded_map_str_int_res = deserialize::<HashMap<&str, i32>>(&map_typ, &bytes);
 
-        // UDT
-        let udt_typ = ColumnType::UserDefinedType {
-            frozen: false,
-            definition: Arc::new(UserDefinedType {
-                name: "udt".into(),
-                keyspace: "ks".into(),
-                field_types: vec![
-                    ("bytes".into(), ColumnType::Native(NativeType::Blob)),
-                    ("text".into(), ColumnType::Native(NativeType::Text)),
-                ],
-            }),
-        };
-        #[derive(DeserializeValue)]
-        #[scylla(crate=crate)]
-        struct Udt<'frame> {
-            #[expect(dead_code)]
-            bytes: &'frame [u8],
-            #[expect(dead_code)]
-            text: &'frame str,
-        }
-        let decoded_udt_res = deserialize::<Udt>(&udt_typ, &bytes);
-
         (
             decoded_blob_res,
             decoded_str_res,
@@ -3209,7 +2158,6 @@ fn metadata_does_not_bound_deserialized_values() {
             decoded_set_str_res,
             decoded_set_string_res,
             decoded_map_str_int_res,
-            decoded_udt_res,
         )
     };
 }
@@ -3219,9 +2167,9 @@ fn metadata_does_not_bound_deserialized_values() {
 #[test]
 fn test_deserialize_text_types() {
     let buf: Vec<u8> = vec![0x41];
-    let int_slice = &mut &buf[..];
-    let ascii_serialized = super::deser_cql_value(&ColumnType::Native(Ascii), int_slice).unwrap();
-    let text_serialized = super::deser_cql_value(&ColumnType::Native(Text), int_slice).unwrap();
+    let bytes = make_bytes(&buf);
+    let ascii_serialized = deserialize::<CqlValue>(&ColumnType::Native(Ascii), &bytes).unwrap();
+    let text_serialized = deserialize::<CqlValue>(&ColumnType::Native(Text), &bytes).unwrap();
     assert_eq!(ascii_serialized, CqlValue::Ascii("A".to_string()));
     assert_eq!(text_serialized, CqlValue::Text("A".to_string()));
 }
@@ -3230,28 +2178,26 @@ fn test_deserialize_text_types() {
 fn test_deserialize_uuid_inet_types() {
     let my_uuid = Uuid::parse_str("00000000000000000000000000000001").unwrap();
 
-    let uuid_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-    let uuid_slice = &mut &uuid_buf[..];
-    let uuid_serialize = super::deser_cql_value(&ColumnType::Native(Uuid), uuid_slice).unwrap();
+    let uuid_bytes = make_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    let uuid_serialize = deserialize::<CqlValue>(&ColumnType::Native(Uuid), &uuid_bytes).unwrap();
     assert_eq!(uuid_serialize, CqlValue::Uuid(my_uuid));
 
     let my_timeuuid = CqlTimeuuid::from_str("00000000000000000000000000000001").unwrap();
     let time_uuid_serialize =
-        super::deser_cql_value(&ColumnType::Native(Timeuuid), uuid_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(Timeuuid), &uuid_bytes).unwrap();
     assert_eq!(time_uuid_serialize, CqlValue::Timeuuid(my_timeuuid));
 
     let my_ip = "::1".parse().unwrap();
-    let ip_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-    let ip_slice = &mut &ip_buf[..];
-    let ip_serialize = super::deser_cql_value(&ColumnType::Native(Inet), ip_slice).unwrap();
+    let ip_bytes = make_bytes(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    let ip_serialize = deserialize::<CqlValue>(&ColumnType::Native(Inet), &ip_bytes).unwrap();
     assert_eq!(ip_serialize, CqlValue::Inet(my_ip));
 
     let max_ip = "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap();
-    let max_ip_buf: Vec<u8> = vec![
+    let max_ip_bytes = make_bytes(&[
         255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    ];
-    let max_ip_slice = &mut &max_ip_buf[..];
-    let max_ip_serialize = super::deser_cql_value(&ColumnType::Native(Inet), max_ip_slice).unwrap();
+    ]);
+    let max_ip_serialize =
+        deserialize::<CqlValue>(&ColumnType::Native(Inet), &max_ip_bytes).unwrap();
     assert_eq!(max_ip_serialize, CqlValue::Inet(max_ip));
 }
 
@@ -3260,15 +2206,14 @@ fn test_floating_points() {
     let float: f32 = 0.5;
     let double: f64 = 2.0;
 
-    let float_buf: Vec<u8> = vec![63, 0, 0, 0];
-    let float_slice = &mut &float_buf[..];
-    let float_serialize = super::deser_cql_value(&ColumnType::Native(Float), float_slice).unwrap();
+    let float_bytes = make_bytes(&[63, 0, 0, 0]);
+    let float_serialize =
+        deserialize::<CqlValue>(&ColumnType::Native(Float), &float_bytes).unwrap();
     assert_eq!(float_serialize, CqlValue::Float(float));
 
-    let double_buf: Vec<u8> = vec![64, 0, 0, 0, 0, 0, 0, 0];
-    let double_slice = &mut &double_buf[..];
+    let double_bytes = make_bytes(&[64, 0, 0, 0, 0, 0, 0, 0]);
     let double_serialize =
-        super::deser_cql_value(&ColumnType::Native(Double), double_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(Double), &double_bytes).unwrap();
     assert_eq!(double_serialize, CqlValue::Double(double));
 }
 
@@ -3338,7 +2283,8 @@ fn test_bigint03() {
     let tests = varint_test_cases_from_spec();
 
     for t in tests.iter() {
-        let value = super::deser_cql_value(&ColumnType::Native(Varint), &mut &*t.encoding).unwrap();
+        let bytes = make_bytes(&t.encoding);
+        let value = deserialize::<CqlValue>(&ColumnType::Native(Varint), &bytes).unwrap();
         assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
     }
 }
@@ -3351,7 +2297,8 @@ fn test_bigint04() {
     let tests = varint_test_cases_from_spec();
 
     for t in tests.iter() {
-        let value = super::deser_cql_value(&ColumnType::Native(Varint), &mut &*t.encoding).unwrap();
+        let bytes = make_bytes(&t.encoding);
+        let value = deserialize::<CqlValue>(&ColumnType::Native(Varint), &bytes).unwrap();
         assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
     }
 }
@@ -3385,8 +2332,8 @@ fn test_decimal() {
     ];
 
     for t in tests.iter() {
-        let value =
-            super::deser_cql_value(&ColumnType::Native(Decimal), &mut &*t.encoding).unwrap();
+        let bytes = make_bytes(t.encoding);
+        let value = deserialize::<CqlValue>(&ColumnType::Native(Decimal), &bytes).unwrap();
         assert_eq!(
             CqlValue::Decimal(t.value.clone().try_into().unwrap()),
             value
@@ -3396,57 +2343,52 @@ fn test_decimal() {
 
 #[test]
 fn test_deserialize_counter() {
-    let counter: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 1, 0];
-    let counter_slice = &mut &counter[..];
+    let counter_bytes = make_bytes(&[0, 0, 0, 0, 0, 0, 1, 0]);
     let counter_serialize =
-        super::deser_cql_value(&ColumnType::Native(NativeType::Counter), counter_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(NativeType::Counter), &counter_bytes).unwrap();
     assert_eq!(counter_serialize, CqlValue::Counter(Counter(256)));
 }
 
 #[test]
 fn test_deserialize_blob() {
     let blob: Vec<u8> = vec![0, 1, 2, 3];
-    let blob_slice = &mut &blob[..];
-    let blob_serialize = super::deser_cql_value(&ColumnType::Native(Blob), blob_slice).unwrap();
+    let blob_bytes = make_bytes(&blob);
+    let blob_serialize = deserialize::<CqlValue>(&ColumnType::Native(Blob), &blob_bytes).unwrap();
     assert_eq!(blob_serialize, CqlValue::Blob(blob));
 }
 
 #[test]
 fn test_deserialize_bool() {
-    let bool_buf: Vec<u8> = vec![0x00];
-    let bool_slice = &mut &bool_buf[..];
-    let bool_serialize = super::deser_cql_value(&ColumnType::Native(Boolean), bool_slice).unwrap();
+    let bool_bytes = make_bytes(&[0x00]);
+    let bool_serialize =
+        deserialize::<CqlValue>(&ColumnType::Native(Boolean), &bool_bytes).unwrap();
     assert_eq!(bool_serialize, CqlValue::Boolean(false));
 
-    let bool_buf: Vec<u8> = vec![0x01];
-    let bool_slice = &mut &bool_buf[..];
-    let bool_serialize = super::deser_cql_value(&ColumnType::Native(Boolean), bool_slice).unwrap();
+    let bool_bytes = make_bytes(&[0x01]);
+    let bool_serialize =
+        deserialize::<CqlValue>(&ColumnType::Native(Boolean), &bool_bytes).unwrap();
     assert_eq!(bool_serialize, CqlValue::Boolean(true));
 }
 
 #[test]
 fn test_deserialize_int_types() {
-    let int_buf: Vec<u8> = vec![0, 0, 0, 4];
-    let int_slice = &mut &int_buf[..];
-    let int_serialized = super::deser_cql_value(&ColumnType::Native(Int), int_slice).unwrap();
+    let int_bytes = make_bytes(&[0, 0, 0, 4]);
+    let int_serialized = deserialize::<CqlValue>(&ColumnType::Native(Int), &int_bytes).unwrap();
     assert_eq!(int_serialized, CqlValue::Int(4));
 
-    let smallint_buf: Vec<u8> = vec![0, 4];
-    let smallint_slice = &mut &smallint_buf[..];
+    let smallint_bytes = make_bytes(&[0, 4]);
     let smallint_serialized =
-        super::deser_cql_value(&ColumnType::Native(SmallInt), smallint_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(SmallInt), &smallint_bytes).unwrap();
     assert_eq!(smallint_serialized, CqlValue::SmallInt(4));
 
-    let tinyint_buf: Vec<u8> = vec![4];
-    let tinyint_slice = &mut &tinyint_buf[..];
+    let tinyint_bytes = make_bytes(&[4]);
     let tinyint_serialized =
-        super::deser_cql_value(&ColumnType::Native(TinyInt), tinyint_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(TinyInt), &tinyint_bytes).unwrap();
     assert_eq!(tinyint_serialized, CqlValue::TinyInt(4));
 
-    let bigint_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 4];
-    let bigint_slice = &mut &bigint_buf[..];
+    let bigint_bytes = make_bytes(&[0, 0, 0, 0, 0, 0, 0, 4]);
     let bigint_serialized =
-        super::deser_cql_value(&ColumnType::Native(BigInt), bigint_slice).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(BigInt), &bigint_bytes).unwrap();
     assert_eq!(bigint_serialized, CqlValue::BigInt(4));
 }
 
@@ -3538,37 +2480,37 @@ fn test_deserialize_date() {
     // Date is correctly parsed from a 4 byte array
     let four_bytes: [u8; 4] = [12, 23, 34, 45];
     let date: CqlValue =
-        super::deser_cql_value(&ColumnType::Native(Date), &mut four_bytes.as_ref()).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(Date), &make_bytes(&four_bytes)).unwrap();
     assert_eq!(
         date,
         CqlValue::Date(CqlDate(u32::from_be_bytes(four_bytes)))
     );
 
     // Date is parsed as u32 not i32, u32::MAX is u32::MAX
-    let date: CqlValue = super::deser_cql_value(
+    let date: CqlValue = deserialize::<CqlValue>(
         &ColumnType::Native(Date),
-        &mut u32::MAX.to_be_bytes().as_ref(),
+        &make_bytes(&u32::MAX.to_be_bytes()),
     )
     .unwrap();
     assert_eq!(date, CqlValue::Date(CqlDate(u32::MAX)));
 
     // Trying to parse a 0, 3 or 5 byte array fails
-    super::deser_cql_value(&ColumnType::Native(Date), &mut [].as_ref()).unwrap();
-    super::deser_cql_value(&ColumnType::Native(Date), &mut [1, 2, 3].as_ref()).unwrap_err();
-    super::deser_cql_value(&ColumnType::Native(Date), &mut [1, 2, 3, 4, 5].as_ref()).unwrap_err();
+    deserialize::<CqlValue>(&ColumnType::Native(Date), &make_bytes(&[])).unwrap();
+    deserialize::<CqlValue>(&ColumnType::Native(Date), &make_bytes(&[1, 2, 3])).unwrap_err();
+    deserialize::<CqlValue>(&ColumnType::Native(Date), &make_bytes(&[1, 2, 3, 4, 5])).unwrap_err();
 
     // Deserialize unix epoch
     let unix_epoch_bytes = 2_u32.pow(31).to_be_bytes();
 
     let date =
-        super::deser_cql_value(&ColumnType::Native(Date), &mut unix_epoch_bytes.as_ref()).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(Date), &make_bytes(&unix_epoch_bytes)).unwrap();
     assert_eq!(date.as_cql_date(), Some(CqlDate(1 << 31)));
 
     // 2^31 - 30 when converted to NaiveDate is 1969-12-02
     let before_epoch = CqlDate((1 << 31) - 30);
-    let date: CqlValue = super::deser_cql_value(
+    let date: CqlValue = deserialize::<CqlValue>(
         &ColumnType::Native(Date),
-        &mut ((1_u32 << 31) - 30).to_be_bytes().as_ref(),
+        &make_bytes(&((1_u32 << 31) - 30).to_be_bytes()),
     )
     .unwrap();
 
@@ -3576,9 +2518,9 @@ fn test_deserialize_date() {
 
     // 2^31 + 30 when converted to NaiveDate is 1970-01-31
     let after_epoch = CqlDate((1 << 31) + 30);
-    let date = super::deser_cql_value(
+    let date = deserialize::<CqlValue>(
         &ColumnType::Native(Date),
-        &mut ((1_u32 << 31) + 30).to_be_bytes().as_ref(),
+        &make_bytes(&((1_u32 << 31) + 30).to_be_bytes()),
     )
     .unwrap();
 
@@ -3586,18 +2528,18 @@ fn test_deserialize_date() {
 
     // Min date
     let min_date = CqlDate(u32::MIN);
-    let date = super::deser_cql_value(
+    let date = deserialize::<CqlValue>(
         &ColumnType::Native(Date),
-        &mut u32::MIN.to_be_bytes().as_ref(),
+        &make_bytes(&u32::MIN.to_be_bytes()),
     )
     .unwrap();
     assert_eq!(date.as_cql_date(), Some(min_date));
 
     // Max date
     let max_date = CqlDate(u32::MAX);
-    let date = super::deser_cql_value(
+    let date = deserialize::<CqlValue>(
         &ColumnType::Native(Date),
-        &mut u32::MAX.to_be_bytes().as_ref(),
+        &make_bytes(&u32::MAX.to_be_bytes()),
     )
     .unwrap();
     assert_eq!(date.as_cql_date(), Some(max_date));
@@ -3605,111 +2547,96 @@ fn test_deserialize_date() {
 
 #[cfg(feature = "chrono-04")]
 #[test]
-fn test_naive_date_04_from_cql() {
+fn test_naive_date_04() {
     use chrono_04::NaiveDate;
+
+    let col_type = ColumnType::Native(Date);
+    let direct =
+        |bytes: &Bytes| -> Option<NaiveDate> { deserialize::<NaiveDate>(&col_type, bytes).ok() };
+    let via_cql = |bytes: &Bytes| -> Option<NaiveDate> {
+        deserialize::<CqlDate>(&col_type, bytes)
+            .ok()
+            .and_then(|d| d.try_into().ok())
+    };
 
     // 2^31 when converted to NaiveDate is 1970-01-01
     let unix_epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Date),
-        &mut (1u32 << 31).to_be_bytes().as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(date.as_naive_date_04(), Some(unix_epoch));
+    assert_conversion(
+        &(1u32 << 31).to_be_bytes(),
+        direct,
+        via_cql,
+        Some(unix_epoch),
+    );
 
     // 2^31 - 30 when converted to NaiveDate is 1969-12-02
     let before_epoch = NaiveDate::from_ymd_opt(1969, 12, 2).unwrap();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Date),
-        &mut ((1u32 << 31) - 30).to_be_bytes().as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(date.as_naive_date_04(), Some(before_epoch));
+    assert_conversion(
+        &((1u32 << 31) - 30).to_be_bytes(),
+        direct,
+        via_cql,
+        Some(before_epoch),
+    );
 
     // 2^31 + 30 when converted to NaiveDate is 1970-01-31
     let after_epoch = NaiveDate::from_ymd_opt(1970, 1, 31).unwrap();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Date),
-        &mut ((1u32 << 31) + 30).to_be_bytes().as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(date.as_naive_date_04(), Some(after_epoch));
+    assert_conversion(
+        &((1u32 << 31) + 30).to_be_bytes(),
+        direct,
+        via_cql,
+        Some(after_epoch),
+    );
 
     // 0 and u32::MAX are out of NaiveDate range, fails with an error, not panics
-    assert_eq!(
-        super::deser_cql_value(&ColumnType::Native(Date), &mut 0_u32.to_be_bytes().as_ref())
-            .unwrap()
-            .as_naive_date_04(),
-        None
-    );
-
-    assert_eq!(
-        super::deser_cql_value(
-            &ColumnType::Native(Date),
-            &mut u32::MAX.to_be_bytes().as_ref()
-        )
-        .unwrap()
-        .as_naive_date_04(),
-        None
-    );
+    assert_conversion(&0_u32.to_be_bytes(), direct, via_cql, None);
+    assert_conversion(&u32::MAX.to_be_bytes(), direct, via_cql, None);
 }
 
 #[cfg(feature = "time-03")]
 #[test]
-fn test_date_03_from_cql() {
+fn test_date_03() {
     use time_03::Date;
     use time_03::Month::*;
 
+    let col_type = ColumnType::Native(Date);
+    let direct = |bytes: &Bytes| -> Option<time_03::Date> {
+        deserialize::<time_03::Date>(&col_type, bytes).ok()
+    };
+    let via_cql = |bytes: &Bytes| -> Option<time_03::Date> {
+        deserialize::<CqlDate>(&col_type, bytes)
+            .ok()
+            .and_then(|d| d.try_into().ok())
+    };
+
     // 2^31 when converted to time_03::Date is 1970-01-01
     let unix_epoch = Date::from_calendar_date(1970, January, 1).unwrap();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Date),
-        &mut (1u32 << 31).to_be_bytes().as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(date.as_date_03(), Some(unix_epoch));
+    assert_conversion(
+        &(1u32 << 31).to_be_bytes(),
+        direct,
+        via_cql,
+        Some(unix_epoch),
+    );
 
     // 2^31 - 30 when converted to time_03::Date is 1969-12-02
     let before_epoch = Date::from_calendar_date(1969, December, 2).unwrap();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Date),
-        &mut ((1u32 << 31) - 30).to_be_bytes().as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(date.as_date_03(), Some(before_epoch));
+    assert_conversion(
+        &((1u32 << 31) - 30).to_be_bytes(),
+        direct,
+        via_cql,
+        Some(before_epoch),
+    );
 
     // 2^31 + 30 when converted to time_03::Date is 1970-01-31
     let after_epoch = Date::from_calendar_date(1970, January, 31).unwrap();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Date),
-        &mut ((1u32 << 31) + 30).to_be_bytes().as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(date.as_date_03(), Some(after_epoch));
-
-    // 0 and u32::MAX are out of NaiveDate range, fails with an error, not panics
-    assert_eq!(
-        super::deser_cql_value(&ColumnType::Native(Date), &mut 0_u32.to_be_bytes().as_ref())
-            .unwrap()
-            .as_date_03(),
-        None
+    assert_conversion(
+        &((1u32 << 31) + 30).to_be_bytes(),
+        direct,
+        via_cql,
+        Some(after_epoch),
     );
 
-    assert_eq!(
-        super::deser_cql_value(
-            &ColumnType::Native(Date),
-            &mut u32::MAX.to_be_bytes().as_ref()
-        )
-        .unwrap()
-        .as_date_03(),
-        None
-    );
+    // 0 and u32::MAX are out of time_03::Date range, fails with an error, not panics
+    assert_conversion(&0_u32.to_be_bytes(), direct, via_cql, None);
+    assert_conversion(&u32::MAX.to_be_bytes(), direct, via_cql, None);
 }
 
 #[test]
@@ -3722,102 +2649,81 @@ fn test_deserialize_time() {
 
     // Check that basic values are deserialized correctly
     for test_val in [0, 1, 18463, max_time].iter() {
-        let bytes: [u8; 8] = test_val.to_be_bytes();
+        let bytes = make_bytes(&test_val.to_be_bytes());
         let cql_value: CqlValue =
-            super::deser_cql_value(&ColumnType::Native(Time), &mut &bytes[..]).unwrap();
+            deserialize::<CqlValue>(&ColumnType::Native(Time), &bytes).unwrap();
         assert_eq!(cql_value, CqlValue::Time(CqlTime(*test_val)));
     }
 
     // Negative values cause an error
     // Values bigger than 86399999999999 cause an error
     for test_val in [-1, i64::MIN, max_time + 1, i64::MAX].iter() {
-        let bytes: [u8; 8] = test_val.to_be_bytes();
-        super::deser_cql_value(&ColumnType::Native(Time), &mut &bytes[..]).unwrap_err();
+        let bytes = make_bytes(&test_val.to_be_bytes());
+        deserialize::<CqlValue>(&ColumnType::Native(Time), &bytes).unwrap_err();
     }
 }
 
 #[cfg(feature = "chrono-04")]
 #[test]
-fn test_naive_time_04_from_cql() {
+fn test_naive_time_04() {
     use chrono_04::NaiveTime;
+
+    let col_type = ColumnType::Native(Time);
+    let direct =
+        |bytes: &Bytes| -> Option<NaiveTime> { deserialize::<NaiveTime>(&col_type, bytes).ok() };
+    let via_cql = |bytes: &Bytes| -> Option<NaiveTime> {
+        deserialize::<CqlTime>(&col_type, bytes)
+            .ok()
+            .and_then(|t| t.try_into().ok())
+    };
 
     // 0 when converted to NaiveTime is 0:0:0.0
     let midnight = NaiveTime::from_hms_nano_opt(0, 0, 0, 0).unwrap();
-    let time = super::deser_cql_value(
-        &ColumnType::Native(Time),
-        &mut (0i64).to_be_bytes().as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(time.as_naive_time_04(), Some(midnight));
+    assert_conversion(&0i64.to_be_bytes(), direct, via_cql, Some(midnight));
 
     // 10:10:30.500,000,001
     let (h, m, s, n) = (10, 10, 30, 500_000_001);
-    let midnight = NaiveTime::from_hms_nano_opt(h, m, s, n).unwrap();
-    let time = super::deser_cql_value(
-        &ColumnType::Native(Time),
-        &mut ((h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64)
-            .to_be_bytes()
-            .as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(time.as_naive_time_04(), Some(midnight));
+    let mid_day = NaiveTime::from_hms_nano_opt(h, m, s, n).unwrap();
+    let nanos = (h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64;
+    assert_conversion(&nanos.to_be_bytes(), direct, via_cql, Some(mid_day));
 
     // 23:59:59.999,999,999
     let (h, m, s, n) = (23, 59, 59, 999_999_999);
-    let midnight = NaiveTime::from_hms_nano_opt(h, m, s, n).unwrap();
-    let time = super::deser_cql_value(
-        &ColumnType::Native(Time),
-        &mut ((h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64)
-            .to_be_bytes()
-            .as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(time.as_naive_time_04(), Some(midnight));
+    let max_time = NaiveTime::from_hms_nano_opt(h, m, s, n).unwrap();
+    let nanos = (h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64;
+    assert_conversion(&nanos.to_be_bytes(), direct, via_cql, Some(max_time));
 }
 
 #[cfg(feature = "time-03")]
 #[test]
-fn test_primitive_time_03_from_cql() {
+fn test_primitive_time_03() {
     use time_03::Time;
 
-    // 0 when converted to NaiveTime is 0:0:0.0
-    let midnight = Time::from_hms_nano(0, 0, 0, 0).unwrap();
-    let time = super::deser_cql_value(
-        &ColumnType::Native(Time),
-        &mut (0i64).to_be_bytes().as_ref(),
-    )
-    .unwrap();
+    let col_type = ColumnType::Native(Time);
+    let direct = |bytes: &Bytes| -> Option<time_03::Time> {
+        deserialize::<time_03::Time>(&col_type, bytes).ok()
+    };
+    let via_cql = |bytes: &Bytes| -> Option<time_03::Time> {
+        deserialize::<CqlTime>(&col_type, bytes)
+            .ok()
+            .and_then(|t| t.try_into().ok())
+    };
 
-    assert_eq!(time.as_time_03(), Some(midnight));
+    // 0 when converted to time_03::Time is 0:0:0.0
+    let midnight = Time::from_hms_nano(0, 0, 0, 0).unwrap();
+    assert_conversion(&0i64.to_be_bytes(), direct, via_cql, Some(midnight));
 
     // 10:10:30.500,000,001
     let (h, m, s, n) = (10, 10, 30, 500_000_001);
-    let midnight = Time::from_hms_nano(h, m, s, n).unwrap();
-    let time = super::deser_cql_value(
-        &ColumnType::Native(Time),
-        &mut ((h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64)
-            .to_be_bytes()
-            .as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(time.as_time_03(), Some(midnight));
+    let mid_day = Time::from_hms_nano(h, m, s, n).unwrap();
+    let nanos = (h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64;
+    assert_conversion(&nanos.to_be_bytes(), direct, via_cql, Some(mid_day));
 
     // 23:59:59.999,999,999
     let (h, m, s, n) = (23, 59, 59, 999_999_999);
-    let midnight = Time::from_hms_nano(h, m, s, n).unwrap();
-    let time = super::deser_cql_value(
-        &ColumnType::Native(Time),
-        &mut ((h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64)
-            .to_be_bytes()
-            .as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(time.as_time_03(), Some(midnight));
+    let max_time = Time::from_hms_nano(h, m, s, n).unwrap();
+    let nanos = (h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64;
+    assert_conversion(&nanos.to_be_bytes(), direct, via_cql, Some(max_time));
 }
 
 #[test]
@@ -3826,27 +2732,31 @@ fn test_timestamp_deserialize() {
 
     // Check that test values are deserialized correctly
     for test_val in &[0, -1, 1, 74568745, -4584658, i64::MIN, i64::MAX] {
-        let bytes: [u8; 8] = test_val.to_be_bytes();
+        let bytes = make_bytes(&test_val.to_be_bytes());
         let cql_value: CqlValue =
-            super::deser_cql_value(&ColumnType::Native(Timestamp), &mut &bytes[..]).unwrap();
+            deserialize::<CqlValue>(&ColumnType::Native(Timestamp), &bytes).unwrap();
         assert_eq!(cql_value, CqlValue::Timestamp(CqlTimestamp(*test_val)));
     }
 }
 
 #[cfg(feature = "chrono-04")]
 #[test]
-fn test_datetime_04_from_cql() {
-    use chrono_04::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
+fn test_datetime_04() {
+    use chrono_04::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+
+    let col_type = ColumnType::Native(Timestamp);
+    let direct = |bytes: &Bytes| -> Option<DateTime<Utc>> {
+        deserialize::<DateTime<Utc>>(&col_type, bytes).ok()
+    };
+    let via_cql = |bytes: &Bytes| -> Option<DateTime<Utc>> {
+        deserialize::<CqlTimestamp>(&col_type, bytes)
+            .ok()
+            .and_then(|ts| ts.try_into().ok())
+    };
 
     // 0 when converted to DateTime is 1970-01-01 0:00:00.00
     let unix_epoch = DateTime::from_timestamp(0, 0).unwrap();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Timestamp),
-        &mut 0i64.to_be_bytes().as_ref(),
-    )
-    .unwrap();
-
-    assert_eq!(date.as_datetime_04(), Some(unix_epoch));
+    assert_conversion(&0i64.to_be_bytes(), direct, via_cql, Some(unix_epoch));
 
     // When converted to NaiveDateTime, this is 1969-12-01 11:29:29.5
     let timestamp: i64 = -((((30 * 24 + 12) * 60 + 30) * 60 + 30) * 1000 + 500);
@@ -3855,116 +2765,72 @@ fn test_datetime_04_from_cql() {
         NaiveTime::from_hms_milli_opt(11, 29, 29, 500).unwrap(),
     )
     .and_utc();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Timestamp),
-        &mut timestamp.to_be_bytes().as_ref(),
-    )
-    .unwrap();
+    assert_conversion(
+        &timestamp.to_be_bytes(),
+        direct,
+        via_cql,
+        Some(before_epoch),
+    );
 
-    assert_eq!(date.as_datetime_04(), Some(before_epoch));
-
-    // when converted to NaiveDateTime, this is is 1970-01-31 12:30:30.5
+    // When converted to NaiveDateTime, this is 1970-01-31 12:30:30.5
     let timestamp: i64 = (((30 * 24 + 12) * 60 + 30) * 60 + 30) * 1000 + 500;
     let after_epoch = NaiveDateTime::new(
         NaiveDate::from_ymd_opt(1970, 1, 31).unwrap(),
         NaiveTime::from_hms_milli_opt(12, 30, 30, 500).unwrap(),
     )
     .and_utc();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Timestamp),
-        &mut timestamp.to_be_bytes().as_ref(),
-    )
-    .unwrap();
+    assert_conversion(&timestamp.to_be_bytes(), direct, via_cql, Some(after_epoch));
 
-    assert_eq!(date.as_datetime_04(), Some(after_epoch));
-
-    // 0 and u32::MAX are out of NaiveDate range, fails with an error, not panics
-    assert_eq!(
-        super::deser_cql_value(
-            &ColumnType::Native(Timestamp),
-            &mut i64::MIN.to_be_bytes().as_ref()
-        )
-        .unwrap()
-        .as_datetime_04(),
-        None
-    );
-
-    assert_eq!(
-        super::deser_cql_value(
-            &ColumnType::Native(Timestamp),
-            &mut i64::MAX.to_be_bytes().as_ref()
-        )
-        .unwrap()
-        .as_datetime_04(),
-        None
-    );
+    // i64::MIN and i64::MAX are out of DateTime range, fails with an error, not panics
+    assert_conversion(&i64::MIN.to_be_bytes(), direct, via_cql, None);
+    assert_conversion(&i64::MAX.to_be_bytes(), direct, via_cql, None);
 }
 
 #[cfg(feature = "time-03")]
 #[test]
-fn test_offset_datetime_03_from_cql() {
+fn test_offset_datetime_03() {
     use time_03::{Date, Month::*, OffsetDateTime, PrimitiveDateTime, Time};
+
+    let col_type = ColumnType::Native(Timestamp);
+    let direct = |bytes: &Bytes| -> Option<OffsetDateTime> {
+        deserialize::<OffsetDateTime>(&col_type, bytes).ok()
+    };
+    let via_cql = |bytes: &Bytes| -> Option<OffsetDateTime> {
+        deserialize::<CqlTimestamp>(&col_type, bytes)
+            .ok()
+            .and_then(|ts| ts.try_into().ok())
+    };
 
     // 0 when converted to OffsetDateTime is 1970-01-01 0:00:00.00
     let unix_epoch = OffsetDateTime::from_unix_timestamp(0).unwrap();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Timestamp),
-        &mut 0i64.to_be_bytes().as_ref(),
-    )
-    .unwrap();
+    assert_conversion(&0i64.to_be_bytes(), direct, via_cql, Some(unix_epoch));
 
-    assert_eq!(date.as_offset_date_time_03(), Some(unix_epoch));
-
-    // When converted to NaiveDateTime, this is 1969-12-01 11:29:29.5
+    // When converted to OffsetDateTime, this is 1969-12-01 11:29:29.5
     let timestamp: i64 = -((((30 * 24 + 12) * 60 + 30) * 60 + 30) * 1000 + 500);
     let before_epoch = PrimitiveDateTime::new(
         Date::from_calendar_date(1969, December, 1).unwrap(),
         Time::from_hms_milli(11, 29, 29, 500).unwrap(),
     )
     .assume_utc();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Timestamp),
-        &mut timestamp.to_be_bytes().as_ref(),
-    )
-    .unwrap();
+    assert_conversion(
+        &timestamp.to_be_bytes(),
+        direct,
+        via_cql,
+        Some(before_epoch),
+    );
 
-    assert_eq!(date.as_offset_date_time_03(), Some(before_epoch));
-
-    // when converted to NaiveDateTime, this is is 1970-01-31 12:30:30.5
+    // When converted to OffsetDateTime, this is 1970-01-31 12:30:30.5
     let timestamp: i64 = (((30 * 24 + 12) * 60 + 30) * 60 + 30) * 1000 + 500;
     let after_epoch = PrimitiveDateTime::new(
         Date::from_calendar_date(1970, January, 31).unwrap(),
         Time::from_hms_milli(12, 30, 30, 500).unwrap(),
     )
     .assume_utc();
-    let date = super::deser_cql_value(
-        &ColumnType::Native(Timestamp),
-        &mut timestamp.to_be_bytes().as_ref(),
-    )
-    .unwrap();
+    assert_conversion(&timestamp.to_be_bytes(), direct, via_cql, Some(after_epoch));
 
-    assert_eq!(date.as_offset_date_time_03(), Some(after_epoch));
-
-    // 0 and u32::MAX are out of NaiveDate range, fails with an error, not panics
-    assert_eq!(
-        super::deser_cql_value(
-            &ColumnType::Native(Timestamp),
-            &mut i64::MIN.to_be_bytes().as_ref()
-        )
-        .unwrap()
-        .as_offset_date_time_03(),
-        None
-    );
-
-    assert_eq!(
-        super::deser_cql_value(
-            &ColumnType::Native(Timestamp),
-            &mut i64::MAX.to_be_bytes().as_ref()
-        )
-        .unwrap()
-        .as_offset_date_time_03(),
-        None
-    );
+    // i64::MIN and i64::MAX are out of OffsetDateTime range, fails with an error, not panics
+    assert_conversion(&i64::MIN.to_be_bytes(), direct, via_cql, None);
+    assert_conversion(&i64::MAX.to_be_bytes(), direct, via_cql, None);
 }
 
 #[test]
@@ -3984,9 +2850,9 @@ fn test_serialize_empty() {
 
 #[test]
 fn test_duration_deserialize() {
-    let bytes = [0xc, 0x12, 0xe2, 0x8c, 0x39, 0xd2];
+    let bytes = make_bytes(&[0xc, 0x12, 0xe2, 0x8c, 0x39, 0xd2]);
     let cql_value: CqlValue =
-        super::deser_cql_value(&ColumnType::Native(Duration), &mut &bytes[..]).unwrap();
+        deserialize::<CqlValue>(&ColumnType::Native(Duration), &bytes).unwrap();
     assert_eq!(
         cql_value,
         CqlValue::Duration(CqlDuration {
@@ -4056,7 +2922,7 @@ fn test_deserialize_empty_payload() {
         (ColumnType::Native(Uuid), CqlValue::Empty),
         (ColumnType::Native(Varint), CqlValue::Empty),
     ] {
-        let cql_value: CqlValue = super::deser_cql_value(&test_type, &mut &[][..]).unwrap();
+        let cql_value: CqlValue = deserialize::<CqlValue>(&test_type, &make_bytes(&[])).unwrap();
 
         assert_eq!(cql_value, res_cql);
     }
@@ -4088,7 +2954,8 @@ fn test_timeuuid_deserialize() {
 
     for (uuid_str, uuid_bytes) in &tests {
         let cql_val: CqlValue =
-            super::deser_cql_value(&ColumnType::Native(Timeuuid), &mut &uuid_bytes[..]).unwrap();
+            deserialize::<CqlValue>(&ColumnType::Native(Timeuuid), &make_bytes(uuid_bytes))
+                .unwrap();
 
         match cql_val {
             CqlValue::Timeuuid(uuid) => {

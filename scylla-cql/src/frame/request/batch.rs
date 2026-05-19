@@ -1,8 +1,7 @@
 //! CQL protocol-level representation of a `BATCH` request.
 
 use bytes::{Buf, BufMut};
-use std::{borrow::Cow, convert::TryInto, num::TryFromIntError};
-use thiserror::Error;
+use std::{borrow::Cow, convert::TryInto};
 
 use crate::frame::{
     frame_errors::CqlRequestSerializationError,
@@ -16,6 +15,11 @@ use crate::serialize::{
 };
 
 use super::{DeserializableRequest, RequestDeserializationError};
+
+// Re-export for backward compatibility.
+pub use crate::frame::frame_errors::{BatchSerializationError, BatchStatementSerializationError};
+
+pub use scylla_cql_core::frame::request::batch::{BatchStatement, BatchType, BatchTypeParseError};
 
 // Batch flags
 const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
@@ -50,62 +54,6 @@ where
     pub values: Values,
 }
 
-/// The type of a batch.
-#[derive(Clone, Copy)]
-#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub enum BatchType {
-    /// By default, all operations in the batch are performed as logged, to ensure all mutations
-    /// eventually complete (or none will). See the notes on [UNLOGGED](BatchType::Unlogged) batches for more details.
-    /// A `LOGGED` batch to a single partition will be converted to an `UNLOGGED` batch as an optimization.
-    Logged = 0,
-
-    /// By default, ScyllaDB uses a batch log to ensure all operations in a batch eventually complete or none will
-    /// (note, however, that operations are only isolated within a single partition).
-    /// There is a performance penalty for batch atomicity when a batch spans multiple partitions. If you do not want
-    /// to incur this penalty, you can tell Scylla to skip the batchlog with the `UNLOGGED` option. If the `UNLOGGED`
-    /// option is used, a failed batch might leave the batch only partly applied.
-    Unlogged = 1,
-
-    /// Use the `COUNTER` option for batched counter updates. Unlike other updates in ScyllaDB, counter updates
-    /// are not idempotent.
-    Counter = 2,
-}
-
-/// Encountered a malformed batch type.
-#[derive(Debug, Error)]
-#[error("Malformed batch type: {value}")]
-pub struct BatchTypeParseError {
-    value: u8,
-}
-
-impl TryFrom<u8> for BatchType {
-    type Error = BatchTypeParseError;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::Logged),
-            1 => Ok(Self::Unlogged),
-            2 => Ok(Self::Counter),
-            _ => Err(BatchTypeParseError { value }),
-        }
-    }
-}
-
-/// A single statement in a batch, which can either be a statement string or a prepared statement ID.
-#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
-pub enum BatchStatement<'a> {
-    /// Unprepared CQL statement.
-    Query {
-        /// CQL statement string.
-        text: Cow<'a, str>,
-    },
-    /// Prepared CQL statement.
-    Prepared {
-        /// Prepared CQL statement's ID.
-        id: Cow<'a, [u8]>,
-    },
-}
-
 impl<Statement, Values> Batch<'_, Statement, Values>
 where
     for<'s> BatchStatement<'s>: From<&'s Statement>,
@@ -134,12 +82,12 @@ where
         let mut n_serialized_statements = 0usize;
         let mut value_lists = self.values.batch_values_iter();
         for (idx, statement) in self.statements.iter().enumerate() {
-            BatchStatement::from(statement)
-                .serialize(buf)
-                .map_err(|err| BatchSerializationError::StatementSerialization {
+            serialize_batch_statement(&BatchStatement::from(statement), buf).map_err(|err| {
+                BatchSerializationError::StatementSerialization {
                     statement_idx: idx,
                     error: err,
-                })?;
+                }
+            })?;
 
             // Reserve two bytes for length
             let length_pos = buf.len();
@@ -225,51 +173,43 @@ where
     }
 }
 
-impl BatchStatement<'_> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
-        let kind = buf.get_u8();
-        match kind {
-            0 => {
-                let text = Cow::Owned(types::read_long_string(buf)?.to_owned());
-                Ok(BatchStatement::Query { text })
-            }
-            1 => {
-                let id = types::read_short_bytes(buf)?.to_vec().into();
-                Ok(BatchStatement::Prepared { id })
-            }
-            _ => Err(RequestDeserializationError::UnexpectedBatchStatementKind(
-                kind,
-            )),
+fn deserialize_batch_statement(
+    buf: &mut &[u8],
+) -> Result<BatchStatement<'static>, RequestDeserializationError> {
+    let kind = buf.get_u8();
+    match kind {
+        0 => {
+            let text = Cow::Owned(types::read_long_string(buf)?.to_owned());
+            Ok(BatchStatement::Query { text })
         }
+        1 => {
+            let id = types::read_short_bytes(buf)?.to_vec().into();
+            Ok(BatchStatement::Prepared { id })
+        }
+        _ => Err(RequestDeserializationError::UnexpectedBatchStatementKind(
+            kind,
+        )),
     }
 }
 
-impl BatchStatement<'_> {
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), BatchStatementSerializationError> {
-        match self {
-            Self::Query { text } => {
-                buf.put_u8(0);
-                types::write_long_string(text, buf)
-                    .map_err(BatchStatementSerializationError::StatementStringSerialization)?;
-            }
-            Self::Prepared { id } => {
-                buf.put_u8(1);
-                types::write_short_bytes(id, buf)
-                    .map_err(BatchStatementSerializationError::StatementIdSerialization)?;
-            }
+fn serialize_batch_statement(
+    statement: &BatchStatement<'_>,
+    buf: &mut impl BufMut,
+) -> Result<(), BatchStatementSerializationError> {
+    match statement {
+        BatchStatement::Query { text } => {
+            buf.put_u8(0);
+            types::write_long_string(text, buf)
+                .map_err(BatchStatementSerializationError::StatementStringSerialization)?;
         }
-
-        Ok(())
-    }
-}
-
-impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
-    fn from(value: &'s BatchStatement) -> Self {
-        match value {
-            BatchStatement::Query { text } => BatchStatement::Query { text: text.clone() },
-            BatchStatement::Prepared { id } => BatchStatement::Prepared { id: id.clone() },
+        BatchStatement::Prepared { id } => {
+            buf.put_u8(1);
+            types::write_short_bytes(id, buf)
+                .map_err(BatchStatementSerializationError::StatementIdSerialization)?;
         }
     }
+
+    Ok(())
 }
 
 impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedValues>> {
@@ -279,7 +219,7 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
         let statements_count: usize = types::read_short(buf)?.into();
         let statements_with_values = (0..statements_count)
             .map(|_| {
-                let batch_statement = BatchStatement::deserialize(buf)?;
+                let batch_statement = deserialize_batch_statement(buf)?;
 
                 // As stated in CQL protocol v4 specification, values names in Batch are broken and should be never used.
                 let values = SerializedValues::new_from_frame(buf)?;
@@ -329,62 +269,4 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
             values,
         })
     }
-}
-
-/// An error type returned when serialization of BATCH request fails.
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum BatchSerializationError {
-    /// Maximum number of batch statements exceeded.
-    #[error(
-        "Too many statements in the batch. Received {0} statements, when u16::MAX is maximum possible value."
-    )]
-    TooManyStatements(usize),
-
-    /// Number of batch statements differs from number of provided bound value lists.
-    #[error(
-        "Number of provided value lists must be equal to number of batch statements (got {n_value_lists} value lists, {n_statements} statements)"
-    )]
-    ValuesAndStatementsLengthMismatch {
-        n_value_lists: usize,
-        n_statements: usize,
-    },
-
-    /// Failed to serialize a statement in the batch.
-    #[error("Failed to serialize batch statement. statement idx: {statement_idx}, error: {error}")]
-    StatementSerialization {
-        statement_idx: usize,
-        error: BatchStatementSerializationError,
-    },
-
-    /// Number of announced batch statements differs from actual number of batch statements.
-    #[error(
-        "Invalid Batch constructed: not as many statements serialized as announced (announced: {n_announced_statements}, serialized: {n_serialized_statements})"
-    )]
-    BadBatchConstructed {
-        n_announced_statements: usize,
-        n_serialized_statements: usize,
-    },
-}
-
-/// An error type returned when serialization of one of the
-/// batch statements fails.
-#[non_exhaustive]
-#[derive(Error, Debug, Clone)]
-pub enum BatchStatementSerializationError {
-    /// Failed to serialize the CQL statement string.
-    #[error("Failed to serialize unprepared statement's content: {0}")]
-    StatementStringSerialization(TryFromIntError),
-
-    /// Maximum value of statement id exceeded.
-    #[error("Malformed prepared statement's id: {0}")]
-    StatementIdSerialization(TryFromIntError),
-
-    /// Failed to serialize statement's bound values.
-    #[error("Failed to serialize statement's values: {0}")]
-    ValuesSerialiation(SerializationError),
-
-    /// Too many bound values provided.
-    #[error("Too many values provided for the statement: {0}")]
-    TooManyValues(usize),
 }

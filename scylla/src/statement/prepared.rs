@@ -1,14 +1,12 @@
 //! Defines the [`PreparedStatement`] type, which represents a statement
 //! that has been prepared in advance on the server.
 
+use crate::frame::response::result::{ColumnSpec, PartitionKeyIndex, ResultMetadata, TableSpec};
+use crate::frame::types::RawValue;
+use crate::serialize::SerializationError;
+use crate::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use arc_swap::{ArcSwap, Guard};
 use bytes::{Bytes, BytesMut};
-use scylla_cql::frame::response::result::{
-    ColumnSpec, PartitionKeyIndex, ResultMetadata, TableSpec,
-};
-use scylla_cql::frame::types::RawValue;
-use scylla_cql::serialize::SerializationError;
-use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use smallvec::{SmallVec, smallvec};
 use std::convert::TryInto;
 use std::sync::Arc;
@@ -838,10 +836,10 @@ impl<'ps> PartitionKey<'ps> {
 
 #[cfg(test)]
 mod tests {
-    use scylla_cql::frame::response::result::{
+    use crate::frame::response::result::{
         ColumnSpec, ColumnType, NativeType, PartitionKeyIndex, PreparedMetadata, TableSpec,
     };
-    use scylla_cql::serialize::row::SerializedValues;
+    use crate::serialize::row::SerializedValues;
 
     use crate::statement::prepared::PartitionKey;
     use crate::test_utils::setup_tracing;
@@ -917,9 +915,9 @@ mod tests {
 
     #[test]
     fn test_column_specs_guard_debug() {
+        use crate::frame::response::result::ResultMetadata;
         use crate::statement::prepared::PreparedStatement;
         use bytes::Bytes;
-        use scylla_cql::frame::response::result::ResultMetadata;
 
         setup_tracing();
 
