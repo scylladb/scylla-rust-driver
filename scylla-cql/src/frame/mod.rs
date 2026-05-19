@@ -360,6 +360,14 @@ pub fn decompress(
 ) -> Result<Vec<u8>, FrameBodyExtensionsParseError> {
     match compression {
         Compression::Lz4 => {
+            if comp_body.len() < std::mem::size_of::<u32>() {
+                return Err(FrameBodyExtensionsParseError::Lz4DecompressError(Arc::new(
+                    std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "lz4 frame body is shorter than its 4-byte size prefix",
+                    ),
+                )));
+            }
             let uncomp_len = comp_body.get_u32() as usize;
             let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)
                 .map_err(|err| FrameBodyExtensionsParseError::Lz4DecompressError(Arc::new(err)))?;
@@ -405,5 +413,19 @@ mod test {
         let result = decompress(&comp_body[..], compression).unwrap();
         assert_eq!(32, comp_body.len());
         assert_eq!(uncomp_body.as_bytes(), result);
+    }
+
+    #[test]
+    fn test_lz4_decompress_rejects_short_input() {
+        // A frame body shorter than the 4-byte size prefix must be rejected
+        // with an error rather than panicking inside `Buf::get_u32`.
+        for short in [&[][..], &[0x00][..], &[0x00, 0x00, 0x00][..]] {
+            let err = decompress(short, Compression::Lz4)
+                .expect_err("short lz4 frame must produce an error");
+            assert!(matches!(
+                err,
+                FrameBodyExtensionsParseError::Lz4DecompressError(_)
+            ));
+        }
     }
 }
