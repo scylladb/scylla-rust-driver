@@ -124,6 +124,7 @@ pub(crate) struct Metadata {
 }
 
 /// Represents a node in the cluster, as fetched from the `system.{peers,local}` tables.
+#[derive(Clone)]
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct Peer {
     /// Unique identifier of the node.
