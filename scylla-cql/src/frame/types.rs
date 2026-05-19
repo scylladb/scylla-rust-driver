@@ -74,10 +74,7 @@ impl TryFrom<u16> for Consistency {
             0x000A => Ok(Consistency::LocalOne),
             0x0008 => Ok(Consistency::Serial),
             0x0009 => Ok(Consistency::LocalSerial),
-            _ => Err(TryFromPrimitiveError {
-                enum_name: "Consistency",
-                primitive: value,
-            }),
+            _ => Err(TryFromPrimitiveError::new("Consistency", value)),
         }
     }
 }
@@ -104,10 +101,7 @@ impl TryFrom<i16> for SerialConsistency {
         match value {
             0x0008 => Ok(Self::Serial),
             0x0009 => Ok(Self::LocalSerial),
-            _ => Err(TryFromPrimitiveError {
-                enum_name: "SerialConsistency",
-                primitive: value,
-            }),
+            _ => Err(TryFromPrimitiveError::new("SerialConsistency", value)),
         }
     }
 }
