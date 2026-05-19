@@ -61,6 +61,7 @@ pub(crate) struct Metadata {
 }
 
 /// Represents a node in the cluster, as fetched from the `system.{peers,local}` tables.
+#[cfg_attr(all(scylla_unstable, feature = "unstable-python-rs"), derive(Clone))] // <- for python-rs HostFilter wrapper to store Peer and reconstruct it from &Peer in accept()
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct Peer {
     /// Unique identifier of the node.
