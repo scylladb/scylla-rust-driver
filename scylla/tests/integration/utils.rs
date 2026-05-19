@@ -34,7 +34,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{env, iter};
 use tokio::sync::mpsc;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -399,6 +399,24 @@ where
     try_join_all(tasks).await
 }
 
+/// Like [`for_each_target_execute`], but invokes the callback once per node
+/// (instead of once per shard). The callback receives only the node.
+async fn for_each_node_execute<ExecuteFn, ExecuteFut>(
+    cluster: &ClusterState,
+    execute: ExecuteFn,
+) -> Result<Vec<QueryResult>, ExecutionError>
+where
+    ExecuteFn: Fn(Arc<scylla::cluster::Node>) -> ExecuteFut,
+    ExecuteFut: Future<Output = Result<QueryResult, ExecutionError>>,
+{
+    let tasks = cluster
+        .get_nodes_info()
+        .iter()
+        .map(|node| execute(node.clone()));
+
+    try_join_all(tasks).await
+}
+
 pub(crate) async fn execute_prepared_statement_everywhere(
     session: &Session,
     cluster: &ClusterState,
@@ -427,6 +445,31 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
 ) -> Result<Vec<QueryResult>, ExecutionError> {
     for_each_target_execute(cluster, |node, shard| async move {
         let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
+        let execution_profile = ExecutionProfile::builder()
+            .load_balancing_policy(policy)
+            .build();
+        let mut statement = statement.clone();
+        statement.set_execution_profile_handle(Some(execution_profile.into_handle()));
+
+        session.query_unpaged(statement, values).await
+    })
+    .await
+}
+
+/// Like [`execute_unprepared_statement_everywhere`], but targets each node
+/// once (any shard) instead of every individual shard. This only requires
+/// at least one connection per node, making it suitable for scenarios where
+/// the pool may not be fully filled yet (e.g. right after a client routes
+/// update).
+pub(crate) async fn execute_unprepared_statement_on_every_node(
+    session: &Session,
+    cluster: &ClusterState,
+    statement: &Statement,
+    values: &dyn SerializeRow,
+) -> Result<Vec<QueryResult>, ExecutionError> {
+    for_each_node_execute(cluster, |node| async move {
+        debug!("Executing on node {} - {}", node.host_id, node.address);
+        let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), None);
         let execution_profile = ExecutionProfile::builder()
             .load_balancing_policy(policy)
             .build();

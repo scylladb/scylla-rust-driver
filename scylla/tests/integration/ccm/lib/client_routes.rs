@@ -368,87 +368,135 @@ impl ClientRoutesCluster {
             .collect()
     }
 
-    /// Waits until every specified proxy node has at least one driver connection.
+    /// Waits until the driver's data pools report `is_connected()` for all
+    /// active nodes.
     ///
-    /// After topology changes (restart, add node), the driver takes time to
-    /// discover the new/restarted node and open a connection. Calling this
-    /// before issuing queries prevents races where all queries miss the
-    /// new node because the driver hasn't connected yet.
-    ///
-    /// Times out after `timeout` to avoid hanging forever if the driver fails to connect.
-    pub(crate) async fn wait_for_connections_to_nodes(
+    /// Unlike [`ensure_driver_picked_up_routes`], this does NOT call
+    /// `refresh_metadata()`. Use this when the driver should discover route
+    /// changes via events (e.g., `CLIENT_ROUTES_CHANGE`) rather than
+    /// explicit polling.
+    pub(crate) async fn wait_for_pools_connected(
         &self,
-        node_ids: Option<&HashSet<u16>>,
+        session: &Session,
         timeout: Duration,
     ) -> Result<(), Error> {
-        let futs: Vec<_> = self
-            .dc_configs
-            .values()
-            .flat_map(|dc| {
-                dc.per_node_chains.iter().filter_map(|(node_id, chain)| {
-                    let wait_fn = || {
-                        let proxy = &chain.running_proxy;
-                        async move {
-                            proxy.wait_for_connection().await;
-                            info!("Proxy for node {} has a driver connection", node_id);
-                        }
-                    };
-                    match node_ids {
-                        // Filter to a specific set of nodes if provided.
-                        Some(ids) => ids.contains(node_id).then(wait_fn),
-                        // No filter, wait for all nodes.
-                        None => Some(wait_fn()),
-                    }
-                })
-            })
+        let expected_host_ids: HashSet<Uuid> = self
+            .host_ids
+            .iter()
+            .filter(|(node_id, _)| self.active_node_ids().contains(node_id))
+            .map(|(_, &hid)| hid)
             .collect();
 
-        tokio::time::timeout(timeout, futures::future::join_all(futs))
-            .await
-            .map_err(|_| {
-                let target_ids = node_ids
-                    .map(|ids| ids.iter().copied().collect::<Vec<_>>())
-                    .unwrap_or_else(|| self.active_node_ids());
-                anyhow::anyhow!(
-                    "Timed out waiting for driver connections to proxy nodes: {:?}.",
-                    target_ids
-                )
-            })?;
+        tokio::time::timeout(timeout, async {
+            loop {
+                let state = session.get_cluster_state();
+                let all_connected = expected_host_ids.iter().all(|hid| {
+                    state
+                        .get_nodes_info()
+                        .iter()
+                        .any(|n| n.host_id == *hid && n.is_connected())
+                });
 
-        Ok(())
+                if all_connected {
+                    return;
+                }
+
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            let state = session.get_cluster_state();
+            let disconnected: Vec<_> = expected_host_ids
+                .iter()
+                .filter(|hid| {
+                    !state
+                        .get_nodes_info()
+                        .iter()
+                        .any(|n| n.host_id == **hid && n.is_connected())
+                })
+                .collect();
+            anyhow::anyhow!(
+                "Timed out after {:?} waiting for data pools to connect. \
+                 Disconnected host_ids: {:?}",
+                timeout,
+                disconnected
+            )
+        })
     }
 
-    /// Waits until every active proxy node has at least one driver connection.
+    /// Ensures the driver has loaded client routes and connected to all
+    /// expected proxy nodes.
     ///
-    /// After topology changes (restart, add node), the driver takes time to
-    /// discover the new/restarted node and open a connection. Calling this
-    /// before issuing queries prevents races where all queries miss the
-    /// new node because the driver hasn't connected yet.
+    /// After `post_client_routes_to_cluster()` posts routes to a single node,
+    /// other nodes may not have the data yet (Raft propagation delay).  The
+    /// driver's metadata reader may land on any node, so the first
+    /// `refresh_metadata()` call might see an empty `system.client_routes`.
     ///
-    /// Times out after `timeout` to avoid hanging forever if the driver fails to connect.
-    pub(crate) async fn wait_for_connections_to_all_nodes(
+    /// This helper polls `refresh_metadata()` (to re-fetch routes) while
+    /// concurrently waiting for all proxy nodes to see a driver connection.
+    /// The proxy wait only resolves when the driver has opened a CQL
+    /// connection through the proxy — which proves the routes were loaded.
+    pub(crate) async fn ensure_driver_picked_up_routes(
         &self,
+        session: &Session,
         timeout: Duration,
     ) -> Result<(), Error> {
-        self.wait_for_connections_to_nodes(None, timeout).await
-    }
+        let expected_host_ids: HashSet<Uuid> = self
+            .host_ids
+            .iter()
+            .filter(|(node_id, _)| self.active_node_ids().contains(node_id))
+            .map(|(_, &hid)| hid)
+            .collect();
 
-    /// Waits until the proxy responsible for given node has at least one driver
-    /// connection.
-    ///
-    /// After topology changes (restart, add node), the driver takes time to
-    /// discover the new/restarted node and open a connection. Calling this
-    /// before issuing queries prevents races where all queries miss the
-    /// new node because the driver hasn't connected yet.
-    ///
-    /// Times out after `timeout` to avoid hanging forever if the driver fails to connect.
-    pub(crate) async fn wait_for_connections_to_node(
-        &self,
-        node_id: NodeId,
-        timeout: Duration,
-    ) -> Result<(), Error> {
-        self.wait_for_connections_to_nodes(Some(&HashSet::from([node_id])), timeout)
-            .await
+        tokio::time::timeout(timeout, async {
+            loop {
+                // Refresh metadata to re-fetch routes from system.client_routes.
+                // This updates the driver's address translator, enabling pools
+                // to reconnect through new NLB ports.
+                if let Err(e) = session.refresh_metadata().await {
+                    info!(
+                        "refresh_metadata during route pickup failed (retrying): {}",
+                        e
+                    );
+                }
+
+                // Check if all expected nodes have connected data pools.
+                let state = session.get_cluster_state();
+                let all_connected = expected_host_ids.iter().all(|hid| {
+                    state
+                        .get_nodes_info()
+                        .iter()
+                        .any(|n| n.host_id == *hid && n.is_connected())
+                });
+
+                if all_connected {
+                    return;
+                }
+
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            // Build diagnostic info for the error message.
+            let state = session.get_cluster_state();
+            let disconnected: Vec<_> = expected_host_ids
+                .iter()
+                .filter(|hid| {
+                    !state
+                        .get_nodes_info()
+                        .iter()
+                        .any(|n| n.host_id == **hid && n.is_connected())
+                })
+                .collect();
+            anyhow::anyhow!(
+                "Timed out after {:?} waiting for data pools to connect. \
+                 Disconnected host_ids: {:?}",
+                timeout,
+                disconnected
+            )
+        })
     }
 
     /// Decommission a node and tear down its proxy chain.
@@ -938,7 +986,152 @@ impl ClientRoutesCluster {
                 )
             })?;
 
+        // Wait for Raft to propagate routes to all nodes.
+        // We check the full route content (not just host_ids) because an
+        // update to an existing route (e.g., changed NLB port) must also be
+        // propagated before the driver can safely refresh metadata.
+        self.wait_for_routes_on_all_nodes(&routes).await?;
+
         Ok(())
+    }
+
+    /// Polls `system.client_routes` on every active ScyllaDB node (via direct
+    /// CQL connections, bypassing the NLB) until all nodes return the exact
+    /// set of expected routes.
+    ///
+    /// Routes are posted to a single node and propagated via Raft. Until
+    /// propagation completes, other nodes may return stale or partial
+    /// `system.client_routes` data. If the driver queries such a node during
+    /// metadata refresh, it could get wrong addresses — breaking pools.
+    /// This helper ensures propagation is complete before proceeding.
+    async fn wait_for_routes_on_all_nodes(
+        &self,
+        expected_routes: &[RouteEntry],
+    ) -> Result<(), Error> {
+        const POLL_INTERVAL: Duration = Duration::from_millis(200);
+        const TIMEOUT: Duration = Duration::from_secs(30);
+
+        // Identify active nodes by CCM node ID.
+        let active_node_ids: HashSet<NodeId> = self
+            .dc_configs
+            .values()
+            .flat_map(|dc| dc.per_node_chains.keys().copied())
+            .collect();
+
+        // Connect a single session to an active node for route verification.
+        let active_node = self
+            .cluster
+            .nodes()
+            .iter()
+            .find(|n| active_node_ids.contains(&n.id()))
+            .context("No active nodes to check routes on")?;
+        let contact = SocketAddr::new(
+            active_node.broadcast_rpc_address(),
+            active_node.native_transport_port(),
+        );
+        let session = SessionBuilder::new()
+            .known_node_addr(contact)
+            .fetch_schema_metadata(false)
+            .keyspaces_to_fetch(std::iter::empty::<String>())
+            .pool_size(PoolSize::PerHost(NonZero::new(1).unwrap()))
+            .disallow_shard_aware_port(true)
+            .build()
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to connect to cluster via {} for route check",
+                    contact
+                )
+            })?;
+
+        // Collect (ccm_node_id, host_id_uuid) for active nodes.
+        let active_nodes: Vec<(NodeId, Uuid)> = self
+            .cluster
+            .nodes()
+            .iter()
+            .filter(|n| active_node_ids.contains(&n.id()))
+            .filter_map(|n| self.host_ids.get(&n.id()).map(|&hid| (n.id(), hid)))
+            .collect();
+
+        // Build the expected set of (connection_id, host_id, address, port)
+        // tuples from the posted routes.
+        let expected_tuples: HashSet<(String, Uuid, String, i32)> = expected_routes
+            .iter()
+            .map(|r| {
+                (
+                    r.connection_id.clone(),
+                    r.host_id,
+                    r.address.clone(),
+                    r.port as i32,
+                )
+            })
+            .collect();
+
+        info!(
+            "Waiting for Raft to propagate {} route(s) to {} node(s)...",
+            expected_tuples.len(),
+            active_nodes.len()
+        );
+
+        let query_str = "SELECT connection_id, host_id, address, port \
+                         FROM system.client_routes";
+
+        tokio::time::timeout(TIMEOUT, async {
+            loop {
+                let mut all_ready = true;
+                for (node_id, host_id) in &active_nodes {
+                    let policy =
+                        scylla::policies::load_balancing::SingleTargetLoadBalancingPolicy::new(
+                            scylla::policies::load_balancing::NodeIdentifier::HostId(*host_id),
+                            None,
+                        );
+                    let profile = scylla::client::execution_profile::ExecutionProfile::builder()
+                        .load_balancing_policy(policy)
+                        .build();
+                    let mut stmt = scylla::statement::Statement::from(query_str);
+                    stmt.set_execution_profile_handle(Some(profile.into_handle()));
+
+                    match session.query_unpaged(stmt, &[]).await {
+                        Ok(result) => {
+                            let found: HashSet<(String, Uuid, String, i32)> = result
+                                .into_rows_result()
+                                .ok()
+                                .map(|rows| {
+                                    rows.rows::<(String, Uuid, String, i32)>()
+                                        .ok()
+                                        .map(|iter| iter.filter_map(|r| r.ok()).collect())
+                                        .unwrap_or_default()
+                                })
+                                .unwrap_or_default();
+
+                            if !expected_tuples.is_subset(&found) {
+                                let missing: Vec<_> = expected_tuples.difference(&found).collect();
+                                debug!("Node {} has stale routes, missing: {:?}", node_id, missing);
+                                all_ready = false;
+                            }
+                        }
+                        Err(e) => {
+                            debug!("Node {} route query failed (retrying): {}", node_id, e);
+                            all_ready = false;
+                        }
+                    }
+                }
+                if all_ready {
+                    info!("All nodes have the expected routes");
+                    return;
+                }
+                tokio::time::sleep(POLL_INTERVAL).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Timed out after {:?} waiting for Raft propagation of routes \
+                 ({} expected route entries)",
+                TIMEOUT,
+                expected_tuples.len()
+            )
+        })
     }
 
     /// Build the JSON-serializable route entries from current state.
