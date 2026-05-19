@@ -3,14 +3,16 @@
 // Note: When editing above doc-comment edit the corresponding comment on
 // re-export module in scylla crate too.
 
-use std::collections::{BTreeMap, HashSet};
+use std::borrow::Borrow;
+use std::collections::BTreeMap;
 use std::fmt::Display;
-use std::hash::BuildHasher;
+use std::hash::{BuildHasher, Hash};
 use std::{collections::HashMap, sync::Arc};
 
 use bytes::BufMut;
 use thiserror::Error;
 
+use crate::_macro_internal;
 use crate::frame::request::RequestDeserializationError;
 use crate::frame::response::result::ColumnType;
 use crate::frame::response::result::PreparedMetadata;
@@ -167,70 +169,34 @@ impl<T: SerializeRow + ?Sized> SerializeRow for Box<T> {
     }
 }
 
-macro_rules! impl_serialize_row_for_map {
-    () => {
-        fn serialize(
-            &self,
-            ctx: &RowSerializationContext<'_>,
-            writer: &mut RowWriter,
-        ) -> Result<(), SerializationError> {
-            // Unfortunately, column names aren't guaranteed to be unique.
-            // We need to track not-yet-used columns in order to see
-            // whether some values were not used at the end, and report an error.
-            let mut unused_columns: HashSet<&str> = self.keys().map(|k| k.as_ref()).collect();
+impl<K: Borrow<str> + Ord, T: SerializeValue> SerializeRow for BTreeMap<K, T> {
+    fn serialize(
+        &self,
+        ctx: &RowSerializationContext<'_>,
+        writer: &mut RowWriter,
+    ) -> Result<(), SerializationError> {
+        _macro_internal::ser::row::ByName(self).serialize(ctx, writer)
+    }
 
-            for col in ctx.columns.iter() {
-                match self.get(col.name()) {
-                    None => {
-                        return Err(mk_typck_err::<Self>(
-                            BuiltinTypeCheckErrorKind::ValueMissingForColumn {
-                                name: col.name().to_owned(),
-                            },
-                        ));
-                    }
-                    Some(v) => {
-                        $crate::_macro_internal::ser::row::serialize_column::<Self>(
-                            v, col, writer,
-                        )?;
-                        let _ = unused_columns.remove(col.name());
-                    }
-                }
-            }
-
-            if !unused_columns.is_empty() {
-                // Report the lexicographically first value for deterministic error messages
-                let name = unused_columns.iter().min().unwrap();
-                return Err(mk_typck_err::<Self>(
-                    BuiltinTypeCheckErrorKind::NoColumnWithName {
-                        name: name.to_string(),
-                    },
-                ));
-            }
-
-            Ok(())
-        }
-
-        #[inline]
-        fn is_empty(&self) -> bool {
-            Self::is_empty(self)
-        }
-    };
+    fn is_empty(&self) -> bool {
+        Self::is_empty(self)
+    }
 }
 
-impl<T: SerializeValue> SerializeRow for BTreeMap<String, T> {
-    impl_serialize_row_for_map!();
-}
+impl<K: Borrow<str> + Eq + Hash, T: SerializeValue, S: BuildHasher> SerializeRow
+    for HashMap<K, T, S>
+{
+    fn serialize(
+        &self,
+        ctx: &RowSerializationContext<'_>,
+        writer: &mut RowWriter,
+    ) -> Result<(), SerializationError> {
+        _macro_internal::ser::row::ByName(self).serialize(ctx, writer)
+    }
 
-impl<T: SerializeValue> SerializeRow for BTreeMap<&str, T> {
-    impl_serialize_row_for_map!();
-}
-
-impl<T: SerializeValue, S: BuildHasher> SerializeRow for HashMap<String, T, S> {
-    impl_serialize_row_for_map!();
-}
-
-impl<T: SerializeValue, S: BuildHasher> SerializeRow for HashMap<&str, T, S> {
-    impl_serialize_row_for_map!();
+    fn is_empty(&self) -> bool {
+        Self::is_empty(self)
+    }
 }
 
 impl<T: SerializeRow + ?Sized> SerializeRow for &T {
