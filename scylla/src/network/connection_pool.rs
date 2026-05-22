@@ -190,6 +190,10 @@ pub(crate) struct NodeConnectionPool {
     use_keyspace_request_sender: mpsc::Sender<UseKeyspaceRequest>,
     _refiller_handle: Arc<RemoteHandle<()>>,
     pool_updated_notify: Arc<Notify>,
+    /// Signaled to make the pool refiller retry immediately, resetting
+    /// its backoff. Used when client routes change makes previously
+    /// untranslatable addresses translatable.
+    refill_now_notify: Arc<Notify>,
     endpoint: Arc<RwLock<UntranslatedEndpoint>>,
 }
 
@@ -223,6 +227,7 @@ impl NodeConnectionPool {
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
+        let refill_now_notify = Arc::new(Notify::new());
 
         let (host_pool_config, host_reconnect_policy) = pool_config.to_host_pool_config(&endpoint);
 
@@ -234,6 +239,7 @@ impl NodeConnectionPool {
             connectivity_events_sender,
             current_keyspace,
             pool_updated_notify.clone(),
+            refill_now_notify.clone(),
             pool_empty_notifier,
             #[cfg(feature = "metrics")]
             metrics,
@@ -249,6 +255,7 @@ impl NodeConnectionPool {
             use_keyspace_request_sender,
             _refiller_handle: Arc::new(refiller_handle),
             pool_updated_notify,
+            refill_now_notify,
             endpoint: arced_endpoint,
         }
     }
@@ -265,6 +272,15 @@ impl NodeConnectionPool {
 
     pub(crate) fn update_endpoint(&self, new_endpoint: PeerEndpoint) {
         *self.endpoint.write().unwrap() = UntranslatedEndpoint::Peer(new_endpoint);
+    }
+
+    /// Signals the pool refiller to retry immediately, resetting its backoff.
+    ///
+    /// Used when client routes are updated: previously untranslatable addresses
+    /// may now be translatable, so the pool should retry without waiting for
+    /// the exponential backoff timer.
+    pub(crate) fn trigger_immediate_refill(&self) {
+        self.refill_now_notify.notify_one();
     }
 
     pub(crate) fn sharder(&self) -> Option<Sharder> {
@@ -496,6 +512,9 @@ struct PoolRefiller {
     // Signaled when the connection pool is updated
     pool_updated_notify: Arc<Notify>,
 
+    // Signaled to make the refiller retry immediately with reset backoff
+    refill_now_notify: Arc<Notify>,
+
     // Signaled when the connection pool becomes empty
     pool_empty_notifier: mpsc::Sender<()>,
 
@@ -518,6 +537,7 @@ impl PoolRefiller {
         connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
+        refill_now_notify: Arc<Notify>,
         pool_empty_notifier: mpsc::Sender<()>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
         reconnect_policy: Box<dyn ReconnectPolicySession>,
@@ -549,6 +569,7 @@ impl PoolRefiller {
             current_keyspace,
 
             pool_updated_notify,
+            refill_now_notify,
             pool_empty_notifier,
 
             #[cfg(feature = "metrics")]
@@ -574,15 +595,28 @@ impl PoolRefiller {
             self.endpoint_description()
         );
 
-        let mut next_refill_time = tokio::time::Instant::now();
-        let mut refill_scheduled = true;
+        struct ScheduledRefill {
+            when: tokio::time::Instant,
+        }
+
+        let mut scheduled_refill = Some(ScheduledRefill {
+            when: tokio::time::Instant::now(),
+        });
 
         loop {
             tokio::select! {
-                _ = tokio::time::sleep_until(next_refill_time), if refill_scheduled => {
+                // Note that some default value must be passed to avoid `unwrap()` here; the guard ensures that `scheduled_refill` is `Some`
+                // when the sleep future is polled, but it does not ensure that `scheduled_refill` is `Some` when the sleep future
+                // is created. With `unwrap()`, we'd get a panic here.
+                // The future created with the default value will not be polled anyway, because the guard prevents that.
+                //
+                // `tokio::select!`'s documentation:
+                // > Additionally, each branch may include an optional if precondition. If the precondition returns false, then the branch is disabled.
+                // > **The provided <async expression> is still evaluated** but the resulting future is never polled.
+                _ = tokio::time::sleep_until(scheduled_refill.as_ref().map_or(tokio::time::Instant::now(), |r| r.when)), if scheduled_refill.is_some() => {
                     self.had_error_since_last_refill = false;
                     self.start_filling();
-                    refill_scheduled = false;
+                    scheduled_refill = None;
                 }
 
                 evt = self.ready_connections.select_next_some(), if !self.ready_connections.is_empty() => {
@@ -617,13 +651,30 @@ impl PoolRefiller {
                         return;
                     }
                 }
+
+                _ = self.refill_now_notify.notified() => {
+                    debug!(
+                        "[{}] Immediate refill requested, resetting backoff",
+                        self.endpoint_description()
+                    );
+                    // This resets the backoff, so the reconnect policy will go back to the initial delay after this.
+                    self.refill_delay_strategy.on_successful_fill();
+                    // This is best-effort reset. Note that a refill may be undergoing, and if a new error is encountered
+                    // during that refill, this will be set to true again.
+                    self.had_error_since_last_refill = false;
+
+                    // Reschedule the refill with the possibly shorter delay.
+                    // Rationale: we may have already scheduled a refill with a longer delay, but that's not a problem -
+                    // we unschedule that refill here and then the block below will schedule a new refill with the correct delay.
+                    scheduled_refill = None;
+                }
             }
             trace!(
                 pool_state = ?ShardedConnectionVectorWrapper(&self.conns)
             );
 
             // Schedule refilling here
-            if !refill_scheduled && self.need_filling() {
+            if scheduled_refill.is_none() && self.need_filling() {
                 if self.had_error_since_last_refill {
                     self.refill_delay_strategy.on_fill_error();
                 } else {
@@ -636,8 +687,9 @@ impl PoolRefiller {
                     delay.as_millis(),
                 );
 
-                next_refill_time = tokio::time::Instant::now() + delay;
-                refill_scheduled = true;
+                scheduled_refill = Some(ScheduledRefill {
+                    when: tokio::time::Instant::now() + delay,
+                });
             }
         }
     }
