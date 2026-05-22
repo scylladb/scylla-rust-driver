@@ -574,15 +574,28 @@ impl PoolRefiller {
             self.endpoint_description()
         );
 
-        let mut next_refill_time = tokio::time::Instant::now();
-        let mut refill_scheduled = true;
+        struct ScheduledRefill {
+            when: tokio::time::Instant,
+        }
+
+        let mut scheduled_refill = Some(ScheduledRefill {
+            when: tokio::time::Instant::now(),
+        });
 
         loop {
             tokio::select! {
-                _ = tokio::time::sleep_until(next_refill_time), if refill_scheduled => {
+                // Note that some default value must be passed to avoid `unwrap()` here; the guard ensures that `scheduled_refill` is `Some`
+                // when the sleep future is polled, but it does not ensure that `scheduled_refill` is `Some` when the sleep future
+                // is created. With `unwrap()`, we'd get a panic here.
+                // The future created with the default value will not be polled anyway, because the guard prevents that.
+                //
+                // `tokio::select!`'s documentation:
+                // > Additionally, each branch may include an optional if precondition. If the precondition returns false, then the branch is disabled.
+                // > **The provided <async expression> is still evaluated** but the resulting future is never polled.
+                _ = tokio::time::sleep_until(scheduled_refill.as_ref().map_or(tokio::time::Instant::now(), |r| r.when)), if scheduled_refill.is_some() => {
                     self.had_error_since_last_refill = false;
                     self.start_filling();
-                    refill_scheduled = false;
+                    scheduled_refill = None;
                 }
 
                 evt = self.ready_connections.select_next_some(), if !self.ready_connections.is_empty() => {
@@ -623,7 +636,7 @@ impl PoolRefiller {
             );
 
             // Schedule refilling here
-            if !refill_scheduled && self.need_filling() {
+            if scheduled_refill.is_none() && self.need_filling() {
                 if self.had_error_since_last_refill {
                     self.refill_delay_strategy.on_fill_error();
                 } else {
@@ -636,8 +649,9 @@ impl PoolRefiller {
                     delay.as_millis(),
                 );
 
-                next_refill_time = tokio::time::Instant::now() + delay;
-                refill_scheduled = true;
+                scheduled_refill = Some(ScheduledRefill {
+                    when: tokio::time::Instant::now() + delay,
+                });
             }
         }
     }
