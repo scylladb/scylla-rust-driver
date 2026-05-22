@@ -105,17 +105,18 @@ async fn assert_queries_reach_all_nodes(
 /// at each step.
 ///
 /// **Added value**: Tests the full lifecycle of topology membership changes
-/// under client-routes: route removal before decommission (so the driver
-/// stops opening new connections to the node, while existing ones keep
-/// serving requests until the node is actually decommissioned), and route
-/// addition after a new node joins (so the driver discovers and routes to
-/// it). Without this test, we wouldn't know if the driver's route cache
-/// stays consistent across node removals and additions in a multi-DC setup.
+/// under client-routes: contact-point NLB backend removal before
+/// decommission (so no new control connections target the node), followed
+/// by route update after decommission (so the driver learns the node is
+/// gone), and route addition after a new node joins (so the driver
+/// discovers and routes to it). Without this test, we wouldn't know if
+/// the driver's route cache stays consistent across node removals and
+/// additions in a multi-DC setup.
 ///
 /// **Scenario** (2 DCs, 2+2 nodes):
 /// 1. **Phase 1** — all 4 nodes: queries reach all 4.
-/// 2. Decommission the highest-ID node in DC2 (routes posted without it
-///    before the actual CCM decommission).
+/// 2. Remove the highest-ID node in DC2 from the contact-point NLB,
+///    decommission it via CCM, then post routes without it.
 /// 3. **Phase 2** — 3 nodes: queries reach remaining 3, decommissioned
 ///    node absent from feedback.
 /// 4. Add a new node to DC2, discover its host ID, start its proxy chain.
@@ -148,7 +149,8 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
     info!("Will decommission node {}", node_to_decommission);
 
     // --- Decommission node from DC2 ---
-    // Routes are posted (without this node) BEFORE the actual topology change.
+    // Contact-point NLB backend is removed before CCM decommission (prevents
+    // new control connections); routes are posted after decommission completes.
     info!("Decommissioning node {}...", node_to_decommission);
     plc.decommission_node(node_to_decommission)
         .await
