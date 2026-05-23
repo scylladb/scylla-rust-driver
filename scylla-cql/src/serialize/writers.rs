@@ -181,10 +181,35 @@ impl<'buf> CellValueBuilder<'buf> {
         }
     }
 
+    /// Reserves additional capacity in the underlying buffer.
+    ///
+    /// This is useful when the total serialized size is known ahead of time
+    /// (e.g. for fixed-size vector elements) to avoid incremental reallocations.
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        self.buf.reserve(additional);
+    }
+
     /// Appends raw bytes to this cell.
     #[inline]
     pub fn append_bytes(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
+    }
+
+    /// Extends the cell value by `len` zero-initialized bytes and returns a
+    /// mutable slice to the newly appended region.
+    ///
+    /// This is useful for bulk writes where the caller wants to fill in the
+    /// bytes directly (e.g. byte-swapping a vector of floats) without
+    /// per-element `append_bytes` overhead.
+    ///
+    /// Caller must ensure that `reserve` was called beforehand if allocation
+    /// overhead should be avoided.
+    #[inline]
+    pub fn append_zeros(&mut self, len: usize) -> &mut [u8] {
+        let start = self.buf.len();
+        self.buf.resize(start + len, 0);
+        &mut self.buf[start..]
     }
 
     /// Appends a sub-value to the end of the current contents of the cell

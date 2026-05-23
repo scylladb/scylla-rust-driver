@@ -688,21 +688,34 @@ fn zig_zag_decode(v: u64) -> i64 {
 }
 
 pub(crate) fn unsigned_vint_encode(v: u64, buf: &mut Vec<u8>) {
+    let (arr, len) = unsigned_vint_encode_to_array(v);
+    buf.extend_from_slice(&arr[..len]);
+}
+
+/// Encodes an unsigned vint into a stack-allocated `[u8; 9]` buffer,
+/// returning the buffer and the number of bytes written (1..=9).
+pub(crate) fn unsigned_vint_encode_to_array(v: u64) -> ([u8; 9], usize) {
+    let mut buf = [0u8; 9];
     let mut v = v;
     let mut number_of_bytes = (639 - 9 * v.leading_zeros()) >> 6;
     if number_of_bytes <= 1 {
-        return buf.put_u8(v as u8);
+        buf[0] = v as u8;
+        return (buf, 1);
     }
 
+    let mut pos = 0;
     if number_of_bytes != 9 {
         let extra_bytes = number_of_bytes - 1;
         let length_bits = !(0xff >> extra_bytes);
         v |= (length_bits as u64) << (8 * extra_bytes);
     } else {
-        buf.put_u8(0xff);
+        buf[0] = 0xff;
+        pos = 1;
         number_of_bytes -= 1;
     }
-    buf.put_uint(v, number_of_bytes as usize)
+    let n = number_of_bytes as usize;
+    buf[pos..pos + n].copy_from_slice(&v.to_be_bytes()[8 - n..]);
+    (buf, pos + n)
 }
 
 pub(crate) fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Error> {
