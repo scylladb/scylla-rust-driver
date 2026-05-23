@@ -302,3 +302,141 @@ mod derive_macros_integration {
         }
     }
 }
+
+mod from_row_tuple_tests {
+    use crate::deserialize::FrameSlice;
+    use crate::deserialize::row::{ColumnIterator, DeserializeRow};
+    use crate::deserialize::tests::spec;
+    use crate::frame::response::result::{ColumnType, NativeType};
+    use bytes::Bytes;
+    use scylla_macros::DeserializeRow;
+
+    fn make_row_bytes(values: &[Option<&[u8]>]) -> Bytes {
+        let mut buf = Vec::new();
+        for v in values {
+            match v {
+                Some(bytes) => {
+                    buf.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
+                    buf.extend_from_slice(bytes);
+                }
+                None => {
+                    buf.extend_from_slice(&(-1i32).to_be_bytes());
+                }
+            }
+        }
+        Bytes::from(buf)
+    }
+
+    #[derive(DeserializeRow, Debug, PartialEq)]
+    #[scylla(crate = "crate")]
+    struct Wrapper(i32);
+
+    #[derive(DeserializeRow, Debug, PartialEq)]
+    #[scylla(crate = "crate")]
+    struct MultiTuple(i32, String, f64);
+
+    #[derive(DeserializeRow, Debug, PartialEq)]
+    #[scylla(crate = "crate")]
+    struct NullableTuple(Option<i32>);
+
+    #[derive(DeserializeRow, Debug, PartialEq)]
+    #[scylla(crate = "crate")]
+    struct GenericTuple<T>(T);
+
+    #[test]
+    fn test_single_wrapper() {
+        let specs = vec![spec("col1", ColumnType::Native(NativeType::Int))];
+        let val = 42i32.to_be_bytes();
+        let data = make_row_bytes(&[Some(&val)]);
+        let slice = FrameSlice::new(&data);
+        let iter = ColumnIterator::new(&specs, slice);
+        let result = Wrapper::deserialize(iter).unwrap();
+        assert_eq!(result, Wrapper(42));
+    }
+
+    #[test]
+    fn test_multi_tuple() {
+        let specs = vec![
+            spec("a", ColumnType::Native(NativeType::Int)),
+            spec("b", ColumnType::Native(NativeType::Text)),
+            spec("c", ColumnType::Native(NativeType::Double)),
+        ];
+        let v1 = 10i32.to_be_bytes();
+        let v2 = b"test";
+        let v3 = 3.5f64.to_be_bytes();
+        let data = make_row_bytes(&[Some(&v1), Some(v2), Some(&v3)]);
+        let slice = FrameSlice::new(&data);
+        let iter = ColumnIterator::new(&specs, slice);
+        let result = MultiTuple::deserialize(iter).unwrap();
+        assert_eq!(result, MultiTuple(10, "test".to_string(), 3.5));
+    }
+
+    #[test]
+    fn test_nullable_tuple() {
+        let specs = vec![spec("col1", ColumnType::Native(NativeType::Int))];
+        let val = 123i32.to_be_bytes();
+        let data_some = make_row_bytes(&[Some(&val)]);
+        let iter_some = ColumnIterator::new(&specs, FrameSlice::new(&data_some));
+        assert_eq!(
+            NullableTuple::deserialize(iter_some).unwrap(),
+            NullableTuple(Some(123))
+        );
+        let data_none = make_row_bytes(&[None]);
+        let iter_none = ColumnIterator::new(&specs, FrameSlice::new(&data_none));
+        assert_eq!(
+            NullableTuple::deserialize(iter_none).unwrap(),
+            NullableTuple(None)
+        );
+    }
+
+    #[test]
+    fn test_generic_tuple() {
+        let specs = vec![spec("col1", ColumnType::Native(NativeType::Int))];
+        let val = 999i32.to_be_bytes();
+        let data = make_row_bytes(&[Some(&val)]);
+        let iter = ColumnIterator::new(&specs, FrameSlice::new(&data));
+        let result = GenericTuple::<i32>::deserialize(iter).unwrap();
+        assert_eq!(result, GenericTuple(999));
+    }
+
+    #[test]
+    fn test_type_check_mismatch() {
+        let specs = vec![spec("col1", ColumnType::Native(NativeType::Text))];
+        let result = Wrapper::type_check(&specs);
+        assert!(
+            result.is_err(),
+            "Should return type check error on type mismatch"
+        );
+    }
+
+    #[test]
+    fn test_column_count_mismatch_too_few() {
+        let specs = vec![];
+        let result = Wrapper::type_check(&specs);
+        assert!(result.is_err(), "Should return error when too few columns");
+    }
+
+    #[test]
+    fn test_column_count_mismatch_too_many() {
+        let specs = vec![
+            spec("col1", ColumnType::Native(NativeType::Int)),
+            spec("col2", ColumnType::Native(NativeType::Int)),
+        ];
+        let result = Wrapper::type_check(&specs);
+        assert!(result.is_err(), "Should return error when too many columns");
+    }
+
+    #[test]
+    fn test_deserialize_failure() {
+        let specs = vec![spec("col1", ColumnType::Native(NativeType::Int))];
+        let bad_val = vec![1u8, 2, 3];
+        let data = make_row_bytes(&[Some(&bad_val)]);
+        let iter = ColumnIterator::new(&specs, FrameSlice::new(&data));
+        let result = Wrapper::deserialize(iter);
+
+        assert!(
+            result.is_err(),
+            "Should fail deserialization on malformed data"
+        );
+    }
+}

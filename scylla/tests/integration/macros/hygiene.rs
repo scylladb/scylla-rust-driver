@@ -343,6 +343,13 @@ macro_rules! test_crate {
             #[scylla(default_when_null)]
             d: ::core::primitive::i32,
         }
+
+        #[derive(
+            _scylla::DeserializeRow, _scylla::SerializeRow, PartialEq, Debug,
+        )]
+        #[scylla(crate = _scylla)]
+        #[allow(dead_code)]
+        struct TestTupleRow(::core::primitive::i32, ::std::string::String);
     };
 }
 
