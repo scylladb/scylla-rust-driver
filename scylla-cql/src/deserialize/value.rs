@@ -730,7 +730,7 @@ where
 // collections
 
 make_error_replace_rust_name!(
-    pub(crate),
+    pub,
     typck_error_replace_rust_name,
     TypeCheckError,
     BuiltinTypeCheckError

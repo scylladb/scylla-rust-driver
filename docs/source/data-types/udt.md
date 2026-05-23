@@ -76,3 +76,53 @@ while let Some((my_type_value,)) = iter.try_next().await? {
 # Ok(())
 # }
 ```
+
+## Transparent Wrappers (Newtype Pattern)
+
+Sometimes it is desirable to wrap a driver's type (like `i32` or `String`) in a custom struct for type safety, a pattern often called the "newtype pattern".
+To avoid writing manual implementations of `SerializeValue` and `DeserializeValue`, you can use the `#[scylla(transparent)]` attribute.
+
+This attribute delegates the serialization, deserialization, and type checking logic to the single field contained within the struct or enum. The wrapper will be stored in the database exactly as the inner type is stored (e.g., as an `Int` or `Text` column), not as a UDT (unless the inner type is a UDT, of course).
+
+**Requirements:**
+* The struct must have exactly one field.
+* The enum must have exactly one variant with exactly one field.
+
+```rust
+# extern crate scylla;
+# async fn check_only_compiles() {
+use scylla::{DeserializeValue, SerializeValue};
+
+// This struct will be serialized as a simple Int (4 bytes),
+// strictly matching the inner `i32` type.
+#[derive(Debug, SerializeValue, DeserializeValue)]
+#[scylla(transparent)]
+struct UserId(i32);
+
+// Works with named fields too
+#[derive(Debug, SerializeValue, DeserializeValue)]
+#[scylla(transparent)]
+struct OrderId {
+    val: i64,
+}
+
+// This will be serialized as a CQL list<text>
+#[derive(Debug, SerializeValue, DeserializeValue)]
+#[scylla(transparent)]
+struct Tags(Vec<String>);
+
+// A standard UDT
+#[derive(Debug, SerializeValue, DeserializeValue)]
+struct Address {
+    street: String,
+    city: String,
+}
+
+// A transparent wrapper around the UDT.
+// This matches the same CQL UDT layout as `Address`.
+#[derive(Debug, SerializeValue, DeserializeValue)]
+#[scylla(transparent)]
+struct HomeAddress(Address);
+
+# }
+```
