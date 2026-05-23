@@ -395,6 +395,11 @@ mod deserialize;
 /// By default, the generated implementation will try to match the Rust field
 /// to a column with the same name. This attribute allows to match to a column
 /// with provided name.
+///
+/// #[scylla(allow_missing)]
+///
+/// If column specs does not contain this field, it will be initialized
+/// with `Default::default()`.
 #[proc_macro_derive(DeserializeRow, attributes(scylla))]
 pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
     match deserialize::row::deserialize_row_derive(tokens_input) {
