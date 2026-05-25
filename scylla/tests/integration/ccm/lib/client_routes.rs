@@ -368,87 +368,61 @@ impl ClientRoutesCluster {
             .collect()
     }
 
-    /// Waits until every specified proxy node has at least one driver connection.
+    /// Waits until the driver's data pools report `is_connected()` for all
+    /// active nodes.
     ///
-    /// After topology changes (restart, add node), the driver takes time to
-    /// discover the new/restarted node and open a connection. Calling this
-    /// before issuing queries prevents races where all queries miss the
-    /// new node because the driver hasn't connected yet.
-    ///
-    /// Times out after `timeout` to avoid hanging forever if the driver fails to connect.
-    pub(crate) async fn wait_for_connections_to_nodes(
+    /// Does NOT call `refresh_metadata()`: the driver discovers routes via
+    /// its normal mechanisms (initial metadata fetch, `TOPOLOGY_CHANGE` and
+    /// `CLIENT_ROUTES_CHANGE` events) and reconnects via `STATUS_CHANGE UP`
+    /// or client-routes-triggered pool refills.
+    pub(crate) async fn wait_for_pools_connected(
         &self,
-        node_ids: Option<&HashSet<u16>>,
+        session: &Session,
         timeout: Duration,
     ) -> Result<(), Error> {
-        let futs: Vec<_> = self
-            .dc_configs
-            .values()
-            .flat_map(|dc| {
-                dc.per_node_chains.iter().filter_map(|(node_id, chain)| {
-                    let wait_fn = || {
-                        let proxy = &chain.running_proxy;
-                        async move {
-                            proxy.wait_for_connection().await;
-                            info!("Proxy for node {} has a driver connection", node_id);
-                        }
-                    };
-                    match node_ids {
-                        // Filter to a specific set of nodes if provided.
-                        Some(ids) => ids.contains(node_id).then(wait_fn),
-                        // No filter, wait for all nodes.
-                        None => Some(wait_fn()),
-                    }
-                })
-            })
+        let active = self.active_node_ids();
+        let expected_host_ids: HashSet<Uuid> = self
+            .host_ids
+            .iter()
+            .filter(|(node_id, _)| active.contains(node_id))
+            .map(|(_, &hid)| hid)
             .collect();
 
-        tokio::time::timeout(timeout, futures::future::join_all(futs))
-            .await
-            .map_err(|_| {
-                let target_ids = node_ids
-                    .map(|ids| ids.iter().copied().collect::<Vec<_>>())
-                    .unwrap_or_else(|| self.active_node_ids());
-                anyhow::anyhow!(
-                    "Timed out waiting for driver connections to proxy nodes: {:?}.",
-                    target_ids
-                )
-            })?;
+        tokio::time::timeout(timeout, async {
+            loop {
+                let state = session.get_cluster_state();
+                let all_connected = expected_host_ids.iter().all(|&hid| {
+                    state
+                        .get_node_by_host_id(hid)
+                        .is_some_and(|n| n.is_connected())
+                });
 
-        Ok(())
-    }
+                if all_connected {
+                    return;
+                }
 
-    /// Waits until every active proxy node has at least one driver connection.
-    ///
-    /// After topology changes (restart, add node), the driver takes time to
-    /// discover the new/restarted node and open a connection. Calling this
-    /// before issuing queries prevents races where all queries miss the
-    /// new node because the driver hasn't connected yet.
-    ///
-    /// Times out after `timeout` to avoid hanging forever if the driver fails to connect.
-    pub(crate) async fn wait_for_connections_to_all_nodes(
-        &self,
-        timeout: Duration,
-    ) -> Result<(), Error> {
-        self.wait_for_connections_to_nodes(None, timeout).await
-    }
-
-    /// Waits until the proxy responsible for given node has at least one driver
-    /// connection.
-    ///
-    /// After topology changes (restart, add node), the driver takes time to
-    /// discover the new/restarted node and open a connection. Calling this
-    /// before issuing queries prevents races where all queries miss the
-    /// new node because the driver hasn't connected yet.
-    ///
-    /// Times out after `timeout` to avoid hanging forever if the driver fails to connect.
-    pub(crate) async fn wait_for_connections_to_node(
-        &self,
-        node_id: NodeId,
-        timeout: Duration,
-    ) -> Result<(), Error> {
-        self.wait_for_connections_to_nodes(Some(&HashSet::from([node_id])), timeout)
-            .await
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            let state = session.get_cluster_state();
+            let disconnected: Vec<_> = expected_host_ids
+                .iter()
+                .filter(|hid| {
+                    !state
+                        .get_nodes_info()
+                        .iter()
+                        .any(|n| n.host_id == **hid && n.is_connected())
+                })
+                .collect();
+            anyhow::anyhow!(
+                "Timed out after {:?} waiting for data pools to connect. \
+                 Disconnected host_ids: {:?}",
+                timeout,
+                disconnected
+            )
+        })
     }
 
     /// Decommission a node and tear down its proxy chain.
