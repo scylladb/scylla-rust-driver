@@ -18,6 +18,21 @@ pub struct RequestInfo<'a> {
     pub consistency: Consistency,
 }
 
+impl<'a> RequestInfo<'a> {
+    /// Creates a new `RequestInfo` instance.
+    pub fn new(
+        error: &'a RequestAttemptError,
+        is_idempotent: bool,
+        consistency: Consistency,
+    ) -> Self {
+        Self {
+            error,
+            is_idempotent,
+            consistency,
+        }
+    }
+}
+
 /// Returned by implementations of RetryPolicy. Instructs the driver on what
 /// to do about the request after it failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
