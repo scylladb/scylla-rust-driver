@@ -290,6 +290,11 @@ impl ClusterState {
         &self.all_nodes
     }
 
+    /// Access details about specific node known to the driver, querying by host id.
+    pub fn get_node_by_host_id(&self, host_id: Uuid) -> Option<NodeRef<'_>> {
+        self.known_peers.get(&host_id)
+    }
+
     /// Compute token of a table partition key
     ///
     /// `partition_key` argument contains the values of all partition key
