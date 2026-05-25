@@ -39,6 +39,7 @@ use crate::utils::safe_format::IteratorSafeFormatExt;
 pub(crate) enum ControlConnectionEvent {
     Broken,
     ServerEvent(Event),
+    Shutdown,
 }
 
 struct WorkingControlConnection {
@@ -175,7 +176,10 @@ impl MetadataReader {
                                 // We could theoretically recover by dropping a connection and creating new one,
                                 // but we would need to add an error variant to `BrokenConnectionErrorKind` that
                                 // could basically never happen. Let's panic instead.
-                                panic!("Error sender of control connection unexpectedly dropped. This is a bug in the driver, please open an issue!");
+                                warn!(concat!("Error sender of control connection unexpectedly dropped. The only case when this ",
+                                "may happen is during runtime shutdown. If you see this and the runtime isn't shutting down, ",
+                                "this is a bug in the driver. Then please open an issue!"));
+                                return ControlConnectionEvent::Shutdown;
                             },
                         };
                         self.control_connection_state = ControlConnectionState::Broken {
