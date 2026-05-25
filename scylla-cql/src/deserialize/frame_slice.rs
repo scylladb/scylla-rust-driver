@@ -76,15 +76,16 @@ impl<'frame> FrameSlice<'frame> {
 
     /// Creates a new FrameSlice from a reference to a slice.
     ///
+    /// This should be avoided!
+    ///
     /// This method creates a not-fully-valid FrameSlice that does not hold
     /// the valid original frame Bytes. Thus, it is intended to be used in
     /// legacy code that does not operate on Bytes, but rather on borrowed slice only.
     /// For correctness in an unlikely case that someone calls `to_bytes()` on such
     /// a deficient slice, a special treatment is added there that copies
     /// the slice into a new-allocation-based Bytes.
-    /// This is pub(crate) for the above reason.
     #[inline]
-    pub(crate) fn new_borrowed(frame_subslice: &'frame [u8]) -> Self {
+    pub fn new_borrowed(frame_subslice: &'frame [u8]) -> Self {
         Self {
             frame_subslice,
             original_frame: &EMPTY_BYTES,

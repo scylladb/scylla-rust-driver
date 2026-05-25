@@ -167,7 +167,7 @@ impl NativeType {
     /// it is needed as the variable size types (`None`) are de/serialized
     /// differently than the fixed size types (`Some(size)`). Note that
     /// many fixed size types are treated as variable size by Cassandra.
-    pub(crate) fn type_size(&self) -> Option<usize> {
+    pub fn type_size_for_vector(&self) -> Option<usize> {
         match self {
             NativeType::Ascii => None,
             NativeType::Boolean => Some(1),
@@ -265,6 +265,39 @@ impl ColumnType<'_> {
             }
         }
     }
+
+    /// Returns the size of the type in bytes, as it is seen by the vector type if it is treated as fixed size.
+    pub fn type_size_for_vector(&self) -> Option<usize> {
+        match self {
+            ColumnType::Native(n) => n.type_size_for_vector(),
+            ColumnType::Tuple(_) => None,
+            ColumnType::Collection { .. } => None,
+            ColumnType::Vector { typ, dimensions } => typ
+                .type_size_for_vector()
+                .map(|size| size * usize::from(*dimensions)),
+            ColumnType::UserDefinedType { .. } => None,
+        }
+    }
+
+    /// Returns true if the type allows a special, empty value in addition to its
+    /// natural representation. For example, bigint represents a 64-bit integer,
+    /// but it can also hold a 0-bit empty value.
+    ///
+    /// It looks like Cassandra 4.1.3 rejects empty values for some more types than
+    /// Scylla: date, time, smallint and tinyint. We will only check against
+    /// Scylla's set of types supported for empty values as it's smaller;
+    /// with Cassandra, some rejects will just have to be rejected on the db side.
+    pub fn supports_special_empty_value(&self) -> bool {
+        #[expect(clippy::match_like_matches_macro)]
+        match self {
+            ColumnType::Native(NativeType::Counter)
+            | ColumnType::Native(NativeType::Duration)
+            | ColumnType::Collection { .. }
+            | ColumnType::UserDefinedType { .. } => false,
+
+            _ => true,
+        }
+    }
 }
 
 impl CollectionType<'_> {
@@ -325,28 +358,6 @@ impl TableSpec<'static> {
         Self {
             ks_name: Cow::Owned(ks_name),
             table_name: Cow::Owned(table_name),
-        }
-    }
-}
-
-impl ColumnType<'_> {
-    /// Returns true if the type allows a special, empty value in addition to its
-    /// natural representation. For example, bigint represents a 32-bit integer,
-    /// but it can also hold a 0-bit empty value.
-    ///
-    /// It looks like Cassandra 4.1.3 rejects empty values for some more types than
-    /// Scylla: date, time, smallint and tinyint. We will only check against
-    /// Scylla's set of types supported for empty values as it's smaller;
-    /// with Cassandra, some rejects will just have to be rejected on the db side.
-    pub(crate) fn supports_special_empty_value(&self) -> bool {
-        #[expect(clippy::match_like_matches_macro)]
-        match self {
-            ColumnType::Native(NativeType::Counter)
-            | ColumnType::Native(NativeType::Duration)
-            | ColumnType::Collection { .. }
-            | ColumnType::UserDefinedType { .. } => false,
-
-            _ => true,
         }
     }
 }
@@ -1037,10 +1048,7 @@ fn mk_col_spec_parse_error(
     col_idx: usize,
     err: impl Into<ColumnSpecParseErrorKind>,
 ) -> ColumnSpecParseError {
-    ColumnSpecParseError {
-        column_index: col_idx,
-        kind: err.into(),
-    }
+    ColumnSpecParseError::new(col_idx, err.into())
 }
 
 fn deser_col_specs_generic<'frame, 'result>(
@@ -1515,19 +1523,6 @@ mod test_utils {
                 }
                 Self::UserDefinedType { .. } => 0x0030,
                 Self::Tuple(_) => 0x0031,
-            }
-        }
-
-        /// Returns the size of the type in bytes, as it is seen by the vector type if it is treated as fixed size.
-        pub(crate) fn type_size(&self) -> Option<usize> {
-            match self {
-                ColumnType::Native(n) => n.type_size(),
-                ColumnType::Tuple(_) => None,
-                ColumnType::Collection { .. } => None,
-                ColumnType::Vector { typ, dimensions } => {
-                    typ.type_size().map(|size| size * usize::from(*dimensions))
-                }
-                ColumnType::UserDefinedType { .. } => None,
             }
         }
 
