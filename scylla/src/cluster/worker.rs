@@ -349,6 +349,11 @@ impl ClusterWorker {
 
                 control_connection_event = self.metadata_reader.wait_for_control_connection_event() => {
                     match control_connection_event {
+                        ControlConnectionEvent::Shutdown => {
+                            // The runtime is shutting down. We can stop working.
+                            debug!("Got shutdown control connection event. Shutting down ClusterWorker.");
+                            return;
+                        },
                         ControlConnectionEvent::Broken => {
                             // The control connection was broken. Acknowledge that and start attempting to reconnect.
                             // The first reconnect attempt will be immediate (by attempting metadata refresh below),
