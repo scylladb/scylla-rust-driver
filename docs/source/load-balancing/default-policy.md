@@ -187,4 +187,6 @@ rotated (similarly to a round robin with a random index).
 
 [^1]: There is an optimisation implemented for LWT requests that routes them
 to the replicas in the ring order (as it prevents contention due to Paxos conflicts), so replicas in that case are not shuffled in groups at all.
-In order for the optimisation to be applied, LWT statements must be prepared before.
+The optimisation is applied in two cases:
+1. when an LWT statement (containing an `IF` clause) is prepared — ScyllaDB sets a flag that the driver uses for routing;
+2. when a statement is executed with `Serial` or `LocalSerial` consistency (this is the only way to execute `SELECT` as LWT, since it may not contain an `IF` clause), the driver detects it automatically.

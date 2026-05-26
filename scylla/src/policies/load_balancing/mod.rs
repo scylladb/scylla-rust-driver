@@ -42,7 +42,41 @@ pub struct RoutingInfo<'a> {
     /// (i. e. always try first to contact replica A, then B if it fails, then C, etc.).
     /// If false, the request should be routed normally.
     /// Note: this a ScyllaDB-specific optimisation. Therefore, the flag will be always false for Cassandra.
+    ///
+    /// <div class="warning">
+    ///
+    /// This flag alone is not sufficient to determine whether a request should be
+    /// routed as LWT. A statement can also be executed with [`Consistency::Serial`] or
+    /// [`Consistency::LocalSerial`] as its consistency level, which makes the server treat it
+    /// as a Paxos (LWT) request — this is the only way to execute a `SELECT` as LWT,
+    /// since `SELECT` statements never contain an `IF` clause.
+    /// Use [`RoutingInfo::should_route_as_lwt()`] to correctly account for both cases.
+    ///
+    /// </div>
+    ///
+    /// [`Consistency::Serial`]: types::Consistency::Serial
+    /// [`Consistency::LocalSerial`]: types::Consistency::LocalSerial
     pub is_confirmed_lwt: bool,
+}
+
+impl RoutingInfo<'_> {
+    /// Returns `true` if the request should be routed using LWT optimisation
+    /// (i.e. deterministic replica ordering to reduce Paxos contention).
+    ///
+    /// This takes into account both the [`is_confirmed_lwt`](RoutingInfo::is_confirmed_lwt) flag
+    /// (set by ScyllaDB during prepare for statements containing `IF` clauses) and the
+    /// [`consistency`](RoutingInfo::consistency) level — a request executed with
+    /// [`Consistency::Serial`](types::Consistency::Serial) or
+    /// [`Consistency::LocalSerial`](types::Consistency::LocalSerial) is always treated
+    /// as LWT by the server, even if `is_confirmed_lwt` is `false` (e.g. for `SELECT`
+    /// statements, which never contain an `IF` clause).
+    pub fn should_route_as_lwt(&self) -> bool {
+        self.is_confirmed_lwt
+            || matches!(
+                self.consistency,
+                types::Consistency::Serial | types::Consistency::LocalSerial
+            )
+    }
 }
 
 /// The fallback list of nodes in the request plan.

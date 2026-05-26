@@ -28,4 +28,25 @@ session.query_unpaged(my_statement, (to_insert,)).await?;
 
 The rest of the API remains identical for LWT and non-LWT statements.
 
+### SELECT as LWT
+
+A `SELECT` statement can also be executed as a lightweight transaction by setting its consistency level to `Serial` or `LocalSerial`. Since `SELECT` statements never contain an `IF` clause, this is the only way to execute them as LWT. The driver automatically detects this case and applies LWT routing optimisation (deterministic replica ordering) for such requests.
+
+```rust
+# extern crate scylla;
+# use scylla::client::session::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::statement::unprepared::Statement;
+use scylla::statement::Consistency;
+
+let mut my_statement: Statement = Statement::new("SELECT * FROM ks.tab WHERE a = ?".to_string());
+// Setting consistency to Serial makes the server execute this SELECT via Paxos.
+my_statement.set_consistency(Consistency::Serial);
+
+session.query_unpaged(my_statement, (12345_i32,)).await?;
+# Ok(())
+# }
+```
+
 See [Statement API documentation](https://docs.rs/scylla/latest/scylla/statement/struct.Statement.html) for more options
