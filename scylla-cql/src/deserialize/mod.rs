@@ -32,7 +32,7 @@ use thiserror::Error;
 ///   in the [`row::BuiltinTypeCheckError`].
 #[derive(Debug, Clone, Error)]
 #[error("TypeCheckError: {0}")]
-pub struct TypeCheckError(pub(crate) Arc<dyn std::error::Error + Send + Sync>);
+pub struct TypeCheckError(Arc<dyn std::error::Error + Send + Sync>);
 
 impl TypeCheckError {
     /// Constructs a new `TypeCheckError`.
@@ -135,7 +135,7 @@ pub(crate) mod tests {
     pub(super) static CELL1: &[u8] = &[1, 2, 3];
     pub(super) static CELL2: &[u8] = &[4, 5, 6, 7];
 
-    pub(super) fn serialize_cells(
+    pub(crate) fn serialize_cells(
         cells: impl IntoIterator<Item = Option<impl AsRef<[u8]>>>,
     ) -> Bytes {
         let mut bytes = BytesMut::new();
