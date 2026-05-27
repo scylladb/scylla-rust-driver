@@ -77,6 +77,12 @@ enum PickedReplica<'a> {
 /// When the policy is datacenter-aware, you can configure whether to allow datacenter failover
 /// (sending query to a node from a remote datacenter).
 ///
+/// Node location preferences can be set directly on this policy (via
+/// [`DefaultPolicyBuilder`]) or inherited from the session-level preference
+/// in [`SessionConfig`](crate::client::session::SessionConfig). When no
+/// policy-level preference is set (the default), the session-level preference
+/// is used.
+///
 /// Latency awareness is available, although **not recommended**:
 /// the penalisation mechanism it involves may interact badly with other
 /// mechanisms, such as LWT optimisation. Also, the very tactics of penalising
@@ -977,6 +983,8 @@ impl DefaultPolicyBuilder {
 
     /// Sets the datacenter to be preferred by this policy.
     ///
+    /// This overrides the session-level node location preference (if any).
+    ///
     /// Allows the load balancing policy to prioritize nodes based on their location.
     /// When a preferred datacenter is set, the policy will treat nodes in that
     /// datacenter as "local" nodes, and nodes in other datacenters as "remote" nodes.
@@ -994,6 +1002,8 @@ impl DefaultPolicyBuilder {
     }
 
     /// Sets the datacenter and rack to be preferred by this policy.
+    ///
+    /// This overrides the session-level node location preference (if any).
     ///
     /// Allows the load balancing policy to prioritize nodes based on their location
     /// as well as their availability zones in the preferred datacenter.

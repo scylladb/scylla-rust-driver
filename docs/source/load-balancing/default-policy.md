@@ -5,6 +5,10 @@ can be configured to be datacenter-aware, rack-aware and token-aware.
 When the policy is datacenter-aware, you can configure whether to allow datacenter failover
 (sending query to a node from a remote datacenter).
 
+Node location preferences (datacenter/rack) can be configured at two levels:
+- **Session level** — via `SessionBuilder::prefer_datacenter()`, `SessionBuilder::prefer_datacenter_and_rack()`, or `SessionBuilder::prefer_no_datacenter()`. This sets a default preference used by all policies that don't override it.
+- **Policy level** — directly on `DefaultPolicyBuilder`. When set, the policy-level preference overrides the session-level one.
+
 ## Creating a DefaultPolicy
 
 `DefaultPolicy` can be created only using `DefaultPolicyBuilder`. The
@@ -12,7 +16,7 @@ When the policy is datacenter-aware, you can configure whether to allow datacent
 `DefaultPolicyBuilder`. Builder has the following configuration options
 and default values:
 
-- `preferences`, configured using `prefer_datacenter` and `prefer_datacenter_and_rack` methods: no particular datacenter/rack preference
+- `preferences`, configured using `prefer_datacenter`, `prefer_datacenter_and_rack`, `prefer_no_datacenter`, and `inherit_location_preference` methods: `None` (falls back to the session-level preference from `SessionConfig`). Use `prefer_no_datacenter` to explicitly treat all nodes equally regardless of session preference.
 - `is_token_aware`, configured using `token_aware` method: `true`
 - `permit_dc_failover`, configured using method with the same name: `false`
 - `latency_awareness`, configured using method with the same name: `None`
@@ -38,12 +42,27 @@ let default_policy = DefaultPolicy::builder()
 
 #### Preferences
 
-The `preferences` field in `DefaultPolicy` allows the load balancing
-policy to prioritize nodes based on their location. It has three modes:
+Node location preferences control how `DefaultPolicy` prioritizes nodes.
+Preferences are resolved at two levels:
 
-- no preference
-- preferred datacenter
-- preferred datacenter and rack
+1. **Session-level preference** — set via `SessionBuilder::prefer_datacenter()`,
+   `SessionBuilder::prefer_datacenter_and_rack()`, or `SessionBuilder::prefer_no_datacenter()`.
+   This is stored in `SessionConfig::node_location_preference` and passed to policies
+   through `RoutingInfo`.
+
+2. **Policy-level preference** — set directly on `DefaultPolicyBuilder` using
+   `prefer_datacenter()`, `prefer_datacenter_and_rack()`, or `prefer_no_datacenter()`.
+   When set (`Some`), this overrides the session-level preference.
+
+By default, `DefaultPolicy` has no policy-level preference (`None`), so it
+uses the session-level preference. The session-level default is `Any` (no
+preference), so out of the box all nodes are treated equally.
+
+The effective preference (after resolving the two levels) has three modes:
+
+- no preference — all nodes are treated as local
+- preferred datacenter — nodes in the preferred DC are "local", others are "remote"
+- preferred datacenter and rack — within the preferred DC, nodes in the preferred rack are tried first
 
 When a datacenter `"my_dc"` is preferred, the policy will treat nodes in `"my_dc"`
 as "local" nodes, and nodes in other datacenters as "remote" nodes. This affects
