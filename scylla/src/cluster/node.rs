@@ -120,7 +120,6 @@ impl Node {
         pool_config: &PoolConfig,
         connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
         keyspace_name: Option<VerifiedKeyspaceName>,
-        enabled: bool,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
     ) -> Self {
         let host_id = peer.host_id;
@@ -130,24 +129,39 @@ impl Node {
 
         // We aren't interested in the fact that the pool becomes empty, so we immediately drop the receiving part.
         let (pool_empty_notifier, _) = tokio::sync::mpsc::channel(1);
-        let pool = enabled.then(|| {
-            NodeConnectionPool::new(
-                UntranslatedEndpoint::Peer(peer),
-                pool_config,
-                Some((host_id, connectivity_events_sender)),
-                keyspace_name,
-                pool_empty_notifier,
-                #[cfg(feature = "metrics")]
-                metrics,
-            )
-        });
+        let pool = NodeConnectionPool::new(
+            UntranslatedEndpoint::Peer(peer),
+            pool_config,
+            Some((host_id, connectivity_events_sender)),
+            keyspace_name,
+            pool_empty_notifier,
+            #[cfg(feature = "metrics")]
+            metrics,
+        );
 
         Node {
             host_id,
             address,
             datacenter,
             rack,
-            pool,
+            pool: Some(pool),
+            #[cfg(test)]
+            enabled_as_connected: AtomicBool::new(false),
+        }
+    }
+
+    pub(crate) fn new_disabled(peer: PeerEndpoint) -> Self {
+        let host_id = peer.host_id;
+        let address = peer.address;
+        let datacenter = peer.datacenter.clone();
+        let rack = peer.rack.clone();
+
+        Node {
+            host_id,
+            address,
+            datacenter,
+            rack,
+            pool: None,
             #[cfg(test)]
             enabled_as_connected: AtomicBool::new(false),
         }

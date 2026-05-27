@@ -170,15 +170,19 @@ impl ClusterState {
                     let is_enabled = host_filter.is_none_or(|f| f.accept(&peer));
                     let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
                     peer_tokens = tokens;
-                    Arc::new(Node::new(
-                        peer_endpoint,
-                        pool_config,
-                        connectivity_events_sender.clone(),
-                        used_keyspace.clone(),
-                        is_enabled,
-                        #[cfg(feature = "metrics")]
-                        Arc::clone(metrics),
-                    ))
+                    let node = if is_enabled {
+                        Node::new(
+                            peer_endpoint,
+                            pool_config,
+                            connectivity_events_sender.clone(),
+                            used_keyspace.clone(),
+                            #[cfg(feature = "metrics")]
+                            Arc::clone(metrics),
+                        )
+                    } else {
+                        Node::new_disabled(peer_endpoint)
+                    };
+                    Arc::new(node)
                 }
             };
 
