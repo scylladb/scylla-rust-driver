@@ -9,7 +9,7 @@ use crate::errors::NewSessionError;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
 use crate::policies::timestamp_generator::TimestampGenerator;
-use crate::routing::ShardAwarePortRange;
+use crate::routing::{NodeLocationPreference, ShardAwarePortRange};
 use crate::statement::Consistency;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
@@ -538,6 +538,36 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn compression(mut self, compression: Option<Compression>) -> Self {
         self.config.compression = compression;
+        self
+    }
+
+    /// Sets the preferred datacenter for this session.
+    ///
+    /// Nodes in the given datacenter will be treated as "local" and preferred
+    /// by load balancing policies that do not override this preference.
+    pub fn prefer_datacenter(mut self, datacenter_name: String) -> Self {
+        self.config.node_location_preference = NodeLocationPreference::Datacenter(datacenter_name);
+        self
+    }
+
+    /// Sets the preferred datacenter and rack for this session.
+    ///
+    /// Nodes in the given rack of the given datacenter are tried first,
+    /// followed by other nodes in the same datacenter, and then remote nodes.
+    /// This preference is used by load balancing policies that do not override it.
+    pub fn prefer_datacenter_and_rack(
+        mut self,
+        datacenter_name: String,
+        rack_name: String,
+    ) -> Self {
+        self.config.node_location_preference =
+            NodeLocationPreference::DatacenterAndRack(datacenter_name, rack_name);
+        self
+    }
+
+    /// Clears any node location preference, treating all nodes equally.
+    pub fn prefer_no_datacenter(mut self) -> Self {
+        self.config.node_location_preference = NodeLocationPreference::Any;
         self
     }
 
