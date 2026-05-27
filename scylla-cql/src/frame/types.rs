@@ -2,6 +2,8 @@
 
 use super::TryFromPrimitiveError;
 use super::frame_errors::LowLevelDeserializationError;
+#[cfg(test)]
+use assert_matches::assert_matches;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::BufMut;
 use bytes::Bytes;
@@ -635,9 +637,11 @@ pub fn read_inet(buf: &mut &[u8]) -> Result<SocketAddr, LowLevelDeserializationE
         }
         v => return Err(LowLevelDeserializationError::InvalidInetLength(v)),
     };
-    let port = read_int(buf)?;
+    let port_int = read_int(buf)?;
+    let port = <i32 as TryInto<u16>>::try_into(port_int)
+        .map_err(LowLevelDeserializationError::TryFromIntError)?;
 
-    Ok(SocketAddr::new(ip_addr, port as u16))
+    Ok(SocketAddr::new(ip_addr, port))
 }
 
 pub fn write_inet(addr: SocketAddr, buf: &mut impl BufMut) {
@@ -671,6 +675,36 @@ fn type_inet() {
     write_inet(iv6, &mut buf);
     let read_iv6 = read_inet(&mut &*buf).unwrap();
     assert_eq!(iv6, read_iv6);
+
+    let buf_invalid_port = &[
+        4, // Ip length
+        127, 0, 0, 1, // IP itself
+        1, 0, 0, 0, // Invalid port, 0x01000000
+    ];
+    assert_matches!(
+        read_inet(&mut buf_invalid_port.as_slice()),
+        Err(LowLevelDeserializationError::TryFromIntError(_))
+    );
+
+    let buf_negative_port = &[
+        4, // IP length
+        127, 0, 0, 1, // IP itself
+        255, 255, 255, 255, // Invalid port, -1 as i32
+    ];
+    assert_matches!(
+        read_inet(&mut buf_negative_port.as_slice()),
+        Err(LowLevelDeserializationError::TryFromIntError(_))
+    );
+
+    let buf_valid_port = &[
+        4, // Ip length
+        127, 0, 0, 1, // IP itself
+        0, 0, 0, 1, // Valid port, 0x00000001
+    ];
+    assert_eq!(
+        read_inet(&mut buf_valid_port.as_slice()).unwrap(),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 1)
+    );
 }
 
 fn zig_zag_encode(v: i64) -> u64 {
