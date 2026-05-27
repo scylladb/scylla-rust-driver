@@ -1988,6 +1988,10 @@ impl Session {
             Some(tracing_info) => tracing_info,
         };
 
+        if tracing_info.duration.is_none() {
+            return Ok(None);
+        }
+
         // Get tracing events
         let tracing_event_rows_result = traces_events_res
             .into_rows_result()
