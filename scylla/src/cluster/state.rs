@@ -484,6 +484,11 @@ impl ClusterState {
         // The returned iterator is nonempty, because it returns at least `first_working_pool`.
     }
 
+    #[cfg(test)]
+    fn known_peers(&self) -> &HashMap<Uuid, Arc<Node>> {
+        &self.known_peers
+    }
+
     pub(super) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
         let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
 
@@ -512,5 +517,213 @@ impl ClusterState {
             };
             self.locator.tablets.add_tablet(table, tablet);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cluster::metadata::{Metadata, Peer};
+    use crate::cluster::node::NodeAddr;
+    use crate::policies::host_filter::HostFilter;
+    use crate::routing::locator::tablets::TabletsInfo;
+    use crate::test_utils::setup_tracing;
+
+    use std::collections::{HashMap, HashSet};
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    fn make_addr(id: u16) -> NodeAddr {
+        NodeAddr::Translatable(SocketAddr::from(([255, 255, 255, id as u8], id)))
+    }
+
+    fn make_peer(
+        host_id: Uuid,
+        address: NodeAddr,
+        datacenter: Option<&str>,
+        rack: Option<&str>,
+    ) -> Peer {
+        Peer {
+            host_id,
+            address,
+            tokens: vec![Token::new(1)],
+            datacenter: datacenter.map(String::from),
+            rack: rack.map(String::from),
+        }
+    }
+
+    fn make_metadata(peers: Vec<Peer>) -> Metadata {
+        Metadata {
+            peers,
+            keyspaces: HashMap::new(),
+            client_routes_updated_hosts: HashSet::new(),
+        }
+    }
+
+    /// A host filter that rejects peers whose address is in the reject set.
+    struct AddrRejectFilter {
+        rejected: HashSet<NodeAddr>,
+    }
+
+    impl AddrRejectFilter {
+        fn rejecting(addrs: impl IntoIterator<Item = NodeAddr>) -> Self {
+            Self {
+                rejected: addrs.into_iter().collect(),
+            }
+        }
+    }
+
+    impl HostFilter for AddrRejectFilter {
+        fn accept(&self, peer: &Peer) -> bool {
+            !self.rejected.contains(&peer.address)
+        }
+    }
+
+    /// Helper: build a ClusterState from metadata, old known_peers, and an optional host filter.
+    async fn build_cluster_state(
+        metadata: Metadata,
+        known_peers: &HashMap<Uuid, Arc<Node>>,
+        host_filter: Option<&dyn HostFilter>,
+    ) -> ClusterState {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        ClusterState::new(
+            metadata,
+            &Default::default(),
+            known_peers,
+            &mut |_, _| (),
+            &None,
+            host_filter,
+            &tx,
+            TabletsInfo::new(),
+            &HashMap::new(),
+            #[cfg(feature = "metrics")]
+            &Default::default(),
+        )
+        .await
+    }
+
+    // Node's address changes so that host filter no longer rejects it.
+    // The node should become enabled, and the Node object must NOT be reused.
+    #[tokio::test]
+    async fn node_included_after_ip_change_not_filtered_anymore() {
+        setup_tracing();
+
+        let host_id = Uuid::new_v4();
+        let addr_rejected = make_addr(1);
+        let addr_accepted = make_addr(2);
+        let filter = AddrRejectFilter::rejecting([addr_rejected]);
+
+        // Build initial state: peer at addr_rejected ⇒ disabled.
+        let initial_metadata = make_metadata(vec![make_peer(
+            host_id,
+            addr_rejected,
+            Some("dc1"),
+            Some("r1"),
+        )]);
+        let initial_state =
+            build_cluster_state(initial_metadata, &HashMap::new(), Some(&filter)).await;
+        let old_node = initial_state.known_peers().get(&host_id).unwrap().clone();
+        assert!(
+            !old_node.is_enabled(),
+            "node should be disabled when its address is rejected"
+        );
+
+        // Refresh: same host_id moves to addr_accepted ⇒ should be enabled.
+        let new_metadata = make_metadata(vec![make_peer(
+            host_id,
+            addr_accepted,
+            Some("dc1"),
+            Some("r1"),
+        )]);
+        let new_state =
+            build_cluster_state(new_metadata, initial_state.known_peers(), Some(&filter)).await;
+        let new_node = new_state.known_peers().get(&host_id).unwrap();
+
+        assert!(
+            new_node.is_enabled(),
+            "node should be enabled after address change passes the filter"
+        );
+        assert!(
+            !Arc::ptr_eq(&old_node, new_node),
+            "Node object must NOT be reused when transitioning from disabled to enabled"
+        );
+    }
+
+    // Node's address changes so that host filter now rejects it.
+    // The node should become disabled, and the Node object must NOT be reused.
+    #[tokio::test]
+    async fn node_filtered_out_after_ip_change() {
+        setup_tracing();
+
+        let host_id = Uuid::new_v4();
+        let addr_accepted = make_addr(1);
+        let addr_rejected = make_addr(2);
+        let filter = AddrRejectFilter::rejecting([addr_rejected]);
+
+        // Build initial state: peer at addr_accepted ⇒ enabled.
+        let initial_metadata = make_metadata(vec![make_peer(
+            host_id,
+            addr_accepted,
+            Some("dc1"),
+            Some("r1"),
+        )]);
+        let initial_state =
+            build_cluster_state(initial_metadata, &HashMap::new(), Some(&filter)).await;
+        let old_node = initial_state.known_peers().get(&host_id).unwrap().clone();
+        assert!(
+            old_node.is_enabled(),
+            "node should be enabled when its address is accepted"
+        );
+
+        // Refresh: same host_id moves to addr_rejected ⇒ should be disabled.
+        let new_metadata = make_metadata(vec![make_peer(
+            host_id,
+            addr_rejected,
+            Some("dc1"),
+            Some("r1"),
+        )]);
+        let new_state =
+            build_cluster_state(new_metadata, initial_state.known_peers(), Some(&filter)).await;
+        let new_node = new_state.known_peers().get(&host_id).unwrap();
+
+        assert!(
+            !new_node.is_enabled(),
+            "node should be disabled after address change hits the filter"
+        );
+        assert!(
+            !Arc::ptr_eq(&old_node, new_node),
+            "Node object must NOT be reused when transitioning from enabled to disabled"
+        );
+    }
+
+    // A disabled node whose attributes (dc, rack, address) have not changed
+    // should reuse the same Node object (Arc::ptr_eq).
+    #[tokio::test]
+    async fn disabled_node_unchanged_attributes_reuses_object() {
+        setup_tracing();
+
+        let host_id = Uuid::new_v4();
+        let addr = make_addr(1);
+        let filter = AddrRejectFilter::rejecting([addr]);
+
+        // Build initial state: peer at addr ⇒ disabled.
+        let initial_metadata =
+            make_metadata(vec![make_peer(host_id, addr, Some("dc1"), Some("r1"))]);
+        let initial_state =
+            build_cluster_state(initial_metadata, &HashMap::new(), Some(&filter)).await;
+        let old_node = initial_state.known_peers().get(&host_id).unwrap().clone();
+        assert!(!old_node.is_enabled(), "node should be disabled");
+
+        // Refresh with identical attributes, still filtered out.
+        let new_metadata = make_metadata(vec![make_peer(host_id, addr, Some("dc1"), Some("r1"))]);
+        let new_state =
+            build_cluster_state(new_metadata, initial_state.known_peers(), Some(&filter)).await;
+        let new_node = new_state.known_peers().get(&host_id).unwrap();
+
+        assert!(!new_node.is_enabled(), "node should still be disabled");
+        assert!(
+            Arc::ptr_eq(&old_node, new_node),
+            "Node object should be reused when disabled node's attributes haven't changed"
+        );
     }
 }
