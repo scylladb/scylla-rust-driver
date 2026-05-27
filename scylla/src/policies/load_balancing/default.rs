@@ -185,7 +185,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         }
 
         /* LWT statements need to be routed differently: always to the same replica, to avoid Paxos contention. */
-        let statement_type = if query.is_confirmed_lwt {
+        let statement_type = if query.should_route_as_lwt() {
             StatementType::Lwt
         } else {
             StatementType::NonLwt
@@ -339,7 +339,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         let routing_info = self.routing_info(query, cluster);
 
         /* LWT statements need to be routed differently: always to the same replica, to avoid Paxos contention. */
-        let statement_type = if query.is_confirmed_lwt {
+        let statement_type = if query.should_route_as_lwt() {
             StatementType::Lwt
         } else {
             StatementType::NonLwt
@@ -2480,6 +2480,86 @@ mod tests {
                     .group([A]) // pick local DC
                     .group([C, G, B]) // local nodes
                     .build(),
+            },
+            // Consistency::Serial triggers LWT routing even without is_confirmed_lwt flag.
+            // This is the only way to execute SELECT as LWT (no IF clause in body).
+            // Keyspace NTS with RF=2 with enabled DC failover.
+            Test {
+                policy: DefaultPolicy {
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
+                    consistency: Consistency::Serial,
+                    is_confirmed_lwt: false,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, G]) // pick + fallback local replicas
+                    .ordered([F, D]) // remote replicas
+                    .group([C, B]) // local nodes
+                    .group([E]) // remote nodes
+                    .build(),
+            },
+            // Consistency::LocalSerial triggers LWT routing even without is_confirmed_lwt flag.
+            // Keyspace NTS with RF=3 with enabled DC failover.
+            Test {
+                policy: DefaultPolicy {
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
+                    consistency: Consistency::LocalSerial,
+                    is_confirmed_lwt: false,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, C, G]) // pick + fallback local replicas
+                    .ordered([F, D, E]) // remote replicas
+                    .group([B]) // local nodes
+                    .group([]) // remote nodes
+                    .build(),
+            },
+            // Consistency::Serial with DC failover disabled and rack-aware policy.
+            // Keyspace NTS with RF=2.
+            Test {
+                policy: DefaultPolicy {
+                    preferences: NodeLocationPreference::DatacenterAndRack(
+                        "eu".to_owned(),
+                        "r1".to_owned(),
+                    ),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
+                    consistency: Consistency::Serial,
+                    is_confirmed_lwt: false,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, G]) // pick + fallback local replicas (A is r1, G is r2)
+                    .group([C, B]) // local nodes
+                    .build(), // failover is explicitly forbidden
             },
         ];
 

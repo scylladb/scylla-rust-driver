@@ -319,6 +319,21 @@ impl PreparedStatement {
     /// then C, etc.). If false, the query should be routed normally.
     /// Note: this a Scylla-specific optimisation. Therefore, the result
     /// will be always false for Cassandra.
+    ///
+    /// <div class="warning">
+    ///
+    /// This method alone is not sufficient to determine whether a request should be
+    /// routed as LWT. A statement can also be executed with [`Consistency::Serial`] or
+    /// [`Consistency::LocalSerial`] as its consistency level, which makes the server treat it
+    /// as a Paxos (LWT) request. This is the only way to execute a `SELECT` as LWT,
+    /// since `SELECT` statements never contain an `IF` clause.
+    /// The driver accounts for this case internally via
+    /// [`RoutingInfo::should_route_as_lwt()`](crate::policies::load_balancing::RoutingInfo::should_route_as_lwt).
+    ///
+    /// </div>
+    ///
+    /// [`Consistency::Serial`]: crate::statement::Consistency::Serial
+    /// [`Consistency::LocalSerial`]: crate::statement::Consistency::LocalSerial
     pub fn is_confirmed_lwt(&self) -> bool {
         self.shared.is_confirmed_lwt
     }
