@@ -45,6 +45,7 @@ use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
+use crate::routing::NodeLocationPreference;
 use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 use tracing::{Instrument, error, trace, trace_span, warn};
@@ -1089,6 +1090,7 @@ pub(crate) struct PreparedPagerConfig {
     pub(crate) cluster_state: Arc<ClusterState>,
     #[cfg(feature = "metrics")]
     pub(crate) metrics: Arc<Metrics>,
+    pub(crate) location_preference: Arc<NodeLocationPreference>,
 }
 
 /// An intermediate object that allows to construct a stream over a query
@@ -1218,6 +1220,7 @@ If you are using this API, you are probably doing something wrong."
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_state: Arc<ClusterState>,
         #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        node_location_preference: Arc<NodeLocationPreference>,
     ) -> Result<Self, PagerExecutionError> {
         let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
 
@@ -1236,12 +1239,6 @@ If you are using this API, you are probably doing something wrong."
             .map(PageQueryTimeouter::new);
 
         let page_size = statement.get_validated_page_size();
-
-        let routing_info = RoutingInfo {
-            consistency,
-            serial_consistency,
-            ..Default::default()
-        };
 
         let load_balancing_policy = Arc::clone(
             statement
@@ -1273,6 +1270,13 @@ If you are using this API, you are probably doing something wrong."
                         )
                         .await
                 }
+            };
+
+            let routing_info = RoutingInfo {
+                consistency,
+                serial_consistency,
+                node_location_preference: &node_location_preference,
+                ..Default::default()
             };
 
             let query_ref = &statement;
@@ -1373,6 +1377,7 @@ If you are using this API, you are probably doing something wrong."
                 token,
                 table: table_spec,
                 is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
+                node_location_preference: &config.location_preference,
             };
 
             let page_query = |connection: Arc<Connection>,

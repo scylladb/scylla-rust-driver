@@ -3,6 +3,7 @@
 //! See [the book](https://rust-driver.docs.scylladb.com/stable/load-balancing/load-balancing.html) for more information
 
 use crate::cluster::{ClusterState, NodeRef};
+use crate::routing::NodeLocationPreference;
 use crate::{
     errors::RequestAttemptError,
     routing::{Shard, Token},
@@ -19,7 +20,7 @@ pub use plan::Plan;
 pub use single_target::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 
 /// Represents info about statement that can be used by load balancing policies.
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct RoutingInfo<'a> {
     /// Consistency level for the request.
@@ -57,6 +58,22 @@ pub struct RoutingInfo<'a> {
     /// [`Consistency::Serial`]: types::Consistency::Serial
     /// [`Consistency::LocalSerial`]: types::Consistency::LocalSerial
     pub is_confirmed_lwt: bool,
+
+    /// The session-level node location preference to pass to load balancing policies.
+    pub node_location_preference: &'a NodeLocationPreference,
+}
+
+impl Default for RoutingInfo<'_> {
+    fn default() -> Self {
+        Self {
+            consistency: types::Consistency::default(),
+            serial_consistency: None,
+            token: None,
+            table: None,
+            is_confirmed_lwt: false,
+            node_location_preference: &NodeLocationPreference::Any,
+        }
+    }
 }
 
 impl RoutingInfo<'_> {

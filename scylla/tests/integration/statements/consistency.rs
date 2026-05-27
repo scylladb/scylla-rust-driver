@@ -9,7 +9,7 @@ use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::NodeRef;
 use scylla::policies::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::policies::retry::FallthroughRetryPolicy;
-use scylla::routing::{Shard, Token};
+use scylla::routing::{NodeLocationPreference, Shard, Token};
 use scylla::statement::SerialConsistency;
 use scylla::statement::batch::BatchStatement;
 use scylla::statement::batch::{Batch, BatchType};
@@ -354,6 +354,8 @@ pub(crate) struct OwnedRoutingInfo {
     token: Option<Token>,
     #[expect(unused)]
     is_confirmed_lwt: bool,
+    #[expect(unused)]
+    node_location_preference: NodeLocationPreference,
 }
 
 impl OwnedRoutingInfo {
@@ -364,6 +366,7 @@ impl OwnedRoutingInfo {
             token,
             table,
             is_confirmed_lwt,
+            node_location_preference,
             ..
         } = info;
         Self {
@@ -372,6 +375,7 @@ impl OwnedRoutingInfo {
             token,
             table: table.map(TableSpec::to_owned),
             is_confirmed_lwt,
+            node_location_preference: node_location_preference.clone(),
         }
     }
 }

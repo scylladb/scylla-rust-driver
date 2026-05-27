@@ -1483,6 +1483,7 @@ mod tests {
         is_confirmed_lwt: false,
         consistency: Consistency::Quorum,
         serial_consistency: Some(SerialConsistency::Serial),
+        node_location_preference: &NodeLocationPreference::Any,
     };
 
     pub(super) fn test_default_policy_with_given_cluster_and_routing_info(

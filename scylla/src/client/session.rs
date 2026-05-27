@@ -998,6 +998,7 @@ impl Session {
             token: first_value_token,
             table: table_spec,
             is_confirmed_lwt: false,
+            node_location_preference: &self.node_location_preference,
         };
 
         let span = RequestSpan::new_batch();
@@ -1304,6 +1305,7 @@ impl Session {
                 .config
                 .serial_consistency
                 .unwrap_or(execution_profile.serial_consistency),
+            node_location_preference: &self.node_location_preference,
             ..Default::default()
         };
 
@@ -1472,6 +1474,7 @@ impl Session {
             self.cluster.get_state(),
             #[cfg(feature = "metrics")]
             Arc::clone(&self.metrics),
+            Arc::clone(&self.node_location_preference),
         )
         .await
     }
@@ -1697,6 +1700,7 @@ impl Session {
             token,
             table: table_spec,
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
+            node_location_preference: &self.node_location_preference,
         };
 
         let span = RequestSpan::new_prepared(
@@ -1797,6 +1801,7 @@ impl Session {
                 cluster_state: self.cluster.get_state(),
                 #[cfg(feature = "metrics")]
                 metrics: Arc::clone(&self.metrics),
+                location_preference: Arc::clone(&self.node_location_preference),
             },
         )
         .await
