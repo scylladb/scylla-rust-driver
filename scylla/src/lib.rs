@@ -231,7 +231,8 @@ pub mod deserialize {
             MapDeserializationErrorKind, MapIterator, MapTypeCheckErrorKind,
             SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind,
             TupleDeserializationErrorKind, TupleTypeCheckErrorKind, UdtIterator,
-            UdtTypeCheckErrorKind,
+            UdtTypeCheckErrorKind, VectorDeserializationErrorKind, VectorIterator,
+            VectorTypeCheckErrorKind,
         };
 
         // Note: deprecated doesn't work on re-exports, users won't get the warning.
