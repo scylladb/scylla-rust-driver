@@ -69,7 +69,7 @@ scylla-macros = { version = "=1.6.0", path = "../scylla-macros" }
 # AsyncRead trait used in read_response_frame
 tokio = { version = "1.40", features = ["io-util"] }
 # FrameSlice and other parts of public API
-bytes = "1.0.1"
+bytes = "1.10"
 # Tracing ids, CqlTimeuuid, ser/deser of CQL UUID
 uuid = "1.0"
 
