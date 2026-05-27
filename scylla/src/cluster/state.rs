@@ -148,16 +148,35 @@ impl ClusterState {
         let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
 
         for peer in metadata.peers {
-            // Take existing Arc<Node> if possible, otherwise create new one
-            // Changing rack/datacenter but not ip address seems improbable
-            // so we can just create new node and connections then
+            // Take existing Arc<Node> if possible, otherwise create new one.
             let peer_host_id = peer.host_id;
             let is_enabled = host_filter.is_none_or(|f| f.accept(&peer));
             let (peer_endpoint, peer_tokens) = peer.into_peer_endpoint_and_tokens();
 
-            let node: Arc<Node> = match known_peers.get(&peer_host_id) {
-                Some(node)
-                    if node.datacenter == peer_endpoint.datacenter
+            let node = match (is_enabled, known_peers.get(&peer_host_id)) {
+                // If the node is disabled, then we never want to have a connection pool to it.
+                // If it already existed, and was disabled, and all parameters (dc, rack, address) match
+                // then we can reuse the object.
+                // Otherwise we need to create a new one.
+                (false, Some(node))
+                    if !node.is_enabled()
+                        && node.datacenter == peer_endpoint.datacenter
+                        && node.rack == peer_endpoint.rack
+                        && node.address == peer_endpoint.address =>
+                {
+                    Arc::clone(node)
+                }
+                (false, _) => Arc::new(Node::new_disabled(peer_endpoint)),
+                // Changing rack/datacenter but not ip address seems improbable
+                // so we can just create new node and connections in such case.
+                // Here we allow preserving the Node object in full if all attributes (dc, rack, address)
+                // match. If only address is different, we recreate Node object but share the same underlying pool.
+                //
+                // IMPORTANT EDGE CASE: The old Node object might have been disabled. We know that the new Node object
+                // must be enabled, so there is no point in using the old one then.
+                (true, Some(node))
+                    if node.is_enabled()
+                        && node.datacenter == peer_endpoint.datacenter
                         && node.rack == peer_endpoint.rack =>
                 {
                     if node.address == peer_endpoint.address {
@@ -167,21 +186,14 @@ impl ClusterState {
                         Arc::new(Node::inherit_with_ip_changed(node, peer_endpoint))
                     }
                 }
-                _ => {
-                    let node = if is_enabled {
-                        Node::new(
-                            peer_endpoint,
-                            pool_config,
-                            connectivity_events_sender.clone(),
-                            used_keyspace.clone(),
-                            #[cfg(feature = "metrics")]
-                            Arc::clone(metrics),
-                        )
-                    } else {
-                        Node::new_disabled(peer_endpoint)
-                    };
-                    Arc::new(node)
-                }
+                (true, _) => Arc::new(Node::new(
+                    peer_endpoint,
+                    pool_config,
+                    connectivity_events_sender.clone(),
+                    used_keyspace.clone(),
+                    #[cfg(feature = "metrics")]
+                    Arc::clone(metrics),
+                )),
             };
 
             new_known_peers.insert(peer_host_id, Arc::clone(&node));
