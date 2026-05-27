@@ -95,7 +95,7 @@ tokio = { version = "1.40", features = [
 ] }
 tracing = "0.1.36"
 # Appears in various places of our public API.
-bytes = "1.0.1"
+bytes = "1.10"
 # Used for representing tracing ids and host ids.
 uuid = { version = "1.0", features = ["v4"] }
 # Used in history module to represent times of events.
