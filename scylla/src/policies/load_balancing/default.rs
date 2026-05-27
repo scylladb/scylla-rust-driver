@@ -145,7 +145,7 @@ impl LoadBalancingPolicy for DefaultPolicy {
         let routing_info = self.routing_info(query, cluster);
 
         if let Some(ref token_with_strategy) = routing_info.token_with_strategy
-            && self.preferences.datacenter().is_some()
+            && routing_info.preference.datacenter().is_some()
             && !self.permit_dc_failover
             && matches!(
                 token_with_strategy.strategy,
@@ -171,7 +171,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         /* Token-aware logic - if routing info is available, we know what are the replicas
          * for the statement. Try to pick one of them. */
         if let (Some(ts), Some(table_spec)) = (&routing_info.token_with_strategy, query.table) {
-            if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+            if let NodeLocationPreference::DatacenterAndRack(dc, rack) = routing_info.preference {
                 // Try to pick some alive local rack random replica.
                 let local_rack_picked = self.pick_replica(
                     ts,
@@ -194,7 +194,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             }
 
             if let NodeLocationPreference::DatacenterAndRack(dc, _)
-            | NodeLocationPreference::Datacenter(dc) = &self.preferences
+            | NodeLocationPreference::Datacenter(dc) = routing_info.preference
             {
                 // Try to pick some alive local random replica.
                 let picked = self.pick_replica(
@@ -218,7 +218,9 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             }
 
             // If preferred datacenter is not specified, or if datacenter failover is possible, loosen restriction about locality.
-            if self.preferences.datacenter().is_none() || self.is_datacenter_failover_possible() {
+            if routing_info.preference.datacenter().is_none()
+                || self.is_datacenter_failover_possible(&routing_info)
+            {
                 // Try to pick some alive random replica.
                 let picked = self.pick_replica(
                     ts,
@@ -249,9 +251,9 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         // Let's start with local nodes, i.e. those in the preferred datacenter.
         // If there was no preferred datacenter specified, all nodes are treated as local.
-        let local_nodes = self.preferred_node_set(cluster);
+        let local_nodes = self.preferred_node_set(cluster, &routing_info);
 
-        if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+        if let NodeLocationPreference::DatacenterAndRack(dc, rack) = routing_info.preference {
             // Try to pick some alive random local rack node.
             let rack_predicate = Self::make_rack_predicate(
                 |node| (self.pick_predicate)(node, None),
@@ -273,7 +275,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
         // If a datacenter failover is possible, loosen restriction about locality.
-        if self.is_datacenter_failover_possible() {
+        if self.is_datacenter_failover_possible(&routing_info) {
             let maybe_remote_node_picked =
                 self.pick_node(all_nodes, |node| (self.pick_predicate)(node, None));
             if let Some(alive_maybe_remote_node) = maybe_remote_node_picked {
@@ -291,7 +293,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         }
 
         // If a datacenter failover is possible, loosen restriction about locality.
-        if self.is_datacenter_failover_possible() {
+        if self.is_datacenter_failover_possible(&routing_info) {
             let maybe_down_maybe_remote_node_picked =
                 self.pick_node(all_nodes, |node| node.is_enabled());
             if let Some(down_but_enabled_maybe_remote_node) = maybe_down_maybe_remote_node_picked {
@@ -331,26 +333,29 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         {
             // Iterator over alive local rack replicas (shuffled or deterministically ordered,
             // depending on the statement being LWT or not).
-            let maybe_local_rack_replicas =
-                if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
-                    let local_rack_replicas = self.maybe_shuffled_replicas(
-                        ts,
-                        NodeLocationCriteria::DatacenterAndRack(dc, rack),
-                        |node, shard| Self::is_alive(node, Some(shard)),
-                        cluster,
-                        statement_type,
-                        table_spec,
-                    );
-                    Either::Left(local_rack_replicas)
-                } else {
-                    Either::Right(std::iter::empty())
-                };
+            let maybe_local_rack_replicas = if let NodeLocationPreference::DatacenterAndRack(
+                dc,
+                rack,
+            ) = routing_info.preference
+            {
+                let local_rack_replicas = self.maybe_shuffled_replicas(
+                    ts,
+                    NodeLocationCriteria::DatacenterAndRack(dc, rack),
+                    |node, shard| Self::is_alive(node, Some(shard)),
+                    cluster,
+                    statement_type,
+                    table_spec,
+                );
+                Either::Left(local_rack_replicas)
+            } else {
+                Either::Right(std::iter::empty())
+            };
 
             // Iterator over alive local datacenter replicas (shuffled or deterministically ordered,
             // depending on the statement being LWT or not).
             let maybe_local_replicas = if let NodeLocationPreference::DatacenterAndRack(dc, _)
             | NodeLocationPreference::Datacenter(dc) =
-                &self.preferences
+                routing_info.preference
             {
                 let local_replicas = self.maybe_shuffled_replicas(
                     ts,
@@ -366,8 +371,8 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             };
 
             // If no datacenter is preferred, or datacenter failover is possible, loosen restriction about locality.
-            let maybe_remote_replicas = if self.preferences.datacenter().is_none()
-                || self.is_datacenter_failover_possible()
+            let maybe_remote_replicas = if routing_info.preference.datacenter().is_none()
+                || self.is_datacenter_failover_possible(&routing_info)
             {
                 // Iterator over alive replicas (shuffled or deterministically ordered,
                 // depending on the statement being LWT or not).
@@ -403,10 +408,10 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         /* We start having not alive nodes filtered out. */
 
         // All nodes in the local datacenter (if one is given).
-        let local_nodes = self.preferred_node_set(cluster);
+        let local_nodes = self.preferred_node_set(cluster, &routing_info);
 
         let robinned_local_rack_nodes =
-            if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+            if let NodeLocationPreference::DatacenterAndRack(dc, rack) = routing_info.preference {
                 let rack_predicate = Self::make_rack_predicate(
                     |node| Self::is_alive(node, None),
                     NodeLocationCriteria::DatacenterAndRack(dc, rack),
@@ -427,7 +432,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
 
         // If a datacenter failover is possible, loosen restriction about locality.
-        let maybe_remote_nodes = if self.is_datacenter_failover_possible() {
+        let maybe_remote_nodes = if self.is_datacenter_failover_possible(&routing_info) {
             let robinned_all_nodes =
                 self.round_robin_nodes(all_nodes, |node| Self::is_alive(node, None));
 
@@ -443,7 +448,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             .map(|node| (node, None));
 
         // If a datacenter failover is possible, loosen restriction about locality.
-        let maybe_down_nodes = if self.is_datacenter_failover_possible() {
+        let maybe_down_nodes = if self.is_datacenter_failover_possible(&routing_info) {
             Either::Left(
                 all_nodes
                     .iter()
@@ -570,7 +575,7 @@ impl DefaultPolicy {
         query: &'a RoutingInfo,
         cluster: &'a ClusterState,
     ) -> ProcessedRoutingInfo<'a> {
-        let mut routing_info = ProcessedRoutingInfo::new(query, cluster);
+        let mut routing_info = ProcessedRoutingInfo::new(query, cluster, &self.preferences);
 
         if !self.is_token_aware {
             routing_info.token_with_strategy = None;
@@ -581,8 +586,12 @@ impl DefaultPolicy {
 
     /// Returns all nodes in the local datacenter if one is given,
     /// or else all nodes in the cluster.
-    fn preferred_node_set<'a>(&'a self, cluster: &'a ClusterState) -> &'a [Arc<Node>] {
-        if let Some(preferred_datacenter) = self.preferences.datacenter() {
+    fn preferred_node_set<'a>(
+        &'a self,
+        cluster: &'a ClusterState,
+        routing_info: &ProcessedRoutingInfo<'_>,
+    ) -> &'a [Arc<Node>] {
+        if let Some(preferred_datacenter) = routing_info.preference.datacenter() {
             if let Some(nodes) = cluster
                 .replica_locator()
                 .unique_nodes_in_datacenter_ring(preferred_datacenter)
@@ -885,8 +894,8 @@ impl DefaultPolicy {
     }
 
     /// Returns true iff the datacenter failover is permitted for the statement being executed.
-    fn is_datacenter_failover_possible(&self) -> bool {
-        self.preferences.datacenter().is_some() && self.permit_dc_failover
+    fn is_datacenter_failover_possible(&self, routing_info: &ProcessedRoutingInfo<'_>) -> bool {
+        routing_info.preference.datacenter().is_some() && self.permit_dc_failover
     }
 }
 
@@ -1094,12 +1103,18 @@ impl Default for DefaultPolicyBuilder {
 
 struct ProcessedRoutingInfo<'a> {
     token_with_strategy: Option<TokenWithStrategy<'a>>,
+    preference: &'a NodeLocationPreference,
 }
 
 impl<'a> ProcessedRoutingInfo<'a> {
-    fn new(query: &'a RoutingInfo, cluster: &'a ClusterState) -> ProcessedRoutingInfo<'a> {
+    fn new(
+        query: &'a RoutingInfo,
+        cluster: &'a ClusterState,
+        policy_preference: &'a NodeLocationPreference,
+    ) -> ProcessedRoutingInfo<'a> {
         Self {
             token_with_strategy: TokenWithStrategy::new(query, cluster),
+            preference: policy_preference,
         }
     }
 }
