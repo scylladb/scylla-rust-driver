@@ -1022,6 +1022,16 @@ impl DefaultPolicyBuilder {
         self
     }
 
+    /// Explicitly sets the preference to treat all nodes equally, with no
+    /// datacenter or rack preference.
+    ///
+    /// This overrides the session-level node location preference (if any),
+    /// ensuring that this policy always treats all nodes as local.
+    pub fn prefer_no_datacenter(mut self) -> Self {
+        self.preferences = Some(NodeLocationPreference::Any);
+        self
+    }
+
     /// Sets whether this policy is token-aware (balances load more consciously) or not.
     ///
     /// Token awareness refers to a mechanism by which the driver is aware
