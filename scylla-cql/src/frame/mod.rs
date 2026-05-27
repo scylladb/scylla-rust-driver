@@ -18,6 +18,7 @@ pub mod types;
 use bytes::{Buf, BufMut, Bytes};
 use frame_errors::{
     CqlRequestSerializationError, FrameBodyExtensionsParseError, FrameHeaderParseError,
+    LowLevelDeserializationError,
 };
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -364,10 +365,10 @@ pub fn decompress(
                 .try_get_u32()
                 .map_err(|_| {
                     FrameBodyExtensionsParseError::Lz4DecompressError(Arc::new(
-                        std::io::Error::new(
+                        LowLevelDeserializationError::IoError(Arc::new(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
                             "lz4 frame body is shorter than its 4-byte size prefix",
-                        ),
+                        ))),
                     ))
                 })? as usize;
             let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)
