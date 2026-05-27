@@ -107,11 +107,7 @@ async fn test_shard_out_of_range() {
             cluster: &'a ClusterState,
         ) -> Option<(NodeRef<'a>, Option<Shard>)> {
             let node = &cluster.get_nodes_info()[0];
-            match node.sharder() {
-                Some(sharder) => Some((node, Some(sharder.nr_shards.get() as u32))),
-                // For Cassandra let's pick some crazy shard number - it should be ignored anyway.
-                None => Some((node, Some(u16::MAX as u32))),
-            }
+            Some((node, Some(10000)))
         }
 
         fn fallback<'a>(
