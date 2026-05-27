@@ -1032,6 +1032,19 @@ impl DefaultPolicyBuilder {
         self
     }
 
+    /// Clears the policy-level node location preference, so that the
+    /// session-level preference (from [`SessionConfig`](crate::client::session::SessionConfig))
+    /// is used instead.
+    ///
+    /// This is the default behaviour — calling this method is only needed
+    /// to undo a previous call to [`prefer_datacenter`](Self::prefer_datacenter),
+    /// [`prefer_datacenter_and_rack`](Self::prefer_datacenter_and_rack),
+    /// or [`prefer_no_datacenter`](Self::prefer_no_datacenter).
+    pub fn inherit_location_preference(mut self) -> Self {
+        self.preferences = None;
+        self
+    }
+
     /// Sets whether this policy is token-aware (balances load more consciously) or not.
     ///
     /// Token awareness refers to a mechanism by which the driver is aware
