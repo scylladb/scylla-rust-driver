@@ -11,6 +11,11 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Coordinator {
     /// Translated address, i.e., one that the connection is opened against.
+    ///
+    /// This may be different than [`Node::address`], and may be different on different
+    /// connections to the same node, because of various driver mechanisms (address translation,
+    /// shard-aware port, client routes). You should never use this
+    /// for node identification. Use [`Node::host_id`] of the [`Self::node`] for that.
     connection_address: SocketAddr,
     /// The node that served as coordinator.
     node: Arc<Node>,
@@ -28,6 +33,11 @@ impl Coordinator {
     }
 
     /// Translated address, i.e., one that the connection is opened against.
+    ///
+    /// This may be different than [`Node::address`], and may be different on different
+    /// connections to the same node, because of various driver mechanisms (address translation,
+    /// shard-aware port, client routes). You should never use this
+    /// for node identification. Use [`Node::host_id`] of the [`Self::node`] for that.
     #[inline]
     pub fn connection_address(&self) -> SocketAddr {
         self.connection_address
