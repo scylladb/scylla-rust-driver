@@ -1128,7 +1128,7 @@ impl<'a> ProcessedRoutingInfo<'a> {
     ) -> ProcessedRoutingInfo<'a> {
         Self {
             token_with_strategy: TokenWithStrategy::new(query, cluster),
-            preference: policy_preference.unwrap_or(&NodeLocationPreference::Any),
+            preference: policy_preference.unwrap_or(query.node_location_preference),
         }
     }
 }
