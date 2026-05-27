@@ -361,16 +361,14 @@ pub fn decompress(
 ) -> Result<Vec<u8>, FrameBodyExtensionsParseError> {
     match compression {
         Compression::Lz4 => {
-            let uncomp_len = comp_body
-                .try_get_u32()
-                .map_err(|_| {
-                    FrameBodyExtensionsParseError::Lz4DecompressError(Arc::new(
-                        LowLevelDeserializationError::IoError(Arc::new(std::io::Error::new(
-                            std::io::ErrorKind::UnexpectedEof,
-                            "lz4 frame body is shorter than its 4-byte size prefix",
-                        ))),
-                    ))
-                })? as usize;
+            let uncomp_len = comp_body.try_get_u32().map_err(|_| {
+                FrameBodyExtensionsParseError::Lz4DecompressError(Arc::new(
+                    LowLevelDeserializationError::IoError(Arc::new(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "lz4 frame body is shorter than its 4-byte size prefix",
+                    ))),
+                ))
+            })? as usize;
             let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)
                 .map_err(|err| FrameBodyExtensionsParseError::Lz4DecompressError(Arc::new(err)))?;
             Ok(uncomp_body)
