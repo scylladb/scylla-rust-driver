@@ -358,7 +358,10 @@ impl NodeConnectionPool {
         }
 
         // If this fails try getting any other in random order
-        let mut shards_to_try: Vec<u16> = (0..shard).chain(shard + 1..nr_shards.get()).collect();
+        // We may attempt the original shard again, but its not a problem.
+        // An iteration of the loop below should be cheap for a shard with
+        // no connections.
+        let mut shards_to_try: Vec<u16> = (0..nr_shards.get()).collect();
 
         let orig_shard = shard;
         while !shards_to_try.is_empty() {
