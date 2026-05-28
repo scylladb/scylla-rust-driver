@@ -2683,6 +2683,101 @@ mod tests {
             );
         }
     }
+
+    #[tokio::test]
+    async fn test_default_policy_uses_routing_info_preference() {
+        setup_tracing();
+        let cluster = mock_cluster_state_for_token_unaware_tests().await;
+
+        // Test 1: Policy None + RI Datacenter("eu") → uses "eu"
+        {
+            let policy = DefaultPolicy {
+                preferences: None,
+                permit_dc_failover: true,
+                ..Default::default()
+            };
+            let eu_preference = NodeLocationPreference::Datacenter("eu".to_owned());
+            let routing_info = RoutingInfo {
+                node_location_preference: &eu_preference,
+                ..EMPTY_ROUTING_INFO
+            };
+            let expected = ExpectedGroupsBuilder::new()
+                .group([1, 2, 3])
+                .group([4, 5])
+                .build();
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &routing_info,
+                &expected,
+            );
+        }
+
+        // Test 2: Policy None + RI Any → all nodes equal
+        {
+            let policy = DefaultPolicy {
+                preferences: None,
+                permit_dc_failover: true,
+                ..Default::default()
+            };
+            let routing_info = RoutingInfo {
+                node_location_preference: &NodeLocationPreference::Any,
+                ..EMPTY_ROUTING_INFO
+            };
+            let expected = ExpectedGroupsBuilder::new().group([1, 2, 3, 4, 5]).build();
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &routing_info,
+                &expected,
+            );
+        }
+
+        // Test 3: Policy Datacenter("us") overrides RI Datacenter("eu")
+        {
+            let policy = DefaultPolicy {
+                preferences: Some(NodeLocationPreference::Datacenter("us".to_owned())),
+                permit_dc_failover: true,
+                ..Default::default()
+            };
+            let eu_preference = NodeLocationPreference::Datacenter("eu".to_owned());
+            let routing_info = RoutingInfo {
+                node_location_preference: &eu_preference,
+                ..EMPTY_ROUTING_INFO
+            };
+            let expected = ExpectedGroupsBuilder::new()
+                .group([4, 5])
+                .group([1, 2, 3])
+                .build();
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &routing_info,
+                &expected,
+            );
+        }
+
+        // Test 4: Policy Some(Any) overrides RI Datacenter("eu") → all nodes equal
+        {
+            let policy = DefaultPolicy {
+                preferences: Some(NodeLocationPreference::Any),
+                permit_dc_failover: true,
+                ..Default::default()
+            };
+            let eu_preference = NodeLocationPreference::Datacenter("eu".to_owned());
+            let routing_info = RoutingInfo {
+                node_location_preference: &eu_preference,
+                ..EMPTY_ROUTING_INFO
+            };
+            let expected = ExpectedGroupsBuilder::new().group([1, 2, 3, 4, 5]).build();
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &routing_info,
+                &expected,
+            );
+        }
+    }
 }
 
 mod latency_awareness {
