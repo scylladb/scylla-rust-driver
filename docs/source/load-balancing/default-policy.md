@@ -174,19 +174,6 @@ let policy = DefaultPolicy::builder()
 # }
 ```
 
-```rust
-# extern crate scylla;
-# fn test_if_compiles() {
-use scylla::policies::load_balancing::DefaultPolicy;
-
-let default_policy = DefaultPolicy::builder()
-        .prefer_datacenter("dc1".to_string())
-        .token_aware(true)
-        .permit_dc_failover(true)
-        .build();
-# }
-```
-
 ### Node order in produced plans
 
 The DefaultPolicy prefers to return nodes in the following order:
