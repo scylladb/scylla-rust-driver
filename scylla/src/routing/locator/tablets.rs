@@ -22,6 +22,10 @@ pub(crate) enum TabletParsingError {
     TypeCheck(#[from] TypeCheckError),
     #[error("Shard id for tablet is negative: {0}")]
     ShardNum(i32),
+    #[error(
+        "First element of tablet payload token range must be strictly smaller than the second, but the range is ({0}, {1}]"
+    )]
+    WrongTokenRange(i64, i64),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -78,6 +82,16 @@ impl RawTablet {
                 Err(err) => return Some(Err(err.into())),
             };
 
+        // Important invariant. That way we guarantee that:
+        // - Token range is not empty.
+        // - Token range doesn't cross the i64::MAX/i64::MIN boundary.
+        if last_token <= first_token {
+            return Some(Err(TabletParsingError::WrongTokenRange(
+                first_token,
+                last_token,
+            )));
+        }
+
         let replicas = match replicas
             .map(|res| {
                 res.map_err(TabletParsingError::from)
@@ -95,6 +109,9 @@ impl RawTablet {
         Some(Ok(RawTablet {
             // +1 because ScyllaDB sends left-open range, so received
             // number is the last token not belonging to this tablet.
+            // This won't overflow because we checked that first token
+            // is strictly smaller than the last, so must be at least
+            // one less than i64::MAX.
             first_token: Token::new(first_token + 1),
             last_token: Token::new(last_token),
             replicas: RawTabletReplicas { replicas },
@@ -674,6 +691,52 @@ mod tests {
             RawTablet::from_custom_payload(&custom_payload),
             Some(Err(TabletParsingError::Deserialization(_)))
         );
+    }
+
+    /// Helper: build a custom payload map from (first_token, last_token, replicas).
+    fn make_tablet_custom_payload(first_token: i64, last_token: i64) -> HashMap<String, Bytes> {
+        let mut data = vec![];
+        let value = CqlValue::Tuple(vec![
+            Some(CqlValue::BigInt(first_token)),
+            Some(CqlValue::BigInt(last_token)),
+            Some(CqlValue::List(vec![])),
+        ]);
+        SerializeValue::serialize(&value, &RAW_TABLETS_CQL_TYPE, CellWriter::new(&mut data))
+            .unwrap();
+        // Skip the 4-byte length prefix added by SerializeValue::serialize,
+        // because ScyllaDB sends the value without it.
+        HashMap::from([(
+            CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(),
+            Bytes::copy_from_slice(&data[4..]),
+        )])
+    }
+
+    #[test]
+    fn test_raw_tablet_deser_wrong_token_range() {
+        // last_token < first_token
+        let payload = make_tablet_custom_payload(100, -50);
+        assert_matches::assert_matches!(
+            RawTablet::from_custom_payload(&payload),
+            Some(Err(TabletParsingError::WrongTokenRange(100, -50)))
+        );
+
+        // last_token == first_token (range would be empty since it's left-open)
+        let payload = make_tablet_custom_payload(100, 100);
+        assert_matches::assert_matches!(
+            RawTablet::from_custom_payload(&payload),
+            Some(Err(TabletParsingError::WrongTokenRange(100, 100)))
+        );
+
+        // Edge case: i64::MAX as first_token, i64::MIN as last_token
+        let payload = make_tablet_custom_payload(i64::MAX, i64::MIN);
+        assert_matches::assert_matches!(
+            RawTablet::from_custom_payload(&payload),
+            Some(Err(TabletParsingError::WrongTokenRange(i64::MAX, i64::MIN)))
+        );
+
+        // Sanity check: valid range still works
+        let payload = make_tablet_custom_payload(99, 100);
+        assert_matches::assert_matches!(RawTablet::from_custom_payload(&payload), Some(Ok(_)));
     }
 
     #[test]
