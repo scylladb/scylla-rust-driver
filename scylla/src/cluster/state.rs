@@ -152,14 +152,14 @@ impl ClusterState {
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
             let peer_host_id = peer.host_id;
-            let peer_address = peer.address;
-            let peer_tokens;
+            let (peer_endpoint, peer_tokens) = peer.into_peer_endpoint_and_tokens();
 
             let node: Arc<Node> = match known_peers.get(&peer_host_id) {
-                Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
-                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
-                    peer_tokens = tokens;
-                    if node.address == peer_address {
+                Some(node)
+                    if node.datacenter == peer_endpoint.datacenter
+                        && node.rack == peer_endpoint.rack =>
+                {
+                    if node.address == peer_endpoint.address {
                         Arc::clone(node)
                     } else {
                         // If IP changes, the Node struct is recreated, but the underlying pool is preserved and notified about the IP change.
@@ -168,8 +168,6 @@ impl ClusterState {
                 }
                 _ => {
                     let is_enabled = host_filter.is_none_or(|f| f.accept(&peer));
-                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
-                    peer_tokens = tokens;
                     let node = if is_enabled {
                         Node::new(
                             peer_endpoint,
