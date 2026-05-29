@@ -3294,7 +3294,7 @@ mod latency_awareness {
                 averages: &[(u16, Option<TimestampedAverage>)],
             ) {
                 let addr_to_host_id: HashMap<NodeAddr, Uuid> = cluster
-                    .known_peers
+                    .known_nodes
                     .values()
                     .map(|node| (node.address, node.host_id))
                     .collect();

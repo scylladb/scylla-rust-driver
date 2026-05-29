@@ -415,7 +415,7 @@ impl TableTablets {
             self.tablet_list.retain_mut(|tablet| {
                 let r = tablet.re_resolve_replicas(|id: Uuid| all_current_nodes.get(&id).cloned());
                 if let Err(failed) = &r {
-                    warn!("Nodes ({}) listed as replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} are not present in ClusterState.known_peers, \
+                    warn!("Nodes ({}) listed as replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} are not present in ClusterState.known_nodes, \
                            despite topology refresh. Removing problematic tablet.",
                            failed.iter().safe_format(", "), self.table_spec.ks_name(), self.table_spec.table_name(), tablet.first_token.value(), tablet.last_token.value());
                 }

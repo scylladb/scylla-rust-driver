@@ -30,9 +30,9 @@ use super::node::{Node, NodeRef};
 pub struct ClusterState {
     /// All nodes known to be part of the cluster, accessible by their host ID.
     /// Often refered to as "topology metadata".
-    pub(crate) known_peers: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+    pub(crate) known_nodes: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
 
-    /// Contains the same set of nodes as `known_peers`.
+    /// Contains the same set of nodes as `known_nodes`.
     ///
     /// Introduced to fix the bug that zero-token nodes were missing from
     /// `ClusterState::get_nodes_info()` slice, because the slice was borrowed
@@ -69,7 +69,7 @@ impl std::fmt::Debug for ClusterStateNeatDebug<'_> {
         };
 
         f.debug_struct("ClusterState")
-            .field("known_peers", &cluster_state.known_peers)
+            .field("known_nodes", &cluster_state.known_nodes)
             .field("ring", &ring_printer)
             .field("keyspaces", &cluster_state.keyspaces.keys())
             .finish_non_exhaustive()
@@ -90,7 +90,7 @@ impl ClusterState {
     /// Suitable, among others, for nodes whose client routes were added or updated.
     pub(super) fn trigger_pool_refills_for_hosts(&self, host_ids: impl Iterator<Item = Uuid>) {
         for host_id in host_ids {
-            if let Some(node) = self.known_peers.get(&host_id) {
+            if let Some(node) = self.known_nodes.get(&host_id) {
                 debug!(
                     host_id = %host_id,
                     "Triggering immediate pool refill for relevant Node"
@@ -104,7 +104,7 @@ impl ClusterState {
     /// address. Used when a `STATUS_CHANGE UP` event hints that a node is back
     /// and its pool (likely in exponential backoff) should retry immediately.
     pub(super) fn trigger_pool_refill_for_addr(&self, addr: SocketAddr) {
-        for node in self.known_peers.values() {
+        for node in self.known_nodes.values() {
             if node.address.into_inner() == addr {
                 debug!(
                     address = %addr,
@@ -122,7 +122,7 @@ impl ClusterState {
     }
 
     /// Creates new ClusterState using information about topology held in `metadata`.
-    /// Uses provided `known_peers` hashmap to recycle nodes if possible.
+    /// Uses provided `known_nodes` hashmap to recycle nodes if possible.
     #[allow(clippy::too_many_arguments)]
     // This allow(clippy::type_complexity) is here because I can't satisfy borrow checker while
     // having the closure type be a type alias.
@@ -130,8 +130,8 @@ impl ClusterState {
     pub(crate) async fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,
-        known_peers: &HashMap<Uuid, Arc<Node>>,
-        // Takes old and new known_peers maps as arguments.
+        known_nodes: &HashMap<Uuid, Arc<Node>>,
+        // Takes old and new known_nodes maps as arguments.
         handle_topology_changes: &mut (
                  dyn FnMut(&HashMap<Uuid, Arc<Node>>, &HashMap<Uuid, Arc<Node>>) + Send + Sync
              ),
@@ -142,8 +142,8 @@ impl ClusterState {
         old_keyspaces: &HashMap<String, Keyspace>,
         #[cfg(feature = "metrics")] metrics: &Arc<Metrics>,
     ) -> Self {
-        // Create new updated known_peers and ring
-        let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
+        // Create new updated known_nodes and ring
+        let mut new_known_nodes: HashMap<Uuid, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
         let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
 
@@ -153,7 +153,7 @@ impl ClusterState {
             let is_enabled = host_filter.is_none_or(|f| f.accept(&peer));
             let (peer_endpoint, peer_tokens) = peer.into_peer_endpoint_and_tokens();
 
-            let node = match (is_enabled, known_peers.get(&peer_host_id)) {
+            let node = match (is_enabled, known_nodes.get(&peer_host_id)) {
                 // If the node is disabled, then we never want to have a connection pool to it.
                 // If it already existed, and was disabled, and all parameters (dc, rack, address) match
                 // then we can reuse the object.
@@ -196,14 +196,14 @@ impl ClusterState {
                 )),
             };
 
-            new_known_peers.insert(peer_host_id, Arc::clone(&node));
+            new_known_nodes.insert(peer_host_id, Arc::clone(&node));
 
             for token in peer_tokens {
                 ring.push((token, Arc::clone(&node)));
             }
         }
 
-        handle_topology_changes(known_peers, &new_known_peers);
+        handle_topology_changes(known_nodes, &new_known_nodes);
 
         let keyspaces: HashMap<String, Keyspace> = metadata
             .keyspaces
@@ -235,8 +235,8 @@ impl ClusterState {
         {
             let removed_nodes = {
                 let mut removed_nodes = HashSet::new();
-                for old_peer in known_peers {
-                    if !new_known_peers.contains_key(old_peer.0) {
+                for old_peer in known_nodes {
+                    if !new_known_nodes.contains_key(old_peer.0) {
                         removed_nodes.insert(*old_peer.0);
                     }
                 }
@@ -254,8 +254,8 @@ impl ClusterState {
 
             let recreated_nodes = {
                 let mut recreated_nodes = HashMap::new();
-                for (old_peer_id, old_peer_node) in known_peers {
-                    if let Some(new_peer_node) = new_known_peers.get(old_peer_id)
+                for (old_peer_id, old_peer_node) in known_nodes {
+                    if let Some(new_peer_node) = new_known_nodes.get(old_peer_id)
                         && !Arc::ptr_eq(old_peer_node, new_peer_node)
                     {
                         recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
@@ -268,7 +268,7 @@ impl ClusterState {
             tablets.perform_maintenance(
                 &table_predicate,
                 &removed_nodes,
-                &new_known_peers,
+                &new_known_nodes,
                 &recreated_nodes,
             )
         }
@@ -282,8 +282,8 @@ impl ClusterState {
         .unwrap();
 
         ClusterState {
-            all_nodes: new_known_peers.values().cloned().collect(),
-            known_peers: new_known_peers,
+            all_nodes: new_known_nodes.values().cloned().collect(),
+            known_nodes: new_known_nodes,
             keyspaces,
             locator,
         }
@@ -306,7 +306,7 @@ impl ClusterState {
 
     /// Access details about specific node known to the driver, querying by host id.
     pub fn get_node_by_host_id(&self, host_id: Uuid) -> Option<NodeRef<'_>> {
-        self.known_peers.get(&host_id)
+        self.known_nodes.get(&host_id)
     }
 
     /// Compute token of a table partition key
@@ -406,9 +406,9 @@ impl ClusterState {
         impl Iterator<Item = (Uuid, impl Iterator<Item = Arc<Connection>> + use<>)> + use<'_>,
         ConnectionPoolError,
     > {
-        // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
-        assert!(!self.known_peers.is_empty());
-        let nodes_iter = self.known_peers.values();
+        // The returned iterator is nonempty by nonemptiness invariant of `self.known_nodes`.
+        assert!(!self.known_nodes.is_empty());
+        let nodes_iter = self.known_nodes.values();
         let mut connection_pool_per_node_iter = nodes_iter.map(|node| {
             node.get_working_connections()
                 .map(|pool| (node.host_id, pool))
@@ -420,7 +420,7 @@ impl ClusterState {
             connection_pool_per_node_iter
                 .by_ref()
                 .find_or_first(Result::is_ok)
-                .expect("impossible: known_peers was asserted to be nonempty");
+                .expect("impossible: known_nodes was asserted to be nonempty");
 
         // We have:
         // 1. either consumed the whole iterator without success and got the first error,
@@ -439,7 +439,7 @@ impl ClusterState {
         Ok(std::iter::once(first_working_pool)
             .chain(remaining_working_pools_iter)
             .map(|(host_id, pool)| (host_id, IntoIterator::into_iter(pool))))
-        // By an invariant `self.known_peers` is nonempty, so the returned iterator
+        // By an invariant `self.known_nodes` is nonempty, so the returned iterator
         // is nonempty, too.
     }
 
@@ -455,9 +455,9 @@ impl ClusterState {
     pub(crate) fn iter_working_connections_to_nodes(
         &self,
     ) -> Result<impl Iterator<Item = Arc<Connection>> + use<'_>, ConnectionPoolError> {
-        // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
-        assert!(!self.known_peers.is_empty());
-        let nodes_iter = self.known_peers.values();
+        // The returned iterator is nonempty by nonemptiness invariant of `self.known_nodes`.
+        assert!(!self.known_nodes.is_empty());
+        let nodes_iter = self.known_nodes.values();
         let mut single_connection_per_node_iter =
             nodes_iter.map(|node| node.get_random_connection());
 
@@ -467,7 +467,7 @@ impl ClusterState {
             single_connection_per_node_iter
                 .by_ref()
                 .find_or_first(Result::is_ok)
-                .expect("impossible: known_peers was asserted to be nonempty");
+                .expect("impossible: known_nodes was asserted to be nonempty");
 
         // We have:
         // 1. either consumed the whole iterator without success and got the first error,
@@ -485,12 +485,12 @@ impl ClusterState {
     }
 
     #[cfg(test)]
-    fn known_peers(&self) -> &HashMap<Uuid, Arc<Node>> {
-        &self.known_peers
+    fn known_nodes(&self) -> &HashMap<Uuid, Arc<Node>> {
+        &self.known_nodes
     }
 
     pub(super) fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
-        let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
+        let replica_translator = |uuid: Uuid| self.known_nodes.get(&uuid).cloned();
 
         for (table, raw_tablet) in raw_tablets.into_iter() {
             // Should we skip tablets that belong to a keyspace not present in
@@ -504,7 +504,7 @@ impl ClusterState {
                 Ok(t) => t,
                 Err((t, f)) => {
                     debug!(
-                        "Nodes ({}) that are replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} not present in current ClusterState.known_peers. \
+                        "Nodes ({}) that are replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} not present in current ClusterState.known_nodes. \
                        Skipping these replicas until topology refresh",
                         f.iter().safe_format(", "),
                         table.ks_name(),
@@ -579,17 +579,17 @@ mod tests {
         }
     }
 
-    /// Helper: build a ClusterState from metadata, old known_peers, and an optional host filter.
+    /// Helper: build a ClusterState from metadata, old known_nodes, and an optional host filter.
     async fn build_cluster_state(
         metadata: Metadata,
-        known_peers: &HashMap<Uuid, Arc<Node>>,
+        known_nodes: &HashMap<Uuid, Arc<Node>>,
         host_filter: Option<&dyn HostFilter>,
     ) -> ClusterState {
         let (tx, _rx) = mpsc::unbounded_channel();
         ClusterState::new(
             metadata,
             &Default::default(),
-            known_peers,
+            known_nodes,
             &mut |_, _| (),
             &None,
             host_filter,
@@ -622,7 +622,7 @@ mod tests {
         )]);
         let initial_state =
             build_cluster_state(initial_metadata, &HashMap::new(), Some(&filter)).await;
-        let old_node = initial_state.known_peers().get(&host_id).unwrap().clone();
+        let old_node = initial_state.known_nodes().get(&host_id).unwrap().clone();
         assert!(
             !old_node.is_enabled(),
             "node should be disabled when its address is rejected"
@@ -636,8 +636,8 @@ mod tests {
             Some("r1"),
         )]);
         let new_state =
-            build_cluster_state(new_metadata, initial_state.known_peers(), Some(&filter)).await;
-        let new_node = new_state.known_peers().get(&host_id).unwrap();
+            build_cluster_state(new_metadata, initial_state.known_nodes(), Some(&filter)).await;
+        let new_node = new_state.known_nodes().get(&host_id).unwrap();
 
         assert!(
             new_node.is_enabled(),
@@ -669,7 +669,7 @@ mod tests {
         )]);
         let initial_state =
             build_cluster_state(initial_metadata, &HashMap::new(), Some(&filter)).await;
-        let old_node = initial_state.known_peers().get(&host_id).unwrap().clone();
+        let old_node = initial_state.known_nodes().get(&host_id).unwrap().clone();
         assert!(
             old_node.is_enabled(),
             "node should be enabled when its address is accepted"
@@ -683,8 +683,8 @@ mod tests {
             Some("r1"),
         )]);
         let new_state =
-            build_cluster_state(new_metadata, initial_state.known_peers(), Some(&filter)).await;
-        let new_node = new_state.known_peers().get(&host_id).unwrap();
+            build_cluster_state(new_metadata, initial_state.known_nodes(), Some(&filter)).await;
+        let new_node = new_state.known_nodes().get(&host_id).unwrap();
 
         assert!(
             !new_node.is_enabled(),
@@ -711,14 +711,14 @@ mod tests {
             make_metadata(vec![make_peer(host_id, addr, Some("dc1"), Some("r1"))]);
         let initial_state =
             build_cluster_state(initial_metadata, &HashMap::new(), Some(&filter)).await;
-        let old_node = initial_state.known_peers().get(&host_id).unwrap().clone();
+        let old_node = initial_state.known_nodes().get(&host_id).unwrap().clone();
         assert!(!old_node.is_enabled(), "node should be disabled");
 
         // Refresh with identical attributes, still filtered out.
         let new_metadata = make_metadata(vec![make_peer(host_id, addr, Some("dc1"), Some("r1"))]);
         let new_state =
-            build_cluster_state(new_metadata, initial_state.known_peers(), Some(&filter)).await;
-        let new_node = new_state.known_peers().get(&host_id).unwrap();
+            build_cluster_state(new_metadata, initial_state.known_nodes(), Some(&filter)).await;
+        let new_node = new_state.known_nodes().get(&host_id).unwrap();
 
         assert!(!new_node.is_enabled(), "node should still be disabled");
         assert!(

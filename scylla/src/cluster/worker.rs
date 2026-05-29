@@ -478,7 +478,7 @@ impl ClusterWorker {
         keyspace_name: &VerifiedKeyspaceName,
     ) -> Result<(), UseKeyspaceError> {
         let use_keyspace_futures = cluster_state
-            .known_peers
+            .known_nodes
             .values()
             .map(|node| node.use_keyspace(keyspace_name.clone()));
         let use_keyspace_results: Vec<Result<(), UseKeyspaceError>> =
@@ -498,7 +498,7 @@ impl ClusterWorker {
             ClusterState::new(
                 metadata,
                 &self.pool_config,
-                &cluster_state.known_peers,
+                &cluster_state.known_nodes,
                 &mut |old_nodes, new_nodes| {
                     ClusterWorker::handle_topology_changes(
                         old_nodes,
@@ -538,14 +538,14 @@ impl ClusterWorker {
     ///
     /// Emit respective events to the [HostListener], if configured.
     fn handle_topology_changes(
-        known_peers: &HashMap<Uuid, Arc<Node>>,
-        new_known_peers: &HashMap<Uuid, Arc<Node>>,
+        known_nodes: &HashMap<Uuid, Arc<Node>>,
+        new_known_nodes: &HashMap<Uuid, Arc<Node>>,
         host_listener: Option<&dyn HostListener>,
         node_status: &mut HashMap<Uuid, NodeConnectivityStatus>,
     ) {
         // Nodes that were previously in the cluster but are not present anymore.
         let removed_nodes =
-            hash_map_difference(known_peers, new_known_peers).filter(|(_host_id, node)| {
+            hash_map_difference(known_nodes, new_known_nodes).filter(|(_host_id, node)| {
                 // If a host filter is configured, we only consider nodes that passed the filter
                 // as removed. Nodes that were filtered out are not considered part of the cluster,
                 // so their removal is not signaled.
@@ -553,14 +553,14 @@ impl ClusterWorker {
             });
         // Nodes that weren't previously in the cluster but are present now.
         let added_nodes =
-            hash_map_difference(new_known_peers, known_peers).filter(|(_host_id, node)| {
+            hash_map_difference(new_known_nodes, known_nodes).filter(|(_host_id, node)| {
                 // If a host filter is configured, we only consider nodes that passed the filter
                 // as added. Nodes that were filtered out are not considered part of the cluster,
                 // so their addition is not signaled.
                 node.is_enabled()
             });
         // Nodes that were present in both old and new cluster state, but have changed address.
-        let nodes_with_changed_address = known_peers
+        let nodes_with_changed_address = known_nodes
             .iter()
             .filter(|(_host_id, old_node)| {
                 // If a host filter is configured, we only consider nodes that passed the filter
@@ -569,7 +569,7 @@ impl ClusterWorker {
                 old_node.is_enabled()
             })
             .filter_map(|(host_id, old_node)| {
-                new_known_peers
+                new_known_nodes
                     .get(host_id)
                     // We only consider nodes with changed SocketAddr. If only NodeAddr variant changed
                     // (which happens mainly when control connection moves from one node to another),
@@ -737,7 +737,7 @@ impl ClusterWorker {
         let cluster_state = self.cluster_state.load();
 
         let (Some(node), Some(connectivity)) = (
-            cluster_state.known_peers.get(&host_id),
+            cluster_state.known_nodes.get(&host_id),
             self.node_status.get_mut(&host_id),
         ) else {
             trace!("Received connectivity change event for unknown host_id: {host_id}");
