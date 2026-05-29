@@ -39,6 +39,17 @@ bigdecimal-04 = ["dep:bigdecimal-04"]
 # This was used by unstable-cloud in `scylla` crate before it was removed.
 # TODO(2.0): Remove this feature
 serde = ["dep:serde"]
+# Enables support for CQL ser/de of all supported external types.
+full-serialization = [
+    "chrono-04",
+    "time-03",
+    "secrecy-08",
+    "secrecy-10",
+    "num-bigint-03",
+    "num-bigint-04",
+    "bigdecimal-04",
+]
+
 
 [dependencies]
 # FrameSlice and other parts of public API (impl SerializeValue for Bytes, BufMut in vint_encode)
