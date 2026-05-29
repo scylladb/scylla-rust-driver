@@ -7,12 +7,13 @@ complicated.
 
 ## Crates and versions
 
-This workspace consists of 4 crates:
+This workspace consists of 5 crates:
 - `scylla`: main driver crate to be used by users;
   the only one expected to be added as a dependency and have items imported from (i.e. the only "public" crate).
-  Depends on `scylla-cql`.
+  Depends on `scylla-cql` and `scylla-macros`.
 - `scylla-macros`: provides derive macros for users to be able to use their structs as UDTs / query parameters.
-- `scylla-cql`: low-level implementation of CQL binary protocol. Depends on `scylla-macros`.
+- `scylla-cql`: low-level implementation of CQL binary protocol. Depends on `scylla-macros` and `scylla-cql-core`. It is a fully private dependency of `scylla`.
+- `scylla-cql-core`: Parts of the CQL binary protocol implementation that are present in `scylla` public API.
 - `scylla-proxy`: mostly internal crate that aids testing. Depends on `scylla-cql`.
 
 We publish all 4 crates on [crates.io](https://crates.io/crates/scylla).

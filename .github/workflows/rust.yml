@@ -53,6 +53,10 @@ jobs:
       - name: Clippy scylla-cql
         run: cargo clippy --all-targets -p scylla-cql --features "full-serialization"
 
+      # Verify scylla-cql-core separately
+      - name: Clippy scylla-cql-core
+        run: cargo clippy --all-targets -p scylla-cql-core --features "full-serialization"
+
       # Features checks.
       # No features.
       - name: Cargo check without features
@@ -201,6 +205,7 @@ jobs:
           tool: cargo-docs-rs
       - run: cargo docs-rs -p scylla
       - run: cargo docs-rs -p scylla-cql
+      - run: cargo docs-rs -p scylla-cql-core
       - run: cargo docs-rs -p scylla-macros
       - name: Check scylla public API for scylla_cql leaks
         run: make check-rustdoc-leaks
