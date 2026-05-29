@@ -11,7 +11,7 @@ use thiserror::Error;
 
 /// An error type for parsing an enum value from a primitive.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
-#[error("No discrimant in enum `{enum_name}` matches the value `{primitive:?}`")]
+#[error("No discriminant in enum `{enum_name}` matches the value `{primitive:?}`")]
 pub struct TryFromPrimitiveError<T: Copy + std::fmt::Debug> {
     enum_name: &'static str,
     primitive: T,
