@@ -161,7 +161,7 @@ make_error_replace_rust_name!(
     /// rather than the top-level type being deserialized.
     ///
     /// # Assumptions
-    /// - This function should **only** be called inside a proper `deserialize()` implementation.
+    /// - This function should **only** be called inside a proper `type_check()` implementation.
     /// - It should be called **before** the error is cloned, as it attempts to mutably access
     ///   the inner error stored in `Arc`; if the `Arc` has already been cloned,
     ///   a new [`BuiltinTypeCheckError`] will be allocated with the updated name instead.
@@ -180,7 +180,7 @@ make_error_replace_rust_name!(
     /// rather than the top-level type being deserialized.
     ///
     /// # Assumptions
-    /// - This function should **only** be called inside a proper `type_check()` implementation.
+    /// - This function should **only** be called inside a proper `deserialize()` implementation.
     /// - It should be called **before** the error is cloned, as it attempts to mutably access
     ///   the inner error stored in `Arc`; if the `Arc` has already been cloned,
     ///   a new [`BuiltinDeserializationError`] will be allocated with the updated name instead.
