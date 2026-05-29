@@ -152,6 +152,7 @@ impl ClusterState {
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
             let peer_host_id = peer.host_id;
+            let is_enabled = host_filter.is_none_or(|f| f.accept(&peer));
             let (peer_endpoint, peer_tokens) = peer.into_peer_endpoint_and_tokens();
 
             let node: Arc<Node> = match known_peers.get(&peer_host_id) {
@@ -167,7 +168,6 @@ impl ClusterState {
                     }
                 }
                 _ => {
-                    let is_enabled = host_filter.is_none_or(|f| f.accept(&peer));
                     let node = if is_enabled {
                         Node::new(
                             peer_endpoint,
