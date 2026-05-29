@@ -76,7 +76,7 @@ impl LoadBalancingPolicy for SingleTargetLoadBalancingPolicy {
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         let node = match &self.node_identifier {
             NodeIdentifier::Node(node) => Some(node),
-            NodeIdentifier::HostId(host_id) => cluster.known_peers.get(host_id),
+            NodeIdentifier::HostId(host_id) => cluster.known_nodes.get(host_id),
             NodeIdentifier::NodeAddress(addr) => cluster
                 .all_nodes
                 .iter()
