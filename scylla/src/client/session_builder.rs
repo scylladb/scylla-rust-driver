@@ -99,6 +99,51 @@ impl GenericSessionBuilder<DefaultMode> {
             kind: PhantomData,
         }
     }
+
+    /// Configures a secondary cluster to receive transparent dual writes.
+    ///
+    /// When set, all DML statements (INSERT, UPDATE, DELETE, and batches) executed
+    /// on the primary session are mirrored to the secondary cluster in a
+    /// **fire-and-forget** fashion — errors on the secondary are logged at WARN level
+    /// but are never propagated to the caller.
+    ///
+    /// ## Limitations
+    /// - Only prepared-statement executes and batches (with all-prepared statements)
+    ///   have full value mirroring. Unprepared queries with non-empty bound values are
+    ///   mirrored as a best-effort no-op (the statement text is sent but values are
+    ///   omitted when the type context is unavailable). Prefer prepared statements for
+    ///   reliable dual-write with bound values.
+    /// - Reads (`SELECT`, paged iterators) are never mirrored.
+    /// - The secondary cluster is configured with its own full [`SessionConfig`].
+    ///   Setting `dual_write_config` recursively on the secondary config is a no-op
+    ///   (nested dual writes are not supported).
+    ///
+    /// Requires the `unstable-dual-write` feature.
+    ///
+    /// # Example
+    /// ```rust
+    /// # #[cfg(feature = "unstable-dual-write")]
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use scylla::client::session::Session;
+    /// use scylla::client::session::SessionConfig;
+    /// use scylla::client::session_builder::SessionBuilder;
+    ///
+    /// let mut secondary_config = SessionConfig::new();
+    /// secondary_config.add_known_node("secondary-cluster:9042");
+    ///
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("primary-cluster:9042")
+    ///     .dual_write_config(secondary_config)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "unstable-dual-write")]
+    pub fn dual_write_config(mut self, config: SessionConfig) -> Self {
+        self.config.dual_write_config = Some(Box::new(config));
+        self
+    }
 }
 
 // NOTE: this `impl` block contains configuration options specific for ClientRoutes mode.

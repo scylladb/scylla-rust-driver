@@ -50,7 +50,12 @@ use itertools::Itertools;
 use scylla_cql::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
 use scylla_cql::frame::response::error::DbError;
 use scylla_cql::serialize::batch::BatchValues;
+#[cfg(not(feature = "unstable-dual-write"))]
 use scylla_cql::serialize::row::{SerializeRow, SerializedValues};
+#[cfg(feature = "unstable-dual-write")]
+use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
+#[cfg(feature = "unstable-dual-write")]
+use scylla_cql::serialize::{RowWriter, SerializationError};
 use std::borrow::Borrow;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
@@ -64,6 +69,191 @@ use tracing::{Instrument, debug, error, trace, trace_span};
 use uuid::Uuid;
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
+
+/// Helpers for transparent dual-write support (feature `unstable-dual-write`).
+#[cfg(feature = "unstable-dual-write")]
+mod dual_write {
+    use super::*;
+    use scylla_cql::serialize::batch::BatchValuesIterator as _;
+    use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+    /// Returns `true` if the unprepared CQL statement text is a DML write
+    /// (INSERT, UPDATE, or DELETE), using a simple first-keyword heuristic.
+    pub(super) fn is_dml_statement(query: &str) -> bool {
+        let first_word = query
+            .trim_start()
+            .split_ascii_whitespace()
+            .next()
+            .unwrap_or("");
+        matches!(
+            first_word.to_ascii_uppercase().as_str(),
+            "INSERT" | "UPDATE" | "DELETE"
+        )
+    }
+
+    /// Returns `true` if the prepared statement is a DML write.
+    ///
+    /// SELECT statements return result columns (`col_count > 0`).
+    /// LWT writes (INSERT/UPDATE/DELETE … IF …) also return columns, so we additionally
+    /// check [`PreparedStatement::is_confirmed_lwt`].
+    pub(super) fn is_dml_prepared(prepared: &PreparedStatement) -> bool {
+        prepared.get_current_result_metadata().col_count() == 0 || prepared.is_confirmed_lwt()
+    }
+
+    /// Wraps already-serialized [`SerializedValues`] so it can be passed as
+    /// a [`SerializeRow`] to the secondary session's public API.
+    pub(super) struct PreserializedRow(pub SerializedValues);
+
+    impl SerializeRow for PreserializedRow {
+        fn serialize(
+            &self,
+            _ctx: &RowSerializationContext<'_>,
+            writer: &mut RowWriter,
+        ) -> Result<(), SerializationError> {
+            writer.append_serialize_row(&self.0);
+            Ok(())
+        }
+
+        fn is_empty(&self) -> bool {
+            self.0.is_empty()
+        }
+    }
+
+    /// Pre-serializes every set of batch values into owned [`SerializedValues`].
+    ///
+    /// Returns `None` if any statement in the batch is unprepared (type information
+    /// is unavailable for serialization), so the caller can gracefully skip dual write.
+    pub(super) fn try_serialize_batch_values<BV: BatchValues>(
+        batch: &Batch,
+        values: &BV,
+    ) -> Option<Vec<SerializedValues>> {
+        let mut iter = values.batch_values_iter();
+        let mut result = Vec::with_capacity(batch.statements.len());
+        for stmt in &batch.statements {
+            let ctx = match stmt {
+                BatchStatement::PreparedStatement(ps) => {
+                    RowSerializationContext::from_prepared(ps.get_prepared_metadata())
+                }
+                BatchStatement::Query(_) => {
+                    // Cannot serialize without type information for unprepared statements.
+                    return None;
+                }
+            };
+            let sv = SerializedValues::from_closure(|writer| {
+                iter.serialize_next(&ctx, writer)
+                    .transpose()
+                    .map(|o| o.is_some())
+            })
+            .ok()
+            .map(|(sv, _)| sv)?;
+            result.push(sv);
+        }
+        Some(result)
+    }
+
+    /// A task sent to the background dual-write worker.
+    ///
+    /// All variants hold only owned, `Send + 'static` data so that the channel itself
+    /// can be `Send`, even though the secondary `Session`'s async methods are not.
+    pub(super) enum WorkerTask {
+        /// Execute a prepared statement with pre-serialized values.
+        Execute {
+            prepared: PreparedStatement,
+            values: SerializedValues,
+        },
+        /// Execute a batch where every statement is prepared and values are pre-serialized.
+        Batch {
+            batch: Batch,
+            values: Vec<SerializedValues>,
+        },
+        /// Eagerly prepare a statement on the secondary cluster.
+        Prepare { statement: Statement },
+        /// Execute an unprepared DML query with no bound values.
+        UnpreparedQuery { statement: Statement },
+        /// Switch the active keyspace on the secondary cluster.
+        UseKeyspace {
+            name: String,
+            case_sensitive: bool,
+        },
+    }
+
+    /// Start a dedicated background OS thread that owns the secondary `Session` and
+    /// processes [`WorkerTask`]s sent over an unbounded channel.
+    ///
+    /// The thread runs its own `current_thread` Tokio runtime so that non-`Send` session
+    /// futures are polled only on that single thread. Dropping the returned sender causes
+    /// the channel to close and the worker thread to exit gracefully.
+    pub(super) fn spawn_worker(secondary: Session) -> UnboundedSender<WorkerTask> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<WorkerTask>();
+        std::thread::Builder::new()
+            .name("scylla-dual-write".to_owned())
+            .spawn(move || run_worker(secondary, rx))
+            .expect("failed to spawn dual-write worker thread");
+        tx
+    }
+
+    /// Worker loop — runs on the dedicated background thread.
+    ///
+    /// Tasks are processed **sequentially** to preserve write ordering on the secondary.
+    fn run_worker(secondary: Session, mut rx: UnboundedReceiver<WorkerTask>) {
+        // Build a single-threaded Tokio runtime for the worker thread.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("dual-write worker: failed to build runtime");
+        // `LocalSet` allows us to `.await` non-`Send` futures.
+        let local = tokio::task::LocalSet::new();
+        local.block_on(&rt, async move {
+            while let Some(task) = rx.recv().await {
+                match task {
+                    WorkerTask::Execute { prepared, values } => {
+                        if let Err(e) = secondary
+                            .execute(&prepared, &values, None, PagingState::start())
+                            .await
+                        {
+                            tracing::warn!(
+                                "Dual-write to secondary cluster failed (execute): {e}"
+                            );
+                        }
+                    }
+                    WorkerTask::Batch { batch, values } => {
+                        let rows: Vec<PreserializedRow> =
+                            values.into_iter().map(PreserializedRow).collect();
+                        if let Err(e) = secondary.batch(&batch, rows).await {
+                            tracing::warn!(
+                                "Dual-write to secondary cluster failed (batch): {e}"
+                            );
+                        }
+                    }
+                    WorkerTask::Prepare { statement } => {
+                        if let Err(e) = secondary.prepare_nongeneric(&statement).await {
+                            tracing::warn!(
+                                "Dual-write: failed to prepare on secondary cluster: {e}"
+                            );
+                        }
+                    }
+                    WorkerTask::UnpreparedQuery { statement } => {
+                        if let Err(e) = secondary.do_query_unpaged(&statement, ()).await {
+                            tracing::warn!(
+                                "Dual-write to secondary cluster failed (query): {e}"
+                            );
+                        }
+                    }
+                    WorkerTask::UseKeyspace {
+                        name,
+                        case_sensitive,
+                    } => {
+                        if let Err(e) = secondary.use_keyspace(name, case_sensitive).await {
+                            tracing::warn!(
+                                "Dual-write: failed to switch keyspace on secondary cluster: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
 
 // Query used for schema agreement checks
 const SCHEMA_VERSION_QUERY_STR: &str = "SELECT schema_version FROM system.local WHERE key='local'";
@@ -97,6 +287,10 @@ pub struct Session {
     tracing_info_fetch_interval: Duration,
     tracing_info_fetch_consistency: Consistency,
     internal_statements: InternalStatements,
+    /// Sender to the background dual-write worker thread.
+    /// Dropping this field closes the channel and shuts down the worker.
+    #[cfg(feature = "unstable-dual-write")]
+    dual_write_sender: Option<tokio::sync::mpsc::UnboundedSender<dual_write::WorkerTask>>,
 }
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -368,6 +562,16 @@ pub struct SessionConfig {
     /// Driver and application self-identifying information,
     /// to be sent to server in STARTUP message.
     pub identity: SelfIdentity<'static>,
+
+    /// Configuration for the secondary cluster used for dual writes.
+    ///
+    /// When set, all DML statements (INSERT, UPDATE, DELETE, and batches)
+    /// are transparently mirrored to the secondary cluster in a fire-and-forget
+    /// manner — errors on the secondary are logged but not propagated.
+    ///
+    /// Requires the `unstable-dual-write` feature.
+    #[cfg(feature = "unstable-dual-write")]
+    pub dual_write_config: Option<Box<SessionConfig>>,
 }
 
 impl SessionConfig {
@@ -428,6 +632,8 @@ impl SessionConfig {
             identity: SelfIdentity::default(),
             #[cfg(feature = "unstable-client-routes")]
             client_routes_config: None,
+            #[cfg(feature = "unstable-dual-write")]
+            dual_write_config: None,
         }
     }
 
@@ -602,7 +808,38 @@ impl Session {
         statement: impl Into<Statement>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
-        self.do_query_unpaged(&statement.into(), values).await
+        let stmt = statement.into();
+
+        // Capture the dual-write decision and sender before the primary write.
+        // The actual send happens only after primary write succeeds.
+        #[cfg(feature = "unstable-dual-write")]
+        let dual_write_task = if let Some(sender) = self.dual_write_sender.as_ref() {
+            if dual_write::is_dml_statement(&stmt.contents) {
+                if values.is_empty() {
+                    Some((sender, stmt.clone()))
+                } else {
+                    tracing::debug!(
+                        "Dual-write: skipping secondary write for unprepared query with \
+                         non-empty bound values. Use prepared statements for reliable dual-write."
+                    );
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let result = self.do_query_unpaged(&stmt, values).await?;
+
+        // Fire-and-forget secondary write only after primary succeeded.
+        #[cfg(feature = "unstable-dual-write")]
+        if let Some((sender, stmt)) = dual_write_task {
+            let _ = sender.send(dual_write::WorkerTask::UnpreparedQuery { statement: stmt });
+        }
+
+        Ok(result)
     }
 
     /// Queries a single page from the database, optionally continuing from a saved point.
@@ -662,8 +899,39 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
-        self.do_query_single_page(&statement.into(), values, paging_state)
-            .await
+        let stmt = statement.into();
+
+        // Capture the dual-write decision and sender before the primary write.
+        #[cfg(feature = "unstable-dual-write")]
+        let dual_write_task = if let Some(sender) = self.dual_write_sender.as_ref() {
+            if dual_write::is_dml_statement(&stmt.contents) {
+                if values.is_empty() {
+                    Some((sender, stmt.clone()))
+                } else {
+                    tracing::debug!(
+                        "Dual-write: skipping secondary write for unprepared query with \
+                         non-empty bound values. Use prepared statements for reliable dual-write."
+                    );
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let result = self
+            .do_query_single_page(&stmt, values, paging_state)
+            .await?;
+
+        // Fire-and-forget secondary write only after primary succeeded.
+        #[cfg(feature = "unstable-dual-write")]
+        if let Some((sender, stmt)) = dual_write_task {
+            let _ = sender.send(dual_write::WorkerTask::UnpreparedQuery { statement: stmt });
+        }
+
+        Ok(result)
     }
 
     /// Execute an unprepared CQL statement with paging\
@@ -759,6 +1027,19 @@ impl Session {
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
         let serialized_values = prepared.serialize_values(&values)?;
+
+        // Capture sender + prepared values before primary write; send only after success.
+        #[cfg(feature = "unstable-dual-write")]
+        let dual_write_task = if let Some(sender) = self.dual_write_sender.as_ref() {
+            if dual_write::is_dml_prepared(prepared) {
+                Some((sender, prepared.clone(), serialized_values.clone()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let (result, paging_state) = self
             .execute(prepared, &serialized_values, None, PagingState::start())
             .await?;
@@ -770,6 +1051,13 @@ impl Session {
                 RequestAttemptError::NonfinishedPagingState,
             ));
         }
+
+        // Fire-and-forget secondary write only after primary succeeded.
+        #[cfg(feature = "unstable-dual-write")]
+        if let Some((sender, prepared, values)) = dual_write_task {
+            let _ = sender.send(dual_write::WorkerTask::Execute { prepared, values });
+        }
+
         Ok(result)
     }
 
@@ -837,8 +1125,30 @@ impl Session {
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let page_size = prepared.get_validated_page_size();
-        self.execute(prepared, &serialized_values, Some(page_size), paging_state)
-            .await
+
+        // Capture sender + prepared values before primary write; send only after success.
+        #[cfg(feature = "unstable-dual-write")]
+        let dual_write_task = if let Some(sender) = self.dual_write_sender.as_ref() {
+            if dual_write::is_dml_prepared(prepared) {
+                Some((sender, prepared.clone(), serialized_values.clone()))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let result = self
+            .execute(prepared, &serialized_values, Some(page_size), paging_state)
+            .await?;
+
+        // Fire-and-forget secondary write only after primary succeeded.
+        #[cfg(feature = "unstable-dual-write")]
+        if let Some((sender, prepared, values)) = dual_write_task {
+            let _ = sender.send(dual_write::WorkerTask::Execute { prepared, values });
+        }
+
+        Ok(result)
     }
 
     /// Execute a prepared statement with paging.\
@@ -953,6 +1263,23 @@ impl Session {
             ));
         }
 
+        // Pre-serialize batch values for dual-write BEFORE `peek_first_token` consumes `values`.
+        #[cfg(feature = "unstable-dual-write")]
+        let dual_write_task = if let Some(sender) = self.dual_write_sender.as_ref() {
+            match dual_write::try_serialize_batch_values(batch, &values) {
+                Some(svs) => Some((sender, batch.clone(), svs)),
+                None => {
+                    tracing::debug!(
+                        "Dual-write: skipping secondary batch write because the batch \
+                         contains unprepared statements."
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let execution_profile = batch
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -1030,6 +1357,15 @@ impl Session {
             }
         };
 
+        // Fire-and-forget batch write to secondary cluster.
+        #[cfg(feature = "unstable-dual-write")]
+        if let Some((sender, batch_clone, svs)) = dual_write_task {
+            let _ = sender.send(dual_write::WorkerTask::Batch {
+                batch: batch_clone,
+                values: svs,
+            });
+        }
+
         Ok(result)
     }
 
@@ -1057,6 +1393,10 @@ impl Session {
     /// ```
     pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
         config.validate()?;
+
+        // Extract dual-write config early before other fields are consumed.
+        #[cfg(feature = "unstable-dual-write")]
+        let dual_write_config = config.dual_write_config;
 
         let known_nodes = config.known_nodes;
 
@@ -1163,6 +1503,7 @@ impl Session {
 
         let default_execution_profile_handle = config.default_execution_profile_handle;
 
+        #[cfg(not(feature = "unstable-dual-write"))]
         let session = Self {
             cluster,
             default_execution_profile_handle,
@@ -1179,11 +1520,48 @@ impl Session {
             tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
             internal_statements: InternalStatements::default(),
         };
+        #[cfg(feature = "unstable-dual-write")]
+        let mut session = Self {
+            cluster,
+            default_execution_profile_handle,
+            schema_agreement_interval: config.schema_agreement_interval,
+            #[cfg(feature = "metrics")]
+            metrics,
+            schema_agreement_timeout: config.schema_agreement_timeout,
+            schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
+            refresh_metadata_on_auto_schema_agreement: config
+                .refresh_metadata_on_auto_schema_agreement,
+            keyspace_name: Arc::new(ArcSwapOption::default()), // will be set by use_keyspace
+            tracing_info_fetch_attempts: config.tracing_info_fetch_attempts,
+            tracing_info_fetch_interval: config.tracing_info_fetch_interval,
+            tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
+            internal_statements: InternalStatements::default(),
+            dual_write_sender: None, // connected below, after primary is ready
+        };
 
         if let Some(keyspace_name) = config.used_keyspace {
             session
                 .use_keyspace(keyspace_name, config.keyspace_case_sensitive)
                 .await?;
+        }
+
+        // Connect the secondary session for dual writes, if configured.
+        #[cfg(feature = "unstable-dual-write")]
+        if let Some(mut secondary_config) = dual_write_config {
+            // Prevent nested dual writes by clearing the secondary config's own dual_write_config.
+            secondary_config.dual_write_config = None;
+            match Box::pin(Session::connect(*secondary_config)).await {
+                Ok(secondary) => {
+                    session.dual_write_sender =
+                        Some(dual_write::spawn_worker(secondary));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to connect to dual-write secondary cluster, \
+                         dual writes will be disabled: {e}"
+                    );
+                }
+            }
         }
 
         Ok(session)
@@ -1535,7 +1913,7 @@ impl Session {
         let cluster_state = self.get_cluster_state();
 
         // Start by attempting preparation on a single (random) connection to every node.
-        {
+        let prepared = {
             let mut connections_to_nodes = cluster_state.iter_working_connections_to_nodes()?;
             let on_all_nodes_result =
                 Self::prepare_on_all(statement, &cluster_state, &mut connections_to_nodes).await;
@@ -1543,18 +1921,27 @@ impl Session {
                 // We succeeded in preparing the statement on at least one node. We're done.
                 // Other nodes could have failed to prepare the statement, but this will be handled
                 // as `DbError::Unprepared` upon execution, followed by a repreparation attempt.
-                return Ok(prepared);
+                prepared
+            } else {
+                // We could have been just unlucky: we could have possibly chosen random connections all of which were defunct
+                // (one possibility is that we targeted overloaded shards).
+                // Let's try again, this time on connections to every shard. This is a "last call" fallback.
+                let mut connections_to_shards =
+                    cluster_state.iter_working_connections_to_shards()?;
+                Self::prepare_on_all(statement, &cluster_state, &mut connections_to_shards).await?
             }
+        };
+
+        // Fire-and-forget prepare on the secondary cluster so its prepared statement cache
+        // is populated before the first dual-write execute.
+        #[cfg(feature = "unstable-dual-write")]
+        if let Some(sender) = self.dual_write_sender.as_ref() {
+            let _ = sender.send(dual_write::WorkerTask::Prepare {
+                statement: statement.clone(),
+            });
         }
 
-        // We could have been just unlucky: we could have possibly chosen random connections all of which were defunct
-        // (one possibility is that we targeted overloaded shards).
-        // Let's try again, this time on connections to every shard. This is a "last call" fallback.
-        {
-            let mut connections_to_shards = cluster_state.iter_working_connections_to_shards()?;
-
-            Self::prepare_on_all(statement, &cluster_state, &mut connections_to_shards).await
-        }
+        Ok(prepared)
     }
 
     /// Prepares the statement on all given connections.
@@ -1886,7 +2273,18 @@ impl Session {
         // To avoid any possible CQL injections it's good to verify that the name is valid
         let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name, case_sensitive)?;
 
-        self.cluster.use_keyspace(verified_ks_name).await
+        self.cluster.use_keyspace(verified_ks_name.clone()).await?;
+
+        // Mirror the keyspace switch to the secondary cluster.
+        #[cfg(feature = "unstable-dual-write")]
+        if let Some(sender) = self.dual_write_sender.as_ref() {
+            let _ = sender.send(dual_write::WorkerTask::UseKeyspace {
+                name: verified_ks_name.as_str().to_owned(),
+                case_sensitive,
+            });
+        }
+
+        Ok(())
     }
 
     /// Manually trigger a metadata refresh\

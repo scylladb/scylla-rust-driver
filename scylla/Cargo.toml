@@ -78,6 +78,9 @@ unstable-reconnect-policy = []
 # Enables fetching contents of the `system.client_routes` table.
 # Needed for custom routing (AWS PrivateLink, GCP PSC, etc.).
 unstable-client-routes = []
+# Enables transparent dual-write support: mirrors DML writes (INSERT/UPDATE/DELETE/BATCH)
+# to a secondary cluster in a fire-and-forget manner.
+unstable-dual-write = []
 
 
 [dependencies]
