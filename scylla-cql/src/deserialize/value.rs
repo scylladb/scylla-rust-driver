@@ -1337,6 +1337,39 @@ where
         (self.remaining, Some(self.remaining))
     }
 
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        if let Some(element_length) = self.element_length {
+            // Fast path: fixed-size elements — skip n elements by advancing the frame
+            // slice by n * element_length bytes, without deserializing each skipped element.
+            if n >= self.remaining {
+                self.remaining = 0;
+                return None;
+            }
+            if n > 0 {
+                let bytes_to_skip = n * element_length;
+                if let Err(err) = self.slice.read_n_bytes(bytes_to_skip) {
+                    // We checked that `n < self.remaining`, so this won't cause
+                    // negative overflow.
+                    self.remaining -= n + 1;
+                    return Some(Err(mk_deser_err::<Self>(
+                        self.collection_type,
+                        BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
+                    )));
+                }
+                self.remaining -= n;
+            }
+            self.next_constant_length_elem(element_length)
+        } else {
+            // Variable-length elements: fall back to the default sequential behaviour.
+            for _ in 0..n {
+                // Discard the item (which may be Ok or Err); only stop on exhaustion.
+                let _ = self.next_variable_length_elem()?;
+            }
+            self.next_variable_length_elem()
+        }
+    }
+}
+
 // This iterator always returns exactly `self.remaining` elements.
 impl<'frame, 'metadata, T> ExactSizeIterator for VectorIterator<'frame, 'metadata, T> where
     T: DeserializeValue<'frame, 'metadata>
