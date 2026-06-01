@@ -49,4 +49,4 @@ session.query_unpaged(my_statement, (12345_i32,)).await?;
 # }
 ```
 
-See [Statement API documentation](https://docs.rs/scylla/latest/scylla/statement/struct.Statement.html) for more options
+See [Statement API documentation](https://docs.rs/scylla/latest/scylla/statement/unprepared/struct.Statement.html) for more options
