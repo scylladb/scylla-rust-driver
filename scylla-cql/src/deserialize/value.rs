@@ -1448,7 +1448,12 @@ where
     type Item = Result<(K, V), DeserializationError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let raw_k = match self.raw_iter.next() {
+        // Note the lack of `?` - we want each call to `next()` to consume EXACTLY two items
+        // from the inner iterator. This is necessary for correct and precise
+        // `size_hint`, and thus the implementation of `ExactSizeIterator`.
+        let raw_k_result = self.raw_iter.next();
+        let raw_v_result = self.raw_iter.next();
+        let raw_k = match raw_k_result {
             Some(Ok(raw_k)) => raw_k,
             Some(Err(err)) => {
                 return Some(Err(mk_deser_err::<Self>(
@@ -1458,7 +1463,7 @@ where
             }
             None => return None,
         };
-        let raw_v = match self.raw_iter.next() {
+        let raw_v = match raw_v_result {
             Some(Ok(raw_v)) => raw_v,
             Some(Err(err)) => {
                 return Some(Err(mk_deser_err::<Self>(
@@ -1488,15 +1493,12 @@ where
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        // IMPORTANT: with the current implementation of `next` we cannot
-        // provide an exact type hint, or implementation of ExactSizeIterator.
-        // If each call to `next` consumed exactly two items from `self.raw_iter`,
-        // and always returned `Some` if both are `Some` then this iterator would be exact.
-        // Right now, if first call to `self.raw_iter.next()` returns `Some(Err(_))`,
-        // then we return early with `Some(Err(_))` as well, consuming only one item of
-        // inner iterator.
-        let len = self.raw_iter.len();
-        (len / 2, Some(len))
+        // Each call to `next()` consumes exactly two items from the iterator.
+        // If, and only if, both are `Some`, this iterator returns `Some`.
+        // This makes its item number precise, given that the inner iterator
+        // is ExactSizeIterator.
+        let len = self.raw_iter.len() / 2;
+        (len, Some(len))
     }
 }
 
