@@ -1488,7 +1488,15 @@ where
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.raw_iter.size_hint()
+        // IMPORTANT: with the current implementation of `next` we cannot
+        // provide an exact type hint, or implementation of ExactSizeIterator.
+        // If each call to `next` consumed exactly two items from `self.raw_iter`,
+        // and always returned `Some` if both are `Some` then this iterator would be exact.
+        // Right now, if first call to `self.raw_iter.next()` returns `Some(Err(_))`,
+        // then we return early with `Some(Err(_))` as well, consuming only one item of
+        // inner iterator.
+        let len = self.raw_iter.len();
+        (len / 2, Some(len))
     }
 }
 
