@@ -1937,7 +1937,17 @@ impl<'frame> Iterator for FixedLengthBytesSequenceIterator<'frame> {
         self.remaining = self.remaining.checked_sub(1)?;
         Some(self.slice.read_cql_bytes())
     }
+
+    // Always yields exactly the requested number of elements.
+    // Some of them may be errors, but it is irrelevant for `size_hint`.
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
 }
+
+// Always yields exactly the requested number of elements.
+// Some of them may be errors, but it is irrelevant here.
+impl<'frame> ExactSizeIterator for FixedLengthBytesSequenceIterator<'frame> {}
 
 /// Iterates over a sequence of `[bytes]` items from a frame subslice.
 ///
