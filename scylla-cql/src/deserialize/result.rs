@@ -148,6 +148,13 @@ where
     }
 }
 
+// This iterator only yields `None` if underlying `RawRowIterator` yields `None`.
+// `RawRowIterator` is `ExactSizeIterator`, so this one can be as well.
+impl<'frame, 'metadata, R> ExactSizeIterator for TypedRowIterator<'frame, 'metadata, R> where
+    R: DeserializeRow<'frame, 'metadata>
+{
+}
+
 // Technically not an iterator because it returns items that borrow from it,
 // and the std Iterator interface does not allow for that.
 /// A _lending_ iterator over serialized rows.
