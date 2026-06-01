@@ -1502,6 +1502,13 @@ where
     }
 }
 
+impl<'frame, 'metadata, K, V> ExactSizeIterator for MapIterator<'frame, 'metadata, K, V>
+where
+    K: DeserializeValue<'frame, 'metadata>,
+    V: DeserializeValue<'frame, 'metadata>,
+{
+}
+
 impl<'frame, 'metadata, K, V> DeserializeValue<'frame, 'metadata> for BTreeMap<K, V>
 where
     K: DeserializeValue<'frame, 'metadata> + Ord,
