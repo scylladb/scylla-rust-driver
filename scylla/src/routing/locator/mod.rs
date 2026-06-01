@@ -810,6 +810,17 @@ impl<'a> Iterator for ReplicasOrderedIterator<'a> {
             } => replicas_ordered_iter.next(),
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match &self.inner {
+            ReplicasOrderedIteratorInner::AlreadyRingOrdered { replica_set_iter } => {
+                replica_set_iter.size_hint()
+            }
+            ReplicasOrderedIteratorInner::PolyDatacenterNTS {
+                replicas_ordered_iter,
+            } => replicas_ordered_iter.size_hint(),
+        }
+    }
 }
 
 impl<'a> IntoIterator for ReplicasOrdered<'a> {
