@@ -95,19 +95,19 @@ This is done by spawning a speculative fiber. Each spawned fiber performs sequen
 Many fibers can be spawned if the answer wasn't acquired in time.
 
 ### StructuredHistory
-[`StructuredHistory`](https://docs.rs/scylla/latest/scylla/history/struct.StructuredHistory.html)
+[`StructuredHistory`](https://docs.rs/scylla/latest/scylla/observability/history/struct.StructuredHistory.html)
 is a history representation that represents the history by listing attempts for each speculative fiber.
 
 ## HistoryListener trait, custom history collecting
 
 History can be collected by any struct implementing the
-[`HistoryListener`](https://docs.rs/scylla/latest/scylla/history/trait.HistoryListener.html) trait.
+[`HistoryListener`](https://docs.rs/scylla/latest/scylla/observability/history/trait.HistoryListener.html) trait.
 
 The implementation of `HistoryListener` provided by this crate is the
-[`HistoryCollector`](https://docs.rs/scylla/latest/scylla/history/struct.HistoryCollector.html).
+[`HistoryCollector`](https://docs.rs/scylla/latest/scylla/observability/history/struct.HistoryCollector.html).
 `HistoryCollector` simply collects all events along with their timestamps.
 
 Information collected by `HistoryCollector` is just a stream of events, in order to analyze it it's possible
 to convert it to a structured representation.
-[`StructuredHistory`](https://docs.rs/scylla/latest/scylla/history/struct.StructuredHistory.html)
+[`StructuredHistory`](https://docs.rs/scylla/latest/scylla/observability/history/struct.StructuredHistory.html)
 can be created by calling `HistoryCollector::clone_structured_history()`.

@@ -49,7 +49,7 @@ session.query_unpaged(my_statement, (to_insert,)).await?;
 # Ok(())
 # }
 ```
-See [Statement API documentation](https://docs.rs/scylla/latest/scylla/statement/struct.Statement.html) for more options
+See [Statement API documentation](https://docs.rs/scylla/latest/scylla/statement/unprepared/struct.Statement.html) for more options
 
 ### Second argument - the values
 Statement text is constant, but the values may change.

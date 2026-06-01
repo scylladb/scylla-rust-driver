@@ -87,7 +87,7 @@ session.execute_unpaged(&prepared, (to_insert,)).await?;
 # }
 ```
 
-See [PreparedStatement API documentation](https://docs.rs/scylla/latest/scylla/statement/prepared_statement/struct.PreparedStatement.html)
+See [PreparedStatement API documentation](https://docs.rs/scylla/latest/scylla/statement/prepared/struct.PreparedStatement.html)
 for more options.
 
 > ***Note***
