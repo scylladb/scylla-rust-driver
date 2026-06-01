@@ -200,6 +200,21 @@ The difference is that instead of `main` you need to use a version branch, which
 Backport the necessary changes to this branch before making version bump commits.
 Please note that in step 9 you still need to use `main`, as described in the section about documentation.
 
+### Updating workflows
+
+Note: There is no need to update workflows every release - this is used only for development purposes.
+This part should only be done if the current setup is insufficient
+(ex. there is a discovered vulnerability in current version, or there is a new feature).
+
+Currently GitHub workflows are fixed to specific commits. This is done to reduce the supply chain attack surface in this repository.
+When updating those workflows, to find the correct commit SHA for a new version, go to the action's repository on GitHub,
+navigate to the desired release tag, and copy the full commit SHA from the tag's commit page.
+
+#### Reviewer responsibility
+
+When reviewing PRs that update the dependencies used in CI,
+ensure the commit comes from the actual release of the action. To do so, open the relevant repository
+and verify that the commit hash on the release page matches the one specified in the action YAML file.
 
 ## Writing release notes
 
