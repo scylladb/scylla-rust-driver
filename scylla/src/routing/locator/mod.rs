@@ -795,6 +795,34 @@ impl<'a> Iterator for ReplicasOrderedNTSIterator<'a> {
             }
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match &self.inner {
+            ReplicasOrderedNTSIteratorInner::FreshForPick {
+                datacenter_repfactors,
+                ..
+            } => {
+                // Haven't yielded anything yet; total replicas ≤ sum of all repfactors.
+                let upper: usize = datacenter_repfactors.values().sum();
+                (0, Some(upper))
+            }
+            ReplicasOrderedNTSIteratorInner::Picked {
+                datacenter_repfactors,
+                ..
+            } => {
+                // Already yielded 1 (the picked node); remaining ≤ sum of repfactors - 1.
+                let upper: usize = datacenter_repfactors
+                    .values()
+                    .sum::<usize>()
+                    .saturating_sub(1);
+                (0, Some(upper))
+            }
+            ReplicasOrderedNTSIteratorInner::ComputedFallback { replicas, idx } => {
+                let remaining = replicas.len() - *idx;
+                (remaining, Some(remaining))
+            }
+        }
+    }
 }
 
 impl<'a> Iterator for ReplicasOrderedIterator<'a> {
