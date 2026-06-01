@@ -88,6 +88,9 @@ impl<'frame, 'metadata> Iterator for RawRowIterator<'frame, 'metadata> {
     }
 }
 
+// This iterator always yields exactly `self.remaining` items.
+impl<'frame, 'metadata> ExactSizeIterator for RawRowIterator<'frame, 'metadata> {}
+
 /// A typed version of [RawRowIterator] which deserializes the rows before
 /// returning them.
 #[derive(Debug)]
