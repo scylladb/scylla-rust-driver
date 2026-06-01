@@ -1814,7 +1814,11 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.raw_iter.size_hint()
+        // The iterator yields exactly one item per remaining field, regardless of whether
+        // the serialized form contains a value for that field or not (missing fields are
+        // reported as `Ok(None)`).
+        let len = self.remaining_fields.len();
+        (len, Some(len))
     }
 }
 
