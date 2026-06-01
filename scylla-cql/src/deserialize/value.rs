@@ -1336,6 +1336,11 @@ where
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.remaining, Some(self.remaining))
     }
+
+// This iterator always returns exactly `self.remaining` elements.
+impl<'frame, 'metadata, T> ExactSizeIterator for VectorIterator<'frame, 'metadata, T> where
+    T: DeserializeValue<'frame, 'metadata>
+{
 }
 
 /// An iterator over a CQL map.
