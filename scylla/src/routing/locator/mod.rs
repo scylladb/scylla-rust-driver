@@ -607,20 +607,22 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
                 idx,
             } => (0, Some(replicas.len() - *idx)),
             ReplicaSetIteratorInner::ChainedNTS {
-                replicas: _,
-                replicas_idx: _,
+                replicas,
+                replicas_idx,
                 datacenter_repfactors,
                 locator,
                 token: _,
                 datacenter_idx,
             } => {
-                let yielded: usize = locator.datacenter_names()[0..*datacenter_idx]
+                let yielded_previous_dcs: usize = locator.datacenter_names()[0..*datacenter_idx]
                     .iter()
                     .filter_map(|name| datacenter_repfactors.get(name))
                     .sum();
+                let yielded: usize = yielded_previous_dcs + replicas_idx;
+                let left_current_dc = replicas.len() - replicas_idx;
 
                 (
-                    0,
+                    left_current_dc,
                     Some(datacenter_repfactors.values().sum::<usize>() - yielded),
                 )
             }
