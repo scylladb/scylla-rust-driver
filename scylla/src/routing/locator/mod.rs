@@ -637,11 +637,46 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
 
                 self.next()
             }
-            _ => {
+            ReplicaSetIteratorInner::FilteredSimple { .. } => {
                 for _i in 0..n {
                     self.next()?;
                 }
 
+                self.next()
+            }
+            ReplicaSetIteratorInner::ChainedNTS {
+                replicas,
+                replicas_idx,
+                datacenter_repfactors,
+                locator,
+                token,
+                datacenter_idx,
+            } => {
+                // Note: `nth` API is indexed by 0, so `nth(0)` is the same as `next()`.
+                let mut remaining = n;
+                loop {
+                    let left_in_current = replicas.len() - *replicas_idx;
+                    if remaining < left_in_current {
+                        // Target is within the current datacenter's replicas.
+                        // Advance the index and break out to call self.next().
+                        *replicas_idx += remaining;
+                        break;
+                    }
+                    // Skip past the rest of the current datacenter.
+                    remaining -= left_in_current;
+                    if *datacenter_idx + 1 < locator.datacenters.len() {
+                        *datacenter_idx += 1;
+                        *replicas_idx = 0;
+                        let datacenter = &locator.datacenters[*datacenter_idx];
+                        let repfactor = *datacenter_repfactors.get(datacenter).unwrap_or(&0);
+                        *replicas =
+                            locator.get_network_strategy_replicas(*token, datacenter, repfactor);
+                    } else {
+                        // No more datacenters; exhausted.
+                        *replicas_idx = replicas.len();
+                        return None;
+                    }
+                }
                 self.next()
             }
         }

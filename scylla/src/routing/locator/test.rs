@@ -226,6 +226,7 @@ async fn test_locator() {
     test_replica_set_len(&locator);
     test_replica_set_choose(&locator);
     test_replica_set_choose_filtered(&locator);
+    test_replica_set_iterator_nth(&locator);
 }
 
 fn test_datacenter_info(locator: &ReplicaLocator) {
@@ -599,4 +600,146 @@ fn test_replica_set_choose_filtered(locator: &ReplicaLocator) {
         )
         .choose_filtered(&mut rng, |_| true);
     assert_eq!(empty, None);
+}
+
+// Helper: extract the address port from an iterator item, for easy node identification.
+fn port(item: Option<(NodeRef<'_>, crate::routing::Shard)>) -> Option<u16> {
+    item.map(|(node, _shard)| node.address.port())
+}
+
+// Tests for ReplicaSetIterator::nth, covering all iterator variants:
+//
+//   * Plain        – SimpleStrategy, no DC filter; O(1) index bump.
+//   * FilteredSimple – SimpleStrategy filtered to one DC; sequential O(n) skip.
+//   * ChainedNTS   – NetworkTopologyStrategy, no DC filter; DC-aware skip that
+//                    can cross datacenter boundaries in O(#DCs).
+//
+// The test topology (mock_metadata_for_token_aware_tests):
+//   Ring:  50  100 150 200 250 300 350 400 450 500 550 600 650 700 750 800 900
+//   Node:   A   B   E   F   A   C   D   A   F   G   D   B   C   C   E   G   B
+//   DC:    eu  eu  us  us  eu  eu  us  eu  us  eu  us  eu  eu  eu  us  eu  eu
+//
+//   Node–port mapping: A=1, B=2, C=3, D=4, E=5, F=6, G=7
+//   DC order in locator: ["eu", "us"]  (first-occurrence order on the ring)
+#[expect(clippy::iter_nth_zero)]
+fn test_replica_set_iterator_nth(locator: &ReplicaLocator) {
+    // -----------------------------------------------------------------------
+    // Plain variant (ReplicaSetIteratorInner::Plain)
+    // SimpleStrategy RF=4, no DC filter, token 75.
+    // Walking the ring from 75: B(100), E(150), F(200), A(250) → [B, E, F, A]
+    // -----------------------------------------------------------------------
+    {
+        let strategy = Strategy::SimpleStrategy {
+            replication_factor: 4,
+        };
+        let make = || locator.replicas_for_token(Token::new(75), &strategy, None, TABLE_INVALID);
+
+        // nth(0) is equivalent to next(): returns the first element.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(0)), Some(B));
+
+        // nth(1) skips B and returns E.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(1)), Some(E));
+
+        // nth(3) reaches the last element A, leaving the iterator empty.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(3)), Some(A));
+        assert_eq!(port(iter.next()), None);
+
+        // nth(4) is out of bounds (equal to len) and returns None.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(4)), None);
+
+        // After nth(1) (returns E), next() continues from F, then A, then exhausts.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(1)), Some(E));
+        assert_eq!(port(iter.next()), Some(F));
+        assert_eq!(port(iter.next()), Some(A));
+        assert_eq!(port(iter.next()), None);
+
+        // Two sequential nth calls: nth(1) → E, then nth(1) on [F, A] → A.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(1)), Some(E));
+        assert_eq!(port(iter.nth(1)), Some(A));
+        assert_eq!(port(iter.next()), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // FilteredSimple variant (ReplicaSetIteratorInner::FilteredSimple)
+    // SimpleStrategy RF=3, DC filter="eu", token 50.
+    // All RF=3 replicas for token 50: [A(50,eu), B(100,eu), E(150,us)]
+    // After filtering to "eu": [A, B]
+    // -----------------------------------------------------------------------
+    {
+        let strategy = Strategy::SimpleStrategy {
+            replication_factor: 3,
+        };
+        let make =
+            || locator.replicas_for_token(Token::new(50), &strategy, Some("eu"), TABLE_INVALID);
+
+        // nth(0) returns the first eu replica: A.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(0)), Some(A));
+
+        // nth(1) skips A and returns B (the last eu replica).
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(1)), Some(B));
+        assert_eq!(port(iter.next()), None);
+
+        // nth(2) is out of bounds and returns None.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(2)), None);
+
+        // After nth(0) (returns A), next() returns B, then exhausts.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(0)), Some(A));
+        assert_eq!(port(iter.next()), Some(B));
+        assert_eq!(port(iter.next()), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // ChainedNTS variant (ReplicaSetIteratorInner::ChainedNTS)
+    // NTS eu=2, us=1, no DC filter, token 75.
+    // eu replicas: [B, G] (B on rack r1, G on rack r2 — NTS picks distinct racks)
+    // us replicas: [E]
+    // Iteration order (eu DC first, then us): B, G, E
+    // -----------------------------------------------------------------------
+    {
+        let strategy = Strategy::NetworkTopologyStrategy {
+            datacenter_repfactors: [("eu".to_owned(), 2), ("us".to_owned(), 1)]
+                .into_iter()
+                .collect(),
+        };
+        let make = || locator.replicas_for_token(Token::new(75), &strategy, None, TABLE_INVALID);
+
+        // nth(0) returns B (first eu replica).
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(0)), Some(B));
+
+        // nth(1) skips B and returns G (second eu replica, within the same DC).
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(1)), Some(G));
+
+        // nth(2) crosses the DC boundary: skips both eu replicas and returns E (us).
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(2)), Some(E));
+        assert_eq!(port(iter.next()), None);
+
+        // nth(3) is out of bounds and returns None.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(3)), None);
+
+        // After nth(1) (returns G), next() crosses to the us DC and returns E.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(1)), Some(G));
+        assert_eq!(port(iter.next()), Some(E));
+        assert_eq!(port(iter.next()), None);
+
+        // Two sequential nth calls: nth(1) → G, then nth(0) on [E] → E.
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(1)), Some(G));
+        assert_eq!(port(iter.nth(0)), Some(E));
+        assert_eq!(port(iter.next()), None);
+    }
 }
