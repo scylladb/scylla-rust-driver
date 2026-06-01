@@ -1044,10 +1044,18 @@ where
         }))
     }
 
+    // We only return `None` when underlying `FixedLengthBytesSequenceIterator` does.
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.raw_iter.size_hint()
     }
+}
+
+// We only return `None` when underlying `FixedLengthBytesSequenceIterator` does.
+// `FixedLengthBytesSequenceIterator` is ExactSize, so this can be too.
+impl<'frame, 'metadata, T> ExactSizeIterator for ListlikeIterator<'frame, 'metadata, T> where
+    T: DeserializeValue<'frame, 'metadata>
+{
 }
 
 impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata> for Vec<T>
