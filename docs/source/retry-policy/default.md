@@ -3,6 +3,39 @@ This is the retry policy used by default. It retries when there is a high chance
 This policy is based on the one in [DataStax Java Driver](https://docs.datastax.com/en/developer/java-driver/4.11/manual/core/retries/).
 The behaviour is the same.
 
+### Decision matrix
+
+The exact retry decision per error class, taken from the implementation in
+`scylla::policies::retry::DefaultRetryPolicy`:
+
+| Error                                                   | Idempotent statement                | Non-idempotent statement |
+| ------------------------------------------------------- | ----------------------------------- | ------------------------ |
+| Broken connection                                       | retry on next target                | don't retry              |
+| `DbError::Overloaded` / `ServerError` / `TruncateError` | retry on next target                | don't retry              |
+| `DbError::Unavailable`                                  | retry on next target (at most once) | retry on next target (at most once) |
+| `DbError::ReadTimeout` (received >= required, no data)  | retry on same target (at most once) | retry on same target (at most once) |
+| `DbError::ReadTimeout` (other shapes)                   | don't retry                         | don't retry              |
+| `DbError::WriteTimeout`, `WriteType::BatchLog`          | retry on same target (at most once) | don't retry              |
+| `DbError::WriteTimeout` (other write types)             | don't retry                         | don't retry              |
+| `DbError::IsBootstrapping`                              | retry on next target                | retry on next target     |
+| `RequestAttemptError::UnableToAllocStreamId`            | retry on next target                | retry on next target     |
+| `Consistency::is_serial()` (LWT)                        | don't retry                         | don't retry              |
+| Anything else (`SyntaxError`, `Invalid`, `Unauthorized`, `RateLimitReached`, parser errors, ...) | don't retry | don't retry |
+
+Two cross-cutting rules to keep in mind:
+
+* **Serial consistency short-circuits everything**: if `RequestInfo.consistency`
+  is one of the `*_SERIAL` levels (LWT path), `DefaultRetryPolicy` returns
+  `DontRetry` regardless of the error and idempotence. This is a safety net for
+  Paxos-routed writes, where the second attempt would re-enter the LWT
+  protocol with surprising semantics.
+* **Per-session "at most once" guards**: `Unavailable`, `ReadTimeout`, and
+  `WriteTimeout` each have a `was_*_retry` flag on the session that flips
+  after the first retry. Subsequent occurrences of the same error class on
+  the same `RetrySession` return `DontRetry` even if everything else still
+  qualifies. The flags are reset by `RetrySession::reset()` between
+  requests, so each new request gets a fresh budget.
+
 ### Examples
 To use in `Session`:
 ```rust
