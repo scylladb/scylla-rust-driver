@@ -161,7 +161,7 @@ impl LoadBalancingPolicy for DefaultPolicy {
         {
             warn!(
                 "\
-Combining SimpleStrategy with preferred_datacenter set to Some and disabled datacenter failover may lead to empty query plans for some tokens.\
+Combining SimpleStrategy with DC preference and disabled datacenter failover may lead to empty query plans for some tokens.\
 It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
 how many replicas there are in each datacenter (you probably want at least 1 to avoid empty plans while preferring that datacenter), \
 or refrain from preferring datacenters (which may ban all other datacenters, if datacenter failover happens to be not possible)."
