@@ -1305,8 +1305,10 @@ impl Session {
                 .config
                 .serial_consistency
                 .unwrap_or(execution_profile.serial_consistency),
+            token: None,
+            table: None,
+            is_confirmed_lwt: false,
             node_location_preference: &self.node_location_preference,
-            ..Default::default()
         };
 
         let span = RequestSpan::new_query(&statement.contents);

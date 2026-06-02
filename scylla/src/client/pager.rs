@@ -1275,8 +1275,10 @@ If you are using this API, you are probably doing something wrong."
             let routing_info = RoutingInfo {
                 consistency,
                 serial_consistency,
+                token: None,
+                table: None,
+                is_confirmed_lwt: false,
                 node_location_preference: &node_location_preference,
-                ..Default::default()
             };
 
             let query_ref = &statement;
