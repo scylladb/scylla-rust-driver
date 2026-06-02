@@ -24,6 +24,7 @@ services:
       - HEAP_NEWSIZE=512M
       - MAX_HEAP_SIZE=2048M
       - JVM_OPTS=-Dcassandra.skip_wait_for_gossip_to_settle=0 -Dcassandra.ring_delay_ms=5000
+      - CASSANDRA_CLUSTER_NAME=TestCluster
   cassandra2:
     image: cassandra
     healthcheck:
@@ -40,6 +41,7 @@ services:
       - HEAP_NEWSIZE=512M
       - MAX_HEAP_SIZE=2048M
       - JVM_OPTS=-Dcassandra.skip_wait_for_gossip_to_settle=0 -Dcassandra.ring_delay_ms=5000
+      - CASSANDRA_CLUSTER_NAME=TestCluster
     depends_on:
       cassandra1:
         condition: service_healthy
@@ -59,6 +61,7 @@ services:
       - HEAP_NEWSIZE=512M
       - MAX_HEAP_SIZE=2048M
       - JVM_OPTS=-Dcassandra.skip_wait_for_gossip_to_settle=0 -Dcassandra.ring_delay_ms=5000
+      - CASSANDRA_CLUSTER_NAME=TestCluster
     depends_on:
       cassandra2:
         condition: service_healthy

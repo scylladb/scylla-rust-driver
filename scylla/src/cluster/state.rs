@@ -49,6 +49,9 @@ pub struct ClusterState {
     /// for a given (token, replication strategy, table) tuple.
     /// It relies on both topology and schema metadata.
     pub(crate) locator: ReplicaLocator,
+
+    /// The name of the cluster, as reported by the `cluster_name` column in `system.local`.
+    pub(crate) cluster_name: Option<String>,
 }
 
 /// Enables printing [ClusterState] struct in a neat way, skipping the clutter involved by
@@ -286,7 +289,13 @@ impl ClusterState {
             known_nodes: new_known_nodes,
             keyspaces,
             locator,
+            cluster_name: metadata.cluster_name,
         }
+    }
+
+    /// Returns the name of the cluster, as reported by the `cluster_name` column in `system.local`.
+    pub fn cluster_name(&self) -> &str {
+        self.cluster_name.as_deref().unwrap_or("")
     }
 
     /// Access keyspace details collected by the driver.
@@ -557,6 +566,7 @@ mod tests {
             peers,
             keyspaces: HashMap::new(),
             client_routes_updated_hosts: HashSet::new(),
+            cluster_name: Some("Test Cluster".into()),
         }
     }
 

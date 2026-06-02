@@ -54,6 +54,7 @@ pub(crate) enum SingleKeyspaceMetadataError {
 pub(crate) struct Metadata {
     pub(crate) peers: Vec<Peer>,
     pub(crate) keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>,
+    pub(crate) cluster_name: Option<String>,
 
     /// Host IDs whose client routes were added or updated during this metadata fetch.
     /// Used to trigger immediate pool refills for nodes that may have been in backoff
@@ -347,6 +348,7 @@ impl Metadata {
         Metadata {
             peers,
             keyspaces: HashMap::new(),
+            cluster_name: None,
             client_routes_updated_hosts: HashSet::new(),
         }
     }
