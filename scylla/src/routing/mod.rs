@@ -62,7 +62,7 @@ impl Token {
 /// This preference influences the order in which nodes appear in load balancing
 /// plans. Nodes matching the preference are considered "local" and are tried
 /// first, while non-matching nodes are considered "remote".
-pub(crate) enum NodeLocationPreference {
+pub enum NodeLocationPreference {
     /// No location preference — all nodes are treated equally.
     Any,
     /// Prefer nodes located in the given datacenter.
@@ -77,7 +77,7 @@ pub(crate) enum NodeLocationPreference {
 
 impl NodeLocationPreference {
     /// Returns the preferred datacenter, if any.
-    pub(crate) fn datacenter(&self) -> Option<&str> {
+    pub fn datacenter(&self) -> Option<&str> {
         match self {
             Self::Any => None,
             Self::Datacenter(dc) | Self::DatacenterAndRack(dc, _) => Some(dc),
@@ -87,8 +87,7 @@ impl NodeLocationPreference {
     /// Returns the preferred rack, if any.
     ///
     /// This is `Some` only for the [`DatacenterAndRack`](Self::DatacenterAndRack) variant.
-    #[expect(unused)]
-    pub(crate) fn rack(&self) -> Option<&str> {
+    pub fn rack(&self) -> Option<&str> {
         match self {
             Self::Any | Self::Datacenter(_) => None,
             Self::DatacenterAndRack(_, rack) => Some(rack),
