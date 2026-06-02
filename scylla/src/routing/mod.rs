@@ -62,6 +62,7 @@ impl Token {
 /// This preference influences the order in which nodes appear in load balancing
 /// plans. Nodes matching the preference are considered "local" and are tried
 /// first, while non-matching nodes are considered "remote".
+#[non_exhaustive]
 pub enum NodeLocationPreference {
     /// No location preference — all nodes are treated equally.
     Any,
