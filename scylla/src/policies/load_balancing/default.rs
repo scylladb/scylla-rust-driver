@@ -3,6 +3,7 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterState;
+use crate::routing::NodeLocationPreference;
 use crate::{
     cluster::metadata::Strategy,
     cluster::node::Node,
@@ -31,30 +32,6 @@ impl<'a> NodeLocationCriteria<'a> {
         match self {
             Self::Any => None,
             Self::Datacenter(dc) | Self::DatacenterAndRack(dc, _) => Some(dc),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-enum NodeLocationPreference {
-    Any,
-    Datacenter(String),
-    DatacenterAndRack(String, String),
-}
-
-impl NodeLocationPreference {
-    fn datacenter(&self) -> Option<&str> {
-        match self {
-            Self::Any => None,
-            Self::Datacenter(dc) | Self::DatacenterAndRack(dc, _) => Some(dc),
-        }
-    }
-
-    #[expect(unused)]
-    fn rack(&self) -> Option<&str> {
-        match self {
-            Self::Any | Self::Datacenter(_) => None,
-            Self::DatacenterAndRack(_, rack) => Some(rack),
         }
     }
 }

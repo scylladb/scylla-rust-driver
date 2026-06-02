@@ -55,3 +55,27 @@ impl Token {
         self.value
     }
 }
+
+#[derive(Debug, Clone)]
+pub(crate) enum NodeLocationPreference {
+    Any,
+    Datacenter(String),
+    DatacenterAndRack(String, String),
+}
+
+impl NodeLocationPreference {
+    pub(crate) fn datacenter(&self) -> Option<&str> {
+        match self {
+            Self::Any => None,
+            Self::Datacenter(dc) | Self::DatacenterAndRack(dc, _) => Some(dc),
+        }
+    }
+
+    #[expect(unused)]
+    pub(crate) fn rack(&self) -> Option<&str> {
+        match self {
+            Self::Any | Self::Datacenter(_) => None,
+            Self::DatacenterAndRack(_, rack) => Some(rack),
+        }
+    }
+}
