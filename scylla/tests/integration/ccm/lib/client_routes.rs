@@ -355,7 +355,6 @@ impl ClientRoutesCluster {
     }
 
     /// Returns the mapping from CCM node ID to Scylla host_id.
-    #[expect(dead_code)]
     pub(crate) fn host_ids(&self) -> &HashMap<NodeId, Uuid> {
         &self.host_ids
     }
