@@ -55,3 +55,43 @@ impl Token {
         self.value
     }
 }
+
+#[derive(Debug, Clone)]
+/// Describes the preferred location of nodes to contact when executing requests.
+///
+/// This preference influences the order in which nodes appear in load balancing
+/// plans. Nodes matching the preference are considered "local" and are tried
+/// first, while non-matching nodes are considered "remote".
+#[non_exhaustive]
+pub enum NodeLocationPreference {
+    /// No location preference — all nodes are treated equally.
+    Any,
+    /// Prefer nodes located in the given datacenter.
+    Datacenter(String),
+    /// Prefer nodes located in the given datacenter and rack.
+    ///
+    /// Nodes in the specified rack of the specified datacenter are tried first,
+    /// followed by other nodes in the same datacenter, and finally nodes in
+    /// remote datacenters.
+    DatacenterAndRack(String, String),
+}
+
+impl NodeLocationPreference {
+    /// Returns the preferred datacenter, if any.
+    pub fn datacenter(&self) -> Option<&str> {
+        match self {
+            Self::Any => None,
+            Self::Datacenter(dc) | Self::DatacenterAndRack(dc, _) => Some(dc),
+        }
+    }
+
+    /// Returns the preferred rack, if any.
+    ///
+    /// This is `Some` only for the [`DatacenterAndRack`](Self::DatacenterAndRack) variant.
+    pub fn rack(&self) -> Option<&str> {
+        match self {
+            Self::Any | Self::Datacenter(_) => None,
+            Self::DatacenterAndRack(_, rack) => Some(rack),
+        }
+    }
+}

@@ -36,6 +36,7 @@ use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{
     Coordinator, NonErrorQueryResponse, PagingState, PagingStateResponse, QueryResponse,
 };
+use crate::routing::NodeLocationPreference;
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::{Shard, ShardAwarePortRange};
 use crate::statement::batch::batch_values;
@@ -96,6 +97,7 @@ pub struct Session {
     tracing_info_fetch_attempts: NonZeroU32,
     tracing_info_fetch_interval: Duration,
     tracing_info_fetch_consistency: Consistency,
+    node_location_preference: Arc<NodeLocationPreference>,
     internal_statements: InternalStatements,
 }
 
@@ -139,6 +141,7 @@ impl std::fmt::Debug for Session {
             "tracing_info_fetch_consistency",
             &self.tracing_info_fetch_consistency,
         )
+        .field("node_location_preference", &self.node_location_preference)
         .finish()
     }
 }
@@ -176,6 +179,15 @@ impl From<Arc<rustls::ClientConfig>> for TlsContext {
 #[derive(Clone)]
 #[non_exhaustive]
 pub struct SessionConfig {
+    /// The preferred location of nodes to contact.
+    ///
+    /// When set to a specific datacenter (or datacenter and rack), the driver
+    /// treats matching nodes as "local" and prioritizes them in query plans.
+    /// This acts as a default that load balancing policies can use or override.
+    ///
+    /// Default: [`NodeLocationPreference::Any`].
+    pub node_location_preference: NodeLocationPreference,
+
     /// List of database servers known on Session startup.
     /// Session will connect to these nodes to retrieve information about other nodes in the cluster.
     /// Each node can be represented as a hostname or an IP address.
@@ -383,6 +395,7 @@ impl SessionConfig {
     /// ```
     pub fn new() -> Self {
         SessionConfig {
+            node_location_preference: NodeLocationPreference::Any,
             known_nodes: Vec::new(),
             local_ip_address: None,
             shard_aware_local_port_range: ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
@@ -985,6 +998,7 @@ impl Session {
             token: first_value_token,
             table: table_spec,
             is_confirmed_lwt: false,
+            node_location_preference: &self.node_location_preference,
         };
 
         let span = RequestSpan::new_batch();
@@ -1058,6 +1072,7 @@ impl Session {
     pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
         config.validate()?;
 
+        let node_location_preference = config.node_location_preference;
         let known_nodes = config.known_nodes;
 
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
@@ -1177,6 +1192,7 @@ impl Session {
             tracing_info_fetch_attempts: config.tracing_info_fetch_attempts,
             tracing_info_fetch_interval: config.tracing_info_fetch_interval,
             tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
+            node_location_preference: Arc::new(node_location_preference),
             internal_statements: InternalStatements::default(),
         };
 
@@ -1289,7 +1305,10 @@ impl Session {
                 .config
                 .serial_consistency
                 .unwrap_or(execution_profile.serial_consistency),
-            ..Default::default()
+            token: None,
+            table: None,
+            is_confirmed_lwt: false,
+            node_location_preference: &self.node_location_preference,
         };
 
         let span = RequestSpan::new_query(&statement.contents);
@@ -1457,6 +1476,7 @@ impl Session {
             self.cluster.get_state(),
             #[cfg(feature = "metrics")]
             Arc::clone(&self.metrics),
+            Arc::clone(&self.node_location_preference),
         )
         .await
     }
@@ -1682,6 +1702,7 @@ impl Session {
             token,
             table: table_spec,
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
+            node_location_preference: &self.node_location_preference,
         };
 
         let span = RequestSpan::new_prepared(
@@ -1782,6 +1803,7 @@ impl Session {
                 cluster_state: self.cluster.get_state(),
                 #[cfg(feature = "metrics")]
                 metrics: Arc::clone(&self.metrics),
+                location_preference: Arc::clone(&self.node_location_preference),
             },
         )
         .await
