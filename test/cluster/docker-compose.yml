@@ -33,6 +33,7 @@ services:
       --logger-log-level=compaction=warn
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
+      --cluster-name TestCluster
     healthcheck:
       test:
         [
@@ -69,6 +70,7 @@ services:
       --logger-log-level=compaction=warn
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
+      --cluster-name TestCluster
     healthcheck:
       test:
         [
@@ -108,6 +110,7 @@ services:
       --logger-log-level=compaction=warn
       --logger-log-level=migration_manager=warn
       --shutdown-announce-in-ms=0
+      --cluster-name TestCluster
     healthcheck:
       test:
         [

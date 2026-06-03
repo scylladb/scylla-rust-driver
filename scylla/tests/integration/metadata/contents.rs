@@ -554,7 +554,7 @@ async fn test_durable_writes_in_metadata() {
 }
 
 #[tokio::test]
-async fn test_session_should_have_topology_metadata() {
+async fn test_session_should_have_cluster_metadata() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let state = session.get_cluster_state();
@@ -577,4 +577,6 @@ async fn test_session_should_have_topology_metadata() {
         got_addresses, expected_addresses,
         "Cluster node addresses do not match environment variables"
     );
+
+    assert_eq!(state.cluster_name(), "TestCluster");
 }

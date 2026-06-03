@@ -172,12 +172,14 @@ impl ControlConnection {
             self.query_client_routes(connection_ids, &[]).await
         };
 
-        let peers: Vec<Peer>;
+        let peers_and_cluster_name;
         let client_routes: ClientRoutes;
         let keyspaces: HashMap<String, Result<Keyspace, SingleKeyspaceMetadataError>>;
 
-        (peers, client_routes, keyspaces) =
+        (peers_and_cluster_name, client_routes, keyspaces) =
             tokio::try_join!(peers_query, client_routes_query, keyspaces_query)?;
+
+        let (peers, cluster_name) = peers_and_cluster_name;
 
         let client_routes_updated_hosts =
             if let Some(client_routes_subscriber) = self.client_routes_subscriber() {
@@ -199,6 +201,7 @@ impl ControlConnection {
         Ok(Metadata {
             peers,
             keyspaces,
+            cluster_name,
             client_routes_updated_hosts,
         })
     }
@@ -214,6 +217,19 @@ struct NodeInfoRow {
     datacenter: Option<String>,
     rack: Option<String>,
     tokens: Option<Vec<String>>,
+}
+
+#[derive(DeserializeRow)]
+#[scylla(crate = "scylla_cql")]
+struct LocalNodeInfoRow {
+    host_id: Option<Uuid>,
+    #[scylla(rename = "rpc_address")]
+    untranslated_ip_addr: IpAddr,
+    #[scylla(rename = "data_center")]
+    datacenter: Option<String>,
+    rack: Option<String>,
+    tokens: Option<Vec<String>>,
+    cluster_name: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -232,7 +248,10 @@ impl NodeInfoSource {
 }
 
 impl ControlConnection {
-    async fn query_peers(&self, connect_port: u16) -> Result<Vec<Peer>, MetadataError> {
+    async fn query_peers(
+        &self,
+        connect_port: u16,
+    ) -> Result<(Vec<Peer>, Option<String>), MetadataError> {
         let peers_query_stream = self
             .query_iter(
                 "SELECT host_id, rpc_address, data_center, rack, tokens FROM system.peers",
@@ -251,13 +270,13 @@ impl ControlConnection {
                 error,
                 table: "system.peers",
             })
-            .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
+            .and_then(|row| future::ok((NodeInfoSource::Peer, row, None::<String>)));
 
         let local_query_stream = self
-            .query_iter("SELECT host_id, rpc_address, data_center, rack, tokens FROM system.local WHERE key='local'", &())
+            .query_iter("SELECT host_id, rpc_address, data_center, rack, tokens, cluster_name FROM system.local WHERE key='local'", &())
             .map(|pager_res| {
                 let pager = pager_res?;
-                let rows_stream = pager.rows_stream::<NodeInfoRow>()?;
+                let rows_stream = pager.rows_stream::<LocalNodeInfoRow>()?;
                 Ok::<_, MetadataFetchErrorKind>(rows_stream)
             })
             .into_stream()
@@ -268,7 +287,17 @@ impl ControlConnection {
                 error,
                 table: "system.local",
             })
-            .and_then(|row_result| future::ok((NodeInfoSource::Local, row_result)));
+            .and_then(|row| {
+                let cluster_name = row.cluster_name;
+                let node_row = NodeInfoRow {
+                    host_id: row.host_id,
+                    untranslated_ip_addr: row.untranslated_ip_addr,
+                    datacenter: row.datacenter,
+                    rack: row.rack,
+                    tokens: row.tokens,
+                };
+                future::ok((NodeInfoSource::Local, node_row, cluster_name))
+            });
 
         let untranslated_rows = stream::select(peers_query_stream, local_query_stream);
 
@@ -277,23 +306,36 @@ impl ControlConnection {
 
         let translated_peers_futures = untranslated_rows.map(|row_result| async {
             match row_result {
-                Ok((source, row)) => Self::create_peer_from_row(source, row, local_address).await,
+                Ok((source, row, cluster_name)) => {
+                    let peer = Self::create_peer_from_row(source, row, local_address).await;
+                    (peer, cluster_name)
+                }
                 Err(err) => {
                     warn!(
                         "system.peers or system.local has an invalid row, skipping it: {}",
                         err
                     );
-                    None
+                    (None, None)
                 }
             }
         });
 
-        let peers = translated_peers_futures
+        let (peers, cluster_name) = translated_peers_futures
             .buffer_unordered(256)
-            .filter_map(std::future::ready)
             .collect::<Vec<_>>()
-            .await;
-        Ok(peers)
+            .await
+            .into_iter()
+            .fold(
+                (Vec::new(), None),
+                |(mut peers, cluster_name), (peer, name)| {
+                    if let Some(peer) = peer {
+                        peers.push(peer);
+                    }
+                    (peers, cluster_name.or(name))
+                },
+            );
+
+        Ok((peers, cluster_name))
     }
 
     async fn create_peer_from_row(

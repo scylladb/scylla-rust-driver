@@ -27,6 +27,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 ## Inspecting schema
 
 Once fetched, a snapshot of cluster's schema can be examined. The following information can be obtained:
+ - cluster name
  - keyspace
    - tables belonging to the keyspace
    - materialized views belonging to the keyspace
@@ -56,6 +57,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     session.refresh_metadata().await?;
 
     let cluster_state = &session.get_cluster_state();
+    println!("Cluster: {}", cluster_state.cluster_name());
     let keyspaces_iter = cluster_state.keyspaces_iter();
 
     for (keyspace_name, keyspace_info) in keyspaces_iter {
