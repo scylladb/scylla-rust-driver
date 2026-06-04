@@ -2559,18 +2559,21 @@ mod tests {
     use assert_matches::assert_matches;
     use scylla_proxy::{
         Condition, Node, Proxy, Reaction, RequestFrame, RequestOpcode, RequestReaction,
-        RequestRule, ResponseFrame, ShardAwareness,
+        RequestRule, ResponseFrame, ResponseOpcode, RunningProxy, ShardAwareness,
     };
 
     use bytes::Bytes;
     use tokio::select;
     use tokio::sync::mpsc;
+    use tokio::task::JoinHandle;
+    use tokio::time::Instant;
 
     use super::{HostConnectionConfig, open_connection};
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
     use crate::errors::{
-        CqlResponseKind, DbError, NextPageError, NextRowError, RequestAttemptError, RequestError,
+        ConnectionError, CqlResponseKind, DbError, NextPageError, NextRowError,
+        RequestAttemptError, RequestError,
     };
     use crate::statement::prepared::PreparedStatement;
     use crate::statement::unprepared::Statement;
@@ -3432,5 +3435,311 @@ mod tests {
         );
 
         let _ = proxy.finish().await;
+    }
+
+    const DROP_QUERY: &str = "DROP";
+    const DELAY_HALF_THRESHOLD_QUERY: &str = "DELAY_HALF_THRESHOLD";
+    const DELAY_DOUBLE_THRESHOLD_QUERY: &str = "DELAY_DOUBLE_THRESHOLD";
+
+    async fn orphaning_test_setup() -> (RunningProxy, Arc<super::Connection>, super::ErrorReceiver)
+    {
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
+        let node_addr: SocketAddr = resolve_hostname(&uri).await;
+
+        let mk_rule = |marker: &str, reaction: RequestReaction| {
+            RequestRule(
+                Condition::And(
+                    Box::new(Condition::RequestOpcode(RequestOpcode::Query)),
+                    Box::new(Condition::BodyContainsCaseSensitive(
+                        marker.as_bytes().to_owned().into_boxed_slice(),
+                    )),
+                ),
+                reaction,
+            )
+        };
+        let make_delayed_response = |delay: Duration| {
+            RequestReaction::forge_response_with_delay(
+                delay,
+                Arc::new(|RequestFrame { params, .. }| ResponseFrame {
+                    params: params.for_response(),
+                    opcode: ResponseOpcode::Result,
+                    body: Bytes::from_static(&[0, 0, 0, 1]), // Void response
+                }),
+            )
+        };
+
+        let request_rules = vec![
+            mk_rule(DROP_QUERY, RequestReaction::drop_frame()),
+            mk_rule(
+                DELAY_HALF_THRESHOLD_QUERY,
+                make_delayed_response(super::OLD_AGE_ORPHAN_THRESHOLD / 2),
+            ),
+            mk_rule(
+                DELAY_DOUBLE_THRESHOLD_QUERY,
+                make_delayed_response(2 * super::OLD_AGE_ORPHAN_THRESHOLD),
+            ),
+        ];
+
+        let proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .real_address(node_addr)
+                    .shard_awareness(ShardAwareness::QueryNode)
+                    .request_rules(request_rules)
+                    .build(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        let (conn, error_receiver) = open_connection(
+            &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+                address: proxy_addr,
+            }),
+            None,
+            &HostConnectionConfig {
+                transport_factory: Some(proxy.transport_factory()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        (proxy, Arc::new(conn), error_receiver)
+    }
+
+    fn assert_too_many_orphaned_streams_error(err: ConnectionError) {
+        use crate::errors::BrokenConnectionErrorKind;
+
+        let ConnectionError::BrokenConnection(reason) = err else {
+            panic!("Expected ConnectionError::BrokenConnection, got {}", err);
+        };
+        let Some(err_inner) = reason.downcast_ref::<BrokenConnectionErrorKind>() else {
+            panic!("Expected BrokenConnectionErrorKind inner type, got something else");
+        };
+        assert_matches!(
+            err_inner,
+            BrokenConnectionErrorKind::TooManyOrphanedStreamIds(_)
+        );
+    }
+
+    /// Verifies that the orphaning mechanism detects connections with a large
+    /// number of dead requests and shuts them down.
+    #[tokio::test(start_paused = true)]
+    async fn test_orphaning_shuts_down_stuck_connections() {
+        setup_tracing();
+        let (_proxy, conn, error_receiver) = orphaning_test_setup().await;
+        let start_time = Instant::now();
+
+        // Spawn enough queries to cross the orphaning threshold.
+        // Because of the proxy rule, those requests will not reach the DB at all
+        // and proxy will not send any response. This will simulate a case
+        // when DB gets stuck and does not respond for a long time.
+        // The requests time out and thus become orphaned.
+        let timeout = Duration::from_millis(500);
+        let mut query_tasks = Vec::new();
+        for _ in 0..super::OLD_ORPHAN_COUNT_THRESHOLD + 1 {
+            let conn = Arc::clone(&conn);
+            query_tasks.push(tokio::spawn(async move {
+                let statement = Statement::new(DROP_QUERY);
+                // Timeouts are not enforced by connections, so use tokio built-ins
+                tokio::time::timeout(timeout, conn.query_unpaged(&statement)).await
+            }));
+        }
+
+        // All queries should fail because of a timeout
+        for task in query_tasks {
+            let result = task.await.unwrap();
+            let _ = result.expect_err("One of the requests did not time out as expected");
+        }
+
+        // The orphaner should shut down the connection within `OLD_AGE_ORPHAN_THRESHOLD``
+        let err = error_receiver.await.unwrap();
+        assert_too_many_orphaned_streams_error(err);
+
+        // Verify that at least `timeout` + `OLD_AGE_ORPHAN_THRESHOLD` has passed
+        let elapsed = Instant::now() - start_time;
+        println!("Time elapsed: {}s", elapsed.as_secs_f64());
+        assert!(Instant::now() - start_time >= timeout + super::OLD_AGE_ORPHAN_THRESHOLD);
+    }
+
+    /// Verifies that orphaning tolerates a large number of requests getting stuck
+    /// for a duration that is shorter than the orphaning threshold.
+    #[tokio::test(start_paused = true)]
+    async fn test_orphaning_tolerates_short_spikes_of_orphaned_requests() {
+        setup_tracing();
+        let (_proxy, conn, mut error_receiver) = orphaning_test_setup().await;
+
+        // Spawn enough queries to cross the orphaning threshold.
+        // Because of the proxy rule, those requests will not reach the DB at all.
+        // This will simulate a case when DB gets stuck and does not respond
+        // for a long time.
+        let mut query_tasks = Vec::new();
+        for _ in 0..super::OLD_ORPHAN_COUNT_THRESHOLD + 1 {
+            let conn = Arc::clone(&conn);
+            query_tasks.push(tokio::spawn(async move {
+                let statement = Statement::new(DELAY_HALF_THRESHOLD_QUERY);
+                // Orphan after a short timeout
+                tokio::time::timeout(Duration::from_millis(10), conn.query_unpaged(&statement))
+                    .await
+            }));
+        }
+
+        // All queries should fail because of a timeout
+        for task in query_tasks {
+            let result = task.await.unwrap();
+            let _ = result.expect_err("One of the requests did not time out as expected");
+        }
+
+        // Give a chance for the requests to clear their orphaned status
+        // and also for the orphaner to check and see that everything's alright
+        tokio::time::sleep(2 * super::OLD_AGE_ORPHAN_THRESHOLD).await;
+
+        // The orphaner should not have been triggered and the connection
+        // should still be working
+        assert!(error_receiver.try_recv().is_err());
+
+        // Send one more request to verify that it works
+        let statement = Statement::new("SELECT * FROM system.local");
+        conn.query_unpaged(&statement)
+            .await
+            .expect("Request should have succeeded");
+
+        assert!(error_receiver.try_recv().is_err());
+    }
+
+    /// Verifies that a number of persistently orphaned requests that is large
+    /// but still below the threshold will not cause the connection to be closed.
+    #[tokio::test(start_paused = true)]
+    async fn test_orphaning_tolerates_long_running_orphaned_requests_under_count_threshold() {
+        setup_tracing();
+        let (_proxy, conn, mut error_receiver) = orphaning_test_setup().await;
+
+        let mut query_tasks = Vec::new();
+        for _ in 0..super::OLD_ORPHAN_COUNT_THRESHOLD {
+            let conn = Arc::clone(&conn);
+            query_tasks.push(tokio::spawn(async move {
+                let statement = Statement::new(DROP_QUERY);
+                // Orphan after a short timeout
+                tokio::time::timeout(Duration::from_millis(10), conn.query_unpaged(&statement))
+                    .await
+            }));
+        }
+
+        // All queries should fail because of a timeout
+        for task in query_tasks {
+            let result = task.await.unwrap();
+            let _ = result.expect_err("One of the requests did not time out as expected");
+        }
+
+        // Give a chance for the orphaner to notice that there are orphaned
+        // requests and that they got stuck for a long time; however, there
+        // are not enough of them to close the connection so the connection
+        // should keep working afterwards.
+        tokio::time::sleep(2 * super::OLD_AGE_ORPHAN_THRESHOLD).await;
+
+        assert!(error_receiver.try_recv().is_err());
+
+        // Send one more request to verify that it works
+        let statement = Statement::new("SELECT * FROM system.local");
+        conn.query_unpaged(&statement)
+            .await
+            .expect("Request should have succeeded");
+
+        assert!(error_receiver.try_recv().is_err());
+    }
+
+    /// Submit request in regular intervals so that, at the steady state,
+    /// there will be `count_threshold_percentage` * `count threshold` orphaned
+    /// requests that are also old enough to contribute to closing the connection.
+    /// Below 100% the connection should not get closed, but above 100% it will be.
+    async fn submit_sustained_orphaned_requests(
+        conn: &Arc<super::Connection>,
+        count_threshold_percentage: f64,
+        submit_period_duration: Duration,
+    ) -> Vec<
+        JoinHandle<
+            Result<Result<super::QueryResult, RequestAttemptError>, tokio::time::error::Elapsed>,
+        >,
+    > {
+        // Delaying responses for double the threshold means that each request
+        // contributes to the orphaned requests count condition for about
+        // 1 * time threshold. We need to divide the age threshold by count
+        // threshold multiplied by the desired percentage
+        let submit_interval = super::OLD_AGE_ORPHAN_THRESHOLD
+            .div_f64(super::OLD_ORPHAN_COUNT_THRESHOLD as f64 * count_threshold_percentage);
+        let stop_submitting_at = Instant::now() + submit_period_duration;
+        let mut next_submit_at = Instant::now();
+        let mut query_tasks = Vec::new();
+        while Instant::now() < stop_submitting_at {
+            // Tokio's timers operate with a millisecond resolution. Considering
+            // the current values of the count and time orphaning threshold,
+            // this little dance with `next_submit_at` is necessary to work around
+            // the precision issues and make the test useful.
+            next_submit_at += submit_interval;
+            tokio::time::sleep_until(next_submit_at).await;
+
+            let conn = Arc::clone(conn);
+            query_tasks.push(tokio::spawn(async move {
+                let statement = Statement::new(DELAY_DOUBLE_THRESHOLD_QUERY);
+                // Orphan after a short timeout
+                tokio::time::timeout(Duration::from_millis(10), conn.query_unpaged(&statement))
+                    .await
+            }));
+        }
+
+        query_tasks
+    }
+
+    /// Simulate a situation where, constantly, we have lots of orphaned requests,
+    /// but not enough of them are old enough to close the connection.
+    #[tokio::test(start_paused = true)]
+    async fn test_orphaning_tolerates_many_short_lived_orphaned_requests() {
+        setup_tracing();
+        let (_proxy, conn, mut error_receiver) = orphaning_test_setup().await;
+
+        let query_tasks =
+            submit_sustained_orphaned_requests(&conn, 0.9, 5 * super::OLD_AGE_ORPHAN_THRESHOLD)
+                .await;
+
+        // All queries should fail because of a timeout
+        for task in query_tasks {
+            let result = task.await.unwrap();
+            let _ = result.expect_err("One of the requests did not time out as expected");
+        }
+
+        // Give a chance for the requests to clear their orphaned status
+        // and also for the orphaner to check and see that everything's alright
+        tokio::time::sleep(3 * super::OLD_AGE_ORPHAN_THRESHOLD).await;
+
+        assert!(error_receiver.try_recv().is_err());
+
+        // Send one more request to verify that it works
+        let statement = Statement::new("SELECT * FROM system.local");
+        conn.query_unpaged(&statement)
+            .await
+            .expect("Request should have succeeded");
+
+        assert!(error_receiver.try_recv().is_err());
+    }
+
+    /// Simulate a workload where the number of orphaned requests gradually
+    /// increases and crosses both the age and count thresholds, which should
+    /// lead to the connection becoming closed.
+    #[tokio::test(start_paused = true)]
+    async fn test_orphaning_closes_connection_after_gradual_increase_of_orphaned_requests() {
+        setup_tracing();
+        let (_proxy, conn, error_receiver) = orphaning_test_setup().await;
+
+        let _ = submit_sustained_orphaned_requests(&conn, 1.1, 5 * super::OLD_AGE_ORPHAN_THRESHOLD)
+            .await;
+
+        // The orphaner should have had enough time to consider the connection
+        // to be orphaned.
+        let err = error_receiver.await.unwrap();
+        assert_too_many_orphaned_streams_error(err);
     }
 }
