@@ -78,9 +78,9 @@ impl Display for NodeAddr {
 
 /// Node represents a cluster node along with its data and connections
 ///
-/// Note: if a Node changes its broadcast address, then it is not longer
-/// represented by the same instance of Node struct, but instead
-/// a new instance is created (for implementation reasons).
+/// Note: if a Node changes its broadcast address or release_version, it is no longer
+/// represented by the same instance of Node struct — a new instance is created instead
+/// (for implementation reasons).
 #[derive(Debug)]
 pub struct Node {
     /// Unique identifier of the node.
@@ -94,6 +94,10 @@ pub struct Node {
     pub datacenter: Option<String>,
     /// Rack of the node, if known.
     pub rack: Option<String>,
+    /// The release version of the server running on this node, as reported in
+    /// `system.local` / `system.peers`. May be `None` if the column is absent
+    /// or the value is null.
+    pub release_version: Option<String>,
 
     /// Connection pool for this node.
     ///
@@ -126,6 +130,7 @@ impl Node {
         let address = peer.address;
         let datacenter = peer.datacenter.clone();
         let rack = peer.rack.clone();
+        let release_version = peer.release_version.clone();
 
         // We aren't interested in the fact that the pool becomes empty, so we immediately drop the receiving part.
         let (pool_empty_notifier, _) = tokio::sync::mpsc::channel(1);
@@ -144,6 +149,7 @@ impl Node {
             address,
             datacenter,
             rack,
+            release_version,
             pool: Some(pool),
             #[cfg(test)]
             enabled_as_connected: AtomicBool::new(false),
@@ -155,35 +161,41 @@ impl Node {
         let address = peer.address;
         let datacenter = peer.datacenter.clone();
         let rack = peer.rack.clone();
+        let release_version = peer.release_version.clone();
 
         Node {
             host_id,
             address,
             datacenter,
             rack,
+            release_version,
             pool: None,
             #[cfg(test)]
             enabled_as_connected: AtomicBool::new(false),
         }
     }
 
-    /// Recreates a Node after it changes its IP, preserving the pool.
+    /// Recreates a Node after its address and/or release_version changes, preserving the pool.
     ///
-    /// All settings except address are inherited from `node`.
-    /// The underlying pool is preserved and notified about the IP change.
+    /// Datacenter, rack, and host_id are inherited from `node`. Address and release_version
+    /// are taken from `endpoint`. If the address changed, the pool is notified.
     /// # Arguments
     ///
     /// - `node` - previous definition of that node
-    /// - `address` - new address to connect to
-    pub(crate) fn inherit_with_ip_changed(node: &Node, endpoint: PeerEndpoint) -> Self {
+    /// - `endpoint` - fresh endpoint data from metadata
+    pub(crate) fn inherit_preserving_pool(node: &Node, endpoint: PeerEndpoint) -> Self {
         let address = endpoint.address;
-        if let Some(ref pool) = node.pool {
+        let release_version = endpoint.release_version.clone();
+        if node.address != address
+            && let Some(ref pool) = node.pool
+        {
             pool.update_endpoint(endpoint);
         }
         Self {
             address,
             datacenter: node.datacenter.clone(),
             rack: node.rack.clone(),
+            release_version,
             host_id: node.host_id,
             pool: node.pool.clone(),
             #[cfg(test)]
@@ -414,6 +426,7 @@ mod tests {
                 )))),
                 datacenter,
                 rack,
+                release_version: None,
                 pool: None,
                 enabled_as_connected: AtomicBool::new(false),
             }

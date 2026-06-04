@@ -76,6 +76,10 @@ pub struct Peer {
     pub datacenter: Option<String>,
     /// Rack this node is in, if known.
     pub rack: Option<String>,
+    /// The release version of the server running on this node, as reported in
+    /// `system.local` / `system.peers`. May be `None` if the column is absent
+    /// or the value is null.
+    pub release_version: Option<String>,
 }
 
 /// An endpoint for a node that the driver is to issue connections to,
@@ -115,6 +119,7 @@ pub(crate) struct PeerEndpoint {
     pub(crate) address: NodeAddr,
     pub(crate) datacenter: Option<String>,
     pub(crate) rack: Option<String>,
+    pub(crate) release_version: Option<String>,
 }
 
 impl Peer {
@@ -124,6 +129,7 @@ impl Peer {
             address: self.address,
             datacenter: self.datacenter.clone(),
             rack: self.rack.clone(),
+            release_version: self.release_version.clone(),
         }
     }
 
@@ -134,6 +140,7 @@ impl Peer {
                 address: self.address,
                 datacenter: self.datacenter,
                 rack: self.rack,
+                release_version: self.release_version,
             },
             self.tokens,
         )
@@ -341,6 +348,7 @@ impl Metadata {
                     datacenter: None,
                     rack: None,
                     host_id: Uuid::new_v4(),
+                    release_version: None,
                 }
             })
             .collect();

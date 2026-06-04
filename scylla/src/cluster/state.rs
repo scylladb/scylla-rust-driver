@@ -158,22 +158,23 @@ impl ClusterState {
 
             let node = match (is_enabled, known_nodes.get(&peer_host_id)) {
                 // If the node is disabled, then we never want to have a connection pool to it.
-                // If it already existed, and was disabled, and all parameters (dc, rack, address) match
+                // If it already existed, and was disabled, and all parameters (dc, rack, address, release_version) match
                 // then we can reuse the object.
                 // Otherwise we need to create a new one.
                 (false, Some(node))
                     if !node.is_enabled()
                         && node.datacenter == peer_endpoint.datacenter
                         && node.rack == peer_endpoint.rack
-                        && node.address == peer_endpoint.address =>
+                        && node.address == peer_endpoint.address
+                        && node.release_version == peer_endpoint.release_version =>
                 {
                     Arc::clone(node)
                 }
                 (false, _) => Arc::new(Node::new_disabled(peer_endpoint)),
                 // Changing rack/datacenter but not ip address seems improbable
                 // so we can just create new node and connections in such case.
-                // Here we allow preserving the Node object in full if all attributes (dc, rack, address)
-                // match. If only address is different, we recreate Node object but share the same underlying pool.
+                // Here we allow preserving the Node object in full if all attributes (dc, rack, address, release_version)
+                // match. If only address or release_version differ, we recreate the Node struct but preserve the pool.
                 //
                 // IMPORTANT EDGE CASE: The old Node object might have been disabled. We know that the new Node object
                 // must be enabled, so there is no point in using the old one then.
@@ -182,11 +183,13 @@ impl ClusterState {
                         && node.datacenter == peer_endpoint.datacenter
                         && node.rack == peer_endpoint.rack =>
                 {
-                    if node.address == peer_endpoint.address {
+                    if node.address == peer_endpoint.address
+                        && node.release_version == peer_endpoint.release_version
+                    {
                         Arc::clone(node)
                     } else {
-                        // If IP changes, the Node struct is recreated, but the underlying pool is preserved and notified about the IP change.
-                        Arc::new(Node::inherit_with_ip_changed(node, peer_endpoint))
+                        // Address and/or release_version changed - recreate Node struct but preserve the pool.
+                        Arc::new(Node::inherit_preserving_pool(node, peer_endpoint))
                     }
                 }
                 (true, _) => Arc::new(Node::new(
@@ -558,6 +561,7 @@ mod tests {
             tokens: vec![Token::new(1)],
             datacenter: datacenter.map(String::from),
             rack: rack.map(String::from),
+            release_version: None,
         }
     }
 

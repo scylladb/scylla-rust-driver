@@ -1971,6 +1971,7 @@ async fn maybe_translated_addr(
                 address: NodeAddr::Translatable(addr),
                 datacenter,
                 rack,
+                ..
             }),
             Some(translator),
         ) => {

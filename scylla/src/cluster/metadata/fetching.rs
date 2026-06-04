@@ -217,6 +217,7 @@ struct NodeInfoRow {
     datacenter: Option<String>,
     rack: Option<String>,
     tokens: Option<Vec<String>>,
+    release_version: Option<String>,
 }
 
 #[derive(DeserializeRow)]
@@ -230,6 +231,7 @@ struct LocalNodeInfoRow {
     rack: Option<String>,
     tokens: Option<Vec<String>>,
     cluster_name: Option<String>,
+    release_version: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -254,7 +256,7 @@ impl ControlConnection {
     ) -> Result<(Vec<Peer>, Option<String>), MetadataError> {
         let peers_query_stream = self
             .query_iter(
-                "SELECT host_id, rpc_address, data_center, rack, tokens FROM system.peers",
+                "SELECT host_id, rpc_address, data_center, rack, tokens, release_version FROM system.peers",
                 &(),
             )
             .map(|pager_res| {
@@ -273,7 +275,11 @@ impl ControlConnection {
             .and_then(|row| future::ok((NodeInfoSource::Peer, row, None::<String>)));
 
         let local_query_stream = self
-            .query_iter("SELECT host_id, rpc_address, data_center, rack, tokens, cluster_name FROM system.local WHERE key='local'", &())
+            .query_iter(
+                "SELECT host_id, rpc_address, data_center, rack, tokens, \
+                 cluster_name, release_version FROM system.local WHERE key='local'",
+                &(),
+            )
             .map(|pager_res| {
                 let pager = pager_res?;
                 let rows_stream = pager.rows_stream::<LocalNodeInfoRow>()?;
@@ -295,6 +301,7 @@ impl ControlConnection {
                     datacenter: row.datacenter,
                     rack: row.rack,
                     tokens: row.tokens,
+                    release_version: row.release_version,
                 };
                 future::ok((NodeInfoSource::Local, node_row, cluster_name))
             });
@@ -349,6 +356,7 @@ impl ControlConnection {
             datacenter,
             rack,
             tokens,
+            release_version,
         } = row;
 
         let host_id = match host_id {
@@ -398,6 +406,7 @@ impl ControlConnection {
             tokens,
             datacenter,
             rack,
+            release_version,
         })
     }
 }

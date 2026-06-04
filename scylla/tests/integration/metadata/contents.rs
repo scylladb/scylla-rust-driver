@@ -579,4 +579,24 @@ async fn test_session_should_have_cluster_metadata() {
     );
 
     assert_eq!(state.cluster_name(), "TestCluster");
+
+    let (expected_version,): (Option<String>,) = session
+        .query_unpaged(
+            "SELECT release_version FROM system.local WHERE key='local'",
+            (),
+        )
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .single_row()
+        .unwrap();
+
+    for node in state.get_nodes_info() {
+        assert_eq!(
+            node.release_version, expected_version,
+            "Node {} has unexpected release_version",
+            node.address
+        );
+    }
 }
