@@ -267,7 +267,7 @@ pub enum TracingError {
     PrepareError(#[from] PrepareError),
 
     /// Failed to convert result of system_traces.sessions query to rows result.
-    #[error("Failed to convert result of system_traces.sessions query to rows result")]
+    #[error("Failed to convert result of system_traces.sessions query to rows result: {0}")]
     TracesSessionIntoRowsResultError(IntoRowsResultError),
 
     /// system_traces.sessions has invalid column type.
@@ -279,7 +279,7 @@ pub enum TracingError {
     TracesSessionDeserializationFailed(DeserializationError),
 
     /// Failed to convert result of system_traces.events query to rows result.
-    #[error("Failed to convert result of system_traces.events query to rows result")]
+    #[error("Failed to convert result of system_traces.events query to rows result: {0}")]
     TracesEventsIntoRowsResultError(IntoRowsResultError),
 
     /// system_traces.events has invalid column type.
