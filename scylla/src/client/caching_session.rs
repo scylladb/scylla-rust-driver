@@ -51,7 +51,15 @@ where
     S: Default + BuildHasher + Clone,
 {
     /// Builds a [`CachingSession`] from a [`Session`] and a cache size.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cache_size` is 0.
     pub fn from(session: Session, cache_size: usize) -> Self {
+        assert!(
+            cache_size > 0,
+            "prepared statement cache capacity must be greater than 0"
+        );
         Self {
             session: Arc::new(session),
             max_capacity: cache_size,
@@ -67,7 +75,15 @@ where
 {
     /// Builds a [`CachingSession`] from a [`Session`], a cache size,
     /// and a [`BuildHasher`], using a customer hasher.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cache_size` is 0.
     pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
+        assert!(
+            cache_size > 0,
+            "prepared statement cache capacity must be greater than 0"
+        );
         Self {
             session: Arc::new(session),
             max_capacity: cache_size,
@@ -301,7 +317,15 @@ where
     S: Clone + BuildHasher,
 {
     /// Configures maximum capacity of the prepared statements cache.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the configured maximum capacity is 0.
     pub fn max_capacity(mut self, max_capacity: usize) -> Self {
+        assert!(
+            max_capacity > 0,
+            "prepared statement cache capacity must be greater than 0"
+        );
         self.max_capacity = max_capacity;
         self
     }
@@ -415,7 +439,7 @@ mod tests {
     use futures::TryStreamExt;
     use scylla_proxy::{
         Condition, Proxy, Reaction as _, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
-        ResponseFrame,
+        ResponseFrame, RunningProxy,
     };
     use std::collections::{BTreeSet, HashMap};
     use std::hash::{BuildHasher, RandomState};
@@ -878,11 +902,7 @@ mod tests {
         assert_eq!(h1.hash_one(TO_BE_HASHED), h2.hash_one(TO_BE_HASHED));
     }
 
-    /// Tests that [CachingSessionBuilder] passes its config options to the built [CachingSession].
-    #[tokio::test]
-    async fn test_builder() {
-        setup_tracing();
-
+    async fn make_minimal_proxy() -> (SocketAddr, RunningProxy) {
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
 
         // A proxy that allows finishing creation of a Session.
@@ -930,6 +950,15 @@ mod tests {
             .await
             .unwrap();
 
+        (proxy_addr, proxy)
+    }
+
+    /// Tests that [CachingSessionBuilder] passes its config options to the built [CachingSession].
+    #[tokio::test]
+    async fn test_builder() {
+        setup_tracing();
+        let (proxy_addr, proxy) = make_minimal_proxy().await;
+
         let create_session = || async {
             SessionBuilder::new()
                 .known_node_addr(proxy_addr)
@@ -974,6 +1003,48 @@ mod tests {
             assert_hashers_equal(caching_session.cache.hasher(), &CustomBuildHasher);
         }
 
+        let _ = proxy.finish().await;
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "prepared statement cache capacity must be greater than 0")]
+    async fn test_builder_zero_capacity_panics() {
+        setup_tracing();
+        let (proxy_addr, proxy) = make_minimal_proxy().await;
+        let session = SessionBuilder::new()
+            .known_node_addr(proxy_addr)
+            .build()
+            .await
+            .unwrap();
+        let _ = CachingSessionBuilder::new(session).max_capacity(0);
+        let _ = proxy.finish().await;
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "prepared statement cache capacity must be greater than 0")]
+    async fn test_from_zero_capacity_panics() {
+        setup_tracing();
+        let (proxy_addr, proxy) = make_minimal_proxy().await;
+        let session = SessionBuilder::new()
+            .known_node_addr(proxy_addr)
+            .build()
+            .await
+            .unwrap();
+        let _: CachingSession = CachingSession::from(session, 0);
+        let _ = proxy.finish().await;
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "prepared statement cache capacity must be greater than 0")]
+    async fn test_with_hasher_zero_capacity_panics() {
+        setup_tracing();
+        let (proxy_addr, proxy) = make_minimal_proxy().await;
+        let session = SessionBuilder::new()
+            .known_node_addr(proxy_addr)
+            .build()
+            .await
+            .unwrap();
+        let _ = CachingSession::with_hasher(session, 0, RandomState::new());
         let _ = proxy.finish().await;
     }
 }
