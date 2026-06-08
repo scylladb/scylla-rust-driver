@@ -415,7 +415,7 @@ mod tests {
     use futures::TryStreamExt;
     use scylla_proxy::{
         Condition, Proxy, Reaction as _, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
-        ResponseFrame,
+        ResponseFrame, RunningProxy,
     };
     use std::collections::{BTreeSet, HashMap};
     use std::hash::{BuildHasher, RandomState};
@@ -878,11 +878,7 @@ mod tests {
         assert_eq!(h1.hash_one(TO_BE_HASHED), h2.hash_one(TO_BE_HASHED));
     }
 
-    /// Tests that [CachingSessionBuilder] passes its config options to the built [CachingSession].
-    #[tokio::test]
-    async fn test_builder() {
-        setup_tracing();
-
+    async fn make_minimal_proxy() -> (SocketAddr, RunningProxy) {
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
 
         // A proxy that allows finishing creation of a Session.
@@ -929,6 +925,15 @@ mod tests {
             .run()
             .await
             .unwrap();
+
+        (proxy_addr, proxy)
+    }
+
+    /// Tests that [CachingSessionBuilder] passes its config options to the built [CachingSession].
+    #[tokio::test]
+    async fn test_builder() {
+        setup_tracing();
+        let (proxy_addr, proxy) = make_minimal_proxy().await;
 
         let create_session = || async {
             SessionBuilder::new()
