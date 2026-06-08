@@ -20,7 +20,7 @@ use std::time::Duration;
 use std::{
     hash::{Hash, Hasher},
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
@@ -99,6 +99,12 @@ pub struct Node {
     /// or the value is null.
     pub release_version: Option<String>,
 
+    /// The ScyllaDB version running on this node, as reported by `system.versions`.
+    ///
+    /// Populated after the node's connection pool comes up, by the cluster
+    /// metadata task. It is written once per `Node` instance.
+    scylla_version: OnceLock<String>,
+
     /// Connection pool for this node.
     ///
     /// If the node is filtered out by the host filter, this will be [None].
@@ -150,6 +156,7 @@ impl Node {
             datacenter,
             rack,
             release_version,
+            scylla_version: OnceLock::new(),
             pool: Some(pool),
             #[cfg(test)]
             enabled_as_connected: AtomicBool::new(false),
@@ -169,6 +176,7 @@ impl Node {
             datacenter,
             rack,
             release_version,
+            scylla_version: OnceLock::new(),
             pool: None,
             #[cfg(test)]
             enabled_as_connected: AtomicBool::new(false),
@@ -196,6 +204,7 @@ impl Node {
             datacenter: node.datacenter.clone(),
             rack: node.rack.clone(),
             release_version,
+            scylla_version: OnceLock::new(),
             host_id: node.host_id,
             pool: node.pool.clone(),
             #[cfg(test)]
@@ -212,6 +221,20 @@ impl Node {
     /// this means it's not a ScyllaDB node.
     pub fn sharder(&self) -> Option<Sharder> {
         self.pool.as_ref()?.sharder()
+    }
+
+    /// The ScyllaDB version running on this node, as reported by `system.versions`.
+    ///
+    /// Returns `None` for Cassandra nodes (which have no `system.versions` table), for
+    /// nodes the driver has not queried yet, and when the query failed or timed out
+    /// (in which case it is retried on a later metadata refresh).
+    pub fn scylla_version(&self) -> Option<&str> {
+        self.scylla_version.get().map(String::as_str)
+    }
+
+    /// Write-once: the first call wins and later calls are ignored
+    pub(crate) fn set_scylla_version(&self, version: String) {
+        let _ = self.scylla_version.set(version);
     }
 
     /// Get a connection targetting the given shard
@@ -427,6 +450,7 @@ mod tests {
                 datacenter,
                 rack,
                 release_version: None,
+                scylla_version: OnceLock::new(),
                 pool: None,
                 enabled_as_connected: AtomicBool::new(false),
             }

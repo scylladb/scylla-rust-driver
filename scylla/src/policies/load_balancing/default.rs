@@ -1434,6 +1434,7 @@ mod tests {
                 &connectivity_events_sender,
                 TabletsInfo::new(),
                 &HashMap::new(),
+                &HashSet::new(),
                 #[cfg(feature = "metrics")]
                 &Default::default(),
             )
@@ -1479,6 +1480,7 @@ mod tests {
                 &connectivity_events_sender,
                 TabletsInfo::new(),
                 &HashMap::new(),
+                &HashSet::new(),
                 #[cfg(feature = "metrics")]
                 &Default::default(),
             )
@@ -2070,6 +2072,7 @@ mod tests {
     async fn test_default_policy_with_lwt_statements() {
         setup_tracing();
         use crate::routing::locator::test::{A, B, C, D, E, F, G};
+        use std::collections::HashSet;
 
         let cluster = mock_cluster_state_for_token_aware_tests().await;
         struct Test<'a> {
@@ -2629,6 +2632,7 @@ mod tests {
             &connectivity_events_sender,
             TabletsInfo::new(),
             &HashMap::new(),
+            &HashSet::new(),
             #[cfg(feature = "metrics")]
             &Default::default(),
         )

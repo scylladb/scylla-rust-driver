@@ -7,20 +7,45 @@ use crate::routing::locator::ReplicaLocator;
 use crate::routing::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use crate::routing::partitioner::{PartitionerName, calculate_token_for_partition_key};
 use crate::routing::{Shard, Token};
+use crate::statement::Statement;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
+use futures::future::join_all;
 use itertools::Itertools;
 use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::metadata::{Keyspace, Metadata, Strategy};
 use super::node::{Node, NodeRef};
+
+const VERSION_QUERY_TIMEOUT: Duration = Duration::from_millis(500);
+
+async fn query_scylla_version(conn: &Arc<Connection>, stmt: &Statement) -> Option<String> {
+    let result = match tokio::time::timeout(VERSION_QUERY_TIMEOUT, conn.query_unpaged(stmt)).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            debug!("Failed to query system.versions: {e}");
+            return None;
+        }
+        Err(_elapsed) => {
+            debug!(
+                "Timed out querying system.versions after {:?}",
+                VERSION_QUERY_TIMEOUT
+            );
+            return None;
+        }
+    };
+    let rows = result.into_rows_result().ok()?;
+    let (version,) = rows.maybe_first_row::<(Option<String>,)>().ok()??;
+    version
+}
 
 /// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
 ///
@@ -80,12 +105,6 @@ impl std::fmt::Debug for ClusterStateNeatDebug<'_> {
 }
 
 impl ClusterState {
-    pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
-        for node in self.locator.unique_nodes_in_global_ring().iter() {
-            node.wait_until_pool_initialized().await;
-        }
-    }
-
     /// Triggers immediate pool refills for given nodes. This resets exponential
     /// backoff for those nodes, so they will be retried immediately instead of
     /// waiting for the next retry timeout.
@@ -124,13 +143,55 @@ impl ClusterState {
         );
     }
 
-    /// Creates new ClusterState using information about topology held in `metadata`.
-    /// Uses provided `known_nodes` hashmap to recycle nodes if possible.
+    /// Creates a new `ClusterState` from freshly read `metadata`, recycling `Node` objects
+    /// from `known_nodes` where possible.
+    ///
+    /// Construction has two steps
+    /// 1. `ClusterState::build` assembles the full state (nodes, ring, keyspaces, tablets)
+    ///    but leaves every node's `scylla_version` empty.
+    /// 2. `ClusterState::populate_scylla_versions` waits for the pools to come up and will query
+    ///    `system.versions` on the nodes and set it
     #[allow(clippy::too_many_arguments)]
     // This allow(clippy::type_complexity) is here because I can't satisfy borrow checker while
     // having the closure type be a type alias.
     #[allow(clippy::type_complexity)]
     pub(crate) async fn new(
+        metadata: Metadata,
+        pool_config: &PoolConfig,
+        known_nodes: &HashMap<Uuid, Arc<Node>>,
+        handle_topology_changes: &mut (
+                 dyn FnMut(&HashMap<Uuid, Arc<Node>>, &HashMap<Uuid, Arc<Node>>) + Send + Sync
+             ),
+        used_keyspace: &Option<VerifiedKeyspaceName>,
+        host_filter: Option<&dyn HostFilter>,
+        connectivity_events_sender: &mpsc::UnboundedSender<ConnectivityChangeEvent>,
+        tablets: TabletsInfo,
+        old_keyspaces: &HashMap<String, Keyspace>,
+        reconnected_nodes: &HashSet<Uuid>,
+        #[cfg(feature = "metrics")] metrics: &Arc<Metrics>,
+    ) -> Self {
+        let cluster_state = Self::build(
+            metadata,
+            pool_config,
+            known_nodes,
+            handle_topology_changes,
+            used_keyspace,
+            host_filter,
+            connectivity_events_sender,
+            tablets,
+            old_keyspaces,
+            reconnected_nodes,
+            #[cfg(feature = "metrics")]
+            metrics,
+        )
+        .await;
+        cluster_state.populate_scylla_versions().await;
+        cluster_state
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    async fn build(
         metadata: Metadata,
         pool_config: &PoolConfig,
         known_nodes: &HashMap<Uuid, Arc<Node>>,
@@ -143,6 +204,7 @@ impl ClusterState {
         connectivity_events_sender: &mpsc::UnboundedSender<ConnectivityChangeEvent>,
         mut tablets: TabletsInfo,
         old_keyspaces: &HashMap<String, Keyspace>,
+        reconnected_nodes: &HashSet<Uuid>,
         #[cfg(feature = "metrics")] metrics: &Arc<Metrics>,
     ) -> Self {
         // Create new updated known_nodes and ring
@@ -186,7 +248,13 @@ impl ClusterState {
                     if node.address == peer_endpoint.address
                         && node.release_version == peer_endpoint.release_version
                     {
-                        Arc::clone(node)
+                        // reuse the existing Node unless the node reconnected, in which case a rolling
+                        // upgrade may have changed its version, so we recreate it to force a requery
+                        if reconnected_nodes.contains(&peer_host_id) {
+                            Arc::new(Node::inherit_preserving_pool(node, peer_endpoint))
+                        } else {
+                            Arc::clone(node)
+                        }
                     } else {
                         // Address and/or release_version changed - recreate Node struct but preserve the pool.
                         Arc::new(Node::inherit_preserving_pool(node, peer_endpoint))
@@ -294,6 +362,32 @@ impl ClusterState {
             locator,
             cluster_name: metadata.cluster_name,
         }
+    }
+
+    /// Waits for the pools to initialize, then queries `system.versions` on every enabled node
+    /// whose `scylla_version` is still empty (new, recreated, or a prior query failed), recording
+    /// the result. Queries run concurrently; failures leave the version empty to retry next refresh.
+    async fn populate_scylla_versions(&self) {
+        join_all(
+            self.known_nodes
+                .values()
+                .map(|node| node.wait_until_pool_initialized()),
+        )
+        .await;
+
+        let stmt = &Statement::new("SELECT version FROM system.versions");
+        join_all(self.known_nodes.values().filter_map(|node| {
+            if node.scylla_version().is_some() {
+                return None;
+            }
+            let conn = node.get_random_connection().ok()?;
+            Some(async move {
+                if let Some(version) = query_scylla_version(&conn, stmt).await {
+                    node.set_scylla_version(version);
+                }
+            })
+        }))
+        .await;
     }
 
     /// Returns the name of the cluster, as reported by the `cluster_name` column in `system.local`.
@@ -599,8 +693,18 @@ mod tests {
         known_nodes: &HashMap<Uuid, Arc<Node>>,
         host_filter: Option<&dyn HostFilter>,
     ) -> ClusterState {
+        build_cluster_state_with_reconnected(metadata, known_nodes, host_filter, &HashSet::new())
+            .await
+    }
+
+    async fn build_cluster_state_with_reconnected(
+        metadata: Metadata,
+        known_nodes: &HashMap<Uuid, Arc<Node>>,
+        host_filter: Option<&dyn HostFilter>,
+        reconnected_nodes: &HashSet<Uuid>,
+    ) -> ClusterState {
         let (tx, _rx) = mpsc::unbounded_channel();
-        ClusterState::new(
+        ClusterState::build(
             metadata,
             &Default::default(),
             known_nodes,
@@ -610,6 +714,7 @@ mod tests {
             &tx,
             TabletsInfo::new(),
             &HashMap::new(),
+            reconnected_nodes,
             #[cfg(feature = "metrics")]
             &Default::default(),
         )
@@ -739,5 +844,136 @@ mod tests {
             Arc::ptr_eq(&old_node, new_node),
             "Node object should be reused when disabled node's attributes haven't changed"
         );
+    }
+
+    async fn build_known_nodes_with_version(
+        peers: Vec<Peer>,
+        version: Option<&str>,
+    ) -> HashMap<Uuid, Arc<Node>> {
+        let state = build_cluster_state(make_metadata(peers), &HashMap::new(), None).await;
+        let map = state.known_nodes().clone();
+        if let Some(v) = version {
+            for node in map.values() {
+                node.set_scylla_version(v.to_owned());
+            }
+        }
+        map
+    }
+
+    // `build` decides, whether to reuse the existing Node or recreate it, and
+    // leaves scylla_version empty on any node that still needs querying.
+    // populate_scylla_versions queries exactly the enabled nodes whose version is None
+    #[tokio::test]
+    async fn build_classifies_existing_nodes() {
+        setup_tracing();
+
+        // (name, prior_version, change_address, reconnected, expect_reused, expect_version)
+        let cases = [
+            (
+                "unchanged + versioned → reused, kept",
+                Some("5.0.0"),
+                false,
+                false,
+                true,
+                Some("5.0.0"),
+            ),
+            (
+                "unchanged + unversioned → reused, empty (retry)",
+                None,
+                false,
+                false,
+                true,
+                None,
+            ),
+            (
+                "reconnected → recreated, cleared (upgrade)",
+                Some("5.0.0"),
+                false,
+                true,
+                false,
+                None,
+            ),
+            (
+                "address changed → recreated, cleared",
+                Some("5.0.0"),
+                true,
+                false,
+                false,
+                None,
+            ),
+        ];
+
+        for (name, prior_version, change_address, reconnected, expect_reused, expect_version) in
+            cases
+        {
+            let host_id = Uuid::new_v4();
+            let known_nodes = build_known_nodes_with_version(
+                vec![make_peer(host_id, make_addr(1), Some("dc1"), Some("r1"))],
+                prior_version,
+            )
+            .await;
+            let old_node = Arc::clone(known_nodes.get(&host_id).unwrap());
+
+            let new_addr = make_addr(if change_address { 2 } else { 1 });
+            let reconnected = if reconnected {
+                HashSet::from([host_id])
+            } else {
+                HashSet::new()
+            };
+            let state = build_cluster_state_with_reconnected(
+                make_metadata(vec![make_peer(host_id, new_addr, Some("dc1"), Some("r1"))]),
+                &known_nodes,
+                None,
+                &reconnected,
+            )
+            .await;
+            let new_node = state.known_nodes().get(&host_id).unwrap();
+
+            assert_eq!(
+                Arc::ptr_eq(&old_node, new_node),
+                expect_reused,
+                "{name}: Arc reuse"
+            );
+            assert_eq!(new_node.scylla_version(), expect_version, "{name}: version");
+            if change_address {
+                assert_eq!(new_node.address, new_addr, "{name}: address");
+            }
+        }
+    }
+
+    // build() assembles a correct ClusterState, and new nodes start with an empty scylla_version
+    #[tokio::test]
+    async fn build_assembles_state_with_empty_versions() {
+        setup_tracing();
+
+        let id_a = Uuid::new_v4();
+        let id_b = Uuid::new_v4();
+        let metadata = make_metadata(vec![
+            make_peer(id_a, make_addr(1), Some("dc1"), Some("r1")),
+            make_peer(id_b, make_addr(2), Some("dc1"), Some("r1")),
+        ]);
+
+        let state = build_cluster_state(metadata, &HashMap::new(), None).await;
+
+        assert_eq!(state.known_nodes.len(), 2, "expected 2 nodes");
+        assert!(state.known_nodes.contains_key(&id_a));
+        assert!(state.known_nodes.contains_key(&id_b));
+        assert_eq!(
+            state.all_nodes.len(),
+            state.known_nodes.len(),
+            "all_nodes and known_nodes must contain the same number of nodes"
+        );
+        assert_eq!(
+            state.cluster_name(),
+            "Test Cluster",
+            "cluster_name must match the metadata"
+        );
+        for node in state.get_nodes_info() {
+            assert_eq!(
+                node.scylla_version(),
+                None,
+                "a brand-new node must start without a version (so it gets queried)"
+            );
+        }
     }
 }

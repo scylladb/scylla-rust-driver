@@ -34,12 +34,16 @@ async fn test_no_unprepared_internal_requests() {
 
         // Helper to check if any Query requests were issued.
         // We allow "USE " queries because they are intended to be unprepared and are not preparable in CQL.
+        // We allow "system.versions" queries because the driver queries each node's real ScyllaDB
+        // version from this virtual table during metadata refresh. Virtual tables cannot be
+        // prepared (they don't go through the normal storage engine), so this query must remain
+        // unprepared.
         let check_no_unprepared_queries =
             |section: &str,
              feedback_rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>| {
                 while let Ok((frame, _)) = feedback_rx.try_recv() {
                     let body_str = String::from_utf8_lossy(&frame.body);
-                    if !body_str.starts_with("USE ") {
+                    if !body_str.contains("USE ") && !body_str.contains("system.versions") {
                         panic!(
                             "Section {}: Forbidden unprepared query detected: {}",
                             section, body_str

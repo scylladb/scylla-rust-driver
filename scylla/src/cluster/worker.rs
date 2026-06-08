@@ -19,7 +19,7 @@ use futures::future::join_all;
 use futures::{FutureExt, future::RemoteHandle};
 use scylla_cql::frame::response::event::StatusChangeEvent;
 use scylla_cql::frame::response::result::TableSpec;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, trace};
@@ -106,6 +106,11 @@ struct ClusterWorker {
     // This value determines how frequently the cluster
     // worker will refresh the cluster metadata
     cluster_metadata_refresh_interval: Duration,
+
+    // Host IDs of nodes that fired ConnectivityChangeEvent::Established since the last
+    // metadata refresh. Passed into ClusterState::new() so those nodes get a fresh Arc
+    // and their scylla_version is re-queried (handles rolling upgrades).
+    reconnected_nodes: HashSet<Uuid>,
 
     #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
@@ -194,11 +199,11 @@ impl Cluster {
             &connectivity_events_sender,
             TabletsInfo::new(),
             &HashMap::new(),
+            &HashSet::new(),
             #[cfg(feature = "metrics")]
             &metrics,
         )
         .await;
-        cluster_state.wait_until_all_pools_are_initialized().await;
 
         let cluster_state: Arc<ArcSwap<ClusterState>> =
             Arc::new(ArcSwap::from(Arc::new(cluster_state)));
@@ -221,6 +226,8 @@ impl Cluster {
             host_filter,
             host_listener,
             cluster_metadata_refresh_interval,
+
+            reconnected_nodes: HashSet::new(),
 
             #[cfg(feature = "metrics")]
             metrics,
@@ -512,18 +519,17 @@ impl ClusterWorker {
                 &self.connectivity_events_sender,
                 cluster_state.locator.tablets.clone(),
                 &cluster_state.keyspaces,
+                &self.reconnected_nodes,
                 #[cfg(feature = "metrics")]
                 &self.metrics,
             )
             .await,
         );
 
-        new_cluster_state
-            .trigger_pool_refills_for_hosts(client_routes_updated_hosts.iter().copied());
+        self.reconnected_nodes.clear();
 
         new_cluster_state
-            .wait_until_all_pools_are_initialized()
-            .await;
+            .trigger_pool_refills_for_hosts(client_routes_updated_hosts.iter().copied());
 
         self.update_cluster_state(new_cluster_state);
 
@@ -754,6 +760,7 @@ impl ClusterWorker {
             (NodeConnectivityStatus::Unreachable, ConnectivityChangeEvent::Established { .. }) => {
                 debug!("Node is now reachable again: {}", addr);
                 *connectivity = NodeConnectivityStatus::Connected;
+                self.reconnected_nodes.insert(host_id);
                 Some(HostEvent::Up)
             }
             _ => {
