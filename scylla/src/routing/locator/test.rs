@@ -227,6 +227,7 @@ async fn test_locator() {
     test_replica_set_choose(&locator);
     test_replica_set_choose_filtered(&locator);
     test_replica_set_iterator_nth(&locator);
+    test_replica_set_iterator_nth_large_n_regression(&locator);
 }
 
 fn test_datacenter_info(locator: &ReplicaLocator) {
@@ -740,6 +741,48 @@ fn test_replica_set_iterator_nth(locator: &ReplicaLocator) {
         let mut iter = make().into_iter();
         assert_eq!(port(iter.nth(1)), Some(G));
         assert_eq!(port(iter.nth(0)), Some(E));
+        assert_eq!(port(iter.next()), None);
+    }
+}
+
+// Regression test for a bug in ReplicaSetIterator::nth for the Plain and PlainSharded variants:
+// the original implementation did `*idx += n` with no overflow or bounds check.
+//
+// Two failure modes:
+// 1. Overflow: nth(usize::MAX) wraps the index around (debug build panics; release build
+//    silently produces a garbage index and may return a wrong element or corrupt state).
+// 2. size_hint underflow: any n that pushes idx past replicas.len() would make size_hint's
+//    `replicas.len() - *idx` subtract with underflow, panicking in debug or yielding a huge
+//    size estimate in release.
+//
+// The fix clamps idx to replicas.len() and returns None early when out of bounds, so both
+// failure modes are prevented.
+fn test_replica_set_iterator_nth_large_n_regression(locator: &ReplicaLocator) {
+    // Plain variant: SimpleStrategy RF=4, no DC filter, token 75 → [B, E, F, A] (len = 4)
+    let strategy = Strategy::SimpleStrategy {
+        replication_factor: 4,
+    };
+    let make = || locator.replicas_for_token(Token::new(75), &strategy, None, TABLE_INVALID);
+
+    // nth(usize::MAX) must return None without overflowing.
+    // Before the fix this would panic (debug) or silently wrap (release).
+    {
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(usize::MAX)), None);
+        // size_hint must not underflow after an out-of-bounds nth.
+        assert_eq!(iter.size_hint(), (0, Some(0)));
+        // The iterator must stay properly exhausted.
+        assert_eq!(port(iter.next()), None);
+    }
+
+    // nth(n) where n > len (but no arithmetic overflow) must also clamp correctly.
+    // Before the fix, idx would be set to e.g. 100, and size_hint would underflow on
+    // `replicas.len() (= 4) - *idx (= 100)`.
+    {
+        let mut iter = make().into_iter();
+        assert_eq!(port(iter.nth(100)), None);
+        // Must not underflow.
+        assert_eq!(iter.size_hint(), (0, Some(0)));
         assert_eq!(port(iter.next()), None);
     }
 }

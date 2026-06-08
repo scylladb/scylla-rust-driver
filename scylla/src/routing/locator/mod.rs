@@ -630,10 +630,20 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         match &mut self.inner {
-            ReplicaSetIteratorInner::Plain { replicas: _, idx }
-            | ReplicaSetIteratorInner::PlainSharded { replicas: _, idx } => {
-                *idx += n;
-
+            ReplicaSetIteratorInner::Plain { replicas, idx } => {
+                *idx = idx.saturating_add(n);
+                if *idx >= replicas.len() {
+                    *idx = replicas.len();
+                    return None;
+                }
+                self.next()
+            }
+            ReplicaSetIteratorInner::PlainSharded { replicas, idx } => {
+                *idx = idx.saturating_add(n);
+                if *idx >= replicas.len() {
+                    *idx = replicas.len();
+                    return None;
+                }
                 self.next()
             }
             ReplicaSetIteratorInner::FilteredSimple { .. } => {
