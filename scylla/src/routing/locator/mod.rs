@@ -572,11 +572,10 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
                 if let Some(replica) = replicas.get(*replicas_idx) {
                     *replicas_idx += 1;
                     Some(with_computed_shard(replica, self.token))
-                } else if *datacenter_idx + 1 < locator.datacenters.len() {
+                } else if let Some(datacenter) = locator.datacenters.get(*datacenter_idx + 1) {
                     *datacenter_idx += 1;
                     *replicas_idx = 0;
 
-                    let datacenter = &locator.datacenters[*datacenter_idx];
                     let repfactor = *datacenter_repfactors.get(datacenter).unwrap_or(&0);
                     *replicas =
                         locator.get_network_strategy_replicas(*token, datacenter, repfactor);
@@ -664,10 +663,9 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
                     }
                     // Skip past the rest of the current datacenter.
                     remaining -= left_in_current;
-                    if *datacenter_idx + 1 < locator.datacenters.len() {
+                    if let Some(datacenter) = locator.datacenters.get(*datacenter_idx + 1) {
                         *datacenter_idx += 1;
                         *replicas_idx = 0;
-                        let datacenter = &locator.datacenters[*datacenter_idx];
                         let repfactor = *datacenter_repfactors.get(datacenter).unwrap_or(&0);
                         *replicas =
                             locator.get_network_strategy_replicas(*token, datacenter, repfactor);
