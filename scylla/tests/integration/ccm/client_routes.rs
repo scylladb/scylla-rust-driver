@@ -24,9 +24,12 @@ use crate::ccm::lib::client_routes::{
 };
 use crate::ccm::lib::cluster::ClusterOptions;
 use crate::ccm::lib::node::NodeId;
-use crate::utils::{HEALTHCHECK_QUERY, execute_unprepared_statement_on_every_node, setup_tracing};
+use crate::utils::{HEALTHCHECK_QUERY, setup_tracing};
 
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
+use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
+use scylla::statement::unprepared::Statement;
 use tracing::info;
 
 /// Timeout for waiting for the driver to open connections to all proxy nodes.
@@ -61,12 +64,14 @@ fn cluster_2dc_2_2() -> ClusterOptions {
 // Helper: verify all active nodes receive queries via proxy feedback
 // ---------------------------------------------------------------------------
 
-/// Executes a query on every node in the cluster and verifies via proxy
-/// feedback that each node with a feedback channel actually received traffic.
+/// Executes a query on every *active* node (i.e., nodes that still have a
+/// running proxy chain) and verifies via proxy feedback that each such node
+/// actually received traffic.
 ///
-/// This combines `execute_unprepared_statement_on_every_node` (which sends
-/// one query per node, targeting any shard) with proxy feedback verification
-/// (which proves the traffic went through the NLB →  proxy path).
+/// Only nodes whose host_id is known to `plc` AND present in the driver's
+/// cluster state are targeted. This avoids sending queries to nodes that
+/// have been decommissioned (proxy torn down) but whose removal the driver
+/// hasn't yet observed via a topology event.
 ///
 /// We deliberately target nodes rather than individual shards: after a client
 /// routes update the pool may not be fully filled yet (only one shard
@@ -74,16 +79,33 @@ fn cluster_2dc_2_2() -> ClusterOptions {
 /// `ConnectionPoolError(Broken)`.
 async fn assert_queries_reach_all_nodes(
     session: &Session,
+    plc: &ClientRoutesCluster,
     rxs: &mut HashMap<NodeId, mpsc::UnboundedReceiver<FeedbackItem>>,
 ) {
-    execute_unprepared_statement_on_every_node(
-        session,
-        &session.get_cluster_state(),
-        &HEALTHCHECK_QUERY.into(),
-        &(),
-    )
-    .await
-    .unwrap();
+    let cluster = session.get_cluster_state();
+
+    let tasks = plc.host_ids().values().map(|&host_id| {
+        let cluster = &cluster;
+        async move {
+            let node = cluster.get_node_by_host_id(host_id).unwrap_or_else(|| {
+                panic!(
+                    "Node with host_id {} is active in the test harness \
+                     but absent from driver's cluster state",
+                    host_id,
+                )
+            });
+            let policy =
+                SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node.clone()), None);
+            let execution_profile = ExecutionProfile::builder()
+                .load_balancing_policy(policy)
+                .build();
+            let mut statement: Statement = HEALTHCHECK_QUERY.into();
+            statement.set_execution_profile_handle(Some(execution_profile.into_handle()));
+            session.query_unpaged(statement, &()).await.unwrap();
+        }
+    });
+
+    futures::future::join_all(tasks).await;
 
     let (per_node, _total) = drain_feedback(rxs);
     for (&node_id, _rx) in rxs.iter() {
@@ -91,7 +113,7 @@ async fn assert_queries_reach_all_nodes(
         assert!(
             count >= 1,
             "Node {} received 0 queries — driver didn't reach it via proxy",
-            node_id
+            node_id,
         );
     }
 }
@@ -142,7 +164,7 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
     // --- Phase 1: all 4 nodes ---
     info!("=== Phase 1: all 4 nodes ===");
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     // The node to decommission: the highest ID in DC2 (should be node 4).
     let node_to_decommission = *initial_nodes.iter().max().expect("non-empty");
@@ -162,7 +184,7 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
     assert_eq!(remaining_nodes.len(), 3);
 
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     // --- Add new node to DC2 ---
     // Cluster::add_node() uses 1-based CCM DC naming: 2 = dc2.
@@ -185,7 +207,7 @@ async fn multi_dc_topology_change(plc: &mut ClientRoutesCluster) {
         new_node_id
     );
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 }
 
 #[tokio::test]
@@ -230,7 +252,7 @@ async fn rolling_restart(plc: &mut ClientRoutesCluster) {
     // --- Phase 0: baseline ---
     info!("=== Phase 0: baseline (all 3 nodes) ===");
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     // --- Rolling restart: stop + start each node in turn ---
     for target_node in 1..=3u16 {
@@ -282,7 +304,7 @@ async fn rolling_restart(plc: &mut ClientRoutesCluster) {
             target_node
         );
         let mut rxs = plc.setup_query_feedback();
-        assert_queries_reach_all_nodes(&session, &mut rxs).await;
+        assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
     }
 }
 
@@ -329,7 +351,7 @@ async fn nlb_port_remap(plc: &mut ClientRoutesCluster) {
     // --- Phase 1: baseline ---
     info!("=== Phase 1: baseline (all 3 nodes) ===");
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     // --- Remap: rebuild proxy chains for nodes 1 and 2 ---
     // Scylla nodes stay up; only the proxy + NLB are replaced, giving
@@ -353,7 +375,7 @@ async fn nlb_port_remap(plc: &mut ClientRoutesCluster) {
     // --- Phase 2: verify traffic goes through new ports ---
     info!("=== Phase 2: after NLB port remap ===");
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 }
 
 #[tokio::test]
@@ -396,7 +418,7 @@ async fn scale_out(plc: &mut ClientRoutesCluster) {
     // --- Phase 1: initial 3 nodes ---
     info!("=== Phase 1: initial 3 nodes ===");
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     // --- Add 3 new nodes ---
     let mut new_node_ids = Vec::new();
@@ -422,7 +444,7 @@ async fn scale_out(plc: &mut ClientRoutesCluster) {
     assert_eq!(active.len(), 6, "Expected 6 active nodes, got {:?}", active);
 
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 }
 
 #[tokio::test]
@@ -523,7 +545,7 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
     // ---------------------------------------------------------------
     info!("=== Phase 1: baseline ===");
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     // ---------------------------------------------------------------
     // Phase 2: Event injection — verify event processing
@@ -548,7 +570,7 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
 
     // Verify all nodes still work after event processing.
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     // ---------------------------------------------------------------
     // Phase 3: Full-DC reroute (both DC1 nodes)
@@ -579,7 +601,7 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
 
     // Verify traffic reaches all 4 nodes through the new ports.
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     // ---------------------------------------------------------------
     // Phase 4: Cross-DC reroute (one node from each DC)
@@ -601,7 +623,7 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
         .unwrap_or_else(|e| panic!("Phase 4: driver did not reconnect to cross-dc nodes: {}", e));
 
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     // ---------------------------------------------------------------
     // Phase 5: Malformed event recovery
@@ -633,7 +655,7 @@ async fn event_driven_reroute(plc: &mut ClientRoutesCluster) {
     .await;
 
     let mut rxs = plc.setup_query_feedback();
-    assert_queries_reach_all_nodes(&session, &mut rxs).await;
+    assert_queries_reach_all_nodes(&session, plc, &mut rxs).await;
 
     info!("All phases passed — event-driven reroute works correctly");
 }
