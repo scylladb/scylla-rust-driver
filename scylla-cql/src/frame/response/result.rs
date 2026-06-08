@@ -1652,7 +1652,7 @@ mod test_utils {
 
             let raw_result_rows = {
                 let mut buf = BytesMut::new();
-                used_metadata.serialize(&mut buf, global_tables_spec, no_metadata)?;
+                used_metadata.serialize(&mut buf, no_metadata, global_tables_spec)?;
                 types::write_int_length(rows_count, &mut buf)?;
                 buf.extend_from_slice(raw_rows);
 
