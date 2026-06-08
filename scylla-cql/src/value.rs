@@ -1201,11 +1201,12 @@ impl CqlValue {
         }
     }
 
-    /// Converts the value to a vector of CQL values if it is of `list` or `set` type.
+    /// Converts the value to a vector of CQL values if it is of `list`, `set`, or `vector` type.
     pub fn into_vec(self) -> Option<Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
             Self::Set(s) => Some(s),
+            Self::Vector(s) => Some(s),
             _ => None,
         }
     }
