@@ -3301,7 +3301,15 @@ mod latency_awareness {
         /// try this default scale first and experiment only if it doesn't provide acceptable results
         /// (hosts are excluded too quickly or not fast enough and tuning the exclusion threshold doesn't
         /// help).
+        ///
+        /// # Panics
+        ///
+        /// Panics if `scale` is [`Duration::ZERO`].
         pub fn scale(self, scale: Duration) -> Self {
+            assert!(
+                scale > Duration::ZERO,
+                "Latency awareness scale must be non-zero"
+            );
             Self { scale, ..self }
         }
 
@@ -4096,6 +4104,12 @@ mod latency_awareness {
                     &test.expected_groups,
                 );
             }
+        }
+
+        #[test]
+        #[should_panic(expected = "Latency awareness scale must be non-zero")]
+        fn zero_scale_panics_on_construction() {
+            LatencyAwarenessBuilder::new().scale(Duration::ZERO);
         }
 
         #[tokio::test(start_paused = true)]
