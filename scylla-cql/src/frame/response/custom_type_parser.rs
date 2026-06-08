@@ -375,7 +375,8 @@ impl<'result> CustomTypeParser<'result> {
         let result = self.parser.accept(":");
         if let Ok(parser) = result {
             self.parser = parser;
-            let _ = usize::from_str_radix(name, 16).map_err(|_| CustomTypeParseError::BadHexString);
+            usize::from_str_radix(name, 16)
+                .map_err(|_| CustomTypeParseError::BadHexString(name.to_owned()))?;
             name = self.read_next_identifier();
         }
         self.skip_blank();
@@ -591,6 +592,12 @@ mod tests {
             Err(CustomTypeParseError::IntegerParseError(
                 ParseErrorCause::Other("Expected 16-bit unsigned integer")
             ))
-        )
+        );
+
+        // Malformed hex prefix before `:` should return an error, not be silently ignored.
+        assert_eq!(
+            CustomTypeParser::parse("zz:org.apache.cassandra.db.marshal.Int32Type"),
+            Err(CustomTypeParseError::BadHexString("zz".to_string()))
+        );
     }
 }
