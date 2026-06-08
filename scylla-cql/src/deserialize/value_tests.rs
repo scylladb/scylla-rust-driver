@@ -2416,6 +2416,25 @@ fn test_set_from_cql() {
 }
 
 #[test]
+fn test_vector_from_cql() {
+    let my_vec: Vec<CqlValue> = vec![CqlValue::Int(20), CqlValue::Int(2), CqlValue::Int(13)];
+
+    let cql: CqlValue = CqlValue::Vector(my_vec);
+
+    // Test borrowing via as_vector.
+    let decoded = cql.as_vector().unwrap();
+    assert_eq!(decoded[0], CqlValue::Int(20));
+    assert_eq!(decoded[1], CqlValue::Int(2));
+    assert_eq!(decoded[2], CqlValue::Int(13));
+
+    // Test taking ownership via into_vec.
+    let decoded = cql.into_vec().unwrap();
+    assert_eq!(decoded[0], CqlValue::Int(20));
+    assert_eq!(decoded[1], CqlValue::Int(2));
+    assert_eq!(decoded[2], CqlValue::Int(13));
+}
+
+#[test]
 fn test_map_from_cql() {
     let my_vec: Vec<(CqlValue, CqlValue)> = vec![
         (CqlValue::Int(20), CqlValue::Int(21)),

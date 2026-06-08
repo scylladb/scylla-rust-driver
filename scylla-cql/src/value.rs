@@ -1182,6 +1182,14 @@ impl CqlValue {
         }
     }
 
+    /// Casts the value to a vec of CQL values if it is of `vector` type.
+    pub fn as_vector(&self) -> Option<&Vec<CqlValue>> {
+        match self {
+            Self::Vector(s) => Some(s),
+            _ => None,
+        }
+    }
+
     /// Casts the value to a vec of pairs of CQL values if it is of `map` type,
     /// where each pair is a key-value pair.
     pub fn as_map(&self) -> Option<&Vec<(CqlValue, CqlValue)>> {
@@ -1201,11 +1209,12 @@ impl CqlValue {
         }
     }
 
-    /// Converts the value to a vector of CQL values if it is of `list` or `set` type.
+    /// Converts the value to a vector of CQL values if it is of `list`, `set`, or `vector` type.
     pub fn into_vec(self) -> Option<Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
             Self::Set(s) => Some(s),
+            Self::Vector(s) => Some(s),
             _ => None,
         }
     }
