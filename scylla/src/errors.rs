@@ -245,10 +245,7 @@ pub enum SchemaAgreementError {
     Timeout(std::time::Duration),
 
     /// Some host mandatory for schema agreement is not present in the connection pool.
-    #[error(
-        "Host with id {} required for schema agreement is not present in connection pool",
-        0
-    )]
+    #[error("Host with id {0} required for schema agreement is not present in connection pool")]
     RequiredHostAbsent(Uuid),
 }
 
