@@ -266,16 +266,16 @@ pub enum TracingError {
     #[error("Failed to prepare tracing query: {0}")]
     PrepareError(#[from] PrepareError),
 
-    /// Failed to convert result of system_traces.session query to rows result.
-    #[error("Failed to convert result of system_traces.session query to rows result")]
+    /// Failed to convert result of system_traces.sessions query to rows result.
+    #[error("Failed to convert result of system_traces.sessions query to rows result")]
     TracesSessionIntoRowsResultError(IntoRowsResultError),
 
-    /// system_traces.session has invalid column type.
-    #[error("system_traces.session has invalid column type: {0}")]
+    /// system_traces.sessions has invalid column type.
+    #[error("system_traces.sessions has invalid column type: {0}")]
     TracesSessionInvalidColumnType(TypeCheckError),
 
-    /// Response to system_traces.session failed to deserialize.
-    #[error("Response to system_traces.session failed to deserialize: {0}")]
+    /// Response to system_traces.sessions failed to deserialize.
+    #[error("Response to system_traces.sessions failed to deserialize: {0}")]
     TracesSessionDeserializationFailed(DeserializationError),
 
     /// Failed to convert result of system_traces.events query to rows result.
