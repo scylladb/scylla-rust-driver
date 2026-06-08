@@ -121,7 +121,7 @@ async fn test_scylla_version_degrades_on_query_failure() {
             let proxy0_addr: SocketAddr = proxy_uris[0].parse().unwrap();
             let node0_real_ip = translation_map
                 .iter()
-                .find(|(_, proxy)| proxy.ip() == proxy0_addr.ip())
+                .find(|(_, proxy)| **proxy == proxy0_addr)
                 .map(|(real, _)| real.ip())
                 .expect("proxy0 address not found in translation_map");
             let translator: Arc<dyn AddressTranslator> = Arc::new(translation_map);
@@ -186,7 +186,7 @@ async fn test_scylla_version_repopulated_after_transient_failure() {
             let proxy0_addr: SocketAddr = proxy_uris[0].parse().unwrap();
             let node0_real_ip = translation_map
                 .iter()
-                .find(|(_, proxy)| proxy.ip() == proxy0_addr.ip())
+                .find(|(_, proxy)| **proxy == proxy0_addr)
                 .map(|(real, _)| real.ip())
                 .expect("proxy0 not in translation_map");
 
