@@ -2421,6 +2421,12 @@ fn test_vector_from_cql() {
 
     let cql: CqlValue = CqlValue::Vector(my_vec);
 
+    // Test borrowing via as_vector.
+    let decoded = cql.as_vector().unwrap();
+    assert_eq!(decoded[0], CqlValue::Int(20));
+    assert_eq!(decoded[1], CqlValue::Int(2));
+    assert_eq!(decoded[2], CqlValue::Int(13));
+
     // Test taking ownership via into_vec.
     let decoded = cql.into_vec().unwrap();
     assert_eq!(decoded[0], CqlValue::Int(20));
