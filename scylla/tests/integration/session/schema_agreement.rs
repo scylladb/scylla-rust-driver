@@ -407,6 +407,24 @@ async fn test_schema_await_required_host_absent() {
 
             // Cleanup
             running_proxy.running_nodes[1].change_request_rules(Some(vec![]));
+            // Prepare a new session. The old one has a very small schema agreement timeout,
+            // so awaiting schema agreement may fail (especially on Cassandra). We do need to await
+            // because:
+            // 1. CREATE KEYSPACE may not have propagated yet, which would cause the DROP below to fail,
+            //    so we need to await before DROP
+            // 2. We have a tool that verifies all keyspaces are dropped after tests.
+            //    If we don't auto-await after DROP, it is theoretically possible for this
+            //    tool to see the undropped keyspace.
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map.clone()))
+                // Let's have small pool for quicker session creation.
+                .pool_size(PoolSize::PerHost(1.try_into().unwrap()))
+                // Let's try more often to speed up the test.
+                .schema_agreement_interval(Duration::from_millis(50))
+                .build()
+                .await
+                .unwrap();
             session.await_schema_agreement().await.unwrap();
             session
                 .query_unpaged(format!("DROP KEYSPACE {ks}"), &[])
