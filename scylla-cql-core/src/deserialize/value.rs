@@ -224,12 +224,19 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                     let t = type_names
                         .iter()
                         .map(|typ| -> Result<_, DeserializationError> {
-                            let raw = frame_slice.read_cql_bytes().map_err(|e| {
-                                mk_deser_err::<CqlValue>(
-                                    typ,
-                                    BuiltinDeserializationErrorKind::RawCqlBytesReadError(e),
-                                )
-                            })?;
+                            let raw = if frame_slice.is_empty() {
+                                // Special case: if there are no bytes left to read, consider the tuple element as null.
+                                // This is needed to handle tuples with fewer elements than expected
+                                // (see https://github.com/scylladb/scylla-rust-driver/issues/1452 for context).
+                                None
+                            } else {
+                                frame_slice.read_cql_bytes().map_err(|e| {
+                                    mk_deser_err::<CqlValue>(
+                                        typ,
+                                        BuiltinDeserializationErrorKind::RawCqlBytesReadError(e),
+                                    )
+                                })?
+                            };
                             raw.map(|v| CqlValue::deserialize(typ, Some(v))).transpose()
                         })
                         .collect::<Result<_, _>>()?;
@@ -1624,7 +1631,7 @@ macro_rules! impl_tuple {
                         {
                             let cql_bytes = if v.is_empty() {
                                 // Special case: if there are no bytes left to read, consider the tuple element as null.
-                                // This is needed to handle tuples with less elements than expected
+                                // This is needed to handle tuples with fewer elements than expected
                                 // (see https://github.com/scylladb/scylla-rust-driver/issues/1452 for context).
                                 None
                             } else {

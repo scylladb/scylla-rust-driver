@@ -297,6 +297,22 @@ async fn test_alter_column_add_field_to_tuple() {
 
     assert!(selected_value.2.is_none());
 
+    // Test CqlValue deserialization: the stored 2-element tuple should deserialize to a
+    // CqlValue::Tuple with 3 elements, where the third is None.
+    let selected_as_cql_value: CqlValue = session
+        .query_unpaged(format!("SELECT val FROM {table_name} WHERE p = 0"), ())
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .single_row::<(CqlValue,)>()
+        .unwrap()
+        .0;
+    assert_eq!(
+        selected_as_cql_value,
+        CqlValue::Tuple(vec![Some(CqlValue::Int(1)), Some(CqlValue::Int(2)), None,])
+    );
+
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
         .await
@@ -335,6 +351,17 @@ async fn test_cql_tuple_db_repr_shorter_than_metadata() {
         // The expected deserialized tuple has None for the missing elements.
         let tuple_deser = ((1, "Ala".to_owned(), None::<i32>), 2, None::<(i32,)>);
         insert_and_select(&session, table_name, &tuple_ser, &tuple_deser).await;
+
+        let tuple_cql_deser = CqlValue::Tuple(vec![
+            Some(CqlValue::Tuple(vec![
+                Some(CqlValue::Int(1)),
+                Some(CqlValue::Text("Ala".to_owned())),
+                None, // missing third field of inner tuple
+            ])),
+            Some(CqlValue::Int(2)),
+            None, // missing third field of outer tuple
+        ]);
+        insert_and_select(&session, table_name, &tuple_ser, &tuple_cql_deser).await;
     }
 
     session
