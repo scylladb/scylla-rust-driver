@@ -1821,6 +1821,11 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
     }
 }
 
+// The iterator yields exactly one item per remaining field, regardless of whether
+// the serialized form contains a value for that field or not (missing fields are
+// reported as `Ok(None)`).
+impl<'frame, 'metadata> ExactSizeIterator for UdtIterator<'frame, 'metadata> {}
+
 // Container implementations
 
 impl<'frame, 'metadata, T: DeserializeValue<'frame, 'metadata>> DeserializeValue<'frame, 'metadata>
