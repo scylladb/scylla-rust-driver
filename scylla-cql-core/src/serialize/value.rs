@@ -859,7 +859,10 @@ macro_rules! impl_tuple {
             ) -> Result<WrittenCellProof<'b>, SerializationError> {
                 let ($($tidents,)*) = match typ {
                     ColumnType::Tuple(typs) => match typs.as_slice() {
-                        [$($tidents),*] => ($($tidents,)*),
+                        // Allow CQL tuples with more fields than the Rust tuple.
+                        // The extra fields will simply not be serialized (treated as null by the server).
+                        // This mirrors how CqlValue::Tuple serialization works.
+                        [$($tidents),*, ..] => ($($tidents,)*),
                         _ => return Err(mk_typck_err::<Self>(
                             typ,
                             TupleTypeCheckErrorKind::WrongElementCount {

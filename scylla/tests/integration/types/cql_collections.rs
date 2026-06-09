@@ -8,6 +8,7 @@ use scylla::value::{
     CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
 };
 use scylla::{client::session::Session, cluster::metadata::ColumnType};
+use scylla_cql::serialize::CellWriter;
 use scylla_cql::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
@@ -362,6 +363,28 @@ async fn test_cql_tuple_db_repr_shorter_than_metadata() {
             None, // missing third field of outer tuple
         ]);
         insert_and_select(&session, table_name, &tuple_ser, &tuple_cql_deser).await;
+
+        // Test that shorter Rust tuple can also be successfully inserted, and is of correct form
+        // when selected.
+        let tuple_ser_raw = ((1, "Ala".to_owned()), 2);
+        insert_and_select(&session, table_name, &tuple_ser_raw, &tuple_deser).await;
+        // Check that the tuple does not serialize the missing elements.
+        {
+            let typ = Tuple(vec![
+                Tuple(vec![Native(Int), Native(Text), Native(Int)]),
+                Native(Int),
+                Tuple(vec![Native(Int)]),
+            ]);
+            let mut buf = vec![];
+            let _ = tuple_ser_raw
+                .serialize(&typ, CellWriter::new(&mut buf))
+                .unwrap();
+            // First inner tuple: [bytes] for Int (8 bytes) and [bytes] for "Ala" (7 bytes) + length prefix of tuple (4 bytes) = 19 bytes
+            // Int: 8 bytes
+            // Length prefix of outer tuple: 4 bytes
+            // Total: 31 bytes
+            assert_eq!(buf.len(), 31);
+        }
     }
 
     session
