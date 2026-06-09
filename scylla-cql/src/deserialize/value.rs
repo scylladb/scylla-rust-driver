@@ -1044,10 +1044,18 @@ where
         }))
     }
 
+    // We only return `None` when underlying `FixedLengthBytesSequenceIterator` does.
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.raw_iter.size_hint()
     }
+}
+
+// We only return `None` when underlying `FixedLengthBytesSequenceIterator` does.
+// `FixedLengthBytesSequenceIterator` is ExactSize, so this can be too.
+impl<'frame, 'metadata, T> ExactSizeIterator for ListlikeIterator<'frame, 'metadata, T> where
+    T: DeserializeValue<'frame, 'metadata>
+{
 }
 
 impl<'frame, 'metadata, T> DeserializeValue<'frame, 'metadata> for Vec<T>
@@ -1328,6 +1336,44 @@ where
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.remaining, Some(self.remaining))
     }
+
+    fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        if let Some(element_length) = self.element_length {
+            // Fast path: fixed-size elements — skip n elements by advancing the frame
+            // slice by n * element_length bytes, without deserializing each skipped element.
+            if n >= self.remaining {
+                self.remaining = 0;
+                return None;
+            }
+            if n > 0 {
+                let bytes_to_skip = n * element_length;
+                if let Err(err) = self.slice.read_n_bytes(bytes_to_skip) {
+                    // We checked that `n < self.remaining`, so this won't cause
+                    // negative overflow.
+                    self.remaining -= n + 1;
+                    return Some(Err(mk_deser_err::<Self>(
+                        self.collection_type,
+                        BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
+                    )));
+                }
+                self.remaining -= n;
+            }
+            self.next_constant_length_elem(element_length)
+        } else {
+            // Variable-length elements: fall back to the default sequential behaviour.
+            for _ in 0..n {
+                // Discard the item (which may be Ok or Err); only stop on exhaustion.
+                let _ = self.next_variable_length_elem()?;
+            }
+            self.next_variable_length_elem()
+        }
+    }
+}
+
+// This iterator always returns exactly `self.remaining` elements.
+impl<'frame, 'metadata, T> ExactSizeIterator for VectorIterator<'frame, 'metadata, T> where
+    T: DeserializeValue<'frame, 'metadata>
+{
 }
 
 /// An iterator over a CQL map.
@@ -1440,7 +1486,12 @@ where
     type Item = Result<(K, V), DeserializationError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let raw_k = match self.raw_iter.next() {
+        // Note the lack of `?` - we want each call to `next()` to consume EXACTLY two items
+        // from the inner iterator. This is necessary for correct and precise
+        // `size_hint`, and thus the implementation of `ExactSizeIterator`.
+        let raw_k_result = self.raw_iter.next();
+        let raw_v_result = self.raw_iter.next();
+        let raw_k = match raw_k_result {
             Some(Ok(raw_k)) => raw_k,
             Some(Err(err)) => {
                 return Some(Err(mk_deser_err::<Self>(
@@ -1450,7 +1501,7 @@ where
             }
             None => return None,
         };
-        let raw_v = match self.raw_iter.next() {
+        let raw_v = match raw_v_result {
             Some(Ok(raw_v)) => raw_v,
             Some(Err(err)) => {
                 return Some(Err(mk_deser_err::<Self>(
@@ -1480,8 +1531,20 @@ where
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.raw_iter.size_hint()
+        // Each call to `next()` consumes exactly two items from the iterator.
+        // If, and only if, both are `Some`, this iterator returns `Some`.
+        // This makes its item number precise, given that the inner iterator
+        // is ExactSizeIterator.
+        let len = self.raw_iter.len() / 2;
+        (len, Some(len))
     }
+}
+
+impl<'frame, 'metadata, K, V> ExactSizeIterator for MapIterator<'frame, 'metadata, K, V>
+where
+    K: DeserializeValue<'frame, 'metadata>,
+    V: DeserializeValue<'frame, 'metadata>,
+{
 }
 
 impl<'frame, 'metadata, K, V> DeserializeValue<'frame, 'metadata> for BTreeMap<K, V>
@@ -1724,7 +1787,6 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
     );
 
     fn next(&mut self) -> Option<Self::Item> {
-        // TODO: Should we fail when there are too many fields?
         let (head, fields) = self.remaining_fields.split_first()?;
         self.remaining_fields = fields;
         let raw_res = match self.raw_iter.next() {
@@ -1751,9 +1813,18 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.raw_iter.size_hint()
+        // The iterator yields exactly one item per remaining field, regardless of whether
+        // the serialized form contains a value for that field or not (missing fields are
+        // reported as `Ok(None)`).
+        let len = self.remaining_fields.len();
+        (len, Some(len))
     }
 }
+
+// The iterator yields exactly one item per remaining field, regardless of whether
+// the serialized form contains a value for that field or not (missing fields are
+// reported as `Ok(None)`).
+impl<'frame, 'metadata> ExactSizeIterator for UdtIterator<'frame, 'metadata> {}
 
 // Container implementations
 
@@ -1937,7 +2008,17 @@ impl<'frame> Iterator for FixedLengthBytesSequenceIterator<'frame> {
         self.remaining = self.remaining.checked_sub(1)?;
         Some(self.slice.read_cql_bytes())
     }
+
+    // Always yields exactly the requested number of elements.
+    // Some of them may be errors, but it is irrelevant for `size_hint`.
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
 }
+
+// Always yields exactly the requested number of elements.
+// Some of them may be errors, but it is irrelevant here.
+impl<'frame> ExactSizeIterator for FixedLengthBytesSequenceIterator<'frame> {}
 
 /// Iterates over a sequence of `[bytes]` items from a frame subslice.
 ///

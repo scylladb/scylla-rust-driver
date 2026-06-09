@@ -200,6 +200,13 @@ where
 
         None
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        // The lower bound is 0 because rack-filtering may cause fewer replicas
+        // to be found than requested. The upper bound is the number of replicas still
+        // to be found.
+        (0, Some(self.replicas_left_to_find))
+    }
 }
 
 #[cfg(test)]

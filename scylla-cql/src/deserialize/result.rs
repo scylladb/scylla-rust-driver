@@ -88,6 +88,9 @@ impl<'frame, 'metadata> Iterator for RawRowIterator<'frame, 'metadata> {
     }
 }
 
+// This iterator always yields exactly `self.remaining` items.
+impl<'frame, 'metadata> ExactSizeIterator for RawRowIterator<'frame, 'metadata> {}
+
 /// A typed version of [RawRowIterator] which deserializes the rows before
 /// returning them.
 #[derive(Debug)]
@@ -143,6 +146,13 @@ where
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.inner.size_hint()
     }
+}
+
+// This iterator only yields `None` if underlying `RawRowIterator` yields `None`.
+// `RawRowIterator` is `ExactSizeIterator`, so this one can be as well.
+impl<'frame, 'metadata, R> ExactSizeIterator for TypedRowIterator<'frame, 'metadata, R> where
+    R: DeserializeRow<'frame, 'metadata>
+{
 }
 
 // Technically not an iterator because it returns items that borrow from it,

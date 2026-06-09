@@ -572,11 +572,10 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
                 if let Some(replica) = replicas.get(*replicas_idx) {
                     *replicas_idx += 1;
                     Some(with_computed_shard(replica, self.token))
-                } else if *datacenter_idx + 1 < locator.datacenters.len() {
+                } else if let Some(datacenter) = locator.datacenters.get(*datacenter_idx + 1) {
                     *datacenter_idx += 1;
                     *replicas_idx = 0;
 
-                    let datacenter = &locator.datacenters[*datacenter_idx];
                     let repfactor = *datacenter_repfactors.get(datacenter).unwrap_or(&0);
                     *replicas =
                         locator.get_network_strategy_replicas(*token, datacenter, repfactor);
@@ -607,20 +606,22 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
                 idx,
             } => (0, Some(replicas.len() - *idx)),
             ReplicaSetIteratorInner::ChainedNTS {
-                replicas: _,
-                replicas_idx: _,
+                replicas,
+                replicas_idx,
                 datacenter_repfactors,
                 locator,
                 token: _,
                 datacenter_idx,
             } => {
-                let yielded: usize = locator.datacenter_names()[0..*datacenter_idx]
+                let yielded_previous_dcs: usize = locator.datacenter_names()[0..*datacenter_idx]
                     .iter()
                     .filter_map(|name| datacenter_repfactors.get(name))
                     .sum();
+                let yielded: usize = yielded_previous_dcs + replicas_idx;
+                let left_current_dc = replicas.len() - replicas_idx;
 
                 (
-                    0,
+                    left_current_dc,
                     Some(datacenter_repfactors.values().sum::<usize>() - yielded),
                 )
             }
@@ -629,17 +630,61 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         match &mut self.inner {
-            ReplicaSetIteratorInner::Plain { replicas: _, idx }
-            | ReplicaSetIteratorInner::PlainSharded { replicas: _, idx } => {
-                *idx += n;
-
+            ReplicaSetIteratorInner::Plain { replicas, idx } => {
+                *idx = idx.saturating_add(n);
+                if *idx >= replicas.len() {
+                    *idx = replicas.len();
+                    return None;
+                }
                 self.next()
             }
-            _ => {
+            ReplicaSetIteratorInner::PlainSharded { replicas, idx } => {
+                *idx = idx.saturating_add(n);
+                if *idx >= replicas.len() {
+                    *idx = replicas.len();
+                    return None;
+                }
+                self.next()
+            }
+            ReplicaSetIteratorInner::FilteredSimple { .. } => {
                 for _i in 0..n {
                     self.next()?;
                 }
 
+                self.next()
+            }
+            ReplicaSetIteratorInner::ChainedNTS {
+                replicas,
+                replicas_idx,
+                datacenter_repfactors,
+                locator,
+                token,
+                datacenter_idx,
+            } => {
+                // Note: `nth` API is indexed by 0, so `nth(0)` is the same as `next()`.
+                let mut remaining = n;
+                loop {
+                    let left_in_current = replicas.len() - *replicas_idx;
+                    if remaining < left_in_current {
+                        // Target is within the current datacenter's replicas.
+                        // Advance the index and break out to call self.next().
+                        *replicas_idx += remaining;
+                        break;
+                    }
+                    // Skip past the rest of the current datacenter.
+                    remaining -= left_in_current;
+                    if let Some(datacenter) = locator.datacenters.get(*datacenter_idx + 1) {
+                        *datacenter_idx += 1;
+                        *replicas_idx = 0;
+                        let repfactor = *datacenter_repfactors.get(datacenter).unwrap_or(&0);
+                        *replicas =
+                            locator.get_network_strategy_replicas(*token, datacenter, repfactor);
+                    } else {
+                        // No more datacenters; exhausted.
+                        *replicas_idx = replicas.len();
+                        return None;
+                    }
+                }
                 self.next()
             }
         }
@@ -795,6 +840,34 @@ impl<'a> Iterator for ReplicasOrderedNTSIterator<'a> {
             }
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match &self.inner {
+            ReplicasOrderedNTSIteratorInner::FreshForPick {
+                datacenter_repfactors,
+                ..
+            } => {
+                // Haven't yielded anything yet; total replicas ≤ sum of all repfactors.
+                let upper: usize = datacenter_repfactors.values().sum();
+                (0, Some(upper))
+            }
+            ReplicasOrderedNTSIteratorInner::Picked {
+                datacenter_repfactors,
+                ..
+            } => {
+                // Already yielded 1 (the picked node); remaining ≤ sum of repfactors - 1.
+                let upper: usize = datacenter_repfactors
+                    .values()
+                    .sum::<usize>()
+                    .saturating_sub(1);
+                (0, Some(upper))
+            }
+            ReplicasOrderedNTSIteratorInner::ComputedFallback { replicas, idx } => {
+                let remaining = replicas.len() - *idx;
+                (remaining, Some(remaining))
+            }
+        }
+    }
 }
 
 impl<'a> Iterator for ReplicasOrderedIterator<'a> {
@@ -808,6 +881,17 @@ impl<'a> Iterator for ReplicasOrderedIterator<'a> {
             ReplicasOrderedIteratorInner::PolyDatacenterNTS {
                 replicas_ordered_iter,
             } => replicas_ordered_iter.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match &self.inner {
+            ReplicasOrderedIteratorInner::AlreadyRingOrdered { replica_set_iter } => {
+                replica_set_iter.size_hint()
+            }
+            ReplicasOrderedIteratorInner::PolyDatacenterNTS {
+                replicas_ordered_iter,
+            } => replicas_ordered_iter.size_hint(),
         }
     }
 }

@@ -100,6 +100,11 @@ impl<'frame, 'metadata> Iterator for ColumnIterator<'frame, 'metadata> {
     }
 }
 
+// In `next` we call `next()` on `self.specs` (which is a slice) and propagate `None`.
+// After that we can only return `Some`. It may be `Some(Err(_))`,
+// but it is still a valid iterator item.
+impl<'frame, 'metadata> ExactSizeIterator for ColumnIterator<'frame, 'metadata> {}
+
 /// A type that can be deserialized from a row that was returned from a query.
 ///
 /// For tips on how to write a custom implementation of this trait, see the

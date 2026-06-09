@@ -24,7 +24,7 @@ use super::{
     BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
     BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator, MapDeserializationErrorKind,
     MapIterator, MapTypeCheckErrorKind, MaybeEmpty, SetOrListDeserializationErrorKind,
-    SetOrListTypeCheckErrorKind, mk_deser_err,
+    SetOrListTypeCheckErrorKind, VectorIterator, mk_deser_err,
 };
 
 #[test]
@@ -358,6 +358,142 @@ fn test_deserialize_vector() {
         decoded_vec,
         CqlValue::Vector(vec![CqlValue::Int(1), CqlValue::Int(2)])
     );
+}
+
+// Tests for VectorIterator::nth, covering both code paths:
+//   - fast path: fixed-size element types (element_length = Some(n)), where nth skips
+//     n * element_length bytes in one shot without deserializing skipped elements.
+//   - slow path: variable-size element types (element_length = None), where nth falls back
+//     to sequential iteration.
+#[test]
+#[expect(clippy::iter_nth_zero)]
+fn test_vector_iterator_nth() {
+    // --- Fast path: f32 elements (4 bytes each, element_length = Some(4)) ---
+    {
+        let typ = ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Float)),
+            dimensions: 5,
+        };
+        // Serialize [1.0, 2.0, 3.0, 4.0, 5.0] so we can deserialize it with VectorIterator.
+        let mut buf = Bytes::new();
+        serialize_to_buf(&typ, &vec![1.0_f32, 2.0, 3.0, 4.0, 5.0], &mut buf);
+
+        // nth(0) behaves like next(): returns the first element and advances by one.
+        {
+            let mut iter = deserialize::<VectorIterator<f32>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(0).transpose().unwrap(), Some(1.0_f32));
+            assert_eq!(iter.len(), 4);
+        }
+
+        // nth(2) skips the first two elements (1.0, 2.0) and returns the third (3.0).
+        {
+            let mut iter = deserialize::<VectorIterator<f32>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(2).transpose().unwrap(), Some(3.0_f32));
+            assert_eq!(iter.len(), 2);
+        }
+
+        // nth(4) returns the very last element and leaves the iterator empty.
+        {
+            let mut iter = deserialize::<VectorIterator<f32>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(4).transpose().unwrap(), Some(5.0_f32));
+            assert_eq!(iter.len(), 0);
+        }
+
+        // nth(n) where n == remaining exhausts the iterator and returns None.
+        {
+            let mut iter = deserialize::<VectorIterator<f32>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(5).transpose().unwrap(), None);
+            assert_eq!(iter.len(), 0);
+        }
+
+        // nth on an already-exhausted iterator returns None.
+        {
+            let mut iter = deserialize::<VectorIterator<f32>>(&typ, &buf).unwrap();
+            let _ = iter.nth(5);
+            assert_eq!(iter.nth(0).transpose().unwrap(), None);
+        }
+
+        // After nth(1) the remaining elements are accessible via next() in order.
+        {
+            let mut iter = deserialize::<VectorIterator<f32>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(1).transpose().unwrap(), Some(2.0_f32)); // skips 1.0, yields 2.0
+            assert_eq!(iter.next().transpose().unwrap(), Some(3.0_f32));
+            assert_eq!(iter.next().transpose().unwrap(), Some(4.0_f32));
+            assert_eq!(iter.next().transpose().unwrap(), Some(5.0_f32));
+            assert_eq!(iter.next().transpose().unwrap(), None);
+        }
+
+        // Two sequential nth calls advance through the vector correctly:
+        // first nth(1) yields element at index 1 (2.0), then nth(1) on the remaining
+        // [3.0, 4.0, 5.0] skips 3.0 and yields 4.0.
+        {
+            let mut iter = deserialize::<VectorIterator<f32>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(1).transpose().unwrap(), Some(2.0_f32));
+            assert_eq!(iter.nth(1).transpose().unwrap(), Some(4.0_f32));
+            assert_eq!(iter.len(), 1);
+        }
+    }
+
+    // --- Slow path: &str elements (Text, variable length, element_length = None) ---
+    {
+        let typ = ColumnType::Vector {
+            typ: Box::new(ColumnType::Native(NativeType::Text)),
+            dimensions: 5,
+        };
+        let mut buf = Bytes::new();
+        serialize_to_buf(
+            &typ,
+            &vec!["alice", "bob", "carol", "dave", "eve"],
+            &mut buf,
+        );
+
+        // nth(0) returns the first element.
+        {
+            let mut iter = deserialize::<VectorIterator<&str>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(0).transpose().unwrap(), Some("alice"));
+            assert_eq!(iter.len(), 4);
+        }
+
+        // nth(2) skips "alice" and "bob", returns "carol".
+        {
+            let mut iter = deserialize::<VectorIterator<&str>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(2).transpose().unwrap(), Some("carol"));
+            assert_eq!(iter.len(), 2);
+        }
+
+        // nth(4) returns the last element and leaves the iterator empty.
+        {
+            let mut iter = deserialize::<VectorIterator<&str>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(4).transpose().unwrap(), Some("eve"));
+            assert_eq!(iter.len(), 0);
+        }
+
+        // nth(n) where n == remaining returns None.
+        {
+            let mut iter = deserialize::<VectorIterator<&str>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(5).transpose().unwrap(), None);
+            assert_eq!(iter.len(), 0);
+        }
+
+        // After nth(1) the remaining elements are accessible via next() in order.
+        {
+            let mut iter = deserialize::<VectorIterator<&str>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(1).transpose().unwrap(), Some("bob")); // skips "alice", yields "bob"
+            assert_eq!(iter.next().transpose().unwrap(), Some("carol"));
+            assert_eq!(iter.next().transpose().unwrap(), Some("dave"));
+            assert_eq!(iter.next().transpose().unwrap(), Some("eve"));
+            assert_eq!(iter.next().transpose().unwrap(), None);
+        }
+
+        // Two sequential nth calls: nth(1) yields "bob", then nth(1) on the remaining
+        // ["carol", "dave", "eve"] skips "carol" and yields "dave".
+        {
+            let mut iter = deserialize::<VectorIterator<&str>>(&typ, &buf).unwrap();
+            assert_eq!(iter.nth(1).transpose().unwrap(), Some("bob"));
+            assert_eq!(iter.nth(1).transpose().unwrap(), Some("dave"));
+            assert_eq!(iter.len(), 1);
+        }
+    }
 }
 
 #[test]
