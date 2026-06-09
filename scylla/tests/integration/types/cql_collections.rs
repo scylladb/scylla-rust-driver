@@ -385,6 +385,18 @@ async fn test_cql_tuple_db_repr_shorter_than_metadata() {
             // Total: 31 bytes
             assert_eq!(buf.len(), 31);
         }
+
+        // Verify that CqlValue::Tuple can be shorter than the DB column type indicates.
+        let tuple_ser_cql = CqlValue::Tuple(vec![
+            Some(CqlValue::Tuple(vec![
+                Some(CqlValue::Int(1)),
+                Some(CqlValue::Text("Ala".to_owned())),
+                // No third element
+            ])),
+            Some(CqlValue::Int(2)),
+            // No third element
+        ]);
+        insert_and_select(&session, table_name, &tuple_ser_cql, &tuple_deser).await;
     }
 
     session
