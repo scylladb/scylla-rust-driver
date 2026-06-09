@@ -1787,7 +1787,6 @@ impl<'frame, 'metadata> Iterator for UdtIterator<'frame, 'metadata> {
     );
 
     fn next(&mut self) -> Option<Self::Item> {
-        // TODO: Should we fail when there are too many fields?
         let (head, fields) = self.remaining_fields.split_first()?;
         self.remaining_fields = fields;
         let raw_res = match self.raw_iter.next() {
