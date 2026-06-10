@@ -43,7 +43,7 @@ jobs:
       output: ${{ steps.semver-pr-check.outputs.output }}
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       with:
         fetch-depth: "2"
         ref: "refs/pull/${{ env.PR_ID }}/merge"
@@ -88,7 +88,7 @@ jobs:
     timeout-minutes: 3
     steps:
     - name: Get ID of comment if posted previously.
-      uses: peter-evans/find-comment@v3
+      uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4.0.0
       id: find-comment
       with:
           issue-number: ${{ env.PR_ID }}
@@ -101,7 +101,7 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
     - name: Report that there were no breaks
-      uses: peter-evans/create-or-update-comment@v4
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
           issue-number: ${{ env.PR_ID }}
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
@@ -117,7 +117,7 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
     - name: Post report on semver break
-      uses: peter-evans/create-or-update-comment@v4
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
           issue-number: ${{ env.PR_ID }}
           comment-id: ${{ steps.find-comment.outputs.comment-id }}
@@ -142,7 +142,7 @@ jobs:
     if: github.event_name == 'push'
     timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
     - name: Update rust toolchain
       run: rustup update
     - name: Install semver-checks
