@@ -523,6 +523,12 @@ impl SessionConfig {
             return Err(NewSessionError::EmptyKnownNodesList);
         }
 
+        if self.keepalive_interval == Some(Duration::ZERO) {
+            return Err(NewSessionError::IllegalConfig(
+                "Keepalive interval must be non-zero".into(),
+            ));
+        }
+
         // Ensure no illegal configuration with Client Routes
         #[cfg(feature = "unstable-client-routes")]
         if self.client_routes_config.is_some() {

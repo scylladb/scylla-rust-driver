@@ -1027,6 +1027,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Set the keepalive interval.
     /// The default is `Some(Duration::from_secs(30))`, which corresponds
     /// to keepalive CQL messages being sent every 30 seconds.
+    /// Zero intervals are rejected during session creation.
     /// Note: this configures CQL-layer keepalives. See also:
     /// `Self::tcp_keepalive_interval`.
     ///
@@ -1420,6 +1421,7 @@ mod tests {
     use super::SessionBuilder;
     use crate::client::execution_profile::{ExecutionProfile, defaults};
     use crate::cluster::node::KnownNode;
+    use crate::errors::NewSessionError;
     use crate::test_utils::setup_tracing;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
@@ -1551,6 +1553,24 @@ mod tests {
         assert_eq!(
             builder.config.connect_timeout,
             std::time::Duration::from_secs(10)
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_keepalive_interval_is_rejected() {
+        setup_tracing();
+        let error = SessionBuilder::new()
+            .known_node("127.0.0.1:9042")
+            .keepalive_interval(Duration::ZERO)
+            .build()
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, NewSessionError::IllegalConfig(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("Keepalive interval must be non-zero")
         );
     }
 
