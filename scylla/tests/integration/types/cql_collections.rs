@@ -8,6 +8,7 @@ use scylla::value::{
     CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlValue, CqlVarint,
 };
 use scylla::{client::session::Session, cluster::metadata::ColumnType};
+use scylla_cql::serialize::CellWriter;
 use scylla_cql::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Debug;
@@ -297,6 +298,22 @@ async fn test_alter_column_add_field_to_tuple() {
 
     assert!(selected_value.2.is_none());
 
+    // Test CqlValue deserialization: the stored 2-element tuple should deserialize to a
+    // CqlValue::Tuple with 3 elements, where the third is None.
+    let selected_as_cql_value: CqlValue = session
+        .query_unpaged(format!("SELECT val FROM {table_name} WHERE p = 0"), ())
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap()
+        .single_row::<(CqlValue,)>()
+        .unwrap()
+        .0;
+    assert_eq!(
+        selected_as_cql_value,
+        CqlValue::Tuple(vec![Some(CqlValue::Int(1)), Some(CqlValue::Int(2)), None,])
+    );
+
     session
         .ddl(format!("DROP KEYSPACE {}", session.get_keyspace().unwrap()))
         .await
@@ -335,6 +352,51 @@ async fn test_cql_tuple_db_repr_shorter_than_metadata() {
         // The expected deserialized tuple has None for the missing elements.
         let tuple_deser = ((1, "Ala".to_owned(), None::<i32>), 2, None::<(i32,)>);
         insert_and_select(&session, table_name, &tuple_ser, &tuple_deser).await;
+
+        let tuple_cql_deser = CqlValue::Tuple(vec![
+            Some(CqlValue::Tuple(vec![
+                Some(CqlValue::Int(1)),
+                Some(CqlValue::Text("Ala".to_owned())),
+                None, // missing third field of inner tuple
+            ])),
+            Some(CqlValue::Int(2)),
+            None, // missing third field of outer tuple
+        ]);
+        insert_and_select(&session, table_name, &tuple_ser, &tuple_cql_deser).await;
+
+        // Test that shorter Rust tuple can also be successfully inserted, and is of correct form
+        // when selected.
+        let tuple_ser_raw = ((1, "Ala".to_owned()), 2);
+        insert_and_select(&session, table_name, &tuple_ser_raw, &tuple_deser).await;
+        // Check that the tuple does not serialize the missing elements.
+        {
+            let typ = Tuple(vec![
+                Tuple(vec![Native(Int), Native(Text), Native(Int)]),
+                Native(Int),
+                Tuple(vec![Native(Int)]),
+            ]);
+            let mut buf = vec![];
+            let _ = tuple_ser_raw
+                .serialize(&typ, CellWriter::new(&mut buf))
+                .unwrap();
+            // First inner tuple: [bytes] for Int (8 bytes) and [bytes] for "Ala" (7 bytes) + length prefix of tuple (4 bytes) = 19 bytes
+            // Int: 8 bytes
+            // Length prefix of outer tuple: 4 bytes
+            // Total: 31 bytes
+            assert_eq!(buf.len(), 31);
+        }
+
+        // Verify that CqlValue::Tuple can be shorter than the DB column type indicates.
+        let tuple_ser_cql = CqlValue::Tuple(vec![
+            Some(CqlValue::Tuple(vec![
+                Some(CqlValue::Int(1)),
+                Some(CqlValue::Text("Ala".to_owned())),
+                // No third element
+            ])),
+            Some(CqlValue::Int(2)),
+            // No third element
+        ]);
+        insert_and_select(&session, table_name, &tuple_ser_cql, &tuple_deser).await;
     }
 
     session
