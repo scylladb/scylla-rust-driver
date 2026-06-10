@@ -549,4 +549,4 @@ impl Display for BuiltinDeserializationErrorKind {
 
 #[cfg(test)]
 #[path = "row_tests.rs"]
-pub(crate) mod tests;
+mod tests;

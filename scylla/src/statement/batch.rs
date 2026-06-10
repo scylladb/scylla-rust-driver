@@ -264,18 +264,14 @@ impl From<PreparedStatement> for BatchStatement {
     }
 }
 
-impl<'a: 'b, 'b> From<&'a BatchStatement>
-    for scylla_cql::frame::request::batch::BatchStatement<'b>
-{
+impl<'a: 'b, 'b> From<&'a BatchStatement> for crate::frame::request::batch::BatchStatement<'b> {
     fn from(val: &'a BatchStatement) -> Self {
         match val {
-            BatchStatement::Query(query) => {
-                scylla_cql::frame::request::batch::BatchStatement::Query {
-                    text: Cow::Borrowed(&query.contents),
-                }
-            }
+            BatchStatement::Query(query) => crate::frame::request::batch::BatchStatement::Query {
+                text: Cow::Borrowed(&query.contents),
+            },
             BatchStatement::PreparedStatement(prepared) => {
-                scylla_cql::frame::request::batch::BatchStatement::Prepared {
+                crate::frame::request::batch::BatchStatement::Prepared {
                     id: Cow::Borrowed(prepared.get_id()),
                 }
             }
@@ -284,11 +280,12 @@ impl<'a: 'b, 'b> From<&'a BatchStatement>
 }
 
 pub(crate) mod batch_values {
-    use scylla_cql::serialize::batch::BatchValues;
-    use scylla_cql::serialize::batch::BatchValuesIterator;
-    use scylla_cql::serialize::row::RowSerializationContext;
-    use scylla_cql::serialize::row::SerializedValues;
-    use scylla_cql::serialize::{RowWriter, SerializationError};
+    use crate::serialize::SerializationError;
+    use crate::serialize::batch::BatchValues;
+    use crate::serialize::batch::BatchValuesIterator;
+    use crate::serialize::row::RowSerializationContext;
+    use crate::serialize::row::SerializedValues;
+    use crate::serialize::writers::RowWriter;
 
     use crate::errors::ExecutionError;
     use crate::routing::Token;

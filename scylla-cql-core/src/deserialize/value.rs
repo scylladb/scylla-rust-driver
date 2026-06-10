@@ -235,9 +235,6 @@ impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for CqlValue {
                         .collect::<Result<_, _>>()?;
                     CqlValue::Tuple(t)
                 }
-                // Catch future variants from #[non_exhaustive] enums.
-                #[allow(unreachable_patterns)]
-                Native(_) | Collection { .. } | _ => unreachable!(),
             },
         )
     }

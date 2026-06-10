@@ -9,7 +9,6 @@ use std::hash::BuildHasher;
 use std::{collections::HashMap, sync::Arc};
 
 use bytes::BufMut;
-
 use thiserror::Error;
 
 use crate::frame::frame_errors::LowLevelDeserializationError;

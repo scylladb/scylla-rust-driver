@@ -1414,8 +1414,7 @@ impl Default for SessionBuilder {
 
 #[cfg(test)]
 mod tests {
-    use scylla_cql::Consistency;
-    use scylla_cql::frame::types::SerialConsistency;
+    use crate::frame::types::{Consistency, SerialConsistency};
 
     use super::super::Compression;
     use super::SessionBuilder;

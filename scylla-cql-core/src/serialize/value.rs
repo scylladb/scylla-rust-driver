@@ -625,6 +625,7 @@ fn serialize_cql_value<'b>(
     typ: &ColumnType,
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
+    #[deny(clippy::wildcard_enum_match_arm)]
     match value {
         CqlValue::Ascii(a) => <_ as SerializeValue>::serialize(&a, typ, writer),
         CqlValue::Boolean(b) => <_ as SerializeValue>::serialize(&b, typ, writer),
@@ -670,24 +671,30 @@ fn serialize_cql_value<'b>(
         CqlValue::Tuple(t) => {
             // We allow serializing tuples that have less fields
             // than the database tuple, but not the other way around.
-            let fields = match typ {
-                ColumnType::Tuple(fields) => {
-                    if fields.len() < t.len() {
+            let fields = {
+                #[deny(clippy::wildcard_enum_match_arm)]
+                match typ {
+                    ColumnType::Tuple(fields) => {
+                        if fields.len() < t.len() {
+                            return Err(mk_typck_err::<CqlValue>(
+                                typ,
+                                TupleTypeCheckErrorKind::WrongElementCount {
+                                    rust_type_el_count: t.len(),
+                                    cql_type_el_count: fields.len(),
+                                },
+                            ));
+                        }
+                        fields
+                    }
+                    ColumnType::Native(_)
+                    | ColumnType::Collection { .. }
+                    | ColumnType::Vector { .. }
+                    | ColumnType::UserDefinedType { .. } => {
                         return Err(mk_typck_err::<CqlValue>(
                             typ,
-                            TupleTypeCheckErrorKind::WrongElementCount {
-                                rust_type_el_count: t.len(),
-                                cql_type_el_count: fields.len(),
-                            },
+                            TupleTypeCheckErrorKind::NotTuple,
                         ));
                     }
-                    fields
-                }
-                _ => {
-                    return Err(mk_typck_err::<CqlValue>(
-                        typ,
-                        TupleTypeCheckErrorKind::NotTuple,
-                    ));
                 }
             };
             serialize_tuple_like(typ, fields.iter(), t.iter(), writer)
@@ -726,7 +733,6 @@ fn fix_rust_name_in_err<RustT>(mut err: SerializationError) -> SerializationErro
                     ..err.clone()
                 });
             }
-
             if let Some(err) = err.0.downcast_ref::<BuiltinSerializationError>()
                 && err.rust_name != rust_name
             {
