@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::num::NonZeroU16;
 use std::ops::RangeInclusive;
 
+use itertools::Either;
 use rand::Rng as _;
 use thiserror::Error;
 
@@ -126,6 +127,25 @@ impl Sharder {
             shard,
             &ShardAwarePortRange::EPHEMERAL_PORT_RANGE,
         )
+        .expect("Impossible to draw any port from provided range")
+    }
+
+    fn calculate_lowest_port_for_shard_in_range(
+        &self,
+        shard: u16,
+        port_range: &ShardAwarePortRange,
+    ) -> Option<u16> {
+        let (range_start, range_end) = (*port_range.0.start(), *port_range.0.end());
+        let nr_shards = self.nr_shards.get();
+
+        // Calculate how much we need to add to range_start to reach a port assigned to `shard`.
+        let shard_for_first_port = range_start % nr_shards;
+        // `as u16` is lossless, because the last operation is `% nr_shards` which is originally a u16.
+        let offset = ((u32::from(nr_shards) - u32::from(shard_for_first_port) + u32::from(shard))
+            % u32::from(nr_shards)) as u16;
+
+        let first_valid_port = range_start.checked_add(offset)?;
+        (first_valid_port <= range_end).then_some(first_valid_port)
     }
 
     /// Randomly choose a source port `p` such that `shard == shard_of_source_port(p)`.
@@ -135,14 +155,25 @@ impl Sharder {
         &self,
         shard: Shard,
         port_range: &ShardAwarePortRange,
-    ) -> u16 {
+    ) -> Option<u16> {
         assert!(shard < self.nr_shards.get() as u32);
-        let (range_start, range_end) = (port_range.0.start(), port_range.0.end());
-        rand::rng().random_range(
-            (range_start + self.nr_shards.get() - 1)..(range_end - self.nr_shards.get() + 1),
-        ) / self.nr_shards.get()
-            * self.nr_shards.get()
-            + shard as u16
+        // Correct because of the above assert.
+        let shard: u16 = shard as u16;
+
+        let (_range_start, range_end) = (*port_range.0.start(), *port_range.0.end());
+
+        let first_valid_port = self.calculate_lowest_port_for_shard_in_range(shard, port_range)?;
+        let mut valid_ports = (first_valid_port..=range_end).step_by(self.nr_shards.get().into());
+        let valid_ports_count = <_ as ExactSizeIterator>::len(&valid_ports);
+        // `first_valid_port` is lower or equal to `range_end`, so `(first_valid_port..=range_end)`
+        // is a non-empty range. `step_by` always returns first element of the iterator at least,
+        // so the `valid_ports` iterator is non empty, so `valid_ports_count` is greater than 0.
+        assert!(valid_ports_count > 0);
+        // `valid_ports_count` is greater than 0, so `0..valid_ports_count` is non-empty,
+        // so `random_range` won't panic.
+        let port_index = rand::rng().random_range(0..valid_ports_count);
+        let port = valid_ports.nth(port_index).unwrap();
+        Some(port)
     }
 
     /// Returns iterator over source ports `p` such that `shard == shard_of_source_port(p)`.
@@ -168,21 +199,30 @@ impl Sharder {
         port_range: &ShardAwarePortRange,
     ) -> impl Iterator<Item = u16> + use<> {
         assert!(shard < self.nr_shards.get() as u32);
+        // Correct because of the above assert (nr_shards is u16).
+        let shard = shard as u16;
 
-        let (range_start, range_end) = (port_range.0.start(), port_range.0.end());
+        let range_end = port_range.0.end();
 
-        // Randomly choose a port to start at
-        let starting_port = self.draw_source_port_for_shard_from_range(shard, port_range);
+        // If we can't even calculate a single valid port, then we have no way
+        // to calculate any other ones, thus early return.
+        let Some(first_valid_port) =
+            self.calculate_lowest_port_for_shard_in_range(shard, port_range)
+        else {
+            return Either::Right(std::iter::empty());
+        };
 
-        // Choose smallest available port number to begin at after wrapping
-        // apply the formula from draw_source_port_for_shard for lowest possible gen_range result
-        let first_valid_port =
-            range_start.div_ceil(self.nr_shards.get()) * self.nr_shards.get() + shard as u16;
+        let make_valid_ports_iter =
+            || (first_valid_port..=*range_end).step_by(self.nr_shards.get().into());
+        let valid_ports = make_valid_ports_iter();
+        let valid_ports_count = <_ as ExactSizeIterator>::len(&valid_ports);
 
-        let before_wrap = (starting_port..=*range_end).step_by(self.nr_shards.get().into());
-        let after_wrap = (first_valid_port..starting_port).step_by(self.nr_shards.get().into());
+        let pivot_element_index = rand::rng().random_range(0..valid_ports_count);
 
-        before_wrap.chain(after_wrap)
+        let before_wrap = valid_ports.skip(pivot_element_index);
+        let after_wrap = make_valid_ports_iter().take(pivot_element_index);
+
+        Either::Left(before_wrap.chain(after_wrap))
     }
 }
 
@@ -318,14 +358,14 @@ mod tests {
             I: Iterator<Item = u16>,
         {
             let max_port_num = port_range.0.end();
-            let min_port_num = port_range.0.start().div_ceil(nr_shards) * nr_shards;
+            let min_port_num = port_range.0.start();
 
             let sharder = Sharder::new(ShardCount::new(nr_shards).unwrap(), 12);
 
             // Test for each shard
             for shard in 0..nr_shards {
                 // Find lowest port for this shard
-                let mut lowest_port = min_port_num;
+                let mut lowest_port = *min_port_num;
                 while lowest_port % nr_shards != shard {
                     lowest_port += 1;
                 }
@@ -365,5 +405,28 @@ mod tests {
                 sharder.iter_source_ports_for_shard_from_range(shard, &port_range)
             });
         }
+    }
+
+    #[test]
+    fn test_iter_source_ports_for_shard_from_too_small_range_is_empty() {
+        let sharder = Sharder::new(ShardCount::new(4).unwrap(), 12);
+        let port_range = ShardAwarePortRange::new(49152..=49152).unwrap();
+
+        let ports: Vec<u16> = sharder
+            .iter_source_ports_for_shard_from_range(1, &port_range)
+            .collect();
+
+        assert!(ports.is_empty());
+    }
+
+    // draw_source_port_for_shard uses ephemeral port range.
+    // If we use a big shard number for which there is no entry in
+    // this ephemeral range, then the function should panic.
+    #[test]
+    #[should_panic]
+    fn draw_source_port_for_shard_panics_on_no_choice() {
+        let sharder = Sharder::new(ShardCount::new(40000).unwrap(), 12);
+
+        let _port: u16 = sharder.draw_source_port_for_shard(30000);
     }
 }
