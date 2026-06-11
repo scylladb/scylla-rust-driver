@@ -8,7 +8,7 @@ mod row {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::SerializeRow)]
-    /// #[scylla(crate = scylla_cql, skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, skip_name_checks)]
     /// struct TestRow {}
     /// ```
     fn _test_struct_serialization_name_check_skip_requires_enforce_order() {}
@@ -16,7 +16,7 @@ mod row {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::SerializeRow)]
-    /// #[scylla(crate = scylla_cql, skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, skip_name_checks)]
     /// struct TestRow {
     ///     #[scylla(rename = "b")]
     ///     a: i32,
@@ -27,7 +27,7 @@ mod row {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::SerializeRow)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestRow {
     ///     #[scylla(rename = "b")]
     ///     a: i32,
@@ -39,7 +39,7 @@ mod row {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::SerializeRow)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestRow {
     ///     #[scylla(rename = "c")]
     ///     a: i32,
@@ -52,7 +52,7 @@ mod row {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::DeserializeRow)]
-    /// #[scylla(crate = scylla_cql, skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, skip_name_checks)]
     /// struct TestRow {}
     /// ```
     fn _test_struct_deserialization_name_check_skip_requires_enforce_order() {}
@@ -60,7 +60,7 @@ mod row {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::DeserializeRow)]
-    /// #[scylla(crate = scylla_cql, skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, skip_name_checks)]
     /// struct TestRow {
     ///     #[scylla(rename = "b")]
     ///     a: i32,
@@ -71,7 +71,7 @@ mod row {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::DeserializeRow)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestRow {
     ///     #[scylla(rename = "b")]
     ///     a: i32,
@@ -83,7 +83,7 @@ mod row {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::DeserializeRow)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestRow {
     ///     #[scylla(rename = "c")]
     ///     a: i32,
@@ -98,7 +98,7 @@ mod value {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, skip_name_checks)]
     /// struct TestUdt {}
     /// ```
     fn _test_serialization_udt_bad_attributes_skip_name_check_requires_enforce_order() {}
@@ -106,7 +106,7 @@ mod value {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, flavor = "enforce_order", skip_name_checks)]
     /// struct TestUdt {
     ///     #[scylla(rename = "b")]
     ///     a: i32,
@@ -117,7 +117,7 @@ mod value {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestUdt {
     ///     #[scylla(rename = "b")]
     ///     a: i32,
@@ -129,7 +129,7 @@ mod value {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestUdt {
     ///     #[scylla(rename = "c")]
     ///     a: i32,
@@ -142,7 +142,7 @@ mod value {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, flavor = "enforce_order", skip_name_checks)]
     /// struct TestUdt {
     ///     a: i32,
     ///     #[scylla(allow_missing)]
@@ -156,7 +156,7 @@ mod value {
     /// ```
     ///
     /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, flavor = "enforce_order", skip_name_checks)]
     /// struct TestUdt {
     ///     a: i32,
     ///     #[scylla(allow_missing)]
@@ -171,7 +171,7 @@ mod value {
 
     /// ```
     /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestUdt {
     ///     a: i32,
     ///     #[scylla(allow_missing)]
@@ -183,7 +183,7 @@ mod value {
 
     /// ```
     /// #[derive(scylla_macros::SerializeValue)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestUdt {
     ///     a: i32,
     ///     #[scylla(default_when_null)]
@@ -196,7 +196,7 @@ mod value {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::DeserializeValue)]
-    /// #[scylla(crate = scylla_cql, skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, skip_name_checks)]
     /// struct TestUdt {}
     /// ```
     fn _test_deserialization_udt_bad_attributes_skip_name_check_requires_enforce_order() {}
@@ -204,7 +204,7 @@ mod value {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::DeserializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, flavor = "enforce_order", skip_name_checks)]
     /// struct TestUdt {
     ///     #[scylla(rename = "b")]
     ///     a: i32,
@@ -215,7 +215,7 @@ mod value {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::DeserializeValue)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestUdt {
     ///     #[scylla(rename = "b")]
     ///     a: i32,
@@ -227,7 +227,7 @@ mod value {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::DeserializeValue)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestUdt {
     ///     #[scylla(rename = "c")]
     ///     a: i32,
@@ -240,7 +240,7 @@ mod value {
     /// ```compile_fail
     ///
     /// #[derive(scylla_macros::DeserializeValue)]
-    /// #[scylla(crate = scylla_cql, flavor = "enforce_order", skip_name_checks)]
+    /// #[scylla(crate = scylla_cql_core, flavor = "enforce_order", skip_name_checks)]
     /// struct TestUdt {
     ///     a: i32,
     ///     #[scylla(allow_missing)]
@@ -254,7 +254,7 @@ mod value {
 
     /// ```
     /// #[derive(scylla_macros::DeserializeValue)]
-    /// #[scylla(crate = scylla_cql)]
+    /// #[scylla(crate = scylla_cql_core)]
     /// struct TestUdt {
     ///     a: i32,
     ///     #[scylla(allow_missing)]

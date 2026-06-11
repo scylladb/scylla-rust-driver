@@ -66,10 +66,6 @@ unstable-nodejs-rs = []
 ###########################
 # Main, public dependencies
 ###########################
-# Important: We use precise version of scylla-macros. This enables
-# us to make breaking changes in the doc(hidden) interfaces that are
-# used by macros.
-scylla-macros = { version = "=1.6.0", path = "../scylla-macros" }
 scylla-cql-core = { version = "1.6.0", path = "../scylla-cql-core" }
 # AsyncRead trait used in read_response_frame
 tokio = { version = "1.40", features = ["io-util"] }
