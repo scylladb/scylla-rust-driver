@@ -66,7 +66,7 @@ unstable-nodejs-rs = []
 ###########################
 # Main, public dependencies
 ###########################
-scylla-cql-core = { version = "1.6.0", path = "../scylla-cql-core" }
+scylla-cql-core = { version = "1.7.0", path = "../scylla-cql-core" }
 # AsyncRead trait used in read_response_frame
 tokio = { version = "1.40", features = ["io-util"] }
 # FrameSlice and other parts of public API
