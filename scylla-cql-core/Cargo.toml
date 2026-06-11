@@ -52,6 +52,10 @@ full-serialization = [
 
 
 [dependencies]
+# Important: We use precise version of scylla-macros. This enables
+# us to make breaking changes in the doc(hidden) interfaces that are
+# used by macros.
+scylla-macros = { version = "=1.6.0", path = "../scylla-macros" }
 # FrameSlice and other parts of public API (impl SerializeValue for Bytes, BufMut in vint_encode)
 bytes = "1.0.1"
 # CqlTimeuuid, ser/deser of CQL UUID

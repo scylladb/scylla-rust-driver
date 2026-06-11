@@ -160,17 +160,17 @@ pub mod ser {
         /// multiple columns are needed to consume the whole `a`.
         ///
         /// ```rust
-        /// # use scylla_cql::SerializeRow;
+        /// # use scylla_cql_core::SerializeRow;
         /// #
         /// #[derive(SerializeRow)]
-        /// # #[scylla(crate = scylla_cql)]
+        /// # #[scylla(crate = scylla_cql_core)]
         /// struct A { // When serializing `A` as a field of `B`...
         ///   f1: i32, // ...serialization of `f1` will return `FieldStatus::NotDone`...
         ///   f2: f64, // ...and serialization of `f2` - `FieldStatus::Done`.
         /// }
         ///
         /// #[derive(SerializeRow)]
-        /// # #[scylla(crate = scylla_cql)]
+        /// # #[scylla(crate = scylla_cql_core)]
         /// struct B {
         ///   #[scylla(flatten)]
         ///   a: A,
