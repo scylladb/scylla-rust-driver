@@ -859,11 +859,16 @@ impl PoolRefiller {
                     return;
                 }
 
+                let active_connection_count = self.active_connection_count();
+                // `ShardInfo::new` rejects out-of-range shard IDs; without shard info
+                // we use shard 0. `maybe_reshard` has sized `self.conns` accordingly.
+                let shard_conns = &mut self.conns[shard_id];
+
                 // Decide if the connection can be accepted, according to
                 // the pool filling strategy
                 let can_be_accepted = match self.pool_config.pool_size {
-                    PoolSize::PerHost(target) => self.active_connection_count() < target.get(),
-                    PoolSize::PerShard(target) => self.conns[shard_id].len() < target.get(),
+                    PoolSize::PerHost(target) => active_connection_count < target.get(),
+                    PoolSize::PerShard(target) => shard_conns.len() < target.get(),
                 };
 
                 if can_be_accepted {
@@ -877,13 +882,13 @@ impl PoolRefiller {
                         endpoint,
                         Arc::as_ptr(&conn),
                         shard_id,
-                        self.conns[shard_id].len() + 1,
-                        self.active_connection_count() + 1,
+                        shard_conns.len() + 1,
+                        active_connection_count + 1,
                     );
 
                     self.connection_errors
                         .push(wait_for_error(Arc::downgrade(&conn), error_receiver).boxed());
-                    self.conns[shard_id].push(conn);
+                    shard_conns.push(conn);
 
                     self.update_shared_conns(None);
                 } else if evt.requested_shard.is_some() {
