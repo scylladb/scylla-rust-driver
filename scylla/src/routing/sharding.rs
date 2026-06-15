@@ -83,12 +83,23 @@ impl std::str::FromStr for Token {
 }
 
 impl ShardInfo {
-    pub(crate) fn new(shard: u16, nr_shards: ShardCount, msb_ignore: u8) -> Self {
-        ShardInfo {
+    pub(crate) fn new(
+        shard: u16,
+        nr_shards: ShardCount,
+        msb_ignore: u8,
+    ) -> Result<Self, ShardingError> {
+        if shard >= nr_shards.get() {
+            return Err(ShardingError::ShardIdOutOfRange {
+                shard,
+                nr_shards: nr_shards.get(),
+            });
+        }
+
+        Ok(ShardInfo {
             shard,
             nr_shards,
             msb_ignore,
-        }
+        })
     }
 
     pub(crate) fn get_sharder(&self) -> Sharder {
@@ -245,6 +256,12 @@ pub(crate) enum ShardingError {
     #[error("Sharding info contains an invalid number of shards (0)")]
     ZeroShards,
 
+    /// A bug in Scylla. Shard IDs must be lower than the total number of shards.
+    #[error(
+        "Sharding info contains an invalid shard id ({shard}); it must be lower than the number of shards ({nr_shards})"
+    )]
+    ShardIdOutOfRange { shard: u16, nr_shards: u16 },
+
     /// A bug in Scylla. Failed to parse string to number.
     #[error("Failed to parse a sharding info parameter's value: {0}")]
     ParseIntError(#[from] std::num::ParseIntError),
@@ -286,7 +303,7 @@ impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
         let nr_shards = nr_shards_entry.parse::<u16>()?;
         let nr_shards = ShardCount::new(nr_shards).ok_or(ShardingError::ZeroShards)?;
         let msb_ignore = msb_ignore_entry.parse::<u8>()?;
-        Ok(ShardInfo::new(shard, nr_shards, msb_ignore))
+        ShardInfo::new(shard, nr_shards, msb_ignore)
     }
 }
 
@@ -309,8 +326,9 @@ mod tests {
     use crate::test_utils::setup_tracing;
 
     use super::Token;
-    use super::{ShardCount, Sharder};
-    use std::collections::HashSet;
+    use super::{MSB_IGNORE_ENTRY, NR_SHARDS_ENTRY, SHARD_ENTRY};
+    use super::{ShardCount, ShardInfo, Sharder, ShardingError};
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn test_shard_aware_port_range_constructor() {
@@ -346,6 +364,61 @@ mod tests {
             }),
             3
         );
+    }
+
+    fn sharding_options(shard: u16, nr_shards: u16) -> HashMap<String, Vec<String>> {
+        [
+            (SHARD_ENTRY.to_owned(), vec![shard.to_string()]),
+            (NR_SHARDS_ENTRY.to_owned(), vec![nr_shards.to_string()]),
+            (MSB_IGNORE_ENTRY.to_owned(), vec!["12".to_owned()]),
+        ]
+        .into()
+    }
+
+    #[test]
+    fn shard_info_rejects_out_of_range_shard_ids() {
+        setup_tracing();
+
+        for shard in [4, 5] {
+            let options = sharding_options(shard, 4);
+            let error = ShardInfo::try_from(&options).unwrap_err();
+
+            assert!(matches!(
+                error,
+                ShardingError::ShardIdOutOfRange {
+                    shard: rejected_shard,
+                    nr_shards: 4,
+                } if rejected_shard == shard
+            ));
+        }
+    }
+
+    #[test]
+    fn shard_info_constructor_rejects_out_of_range_shard_ids() {
+        setup_tracing();
+
+        let nr_shards = ShardCount::new(4).unwrap();
+        let error = ShardInfo::new(4, nr_shards, 12).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ShardingError::ShardIdOutOfRange {
+                shard: 4,
+                nr_shards: 4,
+            }
+        ));
+    }
+
+    #[test]
+    fn shard_info_accepts_highest_valid_shard_id() {
+        setup_tracing();
+
+        let options = sharding_options(3, 4);
+        let shard_info = ShardInfo::try_from(&options).unwrap();
+
+        assert_eq!(shard_info.shard, 3);
+        assert_eq!(shard_info.nr_shards, ShardCount::new(4).unwrap());
+        assert_eq!(shard_info.msb_ignore, 12);
     }
 
     #[test]
