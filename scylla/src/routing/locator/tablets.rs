@@ -473,6 +473,19 @@ impl TableTablets {
     }
 }
 
+/// Needed to query hashbrown::HashMap<TableSpec<'static>, TableTablets>
+/// with `TableSpec` of any lifetime.
+#[derive(Hash)]
+struct TableSpecQueryKey<'a> {
+    table_spec: &'a TableSpec<'a>,
+}
+
+impl<'key, 'query> hashbrown::Equivalent<TableSpec<'key>> for TableSpecQueryKey<'query> {
+    fn equivalent(&self, key: &TableSpec<'key>) -> bool {
+        self.table_spec == key
+    }
+}
+
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct TabletsInfo {
@@ -502,19 +515,7 @@ impl TabletsInfo {
         &'a self,
         table_spec: &'b TableSpec<'b>,
     ) -> Option<&'a TableTablets> {
-        #[derive(Hash)]
-        struct TableSpecQueryKey<'a> {
-            table_spec: &'a TableSpec<'a>,
-        }
-
-        impl<'key, 'query> hashbrown::Equivalent<TableSpec<'key>> for TableSpecQueryKey<'query> {
-            fn equivalent(&self, key: &TableSpec<'key>) -> bool {
-                self.table_spec == key
-            }
-        }
-
         let query_key = TableSpecQueryKey { table_spec };
-
         self.tablets.get(&query_key)
     }
 
