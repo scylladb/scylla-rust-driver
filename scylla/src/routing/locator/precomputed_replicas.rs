@@ -236,6 +236,7 @@ mod tests {
                     replication_factor: 2,
                 },
                 durable_writes: true,
+                tablet_based: false,
                 tables: HashMap::new(),
                 views: HashMap::new(),
                 user_defined_types: HashMap::new(),
