@@ -61,7 +61,7 @@ impl ControlConnection {
 
     /// Returns true iff the target node is a ScyllaDB node (and not a, e.g., Cassandra node).
     pub(super) fn is_to_scylladb(&self) -> bool {
-        self.conn.get_shard_info().is_some()
+        self.conn.is_to_scylladb()
     }
 
     /// Appends the custom server-side timeout to the statement string, if such custom timeout

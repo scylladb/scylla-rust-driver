@@ -29,6 +29,9 @@ const SCYLLA_USE_METADATA_ID_KEY: &str = "SCYLLA_USE_METADATA_ID";
 ///   e.g. whether to expect a rate limit error or how to handle LWT operations;
 /// - client also adds the features it supports to the `STARTUP` frame and sends it to
 ///   the server, which finishes the extensions negotiation process.
+//
+// FOR CONTRIBUTORS:
+// When adding new features, remember to adjust `is_to_scylladb` method on `Connection`.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ProtocolFeatures {
