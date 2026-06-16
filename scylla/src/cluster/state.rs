@@ -247,14 +247,6 @@ impl ClusterState {
                 removed_nodes
             };
 
-            let table_predicate = |spec: &TableSpec| {
-                if let Some(ks) = keyspaces.get(spec.ks_name()) {
-                    ks.tables.contains_key(spec.table_name())
-                } else {
-                    false
-                }
-            };
-
             let recreated_nodes = {
                 let mut recreated_nodes = HashMap::new();
                 for (old_peer_id, old_peer_node) in known_nodes {
@@ -269,7 +261,7 @@ impl ClusterState {
             };
 
             tablets.perform_maintenance(
-                &table_predicate,
+                &keyspaces,
                 &removed_nodes,
                 &new_known_nodes,
                 &recreated_nodes,
