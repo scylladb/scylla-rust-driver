@@ -269,7 +269,10 @@ impl ClusterState {
         }
 
         let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
-            let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
+            let keyspace_strategies = keyspaces
+                .values()
+                .filter(|ks| !ks.tablet_based)
+                .map(|ks| &ks.strategy);
             let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies, tablets);
             (locator, keyspaces)
         })
