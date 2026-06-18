@@ -24,7 +24,7 @@ pub struct UntranslatedPeer<'a> {
     pub(crate) rack: Option<&'a str>,
 }
 
-impl UntranslatedPeer<'_> {
+impl<'a> UntranslatedPeer<'a> {
     /// The unique identifier of the node in the cluster.
     #[inline]
     pub fn host_id(&self) -> Uuid {
@@ -48,6 +48,39 @@ impl UntranslatedPeer<'_> {
     #[inline]
     pub fn rack(&self) -> Option<&str> {
         self.rack
+    }
+
+    /// Creates a new `UntranslatedPeer` from its fields.
+    ///
+    /// This constructor is intended to be used only by the python-rs driver.
+    ///
+    /// In the python-rs driver we need to expose built-in `AddressTranslator`
+    /// implementations to Python users. This means that their `translate`
+    /// methods must also be callable from Python.
+    ///
+    /// When Rust calls a Python-provided `AddressTranslator`, we convert the
+    /// Rust `UntranslatedPeer` into the corresponding Python wrapper and pass it
+    /// to the Python `translate` method. However, a Python user may also call
+    /// `translate` on one of our exposed built-in translators and pass that same
+    /// Python wrapper back to us. In that case, to call the internal Rust
+    /// implementation of the `AddressTranslator` trait, we need to reconstruct
+    /// the Rust `UntranslatedPeer` from the Python wrapper.
+    ///
+    /// Since `UntranslatedPeer` contains a lifetime, it cannot be stored directly
+    /// inside the Python wrapper, so the wrapper stores its fields instead and
+    /// uses this constructor to rebuild the Rust value when needed.
+    pub fn from_fields(
+        host_id: Uuid,
+        untranslated_address: SocketAddr,
+        datacenter: Option<&'a str>,
+        rack: Option<&'a str>,
+    ) -> Self {
+        UntranslatedPeer {
+            host_id,
+            untranslated_address,
+            datacenter,
+            rack,
+        }
     }
 
     /// Creates a new untranslated peer. Intended to be used only in nodejs-rs driver only.
