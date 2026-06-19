@@ -111,7 +111,7 @@ where
 
         let macro_internal = self.attrs.macro_internal_path();
         let struct_name = &self.name;
-        let predicates = generate_lifetime_constraints_for_impl(
+        let predicates = generate_constraints_for_impl(
             &self.generics,
             self.constraint_trait.clone(),
             frame_lifetime,
@@ -143,7 +143,7 @@ fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
     })
 }
 
-/// Helps introduce a lifetime to an `impl` definition that constrains
+/// Helps introduce constraints to an `impl` definition that constrains
 /// other lifetimes and types.
 ///
 /// The original use case is DeserializeValue and DeserializeRow. Both of those traits
@@ -152,7 +152,10 @@ fn generate_default_constraints<Field: DeserializeCommonFieldAttrs>(
 /// lifetime 'frame, using metadata that has lifetime 'metadata, similarly for
 /// DeserializeRow. In impls for those traits, two additional lifetimes must be
 /// introduced, and the frame lifetime must be properly constrained.
-fn generate_lifetime_constraints_for_impl<'a>(
+///
+/// The other use case is generics: if struct has type parameter T, then without any
+/// additional constraints Rust won't be able to verify the impl.
+fn generate_constraints_for_impl<'a>(
     generics: &'a syn::Generics,
     trait_full_name: syn::Path,
     frame_lifetime: &'a syn::Lifetime,
