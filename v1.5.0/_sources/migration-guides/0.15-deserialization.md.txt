@@ -1,0 +1,182 @@
+# Adjusting code to changes in deserialization API introduced in 0.15
+
+In 0.15, a new deserialization API has been introduced. The new API improves type safety and performance of the old one, so it is highly recommended to switch to it. However, deserialization is an area of the API that users frequently interact with: deserialization traits appear in generic code and custom implementations have been written.
+In order to make migration easier, the driver 0.15 still offered the old API. Since 1.0 the old API (and thus the migration utilities too) have been fully removed.
+
+## Introduction
+
+### Old traits
+
+The legacy API worked by deserializing rows in the query response to a sequence of `Row`s. The `Row` is just a `Vec<Option<CqlValue>>`, where `CqlValue` is an enum that is able to represent any CQL value.
+
+The user could request this type-erased representation to be converted into something useful. There were two traits that powered this:
+
+__`FromRow`__
+
+```rust,ignore
+pub trait FromRow: Sized {
+    fn from_row(row: Row) -> Result<Self, FromRowError>;
+}
+```
+
+__`FromCqlVal`__
+
+```rust,ignore
+// The `T` parameter is supposed to be either `CqlValue` or `Option<CqlValue>`
+pub trait FromCqlVal<T>: Sized {
+    fn from_cql(cql_val: T) -> Result<Self, FromCqlValError>;
+}
+```
+
+These traits were implemented for some common types:
+
+- `FromRow` was implemented for tuples up to 16 elements,
+- `FromCqlVal` was implemented for a bunch of types, and each CQL type could be converted to one of them.
+
+While it was possible to implement those manually, the driver provided procedural macros for automatic derivation in some cases:
+
+- `FromRow` - implemented `FromRow` for a struct.
+- `FromUserType` - generated an implementation of `FromCqlVal` for the struct, trying to parse the CQL value as a UDT.
+
+Note: the macros above had a default behavior that is different than what `FromRow` and `FromUserType` do.
+
+### New traits
+
+The new API introduces two analogous traits that, instead of consuming pre-parsed `Vec<Option<CqlValue>>`, are given raw, serialized data with full information about its type. This leads to better performance and allows for better type safety.
+
+The new traits are:
+
+__`DeserializeRow<'frame, 'metadata>`__
+
+```rust
+pub trait DeserializeRow<'frame, 'metadata>
+where
+    Self: Sized,
+{
+    fn type_check(specs: &[ColumnSpec]) -> Result<(), TypeCheckError>;
+    fn deserialize(row: ColumnIterator<'frame, 'metadata>) -> Result<Self, DeserializationError>;
+}
+```
+
+__`DeserializeValue<'frame, 'metadata>`__
+
+```rust
+pub trait DeserializeValue<'frame, 'metadata>
+where
+    Self: Sized,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError>;
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError>;
+}
+```
+
+The above traits have been implemented for the same set of types as `FromRow` and `FromCqlVal`, respectively. Notably, `DeserializeRow` is implemented for `Row`, and `DeserializeValue` is implemented for `CqlValue`.
+
+There are also `DeserializeRow` and `DeserializeValue` derive macros, analogous to `FromRow` and `FromUserType`, respectively - but with slightly different defaults (explained later in this doc page).
+
+## Updating the code to use the new API
+
+Some of the core types have been updated to use the new traits. Updating the code to use the new API should be straightforward.
+
+### Basic queries
+
+Sending queries with the single page API should work similarly as before. The `Session::query_{unpaged,single_page}`, `Session::execute_{unpaged,single_page}` and `Session::batch` functions have the same interface as before, the only exception being that they return a new, updated `QueryResult`.
+
+Consuming rows from a result will require only minimal changes if you are using helper methods of the `QueryResult`. Now, there is no distinction between "typed" and "non-typed" methods; all methods that return rows need to have the type specified. For example, previously there used to be both `rows(self)` and `rows_typed<RowT: FromRow>(self)`, now there is only a single `rows<R: DeserializeRow<'frame, 'metadata>>(&self)`. Another thing worth mentioning is that the returned iterator now _borrows_ from the `QueryResult` instead of consuming it.
+
+Note that the `QueryResult::rows` field is not available anymore. If you used to access it directly, you need to change your code to use the helper methods instead.
+
+Before:
+
+```rust,ignore
+let iter = session
+    .query_unpaged("SELECT name, age FROM my_keyspace.people", &[])
+    .await?
+    .rows_typed::<(String, i32)>()?;
+for row in iter {
+    let (name, age) = row?;
+    println!("{} has age {}", name, age);
+}
+```
+
+After:
+
+```rust
+// 1. Note that the result must be converted to a rows result, and only then
+// an iterator created.
+let result = session
+    .query_unpaged("SELECT name, age FROM my_keyspace.people", &[])
+    .await?
+    .into_rows_result()?;
+
+// 2. Note that `rows` is used here, not `rows_typed`.
+// 3. Note that the new deserialization framework support deserializing types
+//    that borrow directly from the result frame; let's use them to avoid
+//    needless allocations.
+for row in result.rows::<(&str, i32)>()? {
+    let (name, age) = row?;
+    println!("{} has age {}", name, age);
+}
+```
+
+### Iterator queries
+
+The `Session::query_iter` and `Session::execute_iter` have been adjusted, too. They now return a `QueryPager` - an intermediate object which needs to be converted into `TypedRowStream` first before being actually iterated over.
+
+Before:
+
+```rust,ignore
+let mut rows_stream = session
+    .query_iter("SELECT name, age FROM my_keyspace.people", &[])
+    .await?
+    .into_typed::<(String, i32)>();
+
+while let Some(next_row_res) = rows_stream.next().await {
+    let (a, b): (String, i32) = next_row_res?;
+    println!("a, b: {}, {}", a, b);
+}
+```
+
+After:
+
+```rust
+let mut rows_stream = session
+    .query_iter("SELECT name, age FROM my_keyspace.people", &[])
+    .await?
+    // The type of the TypedRowStream is inferred from further use of it.
+    // Alternatively, it can be specified using turbofish syntax:
+    // .rows_stream::<(String, i32)>()?;
+    .rows_stream()?;
+
+while let Some(next_row_res) = rows_stream.next().await {
+    let (a, b): (String, i32) = next_row_res?;
+    println!("a, b: {}, {}", a, b);
+}
+```
+
+Currently, `QueryPager`/`TypedRowStream` do not support deserialization of borrowed types due to limitations of Rust with regard to lending streams. If you want to deserialize borrowed types not to incur additional allocations, use manual paging (`{query/execute}_single_page`) API.
+
+### Procedural macros
+
+As mentioned in the Introduction section, the driver provides new procedural macros for the `DeserializeRow` and `DeserializeValue` traits that are meant to replace `FromRow` and `FromUserType`, respectively. The new macros are designed to be slightly more type-safe by matching column/UDT field names to rust field names dynamically. This is a different behavior to what the old macros used to do, but the new macros can be configured with `#[attributes]` to simulate the old behavior.
+
+__`FromRow` vs. `DeserializeRow`__
+
+The impl generated by `FromRow` expected columns to be in the same order as the struct fields. The `FromRow` trait did not have information about column names, so it could not match them with the struct field names. You can use `enforce_order` and `skip_name_checks` attributes to achieve such behavior via `DeserializeRow` trait.
+
+__`FromUserType` vs. `DeserializeValue`__
+
+The impl generated by `FromUserType` expected UDT fields to be in the same order as the struct fields. Field names should be the same both in the UDT and in the struct. You can use the `enforce_order` attribute to achieve such behavior via the `DeserializeValue` trait.
+
+### Adjusting custom impls of deserialization traits
+
+If you have a custom type with a hand-written `impl FromRow` or `impl FromCqlVal`, the best thing to do is to just write a new impl for `DeserializeRow` or `DeserializeValue` manually.
+
+## Accessing the old API
+
+In 0.15 version of the driver it was possible to access the old API, and to mix usages of the old and new APIs in order
+to allow gradual migration.
+Since 1.0 this is no longer the case. The application must migrate to the new API in order to use driver 1.0.
