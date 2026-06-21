@@ -30,6 +30,113 @@ use crate::utils::{
     test_with_3_node_cluster, unique_keyspace_name,
 };
 
+/// Basic pager functionality test
+#[tokio::test]
+async fn test_pager_basic() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE IF NOT EXISTS {ks} WITH \
+             REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+        ))
+        .await
+        .unwrap();
+    session
+        .ddl(format!(
+            "CREATE TABLE {ks}.t (pk int, ck int, PRIMARY KEY (pk, ck))"
+        ))
+        .await
+        .unwrap();
+
+    test_pager_single_page(&ks, &session).await;
+    test_pager_multi_page(&ks, &session).await;
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+/// Verifies that a single-page result (all rows fit in one page) is returned
+/// correctly.
+async fn test_pager_single_page(ks: &str, session: &Session) {
+    for ck in 0..3 {
+        session
+            .query_unpaged(format!("INSERT INTO {ks}.t (pk, ck) VALUES (1, ?)"), (ck,))
+            .await
+            .unwrap();
+    }
+
+    let mut prepared = session
+        .prepare(format!("SELECT ck FROM {ks}.t WHERE pk = ?"))
+        .await
+        .unwrap();
+    // page_size larger than row count — everything fits in one page.
+    prepared.set_page_size(10);
+
+    let mut row_stream = session
+        .execute_iter(prepared, (1,))
+        .await
+        .unwrap()
+        .rows_stream::<(i32,)>()
+        .unwrap();
+
+    let mut cks = Vec::new();
+    while let Some(row) = row_stream.next().await {
+        let (ck,) = row.unwrap();
+        cks.push(ck);
+    }
+
+    assert_eq!(
+        cks,
+        vec![0, 1, 2],
+        "Expected all 3 rows in clustering order"
+    );
+}
+
+/// Verifies that multi-page paging returns all rows exactly once, in the
+/// correct order. Each row is fetched on a separate page (page_size=1).
+///
+/// This is also a regression test for a bug where I did not update the paging
+/// state after fetching the first page. The consequence was that the worker re-fetched
+/// the first page, causing the first row to appear twice and the total row count to be N+1
+/// instead of N.
+async fn test_pager_multi_page(ks: &str, session: &Session) {
+    let n = 10;
+    for ck in 0..n {
+        session
+            .query_unpaged(format!("INSERT INTO {ks}.t (pk, ck) VALUES (1, ?)"), (ck,))
+            .await
+            .unwrap();
+    }
+
+    let mut prepared = session
+        .prepare(format!("SELECT ck FROM {ks}.t WHERE pk = ?"))
+        .await
+        .unwrap();
+    // page_size=1 forces one row per page: 1 fetched eagerly + 9 by the worker.
+    prepared.set_page_size(1);
+
+    let mut row_stream = session
+        .execute_iter(prepared, (1,))
+        .await
+        .unwrap()
+        .rows_stream::<(i32,)>()
+        .unwrap();
+
+    let mut cks = Vec::new();
+    while let Some(row) = row_stream.next().await {
+        let (ck,) = row.unwrap();
+        cks.push(ck);
+    }
+
+    let expected: Vec<i32> = (0..n).collect();
+    assert_eq!(
+        cks, expected,
+        "Expected exactly {n} rows in clustering order with no duplicates"
+    );
+}
+
 // Reproduces the problem with execute_iter mentioned in #608.
 #[tokio::test]
 async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
