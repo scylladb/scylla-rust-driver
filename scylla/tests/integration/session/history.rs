@@ -211,7 +211,7 @@ async fn failed_query_history() {
 }
 
 #[tokio::test]
-async fn iterator_query_history() {
+async fn pager_query_history() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
@@ -232,18 +232,18 @@ async fn iterator_query_history() {
             .unwrap();
     }
 
-    let mut iter_query: Statement = Statement::new("SELECT * FROM t");
-    iter_query.set_page_size(8);
+    let mut paged_query: Statement = Statement::new("SELECT * FROM t");
+    paged_query.set_page_size(8);
     let history_collector = Arc::new(HistoryCollector::new());
-    iter_query.set_history_listener(history_collector.clone());
+    paged_query.set_history_listener(history_collector.clone());
 
-    let mut rows_iterator = session
-        .query_iter(iter_query, ())
+    let mut rows_stream = session
+        .query_iter(paged_query, ())
         .await
         .unwrap()
         .rows_stream::<Row>()
         .unwrap();
-    while let Some(_row) = rows_iterator.next().await {
+    while let Some(_row) = rows_stream.next().await {
         // Receive rows...
     }
 
@@ -294,7 +294,10 @@ async fn iterator_query_history() {
         set_one_db_error_message(set_one_node(set_one_time(history)))
     );
 
-    assert!(displayed_str.starts_with(displayed_prefix),);
+    assert!(
+        displayed_str.starts_with(displayed_prefix),
+        "Expected history prefix:\n{displayed_prefix}\n\ngot history:\n {displayed_str}"
+    );
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
