@@ -63,7 +63,7 @@ uuid = "1.0"
 # Easier error type creation (ValueOverflow).
 thiserror = "2.0.6"
 # Used by safe_format utility (Display for CqlValue).
-itertools = "0.14.0"
+itertools = "0.15.0"
 # Not optional, because it is also used by Display impl of CqlValue.
 chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, features = [
     "alloc",

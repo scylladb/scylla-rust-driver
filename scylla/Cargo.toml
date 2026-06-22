@@ -138,7 +138,7 @@ dashmap = "6.0"
 # so such workaround is required.
 socket2 = { version = "0.5.3", features = ["all"] }
 # Useful operations on iterators.
-itertools = "0.14.0"
+itertools = "0.15.0"
 # Used by DefaultPolicy to have reproducible randomness.
 rand_pcg = "0.9.0"
 # Used in execution profiles and ClusterState.
