@@ -42,7 +42,7 @@ use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
 use crate::routing::NodeLocationPreference;
-use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
+use crate::statement::prepared::{PartitionKey, PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 use tracing::{Instrument, error, trace, trace_span, warn};
 use uuid::Uuid;
@@ -293,13 +293,8 @@ impl PageSender {
 
 // PagerWorker works in the background to fetch pages
 // QueryPager receives them through a channel
-struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
-    // Closure used to perform a single page query
-    // AsyncFn(Arc<Connection>, Option<Arc<[u8]>>) -> Result<QueryResponse, RequestAttemptError>
-    page_query: QueryFunc,
-
+struct PagerWorker<SpanCreatorFunc> {
     load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
-    routing_info: RoutingInfo<'a>,
     query_is_idempotent: bool,
     query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,
@@ -316,20 +311,24 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     span_creator: SpanCreatorFunc,
 }
 
-impl<QueryFunc, QueryFut, SpanCreator> PagerWorker<'_, QueryFunc, SpanCreator>
+impl<SpanCreator> PagerWorker<SpanCreator>
 where
-    QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
-    QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
-    SpanCreator: Fn() -> RequestSpan,
+    SpanCreator: Fn(&Option<PartitionKey<'_>>) -> RequestSpan,
 {
     // Contract: this function MUST send at least one item through first_page_sender.
-    async fn work(
+    async fn work<QueryFunc, QueryFut>(
         mut self,
         cluster_state: Arc<ClusterState>,
         first_page_sender: ProvingSender<ResultFirstPage>,
-    ) -> FirstPageSendAttemptedProof {
+        page_query: QueryFunc,
+        routing_info: RoutingInfo<'_>,
+        partition_key: Option<PartitionKey<'_>>,
+    ) -> FirstPageSendAttemptedProof
+    where
+        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
+        QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
+    {
         let load_balancer = Arc::clone(&self.load_balancing_policy);
-        let routing_info = self.routing_info.clone();
         let query_plan =
             load_balancing::Plan::new(load_balancer.as_ref(), &routing_info, &cluster_state);
 
@@ -380,11 +379,14 @@ where
                     PageSender,
                 ) = self
                     .query_pages(
+                        &routing_info,
+                        &partition_key,
                         &connection,
                         current_consistency,
                         node,
                         coordinator.clone(),
                         sender,
+                        &page_query,
                     )
                     .instrument(span.clone())
                     .await;
@@ -483,27 +485,37 @@ where
     // Contract: this function must either:
     // - Return an error
     // - Return Ok but have attempted to send a page via self.sender
-    async fn query_pages(
+    #[expect(clippy::too_many_arguments)]
+    async fn query_pages<QueryFunc, QueryFut>(
         &mut self,
+        routing_info: &RoutingInfo<'_>,
+        partition_key: &Option<PartitionKey<'_>>,
         connection: &Arc<Connection>,
         consistency: Consistency,
         node: NodeRef<'_>,
         coordinator: Coordinator,
         mut sender: PageSender,
+        page_query: &QueryFunc,
     ) -> (
         Result<Result<FirstPageSendAttemptedProof, RequestAttemptError>, RequestTimeoutError>,
         PageSender,
-    ) {
+    )
+    where
+        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
+        QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
+    {
         loop {
-            let request_span = (self.span_creator)();
+            let request_span = (self.span_creator)(partition_key);
             let (res, new_sender) = self
                 .query_one_page(
+                    routing_info,
                     connection,
                     consistency,
                     node,
                     coordinator.clone(),
                     &request_span,
                     sender,
+                    page_query,
                 )
                 .instrument(request_span.span().clone())
                 .await;
@@ -530,23 +542,30 @@ where
         }
     }
 
-    async fn query_one_page(
+    #[expect(clippy::too_many_arguments)]
+    async fn query_one_page<QueryFunc, QueryFut>(
         &mut self,
+        routing_info: &RoutingInfo<'_>,
         connection: &Arc<Connection>,
         consistency: Consistency,
         node: NodeRef<'_>,
         coordinator: Coordinator,
         request_span: &RequestSpan,
         mut sender: PageSender,
+        page_query: &QueryFunc,
     ) -> (
         Result<
             Result<ControlFlow<FirstPageSendAttemptedProof, ()>, RequestAttemptError>,
             RequestTimeoutError,
         >,
         PageSender,
-    ) {
+    )
+    where
+        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
+        QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
+    {
         let (elapsed, page_result) = match self
-            .fetch_one_page(connection, consistency, request_span)
+            .fetch_one_page(connection, consistency, request_span, page_query)
             .await
         {
             Err(timeout_err) => return (Err(timeout_err), sender),
@@ -557,6 +576,7 @@ where
             PageSender::FirstPage(first_page_sender) => {
                 let res = self
                     .process_first_page(
+                        routing_info,
                         node,
                         coordinator,
                         request_span,
@@ -580,6 +600,7 @@ where
             PageSender::NextPages(ref proof, ref next_pages_sender) => {
                 let res = self
                     .process_next_page(
+                        routing_info,
                         node,
                         coordinator,
                         request_span,
@@ -594,12 +615,16 @@ where
         (Ok(res), sender)
     }
 
-    async fn fetch_one_page(
+    async fn fetch_one_page<QueryFunc, QueryFut>(
         &mut self,
         connection: &Arc<Connection>,
         consistency: Consistency,
         request_span: &RequestSpan,
+        page_query: &QueryFunc,
     ) -> Result<(Duration, Result<NonErrorQueryResponse, RequestAttemptError>), RequestTimeoutError>
+    where
+        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
+        QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
@@ -612,7 +637,7 @@ where
         self.log_attempt_start(connect_address);
 
         let runner = async {
-            (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
+            page_query(connection.clone(), consistency, self.paging_state.clone())
                 .await
                 .and_then(QueryResponse::into_non_error_query_response)
         };
@@ -636,8 +661,10 @@ where
         Ok((elapsed, query_response))
     }
 
+    #[expect(clippy::too_many_arguments)]
     async fn process_first_page(
         &mut self,
+        routing_info: &RoutingInfo<'_>,
         node: NodeRef<'_>,
         coordinator: Coordinator,
         request_span: &RequestSpan,
@@ -657,7 +684,7 @@ where
             self.log_attempt_success();
             self.log_request_success();
             self.load_balancing_policy
-                .on_request_success(&self.routing_info, elapsed, node);
+                .on_request_success(routing_info, elapsed, node);
         };
 
         match query_response {
@@ -705,12 +732,8 @@ where
             }
             Err(err) => {
                 self.metrics.inc_failed_paged_queries();
-                self.load_balancing_policy.on_request_failure(
-                    &self.routing_info,
-                    elapsed,
-                    node,
-                    &err,
-                );
+                self.load_balancing_policy
+                    .on_request_failure(routing_info, elapsed, node, &err);
                 Err((err, sender))
             }
             Ok(NonErrorQueryResponse {
@@ -784,19 +807,17 @@ where
                 self.metrics.inc_failed_paged_queries();
                 let err =
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
-                self.load_balancing_policy.on_request_failure(
-                    &self.routing_info,
-                    elapsed,
-                    node,
-                    &err,
-                );
+                self.load_balancing_policy
+                    .on_request_failure(routing_info, elapsed, node, &err);
                 Err((err, sender))
             }
         }
     }
 
+    #[expect(clippy::too_many_arguments)]
     async fn process_next_page(
         &mut self,
+        routing_info: &RoutingInfo<'_>,
         node: NodeRef<'_>,
         coordinator: Coordinator,
         request_span: &RequestSpan,
@@ -817,7 +838,7 @@ where
                 self.log_attempt_success();
                 self.log_request_success();
                 self.load_balancing_policy
-                    .on_request_success(&self.routing_info, elapsed, node);
+                    .on_request_success(routing_info, elapsed, node);
 
                 request_span.record_raw_rows_fields(&rows);
 
@@ -856,22 +877,14 @@ where
                 self.metrics.inc_failed_paged_queries();
                 let err =
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
-                self.load_balancing_policy.on_request_failure(
-                    &self.routing_info,
-                    elapsed,
-                    node,
-                    &err,
-                );
+                self.load_balancing_policy
+                    .on_request_failure(routing_info, elapsed, node, &err);
                 Err(err)
             }
             Err(err) => {
                 self.metrics.inc_failed_paged_queries();
-                self.load_balancing_policy.on_request_failure(
-                    &self.routing_info,
-                    elapsed,
-                    node,
-                    &err,
-                );
+                self.load_balancing_policy
+                    .on_request_failure(routing_info, elapsed, node, &err);
                 Err(err)
             }
         }
@@ -1273,17 +1286,15 @@ If you are using this API, you are probably doing something wrong."
                 node_location_preference: &node_location_preference,
             };
 
-            let statement_ref = &statement;
+            let statement_contents = &statement.contents;
 
-            let span_creator = move || {
-                let span = RequestSpan::new_query(&statement_ref.contents);
+            let span_creator = move |_partition_key: &Option<PartitionKey<'_>>| {
+                let span = RequestSpan::new_query(statement_contents);
                 span.record_request_size(0);
                 span
             };
 
             let worker = PagerWorker {
-                page_query,
-                routing_info,
                 query_is_idempotent: statement.config.is_idempotent,
                 query_consistency: consistency,
                 load_balancing_policy,
@@ -1298,7 +1309,9 @@ If you are using this API, you are probably doing something wrong."
                 span_creator,
             };
 
-            worker.work(cluster_state, sender.into()).await
+            worker
+                .work(cluster_state, sender.into(), page_query, routing_info, None)
+                .await
         };
 
         Self::new_from_worker_future(worker_task, receiver, Some(session))
@@ -1403,7 +1416,7 @@ If you are using this API, you are probably doing something wrong."
                     None
                 };
 
-            let span_creator = move || {
+            let span_creator = move |partition_key: &Option<PartitionKey<'_>>| {
                 let span = RequestSpan::new_prepared(
                     partition_key.as_ref().map(|pk| pk.iter()),
                     token,
@@ -1416,8 +1429,6 @@ If you are using this API, you are probably doing something wrong."
             };
 
             let worker = PagerWorker {
-                page_query,
-                routing_info,
                 query_is_idempotent: config.prepared.config.is_idempotent,
                 query_consistency: consistency,
                 load_balancing_policy,
@@ -1437,7 +1448,15 @@ If you are using this API, you are probably doing something wrong."
                 span_creator,
             };
 
-            worker.work(config.cluster_state, sender.into()).await
+            worker
+                .work(
+                    config.cluster_state,
+                    sender.into(),
+                    page_query,
+                    routing_info,
+                    partition_key,
+                )
+                .await
         };
 
         Self::new_from_worker_future(worker_task, receiver, Some(session))
