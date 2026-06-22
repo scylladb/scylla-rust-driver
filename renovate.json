@@ -12,6 +12,7 @@
             "minimumReleaseAge": "90 days"
         },
         {
+            "description": "Skip wait period for scylladb actions. This is generally a no-op, because minimumReleaseAge doesn't work for pure hashes on branches - it needs releases. Keeping it here in case this changes in the future.",
             "matchManagers": [
                 "github-actions"
             ],
@@ -19,7 +20,6 @@
                 "/^scylladb-actions\\//",
                 "/^scylladb\\//"
             ],
-            "pinDigests": true,
             "minimumReleaseAge": null
         },
         {
