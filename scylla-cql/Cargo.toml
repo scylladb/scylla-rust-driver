@@ -82,7 +82,7 @@ uuid = "1.0"
 chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, features = [
     "alloc",
 ] }
-secrecy-08 = { package = "secrecy", version = "0.8", optional = true }
+secrecy-08 = { package = "secrecy", version = "0.10", optional = true }
 secrecy-10 = { package = "secrecy", version = "0.10", optional = true }
 num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
 num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
