@@ -14,7 +14,7 @@ use crate::deserialize::result::RawRowLendingIterator;
 use crate::deserialize::row::{ColumnIterator, DeserializeRow};
 use crate::deserialize::{DeserializationError, TypeCheckError};
 use crate::frame::frame_errors::ResultMetadataAndRowsCountParseError;
-use crate::frame::request::query::PagingState;
+use crate::frame::request::query::{PagingState, PagingStateResponse};
 use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
 use crate::frame::response::result::{DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace};
 use crate::frame::types::{Consistency, SerialConsistency};
@@ -574,28 +574,39 @@ where
 
         let res = match sender {
             PageSender::FirstPage(first_page_sender) => {
-                let res = self
+                let result = self
                     .process_first_page(
                         routing_info,
                         node,
                         coordinator,
                         request_span,
-                        first_page_sender,
                         elapsed,
                         page_result,
                     )
                     .await;
-                let (res, new_sender) = match res {
-                    Ok((cf, proof, next_pages_sender)) => {
-                        let new_sender = PageSender::NextPages(proof.clone(), next_pages_sender);
-                        (Ok(cf.map_break(|()| proof)), new_sender)
+                match result {
+                    Ok((first_page, paging_state_response)) => {
+                        let (next_pages_sender, next_pages_receiver) = mpsc::channel(1);
+                        let (proof, res) =
+                            first_page_sender.send(Ok((first_page, next_pages_receiver)));
+                        sender = PageSender::NextPages(proof.clone(), next_pages_sender);
+                        if res.is_err() {
+                            // channel was closed, QueryPager was dropped - should shutdown
+                            Ok(ControlFlow::Break(proof))
+                        } else {
+                            match paging_state_response {
+                                PagingStateResponse::NoMorePages => Ok(ControlFlow::Break(proof)),
+                                PagingStateResponse::HasMorePages { .. } => {
+                                    Ok(ControlFlow::Continue(()))
+                                }
+                            }
+                        }
                     }
-                    Err((attempt_err, proving_sender)) => {
-                        (Err(attempt_err), PageSender::FirstPage(proving_sender))
+                    Err(attempt_err) => {
+                        sender = PageSender::FirstPage(first_page_sender);
+                        Err(attempt_err)
                     }
-                };
-                sender = new_sender;
-                res
+                }
             }
             PageSender::NextPages(ref proof, ref next_pages_sender) => {
                 let res = self
@@ -661,24 +672,15 @@ where
         Ok((elapsed, query_response))
     }
 
-    #[expect(clippy::too_many_arguments)]
     async fn process_first_page(
         &mut self,
         routing_info: &RoutingInfo<'_>,
         node: NodeRef<'_>,
         coordinator: Coordinator,
         request_span: &RequestSpan,
-        sender: ProvingSender<ResultFirstPage>,
         elapsed: Duration,
         query_response: Result<NonErrorQueryResponse, RequestAttemptError>,
-    ) -> Result<
-        (
-            ControlFlow<(), ()>,
-            FirstPageSendAttemptedProof,
-            mpsc::Sender<ResultNextPage>,
-        ),
-        (RequestAttemptError, ProvingSender<ResultFirstPage>),
-    > {
+    ) -> Result<(FirstReceivedPage, PagingStateResponse), RequestAttemptError> {
         let mut log_success = || {
             let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
             self.log_attempt_success();
@@ -699,42 +701,29 @@ where
                 log_success();
                 request_span.record_raw_rows_fields(&rows);
 
-                let received_page = FirstReceivedPage {
-                    content: FirstPageContent::Rows { rows },
-                    tracing_id,
-                    request_coordinator: Some(coordinator),
-                };
-
-                let (next_pages_sender, next_pages_receiver) = mpsc::channel(1);
-
-                // Send the first page to QueryPager
-                let (proof, res) = sender.send(Ok((received_page, next_pages_receiver)));
-                if res.is_err() {
-                    // channel was closed, QueryPager was dropped - should shutdown
-                    return Ok((ControlFlow::Break(()), proof, next_pages_sender));
-                }
-
-                match paging_state_response.into_paging_control_flow() {
-                    ControlFlow::Continue(paging_state) => {
-                        self.paging_state = paging_state;
-                    }
-                    ControlFlow::Break(()) => {
-                        // Reached the last query, shutdown
-                        return Ok((ControlFlow::Break(()), proof, next_pages_sender));
-                    }
+                if let PagingStateResponse::HasMorePages { state } = &paging_state_response {
+                    self.paging_state = state.clone();
+                    // Log the next page fetch in advance.
+                    self.log_request_start();
                 }
 
                 // Query succeeded, reset retry policy for future retries
                 self.retry_session.reset();
-                self.log_request_start();
 
-                Ok((ControlFlow::Continue(()), proof, next_pages_sender))
+                Ok((
+                    FirstReceivedPage {
+                        content: FirstPageContent::Rows { rows },
+                        tracing_id,
+                        request_coordinator: Some(coordinator),
+                    },
+                    paging_state_response,
+                ))
             }
             Err(err) => {
                 self.metrics.inc_failed_paged_queries();
                 self.load_balancing_policy
                     .on_request_failure(routing_info, elapsed, node, &err);
-                Err((err, sender))
+                Err(err)
             }
             Ok(NonErrorQueryResponse {
                 response:
@@ -744,23 +733,16 @@ where
                 tracing_id,
                 ..
             }) => {
-                // It seems we executed a USE <keyspace> statement.
-                // Although it makes little sense to page over such a statement,
-                // we must handle it gracefully. Especially that there may be users who execute
-                // all statements in a paged manner (e.g., C#-RS Driver).
-
                 log_success();
 
-                let (next_pages_sender, next_pages_receiver) = mpsc::channel(1);
-                let (proof, _) = sender.send(Ok((
-                    (FirstReceivedPage {
+                Ok((
+                    FirstReceivedPage {
+                        content: FirstPageContent::SetKeyspace { set_keyspace },
                         tracing_id,
                         request_coordinator: Some(coordinator),
-                        content: FirstPageContent::SetKeyspace { set_keyspace },
-                    }),
-                    next_pages_receiver,
-                )));
-                Ok((ControlFlow::Break(()), proof, next_pages_sender))
+                    },
+                    PagingStateResponse::NoMorePages,
+                ))
             }
             Ok(NonErrorQueryResponse {
                 response:
@@ -770,23 +752,16 @@ where
                 tracing_id,
                 ..
             }) => {
-                // It seems we executed a DDL statement.
-                // Although it makes little sense to page over such a statement,
-                // we must handle it gracefully. Especially that there may be users who execute
-                // all statements in a paged manner (e.g., C#-RS Driver).
-
                 log_success();
 
-                let (next_pages_sender, next_pages_receiver) = mpsc::channel(1);
-                let (proof, _) = sender.send(Ok((
+                Ok((
                     FirstReceivedPage {
+                        content: FirstPageContent::SchemaChange { schema_change },
                         tracing_id,
                         request_coordinator: Some(coordinator),
-                        content: FirstPageContent::SchemaChange { schema_change },
                     },
-                    next_pages_receiver,
-                )));
-                Ok((ControlFlow::Break(()), proof, next_pages_sender))
+                    PagingStateResponse::NoMorePages,
+                ))
             }
             Ok(NonErrorQueryResponse {
                 response: NonErrorResponseWithDeserializedMetadata::Result(_),
@@ -798,10 +773,16 @@ where
 
                 log_success();
 
-                // We must attempt to send something because the pager expects it.
-                let (next_pages_sender, _) = mpsc::channel(1);
-                let (proof, _) = sender.send_empty_page(tracing_id, Some(coordinator));
-                Ok((ControlFlow::Break(()), proof, next_pages_sender))
+                Ok((
+                    FirstReceivedPage {
+                        content: FirstPageContent::Rows {
+                            rows: DeserializedMetadataAndRawRows::mock_empty(),
+                        },
+                        tracing_id,
+                        request_coordinator: Some(coordinator),
+                    },
+                    PagingStateResponse::NoMorePages,
+                ))
             }
             Ok(response) => {
                 self.metrics.inc_failed_paged_queries();
@@ -809,7 +790,7 @@ where
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
                 self.load_balancing_policy
                     .on_request_failure(routing_info, elapsed, node, &err);
-                Err((err, sender))
+                Err(err)
             }
         }
     }
