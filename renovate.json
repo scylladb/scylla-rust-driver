@@ -21,6 +21,31 @@
             ],
             "pinDigests": true,
             "minimumReleaseAge": null
+        },
+        {
+            "description": "Newest supported version of feature-pinned crates: surface new majors on the Dependency Dashboard (no PR), as adopting them needs a new feature/alias.",
+            "matchManagers": [
+                "cargo"
+            ],
+            "matchDepNames": [
+                "num-bigint-04",
+                "secrecy-10",
+                "bigdecimal-04",
+                "time-03",
+                "chrono-04"
+            ],
+            "dependencyDashboardApproval": true
+        },
+        {
+            "description": "Superseded versions of feature-pinned crates: frozen at their version, do not notify about newer releases.",
+            "matchManagers": [
+                "cargo"
+            ],
+            "matchDepNames": [
+                "num-bigint-03",
+                "secrecy-08"
+            ],
+            "enabled": false
         }
     ]
 }
