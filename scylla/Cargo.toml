@@ -149,7 +149,7 @@ hashbrown = "0.17"
 smallvec = "1.8.0"
 
 [dev-dependencies]
-num-bigint-03 = { package = "num-bigint", version = "0.3" }
+num-bigint-03 = { package = "num-bigint", version = "0.4" }
 num-bigint-04 = { package = "num-bigint", version = "0.4" }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4" }
 scylla-proxy = { version = "0.0.6", path = "../scylla-proxy" }

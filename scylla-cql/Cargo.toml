@@ -84,7 +84,7 @@ chrono-04 = { package = "chrono", version = "0.4.32", default-features = false, 
 ] }
 secrecy-08 = { package = "secrecy", version = "0.8", optional = true }
 secrecy-10 = { package = "secrecy", version = "0.10", optional = true }
-num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
+num-bigint-03 = { package = "num-bigint", version = "0.4", optional = true }
 num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
 time-03 = { package = "time", version = "0.3", optional = true }
