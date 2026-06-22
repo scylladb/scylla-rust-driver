@@ -1898,6 +1898,17 @@ impl Connection {
         self.features = features;
     }
 
+    pub(crate) fn is_to_scylladb(&self) -> bool {
+        let features = &self.features;
+        let proto_features = &features.protocol_features;
+        proto_features.lwt_optimization_meta_bit_mask.is_some()
+            || features.shard_info.is_some()
+            || features.shard_aware_port.is_some()
+            || proto_features.rate_limit_error.is_some()
+            || proto_features.tablets_v1_supported
+            || proto_features.scylla_metadata_id_supported
+    }
+
     pub(crate) fn get_connect_address(&self) -> SocketAddr {
         self.connect_address
     }
