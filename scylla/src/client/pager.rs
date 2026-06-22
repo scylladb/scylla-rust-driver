@@ -331,9 +331,9 @@ where
         first_page_sender: ProvingSender<ResultFirstPage>,
     ) -> FirstPageSendAttemptedProof {
         let load_balancer = Arc::clone(&self.load_balancing_policy);
-        let statement_info = self.routing_info.clone();
+        let routing_info = self.routing_info.clone();
         let query_plan =
-            load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_state);
+            load_balancing::Plan::new(load_balancer.as_ref(), &routing_info, &cluster_state);
 
         let mut last_error: RequestError = RequestError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
@@ -422,13 +422,13 @@ where
                 };
 
                 // Use retry policy to decide what to do next
-                let query_info = RequestInfo {
+                let request_info = RequestInfo {
                     error: &request_error,
                     is_idempotent: self.query_is_idempotent,
                     consistency: self.query_consistency,
                 };
 
-                let retry_decision = self.retry_session.decide_should_retry(query_info);
+                let retry_decision = self.retry_session.decide_should_retry(request_info);
                 trace!(
                     parent: &span,
                     retry_decision = ?retry_decision
@@ -1200,7 +1200,7 @@ If you are using this API, you are probably doing something wrong."
         RowT::type_check(self.column_specs().as_slice())
     }
 
-    /// Casts the iterator to a given row type, enabling [Stream]'ed operations
+    /// Casts the pager's stream to a given row type, enabling [Stream]'ed operations
     /// on rows, which deserialize them on-the-fly to that given type.
     /// It only allows deserializing owned types, because [Stream] is not lending.
     /// Begins with performing type check.
@@ -1278,10 +1278,10 @@ If you are using this API, you are probably doing something wrong."
                 node_location_preference: &node_location_preference,
             };
 
-            let query_ref = &statement;
+            let statement_ref = &statement;
 
             let span_creator = move || {
-                let span = RequestSpan::new_query(&query_ref.contents);
+                let span = RequestSpan::new_query(&statement_ref.contents);
                 span.record_request_size(0);
                 span
             };
@@ -1370,7 +1370,7 @@ If you are using this API, you are probably doing something wrong."
             };
 
             let table_spec = config.prepared.get_table_spec();
-            let statement_info = RoutingInfo {
+            let routing_info = RoutingInfo {
                 consistency,
                 serial_consistency,
                 token,
@@ -1397,9 +1397,7 @@ If you are using this API, you are probably doing something wrong."
             let serialized_values_size = config.values.buffer_size();
 
             let replicas: Option<smallvec::SmallVec<[_; 8]>> =
-                if let (Some(table_spec), Some(token)) =
-                    (statement_info.table, statement_info.token)
-                {
+                if let (Some(table_spec), Some(token)) = (routing_info.table, routing_info.token) {
                     Some(
                         config
                             .cluster_state
@@ -1425,7 +1423,7 @@ If you are using this API, you are probably doing something wrong."
 
             let worker = PagerWorker {
                 page_query,
-                routing_info: statement_info,
+                routing_info,
                 query_is_idempotent: config.prepared.config.is_idempotent,
                 query_consistency: consistency,
                 load_balancing_policy,
@@ -1792,7 +1790,7 @@ pub enum NextPageError {
     TypeCheckError(#[from] TypeCheckError),
 }
 
-/// An error returned by async iterator API.
+/// An error returned by async pager API.
 #[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum NextRowError {
