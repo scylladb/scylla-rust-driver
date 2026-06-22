@@ -136,7 +136,7 @@ dashmap = "6.0"
 # Required to set TCP keepalive on a socket.
 # Unfortunately, neither std nor tokio have this functionality yet,
 # so such workaround is required.
-socket2 = { version = "0.5.3", features = ["all"] }
+socket2 = { version = "0.6.0", features = ["all"] }
 # Useful operations on iterators.
 itertools = "0.15.0"
 # Used by DefaultPolicy to have reproducible randomness.
