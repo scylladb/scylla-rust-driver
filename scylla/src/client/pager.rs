@@ -151,6 +151,11 @@ mod timeouter {
 }
 use timeouter::PageQueryTimeouter;
 
+enum ShouldFetchMorePages {
+    NoMorePages,
+    MorePages { first_page_coordinator: Coordinator },
+}
+
 // PagerWorker works in the background to fetch pages
 // QueryPager receives them through a channel
 struct PagerWorker {
@@ -176,6 +181,10 @@ impl PagerWorker {
     ///
     /// A fresh query plan is constructed for each page, preventing plan
     /// exhaustion for long-running multi-page queries.
+    ///
+    /// The last successful coordinator is preferred for the next page
+    /// (coordinator stability), but all other nodes remain available
+    /// for retry.
     async fn work<QueryFunc, QueryFut, SpanCreator>(
         mut self,
         cluster_state: Arc<ClusterState>,
@@ -183,6 +192,7 @@ impl PagerWorker {
         page_query: QueryFunc,
         routing_info: RoutingInfo<'_>,
         span_creator: SpanCreator,
+        mut last_successful_page_coordinator: Coordinator,
     ) where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
@@ -199,9 +209,36 @@ impl PagerWorker {
 
             self.timeouter.as_mut().map(PageQueryTimeouter::reset);
 
+            let parent_span = self.parent_span.clone();
+
+            // Prefix the plan with the last successful coordinator (coordinator
+            // stability), then chain the remaining nodes from the fresh plan.
+            let mut query_plan = std::iter::once((
+                last_successful_page_coordinator.node(),
+                // `Coordinator` gets its shard from `Connection`. If `Connection` believes it has `Shard` `None`,
+                // then it means that the connection pool to that connection is not sharded.
+                // In such case, shard is ignored in `connection_for_shard()`.
+                // We must provide a shard to `connection_for_shard()` anyway.
+                // Therefore, let's pass an arbitrarily big shard to catch regressions in this logic earlier.
+                last_successful_page_coordinator.shard().unwrap_or(2137),
+            ))
+            .chain(
+                query_plan
+                    // We filter out the last successful page coordinator, because it's tried out first.
+                    .filter(|&(node, shard)| {
+                        !(Arc::ptr_eq(node, last_successful_page_coordinator.node())
+                            && last_successful_page_coordinator
+                                .shard()
+                                // If we targeted an unsharded node (such as Cassandra) previously,
+                                // we should now repeat it as unsharded and at the same time filter out
+                                // all targets to that node, with any shard.
+                                .is_none_or(|last_shard| last_shard == shard))
+                    }),
+            );
+
             // Iterates over nodes in the query plan, trying to fetch the next page.
-            'nodes_in_plan: for (node, shard) in query_plan {
-                let per_target_span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
+            'nodes_in_plan: while let Some((node, shard)) = query_plan.next() {
+                let per_target_span = trace_span!(parent: &parent_span, "Executing query", node = %node.address, shard = ?shard);
                 // For each node in the plan choose a connection to use
                 // This connection will be reused for same node retries to preserve paging cache on the shard
                 let connection: Arc<Connection> = match node
@@ -274,6 +311,12 @@ impl PagerWorker {
                             // Successfully queried one page, and there are more to fetch.
                             // Reset the timeout_instant for the next page fetch.
                             self.timeouter.as_mut().map(PageQueryTimeouter::reset);
+
+                            // Prioritize the successful coordinator for the next page fetch.
+
+                            std::mem::drop(query_plan);
+                            last_successful_page_coordinator = coordinator;
+
                             // Continue with a fresh plan for the next page.
                             continue 'paging;
                         }
@@ -337,14 +380,14 @@ impl PagerWorker {
     }
 
     /// Fetches the first page on the caller task (no spawning).
-    /// Returns the first page and its paging state response.
+    /// Returns the first page and whether more pages should be fetched.
     async fn query_first_page<QueryFunc, QueryFut, SpanCreator>(
         &mut self,
         cluster_state: &ClusterState,
         span_creator: SpanCreator,
         routing_info: &RoutingInfo<'_>,
         page_query: QueryFunc,
-    ) -> Result<(FirstReceivedPage, PagingStateResponse), NextPageError>
+    ) -> Result<(FirstReceivedPage, ShouldFetchMorePages), NextPageError>
     where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
@@ -412,9 +455,17 @@ impl PagerWorker {
                 };
 
                 let request_error: RequestAttemptError = match query_result {
-                    Ok(Ok(response)) => {
+                    Ok(Ok((first_page, paging_state_response))) => {
                         trace!(parent: &per_target_span, "Request succeeded");
-                        return Ok(response);
+                        let should_fetch_more_pages = match paging_state_response {
+                            PagingStateResponse::HasMorePages { .. } => {
+                                ShouldFetchMorePages::MorePages {
+                                    first_page_coordinator: coordinator,
+                                }
+                            }
+                            PagingStateResponse::NoMorePages => ShouldFetchMorePages::NoMorePages,
+                        };
+                        return Ok((first_page, should_fetch_more_pages));
                     }
                     Ok(Err(error)) => {
                         trace!(
@@ -479,7 +530,7 @@ impl PagerWorker {
                                 tracing_id: None,
                                 request_coordinator: coordinator,
                             },
-                            PagingStateResponse::NoMorePages,
+                            ShouldFetchMorePages::NoMorePages,
                         ));
                     }
                 };
@@ -1129,7 +1180,7 @@ If you are using this API, you are probably doing something wrong."
             parent_span,
         };
 
-        let (first_page, paging_state_response) = {
+        let (first_page, should_fetch_more_pages) = {
             let routing_info = RoutingInfo {
                 consistency,
                 serial_consistency,
@@ -1148,12 +1199,14 @@ If you are using this API, you are probably doing something wrong."
 
         /* PROCESS FIRST PAGE */
         let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
-        match paging_state_response {
-            PagingStateResponse::NoMorePages => {
+        match should_fetch_more_pages {
+            ShouldFetchMorePages::NoMorePages => {
                 // No more pages - we are done, return the first page and an empty receiver.
                 std::mem::drop(sender);
             }
-            PagingStateResponse::HasMorePages { .. } => {
+            ShouldFetchMorePages::MorePages {
+                first_page_coordinator,
+            } => {
                 /* REMAINING PAGES */
                 let worker_task = async move {
                     let routing_info = RoutingInfo {
@@ -1190,6 +1243,7 @@ If you are using this API, you are probably doing something wrong."
                             page_query,
                             routing_info,
                             span_creator,
+                            first_page_coordinator,
                         )
                         .await;
                 };
@@ -1336,7 +1390,7 @@ If you are using this API, you are probably doing something wrong."
             parent_span,
         };
 
-        let (first_page, paging_state_response) = worker
+        let (first_page, should_fetch_more_pages) = worker
             .query_first_page(
                 &config.cluster_state,
                 &span_creator,
@@ -1350,12 +1404,14 @@ If you are using this API, you are probably doing something wrong."
 
         /* PROCESS FIRST PAGE */
         let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
-        match paging_state_response {
-            PagingStateResponse::NoMorePages => {
+        match should_fetch_more_pages {
+            ShouldFetchMorePages::NoMorePages => {
                 // No more pages - we are done, return the first page and an empty receiver.
                 std::mem::drop(sender);
             }
-            PagingStateResponse::HasMorePages { .. } => {
+            ShouldFetchMorePages::MorePages {
+                first_page_coordinator,
+            } => {
                 /* REMAINING PAGES */
                 let worker_task = async move {
                     let partition_key = if config.prepared.is_token_aware() {
@@ -1418,6 +1474,7 @@ If you are using this API, you are probably doing something wrong."
                             page_query,
                             routing_info,
                             span_creator,
+                            first_page_coordinator,
                         )
                         .await;
                 };
