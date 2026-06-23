@@ -1297,7 +1297,7 @@ If you are using this API, you are probably doing something wrong."
                 #[cfg(feature = "metrics")]
                 metrics,
                 paging_state: PagingState::start(),
-                history_listener: statement.config.history_listener.clone(),
+                history_listener: statement.config.history_listener.as_ref().map(Arc::clone),
                 current_request_id: None,
                 current_attempt_id: None,
                 parent_span,
@@ -1432,7 +1432,12 @@ If you are using this API, you are probably doing something wrong."
                 #[cfg(feature = "metrics")]
                 metrics: config.metrics,
                 paging_state: PagingState::start(),
-                history_listener: config.prepared.config.history_listener.clone(),
+                history_listener: config
+                    .prepared
+                    .config
+                    .history_listener
+                    .as_ref()
+                    .map(Arc::clone),
                 current_request_id: None,
                 current_attempt_id: None,
                 parent_span,
