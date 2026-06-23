@@ -1172,7 +1172,7 @@ impl Session {
             host_listener,
             config.cluster_metadata_refresh_interval,
             tablet_receiver,
-            Arc::clone(&metrics),
+            metrics.as_ref().clone(),
             client_routes_config,
         )
         .await?;
@@ -1474,7 +1474,7 @@ impl Session {
             statement,
             execution_profile,
             self.cluster.get_state(),
-            Arc::clone(&self.metrics),
+            self.metrics.as_ref().clone(),
             Arc::clone(&self.node_location_preference),
         )
         .await
@@ -1800,7 +1800,7 @@ impl Session {
                 values,
                 execution_profile,
                 cluster_state: self.cluster.get_state(),
-                metrics: Arc::clone(&self.metrics),
+                metrics: self.metrics.as_ref().clone(),
                 location_preference: Arc::clone(&self.node_location_preference),
             },
         )

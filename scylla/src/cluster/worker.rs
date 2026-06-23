@@ -107,7 +107,7 @@ struct ClusterWorker {
     // worker will refresh the cluster metadata
     cluster_metadata_refresh_interval: Duration,
 
-    metrics: Arc<Metrics>,
+    metrics: Metrics,
 }
 
 #[derive(Debug)]
@@ -134,7 +134,7 @@ impl Cluster {
         host_listener: Option<Arc<dyn HostListener>>,
         cluster_metadata_refresh_interval: Duration,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
-        metrics: Arc<Metrics>,
+        metrics: Metrics,
         client_routes_config: Option<ClientRoutesConfig>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);

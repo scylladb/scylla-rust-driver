@@ -8,7 +8,7 @@
 pub(crate) enum MetricsError {}
 
 /// No-op metrics object used when the `metrics` feature is disabled.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Metrics;
 
 impl Metrics {

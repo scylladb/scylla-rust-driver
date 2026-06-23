@@ -222,7 +222,7 @@ impl NodeConnectionPool {
         connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_empty_notifier: mpsc::Sender<()>,
-        metrics: Arc<Metrics>,
+        metrics: Metrics,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
@@ -519,7 +519,7 @@ struct PoolRefiller {
     // Signaled when the connection pool becomes empty
     pool_empty_notifier: mpsc::Sender<()>,
 
-    metrics: Arc<Metrics>,
+    metrics: Metrics,
 }
 
 #[derive(Debug)]
@@ -538,7 +538,7 @@ impl PoolRefiller {
         pool_updated_notify: Arc<Notify>,
         refill_now_notify: Arc<Notify>,
         pool_empty_notifier: mpsc::Sender<()>,
-        metrics: Arc<Metrics>,
+        metrics: Metrics,
         reconnect_policy: Box<dyn ReconnectPolicySession>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
@@ -939,7 +939,7 @@ impl PoolRefiller {
         let mut endpoint = self.endpoint.read().unwrap().clone();
 
         let count_in_metrics = {
-            let metrics = Arc::clone(&self.metrics);
+            let metrics = self.metrics.clone();
             move |connect_result: &Result<_, ConnectionError>| {
                 if connect_result.is_ok() {
                     metrics.inc_total_connections();

@@ -119,7 +119,7 @@ impl Node {
         pool_config: &PoolConfig,
         connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
         keyspace_name: Option<VerifiedKeyspaceName>,
-        metrics: Arc<Metrics>,
+        metrics: Metrics,
     ) -> Self {
         let host_id = peer.host_id;
         let address = peer.address;

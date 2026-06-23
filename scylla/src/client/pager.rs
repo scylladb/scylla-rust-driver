@@ -304,7 +304,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,
     timeouter: Option<PageQueryTimeouter>,
-    metrics: Arc<Metrics>,
+    metrics: Metrics,
 
     paging_state: PagingState,
 
@@ -1078,7 +1078,7 @@ pub(crate) struct PreparedPagerConfig {
     pub(crate) values: SerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_state: Arc<ClusterState>,
-    pub(crate) metrics: Arc<Metrics>,
+    pub(crate) metrics: Metrics,
     pub(crate) location_preference: Arc<NodeLocationPreference>,
 }
 
@@ -1208,7 +1208,7 @@ If you are using this API, you are probably doing something wrong."
         statement: Statement,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_state: Arc<ClusterState>,
-        metrics: Arc<Metrics>,
+        metrics: Metrics,
         node_location_preference: Arc<NodeLocationPreference>,
     ) -> Result<Self, PagerExecutionError> {
         let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
