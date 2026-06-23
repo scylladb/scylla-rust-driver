@@ -337,7 +337,7 @@ impl Metrics {
     /// Returns latency from histogram for a given percentile
     /// # Arguments
     ///
-    /// * `percentile` - float value (0.0 - 100.0)
+    /// * `percentile` - float value (0.0..=100.0)
     pub fn get_latency_percentile_ms(&self, percentile: f64) -> Result<u64, MetricsError> {
         // `histogram` 1.x uses the 0.0..=1.0 quantile scale, whereas our
         // public API uses the 0.0..=100.0 percentile scale.
