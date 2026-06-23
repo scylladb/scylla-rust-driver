@@ -343,6 +343,7 @@ where
         self.log_request_start();
         self.timeouter.as_mut().map(PageQueryTimeouter::reset);
 
+        // Iterates over nodes in the query plan, trying to fetch the next page.
         'nodes_in_plan: for (node, shard) in query_plan {
             let span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
             // For each node in the plan choose a connection to use
@@ -365,13 +366,14 @@ where
                 }
             };
 
+            // Retries on the same node as long as RetrySession decides so.
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
 
                 let coordinator =
                     Coordinator::new(node, node.sharder().is_some().then_some(shard), &connection);
 
-                // Query pages until an error occurs
+                // Fetch pages from this connection until an error occurs.
                 let (queries_result, new_sender): (
                     Result<
                         Result<FirstPageSendAttemptedProof, RequestAttemptError>,
@@ -414,6 +416,7 @@ where
                             error = %request_error,
                             "Request timed out"
                         );
+                        // This means that we failed all attempts - in this case, due to a timeout.
                         let proof = sender
                             .send_err(NextPageError::RequestFailure(request_error))
                             .await;
@@ -468,6 +471,8 @@ where
             }
         }
 
+        // If we are here, it means we failed to fetch next page on any node from the plan.
+        // The plan is exhausted, so we send the last error and finish.
         self.log_request_error(&last_error);
         sender
             .send_err(NextPageError::RequestFailure(last_error))
