@@ -177,6 +177,9 @@ where
 {
     /// Fetches remaining pages (pages 2+) in a background task.
     /// Sends each page through the mpsc channel.
+    ///
+    /// A fresh query plan is constructed for each page, preventing plan
+    /// exhaustion for long-running multi-page queries.
     async fn work<QueryFunc, QueryFut>(
         mut self,
         cluster_state: Arc<ClusterState>,
@@ -188,47 +191,50 @@ where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
-        let load_balancer = Arc::clone(&self.load_balancing_policy);
-        let query_plan =
-            load_balancing::Plan::new(load_balancer.as_ref(), &routing_info, &cluster_state);
-
         let mut last_error: RequestError = RequestError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
+        let load_balancer = Arc::clone(&self.load_balancing_policy);
 
-        self.timeouter.as_mut().map(PageQueryTimeouter::reset);
+        // Iterates over pages until exhaustion or non-retriable error.
+        'paging: loop {
+            let query_plan =
+                load_balancing::Plan::new(load_balancer.as_ref(), &routing_info, &cluster_state);
 
-        // Iterates over nodes in the query plan, trying to fetch the next page.
-        'nodes_in_plan: for (node, shard) in query_plan {
-            let all_pages_span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
-            // For each node in the plan choose a connection to use
-            // This connection will be reused for same node retries to preserve paging cache on the shard
-            let connection: Arc<Connection> = match node
-                .connection_for_shard(shard)
-                .instrument(all_pages_span.clone())
-                .await
-            {
-                Ok(connection) => connection,
-                Err(e) => {
-                    trace!(
-                        parent: &all_pages_span,
-                        error = %e,
-                        "Choosing connection failed"
+            self.timeouter.as_mut().map(PageQueryTimeouter::reset);
+
+            // Iterates over nodes in the query plan, trying to fetch the next page.
+            'nodes_in_plan: for (node, shard) in query_plan {
+                let all_pages_span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
+                // For each node in the plan choose a connection to use
+                // This connection will be reused for same node retries to preserve paging cache on the shard
+                let connection: Arc<Connection> = match node
+                    .connection_for_shard(shard)
+                    .instrument(all_pages_span.clone())
+                    .await
+                {
+                    Ok(connection) => connection,
+                    Err(e) => {
+                        trace!(
+                            parent: &all_pages_span,
+                            error = %e,
+                            "Choosing connection failed"
+                        );
+                        last_error = e.into();
+                        // Broken connection doesn't count as a failed query, don't log in metrics.
+                        continue 'nodes_in_plan;
+                    }
+                };
+
+                // Retries on the same node as long as RetrySession decides so.
+                'same_node_retries: loop {
+                    trace!(parent: &all_pages_span, "Execution started");
+
+                    let coordinator = Coordinator::new(
+                        node,
+                        node.sharder().is_some().then_some(shard),
+                        &connection,
                     );
-                    last_error = e.into();
-                    // Broken connection doesn't count as a failed query, don't log in metrics
-                    continue 'nodes_in_plan;
-                }
-            };
 
-            // Retries on the same node as long as RetrySession decides so.
-            'same_node_retries: loop {
-                trace!(parent: &all_pages_span, "Execution started");
-
-                let coordinator =
-                    Coordinator::new(node, node.sharder().is_some().then_some(shard), &connection);
-
-                // Fetch pages from this connection until an error occurs.
-                'same_node_pages: loop {
                     let request_span = (self.span_creator)(&partition_key);
 
                     let fetch_result = self
@@ -242,18 +248,14 @@ where
                         .await;
                     let query_result = match fetch_result {
                         Err(RequestTimeoutError(timeout)) => {
-                            let request_error = RequestError::RequestTimeout(timeout);
-                            self.log_request_error(&request_error);
+                            last_error = RequestError::RequestTimeout(timeout);
                             trace!(
                                 parent: &all_pages_span,
-                                error = %request_error,
+                                error = %last_error,
                                 "Request timed out"
                             );
                             // This means that we failed all attempts - in this case, due to a timeout.
-                            let _ = sender
-                                .send(Err(NextPageError::RequestFailure(request_error)))
-                                .await;
-                            return;
+                            break 'nodes_in_plan;
                         }
                         Ok((elapsed, result)) => {
                             self.process_next_page(
@@ -269,7 +271,7 @@ where
                         }
                     };
 
-                    match query_result {
+                    let request_error: RequestAttemptError = match query_result {
                         Ok(ControlFlow::Break(())) => {
                             // Successfully queried the last remaining page.
                             trace!(parent: &all_pages_span, "Request succeeded");
@@ -279,61 +281,66 @@ where
                             // Successfully queried one page, and there are more to fetch.
                             // Reset the timeout_instant for the next page fetch.
                             self.timeouter.as_mut().map(PageQueryTimeouter::reset);
-                            continue 'same_node_pages;
+                            // Continue with a fresh plan for the next page.
+                            continue 'paging;
                         }
-                        Err(request_error) => {
-                            // Break out of the inner page-fetching loop to retry logic.
-                            let request_info = RequestInfo {
-                                error: &request_error,
-                                is_idempotent: self.query_is_idempotent,
-                                consistency: current_consistency,
-                            };
-
-                            let retry_decision =
-                                self.retry_session.decide_should_retry(request_info);
+                        Err(error) => {
                             trace!(
                                 parent: &all_pages_span,
-                                retry_decision = ?retry_decision
+                                error = %error,
+                                "Request failed"
                             );
-
-                            self.log_attempt_error(&request_error, &retry_decision);
-
-                            last_error = request_error.into();
-
-                            match retry_decision {
-                                RetryDecision::RetrySameTarget(cl) => {
-                                    self.metrics.inc_retries_num();
-                                    current_consistency = cl.unwrap_or(current_consistency);
-                                    continue 'same_node_retries;
-                                }
-                                RetryDecision::RetryNextTarget(cl) => {
-                                    self.metrics.inc_retries_num();
-                                    current_consistency = cl.unwrap_or(current_consistency);
-                                    continue 'nodes_in_plan;
-                                }
-                                RetryDecision::DontRetry => break 'nodes_in_plan,
-                                RetryDecision::IgnoreWriteError => {
-                                    self.log_request_success();
-                                    self.retry_session.reset();
-
-                                    warn!(
-                                        "Ignoring error during fetching pages; stopping fetching."
-                                    );
-                                    return;
-                                }
-                            };
+                            error
                         }
-                    }
+                    };
+
+                    let request_info = RequestInfo {
+                        error: &request_error,
+                        is_idempotent: self.query_is_idempotent,
+                        consistency: current_consistency,
+                    };
+
+                    let retry_decision = self.retry_session.decide_should_retry(request_info);
+                    trace!(
+                        parent: &all_pages_span,
+                        retry_decision = ?retry_decision
+                    );
+
+                    self.log_attempt_error(&request_error, &retry_decision);
+
+                    last_error = request_error.into();
+
+                    match retry_decision {
+                        RetryDecision::RetrySameTarget(cl) => {
+                            self.metrics.inc_retries_num();
+                            current_consistency = cl.unwrap_or(current_consistency);
+                            continue 'same_node_retries;
+                        }
+                        RetryDecision::RetryNextTarget(cl) => {
+                            self.metrics.inc_retries_num();
+                            current_consistency = cl.unwrap_or(current_consistency);
+                            continue 'nodes_in_plan;
+                        }
+                        RetryDecision::DontRetry => break 'nodes_in_plan,
+                        RetryDecision::IgnoreWriteError => {
+                            self.log_request_success();
+                            self.retry_session.reset();
+
+                            warn!("Ignoring error during fetching pages; stopping fetching.");
+                            return;
+                        }
+                    };
                 }
             }
-        }
 
-        // If we are here, it means we failed to fetch next page on any node from the plan.
-        // The plan is exhausted, so we send the last error and finish.
-        self.log_request_error(&last_error);
-        let _ = sender
-            .send(Err(NextPageError::RequestFailure(last_error)))
-            .await;
+            // If we are here, it means we failed to fetch next page on any node from the plan.
+            // The plan is exhausted, so we send the last error and finish.
+            self.log_request_error(&last_error);
+            let _ = sender
+                .send(Err(NextPageError::RequestFailure(last_error)))
+                .await;
+            return;
+        }
     }
 
     /// Fetches the first page on the caller task (no spawning).
