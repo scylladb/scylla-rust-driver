@@ -350,7 +350,7 @@ impl Metrics {
 
             // A single quantile was requested, so there is exactly one entry.
             Ok(Some(qr)) => match qr.entries().values().next() {
-                Some(bucket) => Ok(bucket.count()),
+                Some(bucket) => Ok((bucket.start() + bucket.end()) / 2),
                 None => Err(MetricsError::Empty),
             },
         }
@@ -605,6 +605,29 @@ mod tests {
         assert_eq!(snapshot.percentile_99_9, 100);
 
         assert_eq!(metrics.get_latency_avg_ms().unwrap(), 50);
+    }
+
+    #[test]
+    fn regression_get_latency_percentile_ms() {
+        let metrics = Metrics::new();
+        // One bucket (value 5) with 10 observations, another (value 1000) with 1.
+        for _ in 0..10 {
+            metrics.log_query_latency(5).unwrap();
+        }
+        metrics.log_query_latency(1000).unwrap();
+
+        // The public API uses the 0.0..=100.0 percentile scale.
+        assert_eq!(metrics.get_latency_percentile_ms(0.0).unwrap(), 5);
+        assert_eq!(metrics.get_latency_percentile_ms(50.0).unwrap(), 5);
+        assert_eq!(metrics.get_latency_percentile_ms(90.0).unwrap(), 5);
+        assert_eq!(metrics.get_latency_percentile_ms(100.0).unwrap(), 1000);
+
+        // Empty histogram yields the `Empty` error.
+        let empty = Metrics::new();
+        assert!(matches!(
+            empty.get_latency_percentile_ms(50.0),
+            Err(super::MetricsError::Empty)
+        ));
     }
 
     // A regression test for a bug where we would return
