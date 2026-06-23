@@ -38,7 +38,7 @@ use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
-use crate::routing::NodeLocationPreference;
+use crate::routing::{NodeLocationPreference, Shard};
 use crate::statement::prepared::{PartitionKey, PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 use tracing::{Instrument, trace, trace_span, warn};
@@ -151,6 +151,14 @@ mod timeouter {
 }
 use timeouter::PageQueryTimeouter;
 
+enum ShouldFetchMorePages {
+    NoMorePages,
+    MorePages {
+        first_page_coordinator: Coordinator,
+        first_page_connection: Arc<Connection>,
+    },
+}
+
 // PagerWorker works in the background to fetch pages
 // QueryPager receives them through a channel
 struct PagerWorker<SpanCreatorFunc> {
@@ -180,6 +188,11 @@ where
     ///
     /// A fresh query plan is constructed for each page, preventing plan
     /// exhaustion for long-running multi-page queries.
+    ///
+    /// The last successful coordinator is preferred for the next page
+    /// (coordinator stability), but all other nodes remain available
+    /// for retry.
+    #[expect(clippy::too_many_arguments)]
     async fn work<QueryFunc, QueryFut>(
         mut self,
         cluster_state: Arc<ClusterState>,
@@ -187,6 +200,8 @@ where
         page_query: QueryFunc,
         routing_info: RoutingInfo<'_>,
         partition_key: Option<PartitionKey<'_>>,
+        mut last_successful_page_coordinator: Coordinator,
+        mut last_successful_page_conn: Arc<Connection>,
     ) where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
@@ -202,16 +217,48 @@ where
 
             self.timeouter.as_mut().map(PageQueryTimeouter::reset);
 
+            let parent_span = self.parent_span.clone();
+            let create_execution_span = |node: NodeRef, shard: Option<Shard>| trace_span!(parent: &parent_span, "Executing query", node = %node.address, shard = ?shard);
+
+            // Prefix the plan with the last successful coordinator (coordinator
+            // stability), then chain the remaining nodes from the fresh plan.
+            let query_plan = std::iter::once((
+                last_successful_page_coordinator.node(),
+                last_successful_page_coordinator.shard(),
+                create_execution_span(
+                    last_successful_page_coordinator.node(),
+                    last_successful_page_coordinator.shard(),
+                ),
+                itertools::Either::Left(std::future::ready(Ok(last_successful_page_conn))),
+            ))
+            .chain(
+                query_plan
+                    // We filter out the last successful page coordinator, because it's tried out first.
+                    .filter(|&(node, shard)| {
+                        !(Arc::ptr_eq(node, last_successful_page_coordinator.node())
+                            && last_successful_page_coordinator
+                                .shard()
+                                // If we targeted an unsharded node (such as Cassandra) previously,
+                                // we should now repeat it as unsharded and at the same time filter out
+                                // all targets to that node, with any shard.
+                                .is_none_or(|last_shard| last_shard == shard))
+                    })
+                    .map(|(node, shard)| {
+                        let span = create_execution_span(node, Some(shard));
+                        // For each node in the plan choose a connection to use.
+                        // This connection will be reused for same node retries to preserve paging cache on the shard.
+                        let connection_fut = itertools::Either::Right(
+                            node.connection_for_shard(shard).instrument(span.clone()),
+                        );
+                        (node, Some(shard), span, connection_fut)
+                    }),
+            );
+
             // Iterates over nodes in the query plan, trying to fetch the next page.
-            'nodes_in_plan: for (node, shard) in query_plan {
-                let all_pages_span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
+            'nodes_in_plan: for (node, shard, all_pages_span, connection_fut) in query_plan {
                 // For each node in the plan choose a connection to use
                 // This connection will be reused for same node retries to preserve paging cache on the shard
-                let connection: Arc<Connection> = match node
-                    .connection_for_shard(shard)
-                    .instrument(all_pages_span.clone())
-                    .await
-                {
+                let connection: Arc<Connection> = match connection_fut.await {
                     Ok(connection) => connection,
                     Err(e) => {
                         trace!(
@@ -225,15 +272,11 @@ where
                     }
                 };
 
+                let coordinator = Coordinator::new(node, node.sharder().and(shard), &connection);
+
                 // Retries on the same node as long as RetrySession decides so.
                 'same_node_retries: loop {
                     trace!(parent: &all_pages_span, "Execution started");
-
-                    let coordinator = Coordinator::new(
-                        node,
-                        node.sharder().is_some().then_some(shard),
-                        &connection,
-                    );
 
                     let request_span = (self.span_creator)(&partition_key);
 
@@ -281,6 +324,11 @@ where
                             // Successfully queried one page, and there are more to fetch.
                             // Reset the timeout_instant for the next page fetch.
                             self.timeouter.as_mut().map(PageQueryTimeouter::reset);
+
+                            // Prioritize the successful coordinator for the next page fetch.
+                            last_successful_page_coordinator = coordinator;
+                            last_successful_page_conn = connection;
+
                             // Continue with a fresh plan for the next page.
                             continue 'paging;
                         }
@@ -344,14 +392,14 @@ where
     }
 
     /// Fetches the first page on the caller task (no spawning).
-    /// Returns the first page and its paging state response.
+    /// Returns the first page and whether more pages should be fetched.
     async fn query_first_page<QueryFunc, QueryFut>(
         &mut self,
         cluster_state: &ClusterState,
         partition_key: &Option<PartitionKey<'_>>,
         routing_info: &RoutingInfo<'_>,
         page_query: QueryFunc,
-    ) -> Result<(FirstReceivedPage, PagingStateResponse), NextPageError>
+    ) -> Result<(FirstReceivedPage, ShouldFetchMorePages), NextPageError>
     where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
@@ -419,9 +467,18 @@ where
                 };
 
                 let request_error: RequestAttemptError = match query_result {
-                    Ok(Ok(response)) => {
+                    Ok(Ok((first_page, paging_state_response))) => {
                         trace!(parent: &all_pages_span, "Request succeeded");
-                        return Ok(response);
+                        let should_fetch_more_pages = match paging_state_response {
+                            PagingStateResponse::HasMorePages { .. } => {
+                                ShouldFetchMorePages::MorePages {
+                                    first_page_coordinator: coordinator,
+                                    first_page_connection: connection,
+                                }
+                            }
+                            PagingStateResponse::NoMorePages => ShouldFetchMorePages::NoMorePages,
+                        };
+                        return Ok((first_page, should_fetch_more_pages));
                     }
                     Ok(Err(error)) => {
                         trace!(
@@ -486,7 +543,7 @@ where
                                 tracing_id: None,
                                 request_coordinator: coordinator,
                             },
-                            PagingStateResponse::NoMorePages,
+                            ShouldFetchMorePages::NoMorePages,
                         ));
                     }
                 };
@@ -1147,18 +1204,21 @@ If you are using this API, you are probably doing something wrong."
             span_creator,
         };
 
-        let (first_page, paging_state_response) = worker
+        let (first_page, should_fetch_more_pages) = worker
             .query_first_page(&cluster_state, &None, &routing_info, page_query)
             .await?;
 
         /* PROCESS FIRST PAGE */
         let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
-        match paging_state_response {
-            PagingStateResponse::NoMorePages => {
+        match should_fetch_more_pages {
+            ShouldFetchMorePages::NoMorePages => {
                 // No more pages - we are done, return the first page and an empty receiver.
                 std::mem::drop(sender);
             }
-            PagingStateResponse::HasMorePages { .. } => {
+            ShouldFetchMorePages::MorePages {
+                first_page_coordinator,
+                first_page_connection,
+            } => {
                 /* REMAINING PAGES */
                 let worker_task = async move {
                     let routing_info = RoutingInfo {
@@ -1187,7 +1247,15 @@ If you are using this API, you are probably doing something wrong."
                         };
 
                     worker
-                        .work(cluster_state, sender, page_query, routing_info, None)
+                        .work(
+                            cluster_state,
+                            sender,
+                            page_query,
+                            routing_info,
+                            None,
+                            first_page_coordinator,
+                            first_page_connection,
+                        )
                         .await;
                 };
                 let _worker_handle = tokio::task::spawn(worker_task);
@@ -1323,7 +1391,7 @@ If you are using this API, you are probably doing something wrong."
             span_creator,
         };
 
-        let (first_page, paging_state_response) = worker
+        let (first_page, should_fetch_more_pages) = worker
             .query_first_page(
                 &config.cluster_state,
                 &partition_key,
@@ -1337,12 +1405,15 @@ If you are using this API, you are probably doing something wrong."
 
         /* PROCESS FIRST PAGE */
         let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
-        match paging_state_response {
-            PagingStateResponse::NoMorePages => {
+        match should_fetch_more_pages {
+            ShouldFetchMorePages::NoMorePages => {
                 // No more pages - we are done, return the first page and an empty receiver.
                 std::mem::drop(sender);
             }
-            PagingStateResponse::HasMorePages { .. } => {
+            ShouldFetchMorePages::MorePages {
+                first_page_coordinator,
+                first_page_connection,
+            } => {
                 /* REMAINING PAGES */
                 let worker_task = async move {
                     let partition_key = if config.prepared.is_token_aware() {
@@ -1396,6 +1467,8 @@ If you are using this API, you are probably doing something wrong."
                             page_query,
                             routing_info,
                             partition_key,
+                            first_page_coordinator,
+                            first_page_connection,
                         )
                         .await;
                 };
