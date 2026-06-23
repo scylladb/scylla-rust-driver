@@ -114,14 +114,8 @@ type ResultNextPage = Result<NextReceivedPage, NextPageError>;
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_oneshot_sender {
-    use crate::frame::response::result::DeserializedMetadataAndRawRows;
     use std::marker::PhantomData;
-    use tokio::sync::{mpsc, oneshot};
-    use uuid::Uuid;
-
-    use crate::response::Coordinator;
-
-    use super::{FirstPageContent, FirstReceivedPage, ResultFirstPage, ResultNextPage};
+    use tokio::sync::oneshot;
 
     /// A value whose existence proves that there was an attempt
     /// to send an item of type T through a oneshot.
@@ -147,29 +141,6 @@ mod checked_oneshot_sender {
         pub(crate) fn send(self, value: T) -> (SendAttemptedProof<T>, Result<(), T>) {
             let res = self.0.send(value);
             (SendAttemptedProof(PhantomData), res)
-        }
-    }
-
-    impl ProvingSender<ResultFirstPage> {
-        pub(crate) fn send_empty_page(
-            self,
-            tracing_id: Option<Uuid>,
-            request_coordinator: Option<Coordinator>,
-        ) -> (
-            SendAttemptedProof<ResultFirstPage>,
-            Result<(), ResultFirstPage>,
-        ) {
-            let empty_page = FirstReceivedPage {
-                content: FirstPageContent::Rows {
-                    rows: DeserializedMetadataAndRawRows::mock_empty(),
-                },
-                tracing_id,
-                request_coordinator,
-            };
-            // No more pages to follow.
-            let (_, next_pages_receiver) = mpsc::channel::<ResultNextPage>(1);
-
-            self.send(Ok((empty_page, next_pages_receiver)))
         }
     }
 }
@@ -241,28 +212,6 @@ impl PageSender {
         }
     }
 
-    async fn send_empty_page(
-        self,
-        tracing_id: Option<Uuid>,
-        request_coordinator: Option<Coordinator>,
-    ) -> FirstPageSendAttemptedProof {
-        match self {
-            PageSender::FirstPage(sender) => {
-                let (proof, _) = sender.send_empty_page(tracing_id, request_coordinator);
-                proof
-            }
-            PageSender::NextPages(proof, sender) => {
-                let empty_page = NextReceivedPage {
-                    rows: DeserializedMetadataAndRawRows::mock_empty(),
-                    tracing_id,
-                    request_coordinator,
-                };
-                let _ = sender.send(Ok(empty_page)).await;
-                proof
-            }
-        }
-    }
-
     async fn send(
         self,
         page: NextReceivedPage,
@@ -311,16 +260,16 @@ struct PagerWorker {
 }
 
 impl PagerWorker {
-    // Contract: this function MUST send at least one item through first_page_sender.
+    /// Fetches remaining pages (pages 2+) in a background task.
+    /// Sends each page through the mpsc channel.
     async fn work<QueryFunc, QueryFut, SpanCreator>(
         mut self,
         cluster_state: Arc<ClusterState>,
-        first_page_sender: ProvingSender<ResultFirstPage>,
+        sender: mpsc::Sender<ResultNextPage>,
         page_query: QueryFunc,
         routing_info: RoutingInfo<'_>,
         span_creator: SpanCreator,
-    ) -> FirstPageSendAttemptedProof
-    where
+    ) where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
         SpanCreator: Fn() -> RequestSpan,
@@ -332,9 +281,6 @@ impl PagerWorker {
         let mut last_error: RequestError = RequestError::EmptyPlan;
         let mut current_consistency: Consistency = self.query_consistency;
 
-        let mut sender = PageSender::FirstPage(first_page_sender);
-
-        self.log_request_start();
         self.timeouter.as_mut().map(PageQueryTimeouter::reset);
 
         // Iterates over nodes in the query plan, trying to fetch the next page.
@@ -367,51 +313,199 @@ impl PagerWorker {
                 trace!(parent: &per_target_span, "Execution started");
 
                 // Fetch pages from this connection until an error occurs.
-                let queries_result = 'same_node_pages: loop {
+                'same_node_pages: loop {
                     let request_span = span_creator();
-                    let (res, new_sender) = self
-                        .query_one_page(
-                            &routing_info,
+
+                    let fetch_result = self
+                        .fetch_one_page(
                             &connection,
                             current_consistency,
-                            node,
-                            coordinator.clone(),
                             &request_span,
-                            sender,
                             &page_query,
                         )
                         .instrument(request_span.span().clone())
                         .await;
-                    sender = new_sender;
-
-                    match res {
-                        Ok(Ok(ControlFlow::Break(proof))) => {
-                            // Successfully queried the last remaining page.
-                            break Ok(Ok(proof));
+                    let query_result = match fetch_result {
+                        Err(RequestTimeoutError(timeout)) => {
+                            let request_error = RequestError::RequestTimeout(timeout);
+                            self.log_request_error(&request_error);
+                            trace!(
+                                parent: &per_target_span,
+                                error = %request_error,
+                                "Request timed out"
+                            );
+                            // This means that we failed all attempts - in this case, due to a timeout.
+                            let _ = sender
+                                .send(Err(NextPageError::RequestFailure(request_error)))
+                                .await;
+                            return;
                         }
+                        Ok((elapsed, result)) => {
+                            self.process_next_page(
+                                &routing_info,
+                                node,
+                                coordinator.clone(),
+                                &request_span,
+                                &sender,
+                                elapsed,
+                                result,
+                            )
+                            .await
+                        }
+                    };
 
-                        Ok(Ok(ControlFlow::Continue(()))) => {
+                    match query_result {
+                        Ok(ControlFlow::Break(())) => {
+                            // Successfully queried the last remaining page.
+                            trace!(parent: &per_target_span, "Request succeeded");
+                            return;
+                        }
+                        Ok(ControlFlow::Continue(())) => {
                             // Successfully queried one page, and there are more to fetch.
                             // Reset the timeout_instant for the next page fetch.
                             self.timeouter.as_mut().map(PageQueryTimeouter::reset);
                             continue 'same_node_pages;
                         }
-                        Ok(Err(request_attempt_error)) => {
-                            break Ok(Err(request_attempt_error));
+                        Err(request_error) => {
+                            trace!(
+                                parent: &per_target_span,
+                                error = %request_error,
+                                "Request failed"
+                            );
+
+                            // Break out of the inner page-fetching loop to retry logic.
+                            let request_info = RequestInfo {
+                                error: &request_error,
+                                is_idempotent: self.query_is_idempotent,
+                                consistency: current_consistency,
+                            };
+
+                            let retry_decision =
+                                self.retry_session.decide_should_retry(request_info);
+                            trace!(
+                                parent: &per_target_span,
+                                retry_decision = ?retry_decision
+                            );
+
+                            self.log_attempt_error(&request_error, &retry_decision);
+
+                            last_error = request_error.into();
+
+                            match retry_decision {
+                                RetryDecision::RetrySameTarget(cl) => {
+                                    self.metrics.inc_retries_num();
+                                    current_consistency = cl.unwrap_or(current_consistency);
+                                    continue 'same_node_retries;
+                                }
+                                RetryDecision::RetryNextTarget(cl) => {
+                                    self.metrics.inc_retries_num();
+                                    current_consistency = cl.unwrap_or(current_consistency);
+                                    continue 'nodes_in_plan;
+                                }
+                                RetryDecision::DontRetry => break 'nodes_in_plan,
+                                RetryDecision::IgnoreWriteError => {
+                                    self.log_request_success();
+                                    self.retry_session.reset();
+
+                                    warn!(
+                                        "Ignoring error during fetching pages; stopping fetching."
+                                    );
+                                    return;
+                                }
+                            };
                         }
-                        Err(request_timeout_error) => {
-                            break Err(request_timeout_error);
-                        }
-                    };
+                    }
+                }
+            }
+        }
+
+        // If we are here, it means we failed to fetch next page on any node from the plan.
+        // The plan is exhausted, so we send the last error and finish.
+        self.log_request_error(&last_error);
+        let _ = sender
+            .send(Err(NextPageError::RequestFailure(last_error)))
+            .await;
+    }
+
+    /// Fetches the first page on the caller task (no spawning).
+    /// Returns the first page and its paging state response.
+    async fn query_first_page<QueryFunc, QueryFut, SpanCreator>(
+        &mut self,
+        cluster_state: &ClusterState,
+        span_creator: SpanCreator,
+        routing_info: &RoutingInfo<'_>,
+        page_query: QueryFunc,
+    ) -> Result<(FirstReceivedPage, PagingStateResponse), NextPageError>
+    where
+        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
+        QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
+        SpanCreator: Fn() -> RequestSpan,
+    {
+        let load_balancer = Arc::clone(&self.load_balancing_policy);
+        let query_plan =
+            load_balancing::Plan::new(load_balancer.as_ref(), routing_info, cluster_state);
+
+        let mut last_error: RequestError = RequestError::EmptyPlan;
+        let mut current_consistency: Consistency = self.query_consistency;
+
+        self.log_request_start();
+        self.timeouter.as_mut().map(PageQueryTimeouter::reset);
+
+        // Iterates over nodes in the query plan, trying to fetch the next page.
+        'nodes_in_plan: for (node, shard) in query_plan {
+            let per_target_span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
+            // For each node in the plan choose a connection to use
+            // This connection will be reused for same node retries to preserve paging cache on the shard
+            let connection: Arc<Connection> = match node
+                .connection_for_shard(shard)
+                .instrument(per_target_span.clone())
+                .await
+            {
+                Ok(connection) => connection,
+                Err(e) => {
+                    trace!(
+                        parent: &per_target_span,
+                        error = %e,
+                        "Choosing connection failed"
+                    );
+                    last_error = e.into();
+                    // Broken connection doesn't count as a failed query, don't log in metrics
+                    continue 'nodes_in_plan;
+                }
+            };
+
+            let coordinator = Coordinator::new(node, &connection);
+
+            // Retries on the same node as long as RetrySession decides so.
+            'same_node_retries: loop {
+                trace!(parent: &per_target_span, "Execution started");
+                let request_span = span_creator();
+
+                let fetch_result = self
+                    .fetch_one_page(&connection, current_consistency, &request_span, &page_query)
+                    .instrument(request_span.span().clone())
+                    .await;
+                let query_result = match fetch_result {
+                    Err(e) => Err(e),
+                    Ok((elapsed, result)) => {
+                        let result = self
+                            .process_first_page(
+                                routing_info,
+                                node,
+                                coordinator.clone(),
+                                &request_span,
+                                elapsed,
+                                result,
+                            )
+                            .await;
+                        Ok(result)
+                    }
                 };
 
-                let request_error: RequestAttemptError = match queries_result {
-                    Ok(Ok(proof)) => {
+                let request_error: RequestAttemptError = match query_result {
+                    Ok(Ok(response)) => {
                         trace!(parent: &per_target_span, "Request succeeded");
-                        // query_pages returned Ok, so we are guaranteed
-                        // that it attempted to send at least one page
-                        // through sender and we can safely return now.
-                        return proof;
+                        return Ok(response);
                     }
                     Ok(Err(error)) => {
                         trace!(
@@ -430,10 +524,7 @@ impl PagerWorker {
                             "Request timed out"
                         );
                         // This means that we failed all attempts - in this case, due to a timeout.
-                        let proof = sender
-                            .send_err(NextPageError::RequestFailure(request_error))
-                            .await;
-                        return proof;
+                        return Err(NextPageError::RequestFailure(request_error));
                     }
                 };
 
@@ -452,7 +543,7 @@ impl PagerWorker {
 
                 self.log_attempt_error(&request_error, &retry_decision);
 
-                last_error = request_error.into();
+                last_error = RequestError::LastAttemptError(request_error);
 
                 match retry_decision {
                     RetryDecision::RetrySameTarget(cl) => {
@@ -471,110 +562,23 @@ impl PagerWorker {
                         self.retry_session.reset();
 
                         warn!("Ignoring error during fetching pages; stopping fetching.");
-                        // If we are here then, most likely, we didn't send
-                        // anything through the self.sender channel.
-                        // Although we are in an awkward situation (_iter
-                        // interface isn't meant for sending writes),
-                        // we must attempt to send something because
-                        // QueryPager expects it.
-                        return sender
-                            .send_empty_page(None, Some(coordinator.clone()))
-                            .await;
+                        return Ok((
+                            FirstReceivedPage {
+                                content: FirstPageContent::Rows {
+                                    rows: DeserializedMetadataAndRawRows::mock_empty(),
+                                },
+                                tracing_id: None,
+                                request_coordinator: Some(coordinator),
+                            },
+                            PagingStateResponse::NoMorePages,
+                        ));
                     }
                 };
             }
         }
 
-        // If we are here, it means we failed to fetch next page on any node from the plan.
-        // The plan is exhausted, so we send the last error and finish.
         self.log_request_error(&last_error);
-        sender
-            .send_err(NextPageError::RequestFailure(last_error))
-            .await
-    }
-
-    #[expect(clippy::too_many_arguments)]
-    async fn query_one_page<QueryFunc, QueryFut>(
-        &mut self,
-        routing_info: &RoutingInfo<'_>,
-        connection: &Arc<Connection>,
-        consistency: Consistency,
-        node: NodeRef<'_>,
-        coordinator: Coordinator,
-        request_span: &RequestSpan,
-        mut sender: PageSender,
-        page_query: &QueryFunc,
-    ) -> (
-        Result<
-            Result<ControlFlow<FirstPageSendAttemptedProof, ()>, RequestAttemptError>,
-            RequestTimeoutError,
-        >,
-        PageSender,
-    )
-    where
-        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
-        QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
-    {
-        let (elapsed, page_result) = match self
-            .fetch_one_page(connection, consistency, request_span, page_query)
-            .await
-        {
-            Err(timeout_err) => return (Err(timeout_err), sender),
-            Ok((elapsed, resp)) => (elapsed, resp),
-        };
-
-        let res = match sender {
-            PageSender::FirstPage(first_page_sender) => {
-                let result = self
-                    .process_first_page(
-                        routing_info,
-                        node,
-                        coordinator,
-                        request_span,
-                        elapsed,
-                        page_result,
-                    )
-                    .await;
-                match result {
-                    Ok((first_page, paging_state_response)) => {
-                        let (next_pages_sender, next_pages_receiver) = mpsc::channel(1);
-                        let (proof, res) =
-                            first_page_sender.send(Ok((first_page, next_pages_receiver)));
-                        sender = PageSender::NextPages(proof.clone(), next_pages_sender);
-                        if res.is_err() {
-                            // channel was closed, QueryPager was dropped - should shutdown
-                            Ok(ControlFlow::Break(proof))
-                        } else {
-                            match paging_state_response {
-                                PagingStateResponse::NoMorePages => Ok(ControlFlow::Break(proof)),
-                                PagingStateResponse::HasMorePages { .. } => {
-                                    Ok(ControlFlow::Continue(()))
-                                }
-                            }
-                        }
-                    }
-                    Err(attempt_err) => {
-                        sender = PageSender::FirstPage(first_page_sender);
-                        Err(attempt_err)
-                    }
-                }
-            }
-            PageSender::NextPages(ref proof, ref next_pages_sender) => {
-                let res = self
-                    .process_next_page(
-                        routing_info,
-                        node,
-                        coordinator,
-                        request_span,
-                        next_pages_sender,
-                        elapsed,
-                        page_result,
-                    )
-                    .await;
-                res.map(|cf| cf.map_break(|()| proof.clone()))
-            }
-        };
-        (Ok(res), sender)
+        Err(NextPageError::RequestFailure(last_error))
     }
 
     async fn fetch_one_page<QueryFunc, QueryFut>(
@@ -1159,8 +1163,6 @@ If you are using this API, you are probably doing something wrong."
         metrics: Metrics,
         node_location_preference: Arc<NodeLocationPreference>,
     ) -> Result<Self, PagerExecutionError> {
-        let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
-
         let consistency = statement
             .config
             .consistency
@@ -1197,25 +1199,38 @@ If you are using this API, you are probably doing something wrong."
             span
         }
 
-        let worker_task = async move {
-            let statement_ref = &statement;
+        let statement_ref = &statement;
+        let page_query = |connection: Arc<Connection>,
+                          consistency: Consistency,
+                          paging_state: PagingState| {
+            async move {
+                connection
+                    .query_raw_with_consistency(
+                        statement_ref,
+                        consistency,
+                        serial_consistency,
+                        Some(page_size),
+                        paging_state,
+                    )
+                    .await
+            }
+        };
 
-            let page_query = |connection: Arc<Connection>,
-                              consistency: Consistency,
-                              paging_state: PagingState| {
-                async move {
-                    connection
-                        .query_raw_with_consistency(
-                            statement_ref,
-                            consistency,
-                            serial_consistency,
-                            Some(page_size),
-                            paging_state,
-                        )
-                        .await
-                }
-            };
+        let mut worker = PagerWorker {
+            query_is_idempotent: statement.config.is_idempotent,
+            query_consistency: consistency,
+            load_balancing_policy,
+            retry_session,
+            timeouter,
+            metrics,
+            paging_state: PagingState::start(),
+            history_listener: statement.config.history_listener.as_ref().map(Arc::clone),
+            current_request_id: None,
+            current_attempt_id: None,
+            parent_span,
+        };
 
+        let (first_page, paging_state_response) = {
             let routing_info = RoutingInfo {
                 consistency,
                 serial_consistency,
@@ -1227,32 +1242,63 @@ If you are using this API, you are probably doing something wrong."
 
             let span_creator = || create_span(&statement.contents);
 
-            let worker = PagerWorker {
-                query_is_idempotent: statement.config.is_idempotent,
-                query_consistency: consistency,
-                load_balancing_policy,
-                retry_session,
-                timeouter,
-                metrics,
-                paging_state: PagingState::start(),
-                history_listener: statement.config.history_listener.as_ref().map(Arc::clone),
-                current_request_id: None,
-                current_attempt_id: None,
-                parent_span,
-            };
-
             worker
-                .work(
-                    cluster_state,
-                    sender.into(),
-                    page_query,
-                    routing_info,
-                    span_creator,
-                )
-                .await
+                .query_first_page(&cluster_state, span_creator, &routing_info, page_query)
+                .await?
         };
 
-        Self::new_from_worker_future(worker_task, receiver, Some(session))
+        /* PROCESS FIRST PAGE */
+        let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
+        match paging_state_response {
+            PagingStateResponse::NoMorePages => {
+                // No more pages - we are done, return the first page and an empty receiver.
+                std::mem::drop(sender);
+            }
+            PagingStateResponse::HasMorePages { .. } => {
+                /* REMAINING PAGES */
+                let worker_task = async move {
+                    let routing_info = RoutingInfo {
+                        consistency,
+                        serial_consistency,
+                        token: None,
+                        table: None,
+                        is_confirmed_lwt: false,
+                        node_location_preference: &node_location_preference,
+                    };
+
+                    let statement_ref = &statement;
+                    let page_query =
+                        |connection: Arc<Connection>,
+                         consistency: Consistency,
+                         paging_state: PagingState| async move {
+                            connection
+                                .query_raw_with_consistency(
+                                    statement_ref,
+                                    consistency,
+                                    serial_consistency,
+                                    Some(page_size),
+                                    paging_state,
+                                )
+                                .await
+                        };
+
+                    let span_creator = move || create_span(&statement_ref.contents);
+
+                    worker
+                        .work(
+                            cluster_state,
+                            sender,
+                            page_query,
+                            routing_info,
+                            span_creator,
+                        )
+                        .await;
+                };
+                let _worker_handle = tokio::task::spawn(worker_task);
+            }
+        }
+
+        Self::new_from_first_page(first_page, receiver, session)
             .await
             .map_err(PagerExecutionError::from)
     }
@@ -1261,8 +1307,6 @@ If you are using this API, you are probably doing something wrong."
         session: &Session,
         config: PreparedPagerConfig,
     ) -> Result<Self, PagerExecutionError> {
-        let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
-
         let consistency = config
             .prepared
             .config
@@ -1316,99 +1360,175 @@ If you are using this API, you are probably doing something wrong."
             span
         }
 
-        let worker_task = async move {
-            let prepared_ref = &config.prepared;
-            let values_ref = &config.values;
-
-            let (partition_key, token) = match prepared_ref
-                .extract_partition_key_and_calculate_token(
-                    prepared_ref.get_partitioner_name(),
-                    values_ref,
-                ) {
+        let (partition_key, token) =
+            match config.prepared.extract_partition_key_and_calculate_token(
+                config.prepared.get_partitioner_name(),
+                &config.values,
+            ) {
                 Ok(res) => res.unzip(),
                 Err(err) => {
-                    let (proof, _res) = ProvingSender::from(sender)
-                        .send(Err(NextPageError::PartitionKeyError(err)));
-                    return proof;
+                    return Err(PagerExecutionError::NextPageError(
+                        NextPageError::PartitionKeyError(err),
+                    ));
                 }
             };
 
-            let table_spec = config.prepared.get_table_spec();
-            let routing_info = RoutingInfo {
-                consistency,
-                serial_consistency,
-                token,
-                table: table_spec,
-                is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
-                node_location_preference: &config.location_preference,
-            };
+        let table_spec = config.prepared.get_table_spec();
+        let routing_info = RoutingInfo {
+            consistency,
+            serial_consistency,
+            token,
+            table: table_spec,
+            is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
+            node_location_preference: &config.location_preference,
+        };
 
-            let page_query = |connection: Arc<Connection>,
-                              consistency: Consistency,
-                              paging_state: PagingState| async move {
-                connection
-                    .execute_raw_with_consistency(
-                        prepared_ref,
-                        values_ref,
-                        consistency,
-                        serial_consistency,
-                        Some(page_size),
-                        paging_state,
-                    )
-                    .await
-            };
-
-            let serialized_values_size = config.values.buffer_size();
-
-            let replicas: Option<Replicas> = Option::zip(routing_info.table, routing_info.token)
-                .map(|(table_spec, token)| {
-                    config
-                        .cluster_state
-                        .get_token_endpoints_iter(table_spec, token)
-                        .map(|(node, shard)| (node.clone(), shard))
-                        .collect()
-                });
-
-            let span_creator = move || {
-                create_span(
-                    &partition_key,
-                    token,
-                    serialized_values_size,
-                    replicas.as_ref(),
-                )
-            };
-
-            let worker = PagerWorker {
-                query_is_idempotent: config.prepared.config.is_idempotent,
-                query_consistency: consistency,
-                load_balancing_policy,
-                retry_session,
-                timeouter,
-                metrics: config.metrics,
-                paging_state: PagingState::start(),
-                history_listener: config
-                    .prepared
-                    .config
-                    .history_listener
-                    .as_ref()
-                    .map(Arc::clone),
-                current_request_id: None,
-                current_attempt_id: None,
-                parent_span,
-            };
-
-            worker
-                .work(
-                    config.cluster_state,
-                    sender.into(),
-                    page_query,
-                    routing_info,
-                    span_creator,
+        let prepared_ref = &config.prepared;
+        let values_ref = &config.values;
+        let page_query = |connection: Arc<Connection>,
+                          consistency: Consistency,
+                          paging_state: PagingState| async move {
+            connection
+                .execute_raw_with_consistency(
+                    prepared_ref,
+                    values_ref,
+                    consistency,
+                    serial_consistency,
+                    Some(page_size),
+                    paging_state,
                 )
                 .await
         };
 
-        Self::new_from_worker_future(worker_task, receiver, Some(session))
+        let serialized_values_size = config.values.buffer_size();
+
+        let replicas: Option<Replicas> =
+            Option::zip(routing_info.table, routing_info.token).map(|(table_spec, token)| {
+                config
+                    .cluster_state
+                    .get_token_endpoints_iter(table_spec, token)
+                    .map(|(node, shard)| (node.clone(), shard))
+                    .collect()
+            });
+
+        let span_creator = || {
+            create_span(
+                &partition_key,
+                token,
+                serialized_values_size,
+                replicas.as_ref(),
+            )
+        };
+
+        let mut worker = PagerWorker {
+            query_is_idempotent: config.prepared.config.is_idempotent,
+            query_consistency: consistency,
+            load_balancing_policy,
+            retry_session,
+            timeouter,
+            metrics: config.metrics,
+            paging_state: PagingState::start(),
+            history_listener: config
+                .prepared
+                .config
+                .history_listener
+                .as_ref()
+                .map(Arc::clone),
+            current_request_id: None,
+            current_attempt_id: None,
+            parent_span,
+        };
+
+        let (first_page, paging_state_response) = worker
+            .query_first_page(
+                &config.cluster_state,
+                &span_creator,
+                &routing_info,
+                page_query,
+            )
+            .await?;
+
+        // Required to end the borrow of `partition_key`, so `config` can be moved into the worker task.
+        std::mem::drop(partition_key);
+
+        /* PROCESS FIRST PAGE */
+        let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
+        match paging_state_response {
+            PagingStateResponse::NoMorePages => {
+                // No more pages - we are done, return the first page and an empty receiver.
+                std::mem::drop(sender);
+            }
+            PagingStateResponse::HasMorePages { .. } => {
+                /* REMAINING PAGES */
+                let worker_task = async move {
+                    let partition_key = if config.prepared.is_token_aware() {
+                        match config.prepared.extract_partition_key(&config.values) {
+                            Ok(res) => Some(res),
+                            Err(err) => {
+                                let _ = sender
+                                    .send(Err(NextPageError::PartitionKeyError(
+                                        PartitionKeyError::PartitionKeyExtraction(err),
+                                    )))
+                                    .await;
+                                return;
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    let table_spec = config.prepared.get_table_spec();
+                    let routing_info = RoutingInfo {
+                        consistency,
+                        serial_consistency,
+                        token,
+                        table: table_spec,
+                        is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
+                        node_location_preference: &config.location_preference,
+                    };
+
+                    let prepared = &config.prepared;
+                    let values_ref = &config.values;
+                    let page_query =
+                        |connection: Arc<Connection>,
+                         consistency: Consistency,
+                         paging_state: PagingState| async move {
+                            connection
+                                .execute_raw_with_consistency(
+                                    prepared,
+                                    values_ref,
+                                    consistency,
+                                    serial_consistency,
+                                    Some(page_size),
+                                    paging_state,
+                                )
+                                .await
+                        };
+
+                    let span_creator = move || {
+                        create_span(
+                            &partition_key,
+                            token,
+                            serialized_values_size,
+                            replicas.as_ref(),
+                        )
+                    };
+
+                    worker
+                        .work(
+                            config.cluster_state,
+                            sender,
+                            page_query,
+                            routing_info,
+                            span_creator,
+                        )
+                        .await;
+                };
+                let _worker_handle = tokio::task::spawn(worker_task);
+            }
+        };
+
+        Self::new_from_first_page(first_page, receiver, session)
             .await
             .map_err(PagerExecutionError::from)
     }
@@ -1464,6 +1584,83 @@ If you are using this API, you are probably doing something wrong."
                     use_keyspace_error
                 ),
             })
+    }
+
+    async fn new_from_first_page(
+        first_page: FirstReceivedPage,
+        receiver: mpsc::Receiver<ResultNextPage>,
+        session: &Session,
+    ) -> Result<Self, PagerConstructionError> {
+        let tracing_ids = Vec::from_iter(first_page.tracing_id);
+        let coordinator_id = first_page
+            .request_coordinator
+            .as_ref()
+            .map(|coordinator| coordinator.node().host_id);
+        let request_coordinators = Vec::from_iter(first_page.request_coordinator);
+
+        let first_page = match first_page.content {
+            FirstPageContent::Rows { rows } => RawRowLendingIterator::new(rows),
+            FirstPageContent::SetKeyspace { set_keyspace } => {
+                // If we are here, this means that we received a SET_KEYSPACE response as a first page.
+                // This can happen when the user executes a "USE <keyspace>" statement.
+                // Although it makes little sense to page over such a statement,
+                // we must handle it gracefully. Especially that there may be users who execute
+                // all statements in a paged manner (e.g., C# RS Driver).
+                //
+                // Let's set the keyspace on the session.
+                let response = NonErrorQueryResponse {
+                    response: NonErrorResponseWithDeserializedMetadata::Result(
+                        result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace),
+                    ),
+                    tracing_id: None,
+                    warnings: Vec::new(),
+                };
+                session.handle_set_keyspace_response(&response).await?;
+                // The stream will be empty.
+                RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
+            }
+            FirstPageContent::SchemaChange { schema_change } => {
+                // If we are here, this means that we received a SCHEMA_CHANGE response as a first page.
+                // This can happen when the user executes a DDL statement.
+                // Although it makes little sense to page over such a statement,
+                // we must handle it gracefully. Especially that there may be users who execute
+                // all statements in a paged manner (e.g., C#-RS Driver).
+                //
+                // Let's await schema agreement, if Session is configured to do so.
+                let response = NonErrorQueryResponse {
+                    response: NonErrorResponseWithDeserializedMetadata::Result(
+                        result::ResultWithDeserializedMetadata::SchemaChange(schema_change),
+                    ),
+                    tracing_id: None,
+                    warnings: Vec::new(),
+                };
+                session
+                    .handle_auto_await_schema_agreement(
+                        &response,
+                        // Making it impossible to pass None here on the type level would be possible,
+                        // but it would require heavy restructuring. The culprit is SingleConnectionPagerWorker,
+                        // which is used for ControlConnection::execute_iter, and which doesn't have enough
+                        // data to provide a Coordinator in its proof of sending the first page.
+                        //
+                        // I could duplicate data types and the proving sender with Coordinator for PagerWorker
+                        // and no Coordinator for SingleConnectionPagerWorker, but it's not worth it given that
+                        // this None here is an erroneous situation that can only happen due to a bug in the driver.
+                        //
+                        // Also, we hope to refactor the Pager soon [#1549](https://github.com/scylladb/scylla-rust-driver/issues/1549).
+                        coordinator_id.expect("PagerWorker always has Coordinator specified"),
+                    )
+                    .await?;
+                // The stream will be empty.
+                RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
+            }
+        };
+
+        Ok(Self {
+            current_page: first_page,
+            page_receiver: receiver,
+            tracing_ids,
+            request_coordinators,
+        })
     }
 
     async fn new_from_worker_future(
