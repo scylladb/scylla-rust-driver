@@ -339,14 +339,20 @@ impl Metrics {
     ///
     /// * `percentile` - float value (0.0 - 100.0)
     pub fn get_latency_percentile_ms(&self, percentile: f64) -> Result<u64, MetricsError> {
-        let res = self.histogram.load().percentile(percentile);
+        // `histogram` 1.x uses the 0.0..=1.0 quantile scale, whereas our
+        // public API uses the 0.0..=100.0 percentile scale.
+        let res = self.histogram.load().quantile(percentile / 100.0);
 
         match res {
             Err(err) => Err(MetricsError::HistogramError(Arc::new(err))),
 
             Ok(None) => Err(MetricsError::Empty),
 
-            Ok(Some(p)) => Ok(p.count()),
+            // A single quantile was requested, so there is exactly one entry.
+            Ok(Some(qr)) => match qr.entries().values().next() {
+                Some(bucket) => Ok(bucket.count()),
+                None => Err(MetricsError::Empty),
+            },
         }
     }
 
@@ -359,11 +365,12 @@ impl Metrics {
 
         let (min, max) = Self::minmax(&h)?;
 
-        let percentile_args = [50.0, 75.0, 95.0, 98.0, 99.0, 99.9];
-        let mut percentiles = Self::percentiles(&h, &percentile_args)?;
+        // `histogram` uses the 0.0..=1.0 quantile scale.
+        let quantile_args = [0.50, 0.75, 0.95, 0.98, 0.99, 0.999];
+        let mut percentiles = Self::percentiles(&h, &quantile_args)?;
 
         // SAFETY: `unwrap()`s are OK here, because `Self::percentiles()` returned iterator's length
-        // is equal to number of elements in `percentile_args`.
+        // is equal to number of elements in `quantile_args`.
         let median = percentiles.next().unwrap();
         let percentile_75 = percentiles.next().unwrap();
         let percentile_95 = percentiles.next().unwrap();
@@ -473,21 +480,31 @@ impl Metrics {
             .ok_or(MetricsError::Empty)
     }
 
+    /// Computes the bucket midpoints for the given `quantiles`, which must be
+    /// on the 0.0..=1.0 scale used by the `histogram` crate.
     fn percentiles(
         h: &Histogram,
-        percentiles: &[f64],
+        quantiles: &[f64],
     ) -> Result<impl Iterator<Item = u64> + use<>, MetricsError> {
-        let res = h.percentiles(percentiles);
+        let res = h.quantiles(quantiles);
 
         match res {
             Err(err) => Err(MetricsError::HistogramError(Arc::new(err))),
 
             Ok(None) => Err(MetricsError::Empty),
 
-            Ok(Some(ps)) => Ok(ps
-                .into_iter()
+            // `entries()` is a `BTreeMap` keyed by quantile, so iterating its
+            // values yields buckets in ascending quantile order.
+            Ok(Some(qr)) => Ok(qr
+                .entries()
+                .values()
                 // Get the mean value from the bucket.
-                .map(|(_, bucket)| (bucket.start() + bucket.end()) / 2)),
+                .map(|bucket| (bucket.start() + bucket.end()) / 2)
+                // https://github.com/iopsystems/histogram/issues/23
+                // Until `into_entries` is added, we need this additional Vec.
+                // https://github.com/iopsystems/histogram/pull/24
+                .collect::<Vec<_>>()
+                .into_iter()),
         }
     }
 
