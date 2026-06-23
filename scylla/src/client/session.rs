@@ -1422,6 +1422,15 @@ impl From<AutoSchemaAwaitingError> for ExecutionError {
     }
 }
 
+impl From<AutoSchemaAwaitingError> for PagerExecutionError {
+    fn from(err: AutoSchemaAwaitingError) -> Self {
+        match err {
+            AutoSchemaAwaitingError::SchemaAgreement(e) => e.into(),
+            AutoSchemaAwaitingError::MetadataRefresh(e) => e.into(),
+        }
+    }
+}
+
 impl Session {
     pub(crate) async fn handle_auto_await_schema_agreement(
         &self,

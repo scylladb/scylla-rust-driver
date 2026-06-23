@@ -25,13 +25,10 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 use crate::client::execution_profile::ExecutionProfileInner;
-use crate::client::session::{AutoSchemaAwaitingError, Session};
+use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node, NodeRef};
 use crate::deserialize::DeserializeOwnedRow;
-use crate::errors::{
-    MetadataError, PagerExecutionError, RequestAttemptError, RequestError, SchemaAgreementError,
-    UseKeyspaceError,
-};
+use crate::errors::{PagerExecutionError, RequestAttemptError, RequestError};
 use crate::frame::response::result;
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
@@ -1202,9 +1199,7 @@ If you are using this API, you are probably doing something wrong."
             }
         }
 
-        Self::new_from_first_page(first_page, receiver, session)
-            .await
-            .map_err(PagerExecutionError::from)
+        Self::new_from_first_page(first_page, receiver, session).await
     }
 
     pub(crate) async fn new_for_prepared_statement(
@@ -1432,9 +1427,7 @@ If you are using this API, you are probably doing something wrong."
             }
         };
 
-        Self::new_from_first_page(first_page, receiver, session)
-            .await
-            .map_err(PagerExecutionError::from)
+        Self::new_from_first_page(first_page, receiver, session).await
     }
 
     pub(crate) async fn new_for_connection_execute_iter(
@@ -1510,7 +1503,7 @@ If you are using this API, you are probably doing something wrong."
         first_page: FirstReceivedPage,
         receiver: mpsc::Receiver<ResultNextPage>,
         session: &Session,
-    ) -> Result<Self, PagerConstructionError> {
+    ) -> Result<Self, PagerExecutionError> {
         let tracing_ids = Vec::from_iter(first_page.tracing_id);
         let coordinator_id = first_page
             .request_coordinator
@@ -1740,84 +1733,4 @@ pub enum NextRowError {
     /// An error occurred during row deserialization.
     #[error("Row deserialization error: {0}")]
     RowDeserializationError(#[from] DeserializationError),
-}
-
-/// An error that occurred during construction of [QueryPager].
-/// A temporary error type that is introduced to support proper error handling
-/// when the first page is received and processed.
-///
-/// Rationale:
-/// - `new_from_worker_future` function is used both by Session-based QueryPager constructors
-///   (`QueryPager::new_for_query` and `QueryPager::new_for_prepared_statement`,
-///   used by `Session::query_iter` and `Session::execute_iter`, respectively)
-///   and by connection-based QueryPager constructor (QueryPager::new_for_connection_execute_iter,
-///   used by `Connection::execute_iter`).
-/// - In the Session-based constructors, we have a Session available, so we can handle
-///   SET_KEYSPACE and SCHEMA_CHANGE responses properly (by setting the keyspace on the Session,
-///   or awaiting schema agreement, respectively).
-/// - In the connection-based constructor, we do not have a Session available, so we cannot handle
-///   those responses properly. We can only log an error message. Note that those responses
-///   should never be received in that case, because USE KEYSPACE statements and DDL statements
-///   should not be executed via `Connection::execute_iter()`.
-/// - Therefore, we need to distinguish between errors that can occur during handling
-///   of those responses, so that we can propagate them only in the Session-based constructors.
-///   Specifically, we need to propagate UseKeyspaceError and SchemaAgreementError
-///   only in the Session-based constructors, and assert that they never occur in the connection-based constructor.
-/// - We don't want to pollute NextPageError or NextRowError with those variants,
-///   because they are not relevant for normal paging operation (only for construction and the first received page).
-enum PagerConstructionError {
-    NextPage(NextPageError),
-    SchemaAgreement(SchemaAgreementError),
-    MetadataRefresh(MetadataError),
-    UseKeyspace(UseKeyspaceError),
-}
-
-impl From<NextPageError> for PagerConstructionError {
-    fn from(err: NextPageError) -> Self {
-        PagerConstructionError::NextPage(err)
-    }
-}
-
-impl From<SchemaAgreementError> for PagerConstructionError {
-    fn from(err: SchemaAgreementError) -> Self {
-        PagerConstructionError::SchemaAgreement(err)
-    }
-}
-
-impl From<UseKeyspaceError> for PagerConstructionError {
-    fn from(err: UseKeyspaceError) -> Self {
-        PagerConstructionError::UseKeyspace(err)
-    }
-}
-
-impl From<AutoSchemaAwaitingError> for PagerConstructionError {
-    fn from(err: AutoSchemaAwaitingError) -> Self {
-        match err {
-            AutoSchemaAwaitingError::SchemaAgreement(err) => {
-                PagerConstructionError::SchemaAgreement(err)
-            }
-            AutoSchemaAwaitingError::MetadataRefresh(err) => {
-                PagerConstructionError::MetadataRefresh(err)
-            }
-        }
-    }
-}
-
-impl From<PagerConstructionError> for PagerExecutionError {
-    fn from(err: PagerConstructionError) -> Self {
-        match err {
-            PagerConstructionError::NextPage(next_page_err) => {
-                PagerExecutionError::NextPageError(next_page_err)
-            }
-            PagerConstructionError::SchemaAgreement(schema_agreement_err) => {
-                PagerExecutionError::SchemaAgreementError(schema_agreement_err)
-            }
-            PagerConstructionError::MetadataRefresh(metadata_err) => {
-                PagerExecutionError::MetadataError(metadata_err)
-            }
-            PagerConstructionError::UseKeyspace(use_keyspace_err) => {
-                PagerExecutionError::UseKeyspaceError(use_keyspace_err)
-            }
-        }
-    }
 }
