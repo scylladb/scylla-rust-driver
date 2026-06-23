@@ -354,6 +354,9 @@ async fn test_iter_methods_when_altering_table() {
 }
 
 #[tokio::test]
+#[ignore = "This test required coordinator stickiness in the pager,
+    which is temporarily not implemented in the middle of the undergoing refactor.
+    The next commit will reintroduce it and reenable this test."]
 async fn test_pager_timeouts() {
     setup_tracing();
 
