@@ -46,6 +46,21 @@
                 "secrecy-08"
             ],
             "enabled": false
+        },
+        {
+            "description": "rand is part of public API; surface new versions on the Dependency Dashboard only (no auto-PR), to be addressed in 2.0.",
+            "matchManagers": [
+                "cargo"
+            ],
+            "matchDepNames": [
+                "rand",
+                "rand_pcg",
+                "rand_chacha"
+            ],
+            "matchFileNames": [
+                "scylla/Cargo.toml"
+            ],
+            "dependencyDashboardApproval": true
         }
     ]
 }
