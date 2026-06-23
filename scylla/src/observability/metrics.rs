@@ -565,6 +565,31 @@ mod tests {
 
     use super::Metrics;
 
+    // Characterization test for a small, hand-verifiable distribution where
+    // every bucket has width 1 (values are well below 2^(grouping_power + 1)),
+    // so the bucket midpoints equal the inserted values exactly.
+    #[test]
+    fn characterization_known_distribution() {
+        let metrics = Metrics::new();
+        for v in 0..=100u64 {
+            metrics.log_query_latency(v).unwrap();
+        }
+
+        let snapshot = metrics.get_snapshot().unwrap();
+        assert_eq!(snapshot.min, 0);
+        assert_eq!(snapshot.max, 100);
+        assert_eq!(snapshot.mean, 50);
+        assert_eq!(snapshot.stddev, 29);
+        assert_eq!(snapshot.median, 50);
+        assert_eq!(snapshot.percentile_75, 75);
+        assert_eq!(snapshot.percentile_95, 95);
+        assert_eq!(snapshot.percentile_98, 98);
+        assert_eq!(snapshot.percentile_99, 99);
+        assert_eq!(snapshot.percentile_99_9, 100);
+
+        assert_eq!(metrics.get_latency_avg_ms().unwrap(), 50);
+    }
+
     // A regression test for a bug where we would return
     // the number of observations in the bucket for the given percentile.
     #[test]
