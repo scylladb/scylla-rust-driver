@@ -196,7 +196,6 @@ pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, A
             &pool_config,
             connectivity_events_sender.clone(),
             None,
-            #[cfg(feature = "metrics")]
             Default::default(),
         ));
 

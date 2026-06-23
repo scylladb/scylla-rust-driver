@@ -7,7 +7,6 @@ use crate::errors::{ConnectionPoolError, DnsLookupError, UseKeyspaceError};
 use crate::network::VerifiedKeyspaceName;
 use crate::network::{Connection, ConnectivityChangeEvent};
 use crate::network::{NodeConnectionPool, PoolConfig};
-#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 /// Node represents a cluster node along with it's data and connections
 use crate::routing::{Shard, Sharder};
@@ -120,7 +119,7 @@ impl Node {
         pool_config: &PoolConfig,
         connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
         keyspace_name: Option<VerifiedKeyspaceName>,
-        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        metrics: Arc<Metrics>,
     ) -> Self {
         let host_id = peer.host_id;
         let address = peer.address;
@@ -135,7 +134,6 @@ impl Node {
             Some((host_id, connectivity_events_sender)),
             keyspace_name,
             pool_empty_notifier,
-            #[cfg(feature = "metrics")]
             metrics,
         );
 
