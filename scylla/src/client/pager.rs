@@ -371,26 +371,43 @@ where
                     Coordinator::new(node, node.sharder().is_some().then_some(shard), &connection);
 
                 // Fetch pages from this connection until an error occurs.
-                let (queries_result, new_sender): (
-                    Result<
-                        Result<FirstPageSendAttemptedProof, RequestAttemptError>,
-                        RequestTimeoutError,
-                    >,
-                    PageSender,
-                ) = self
-                    .query_pages(
-                        &routing_info,
-                        &partition_key,
-                        &connection,
-                        current_consistency,
-                        node,
-                        coordinator.clone(),
-                        sender,
-                        &page_query,
-                    )
-                    .instrument(span.clone())
-                    .await;
-                sender = new_sender;
+                let queries_result = 'same_node_pages: loop {
+                    let request_span = (self.span_creator)(&partition_key);
+                    let (res, new_sender) = self
+                        .query_one_page(
+                            &routing_info,
+                            &connection,
+                            current_consistency,
+                            node,
+                            coordinator.clone(),
+                            &request_span,
+                            sender,
+                            &page_query,
+                        )
+                        .instrument(request_span.span().clone())
+                        .await;
+                    sender = new_sender;
+
+                    match res {
+                        Ok(Ok(ControlFlow::Break(proof))) => {
+                            // Successfully queried the last remaining page.
+                            break Ok(Ok(proof));
+                        }
+
+                        Ok(Ok(ControlFlow::Continue(()))) => {
+                            // Successfully queried one page, and there are more to fetch.
+                            // Reset the timeout_instant for the next page fetch.
+                            self.timeouter.as_mut().map(PageQueryTimeouter::reset);
+                            continue 'same_node_pages;
+                        }
+                        Ok(Err(request_attempt_error)) => {
+                            break Ok(Err(request_attempt_error));
+                        }
+                        Err(request_timeout_error) => {
+                            break Err(request_timeout_error);
+                        }
+                    };
+                };
 
                 let request_error: RequestAttemptError = match queries_result {
                     Ok(Ok(proof)) => {
@@ -478,68 +495,6 @@ where
         sender
             .send_err(NextPageError::RequestFailure(last_error))
             .await
-    }
-
-    // Given a working connection query as many pages as possible until the first error.
-    //
-    // Contract: this function must either:
-    // - Return an error
-    // - Return Ok but have attempted to send a page via self.sender
-    #[expect(clippy::too_many_arguments)]
-    async fn query_pages<QueryFunc, QueryFut>(
-        &mut self,
-        routing_info: &RoutingInfo<'_>,
-        partition_key: &Option<PartitionKey<'_>>,
-        connection: &Arc<Connection>,
-        consistency: Consistency,
-        node: NodeRef<'_>,
-        coordinator: Coordinator,
-        mut sender: PageSender,
-        page_query: &QueryFunc,
-    ) -> (
-        Result<Result<FirstPageSendAttemptedProof, RequestAttemptError>, RequestTimeoutError>,
-        PageSender,
-    )
-    where
-        QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
-        QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
-    {
-        loop {
-            let request_span = (self.span_creator)(partition_key);
-            let (res, new_sender) = self
-                .query_one_page(
-                    routing_info,
-                    connection,
-                    consistency,
-                    node,
-                    coordinator.clone(),
-                    &request_span,
-                    sender,
-                    page_query,
-                )
-                .instrument(request_span.span().clone())
-                .await;
-            sender = new_sender;
-
-            match res {
-                Ok(Ok(ControlFlow::Break(proof))) => {
-                    // Successfully queried the last remaining page.
-                    return (Ok(Ok(proof)), sender);
-                }
-
-                Ok(Ok(ControlFlow::Continue(()))) => {
-                    // Successfully queried one page, and there are more to fetch.
-                    // Reset the timeout_instant for the next page fetch.
-                    self.timeouter.as_mut().map(PageQueryTimeouter::reset);
-                }
-                Ok(Err(request_attempt_error)) => {
-                    return (Ok(Err(request_attempt_error)), sender);
-                }
-                Err(request_timeout_error) => {
-                    return (Err(request_timeout_error), sender);
-                }
-            };
-        }
     }
 
     #[expect(clippy::too_many_arguments)]
