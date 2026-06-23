@@ -1,3 +1,4 @@
+use crate::cluster::metadata::Keyspace;
 use crate::deserialize::value::{DeserializeValue, ListlikeIterator};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
@@ -473,6 +474,19 @@ impl TableTablets {
     }
 }
 
+/// Needed to query hashbrown::HashMap<TableSpec<'static>, TableTablets>
+/// with `TableSpec` of any lifetime.
+#[derive(Hash)]
+struct TableSpecQueryKey<'a> {
+    table_spec: &'a TableSpec<'a>,
+}
+
+impl<'key, 'query> hashbrown::Equivalent<TableSpec<'key>> for TableSpecQueryKey<'query> {
+    fn equivalent(&self, key: &TableSpec<'key>) -> bool {
+        self.table_spec == key
+    }
+}
+
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct TabletsInfo {
@@ -502,19 +516,7 @@ impl TabletsInfo {
         &'a self,
         table_spec: &'b TableSpec<'b>,
     ) -> Option<&'a TableTablets> {
-        #[derive(Hash)]
-        struct TableSpecQueryKey<'a> {
-            table_spec: &'a TableSpec<'a>,
-        }
-
-        impl<'key, 'query> hashbrown::Equivalent<TableSpec<'key>> for TableSpecQueryKey<'query> {
-            fn equivalent(&self, key: &TableSpec<'key>) -> bool {
-                self.table_spec == key
-            }
-        }
-
         let query_key = TableSpecQueryKey { table_spec };
-
         self.tablets.get(&query_key)
     }
 
@@ -540,7 +542,10 @@ impl TabletsInfo {
     /// It goes through tablet info and adjusts it to topology changes, to prevent
     /// a situation where local tablet info and a real one are permanently different.
     /// What is updated:
-    /// 1. Info for dropped tables is removed.
+    /// 1. Info for dropped tables, and tables that are in non-tablet keyspaces
+    ///    according to fetched schema. Empty tablet lists are added for tables
+    ///    in tablet-based keyspaces, to prevent ReplicaLocator from treating
+    ///    them as VNode-based.
     /// 2. Tablets where a removed node was one of replicas are removed.
     ///    Can be skipped if no nodes were removed.
     /// 3. Tablets with unrecognized uuids in replica list are resolved again.
@@ -592,13 +597,47 @@ impl TabletsInfo {
     ///   for completeness.
     pub(crate) fn perform_maintenance(
         &mut self,
-        table_predicate: &impl Fn(&TableSpec) -> bool,
+        keyspaces: &HashMap<String, Keyspace>,
         removed_nodes: &HashSet<Uuid>,
         all_current_nodes: &HashMap<Uuid, Arc<Node>>,
         recreated_nodes: &HashMap<Uuid, Arc<Node>>,
     ) {
-        // First we remove info for all tables that are no longer present.
-        self.tablets.retain(|k, _| table_predicate(k));
+        // First we remove info for all tables that are no longer present,
+        // or are in non-tablet keyspace.
+        self.tablets.retain(|k, _| {
+            let Some(keyspace) = keyspaces.get(k.ks_name()) else {
+                return false;
+            };
+            if !keyspace.tablet_based {
+                return false;
+            }
+
+            keyspace.tables.contains_key(k.table_name())
+        });
+
+        // Now we add empty entries for all tables in tablet-based keyspaces
+        // that don't already have an entry. This prevents ReplicaLocator
+        // from returning VNode-based replicas for such tables.
+        keyspaces
+            .iter()
+            .filter(|(_, ks)| ks.tablet_based)
+            .for_each(|(ks_name, ks)| {
+                ks.tables.iter().for_each(|(table_name, _table)| {
+                    let borrowed_spec = TableSpec::borrowed(ks_name.as_str(), table_name.as_str());
+                    let query_key = TableSpecQueryKey {
+                        table_spec: &borrowed_spec,
+                    };
+                    self.tablets
+                        .raw_entry_mut()
+                        .from_key(&query_key)
+                        .or_insert_with(|| {
+                            (
+                                borrowed_spec.to_owned(),
+                                TableTablets::new(borrowed_spec.to_owned()),
+                            )
+                        });
+                })
+            });
 
         if !removed_nodes.is_empty() || !recreated_nodes.is_empty() || self.has_unknown_replicas {
             for (_, table_tablets) in self.tablets.iter_mut() {
@@ -620,6 +659,7 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
+    use crate::cluster::metadata::{Keyspace, Strategy, Table};
     use crate::frame::response::result::{CollectionType, ColumnType, NativeType, TableSpec};
     use crate::serialize::value::SerializeValue;
     use crate::serialize::writers::CellWriter;
@@ -1442,9 +1482,10 @@ mod tests {
     }
 
     #[test]
-    fn maintenance_keyspace_remove_test() {
+    fn maintenance_keyspace_add_remove_test() {
         const TABLE_1: TableSpec<'static> = TableSpec::borrowed("ks_1", "table_1");
         const TABLE_2: TableSpec<'static> = TableSpec::borrowed("ks_2", "table_2");
+        const TABLE_3: TableSpec<'static> = TableSpec::borrowed("ks_3", "table_3");
         const TABLE_DROP: TableSpec<'static> = TableSpec::borrowed("ks_drop", "table_drop");
 
         let mut pre = TabletsInfo {
@@ -1460,12 +1501,42 @@ mod tests {
             tablets: hashbrown::HashMap::from([
                 (TABLE_1.clone(), TableTablets::new(TABLE_1.clone())),
                 (TABLE_2.clone(), TableTablets::new(TABLE_2.clone())),
+                (TABLE_3.clone(), TableTablets::new(TABLE_3.clone())),
             ]),
             has_unknown_replicas: false,
         };
 
+        let spec_to_ks_tuple = |spec: TableSpec<'_>| {
+            (
+                spec.ks_name().to_owned(),
+                Keyspace {
+                    strategy: Strategy::LocalStrategy,
+                    durable_writes: false,
+                    tablet_based: true,
+                    tables: HashMap::from([(
+                        spec.table_name().to_owned(),
+                        Table {
+                            columns: HashMap::new(),
+                            partition_key: vec![],
+                            clustering_key: vec![],
+                            partitioner: None,
+                            pk_column_specs: vec![],
+                        },
+                    )]),
+                    views: HashMap::new(),
+                    user_defined_types: HashMap::new(),
+                },
+            )
+        };
+
+        let keyspaces_after = HashMap::from([
+            spec_to_ks_tuple(TABLE_1),
+            spec_to_ks_tuple(TABLE_2),
+            spec_to_ks_tuple(TABLE_3),
+        ]);
+
         pre.perform_maintenance(
-            &|spec| *spec != TABLE_DROP,
+            &keyspaces_after,
             &HashSet::new(),
             &HashMap::new(),
             &HashMap::new(),

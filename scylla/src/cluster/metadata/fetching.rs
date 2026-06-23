@@ -603,26 +603,39 @@ impl ControlConnection {
                 table: "system_schema.keyspaces",
             });
 
-        let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
-            let udts = self.query_user_defined_types(keyspaces_to_fetch).await?;
-            let mut tables_schema = self.query_tables_schema(keyspaces_to_fetch, &udts).await?;
-            (
-                // We pass the mutable reference to the same map to the both functions.
-                // First function fetches `system_schema.tables`, and removes found
-                // table from `tables_schema`.
-                // Second does the same for `system_schema.views`.
-                // The assumption here is that no keys (table names) can appear in both
-                // of those schema table.
-                // As far as we know this assumption is true for Scylla and Cassandra.
-                self.query_tables(keyspaces_to_fetch, &mut tables_schema)
-                    .await?,
-                self.query_views(keyspaces_to_fetch, &mut tables_schema)
-                    .await?,
-                udts,
-            )
-        } else {
-            (HashMap::new(), HashMap::new(), HashMap::new())
+        // Fetching the schema (UDTs, tables, views) and the per-keyspace tablet information
+        // are independent of each other, so we run them concurrently to minimize the
+        // critical path length.
+        let schema_query = async {
+            if fetch_schema {
+                let udts = self.query_user_defined_types(keyspaces_to_fetch).await?;
+                let mut tables_schema = self.query_tables_schema(keyspaces_to_fetch, &udts).await?;
+                Ok::<_, MetadataError>((
+                    // We pass the mutable reference to the same map to the both functions.
+                    // First function fetches `system_schema.tables`, and removes found
+                    // table from `tables_schema`.
+                    // Second does the same for `system_schema.views`.
+                    // The assumption here is that no keys (table names) can appear in both
+                    // of those schema table.
+                    // As far as we know this assumption is true for Scylla and Cassandra.
+                    self.query_tables(keyspaces_to_fetch, &mut tables_schema)
+                        .await?,
+                    self.query_views(keyspaces_to_fetch, &mut tables_schema)
+                        .await?,
+                    udts,
+                ))
+            } else {
+                Ok((HashMap::new(), HashMap::new(), HashMap::new()))
+            }
         };
+        let tablets_query = async {
+            self.query_keyspaces_tablets(keyspaces_to_fetch)
+                .await
+                .map_err(MetadataError::from)
+        };
+
+        let ((mut all_tables, mut all_views, mut all_user_defined_types), tablets_keyspaces) =
+            tokio::try_join!(schema_query, tablets_query)?;
 
         rows.map(|row_result| {
             let (keyspace_name, strategy_map, durable_writes) = row_result?;
@@ -664,6 +677,7 @@ impl ControlConnection {
             let keyspace = Keyspace {
                 strategy,
                 durable_writes,
+                tablet_based: tablets_keyspaces.contains(&keyspace_name),
                 tables,
                 views,
                 user_defined_types,
@@ -1599,6 +1613,61 @@ impl ControlConnection {
                     )),
                 ..
             }) => Ok(HashMap::new()),
+            result => result,
+        }
+    }
+
+    /// Fetches a (possibly filtered) set of tablet-based keyspaces.
+    ///
+    /// A keyspace is tablet-based if its `initial_tablets` column in
+    /// `system_schema.scylla_keyspaces` is not NULL.
+    ///
+    /// On Cassandra and old ScyllaDB versions the `system_schema.scylla_keyspaces`
+    /// table does not exist. This is handled the same way as in
+    /// [`Self::query_table_partitioners`]: the resulting `DbError::Invalid` is caught
+    /// and an empty set is returned (so all keyspaces default to non-tablet-based).
+    #[expect(clippy::result_large_err)]
+    async fn query_keyspaces_tablets(
+        &self,
+        keyspaces_to_fetch: &[String],
+    ) -> Result<HashSet<String>, MetadataFetchError> {
+        let rows = self
+            .query_filter_keyspace_name::<(String, Option<i32>)>(
+                "SELECT keyspace_name, initial_tablets FROM system_schema.scylla_keyspaces",
+                keyspaces_to_fetch,
+            )
+            .map_err(|error| MetadataFetchError {
+                error,
+                table: "system_schema.scylla_keyspaces",
+            });
+
+        let result = rows
+            .filter_map(|row_result| {
+                let result = match row_result {
+                    Ok((keyspace_name, initial_tablets)) => {
+                        initial_tablets.map(|_| Ok(keyspace_name))
+                    }
+                    Err(e) => Some(Err(e)),
+                };
+                future::ready(result)
+            })
+            .try_collect::<HashSet<_, _>>()
+            .await;
+
+        match result {
+            // FIXME: This match catches all database errors with this error code despite the fact
+            // that we are only interested in the ones resulting from non-existent table
+            // system_schema.scylla_keyspaces.
+            // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
+            Err(MetadataFetchError {
+                error:
+                    MetadataFetchErrorKind::NextRowError(NextRowError::NextPageError(
+                        NextPageError::RequestFailure(RequestError::LastAttemptError(
+                            RequestAttemptError::DbError(DbError::Invalid, _),
+                        )),
+                    )),
+                ..
+            }) => Ok(HashSet::new()),
             result => result,
         }
     }

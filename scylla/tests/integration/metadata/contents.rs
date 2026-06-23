@@ -580,3 +580,56 @@ async fn test_session_should_have_cluster_metadata() {
 
     assert_eq!(state.cluster_name(), "TestCluster");
 }
+
+#[tokio::test]
+#[cfg_attr(cassandra_tests, ignore)]
+async fn test_tablets_enabled_in_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+
+    // This test only makes sense on ScyllaDB versions that support tablets.
+    if !scylla_supports_tablets(&session).await {
+        return;
+    }
+
+    let ks = unique_keyspace_name();
+
+    // Create a keyspace with tablets explicitly enabled.
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}} AND TABLETS = {{'enabled': true}}"
+        ))
+        .await
+        .unwrap();
+
+    let cluster_state = session.get_cluster_state();
+    let ks_meta = cluster_state.get_keyspace(&ks).unwrap();
+    assert!(ks_meta.tablet_based);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_tablets_disabled_in_metadata() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    // Create a keyspace with tablets explicitly disabled on ScyllaDB.
+    // On Cassandra (and old ScyllaDB versions without tablets support) the
+    // keyspace simply has no tablets, so we don't add the TABLETS option.
+    let mut create_ks = format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    );
+    if scylla_supports_tablets(&session).await {
+        create_ks += " AND TABLETS = {'enabled': false}";
+    }
+
+    session.ddl(create_ks).await.unwrap();
+
+    let cluster_state = session.get_cluster_state();
+    let ks_meta = cluster_state.get_keyspace(&ks).unwrap();
+    assert!(!ks_meta.tablet_based);
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}

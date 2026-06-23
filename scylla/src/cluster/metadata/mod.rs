@@ -146,6 +146,12 @@ pub struct Keyspace {
     pub strategy: Strategy,
     /// Whether the keyspace has durable writes enabled.
     pub durable_writes: bool,
+    /// Whether the keyspace is tablet-based.
+    ///
+    /// This is determined based on whether `initial_tablets` is set in
+    /// `system_schema.scylla_keyspaces`. On Cassandra and old ScyllaDB versions,
+    /// where this table or column is not present, this is always `false`.
+    pub tablet_based: bool,
     /// Tables in the keyspace.
     ///
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig.
