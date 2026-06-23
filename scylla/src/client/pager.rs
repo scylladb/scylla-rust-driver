@@ -102,7 +102,7 @@ enum FirstPageContent {
 struct FirstReceivedPage {
     content: FirstPageContent,
     tracing_id: Option<Uuid>,
-    request_coordinator: Option<Coordinator>,
+    request_coordinator: Coordinator,
 }
 
 type ResultNextPage = Result<NextReceivedPage, NextPageError>;
@@ -477,7 +477,7 @@ where
                                     rows: DeserializedMetadataAndRawRows::mock_empty(),
                                 },
                                 tracing_id: None,
-                                request_coordinator: Some(coordinator),
+                                request_coordinator: coordinator,
                             },
                             PagingStateResponse::NoMorePages,
                         ));
@@ -578,7 +578,7 @@ where
                     FirstReceivedPage {
                         content: FirstPageContent::Rows { rows },
                         tracing_id,
-                        request_coordinator: Some(coordinator),
+                        request_coordinator: coordinator,
                     },
                     paging_state_response,
                 ))
@@ -603,7 +603,7 @@ where
                     FirstReceivedPage {
                         content: FirstPageContent::SetKeyspace { set_keyspace },
                         tracing_id,
-                        request_coordinator: Some(coordinator),
+                        request_coordinator: coordinator,
                     },
                     PagingStateResponse::NoMorePages,
                 ))
@@ -622,7 +622,7 @@ where
                     FirstReceivedPage {
                         content: FirstPageContent::SchemaChange { schema_change },
                         tracing_id,
-                        request_coordinator: Some(coordinator),
+                        request_coordinator: coordinator,
                     },
                     PagingStateResponse::NoMorePages,
                 ))
@@ -643,7 +643,7 @@ where
                             rows: DeserializedMetadataAndRawRows::mock_empty(),
                         },
                         tracing_id,
-                        request_coordinator: Some(coordinator),
+                        request_coordinator: coordinator,
                     },
                     PagingStateResponse::NoMorePages,
                 ))
@@ -1474,11 +1474,8 @@ If you are using this API, you are probably doing something wrong."
         session: &Session,
     ) -> Result<Self, PagerExecutionError> {
         let tracing_ids = Vec::from_iter(first_page.tracing_id);
-        let coordinator_id = first_page
-            .request_coordinator
-            .as_ref()
-            .map(|coordinator| coordinator.node().host_id);
-        let request_coordinators = Vec::from_iter(first_page.request_coordinator);
+        let coordinator_id = first_page.request_coordinator.node().host_id;
+        let request_coordinators = vec![first_page.request_coordinator];
 
         let first_page = match first_page.content {
             FirstPageContent::Rows { rows } => RawRowLendingIterator::new(rows),
@@ -1517,20 +1514,7 @@ If you are using this API, you are probably doing something wrong."
                     warnings: Vec::new(),
                 };
                 session
-                    .handle_auto_await_schema_agreement(
-                        &response,
-                        // Making it impossible to pass None here on the type level would be possible,
-                        // but it would require heavy restructuring. The culprit is SingleConnectionPagerWorker,
-                        // which is used for ControlConnection::execute_iter, and which doesn't have enough
-                        // data to provide a Coordinator in its proof of sending the first page.
-                        //
-                        // I could duplicate data types and the proving sender with Coordinator for PagerWorker
-                        // and no Coordinator for SingleConnectionPagerWorker, but it's not worth it given that
-                        // this None here is an erroneous situation that can only happen due to a bug in the driver.
-                        //
-                        // Also, we hope to refactor the Pager soon [#1549](https://github.com/scylladb/scylla-rust-driver/issues/1549).
-                        coordinator_id.expect("PagerWorker always has Coordinator specified"),
-                    )
+                    .handle_auto_await_schema_agreement(&response, coordinator_id)
                     .await?;
                 // The stream will be empty.
                 RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
