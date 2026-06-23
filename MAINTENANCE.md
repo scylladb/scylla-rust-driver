@@ -217,6 +217,40 @@ When reviewing PRs that update the dependencies used in CI,
 ensure the commit comes from the actual release of the action. To do so, open the relevant repository
 and verify that the commit hash on the release page matches the one specified in the action YAML file.
 
+## Dependency updates (Renovate)
+
+Dependency updates - both Cargo crates and GitHub Actions - are managed by
+[Renovate](https://docs.renovatebot.com/). Its configuration lives in
+`renovate.json`. For most dependencies Renovate simply opens a PR when a new
+version is available, and a maintainer reviews and merges it as usual.
+
+However, **not every out-of-date dependency results in a PR**. Some updates are
+intentionally gated and are only visible on the **Dependency Dashboard** - an
+issue that Renovate keeps up to date in the repository (titled "Dependency
+Dashboard"). Maintainers should periodically check that issue to see updates
+that do not have a PR. In particular:
+
+- **Feature-pinned crates.** Some crates are depended on through a
+  "feature-per-version" scheme: each supported major is a separate renamed
+  dependency behind its own Cargo feature (e.g. `num-bigint-03` and
+  `num-bigint-04`, or `secrecy-08` and `secrecy-10`). A plain version bump
+  cannot be applied to these automatically - adopting a new major requires
+  adding a new feature and alias by hand. For the newest supported alias of
+  each such crate, Renovate is configured with `dependencyDashboardApproval`,
+  so a new major (e.g. `num-bigint` 0.5) will appear on the Dependency
+  Dashboard instead of as a PR. When you see such an entry, the action is to
+  introduce a new feature + alias for that version (not to "just bump" the
+  existing one). Approving the dashboard entry would only create the (useless)
+  bump PR, so usually you should leave it and handle the new feature manually.
+- **Superseded aliases.** The older aliases of those crates
+  (e.g. `num-bigint-03`, `secrecy-08`) are frozen at their version and have
+  Renovate disabled entirely (`enabled: false`), so they intentionally produce
+  neither PRs nor Dependency Dashboard entries.
+
+If you add a new feature-pinned crate (or a new supported version of an
+existing one), update `renovate.json` accordingly: the newest alias should get
+`dependencyDashboardApproval`, and the alias it supersedes should be disabled.
+
 ## Writing release notes
 
 PR titles are written for maintainers, but release notes entries are written for users.
