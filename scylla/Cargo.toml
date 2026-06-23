@@ -106,7 +106,7 @@ chrono = { version = "0.4.32", default-features = false, features = ["clock"] }
 futures = "0.3.6"
 # Part of ReplicaSet::choose_filtered public API.
 # Used internally in some other places (mostly in LBP / routing).
-rand = "0.9.0"
+rand = "0.10.0"
 
 #####################
 # TLS implementations
