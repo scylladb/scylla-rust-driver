@@ -140,7 +140,7 @@ socket2 = { version = "0.6.0", features = ["all"] }
 # Useful operations on iterators.
 itertools = "0.15.0"
 # Used by DefaultPolicy to have reproducible randomness.
-rand_pcg = "0.9.0"
+rand_pcg = "0.10.0"
 # Used in execution profiles and ClusterState.
 arc-swap = "1.3.0"
 # Used in tablets to have a hashmap queryable with borrowed key.
