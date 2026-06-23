@@ -22,7 +22,7 @@ use crate::serialize::row::SerializedValues;
 use futures::Stream;
 use std::result::Result;
 use thiserror::Error;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 use crate::client::execution_profile::ExecutionProfileInner;
 use crate::client::session::{AutoSchemaAwaitingError, Session};
@@ -44,7 +44,7 @@ use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
 use crate::routing::NodeLocationPreference;
 use crate::statement::prepared::{PartitionKey, PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
-use tracing::{Instrument, error, trace, trace_span, warn};
+use tracing::{Instrument, trace, trace_span, warn};
 use uuid::Uuid;
 
 // Like std::task::ready!, but handles the whole stack of Poll<Option<Result<>>>.
@@ -108,46 +108,7 @@ struct FirstReceivedPage {
     request_coordinator: Option<Coordinator>,
 }
 
-type ResultFirstPage = Result<(FirstReceivedPage, mpsc::Receiver<ResultNextPage>), NextPageError>;
 type ResultNextPage = Result<NextReceivedPage, NextPageError>;
-
-// A separate module is used here so that the parent module cannot construct
-// SendAttemptedProof directly.
-mod checked_oneshot_sender {
-    use std::marker::PhantomData;
-    use tokio::sync::oneshot;
-
-    /// A value whose existence proves that there was an attempt
-    /// to send an item of type T through a oneshot.
-    /// Can only be constructed by ProvingSender::send.
-    pub(crate) struct SendAttemptedProof<T>(PhantomData<T>);
-
-    impl<T> Clone for SendAttemptedProof<T> {
-        fn clone(&self) -> Self {
-            SendAttemptedProof(PhantomData)
-        }
-    }
-
-    /// An oneshot::Sender which returns proof that it attempted to send an item.
-    pub(crate) struct ProvingSender<T>(oneshot::Sender<T>);
-
-    impl<T> From<oneshot::Sender<T>> for ProvingSender<T> {
-        fn from(s: oneshot::Sender<T>) -> Self {
-            Self(s)
-        }
-    }
-
-    impl<T> ProvingSender<T> {
-        pub(crate) fn send(self, value: T) -> (SendAttemptedProof<T>, Result<(), T>) {
-            let res = self.0.send(value);
-            (SendAttemptedProof(PhantomData), res)
-        }
-    }
-}
-
-use checked_oneshot_sender::{ProvingSender, SendAttemptedProof};
-
-type FirstPageSendAttemptedProof = SendAttemptedProof<ResultFirstPage>;
 
 mod timeouter {
     use std::time::Duration;
@@ -192,53 +153,6 @@ mod timeouter {
     }
 }
 use timeouter::PageQueryTimeouter;
-
-enum PageSender {
-    FirstPage(ProvingSender<ResultFirstPage>),
-    NextPages(FirstPageSendAttemptedProof, mpsc::Sender<ResultNextPage>),
-}
-
-impl PageSender {
-    async fn send_err(self, err: NextPageError) -> FirstPageSendAttemptedProof {
-        match self {
-            PageSender::FirstPage(sender) => {
-                let (proof, _) = sender.send(Err(err));
-                proof
-            }
-            PageSender::NextPages(proof, sender) => {
-                let _ = sender.send(Err(err)).await;
-                proof
-            }
-        }
-    }
-
-    async fn send(
-        self,
-        page: NextReceivedPage,
-    ) -> (FirstPageSendAttemptedProof, Self, Result<(), ()>) {
-        match self {
-            PageSender::FirstPage(sender) => {
-                // This conversion from NextReceivedPage to FirstReceivedPage is correct as long as we assume
-                // that NextReceivedPage is a logical subset of FirstReceivedPage. This is true because
-                // currently FirstReceivedPage can contain either Rows, SetKeyspace or SchemaChange,
-                // while NextReceivedPage can only contain Rows.
-                let first_page = FirstReceivedPage {
-                    content: FirstPageContent::Rows { rows: page.rows },
-                    tracing_id: page.tracing_id,
-                    request_coordinator: page.request_coordinator,
-                };
-                let (next_pages_sender, next_pages_receiver) = mpsc::channel::<ResultNextPage>(1);
-                let (proof, res) = sender.send(Ok((first_page, next_pages_receiver)));
-                let sender = PageSender::NextPages(proof.clone(), next_pages_sender);
-                (proof, sender, res.map_err(|_| ()))
-            }
-            PageSender::NextPages(ref proof, ref next_pages_sender) => {
-                let res = next_pages_sender.send(Ok(page)).await;
-                (proof.clone(), self, res.map_err(|_| ()))
-            }
-        }
-    }
-}
 
 // PagerWorker works in the background to fetch pages
 // QueryPager receives them through a channel
@@ -917,87 +831,85 @@ struct SingleConnectionPagerWorker<Fetcher> {
     timeout: Option<Duration>,
 }
 
-impl<Fetcher, FetchFut> SingleConnectionPagerWorker<Fetcher>
+impl<Fetcher> SingleConnectionPagerWorker<Fetcher>
 where
-    Fetcher: Fn(PagingState) -> FetchFut + Send + Sync,
-    FetchFut: Future<Output = Result<QueryResponse, RequestAttemptError>> + Send,
+    Fetcher: AsyncFn(PagingState) -> Result<QueryResponse, RequestAttemptError> + Send + Sync,
 {
-    async fn work(
-        mut self,
-        first_page_sender: ProvingSender<ResultFirstPage>,
-    ) -> FirstPageSendAttemptedProof {
-        let sender = PageSender::FirstPage(first_page_sender);
+    /// Fetches a single page. Returns the page and paging state response.
+    async fn query_one_page(
+        &mut self,
+        paging_state: PagingState,
+    ) -> Result<
+        Result<(NextReceivedPage, PagingStateResponse), RequestAttemptError>,
+        RequestTimeoutError,
+    > {
+        let runner = async {
+            (self.fetcher)(paging_state)
+                .await
+                .and_then(QueryResponse::into_non_error_query_response)
+        };
+        let response_res = match self.timeout {
+            Some(timeout) => {
+                match tokio::time::timeout(timeout, runner).await {
+                    Ok(res) => res,
+                    Err(_) /* tokio::time::error::Elapsed */ => {
+                        return Err(RequestTimeoutError(timeout));
+                    }
+                }
+            }
+            None => runner.await,
+        };
+        let response = match response_res {
+            Ok(resp) => resp,
+            Err(err) => {
+                return Ok(Err(err));
+            }
+        };
 
-        let (res, sender) = self.do_work(sender).await;
-        match res {
-            Ok(Ok(proof)) => proof,
-            Ok(Err(err)) => {
-                sender
-                    .send_err(NextPageError::RequestFailure(
-                        RequestError::LastAttemptError(err),
-                    ))
-                    .await
+        match response.response {
+            NonErrorResponseWithDeserializedMetadata::Result(
+                result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
+            ) => {
+                let page = NextReceivedPage {
+                    rows,
+                    tracing_id: response.tracing_id,
+                    request_coordinator: None,
+                };
+                Ok(Ok((page, paging_state_response)))
             }
-            Err(RequestTimeoutError(timeout)) => {
-                sender
-                    .send_err(NextPageError::RequestFailure(RequestError::RequestTimeout(
-                        timeout,
-                    )))
-                    .await
-            }
+            _ => Ok(Err(RequestAttemptError::UnexpectedResponse(
+                response.response.to_response_kind(),
+            ))),
         }
     }
 
-    async fn do_work(
-        &mut self,
-        mut sender: PageSender,
-    ) -> (
-        Result<Result<FirstPageSendAttemptedProof, RequestAttemptError>, RequestTimeoutError>,
-        PageSender,
-    ) {
-        let mut paging_state = PagingState::start();
-
+    /// Fetches remaining pages (pages 2+) and sends them through the channel.
+    async fn work(mut self, paging_state: PagingState, sender: mpsc::Sender<ResultNextPage>) {
+        let mut paging_state = paging_state;
         loop {
-            let runner = async {
-                (self.fetcher)(paging_state)
-                    .await
-                    .and_then(QueryResponse::into_non_error_query_response)
-            };
-            let response_res = match self.timeout {
-                Some(timeout) => {
-                    match tokio::time::timeout(timeout, runner).await {
-                        Ok(res) => res,
-                        Err(_) /* tokio::time::error::Elapsed */ => {
-                            return (Err(RequestTimeoutError(timeout)), sender);
-                        }
-                    }
-                }
-
-                None => runner.await,
-            };
-            let response = match response_res {
-                Ok(resp) => resp,
-                Err(err) => {
-                    return (Ok(Err(err)), sender);
-                }
-            };
-
-            match response.response {
-                NonErrorResponseWithDeserializedMetadata::Result(
-                    result::ResultWithDeserializedMetadata::Rows((rows, paging_state_response)),
-                ) => {
-                    let (proof, new_sender, send_result) = sender
-                        .send(NextReceivedPage {
-                            rows,
-                            tracing_id: response.tracing_id,
-                            request_coordinator: None,
-                        })
+            let result = self.query_one_page(paging_state).await;
+            match result {
+                Err(RequestTimeoutError(timeout)) => {
+                    let _ = sender
+                        .send(Err(NextPageError::RequestFailure(
+                            RequestError::RequestTimeout(timeout),
+                        )))
                         .await;
-                    sender = new_sender;
-
+                    return;
+                }
+                Ok(Err(err)) => {
+                    let _ = sender
+                        .send(Err(NextPageError::RequestFailure(
+                            RequestError::LastAttemptError(err),
+                        )))
+                        .await;
+                    return;
+                }
+                Ok(Ok((page, paging_state_response))) => {
+                    let send_result = sender.send(Ok(page)).await;
                     if send_result.is_err() {
                         // channel was closed, QueryPager was dropped - should shutdown
-                        return (Ok(Ok(proof)), sender);
+                        return;
                     }
 
                     match paging_state_response.into_paging_control_flow() {
@@ -1006,17 +918,9 @@ where
                         }
                         ControlFlow::Break(()) => {
                             // Reached the last query, shutdown
-                            return (Ok(Ok(proof)), sender);
+                            return;
                         }
                     }
-                }
-                _ => {
-                    return (
-                        Ok(Err(RequestAttemptError::UnexpectedResponse(
-                            response.response.to_response_kind(),
-                        ))),
-                        sender,
-                    );
                 }
             }
         }
@@ -1509,8 +1413,6 @@ If you are using this API, you are probably doing something wrong."
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<Self, NextPageError> {
-        let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
-
         let page_size = prepared.get_validated_page_size();
         let timeout = prepared.get_request_timeout().or_else(|| {
             prepared
@@ -1519,10 +1421,10 @@ If you are using this API, you are probably doing something wrong."
                 .request_timeout
         });
 
-        let worker_task = async move {
-            let worker = SingleConnectionPagerWorker {
-                fetcher: |paging_state| {
-                    connection.execute_raw_with_consistency(
+        let mut worker = SingleConnectionPagerWorker {
+            fetcher: async move |paging_state: PagingState| {
+                connection
+                    .execute_raw_with_consistency(
                         &prepared,
                         &values,
                         consistency,
@@ -1530,29 +1432,47 @@ If you are using this API, you are probably doing something wrong."
                         Some(page_size),
                         paging_state,
                     )
-                },
-                timeout,
-            };
-            worker.work(sender.into()).await
+                    .await
+            },
+            timeout,
         };
 
-        Self::new_from_worker_future(worker_task, receiver, None)
+        let (first_page, paging_state_response) = worker
+            .query_one_page(PagingState::start())
             .await
-            .map_err(|e| match e {
-                PagerConstructionError::NextPage(next_page_error) => next_page_error,
-                PagerConstructionError::SchemaAgreement(schema_agreement_error) => panic!(
-                    "A DDL statement executed via Connection::execute_iter(), which is unsupported and a bug in the driver! Triggered error: {:?}",
-                    schema_agreement_error
-                ),
-                PagerConstructionError::MetadataRefresh(metadata_error) => panic!(
-                    "A DDL statement executed via Connection::execute_iter(), which is unsupported and a bug in the driver! Triggered error: {:?}",
-                    metadata_error
-                ),
-                PagerConstructionError::UseKeyspace(use_keyspace_error) => panic!(
-                    "A \"USE <keyspace>\" statement executed via Connection::execute_iter(), which is unsupported and a bug in the driver! Triggered error: {:?}",
-                    use_keyspace_error
-                ),
-            })
+            .map_err(|RequestTimeoutError(timeout)| {
+                NextPageError::RequestFailure(RequestError::RequestTimeout(timeout))
+            })?
+            .map_err(|attempt_error| {
+                NextPageError::RequestFailure(RequestError::LastAttemptError(attempt_error))
+            })?;
+
+        /* PROCESS FIRST PAGE */
+        let (sender, receiver) = mpsc::channel::<ResultNextPage>(1);
+        match paging_state_response {
+            PagingStateResponse::NoMorePages => {
+                // No more pages - we are done, return the first page and an empty receiver.
+                std::mem::drop(sender);
+            }
+            PagingStateResponse::HasMorePages { state } => {
+                /* REMAINING PAGES */
+                let worker_task = async move { worker.work(state, sender).await };
+                let _worker_handle = tokio::task::spawn(worker_task);
+            }
+        }
+
+        let NextReceivedPage {
+            rows,
+            tracing_id,
+            request_coordinator,
+        } = first_page;
+
+        Ok(Self {
+            current_page: RawRowLendingIterator::new(rows),
+            page_receiver: receiver,
+            tracing_ids: Vec::from_iter(tracing_id),
+            request_coordinators: Vec::from_iter(request_coordinator),
+        })
     }
 
     async fn new_from_first_page(
@@ -1627,150 +1547,6 @@ If you are using this API, you are probably doing something wrong."
         Ok(Self {
             current_page: first_page,
             page_receiver: receiver,
-            tracing_ids,
-            request_coordinators,
-        })
-    }
-
-    async fn new_from_worker_future(
-        worker_task: impl Future<Output = FirstPageSendAttemptedProof> + Send + 'static,
-        first_page_receiver: oneshot::Receiver<ResultFirstPage>,
-        session: Option<&Session>,
-    ) -> Result<Self, PagerConstructionError> {
-        let worker_handle = tokio::task::spawn(worker_task);
-
-        let Ok(first_page_res) = first_page_receiver.await else {
-            // - The future returned by worker.work sends at least one item
-            //   to the channel (the PageSendAttemptedProof helps enforce this);
-            // - That future is polled in a tokio::task which isn't going to be
-            //   cancelled, **unless** the runtime is being shut down.
-            // - Another way for the worker task to terminate without sending
-            //   anything could be panic.
-            // Therefore, there are two possible reasons for recv() to return None:
-            // 1. The runtime is being shut down.
-            // 2. The worker task panicked.
-            //
-            // Both cases are handled below, and in both cases we do not return
-            // from this function, but rather either propagate the panic,
-            // or hang indefinitely to avoid returning from here during runtime shutdown.
-            let worker_result = worker_handle.await;
-            match worker_result {
-                Ok(_send_attempted_proof) => {
-                    unreachable!(
-                        "Worker task completed without sending any page, despite having returned proof of having sent some"
-                    )
-                }
-                Err(join_error) => {
-                    let is_cancelled = join_error.is_cancelled();
-                    if let Ok(panic_payload) = join_error.try_into_panic() {
-                        // Worker task panicked. Propagate the panic.
-                        std::panic::resume_unwind(panic_payload);
-                    } else {
-                        // This is not a panic, so it must be runtime shutdown.
-                        assert!(
-                            is_cancelled,
-                            "PagerWorker task join error is neither a panic nor cancellation, which should be impossible"
-                        );
-                        // Let's await a never-ending future to avoid returning from here.
-                        // But before, let's emit a message to indicate that we're in such a situation.
-                        tracing::info!(
-                            "Runtime is being shut down while QueryPager is being constructed; hanging the future indefinitely"
-                        );
-                        return futures::future::pending().await;
-                    }
-                }
-            }
-        };
-
-        let (first_page, remaining_pages_receiver) = first_page_res?;
-
-        let tracing_ids = Vec::from_iter(first_page.tracing_id);
-        let coordinator_id = first_page
-            .request_coordinator
-            .as_ref()
-            .map(|coordinator| coordinator.node().host_id);
-        let request_coordinators = Vec::from_iter(first_page.request_coordinator);
-
-        let current_page = match first_page.content {
-            FirstPageContent::Rows { rows } => RawRowLendingIterator::new(rows),
-            FirstPageContent::SetKeyspace { set_keyspace } => {
-                if let Some(session) = session {
-                    // If we are here, this means that we received a SET_KEYSPACE response as a first page.
-                    // This can happen when the user executes a "USE <keyspace>" statement.
-                    // Although it makes little sense to page over such a statement,
-                    // we must handle it gracefully. Especially that there may be users who execute
-                    // all statements in a paged manner (e.g., C#-RS Driver).
-                    //
-                    // Let's set the keyspace on the session.
-                    let response = NonErrorQueryResponse {
-                        response: NonErrorResponseWithDeserializedMetadata::Result(
-                            result::ResultWithDeserializedMetadata::SetKeyspace(set_keyspace),
-                        ),
-                        tracing_id: None,
-                        warnings: Vec::new(),
-                    };
-                    session.handle_set_keyspace_response(&response).await?;
-                } else {
-                    // We don't have a session to set the keyspace on.
-                    // Let's just log an erroneous situation.
-                    error!(
-                    "BUG: Received SET_KEYSPACE response as a first page in QueryPager without a Session.
-                    This should be impossible, because it means that we executed USE KEYSPACE statement with `Connection::execute_iter()`.
-                    The response may not be handled by setting the keyspace on the Session."
-                );
-                }
-                // The stream will be empty.
-                RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
-            }
-            FirstPageContent::SchemaChange { schema_change } => {
-                if let Some(session) = session {
-                    // If we are here, this means that we received a SCHEMA_CHANGE response as a first page.
-                    // This can happen when the user executes a DDL statement.
-                    // Although it makes little sense to page over such a statement,
-                    // we must handle it gracefully. Especially that there may be users who execute
-                    // all statements in a paged manner (e.g., C#-RS Driver).
-                    //
-                    // Let's await schema agreement, if Session is configured to do so.
-                    let response = NonErrorQueryResponse {
-                        response: NonErrorResponseWithDeserializedMetadata::Result(
-                            result::ResultWithDeserializedMetadata::SchemaChange(schema_change),
-                        ),
-                        tracing_id: None,
-                        warnings: Vec::new(),
-                    };
-                    session
-                        .handle_auto_await_schema_agreement(
-                            &response,
-                            // Making it impossible to pass None here on the type level would be possible,
-                            // but it would require heavy restructuring. The culprit is SingleConnectionPagerWorker,
-                            // which is used for ControlConnection::execute_iter, and which doesn't have enough
-                            // data to provide a Coordinator in its proof of sending the first page.
-                            //
-                            // I could duplicate data types and the proving sender with Coordinator for PagerWorker
-                            // and no Coordinator for SingleConnectionPagerWorker, but it's not worth it given that
-                            // this None here is an erroneous situation that can only happen due to a bug in the driver.
-                            //
-                            // Also, we hope to refactor the Pager soon [#1549](https://github.com/scylladb/scylla-rust-driver/issues/1549).
-                            coordinator_id.expect("PagerWorker always has Coordinator specified"),
-                        )
-                        .await?;
-                } else {
-                    // We don't have a session to await schema agreement with.
-                    // Let's just log an erroneous situation.
-                    error!(
-                        "BUG: Received SCHEMA_CHANGE response as a first page in QueryPager without a Session.
-                        This should be impossible, because it means that we executed a DDL statement with `Connection::execute_iter()`.
-                        Without Session, the response may not be handled by awaiting schema agreement."
-                    );
-                }
-                // The stream will be empty.
-                RawRowLendingIterator::new(DeserializedMetadataAndRawRows::mock_empty())
-            }
-        };
-
-        Ok(Self {
-            current_page,
-            page_receiver: remaining_pages_receiver,
             tracing_ids,
             request_coordinators,
         })
