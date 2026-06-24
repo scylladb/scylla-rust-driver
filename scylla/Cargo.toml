@@ -71,6 +71,8 @@ unstable-testing = []
 unstable-cpp-rs = []
 # Enables features for use in Node.js-RS Driver.
 unstable-nodejs-rs = ["scylla-cql/unstable-nodejs-rs"]
+# Enables features for use in C#-RS Driver.
+unstable-csharp-rs = []
 # Enables HostListener experimental support.
 unstable-host-listener = []
 # Enables unstable reconnection policy configuration.

@@ -1117,6 +1117,25 @@ pub enum ClusterStateTokenError {
         /// Table name for which the error occurred.
         table: String,
     },
+
+    /// The number of values in the serialized partition key does not match the number of partition key columns.
+    ///
+    /// This error occurs when trying to compute a token for a **pre-serialized** partition key,
+    /// originating from outside of Rust drivers.
+    #[cfg(all(scylla_unstable, feature = "unstable-csharp-rs"))]
+    #[error(
+        "Serialized partition key has {received} values, but table {keyspace}.{table} expects {expected}"
+    )]
+    PartitionKeyCountMismatch {
+        /// Keyspace name.
+        keyspace: String,
+        /// Table name.
+        table: String,
+        /// Number of values received.
+        received: usize,
+        /// Number of values expected.
+        expected: usize,
+    },
 }
 
 #[cfg(test)]

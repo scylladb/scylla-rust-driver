@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::metadata::{Keyspace, Metadata, Strategy};
+use super::metadata::{Keyspace, Metadata, Strategy, Table};
 use super::node::{Node, NodeRef};
 
 /// Represents the state of the cluster, including known nodes, keyspaces, and replica locator.
@@ -326,27 +326,44 @@ impl ClusterState {
         table: &str,
         partition_key: &dyn SerializeRow,
     ) -> Result<Token, ClusterStateTokenError> {
-        let Some(table) = self
-            .keyspaces
-            .get(keyspace)
-            .and_then(|k| k.tables.get(table))
-        else {
-            return Err(ClusterStateTokenError::UnknownTable {
-                keyspace: keyspace.to_owned(),
-                table: table.to_owned(),
-            });
-        };
+        let table_meta = self.lookup_table_meta(keyspace, table)?;
+
         let values = SerializedValues::from_serializable(
-            &RowSerializationContext::from_specs(table.pk_column_specs.as_slice()),
+            &RowSerializationContext::from_specs(table_meta.pk_column_specs.as_slice()),
             partition_key,
         )?;
+
+        // Delegate actual token calculation to centralized helper.
+        self.do_compute_token(table_meta, &values)
+    }
+
+    fn do_compute_token(
+        &self,
+        table: &Table,
+        serialized_partition_key: &SerializedValues,
+    ) -> Result<Token, ClusterStateTokenError> {
         let partitioner = table
             .partitioner
             .as_deref()
             .and_then(PartitionerName::from_str)
             .unwrap_or_default();
-        calculate_token_for_partition_key(&values, &partitioner)
+        calculate_token_for_partition_key(serialized_partition_key, &partitioner)
             .map_err(ClusterStateTokenError::TokenCalculation)
+    }
+
+    /// Helper: lookup table metadata or return `UnknownTable` error.
+    fn lookup_table_meta(
+        &self,
+        keyspace: &str,
+        table: &str,
+    ) -> Result<&Table, ClusterStateTokenError> {
+        self.keyspaces
+            .get(keyspace)
+            .and_then(|k| k.tables.get(table))
+            .ok_or_else(|| ClusterStateTokenError::UnknownTable {
+                keyspace: keyspace.to_string(),
+                table: table.to_string(),
+            })
     }
 
     /// Access to replicas owning a given token
@@ -521,6 +538,90 @@ impl ClusterState {
             };
             self.locator.tablets.add_tablet(table, tablet);
         }
+    }
+}
+
+/// Additional API for interop-based code.
+#[cfg(all(scylla_unstable, feature = "unstable-csharp-rs"))]
+impl ClusterState {
+    /// Compute token for an externally-provided **serialized** partition key.
+    ///
+    /// For typical Rust code that starts from strongly-typed key values, prefer
+    /// [`ClusterState::compute_token`], which takes typed values and handles their
+    /// serialization into [`SerializedValues`] for you.
+    ///
+    /// This is a lower-level variant of [`ClusterState::compute_token`] intended for interop
+    /// and FFI use, when the caller already has a [`SerializedValues`] representing
+    /// the partition key.
+    ///
+    /// # Partition key format
+    ///
+    /// `serialized_partition_key` must contain **exactly** the serialized values of
+    /// the table’s partition key columns:
+    ///
+    /// - Values must be provided in the same order as the partition key columns are
+    ///   defined in the table schema (e.g. `PRIMARY KEY ((k1, k2), ...)` means `k1`,
+    ///   then `k2`).
+    /// - Each value must be serialized using the CQL type of the corresponding
+    ///   partition key column, using the standard CQL binary encoding (including
+    ///   length prefixes for composite keys).
+    /// - Only partition key columns are allowed; clustering or regular columns must
+    ///   not be included.
+    /// - Partition key components must not be null or unset.
+    ///
+    /// This method performs no reordering or validation beyond basic structural
+    /// checks. If the provided values do not exactly match the table’s partition key
+    /// definition in order, type, or encoding, token computation will produce
+    /// incorrect results.
+    ///
+    /// # Usage notes
+    ///
+    /// Use this method when you already have a `SerializedValues` representation of
+    /// the partition key, for example:
+    ///
+    /// - from another language / binding,
+    /// - from code that manually constructs `SerializedValues` using
+    ///   [`RowSerializationContext`] and the [`SerializeRow`] trait.
+    ///
+    /// # Correctness validation
+    ///
+    /// Type validation at this stage would be difficult, as it would likely require deserializing
+    /// each value to check its type against the table schema. Therefore, it is the caller’s
+    /// responsibility to ensure that the provided serialized values are correct for the target
+    /// table’s partition key.
+    /// A basic check is performed to ensure the number of provided values matches
+    /// the number of partition key columns.
+    pub fn compute_token_preserialized(
+        &self,
+        keyspace: &str,
+        table: &str,
+        serialized_partition_key: &SerializedValues,
+    ) -> Result<Token, ClusterStateTokenError> {
+        let table_meta = self.lookup_table_meta(keyspace, table)?;
+
+        if serialized_partition_key.element_count() as usize != table_meta.partition_key.len() {
+            return Err(ClusterStateTokenError::PartitionKeyCountMismatch {
+                keyspace: keyspace.to_string(),
+                table: table.to_string(),
+                received: serialized_partition_key.element_count() as usize,
+                expected: table_meta.partition_key.len(),
+            });
+        }
+
+        self.do_compute_token(table_meta, serialized_partition_key)
+    }
+
+    /// Compute token using a specific partitioner, bypassing table metadata lookup.
+    ///
+    /// This is useful when the table metadata is not available (e.g. no keyspace provided),
+    /// but the partitioner is known (or default is desired).
+    pub fn compute_token_preserialized_with_partitioner(
+        &self,
+        partitioner: &PartitionerName,
+        serialized_partition_key: &SerializedValues,
+    ) -> Result<Token, ClusterStateTokenError> {
+        calculate_token_for_partition_key(serialized_partition_key, partitioner)
+            .map_err(ClusterStateTokenError::TokenCalculation)
     }
 }
 
@@ -730,5 +831,111 @@ mod tests {
             Arc::ptr_eq(&old_node, new_node),
             "Node object should be reused when disabled node's attributes haven't changed"
         );
+    }
+
+    /// Unit tests for the interop API.
+    #[cfg(all(scylla_unstable, feature = "unstable-csharp-rs"))]
+    mod interop_tests {
+        use super::super::*;
+        use crate::cluster::metadata::{Keyspace, Table};
+        use crate::frame::response::result::ColumnType;
+        use crate::frame::response::result::{ColumnSpec, NativeType, TableSpec};
+        use crate::routing::locator::ReplicaLocator;
+        use crate::routing::locator::tablets::TabletsInfo;
+        use std::collections::HashMap;
+
+        // Helper to build a minimal ClusterState containing given table metadata.
+        fn make_cluster_state_with_table(
+            keyspace_name: &str,
+            table_name: &str,
+            pk_column_specs: Vec<ColumnSpec<'static>>,
+        ) -> ClusterState {
+            let mut tables = HashMap::new();
+            let table = Table {
+                columns: HashMap::new(),
+                partition_key: pk_column_specs
+                    .iter()
+                    .map(|s| s.name().to_string())
+                    .collect(),
+                clustering_key: Vec::new(),
+                partitioner: None,
+                pk_column_specs,
+            };
+            tables.insert(table_name.to_string(), table);
+
+            let keyspace = Keyspace {
+                strategy: Strategy::LocalStrategy,
+                tables,
+                views: HashMap::new(),
+                user_defined_types: HashMap::new(),
+                durable_writes: true,
+            };
+            let mut keyspaces = HashMap::new();
+            keyspaces.insert(keyspace_name.to_string(), keyspace);
+
+            // Minimal ReplicaLocator: empty ring and no precompute, empty TabletsInfo
+            let locator = ReplicaLocator::new(
+                std::iter::empty(),
+                std::iter::empty::<&Strategy>(),
+                TabletsInfo::new(),
+            );
+
+            ClusterState {
+                cluster_name: None,
+                known_nodes: HashMap::new(),
+                all_nodes: Vec::new(),
+                keyspaces,
+                locator,
+            }
+        }
+
+        #[test]
+        fn compute_token_preserialized_happy_path() {
+            // Single-column PK
+            let ks = "ks_unit";
+            let tbl = "t_unit";
+            let col_spec_owned = ColumnSpec::owned(
+                "a".to_string(),
+                ColumnType::Native(NativeType::Text),
+                TableSpec::owned(ks.to_string(), tbl.to_string()),
+            );
+            let cs = make_cluster_state_with_table(ks, tbl, vec![col_spec_owned.clone()]);
+
+            // Create borrowed ColumnSpec for serialization context
+            let col_spec_borrowed = ColumnSpec::borrowed(
+                "a",
+                ColumnType::Native(NativeType::Text),
+                TableSpec::borrowed(ks, tbl),
+            );
+            // ensure borrowed slice lives long enough by binding it
+            let col_specs_slice = [col_spec_borrowed];
+            let ctx = RowSerializationContext::from_specs(&col_specs_slice);
+            let sv: SerializedValues = SerializedValues::from_serializable(&ctx, &("x",)).unwrap();
+
+            let token = cs.compute_token_preserialized(ks, tbl, &sv).unwrap();
+            // Should match compute_token path invoked with a SerializeRow tuple
+            let token2 = cs.compute_token(ks, tbl, &(&"x",)).unwrap();
+            assert_eq!(token, token2);
+        }
+
+        #[test]
+        fn compute_token_preserialized_count_mismatch() {
+            let ks = "ks_unit";
+            let tbl = "t_unit2";
+            let col_spec = ColumnSpec::owned(
+                "a".to_string(),
+                ColumnType::Native(NativeType::Int),
+                TableSpec::owned(ks.to_string(), tbl.to_string()),
+            );
+            let cs = make_cluster_state_with_table(ks, tbl, vec![col_spec]);
+
+            // Serialized values with zero elements
+            let sv = SerializedValues::new();
+            let res = cs.compute_token_preserialized(ks, tbl, &sv);
+            assert!(matches!(
+                res,
+                Err(ClusterStateTokenError::PartitionKeyCountMismatch { .. })
+            ));
+        }
     }
 }
