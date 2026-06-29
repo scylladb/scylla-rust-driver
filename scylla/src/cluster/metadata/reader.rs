@@ -37,7 +37,7 @@ use crate::policies::host_filter::HostFilter;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
 pub(crate) enum ControlConnectionEvent {
-    Broken,
+    Broken(ConnectionError),
     ServerEvent(Event),
     Shutdown,
 }
@@ -47,6 +47,43 @@ struct WorkingControlConnection {
     endpoint: UntranslatedEndpoint,
     error_channel: oneshot::Receiver<ConnectionError>,
     events_channel: mpsc::Receiver<Event>,
+}
+
+impl WorkingControlConnection {
+    pub(crate) async fn wait_for_event(&mut self) -> ControlConnectionEvent {
+        tokio::select! {
+            // Why only `Some`? `None` means that event channel was dropped.
+            // In current implementation (as of writing this comment)
+            // this should not be possible: events sender is stored in HostConnectionConfig,
+            // which is a field of Connection that we own. If we got `None`, then most likely
+            // two things happened:
+            //  - The implementation changed, for example by moving event sender to router.
+            //  - Connection was closed, router shutdown.
+            //  - `tokio::select!` chose this branch instead of error channel.
+            // The best thing we can imo do is ignore this `None`. `error_channel` should receive
+            // info about connection shutdown very soon.
+            Some(cql_event) = self.events_channel.recv() => {
+                ControlConnectionEvent::ServerEvent(cql_event)
+            },
+            maybe_control_connection_failed = &mut self.error_channel => {
+                let err = match maybe_control_connection_failed {
+                    Ok(err) => err,
+                    Err(_recv_error) => {
+                        // If we got here then error channel, in a Connection that we own,
+                        // was dropped without sending anything. This is definitely a bug in the driver!
+                        // We could theoretically recover by dropping a connection and creating new one,
+                        // but we would need to add an error variant to `BrokenConnectionErrorKind` that
+                        // could basically never happen. Let's panic instead.
+                        warn!(concat!("Error sender of control connection unexpectedly dropped. The only case when this ",
+                        "may happen is during runtime shutdown. If you see this and the runtime isn't shutting down, ",
+                        "this is a bug in the driver. Then please open an issue!"));
+                        return ControlConnectionEvent::Shutdown;
+                    },
+                };
+                ControlConnectionEvent::Broken(err)
+            }
+        }
+    }
 }
 
 enum ControlConnectionState {
@@ -153,42 +190,19 @@ impl MetadataReader {
         match &mut self.control_connection_state {
             ControlConnectionState::Broken { .. } => std::future::pending().await,
             ControlConnectionState::Working(working_connection) => {
-                tokio::select! {
-                    // Why only `Some`? `None` means that event channel was dropped.
-                    // In current implementation (as of writing this comment)
-                    // this should not be possible: events sender is stored in HostConnectionConfig,
-                    // which is a field of Connection that we own. If we got `None`, then most likely
-                    // two things happened:
-                    //  - The implementation changed, for example by moving event sender to router.
-                    //  - Connection was closed, router shutdown.
-                    //  - `tokio::select!` chose this branch instead of error channel.
-                    // The best thing we can imo do is ignore this `None`. `error_channel` should receive
-                    // info about connection shutdown very soon.
-                    Some(cql_event) = working_connection.events_channel.recv() => {
-                        ControlConnectionEvent::ServerEvent(cql_event)
-                    },
-                    maybe_control_connection_failed = &mut working_connection.error_channel => {
-                        let err = match maybe_control_connection_failed {
-                            Ok(err) => err,
-                            Err(_recv_error) => {
-                                // If we got here then error channel, in a Connection that we own,
-                                // was dropped without sending anything. This is definitely a bug in the driver!
-                                // We could theoretically recover by dropping a connection and creating new one,
-                                // but we would need to add an error variant to `BrokenConnectionErrorKind` that
-                                // could basically never happen. Let's panic instead.
-                                warn!(concat!("Error sender of control connection unexpectedly dropped. The only case when this ",
-                                "may happen is during runtime shutdown. If you see this and the runtime isn't shutting down, ",
-                                "this is a bug in the driver. Then please open an issue!"));
-                                return ControlConnectionEvent::Shutdown;
+                let event = working_connection.wait_for_event().await;
+                if let ControlConnectionEvent::Broken(err) = &event {
+                    self.control_connection_state = ControlConnectionState::Broken {
+                        last_error: MetadataError::ConnectionPoolError(
+                            ConnectionPoolError::Broken {
+                                last_connection_error: err.clone(),
                             },
-                        };
-                        self.control_connection_state = ControlConnectionState::Broken {
-                            last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken { last_connection_error: err }),
-                            last_endpoint: working_connection.endpoint.clone()
-                        };
-                        ControlConnectionEvent::Broken
-                    }
+                        ),
+                        last_endpoint: working_connection.endpoint.clone(),
+                    };
                 }
+
+                return event;
             }
         }
     }

@@ -351,7 +351,7 @@ impl ClusterWorker {
                             debug!("Got shutdown control connection event. Shutting down ClusterWorker.");
                             return;
                         },
-                        ControlConnectionEvent::Broken => {
+                        ControlConnectionEvent::Broken(_err) => {
                             // The control connection was broken. Acknowledge that and start attempting to reconnect.
                             // The first reconnect attempt will be immediate (by attempting metadata refresh below),
                             // and if it does not succeed, then `ControlConnectionState` will be set to `Broken`, so
