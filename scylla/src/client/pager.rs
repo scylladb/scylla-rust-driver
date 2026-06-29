@@ -426,7 +426,7 @@ where
                 let request_info = RequestInfo {
                     error: &request_error,
                     is_idempotent: self.query_is_idempotent,
-                    consistency: self.query_consistency,
+                    consistency: current_consistency,
                 };
 
                 let retry_decision = self.retry_session.decide_should_retry(request_info);
