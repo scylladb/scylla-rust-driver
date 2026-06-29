@@ -7,10 +7,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
+use tokio::sync::{mpsc, oneshot};
+use tracing::warn;
 
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::client::pager::QueryPager;
-use crate::errors::{NextPageError, NextRowError, RequestAttemptError, RequestError};
+use crate::cluster::metadata::UntranslatedEndpoint;
+use crate::errors::{
+    ConnectionError, NextPageError, NextRowError, RequestAttemptError, RequestError,
+};
+use crate::frame::response::event::EventV2 as Event;
 use crate::network::Connection;
 use crate::serialize::row::SerializeRow;
 use crate::statement::Statement;
@@ -20,27 +26,47 @@ const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
 
 pub(crate) type ControlConnectionCache = DashMap<String, PreparedStatement>;
 
+pub(crate) enum ControlConnectionEvent {
+    Broken(ConnectionError),
+    ServerEvent(Event),
+    Shutdown,
+}
+
 /// The single connection used to fetch metadata and receive events from the cluster.
 pub(super) struct ControlConnection {
     conn: Arc<Connection>,
+    endpoint: UntranslatedEndpoint,
     /// The custom server-side timeout set for requests executed on the control connection.
     overridden_serverside_timeout: Option<Duration>,
     cache: Arc<ControlConnectionCache>,
     client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
+
+    error_channel: oneshot::Receiver<ConnectionError>,
+    events_channel: mpsc::Receiver<Event>,
 }
 
 impl ControlConnection {
     pub(super) fn new(
         conn: Arc<Connection>,
+        endpoint: UntranslatedEndpoint,
         cache: Arc<ControlConnectionCache>,
         client_routes_subscriber: Option<Arc<dyn ClientRoutesSubscriber>>,
+        error_channel: oneshot::Receiver<ConnectionError>,
+        events_channel: mpsc::Receiver<Event>,
     ) -> Self {
         Self {
             conn,
+            endpoint,
             overridden_serverside_timeout: None,
             cache,
             client_routes_subscriber,
+            error_channel,
+            events_channel,
         }
+    }
+
+    pub(super) fn endpoint(&self) -> &UntranslatedEndpoint {
+        &self.endpoint
     }
 
     /// Sets the custom server-side timeout set for requests executed on the control connection.
@@ -128,6 +154,41 @@ impl ControlConnection {
             .execute_iter(prepared, serialized_values)
             .await
     }
+
+    pub(crate) async fn wait_for_event(&mut self) -> ControlConnectionEvent {
+        tokio::select! {
+            // Why only `Some`? `None` means that event channel was dropped.
+            // In current implementation (as of writing this comment)
+            // this should not be possible: events sender is stored in HostConnectionConfig,
+            // which is a field of Connection that we own. If we got `None`, then most likely
+            // two things happened:
+            //  - The implementation changed, for example by moving event sender to router.
+            //  - Connection was closed, router shutdown.
+            //  - `tokio::select!` chose this branch instead of error channel.
+            // The best thing we can imo do is ignore this `None`. `error_channel` should receive
+            // info about connection shutdown very soon.
+            Some(cql_event) = self.events_channel.recv() => {
+                ControlConnectionEvent::ServerEvent(cql_event)
+            },
+            maybe_control_connection_failed = &mut self.error_channel => {
+                let err = match maybe_control_connection_failed {
+                    Ok(err) => err,
+                    Err(_recv_error) => {
+                        // If we got here then error channel, in a Connection that we own,
+                        // was dropped without sending anything. This is definitely a bug in the driver!
+                        // We could theoretically recover by dropping a connection and creating new one,
+                        // but we would need to add an error variant to `BrokenConnectionErrorKind` that
+                        // could basically never happen. Let's panic instead.
+                        warn!(concat!("Error sender of control connection unexpectedly dropped. The only case when this ",
+                        "may happen is during runtime shutdown. If you see this and the runtime isn't shutting down, ",
+                        "this is a bug in the driver. Then please open an issue!"));
+                        return ControlConnectionEvent::Shutdown;
+                    },
+                };
+                ControlConnectionEvent::Broken(err)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -148,6 +209,7 @@ mod tests {
     use crate::cluster::control_connection::ControlConnectionCache;
     use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::cluster::node::ResolvedContactPoint;
+    use crate::network::HostConnectionConfig;
     use crate::network::open_connection;
     use crate::routing::ShardInfo;
     use crate::test_utils::setup_tracing;
@@ -271,12 +333,17 @@ mod tests {
             proxy_addr: SocketAddr,
             feedback_rx: &mut mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>,
         ) {
-            let (conn, _error_receiver) = open_connection(
-                &UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
-                    address: proxy_addr,
-                }),
+            let endpoint = UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
+                address: proxy_addr,
+            });
+            let (events_sender, events_receiver) = mpsc::channel(32);
+            let (conn, error_receiver) = open_connection(
+                &endpoint,
                 None,
-                &Default::default(),
+                &HostConnectionConfig {
+                    event_sender: Some((events_sender, vec![])),
+                    ..Default::default()
+                },
             )
             .await
             .unwrap();
@@ -284,8 +351,11 @@ mod tests {
             let connected_to_scylladb = conn.get_shard_info().is_some();
             let conn_with_default_timeout = ControlConnection::new(
                 Arc::new(conn),
+                endpoint,
                 Arc::new(ControlConnectionCache::new()),
                 None,
+                error_receiver,
+                events_receiver,
             );
 
             // No custom timeout set.

@@ -19,75 +19,25 @@ use std::time::Duration;
 
 use rand::rng;
 use rand::seq::{IndexedRandom, SliceRandom};
-use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 use crate::client::client_routes::ClientRoutesSubscriber;
 use crate::cluster::KnownNode;
-use crate::cluster::control_connection::{ControlConnection, ControlConnectionCache};
+use crate::cluster::control_connection::{
+    ControlConnection, ControlConnectionCache, ControlConnectionEvent,
+};
 use crate::cluster::metadata::{Metadata, PeerEndpoint, UntranslatedEndpoint};
 use crate::cluster::node::resolve_contact_points;
-use crate::errors::{ConnectionError, ConnectionPoolError, MetadataError, NewSessionError};
+use crate::errors::{ConnectionPoolError, MetadataError, NewSessionError};
 use crate::frame::response::event::ClientRoutesChangeEvent;
-use crate::frame::response::event::EventV2 as Event;
 use crate::frame::server_event_type::EventTypeV2 as EventType;
 use crate::network::{ConnectionConfig, open_connection};
 use crate::policies::host_filter::HostFilter;
 use crate::utils::safe_format::IteratorSafeFormatExt;
 
-pub(crate) enum ControlConnectionEvent {
-    Broken(ConnectionError),
-    ServerEvent(Event),
-    Shutdown,
-}
-
-struct WorkingControlConnection {
-    connection: ControlConnection,
-    endpoint: UntranslatedEndpoint,
-    error_channel: oneshot::Receiver<ConnectionError>,
-    events_channel: mpsc::Receiver<Event>,
-}
-
-impl WorkingControlConnection {
-    pub(crate) async fn wait_for_event(&mut self) -> ControlConnectionEvent {
-        tokio::select! {
-            // Why only `Some`? `None` means that event channel was dropped.
-            // In current implementation (as of writing this comment)
-            // this should not be possible: events sender is stored in HostConnectionConfig,
-            // which is a field of Connection that we own. If we got `None`, then most likely
-            // two things happened:
-            //  - The implementation changed, for example by moving event sender to router.
-            //  - Connection was closed, router shutdown.
-            //  - `tokio::select!` chose this branch instead of error channel.
-            // The best thing we can imo do is ignore this `None`. `error_channel` should receive
-            // info about connection shutdown very soon.
-            Some(cql_event) = self.events_channel.recv() => {
-                ControlConnectionEvent::ServerEvent(cql_event)
-            },
-            maybe_control_connection_failed = &mut self.error_channel => {
-                let err = match maybe_control_connection_failed {
-                    Ok(err) => err,
-                    Err(_recv_error) => {
-                        // If we got here then error channel, in a Connection that we own,
-                        // was dropped without sending anything. This is definitely a bug in the driver!
-                        // We could theoretically recover by dropping a connection and creating new one,
-                        // but we would need to add an error variant to `BrokenConnectionErrorKind` that
-                        // could basically never happen. Let's panic instead.
-                        warn!(concat!("Error sender of control connection unexpectedly dropped. The only case when this ",
-                        "may happen is during runtime shutdown. If you see this and the runtime isn't shutting down, ",
-                        "this is a bug in the driver. Then please open an issue!"));
-                        return ControlConnectionEvent::Shutdown;
-                    },
-                };
-                ControlConnectionEvent::Broken(err)
-            }
-        }
-    }
-}
-
 enum ControlConnectionState {
-    Working(WorkingControlConnection),
+    Working(ControlConnection),
     Broken {
         last_error: MetadataError,
         last_endpoint: UntranslatedEndpoint,
@@ -97,7 +47,7 @@ enum ControlConnectionState {
 impl ControlConnectionState {
     fn endpoint(&self) -> &UntranslatedEndpoint {
         match self {
-            ControlConnectionState::Working(c) => &c.endpoint,
+            ControlConnectionState::Working(c) => c.endpoint(),
             ControlConnectionState::Broken { last_endpoint, .. } => last_endpoint,
         }
     }
@@ -198,11 +148,11 @@ impl MetadataReader {
                                 last_connection_error: err.clone(),
                             },
                         ),
-                        last_endpoint: working_connection.endpoint.clone(),
+                        last_endpoint: working_connection.endpoint().clone(),
                     };
                 }
 
-                return event;
+                event
             }
         }
     }
@@ -352,10 +302,9 @@ impl MetadataReader {
                 return Err(e.clone());
             }
         };
-        let endpoint = working_connection.endpoint.clone();
+        let endpoint = working_connection.endpoint().clone();
 
         let res = working_connection
-            .connection
             .query_metadata(
                 endpoint.address().port(),
                 &self.keyspaces_to_fetch,
@@ -485,13 +434,17 @@ impl MetadataReader {
         .await;
 
         match open_result {
-            Ok((con, recv)) => ControlConnectionState::Working(WorkingControlConnection {
-                connection: ControlConnection::new(Arc::new(con), cache, client_routes_subscriber)
-                    .override_serverside_timeout(request_serverside_timeout),
-                error_channel: recv,
-                events_channel: receiver,
-                endpoint,
-            }),
+            Ok((con, recv)) => ControlConnectionState::Working(
+                ControlConnection::new(
+                    Arc::new(con),
+                    endpoint,
+                    cache,
+                    client_routes_subscriber,
+                    recv,
+                    receiver,
+                )
+                .override_serverside_timeout(request_serverside_timeout),
+            ),
             Err(conn_err) => ControlConnectionState::Broken {
                 last_error: MetadataError::ConnectionPoolError(ConnectionPoolError::Broken {
                     last_connection_error: conn_err,
@@ -555,7 +508,6 @@ impl MetadataReader {
         // This is a tradeoff - the only alternative is issuing multiple queries, one per connection id.
         // I believe the tradeoff here is correct.
         let client_routes = working_connection
-            .connection
             .query_client_routes(&connection_ids, host_ids)
             .await?;
 
