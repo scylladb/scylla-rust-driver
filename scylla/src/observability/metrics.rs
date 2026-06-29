@@ -216,7 +216,18 @@ impl Default for RequestRateMeter {
 }
 
 /// Various metrics collected by the driver.
+///
+/// `Metrics` is cheaply cloneable — all clones share the same underlying
+/// counters and histogram, so recording on any clone is visible through every
+/// other clone.  This is achieved by wrapping the actual data in an `Arc`
+/// internally; cloning `Metrics` costs one atomic reference-count increment.
+#[derive(Clone)]
 pub struct Metrics {
+    inner: Arc<MetricsInner>,
+}
+
+/// Storage for all metric counters and histograms.
+struct MetricsInner {
     /// Number of errors that occurred in queries executed without `QueryPager`.
     errors_num: AtomicU64,
     /// Number of queries executed without `QueryPager`.
@@ -252,67 +263,69 @@ impl Metrics {
         let grouping_power = 12;
 
         Self {
-            errors_num: AtomicU64::new(0),
-            queries_num: AtomicU64::new(0),
-            errors_iter_num: AtomicU64::new(0),
-            queries_iter_num: AtomicU64::new(0),
-            retries_num: AtomicU64::new(0),
-            histogram: Arc::new(AtomicHistogram::new(grouping_power, max_value_power).unwrap()),
-            meter: Arc::new(RequestRateMeter::new()),
-            total_connections: AtomicU64::new(0),
-            connection_timeouts: AtomicU64::new(0),
-            request_timeouts: AtomicU64::new(0),
+            inner: Arc::new(MetricsInner {
+                errors_num: AtomicU64::new(0),
+                queries_num: AtomicU64::new(0),
+                errors_iter_num: AtomicU64::new(0),
+                queries_iter_num: AtomicU64::new(0),
+                retries_num: AtomicU64::new(0),
+                histogram: Arc::new(AtomicHistogram::new(grouping_power, max_value_power).unwrap()),
+                meter: Arc::new(RequestRateMeter::new()),
+                total_connections: AtomicU64::new(0),
+                connection_timeouts: AtomicU64::new(0),
+                request_timeouts: AtomicU64::new(0),
+            }),
         }
     }
 
     /// Increments counter for errors that occurred in nonpaged queries.
     pub(crate) fn inc_failed_nonpaged_queries(&self) {
-        self.errors_num.fetch_add(1, ORDER_TYPE);
+        self.inner.errors_num.fetch_add(1, ORDER_TYPE);
     }
 
     /// Increments counter for nonpaged queries.
     pub(crate) fn inc_total_nonpaged_queries(&self) {
-        self.queries_num.fetch_add(1, ORDER_TYPE);
-        self.meter.mark();
+        self.inner.queries_num.fetch_add(1, ORDER_TYPE);
+        self.inner.meter.mark();
     }
 
     /// Increments counter for errors that occurred in paged queries.
     pub(crate) fn inc_failed_paged_queries(&self) {
-        self.errors_iter_num.fetch_add(1, ORDER_TYPE);
+        self.inner.errors_iter_num.fetch_add(1, ORDER_TYPE);
     }
 
     /// Increments counter for page queries in paged queries.
     /// If query_iter would return 4 pages then this counter should be incremented 4 times.
     pub(crate) fn inc_total_paged_queries(&self) {
-        self.queries_iter_num.fetch_add(1, ORDER_TYPE);
-        self.meter.mark();
+        self.inner.queries_iter_num.fetch_add(1, ORDER_TYPE);
+        self.inner.meter.mark();
     }
 
     /// Increments counter measuring how many times a retry policy has decided to retry a query
     pub(crate) fn inc_retries_num(&self) {
-        self.retries_num.fetch_add(1, ORDER_TYPE);
+        self.inner.retries_num.fetch_add(1, ORDER_TYPE);
     }
 
     /// Increments counter for active number of connections to the cluster.
     /// Should be called when opening new connections, once per connection.
     pub(crate) fn inc_total_connections(&self) {
-        self.total_connections.fetch_add(1, ORDER_TYPE);
+        self.inner.total_connections.fetch_add(1, ORDER_TYPE);
     }
 
     /// Decrements counter for number of active connections to the cluster.
     /// Should be called when closing the connections, once per connection.
     pub(crate) fn dec_total_connections(&self) {
-        self.total_connections.fetch_sub(1, ORDER_TYPE);
+        self.inner.total_connections.fetch_sub(1, ORDER_TYPE);
     }
 
     /// Increments counter for timeouts for new connections to the cluster.
     pub(crate) fn inc_connection_timeouts(&self) {
-        self.connection_timeouts.fetch_add(1, ORDER_TYPE);
+        self.inner.connection_timeouts.fetch_add(1, ORDER_TYPE);
     }
 
     /// Increments counter for client request timeouts.
     pub(crate) fn inc_request_timeouts(&self) {
-        self.request_timeouts.fetch_add(1, ORDER_TYPE);
+        self.inner.request_timeouts.fetch_add(1, ORDER_TYPE);
     }
 
     /// Saves to histogram latency of completing single query.
@@ -322,7 +335,7 @@ impl Metrics {
     ///
     /// * `latency` - time in milliseconds that should be logged
     pub(crate) fn log_query_latency(&self, latency: u64) -> Result<(), MetricsError> {
-        if let Err(err) = self.histogram.increment(latency) {
+        if let Err(err) = self.inner.histogram.increment(latency) {
             Err(MetricsError::HistogramError(Arc::new(err)))
         } else {
             Ok(())
@@ -331,7 +344,7 @@ impl Metrics {
 
     /// Returns average latency in milliseconds
     pub fn get_latency_avg_ms(&self) -> Result<u64, MetricsError> {
-        Self::mean(&self.histogram.load())
+        Self::mean(&self.inner.histogram.load())
     }
 
     /// Returns latency from histogram for a given percentile
@@ -341,7 +354,7 @@ impl Metrics {
     pub fn get_latency_percentile_ms(&self, percentile: f64) -> Result<u64, MetricsError> {
         // `histogram` 1.x uses the 0.0..=1.0 quantile scale, whereas our
         // public API uses the 0.0..=100.0 percentile scale.
-        let res = self.histogram.load().quantile(percentile / 100.0);
+        let res = self.inner.histogram.load().quantile(percentile / 100.0);
 
         match res {
             Err(err) => Err(MetricsError::HistogramError(Arc::new(err))),
@@ -361,7 +374,7 @@ impl Metrics {
     ///                    percentile_75, percentile_95, percentile_98,
     ///                    percentile_99, and percentile_99_9.
     pub fn get_snapshot(&self) -> Result<Snapshot, MetricsError> {
-        let h = self.histogram.load();
+        let h = self.inner.histogram.load();
 
         let (min, max) = Self::minmax(&h)?;
 
@@ -394,62 +407,62 @@ impl Metrics {
 
     /// Returns counter for errors occurred in nonpaged queries
     pub fn get_errors_num(&self) -> u64 {
-        self.errors_num.load(ORDER_TYPE)
+        self.inner.errors_num.load(ORDER_TYPE)
     }
 
     /// Returns counter for nonpaged queries
     pub fn get_queries_num(&self) -> u64 {
-        self.queries_num.load(ORDER_TYPE)
+        self.inner.queries_num.load(ORDER_TYPE)
     }
 
     /// Returns counter for errors occurred in paged queries
     pub fn get_errors_iter_num(&self) -> u64 {
-        self.errors_iter_num.load(ORDER_TYPE)
+        self.inner.errors_iter_num.load(ORDER_TYPE)
     }
 
     /// Returns counter for pages requested in paged queries
     pub fn get_queries_iter_num(&self) -> u64 {
-        self.queries_iter_num.load(ORDER_TYPE)
+        self.inner.queries_iter_num.load(ORDER_TYPE)
     }
 
     /// Returns counter measuring how many times a retry policy has decided to retry a query
     pub fn get_retries_num(&self) -> u64 {
-        self.retries_num.load(ORDER_TYPE)
+        self.inner.retries_num.load(ORDER_TYPE)
     }
 
     /// Returns mean rate of queries per second
     pub fn get_mean_rate(&self) -> f64 {
-        self.meter.mean_rate()
+        self.inner.meter.mean_rate()
     }
 
     /// Returns one-minute rate of queries per second
     pub fn get_one_minute_rate(&self) -> f64 {
-        self.meter.one_minute_rate()
+        self.inner.meter.one_minute_rate()
     }
 
     /// Returns five-minute rate of queries per second
     pub fn get_five_minute_rate(&self) -> f64 {
-        self.meter.five_minute_rate()
+        self.inner.meter.five_minute_rate()
     }
 
     /// Returns fifteen-minute rate of queries per second
     pub fn get_fifteen_minute_rate(&self) -> f64 {
-        self.meter.fifteen_minute_rate()
+        self.inner.meter.fifteen_minute_rate()
     }
 
     /// Returns total number of active connections
     pub fn get_total_connections(&self) -> u64 {
-        self.total_connections.load(ORDER_TYPE)
+        self.inner.total_connections.load(ORDER_TYPE)
     }
 
     /// Returns counter for connection timeouts
     pub fn get_connection_timeouts(&self) -> u64 {
-        self.connection_timeouts.load(ORDER_TYPE)
+        self.inner.connection_timeouts.load(ORDER_TYPE)
     }
 
     /// Returns counter for request timeouts
     pub fn get_request_timeouts(&self) -> u64 {
-        self.request_timeouts.load(ORDER_TYPE)
+        self.inner.request_timeouts.load(ORDER_TYPE)
     }
 
     // Metric implementations
@@ -558,18 +571,18 @@ impl Default for Metrics {
 
 impl std::fmt::Debug for Metrics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let h = self.histogram.load();
+        let h = self.inner.histogram.load();
         f.debug_struct("Metrics")
-            .field("errors_num", &self.errors_num)
-            .field("queries_num", &self.queries_num)
-            .field("errors_iter_num", &self.errors_iter_num)
-            .field("queries_iter_num", &self.queries_iter_num)
-            .field("retries_num", &self.retries_num)
+            .field("errors_num", &self.inner.errors_num)
+            .field("queries_num", &self.inner.queries_num)
+            .field("errors_iter_num", &self.inner.errors_iter_num)
+            .field("queries_iter_num", &self.inner.queries_iter_num)
+            .field("retries_num", &self.inner.retries_num)
             .field("histogram", &h)
-            .field("meter", &self.meter)
-            .field("total_connections", &self.total_connections)
-            .field("connection_timeouts", &self.connection_timeouts)
-            .field("request_timeouts", &self.request_timeouts)
+            .field("meter", &self.inner.meter)
+            .field("total_connections", &self.inner.total_connections)
+            .field("connection_timeouts", &self.inner.connection_timeouts)
+            .field("request_timeouts", &self.inner.request_timeouts)
             .finish()
     }
 }

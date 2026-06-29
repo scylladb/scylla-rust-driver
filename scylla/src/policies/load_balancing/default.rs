@@ -1434,7 +1434,6 @@ mod tests {
                 &connectivity_events_sender,
                 TabletsInfo::new(),
                 &HashMap::new(),
-                #[cfg(feature = "metrics")]
                 &Default::default(),
             )
             .await;
@@ -1478,7 +1477,6 @@ mod tests {
                 &connectivity_events_sender,
                 TabletsInfo::new(),
                 &HashMap::new(),
-                #[cfg(feature = "metrics")]
                 &Default::default(),
             )
             .await;
@@ -2628,7 +2626,6 @@ mod tests {
             &connectivity_events_sender,
             TabletsInfo::new(),
             &HashMap::new(),
-            #[cfg(feature = "metrics")]
             &Default::default(),
         )
         .await;

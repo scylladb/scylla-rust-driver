@@ -22,7 +22,6 @@ use crate::network::{
 };
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
-#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
@@ -88,7 +87,6 @@ pub struct Session {
     cluster: Cluster,
     default_execution_profile_handle: ExecutionProfileHandle,
     schema_agreement_interval: Duration,
-    #[cfg(feature = "metrics")]
     metrics: Arc<Metrics>,
     schema_agreement_timeout: Duration,
     schema_agreement_automatic_waiting: bool,
@@ -113,7 +111,6 @@ impl std::fmt::Debug for Session {
             )
             .field("schema_agreement_interval", &self.schema_agreement_interval);
 
-        #[cfg(feature = "metrics")]
         d.field("metrics", &self.metrics);
 
         d.field(
@@ -1140,7 +1137,6 @@ impl Session {
             reconnect_policy: Arc::new(ExponentialReconnectPolicy::new()),
         };
 
-        #[cfg(feature = "metrics")]
         let metrics = Arc::new(Metrics::new());
 
         let host_listener = {
@@ -1176,8 +1172,7 @@ impl Session {
             host_listener,
             config.cluster_metadata_refresh_interval,
             tablet_receiver,
-            #[cfg(feature = "metrics")]
-            Arc::clone(&metrics),
+            metrics.as_ref().clone(),
             client_routes_config,
         )
         .await?;
@@ -1188,7 +1183,6 @@ impl Session {
             cluster,
             default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
-            #[cfg(feature = "metrics")]
             metrics,
             schema_agreement_timeout: config.schema_agreement_timeout,
             schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
@@ -1480,8 +1474,7 @@ impl Session {
             statement,
             execution_profile,
             self.cluster.get_state(),
-            #[cfg(feature = "metrics")]
-            Arc::clone(&self.metrics),
+            self.metrics.as_ref().clone(),
             Arc::clone(&self.node_location_preference),
         )
         .await
@@ -1807,8 +1800,7 @@ impl Session {
                 values,
                 execution_profile,
                 cluster_state: self.cluster.get_state(),
-                #[cfg(feature = "metrics")]
-                metrics: Arc::clone(&self.metrics),
+                metrics: self.metrics.as_ref().clone(),
                 location_preference: Arc::clone(&self.node_location_preference),
             },
         )
@@ -2196,7 +2188,6 @@ impl Session {
         let result = match effective_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner).await.unwrap_or_else(
                 |_: tokio::time::error::Elapsed| {
-                    #[cfg(feature = "metrics")]
                     self.metrics.inc_request_timeouts();
 
                     let timeout_error = RequestError::RequestTimeout(timeout);
@@ -2267,7 +2258,6 @@ impl Session {
                 };
                 context.request_span.record_shard_id(&connection);
 
-                #[cfg(feature = "metrics")]
                 self.metrics.inc_total_nonpaged_queries();
                 let request_start = std::time::Instant::now();
 
@@ -2291,7 +2281,6 @@ impl Session {
                 let request_error: RequestAttemptError = match request_result {
                     Ok(response) => {
                         trace!(parent: &span, "Request succeeded");
-                        #[cfg(feature = "metrics")]
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
                         context.load_balancing_policy.on_request_success(
@@ -2307,7 +2296,6 @@ impl Session {
                             last_error = %e,
                             "Request failed"
                         );
-                        #[cfg(feature = "metrics")]
                         self.metrics.inc_failed_nonpaged_queries();
                         context.load_balancing_policy.on_request_failure(
                             context.query_info,
@@ -2340,13 +2328,11 @@ impl Session {
 
                 match retry_decision {
                     RetryDecision::RetrySameTarget(new_cl) => {
-                        #[cfg(feature = "metrics")]
                         self.metrics.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
                     RetryDecision::RetryNextTarget(new_cl) => {
-                        #[cfg(feature = "metrics")]
                         self.metrics.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;

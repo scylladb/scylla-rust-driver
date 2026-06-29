@@ -36,7 +36,6 @@ use crate::frame::response::result;
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
-#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
@@ -305,8 +304,7 @@ struct PagerWorker<'a, QueryFunc, SpanCreatorFunc> {
     query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,
     timeouter: Option<PageQueryTimeouter>,
-    #[cfg(feature = "metrics")]
-    metrics: Arc<Metrics>,
+    metrics: Metrics,
 
     paging_state: PagingState,
 
@@ -443,13 +441,11 @@ where
 
                 match retry_decision {
                     RetryDecision::RetrySameTarget(cl) => {
-                        #[cfg(feature = "metrics")]
                         self.metrics.inc_retries_num();
                         current_consistency = cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
                     RetryDecision::RetryNextTarget(cl) => {
-                        #[cfg(feature = "metrics")]
                         self.metrics.inc_retries_num();
                         current_consistency = cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;
@@ -602,7 +598,6 @@ where
         request_span: &RequestSpan,
     ) -> Result<(Duration, Result<NonErrorQueryResponse, RequestAttemptError>), RequestTimeoutError>
     {
-        #[cfg(feature = "metrics")]
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
 
@@ -623,7 +618,6 @@ where
                 match tokio::time::timeout_at(timeouter.deadline(), runner).await {
                     Ok(res) => res,
                     Err(_) /* tokio::time::error::Elapsed */ => {
-                        #[cfg(feature = "metrics")]
                         self.metrics.inc_request_timeouts();
                         return Err(RequestTimeoutError(timeouter.timeout_duration()));
                     }
@@ -656,7 +650,6 @@ where
         (RequestAttemptError, ProvingSender<ResultFirstPage>),
     > {
         let mut log_success = || {
-            #[cfg(feature = "metrics")]
             let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
             self.log_attempt_success();
             self.log_request_success();
@@ -708,7 +701,6 @@ where
                 Ok((ControlFlow::Continue(()), proof, next_pages_sender))
             }
             Err(err) => {
-                #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
                 self.load_balancing_policy.on_request_failure(
                     &self.routing_info,
@@ -786,7 +778,6 @@ where
                 Ok((ControlFlow::Break(()), proof, next_pages_sender))
             }
             Ok(response) => {
-                #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
                 let err =
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
@@ -819,7 +810,6 @@ where
                 tracing_id,
                 ..
             }) => {
-                #[cfg(feature = "metrics")]
                 let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                 self.log_attempt_success();
                 self.log_request_success();
@@ -860,7 +850,6 @@ where
             // This catches all other kinds of responses that are not rows.
             // As this is not the first page, this is certainly an error.
             Ok(response) => {
-                #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
                 let err =
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
@@ -873,7 +862,6 @@ where
                 Err(err)
             }
             Err(err) => {
-                #[cfg(feature = "metrics")]
                 self.metrics.inc_failed_paged_queries();
                 self.load_balancing_policy.on_request_failure(
                     &self.routing_info,
@@ -1090,8 +1078,7 @@ pub(crate) struct PreparedPagerConfig {
     pub(crate) values: SerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_state: Arc<ClusterState>,
-    #[cfg(feature = "metrics")]
-    pub(crate) metrics: Arc<Metrics>,
+    pub(crate) metrics: Metrics,
     pub(crate) location_preference: Arc<NodeLocationPreference>,
 }
 
@@ -1221,7 +1208,7 @@ If you are using this API, you are probably doing something wrong."
         statement: Statement,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_state: Arc<ClusterState>,
-        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        metrics: Metrics,
         node_location_preference: Arc<NodeLocationPreference>,
     ) -> Result<Self, PagerExecutionError> {
         let (sender, receiver) = oneshot::channel::<ResultFirstPage>();
@@ -1299,7 +1286,6 @@ If you are using this API, you are probably doing something wrong."
                 load_balancing_policy,
                 retry_session,
                 timeouter,
-                #[cfg(feature = "metrics")]
                 metrics,
                 paging_state: PagingState::start(),
                 history_listener: statement.config.history_listener.as_ref().map(Arc::clone),
@@ -1434,7 +1420,6 @@ If you are using this API, you are probably doing something wrong."
                 load_balancing_policy,
                 retry_session,
                 timeouter,
-                #[cfg(feature = "metrics")]
                 metrics: config.metrics,
                 paging_state: PagingState::start(),
                 history_listener: config

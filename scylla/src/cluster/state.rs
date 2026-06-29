@@ -1,6 +1,5 @@
 use crate::errors::{ClusterStateTokenError, ConnectionPoolError};
 use crate::network::{Connection, ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
-#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::host_filter::HostFilter;
 use crate::routing::locator::ReplicaLocator;
@@ -143,7 +142,7 @@ impl ClusterState {
         connectivity_events_sender: &mpsc::UnboundedSender<ConnectivityChangeEvent>,
         mut tablets: TabletsInfo,
         old_keyspaces: &HashMap<String, Keyspace>,
-        #[cfg(feature = "metrics")] metrics: &Arc<Metrics>,
+        metrics: &Metrics,
     ) -> Self {
         // Create new updated known_nodes and ring
         let mut new_known_nodes: HashMap<Uuid, Arc<Node>> =
@@ -194,8 +193,7 @@ impl ClusterState {
                     pool_config,
                     connectivity_events_sender.clone(),
                     used_keyspace.clone(),
-                    #[cfg(feature = "metrics")]
-                    Arc::clone(metrics),
+                    metrics.clone(),
                 )),
             };
 
@@ -601,7 +599,6 @@ mod tests {
             &tx,
             TabletsInfo::new(),
             &HashMap::new(),
-            #[cfg(feature = "metrics")]
             &Default::default(),
         )
         .await

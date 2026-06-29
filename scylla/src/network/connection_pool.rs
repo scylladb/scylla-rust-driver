@@ -13,7 +13,6 @@ use crate::routing::{Shard, ShardCount, Sharder};
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
-#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 
 use crate::cluster::NodeAddr;
@@ -223,7 +222,7 @@ impl NodeConnectionPool {
         connectivity_events_sender: Option<(Uuid, mpsc::UnboundedSender<ConnectivityChangeEvent>)>,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_empty_notifier: mpsc::Sender<()>,
-        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        metrics: Metrics,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
@@ -241,7 +240,6 @@ impl NodeConnectionPool {
             pool_updated_notify.clone(),
             refill_now_notify.clone(),
             pool_empty_notifier,
-            #[cfg(feature = "metrics")]
             metrics,
             host_reconnect_policy,
         );
@@ -521,8 +519,7 @@ struct PoolRefiller {
     // Signaled when the connection pool becomes empty
     pool_empty_notifier: mpsc::Sender<()>,
 
-    #[cfg(feature = "metrics")]
-    metrics: Arc<Metrics>,
+    metrics: Metrics,
 }
 
 #[derive(Debug)]
@@ -532,8 +529,7 @@ struct UseKeyspaceRequest {
 }
 
 impl PoolRefiller {
-    #[allow(clippy::too_many_arguments)] // Not always triggered, because of the metrics, so
-    // I can't use `expect`.
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn new(
         endpoint: Arc<RwLock<UntranslatedEndpoint>>,
         pool_config: HostPoolConfig,
@@ -542,7 +538,7 @@ impl PoolRefiller {
         pool_updated_notify: Arc<Notify>,
         refill_now_notify: Arc<Notify>,
         pool_empty_notifier: mpsc::Sender<()>,
-        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        metrics: Metrics,
         reconnect_policy: Box<dyn ReconnectPolicySession>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
@@ -575,7 +571,6 @@ impl PoolRefiller {
             refill_now_notify,
             pool_empty_notifier,
 
-            #[cfg(feature = "metrics")]
             metrics,
         }
     }
@@ -943,9 +938,8 @@ impl PoolRefiller {
         let cfg = self.pool_config.connection_config.clone();
         let mut endpoint = self.endpoint.read().unwrap().clone();
 
-        #[cfg(feature = "metrics")]
         let count_in_metrics = {
-            let metrics = Arc::clone(&self.metrics);
+            let metrics = self.metrics.clone();
             move |connect_result: &Result<_, ConnectionError>| {
                 if connect_result.is_ok() {
                     metrics.inc_total_connections();
@@ -969,7 +963,6 @@ impl PoolRefiller {
                 )
                 .await;
 
-                #[cfg(feature = "metrics")]
                 count_in_metrics(&result);
 
                 OpenedConnectionEvent {
@@ -983,7 +976,6 @@ impl PoolRefiller {
                 let non_shard_aware_endpoint = endpoint;
                 let result = open_connection(&non_shard_aware_endpoint, None, &cfg).await;
 
-                #[cfg(feature = "metrics")]
                 count_in_metrics(&result);
 
                 OpenedConnectionEvent {
@@ -1128,7 +1120,6 @@ impl PoolRefiller {
             match maybe_idx {
                 Some(idx) => {
                     v.swap_remove(idx);
-                    #[cfg(feature = "metrics")]
                     self.metrics.dec_total_connections();
                     true
                 }

@@ -7,7 +7,6 @@ use crate::cluster::{KnownNode, Node};
 use crate::errors::{MetadataError, NewSessionError, RequestAttemptError, UseKeyspaceError};
 use crate::frame::response::event::EventV2 as Event;
 use crate::network::{ConnectivityChangeEvent, PoolConfig, VerifiedKeyspaceName};
-#[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
@@ -108,8 +107,7 @@ struct ClusterWorker {
     // worker will refresh the cluster metadata
     cluster_metadata_refresh_interval: Duration,
 
-    #[cfg(feature = "metrics")]
-    metrics: Arc<Metrics>,
+    metrics: Metrics,
 }
 
 #[derive(Debug)]
@@ -136,7 +134,7 @@ impl Cluster {
         host_listener: Option<Arc<dyn HostListener>>,
         cluster_metadata_refresh_interval: Duration,
         tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
-        #[cfg(feature = "metrics")] metrics: Arc<Metrics>,
+        metrics: Metrics,
         client_routes_config: Option<ClientRoutesConfig>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
@@ -195,7 +193,6 @@ impl Cluster {
             &connectivity_events_sender,
             TabletsInfo::new(),
             &HashMap::new(),
-            #[cfg(feature = "metrics")]
             &metrics,
         )
         .await;
@@ -223,7 +220,6 @@ impl Cluster {
             host_listener,
             cluster_metadata_refresh_interval,
 
-            #[cfg(feature = "metrics")]
             metrics,
         };
 
@@ -513,7 +509,6 @@ impl ClusterWorker {
                 &self.connectivity_events_sender,
                 cluster_state.locator.tablets.clone(),
                 &cluster_state.keyspaces,
-                #[cfg(feature = "metrics")]
                 &self.metrics,
             )
             .await,
