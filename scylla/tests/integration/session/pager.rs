@@ -32,8 +32,8 @@ use scylla_proxy::{
 use tracing::info;
 
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
-    test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL as _, create_new_session_builder, fetch_negotiated_features,
+    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
 };
 
 /// Basic pager functionality test
@@ -705,6 +705,179 @@ async fn test_pager_retry_receives_current_consistency() {
              RequestInfo, not the original query consistency (All)"
         );
     }
+}
+
+/// Regression test: consistency must be reset to the original query value at
+/// the start of each new page, even if a retry during a previous page
+/// downgraded it.
+///
+/// The bug: `current_consistency` not reset before starting the first query attempt
+/// for each page, so a downgrade performed during page N's retry
+/// sequence persisted into page N+1's first attempt.
+///
+/// This test observes the consistency of each Execute frame **on the wire**
+/// using proxy feedback channels, rather than inspecting what the retry policy
+/// receives. This keeps the two concerns separate:
+/// - `test_pager_retry_receives_current_consistency` verifies that the pager
+///   correctly reports `current_consistency` (not `query_consistency`) to the
+///   retry policy within a single page's retry loop.
+/// - This test verifies that `current_consistency` is reset to `query_consistency`
+///   at the start of each new page.
+///
+/// Execute sequence (all on the same node via coordinator stability):
+///
+/// | Execute # | Rule      | Consistency | Event                                       |
+/// |-----------|-----------|-------------|---------------------------------------------|
+/// | 1         | noop      | All         | Page 1 → success                            |
+/// | 2         | forge+cap | All         | Page 2, att.1 → error → downgrade All → One |
+/// | 3         | noop+cap  | One         | Page 2, att.2 → success                     |
+/// | 4         | forge+cap | All         | Page 3, att.1 → error → stop                |
+///
+/// The key assertion: Execute #4 uses `All`, not `One` — proving the reset.
+#[tokio::test]
+async fn test_pager_consistency_reset_between_pages() {
+    setup_tracing();
+
+    // The retry policy only needs to downgrade on the first failure (page 2,
+    // attempt 1) and give up on the second (page 3, attempt 1).
+    #[derive(Debug)]
+    struct DowngradeOnceThenStopPolicy;
+
+    impl RetryPolicy for DowngradeOnceThenStopPolicy {
+        fn new_session(&self) -> Box<dyn RetrySession> {
+            Box::new(DowngradeOnceThenStopSession { retried: false })
+        }
+    }
+
+    struct DowngradeOnceThenStopSession {
+        retried: bool,
+    }
+
+    impl RetrySession for DowngradeOnceThenStopSession {
+        fn decide_should_retry(&mut self, _: RequestInfo) -> RetryDecision {
+            if !self.retried {
+                self.retried = true;
+                RetryDecision::RetrySameTarget(Some(Consistency::One))
+            } else {
+                RetryDecision::DontRetry
+            }
+        }
+
+        fn reset(&mut self) {
+            self.retried = false;
+        }
+    }
+
+    let profile = ExecutionProfile::builder()
+        .consistency(Consistency::All)
+        .retry_policy(Arc::new(DowngradeOnceThenStopPolicy))
+        .build();
+
+    let features = fetch_negotiated_features(None).await;
+
+    let execute_not_control = Condition::RequestOpcode(RequestOpcode::Execute)
+        .and(Condition::not(Condition::ConnectionRegisteredAnyEvent));
+
+    // Feedback channels: the proxy sends each matched frame here so we can
+    // inspect its wire consistency after the test completes.
+    let (forged_tx, mut forged_rx) = mpsc::unbounded_channel();
+    let (passed_tx, mut passed_rx) = mpsc::unbounded_channel();
+
+    let res = test_with_3_node_cluster(
+        scylla_proxy::ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .default_execution_profile_handle(profile.into_handle())
+                .build()
+                .await
+                .unwrap();
+
+            // system_schema.tables has many built-in tables on both ScyllaDB
+            // and Cassandra, giving us at least 5 pages regardless of
+            // cluster size or backend.
+            let mut prepared = session
+                .prepare("SELECT keyspace_name FROM system_schema.tables LIMIT 5")
+                .await
+                .unwrap();
+            prepared.set_page_size(1);
+            prepared.set_is_idempotent(true);
+
+            // Rule 1: pass page 1 through silently (no feedback needed).
+            // Rule 2: forge server_error for every CL=All attempt; capture frame.
+            // Rule 3: pass everything else (CL=One retries) through; capture frame.
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_request_rules(Some(vec![
+                    RequestRule(
+                        execute_not_control
+                            .clone()
+                            .and(Condition::TrueForLimitedTimes(1)),
+                        RequestReaction::noop(),
+                    ),
+                    RequestRule(
+                        execute_not_control
+                            .clone()
+                            .and(Condition::RequestConsistency(Consistency::All, features)),
+                        RequestReaction::forge()
+                            .server_error()
+                            .with_feedback_when_performed(forged_tx.clone()),
+                    ),
+                    RequestRule(
+                        execute_not_control.clone(),
+                        RequestReaction::noop().with_feedback_when_performed(passed_tx.clone()),
+                    ),
+                ]));
+            });
+
+            let pager = session.execute_iter(prepared, ()).await.unwrap();
+            let mut stream = pager.rows_stream::<Row>().unwrap();
+            while stream.next().await.transpose().is_ok_and(|r| r.is_some()) {}
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+
+    // Helper: extract the wire consistency from a captured frame.
+    let cl = |frame: scylla_proxy::RequestFrame| {
+        frame
+            .deserialize(&features)
+            .unwrap()
+            .get_consistency()
+            .unwrap()
+    };
+
+    // Execute 2 (page 2, attempt 1): must have been sent at All.
+    let (page2_att1, _) = forged_rx.recv().await.expect("page 2 att.1 frame missing");
+    assert_eq!(
+        cl(page2_att1),
+        Consistency::All,
+        "page 2 att.1 must use All"
+    );
+
+    // Execute 3 (page 2, attempt 2): downgraded to One by the retry policy.
+    let (page2_att2, _) = passed_rx.recv().await.expect("page 2 att.2 frame missing");
+    assert_eq!(
+        cl(page2_att2),
+        Consistency::One,
+        "page 2 att.2 must use One"
+    );
+
+    // Execute 4 (page 3, attempt 1): must be reset to All, not leaked One.
+    let (page3_att1, _) = forged_rx.recv().await.expect("page 3 att.1 frame missing");
+    assert_eq!(
+        cl(page3_att1),
+        Consistency::All,
+        "page 3 att.1 must use All (reset to query_consistency), not One \
+         (leaked from page 2 downgrade)"
+    );
 }
 
 /// Regression test: `execute_iter` and `query_iter` must not return a spurious

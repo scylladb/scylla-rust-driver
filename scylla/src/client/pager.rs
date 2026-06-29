@@ -199,13 +199,13 @@ impl PagerWorker {
         SpanCreator: Fn() -> RequestSpan,
     {
         let mut last_error: RequestError = RequestError::EmptyPlan;
-        let mut current_consistency: Consistency = self.query_consistency;
         let load_balancer = Arc::clone(&self.load_balancing_policy);
 
         // Iterates over pages until exhaustion or non-retriable error.
         'paging: loop {
             let query_plan =
                 load_balancing::Plan::new(load_balancer.as_ref(), &routing_info, &cluster_state);
+            let mut current_consistency: Consistency = self.query_consistency;
 
             self.timeouter.as_mut().map(PageQueryTimeouter::reset);
 
