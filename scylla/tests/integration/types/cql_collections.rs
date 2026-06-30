@@ -614,9 +614,6 @@ async fn test_vector_single_type<
     let row = result.single_row::<(i32, Vec<T>)>().unwrap();
 
     assert_eq!(row, (1, values));
-
-    let drop_statement = format!("DROP TABLE {keyspace}.{table_name}");
-    session.ddl(drop_statement).await.unwrap();
 }
 
 #[tokio::test]
@@ -627,160 +624,197 @@ async fn test_vector_type_all_types() {
 
     session.ddl(format!("CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}")).await.unwrap();
 
-    // Native types
-
-    test_vector_single_type(
-        &ks,
-        &session,
-        "ascii",
-        vec!["foo".to_string(), "bar".to_string()],
-    )
-    .await;
-    test_vector_single_type(&ks, &session, "bigint", vec![1i64, 2i64, 3i64]).await;
-    test_vector_single_type(
-        &ks,
-        &session,
-        "blob",
-        vec![vec![1_u8, 2_u8], vec![3_u8, 4_u8]],
-    )
-    .await;
-    test_vector_single_type(&ks, &session, "boolean", vec![true, false]).await;
-    test_vector_single_type(&ks, &session, "date", vec![CqlDate(123), CqlDate(456)]).await;
-    test_vector_single_type(
-        &ks,
-        &session,
-        "decimal",
-        vec![
-            CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"123", 42),
-            CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"123", 42),
-        ],
-    )
-    .await;
-    test_vector_single_type(&ks, &session, "double", vec![1.0f64, 2.0f64, 3.0f64]).await;
-    test_vector_single_type(
-        &ks,
-        &session,
-        "duration",
-        vec![
-            CqlDuration {
-                months: 1,
-                days: 2,
-                nanoseconds: 3,
-            },
-            CqlDuration {
-                months: 1,
-                days: 2,
-                nanoseconds: 3,
-            },
-        ],
-    )
-    .await;
-    test_vector_single_type(&ks, &session, "float", vec![1.0f32, 2.0f32, 3.0f32]).await;
-    test_vector_single_type(
-        &ks,
-        &session,
-        "inet",
-        vec![
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            IpAddr::V6(Ipv6Addr::LOCALHOST),
-        ],
-    )
-    .await;
-    test_vector_single_type(&ks, &session, "int", vec![1, 2, 3]).await;
-    test_vector_single_type(&ks, &session, "smallint", vec![1_i16, 2_i16]).await;
-    test_vector_single_type(
-        &ks,
-        &session,
-        "text",
-        vec!["foo".to_string(), "bar".to_string()],
-    )
-    .await;
-    test_vector_single_type(&ks, &session, "time", vec![CqlTime(1234), CqlTime(5678)]).await;
-    test_vector_single_type(
-        &ks,
-        &session,
-        "timestamp",
-        vec![CqlTimestamp(1234), CqlTimestamp(5678)],
-    )
-    .await;
-    test_vector_single_type(
-        &ks,
-        &session,
-        "timeuuid",
-        vec![
-            CqlTimeuuid::from_str("f4a7c45e-220e-11f0-8a95-325096b39f47").unwrap(),
-            CqlTimeuuid::from_str("f4a7c620-220e-11f0-bfde-325096b39f47").unwrap(),
-        ],
-    )
-    .await;
-    test_vector_single_type(&ks, &session, "tinyint", vec![1_i8, 2_i8, 3_i8, 4_i8]).await;
-    test_vector_single_type(&ks, &session, "uuid", vec![Uuid::new_v4(), Uuid::new_v4()]).await;
-
-    test_vector_single_type(
-        &ks,
-        &session,
-        "varchar",
-        vec!["foo".to_string(), "bar".to_string()],
-    )
-    .await;
-    test_vector_single_type(
-        &ks,
-        &session,
-        "varint",
-        vec![
-            CqlVarint::from_signed_bytes_be(vec![1, 2]),
-            CqlVarint::from_signed_bytes_be(vec![3, 4]),
-        ],
-    )
-    .await;
-
-    // Collections
-
-    test_vector_single_type(&ks, &session, "list<int>", vec![vec![1, 2], vec![3, 4]]).await;
-
-    test_vector_single_type(
-        &ks,
-        &session,
-        "set<int>",
-        vec![HashSet::from([1, 2]), HashSet::from([3, 4])],
-    )
-    .await;
-
-    test_vector_single_type(
-        &ks,
-        &session,
-        "map<int,text>",
-        vec![
-            HashMap::from([(1, "foo".to_string()), (2, "bar".to_string())]),
-            HashMap::from([(3, "baz".to_string()), (4, "qux".to_string())]),
-        ],
-    )
-    .await;
-
-    // Tuples
-
-    test_vector_single_type(
-        &ks,
-        &session,
-        "tuple<int,text>",
-        vec![
-            (1, "foo".to_string()),
-            (2, "bar".to_string()),
-            (3, "baz".to_string()),
-        ],
-    )
-    .await;
-
-    // Nested vectors
-    test_vector_single_type(&ks, &session, "vector<int,3>", vec![vec![1, 2, 3]]).await;
-
-    test_vector_single_type(
-        &ks,
-        &session,
-        "list<vector<int,2>>",
-        vec![vec![vec![1, 2], vec![3, 4]], vec![vec![5, 6], vec![7, 8]]],
-    )
-    .await;
+    // All subtests run concurrently - each operates on a distinct table,
+    // so there are no conflicts. DROP TABLE is omitted; DROP KEYSPACE below
+    // cleans everything up.
+    let subtests: Vec<futures::future::BoxFuture<'_, ()>> = vec![
+        // Native types
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "ascii",
+            vec!["foo".to_string(), "bar".to_string()],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "bigint",
+            vec![1i64, 2i64, 3i64],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "blob",
+            vec![vec![1_u8, 2_u8], vec![3_u8, 4_u8]],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "boolean",
+            vec![true, false],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "date",
+            vec![CqlDate(123), CqlDate(456)],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "decimal",
+            vec![
+                CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"123", 42),
+                CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"123", 42),
+            ],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "double",
+            vec![1.0f64, 2.0f64, 3.0f64],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "duration",
+            vec![
+                CqlDuration {
+                    months: 1,
+                    days: 2,
+                    nanoseconds: 3,
+                },
+                CqlDuration {
+                    months: 1,
+                    days: 2,
+                    nanoseconds: 3,
+                },
+            ],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "float",
+            vec![1.0f32, 2.0f32, 3.0f32],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "inet",
+            vec![
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                IpAddr::V6(Ipv6Addr::LOCALHOST),
+            ],
+        )),
+        Box::pin(test_vector_single_type(&ks, &session, "int", vec![1, 2, 3])),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "smallint",
+            vec![1_i16, 2_i16],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "text",
+            vec!["foo".to_string(), "bar".to_string()],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "time",
+            vec![CqlTime(1234), CqlTime(5678)],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "timestamp",
+            vec![CqlTimestamp(1234), CqlTimestamp(5678)],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "timeuuid",
+            vec![
+                CqlTimeuuid::from_str("f4a7c45e-220e-11f0-8a95-325096b39f47").unwrap(),
+                CqlTimeuuid::from_str("f4a7c620-220e-11f0-bfde-325096b39f47").unwrap(),
+            ],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "tinyint",
+            vec![1_i8, 2_i8, 3_i8, 4_i8],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "uuid",
+            vec![Uuid::new_v4(), Uuid::new_v4()],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "varchar",
+            vec!["foo".to_string(), "bar".to_string()],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "varint",
+            vec![
+                CqlVarint::from_signed_bytes_be(vec![1, 2]),
+                CqlVarint::from_signed_bytes_be(vec![3, 4]),
+            ],
+        )),
+        // Collections
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "list<int>",
+            vec![vec![1, 2], vec![3, 4]],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "set<int>",
+            vec![HashSet::from([1, 2]), HashSet::from([3, 4])],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "map<int,text>",
+            vec![
+                HashMap::from([(1, "foo".to_string()), (2, "bar".to_string())]),
+                HashMap::from([(3, "baz".to_string()), (4, "qux".to_string())]),
+            ],
+        )),
+        // Tuples
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "tuple<int,text>",
+            vec![
+                (1, "foo".to_string()),
+                (2, "bar".to_string()),
+                (3, "baz".to_string()),
+            ],
+        )),
+        // Nested vectors
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "vector<int,3>",
+            vec![vec![1, 2, 3]],
+        )),
+        Box::pin(test_vector_single_type(
+            &ks,
+            &session,
+            "list<vector<int,2>>",
+            vec![vec![vec![1, 2], vec![3, 4]], vec![vec![5, 6], vec![7, 8]]],
+        )),
+    ];
+    futures::future::join_all(subtests).await;
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
