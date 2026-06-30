@@ -2,16 +2,27 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
+use scylla::client::execution_profile::ExecutionProfile;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::errors::{RequestAttemptError, RequestError};
 use scylla::observability::history::{
     AttemptResult, HistoryCollector, RequestHistoryResult, StructuredHistory, TimePoint,
 };
+use scylla::policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession};
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 use scylla::value::Row;
+use scylla_cql::Consistency;
+use scylla_proxy::{
+    Condition, ProxyError, Reaction as _, RequestOpcode, RequestReaction, RequestRule, WorkerError,
+};
 
-use crate::utils::{PerformDDL, create_new_session_builder, setup_tracing, unique_keyspace_name};
+use crate::utils::{
+    PerformDDL, create_new_session_builder, setup_tracing, test_with_3_node_cluster,
+    unique_keyspace_name,
+};
 
 // Set a single time for all timestamps within StructuredHistory.
 // HistoryCollector sets the timestamp to current time which changes with each test.
@@ -395,4 +406,241 @@ async fn pager_single_page_history() {
             "execute_iter: unexpected history (orphaned request?)"
         );
     }
+}
+
+/// Regression test: `query_iter` / `execute_iter` must correctly finalize the
+/// history request when the retry policy returns `IgnoreWriteError`.
+///
+/// The bug: `PagerWorker::work()` handled `RetryDecision::IgnoreWriteError`
+/// by immediately returning an empty page without calling
+/// `log_request_success()` or `retry_session.reset()` first. This left the
+/// history request opened by `log_request_start()` with `result = None`
+/// ("still running") rather than closing it as successful.
+///
+/// The fix: call `log_request_success()` and `retry_session.reset()` before
+/// returning the empty page.
+///
+/// Two cases are tested:
+///
+/// 1. `IgnoreWriteError` on the **first page**: the pager never successfully
+///    fetches any page; the policy fires on the very first attempt.
+///    Uses a syntax-error query so no DDL is needed.
+/// 2. `IgnoreWriteError` on the **second page**: page 1 is fetched
+///    successfully; the policy fires on the first attempt of page 2.
+///    Uses a proxy to forge the second-page error while letting page 1
+///    through.
+#[tokio::test]
+async fn pager_ignore_write_error_history() {
+    setup_tracing();
+
+    #[derive(Debug)]
+    struct IgnoreWriteErrorPolicy;
+
+    impl RetryPolicy for IgnoreWriteErrorPolicy {
+        fn new_session(&self) -> Box<dyn RetrySession> {
+            Box::new(IgnoreWriteErrorSession)
+        }
+    }
+
+    struct IgnoreWriteErrorSession;
+
+    impl RetrySession for IgnoreWriteErrorSession {
+        fn decide_should_retry(&mut self, _: RequestInfo) -> RetryDecision {
+            RetryDecision::IgnoreWriteError
+        }
+        fn reset(&mut self) {}
+    }
+
+    let history_collector = Arc::new(HistoryCollector::new());
+
+    // ---- Case 1: IgnoreWriteError on the first page ----
+    //
+    // Use an intentional syntax error so the query fails immediately without
+    // touching any table (no DDL required).
+    {
+        let handle = ExecutionProfile::builder()
+            .consistency(Consistency::One)
+            .retry_policy(Arc::new(IgnoreWriteErrorPolicy))
+            .build()
+            .into_handle();
+
+        let session = create_new_session_builder()
+            .default_execution_profile_handle(handle)
+            .build()
+            .await
+            .unwrap();
+
+        let mut stmt = Statement::new("INSERT INTO t (pk v) VALUES (1, 2)");
+        stmt.set_history_listener(history_collector.clone());
+
+        let mut stream = session
+            .query_iter(stmt, ())
+            .await
+            .unwrap()
+            .rows_stream::<Row>()
+            .unwrap();
+        while stream.try_next().await.unwrap().is_some() {}
+
+        let history = history_collector.take_structured_history();
+
+        // One attempt (error) and one request (successful despite the attempt
+        // error, because IgnoreWriteError = "treat as done").
+        // Before the fix the request showed "still running".
+        let expected = "Requests History:
+=== Request #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Error at 2022-02-22 20:22:22 UTC
+|   Error: Database returned an error: The submitted query has a syntax error, Error message: Error message from database
+|   Retry decision: IgnoreWriteError
+|
+| Request successful at 2022-02-22 20:22:22 UTC
+=================
+";
+        assert_eq!(
+            expected,
+            format!(
+                "{}",
+                set_one_db_error_message(set_one_node(set_one_time(history)))
+            ),
+            "case 1 (first page): unexpected history"
+        );
+    }
+
+    // ---- Case 2: IgnoreWriteError on the second page ----
+    //
+    // Use a proxy to pass page 1 through but forge a server error on page 2,
+    // triggering IgnoreWriteError in the background worker (PagerWorker::work).
+    // system_schema.keyspaces has ≥4 rows on both backends; with page_size=1
+    // page 1 always returns HasMorePages (1 row delivered, ≥3 remaining), so
+    // work() is always spawned and issues a second Execute — deterministically
+    // on both Scylla and Cassandra.
+    let history_collector_ref = Arc::clone(&history_collector);
+    let execute_not_control = Condition::RequestOpcode(RequestOpcode::Execute)
+        .and(Condition::not(Condition::ConnectionRegisteredAnyEvent));
+
+    let res = test_with_3_node_cluster(
+        scylla_proxy::ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let profile = ExecutionProfile::builder()
+                .retry_policy(Arc::new(IgnoreWriteErrorPolicy))
+                .build()
+                .into_handle();
+
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .default_execution_profile_handle(profile)
+                .build()
+                .await
+                .unwrap();
+
+            // system_schema.keyspaces has ≥4 rows on both backends (system,
+            // system_schema, system_auth, system_traces, …). With page_size=1
+            // page 1 always returns HasMorePages (1 row delivered, ≥3
+            // remaining), so work() is always spawned and issues a second
+            // Execute — which the proxy forges as an error.
+            let mut prepared = session
+                .prepare("SELECT keyspace_name FROM system_schema.keyspaces")
+                .await
+                .unwrap();
+            prepared.set_page_size(1);
+            prepared.set_history_listener(history_collector.clone());
+
+            // Let the first Execute through; forge a server error on all
+            // subsequent ones so the second-page fetch fails.
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_request_rules(Some(vec![
+                    RequestRule(
+                        execute_not_control
+                            .clone()
+                            .and(Condition::TrueForLimitedTimes(1)),
+                        RequestReaction::noop(),
+                    ),
+                    RequestRule(
+                        execute_not_control.clone(),
+                        RequestReaction::forge().server_error(),
+                    ),
+                ]));
+            });
+
+            let pager = session.execute_iter(prepared, ()).await.unwrap();
+            let mut stream = pager.rows_stream::<Row>().unwrap();
+            while stream.next().await.transpose().is_ok_and(|r| r.is_some()) {}
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+
+    let history = history_collector_ref.take_structured_history();
+
+    // The exact number of successfully-fetched pages before the forged error
+    // depends on the backend and nondeterministic paging-token behaviour, so
+    // we don't assert the full history string here.  What we do assert:
+    //
+    // 1. There is at least one request (sanity).
+    // 2. Every request except the last one was fetched successfully (one
+    //    successful attempt, request successful).
+    // 3. The last request is the one where IgnoreWriteError fired: its single
+    //    attempt ended with a server error + IgnoreWriteError decision, and
+    //    the request itself is marked successful (not "still running").
+    //    Before the fix, the last request had result = None.
+    assert!(
+        !history.requests.is_empty(),
+        "case 2: expected at least one history request"
+    );
+
+    for (i, req) in history.requests[..history.requests.len() - 1]
+        .iter()
+        .enumerate()
+    {
+        assert!(
+            matches!(req.result, Some(RequestHistoryResult::Success(_))),
+            "case 2: request #{i} (successful page) must have result=Success, got {:?}",
+            req.result,
+        );
+        assert_eq!(
+            req.non_speculative_fiber.attempts.len(),
+            1,
+            "case 2: request #{i} must have exactly 1 attempt"
+        );
+        assert!(
+            matches!(
+                req.non_speculative_fiber.attempts[0].result,
+                Some(AttemptResult::Success(_))
+            ),
+            "case 2: request #{i} attempt must be successful"
+        );
+    }
+
+    let last = history.requests.last().unwrap();
+    let last_i = history.requests.len() - 1;
+    assert!(
+        matches!(last.result, Some(RequestHistoryResult::Success(_))),
+        "case 2: request #{last_i} (IgnoreWriteError page) must have result=Success \
+         (not still-running), got {:?}",
+        last.result,
+    );
+    assert_eq!(
+        last.non_speculative_fiber.attempts.len(),
+        1,
+        "case 2: request #{last_i} must have exactly 1 attempt"
+    );
+    assert!(
+        matches!(
+            last.non_speculative_fiber.attempts[0].result,
+            Some(AttemptResult::Error(_, _, RetryDecision::IgnoreWriteError))
+        ),
+        "case 2: request #{last_i} attempt must have IgnoreWriteError decision, got {:?}",
+        last.non_speculative_fiber.attempts[0].result,
+    );
 }
