@@ -7,6 +7,7 @@ use scylla::errors::{RequestAttemptError, RequestError};
 use scylla::observability::history::{
     AttemptResult, HistoryCollector, RequestHistoryResult, StructuredHistory, TimePoint,
 };
+use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 use scylla::value::Row;
 
@@ -300,4 +301,98 @@ async fn pager_query_history() {
     );
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+/// Regression test: `query_iter` and `execute_iter` must not create an orphaned
+/// history request when the result fits in a single page.
+///
+/// The bug: `PagerWorker::process_first_page` called `log_request_start()`
+/// unconditionally after a successful first-page fetch, even when the server
+/// returned `NoMorePages` and no background worker would be spawned.  This
+/// created a new history request entry that was never closed with a success or
+/// error event (`result = None`).
+///
+/// The fix: only call `log_request_start()` when `HasMorePages` is set,
+/// i.e. only when a background worker will actually be spawned to continue
+/// fetching.
+///
+/// Two cases are tested:
+/// 1. `query_iter` on an unprepared `Statement`.
+/// 2. `execute_iter` on a `PreparedStatement`.
+///
+/// Both use `SELECT * FROM system.local WHERE key = 'local'`, which returns
+/// exactly one row and always fits in a single page.
+#[tokio::test]
+async fn pager_single_page_history() {
+    setup_tracing();
+    let session = create_new_session_builder().build().await.unwrap();
+
+    let history_collector = Arc::new(HistoryCollector::new());
+
+    // The expected history for a single successful paged request: exactly one
+    // request and one attempt, both successful, with no orphaned extra request.
+    let expected = "Requests History:
+=== Request #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Request successful at 2022-02-22 20:22:22 UTC
+=================
+";
+
+    // Case 1: query_iter on an unprepared Statement.
+    {
+        let mut stmt = Statement::new("SELECT * FROM system.local WHERE key = 'local'");
+        stmt.set_history_listener(history_collector.clone());
+
+        let mut stream = session
+            .query_iter(stmt, ())
+            .await
+            .unwrap()
+            .rows_stream::<Row>()
+            .unwrap();
+        while stream.next().await.transpose().unwrap().is_some() {}
+
+        let history = history_collector.take_structured_history();
+        assert_eq!(
+            expected,
+            format!(
+                "{}",
+                set_one_db_error_message(set_one_node(set_one_time(history)))
+            ),
+            "query_iter: unexpected history (orphaned request?)"
+        );
+    }
+
+    // Case 2: execute_iter on a PreparedStatement.
+    // take_structured_history() above cleared the collector, so request
+    // numbering starts again from #0.
+    {
+        let mut prepared: PreparedStatement = session
+            .prepare("SELECT * FROM system.local WHERE key = 'local'")
+            .await
+            .unwrap();
+        prepared.set_history_listener(history_collector.clone());
+
+        let mut stream = session
+            .execute_iter(prepared, ())
+            .await
+            .unwrap()
+            .rows_stream::<Row>()
+            .unwrap();
+        while stream.next().await.transpose().unwrap().is_some() {}
+
+        let history = history_collector.take_structured_history();
+        assert_eq!(
+            expected,
+            format!(
+                "{}",
+                set_one_db_error_message(set_one_node(set_one_time(history)))
+            ),
+            "execute_iter: unexpected history (orphaned request?)"
+        );
+    }
 }
