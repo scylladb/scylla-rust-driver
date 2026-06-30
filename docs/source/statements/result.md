@@ -1,7 +1,7 @@
 # Query result
 
 `Session::query_unpaged`, `Session::query_single_page`, `Session::execute_unpaged` and `Session::execute_single_page`
-return a `QueryResult` with rows represented as `Option<Vec<Row>>`.
+return a `QueryResult` with rows in a raw form, yet-to-be lazily deserialized.
 
 > ***Note***\
 > Using unpaged queries for SELECTs is discouraged in general.
