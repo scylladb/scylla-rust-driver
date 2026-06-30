@@ -339,18 +339,18 @@ impl PagerWorker {
 
         // Iterates over nodes in the query plan, trying to fetch the next page.
         'nodes_in_plan: for (node, shard) in query_plan {
-            let span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
+            let per_target_span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
             let connection: Arc<Connection> = match node
                 .connection_for_shard(shard)
-                .instrument(span.clone())
+                .instrument(per_target_span.clone())
                 .await
             {
                 Ok(connection) => connection,
                 Err(e) => {
                     trace!(
-                        parent: &span,
+                        parent: &per_target_span,
                         error = %e,
                         "Choosing connection failed"
                     );
@@ -364,7 +364,7 @@ impl PagerWorker {
 
             // Retries on the same node as long as RetrySession decides so.
             'same_node_retries: loop {
-                trace!(parent: &span, "Execution started");
+                trace!(parent: &per_target_span, "Execution started");
 
                 // Fetch pages from this connection until an error occurs.
                 let queries_result = 'same_node_pages: loop {
@@ -407,7 +407,7 @@ impl PagerWorker {
 
                 let request_error: RequestAttemptError = match queries_result {
                     Ok(Ok(proof)) => {
-                        trace!(parent: &span, "Request succeeded");
+                        trace!(parent: &per_target_span, "Request succeeded");
                         // query_pages returned Ok, so we are guaranteed
                         // that it attempted to send at least one page
                         // through sender and we can safely return now.
@@ -415,7 +415,7 @@ impl PagerWorker {
                     }
                     Ok(Err(error)) => {
                         trace!(
-                            parent: &span,
+                            parent: &per_target_span,
                             error = %error,
                             "Request failed"
                         );
@@ -425,7 +425,7 @@ impl PagerWorker {
                         let request_error = RequestError::RequestTimeout(timeout);
                         self.log_request_error(&request_error);
                         trace!(
-                            parent: &span,
+                            parent: &per_target_span,
                             error = %request_error,
                             "Request timed out"
                         );
@@ -446,7 +446,7 @@ impl PagerWorker {
 
                 let retry_decision = self.retry_session.decide_should_retry(request_info);
                 trace!(
-                    parent: &span,
+                    parent: &per_target_span,
                     retry_decision = ?retry_decision
                 );
 
