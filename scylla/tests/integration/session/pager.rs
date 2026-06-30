@@ -701,3 +701,117 @@ async fn test_pager_retry_receives_current_consistency() {
         );
     }
 }
+
+/// Regression test: `execute_iter` and `query_iter` must not return a spurious
+/// `PartitionKeyError` for token-unaware queries.
+///
+/// The bug was in `new_for_prepared_statement`: it called
+/// `extract_partition_key_and_calculate_token` unconditionally, whereas
+/// previously (before the "fetch first page without spawning" refactor) that
+/// call was only reached inside the spawned worker task, which was guarded by
+/// `is_token_aware()`. For non-token-aware statements the call returns
+/// `Ok(None)` today, so there is no actual failure — but this test locks in
+/// the correct behaviour and will catch any future regression.
+///
+/// Three cases are exercised:
+///
+/// 1. Unprepared `Statement` + `query_iter` (token is always `None` here;
+///    baseline sanity check).
+/// 2. Token-unaware `PreparedStatement` with **no bind markers**
+///    (`SELECT peer FROM system.peers` — the PK column `peer` never appears
+///    as `?`, so the server returns `pk_indexes = []`).
+/// 3. Token-unaware `PreparedStatement` with **bind markers on non-PK
+///    columns** (`system_schema.columns WHERE keyspace_name = 'system' AND
+///    position >= ?` — the PK `keyspace_name` is a hardcoded literal, so
+///    again `pk_indexes = []`).
+///
+/// All three cases must succeed end-to-end and return at least one row, using
+/// `page_size = 1` to force the multi-page `work()` code path.
+#[tokio::test]
+async fn test_token_unaware_pager() {
+    setup_tracing();
+
+    let session = create_new_session_builder().build().await.unwrap();
+
+    // Drain a pager and assert it yields at least one row without error.
+    async fn assert_pager_succeeds(
+        mut stream: impl futures::Stream<Item = Result<Row, impl std::error::Error>> + Unpin,
+        label: &str,
+    ) {
+        let mut count = 0_usize;
+        while let Some(row) = stream.next().await {
+            row.unwrap_or_else(|e| panic!("[{label}] unexpected stream error: {e:?}"));
+            count += 1;
+        }
+        assert!(count >= 1, "[{label}] expected at least one row, got none");
+    }
+
+    // Case 1: unprepared Statement + query_iter.
+    // new_for_query always sets token = None; no partition-key extraction is attempted.
+    {
+        let label = "case 1: unprepared Statement";
+        let mut stmt = Statement::from("SELECT peer FROM system.peers");
+        stmt.set_page_size(1);
+        let stream = session
+            .query_iter(stmt, ())
+            .await
+            .unwrap_or_else(|e| panic!("[{label}] query_iter failed: {e}"))
+            .rows_stream::<Row>()
+            .unwrap();
+        assert_pager_succeeds(stream, label).await;
+    }
+
+    // Case 2: token-unaware PreparedStatement, no bind markers.
+    // `SELECT peer FROM system.peers` has no `?` at all, so the server returns
+    // pk_indexes = [] and is_token_aware() is false.
+    {
+        let label = "case 2: prepared, no bind markers";
+        let mut prepared = session
+            .prepare("SELECT peer FROM system.peers")
+            .await
+            .unwrap();
+        assert!(
+            !prepared.is_token_aware(),
+            "[{label}] expected non-token-aware statement"
+        );
+        prepared.set_page_size(1);
+        let stream = session
+            .execute_iter(prepared, ())
+            .await
+            .unwrap_or_else(|e| panic!("[{label}] execute_iter failed: {e}"))
+            .rows_stream::<Row>()
+            .unwrap();
+        assert_pager_succeeds(stream, label).await;
+    }
+
+    // Case 3: token-unaware PreparedStatement, bind markers on non-PK columns.
+    // `keyspace_name = 'system'` is the partition key as a hardcoded literal,
+    // so it does not appear in pk_indexes. `position >= ?` is a bind marker on
+    // a regular (non-PK) column. The server therefore returns pk_indexes = []
+    // and is_token_aware() is false, even though the statement has bind values.
+    // The query returns many rows (all columns of all system tables), ensuring
+    // the multi-page `work()` code path is exercised.
+    {
+        let label = "case 3: prepared, non-PK bind markers";
+        let mut prepared = session
+            .prepare(
+                "SELECT column_name FROM system_schema.columns \
+                 WHERE keyspace_name = 'system' AND position >= ? \
+                 ALLOW FILTERING",
+            )
+            .await
+            .unwrap();
+        assert!(
+            !prepared.is_token_aware(),
+            "[{label}] expected non-token-aware statement"
+        );
+        prepared.set_page_size(1);
+        let stream = session
+            .execute_iter(prepared, (0_i32,))
+            .await
+            .unwrap_or_else(|e| panic!("[{label}] execute_iter failed: {e}"))
+            .rows_stream::<Row>()
+            .unwrap();
+        assert_pager_succeeds(stream, label).await;
+    }
+}
