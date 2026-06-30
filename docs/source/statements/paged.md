@@ -21,11 +21,6 @@ Stay safe. Page your SELECTs.
 The automated way to achieve that is `QueryPager`. It always fetches and enables access to one page,
 while prefetching the next one. This limits latency and is a convenient abstraction.
 
-> ***Note***\
-> `QueryPager` is quite heavy machinery, introducing considerable overhead. Therefore,
-> don't use it for statements that do not benefit from paging. In particular, avoid using it
-> for non-SELECTs.
-
 On API level, `Session::query_iter` and `Session::execute_iter` take a [unprepared statement](unprepared.md)
 or a [prepared statement](prepared.md), respectively, and return a `QueryPager`. `QueryPager` needs
 to be converted into typed `Stream` (by calling `QueryPager::rows_stream::<RowT>`) in order to
