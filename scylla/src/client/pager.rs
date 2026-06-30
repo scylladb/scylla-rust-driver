@@ -342,18 +342,18 @@ where
 
         // Iterates over nodes in the query plan, trying to fetch the next page.
         'nodes_in_plan: for (node, shard) in query_plan {
-            let span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
+            let all_pages_span = trace_span!(parent: &self.parent_span, "Executing query", node = %node.address, shard = %shard);
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
             let connection: Arc<Connection> = match node
                 .connection_for_shard(shard)
-                .instrument(span.clone())
+                .instrument(all_pages_span.clone())
                 .await
             {
                 Ok(connection) => connection,
                 Err(e) => {
                     trace!(
-                        parent: &span,
+                        parent: &all_pages_span,
                         error = %e,
                         "Choosing connection failed"
                     );
@@ -365,7 +365,7 @@ where
 
             // Retries on the same node as long as RetrySession decides so.
             'same_node_retries: loop {
-                trace!(parent: &span, "Execution started");
+                trace!(parent: &all_pages_span, "Execution started");
 
                 let coordinator =
                     Coordinator::new(node, node.sharder().is_some().then_some(shard), &connection);
@@ -411,7 +411,7 @@ where
 
                 let request_error: RequestAttemptError = match queries_result {
                     Ok(Ok(proof)) => {
-                        trace!(parent: &span, "Request succeeded");
+                        trace!(parent: &all_pages_span, "Request succeeded");
                         // query_pages returned Ok, so we are guaranteed
                         // that it attempted to send at least one page
                         // through sender and we can safely return now.
@@ -419,7 +419,7 @@ where
                     }
                     Ok(Err(error)) => {
                         trace!(
-                            parent: &span,
+                            parent: &all_pages_span,
                             error = %error,
                             "Request failed"
                         );
@@ -429,7 +429,7 @@ where
                         let request_error = RequestError::RequestTimeout(timeout);
                         self.log_request_error(&request_error);
                         trace!(
-                            parent: &span,
+                            parent: &all_pages_span,
                             error = %request_error,
                             "Request timed out"
                         );
@@ -450,7 +450,7 @@ where
 
                 let retry_decision = self.retry_session.decide_should_retry(request_info);
                 trace!(
-                    parent: &span,
+                    parent: &all_pages_span,
                     retry_decision = ?retry_decision
                 );
 
