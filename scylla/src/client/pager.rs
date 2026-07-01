@@ -452,6 +452,9 @@ where
                     }
                     RetryDecision::DontRetry => break 'nodes_in_plan,
                     RetryDecision::IgnoreWriteError => {
+                        self.log_request_success();
+                        self.retry_session.reset();
+
                         warn!("Ignoring error during fetching pages; stopping fetching.");
                         // If we are here then, most likely, we didn't send
                         // anything through the self.sender channel.
