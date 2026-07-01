@@ -6,17 +6,26 @@ use assert_matches::assert_matches;
 use futures::StreamExt;
 use scylla::client::pager::QueryPager;
 use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::errors::ExecutionError;
-
 use scylla::policies::load_balancing::{NodeIdentifier, SingleTargetLoadBalancingPolicy};
 use scylla::response::query_result::QueryResult;
 use scylla::response::{Coordinator, PagingState};
 use scylla::routing::Shard;
 use scylla::statement::Statement;
 use scylla::statement::batch::{Batch, BatchStatement, BatchType};
+use scylla_cql::frame::response::Supported;
+use scylla_cql::frame::types;
+use scylla_proxy::{
+    Condition, Node, Proxy, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction,
+    ResponseRule, ShardAwareness, WorkerError,
+};
 use uuid::Uuid;
 
-use crate::utils::{PerformDDL, create_new_session_builder, setup_tracing, unique_keyspace_name};
+use crate::utils::{
+    PerformDDL, calculate_proxy_host_ids, create_new_session_builder, setup_tracing,
+    unique_keyspace_name,
+};
 
 #[tokio::test]
 async fn test_enforce_request_coordinator() {
@@ -244,4 +253,154 @@ async fn test_exposed_request_coordinator() {
     }
 
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
+/// Regression test for the bug where `Coordinator` reported the shard
+/// requested by the load-balancing policy instead of the shard that
+/// the connection actually belongs to.
+///
+/// When a connection for the requested shard does not exist (here: because the
+/// proxy was configured to make it look like that shard is mapped to a
+/// different shard number), the connection pool falls back to a connection
+/// on a different shard. The `Coordinator` must reflect the shard of the
+/// *actual* connection used, not the shard the LBP asked for.
+///
+/// Setup:
+/// - A single-node proxy sits in front of the first cluster node.
+/// - The proxy intercepts every `SUPPORTED` response and rewrites
+///   `SCYLLA_SHARD=<shard>` to `SCYLLA_SHARD=0`, so the driver
+///   never learns about a connection to shards other than 0.
+/// - We then request the last shard of that node via
+///   `SingleTargetLoadBalancingPolicy`.
+/// - The pool falls back to a shard-0 connection.
+/// - We assert `coordinator.shard() == Some(0)`, not `Some(non-0)`.
+#[tokio::test]
+async fn test_coordinator_shard_fallback() {
+    setup_tracing();
+
+    let real_uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "172.42.0.2:9042".to_string());
+    let proxy_uri = format!("{}:9042", scylla_proxy::get_exclusive_local_address());
+
+    let real_addr: SocketAddr = real_uri.parse().unwrap();
+    let proxy_addr: SocketAddr = proxy_uri.parse().unwrap();
+
+    let proxy = Proxy::new([Node::builder()
+        .real_address(real_addr)
+        .proxy_address(proxy_addr)
+        .shard_awareness(ShardAwareness::QueryNode)
+        .build()]);
+
+    let translation_map = proxy.translation_map();
+    let mut running_proxy = proxy.run().await.unwrap();
+
+    // Intercept SUPPORTED responses and remap other shards to shard 0,
+    // so that the driver never populates other shards' connection slots.
+    // We do this by changing SCYLLA_SHARD to "0".
+    running_proxy.running_nodes[0].change_response_rules(Some(vec![ResponseRule(
+        Condition::ResponseOpcode(ResponseOpcode::Supported),
+        ResponseReaction::transform_frame(Arc::new(|mut frame: ResponseFrame| {
+            let mut msg = Supported::deserialize(&mut &*frame.body).unwrap();
+
+            // If the server advertises SCYLLA_SHARD, we set it to 0, so that the driver
+            // never learns about a connection to shards different than 0.
+            // This will cause the connection pool to fall back to shard 0 when we request
+            // any different shard.
+            if msg
+                .options
+                .get("SCYLLA_SHARD")
+                .and_then(|v| v.first())
+                .map(|s| s.as_str())
+                .is_some()
+            {
+                msg.options
+                    .insert("SCYLLA_SHARD".to_owned(), vec!["0".to_owned()]);
+
+                let mut new_body = Vec::new();
+                types::write_string_multimap(&msg.options, &mut new_body).unwrap();
+                frame.body = new_body.into();
+            }
+
+            frame
+        })),
+    )]));
+
+    let session = SessionBuilder::new()
+        .known_node(&proxy_uri)
+        .address_translator(Arc::new(translation_map.clone()))
+        .build()
+        .await
+        .unwrap();
+
+    // Find the node that is behind the proxy (the one with the proxy's
+    // address in the translation map).
+    let [proxied_node_host_id] =
+        calculate_proxy_host_ids(&[proxy_uri], &translation_map, &session)[..]
+    else {
+        panic!("expected exactly one proxied node");
+    };
+
+    let cluster_state = session.get_cluster_state();
+    let node = cluster_state
+        .get_nodes_info()
+        .iter()
+        .find(|n| n.host_id == proxied_node_host_id)
+        .expect("proxied node not found in cluster state");
+
+    let nr_shards = match node.sharder() {
+        Some(s) if s.nr_shards.get() >= 2 => s.nr_shards.get() as Shard,
+        // Cassandra or single-shard ScyllaDB – skip.
+        _ => {
+            let _ = running_proxy.finish().await;
+            return;
+        }
+    };
+
+    // Request the last shard, which has no connection (the proxy erased
+    // it), so the pool will fall back to shard 0.
+    let last_shard: Shard = nr_shards - 1;
+    let policy = SingleTargetLoadBalancingPolicy::new(
+        NodeIdentifier::HostId(proxied_node_host_id),
+        Some(last_shard),
+    );
+
+    let mut stmt = Statement::new("SELECT host_id FROM system.local WHERE key='local'");
+    stmt.set_load_balancing_policy(Some(policy));
+
+    // --- query_unpaged path (goes through session.rs) ---
+    let result = session.query_unpaged(stmt.clone(), ()).await.unwrap();
+    let rows = result.into_rows_result().unwrap();
+    let coordinator = rows.request_coordinator();
+    assert_eq!(
+        coordinator.shard(),
+        Some(0),
+        "query_unpaged: expected shard 0 (actual connection), \
+         got {:?} (LBP requested {})",
+        coordinator.shard(),
+        last_shard,
+    );
+
+    // --- query_iter path (goes through pager.rs) ---
+    let mut rows_stream = session
+        .query_iter(stmt, ())
+        .await
+        .unwrap()
+        .rows_stream::<(Uuid,)>()
+        .unwrap();
+    // Consume the single row so that the coordinator is recorded.
+    let _ = rows_stream.next().await.unwrap().unwrap();
+    let coordinator = rows_stream.request_coordinators().next().unwrap();
+    assert_eq!(
+        coordinator.shard(),
+        Some(0),
+        "query_iter: expected shard 0 (actual connection), \
+         got {:?} (LBP requested {})",
+        coordinator.shard(),
+        last_shard,
+    );
+
+    match running_proxy.finish().await {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("proxy error: {err}"),
+    }
 }
