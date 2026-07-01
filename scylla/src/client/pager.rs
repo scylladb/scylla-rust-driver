@@ -26,7 +26,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::client::execution_profile::ExecutionProfileInner;
 use crate::client::session::{AutoSchemaAwaitingError, Session};
-use crate::cluster::{ClusterState, NodeRef};
+use crate::cluster::{ClusterState, Node, NodeRef};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::errors::{
     MetadataError, PagerExecutionError, RequestAttemptError, RequestError, SchemaAgreementError,
@@ -41,8 +41,8 @@ use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
-use crate::routing::NodeLocationPreference;
-use crate::statement::prepared::{PartitionKeyError, PreparedStatement};
+use crate::routing::{NodeLocationPreference, Shard, Token};
+use crate::statement::prepared::{PartitionKey, PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
 use tracing::{Instrument, error, trace, trace_span, warn};
 use uuid::Uuid;
@@ -1190,6 +1190,13 @@ If you are using this API, you are probably doing something wrong."
             .new_session();
 
         let parent_span = tracing::Span::current();
+
+        fn create_span(statement_contents: &str) -> RequestSpan {
+            let span = RequestSpan::new_query(statement_contents);
+            span.record_request_size(0);
+            span
+        }
+
         let worker_task = async move {
             let statement_ref = &statement;
 
@@ -1218,13 +1225,7 @@ If you are using this API, you are probably doing something wrong."
                 node_location_preference: &node_location_preference,
             };
 
-            let statement_contents = &statement.contents;
-
-            let span_creator = move || {
-                let span = RequestSpan::new_query(statement_contents);
-                span.record_request_size(0);
-                span
-            };
+            let span_creator = || create_span(&statement.contents);
 
             let worker = PagerWorker {
                 query_is_idempotent: statement.config.is_idempotent,
@@ -1295,7 +1296,26 @@ If you are using this API, you are probably doing something wrong."
             .unwrap_or(&*config.execution_profile.retry_policy)
             .new_session();
 
+        type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
+
         let parent_span = tracing::Span::current();
+        fn create_span(
+            partition_key: &Option<PartitionKey>,
+            token: Option<Token>,
+            serialized_values_size: usize,
+            replicas: Option<&Replicas>,
+        ) -> RequestSpan {
+            let span = RequestSpan::new_prepared(
+                partition_key.as_ref().map(|pk| pk.iter()),
+                token,
+                serialized_values_size,
+            );
+            if let Some(replicas) = replicas {
+                span.record_replicas(replicas.iter().map(|(node, shard)| (node, *shard)));
+            }
+            span
+        }
+
         let worker_task = async move {
             let prepared_ref = &config.prepared;
             let values_ref = &config.values;
@@ -1340,29 +1360,22 @@ If you are using this API, you are probably doing something wrong."
 
             let serialized_values_size = config.values.buffer_size();
 
-            let replicas: Option<smallvec::SmallVec<[_; 8]>> =
-                if let (Some(table_spec), Some(token)) = (routing_info.table, routing_info.token) {
-                    Some(
-                        config
-                            .cluster_state
-                            .get_token_endpoints_iter(table_spec, token)
-                            .map(|(node, shard)| (node.clone(), shard))
-                            .collect(),
-                    )
-                } else {
-                    None
-                };
+            let replicas: Option<Replicas> = Option::zip(routing_info.table, routing_info.token)
+                .map(|(table_spec, token)| {
+                    config
+                        .cluster_state
+                        .get_token_endpoints_iter(table_spec, token)
+                        .map(|(node, shard)| (node.clone(), shard))
+                        .collect()
+                });
 
             let span_creator = move || {
-                let span = RequestSpan::new_prepared(
-                    partition_key.as_ref().map(|pk| pk.iter()),
+                create_span(
+                    &partition_key,
                     token,
                     serialized_values_size,
-                );
-                if let Some(replicas) = replicas.as_ref() {
-                    span.record_replicas(replicas.iter().map(|(node, shard)| (node, *shard)));
-                }
-                span
+                    replicas.as_ref(),
+                )
             };
 
             let worker = PagerWorker {
