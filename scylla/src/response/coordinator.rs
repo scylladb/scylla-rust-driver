@@ -24,11 +24,14 @@ pub struct Coordinator {
 }
 
 impl Coordinator {
-    pub(crate) fn new(node: NodeRef, shard: Option<Shard>, connection: &Connection) -> Self {
+    /// Creates a new [`Coordinator`] from the given node and connection.
+    ///
+    /// Shard is inherited from the connection, if applicable (present for ScyllaDB nodes, absent for Cassandra).
+    pub(crate) fn new(node: NodeRef, connection: &Connection) -> Self {
         Self {
             connection_address: connection.get_connect_address(),
             node: Arc::clone(node),
-            shard,
+            shard: connection.get_shard_info().as_ref().map(|si| si.shard as _),
         }
     }
 

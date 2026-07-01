@@ -2267,8 +2267,7 @@ impl Session {
                     connection = %connect_address,
                     "Sending"
                 );
-                let coordinator =
-                    Coordinator::new(node, node.sharder().is_some().then_some(shard), &connection);
+                let coordinator = Coordinator::new(node, &connection);
 
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connect_address);
