@@ -364,11 +364,11 @@ where
                 }
             };
 
+            let coordinator = Coordinator::new(node, &connection);
+
             // Retries on the same node as long as RetrySession decides so.
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
-
-                let coordinator = Coordinator::new(node, &connection);
 
                 // Fetch pages from this connection until an error occurs.
                 let (queries_result, new_sender): (
