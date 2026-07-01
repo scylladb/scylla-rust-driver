@@ -312,8 +312,6 @@ fn drain_feedbacks(feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<
 }
 
 /// The CQL operation exercised by a subtest.
-// Not all variants are constructed yet; they are added in later commits.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Op {
     Select,
@@ -921,7 +919,7 @@ async fn test_tablets() {
             .await
             .unwrap();
 
-        let cases = vec![
+        let mut cases = vec![
             // Default policy is tablet-aware: token-aware INSERT gets no
             // feedback once the driver has all tablet info.
             QueryDescriptor {
@@ -985,151 +983,40 @@ async fn test_tablets() {
             },
         ];
 
+        // LWT statements are routed to a single replica in a fixed order to
+        // avoid Paxos contention. This optimization only applies to
+        // token-aware (fully bound partition key) statements. We exercise
+        // every flavor of LWT: the three conditional forms plus a "manual"
+        // Paxos read forced via SERIAL consistency. Gated on the server
+        // supporting LWTs on tablet tables.
+        if supports_feature(&session, "LWT_WITH_TABLETS").await {
+            cases.extend([
+                QueryDescriptor {
+                    op: Op::LwtUpdateIf,
+                    ks_presence: KsPresence::WithKs,
+                    data_form: DataForm::RegularPrepared,
+                },
+                QueryDescriptor {
+                    op: Op::LwtUpdateIfExists,
+                    ks_presence: KsPresence::WithKs,
+                    data_form: DataForm::RegularPrepared,
+                },
+                QueryDescriptor {
+                    op: Op::LwtInsertIfNotExists,
+                    ks_presence: KsPresence::WithKs,
+                    data_form: DataForm::RegularPrepared,
+                },
+                QueryDescriptor {
+                    op: Op::LwtManualSelect,
+                    ks_presence: KsPresence::WithKs,
+                    data_form: DataForm::RegularPrepared,
+                },
+            ]);
+        }
+
         run_tablet_cases(&session, &ks, &prepared_insert, &cases, &mut feedback_rxs).await;
 
         session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
     })
     .await;
-}
-
-/// Verifies that LWT optimization (sending LWT queries to the replicas in a fixed order)
-/// works correctly for tablet tables when we have all tablet info locally.
-///
-/// The test first fetches all tablet info: by sending a query to each shard of each node,
-/// for every tablet.
-/// After that it sends 100 queries fro each tablet and verifies that only 1 shard on 1 node
-/// recevied requests for a given tablet.
-///
-/// TODO: Remove #[ignore] once LWTs are supported with tablets.
-#[tokio::test]
-#[ignore]
-async fn test_lwt_optimization_works_with_tablets() {
-    setup_tracing();
-    const TABLET_COUNT: usize = 16;
-
-    let res = test_with_3_node_cluster(
-        ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
-            let session = scylla::client::session_builder::SessionBuilder::new()
-                .known_node(proxy_uris[0].as_str())
-                .address_translator(Arc::new(translation_map))
-                .build()
-                .await
-                .unwrap();
-
-            if !scylla_supports_tablets(&session).await {
-                tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
-                return running_proxy;
-            }
-
-            let ks = unique_keyspace_name();
-
-            /* Prepare schema */
-            prepare_schema(&session, &ks, "t", TABLET_COUNT).await;
-
-            let tablets = get_tablets(&session, &ks, "t").await;
-
-            let prepared_insert = session
-                .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, null)"))
-                .await
-                .unwrap();
-
-            let prepared_lwt_update = session
-                .prepare(format!(
-                    "UPDATE {ks}.t SET c = ? WHERE a = ? and b = ? IF c != null"
-                ))
-                .await
-                .unwrap();
-
-            let value_lists = calculate_key_per_tablet(&tablets, &prepared_insert, |i| (i, 1));
-
-            let (feedback_txs, mut feedback_rxs): (Vec<_>, Vec<_>) = (0..3)
-                .map(|_| mpsc::unbounded_channel::<(ResponseFrame, Option<TargetShard>)>())
-                .unzip();
-            for (i, tx) in feedback_txs.iter().cloned().enumerate() {
-                running_proxy.running_nodes[i].change_response_rules(Some(vec![ResponseRule(
-                    Condition::ResponseOpcode(ResponseOpcode::Result)
-                        .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
-                    ResponseReaction::noop().with_feedback_when_performed(tx),
-                )]));
-            }
-
-            // Unlike test_tablet_awareness_works_with_full_info I use "send_statement_everywhere",
-            // in order to make the test faster (it sends one request per shard, not 100 requests).
-            for values in value_lists.iter() {
-                info!(
-                    "First loop, trying key {:?}, token: {}",
-                    values,
-                    prepared_insert
-                        .calculate_token(&values)
-                        .unwrap()
-                        .unwrap()
-                        .value()
-                );
-                execute_prepared_statement_everywhere(
-                    &session,
-                    session.get_cluster_state().as_ref(),
-                    &prepared_insert,
-                    values,
-                )
-                .await
-                .unwrap();
-                let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-                assert!(feedbacks > 0);
-            }
-
-            // We have all the info about tablets.
-            // Executing LWT queries should not yield any more feedbacks.
-            // All queries for given key should also land in a single replica.
-            for (a, b) in value_lists.iter() {
-                info!(
-                    "Second loop, trying key {:?}, token: {}",
-                    (a, b),
-                    prepared_insert
-                        .calculate_token(&(a, b))
-                        .unwrap()
-                        .unwrap()
-                        .value()
-                );
-                try_join_all((0..100).map(|_| async {
-                    session
-                        .execute_unpaged(&prepared_lwt_update, &("abc", a, b))
-                        .await
-                }))
-                .await
-                .unwrap();
-
-                let mut queried_nodes = 0;
-                feedback_rxs.iter_mut().for_each(|rx| {
-                    let frames = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
-                    let feedbacks_count = frames
-                        .iter()
-                        .map(|(frame, _shard)| frame_has_tablet_feedback(frame.clone()))
-                        .filter(|b| *b)
-                        .count();
-                    assert_eq!(feedbacks_count, 0);
-
-                    let queried_shards =
-                        frames.iter().map(|(_frame, shard)| *shard).unique().count();
-                    assert!(queried_shards <= 1);
-
-                    if queried_shards == 1 {
-                        queried_nodes += 1;
-                    }
-                });
-
-                assert_eq!(queried_nodes, 1);
-            }
-
-            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
-
-            running_proxy
-        },
-    )
-    .await;
-    match res {
-        Ok(()) => (),
-        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
-        Err(err) => panic!("{}", err),
-    }
 }
