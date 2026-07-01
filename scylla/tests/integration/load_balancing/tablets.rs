@@ -276,18 +276,102 @@ async fn run_test_default_policy_is_tablet_aware_attempt(
         .await
 }
 
-/// Tests that, when:
+/// Drains all pending feedback frames from every receiver.
+///
+/// Because all subtests share the same set of feedback channels, we drain them
+/// before a subtest that has expectations about the number of received feedbacks,
+/// so that leftovers from a previous subtest don't leak into it.
+fn drain_feedbacks(feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>]) {
+    for rx in feedback_rxs.iter_mut() {
+        while rx.try_recv().is_ok() {}
+    }
+}
+
+/// Subtest verifying that, when:
 /// - Using DefaultPolicy with TokenAwareness
 /// - Querying table that uses tablets
 /// - Driver has all driver info fetched locally
+///
 /// Then we'll never receive tablet info.
 ///
-/// The test first sends, to each possible target, one insert request per tablet.
+/// The subtest first sends, to each possible target, one insert request per tablet.
 /// It expects to get tablet feedback for each tablet.
-/// After that we know we have all the info. The test sends the same insert request
-/// per tablet, this time using DefaultPolicy, and expects to not get any feedbacks.
+/// After that we know we have all the info. Then it refreshes the metadata (to make
+/// sure tablet info survives tablet maintenance) and sends the same insert request
+/// per tablet using DefaultPolicy, expecting to not get any feedbacks.
+async fn subtest_default_policy_is_tablet_aware(
+    session: &Session,
+    ks: &str,
+    prepared: &PreparedStatement,
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
+) {
+    drain_feedbacks(feedback_rxs);
+
+    // Test attempt can fail because of tablet migrations.
+    // Let's try a few times if there are migrations.
+    let mut last_error = None;
+    for _ in 0..5 {
+        let tablets = get_tablets(session, ks, "t").await;
+        let value_per_tablet = calculate_key_per_tablet(&tablets, prepared);
+        match run_test_default_policy_is_tablet_aware_attempt(
+            session,
+            prepared,
+            &value_per_tablet,
+            feedback_rxs,
+        )
+        .await
+        {
+            Ok(()) => return,
+            Err(e) => {
+                let new_tablets = get_tablets(session, ks, "t").await;
+                if tablets == new_tablets {
+                    // We failed, but there was no migration.
+                    panic!("Test attempt failed despite no migration. Error: {e}");
+                }
+                last_error = Some(e);
+                // There was a migration, let's try again
+            }
+        }
+    }
+    panic!(
+        "There was a tablet migration during each attempt! Last error: {}",
+        last_error.unwrap()
+    );
+}
+
+/// Subtest verifying that Scylla never sends tablet info when receiving an unprepared
+/// query - as it would make no sense to send it (driver can't do token awareness
+/// for unprepared queries).
+///
+/// The subtest sends a query to each shard of every node and verifies that no
+/// tablet info was sent in response.
+async fn subtest_unprepared_query_gets_no_feedback(
+    session: &Session,
+    ks: &str,
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
+) {
+    drain_feedbacks(feedback_rxs);
+
+    // I expect Scylla to not send feedback for unprepared queries,
+    // as such queries cannot be token-aware anyway
+    execute_unprepared_statement_everywhere(
+        session,
+        session.get_cluster_state().as_ref(),
+        &Statement::new(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')")),
+        &(),
+    )
+    .await
+    .unwrap();
+
+    let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
+    assert_eq!(feedbacks, 0);
+}
+
+/// A single integration test that exercises the driver's tablet awareness across
+/// many scenarios. All scenarios are run as subtests sharing a single keyspace and
+/// table, because creating keyspaces/tables is expensive.
 #[tokio::test]
-async fn test_default_policy_is_tablet_aware() {
+async fn test_tablets() {
     setup_tracing();
     const TABLET_COUNT: usize = 16;
 
@@ -311,7 +395,7 @@ async fn test_default_policy_is_tablet_aware() {
             /* Prepare schema */
             prepare_schema(&session, &ks, "t", TABLET_COUNT).await;
 
-            let prepared = session
+            let prepared_insert = session
                 .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, 'abc')"))
                 .await
                 .unwrap();
@@ -327,105 +411,15 @@ async fn test_default_policy_is_tablet_aware() {
                 )]));
             }
 
-            // Test attempt can fail because of tablet migrations.
-            // Let's try a few times if there are migrations.
-            let mut last_error = None;
-            for _ in 0..5 {
-                let tablets = get_tablets(&session, &ks, "t").await;
-                let value_per_tablet = calculate_key_per_tablet(&tablets, &prepared);
-                match run_test_default_policy_is_tablet_aware_attempt(
-                    &session,
-                    &prepared,
-                    &value_per_tablet,
-                    &mut feedback_rxs,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        // Test succeeded
-                        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
-                        return running_proxy;
-                    }
-                    Err(e) => {
-                        let new_tablets = get_tablets(&session, &ks, "t").await;
-                        if tablets == new_tablets {
-                            // We failed, but there was no migration.
-                            panic!("Test attempt failed despite no migration. Error: {e}");
-                        }
-                        last_error = Some(e);
-                        // There was a migration, let's try again
-                    }
-                }
-            }
-            panic!(
-                "There was a tablet migration during each attempt! Last error: {}",
-                last_error.unwrap()
-            );
-        },
-    )
-    .await;
-    match res {
-        Ok(()) => (),
-        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
-        Err(err) => panic!("{}", err),
-    }
-}
-
-/// This test verifies that Scylla never sends tablet info when receiving unprepared
-/// query - as it would make no sens to send it (driver can't do token awareness
-/// for unprepared queries).
-///
-/// The test sends a query to each shard of every node and verifies that no
-/// tablet info was sent in response.
-#[tokio::test]
-async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
-    setup_tracing();
-    const TABLET_COUNT: usize = 16;
-
-    let res = test_with_3_node_cluster(
-        ShardAwareness::QueryNode,
-        |proxy_uris, translation_map, mut running_proxy| async move {
-            let session = scylla::client::session_builder::SessionBuilder::new()
-                .known_node(proxy_uris[0].as_str())
-                .address_translator(Arc::new(translation_map))
-                .build()
-                .await
-                .unwrap();
-
-            if !scylla_supports_tablets(&session).await {
-                tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
-                return running_proxy;
-            }
-
-            let ks = unique_keyspace_name();
-
-            /* Prepare schema */
-            prepare_schema(&session, &ks, "t", TABLET_COUNT).await;
-
-            let (feedback_txs, mut feedback_rxs): (Vec<_>, Vec<_>) = (0..3)
-                .map(|_| mpsc::unbounded_channel::<(ResponseFrame, Option<TargetShard>)>())
-                .unzip();
-            for (i, tx) in feedback_txs.iter().cloned().enumerate() {
-                running_proxy.running_nodes[i].change_response_rules(Some(vec![ResponseRule(
-                    Condition::ResponseOpcode(ResponseOpcode::Result)
-                        .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
-                    ResponseReaction::noop().with_feedback_when_performed(tx),
-                )]));
-            }
-
-            // I expect Scylla to not send feedback for unprepared queries,
-            // as such queries cannot be token-aware anyway
-            execute_unprepared_statement_everywhere(
+            subtest_default_policy_is_tablet_aware(
                 &session,
-                session.get_cluster_state().as_ref(),
-                &Statement::new(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')")),
-                &(),
+                &ks,
+                &prepared_insert,
+                &mut feedback_rxs,
             )
-            .await
-            .unwrap();
+            .await;
 
-            let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-            assert_eq!(feedbacks, 0);
+            subtest_unprepared_query_gets_no_feedback(&session, &ks, &mut feedback_rxs).await;
 
             session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 
