@@ -11,13 +11,18 @@ use futures::future::try_join_all;
 use itertools::Itertools;
 use scylla::client::session::Session;
 use scylla::cluster::Node;
+use scylla::routing::Shard;
+use scylla::serialize::row::SerializeRow;
+use scylla::statement::Consistency;
 use scylla::statement::prepared::PreparedStatement;
 use scylla::statement::unprepared::Statement;
 
 use scylla_proxy::{
     Condition, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule,
-    ShardAwareness, TargetShard, WorkerError,
+    RunningProxy, ShardAwareness, TargetShard, WorkerError,
 };
+
+use std::future::Future;
 
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tracing::info;
@@ -105,14 +110,23 @@ async fn get_tablets(session: &Session, ks: &str, table: &str) -> Vec<Tablet> {
     tablets
 }
 
-// Takes a prepared statements which accepts 2 arguments: i32 pk and i32 ck,
-// and calculates an example key for each of the tablets in the table.
-fn calculate_key_per_tablet(tablets: &[Tablet], prepared: &PreparedStatement) -> Vec<(i32, i32)> {
-    // Here we calculate a PK per token
+// Finds an example partition key for each tablet in the table.
+//
+// `make_key` turns a probe integer into a candidate key (whatever shape the
+// `prepared` statement's partition key has, e.g. `(i, 1)` for a `(pk, ck)` table
+// or `(i,)` for a single-column partition key). We probe increasing integers,
+// compute each candidate's token with `prepared`, and keep the first key that
+// falls into each tablet, so the returned vector has exactly one key per tablet.
+fn calculate_key_per_tablet<K: SerializeRow>(
+    tablets: &[Tablet],
+    prepared: &PreparedStatement,
+    make_key: impl Fn(i32) -> K,
+) -> Vec<K> {
     let mut present_tablets = vec![false; tablets.len()];
-    let mut value_lists = vec![];
+    let mut keys = Vec::new();
     for i in 0..1000 {
-        let token_value = prepared.calculate_token(&(i, 1)).unwrap().unwrap().value();
+        let key = make_key(i);
+        let token_value = prepared.calculate_token(&key).unwrap().unwrap().value();
         let tablet_idx = tablets
             .iter()
             .position(|tablet| {
@@ -120,22 +134,7 @@ fn calculate_key_per_tablet(tablets: &[Tablet], prepared: &PreparedStatement) ->
             })
             .unwrap();
         if !present_tablets[tablet_idx] {
-            let values = (i, 1);
-            let tablet = &tablets[tablet_idx];
-            info!(
-                "Values: {:?}, token: {}, tablet index: {}, tablet: [{}, {}], replicas: {:?}",
-                values,
-                token_value,
-                tablet_idx,
-                tablet.first_token,
-                tablet.last_token,
-                tablet
-                    .replicas
-                    .iter()
-                    .map(|(replica, shard)| { (replica.address.ip(), shard) })
-                    .collect::<Vec<_>>()
-            );
-            value_lists.push(values);
+            keys.push(key);
             present_tablets[tablet_idx] = true;
         }
     }
@@ -146,7 +145,7 @@ fn calculate_key_per_tablet(tablets: &[Tablet], prepared: &PreparedStatement) ->
     // for some reason.
     assert!(present_tablets.iter().all(|x| *x));
 
-    value_lists
+    keys
 }
 
 fn frame_has_tablet_feedback(frame: ResponseFrame) -> bool {
@@ -199,146 +198,408 @@ async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: 
         .unwrap();
 }
 
-async fn populate_internal_driver_tablet_info(
+/// Learns the tablet info for a set of keys by executing each key's prepared
+/// statement on every shard of every node: the non-replica targets answer with
+/// tablet feedback that teaches the driver where each tablet lives.
+///
+/// Also asserts that every key produced at least one feedback, which confirms
+/// the `TABLETS_ROUTING_V1` extension was negotiated and feedback is flowing --
+/// otherwise the later verification phase, which relies on the *absence* of
+/// feedback, would pass vacuously.
+async fn learn_tablet_info(
     session: &Session,
-    prepared: &PreparedStatement,
-    value_per_tablet: &[(i32, i32)],
-    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
+    per_key: &[PreparedForKey],
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
 ) -> Result<(), String> {
-    let mut total_tablets_with_feedback = 0;
-    for values in value_per_tablet.iter() {
-        info!(
-            "First loop, trying key {:?}, token: {}",
-            values,
-            prepared.calculate_token(&values).unwrap().unwrap().value()
-        );
+    drain_feedbacks(feedback_rxs);
+    let mut keys_with_feedback = 0;
+    for (prepared, values) in per_key {
         execute_prepared_statement_everywhere(
             session,
-            &session.get_cluster_state(),
+            session.get_cluster_state().as_ref(),
             prepared,
-            values,
+            &**values,
         )
         .await
-        .unwrap();
+        .map_err(|e| format!("learning execution failed: {e}"))?;
         let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
         if feedbacks > 0 {
-            total_tablets_with_feedback += 1;
+            keys_with_feedback += 1;
         }
     }
 
-    if total_tablets_with_feedback == value_per_tablet.len() {
+    if keys_with_feedback == per_key.len() {
         Ok(())
     } else {
         Err(format!(
-            "Expected feedback for {} tablets, got it for {}",
-            value_per_tablet.len(),
-            total_tablets_with_feedback
+            "Expected tablet feedback for all {} keys, got it for {}",
+            per_key.len(),
+            keys_with_feedback
         ))
     }
 }
 
-async fn verify_queries_routed_to_correct_tablets(
-    session: &Session,
-    prepared: &PreparedStatement,
-    value_per_tablet: &[(i32, i32)],
-    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
-) -> Result<(), String> {
-    for values in value_per_tablet.iter() {
-        info!(
-            "Second loop, trying key {:?}, token: {}",
-            values,
-            prepared.calculate_token(&values).unwrap().unwrap().value()
-        );
-        try_join_all((0..100).map(|_| async { session.execute_unpaged(prepared, values).await }))
-            .await
-            .unwrap();
-        let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-        if feedbacks != 0 {
-            return Err(format!("Expected 0 tablet feedbacks, received {feedbacks}"));
-        }
-    }
-
-    Ok(())
-}
-
-async fn run_test_default_policy_is_tablet_aware_attempt(
-    session: &Session,
-    prepared: &PreparedStatement,
-    value_per_tablet: &[(i32, i32)],
-    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<u16>)>],
-) -> Result<(), String> {
-    populate_internal_driver_tablet_info(session, prepared, value_per_tablet, feedback_rxs).await?;
-
-    // Refresh the whole metadata to make sure that the tablet info the driver
-    // learned above survives a metadata refresh (which happens periodically and
-    // during tablet maintenance). If the refresh dropped the tablet mapping,
-    // the verification below would start receiving feedback again.
-    session
-        .refresh_metadata()
-        .await
-        .map_err(|e| format!("refresh_metadata failed: {e}"))?;
-
-    // Now we must have info about all the tablets. It should not be
-    // possible to receive any feedback if DefaultPolicy is properly
-    // tablet-aware.
-    verify_queries_routed_to_correct_tablets(session, prepared, value_per_tablet, feedback_rxs)
-        .await
-}
-
 /// Drains all pending feedback frames from every receiver.
 ///
-/// Because all subtests share the same set of feedback channels, we drain them
-/// before a subtest that has expectations about the number of received feedbacks,
-/// so that leftovers from a previous subtest don't leak into it.
+/// A subtest learns tablet info in one phase (which produces feedback) and then
+/// asserts on the feedback from a later phase, so we drain in between to keep
+/// the learning-phase feedback from leaking into the assertion.
 fn drain_feedbacks(feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>]) {
     for rx in feedback_rxs.iter_mut() {
         while rx.try_recv().is_ok() {}
     }
 }
 
-/// Subtest verifying that, when:
-/// - Using DefaultPolicy with TokenAwareness
-/// - Querying table that uses tablets
-/// - Driver has all driver info fetched locally
+/// The CQL operation exercised by a subtest.
+// Not all variants are constructed yet; they are added in later commits.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Op {
+    Select,
+    Update,
+    Insert,
+    Delete,
+    /// `UPDATE ... IF c != null`.
+    LwtUpdateIf,
+    /// `UPDATE ... IF EXISTS`.
+    LwtUpdateIfExists,
+    /// `INSERT ... IF NOT EXISTS`.
+    LwtInsertIfNotExists,
+    /// A plain `SELECT` executed with `Consistency::Serial`, i.e. a Paxos read.
+    ///
+    /// This is the only way to force LWT routing without a conditional `IF`
+    /// clause: the server rejects `SERIAL` consistency on writes ("You must use
+    /// conditional updates for serializable writes"), so there is no
+    /// `LwtManual{Update,Insert,Delete}` counterpart.
+    LwtManualSelect,
+}
+
+/// The underlying CQL verb of an [`Op`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Verb {
+    Select,
+    Update,
+    Insert,
+    Delete,
+}
+
+/// The LWT condition appended to a statement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LwtCondition {
+    None,
+    IfValueNotNull, // ... IF c != null
+    IfExists,       // ... IF EXISTS
+    IfNotExists,    // ... IF NOT EXISTS
+}
+
+impl Op {
+    fn verb(self) -> Verb {
+        match self {
+            Op::Select | Op::LwtManualSelect => Verb::Select,
+            Op::Update | Op::LwtUpdateIf | Op::LwtUpdateIfExists => Verb::Update,
+            Op::Insert | Op::LwtInsertIfNotExists => Verb::Insert,
+            Op::Delete => Verb::Delete,
+        }
+    }
+
+    fn condition(self) -> LwtCondition {
+        match self {
+            Op::LwtUpdateIf => LwtCondition::IfValueNotNull,
+            Op::LwtUpdateIfExists => LwtCondition::IfExists,
+            Op::LwtInsertIfNotExists => LwtCondition::IfNotExists,
+            _ => LwtCondition::None,
+        }
+    }
+
+    /// Whether the op is forced to be an LWT by requesting SERIAL consistency
+    /// (rather than by using a conditional `IF ...` clause).
+    fn is_manual_lwt(self) -> bool {
+        matches!(self, Op::LwtManualSelect)
+    }
+
+    /// Whether the op is an LWT, either conditional or forced via SERIAL.
+    fn is_lwt(self) -> bool {
+        self.is_manual_lwt() || self.condition() != LwtCondition::None
+    }
+}
+
+/// Whether the keyspace is spelled out in the query (`ks.t`) or not (`t`).
+// `WithoutKs` is constructed in a later commit.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KsPresence {
+    WithKs,
+    WithoutKs,
+}
+
+/// How the partition key, clustering key and value are expressed in the query.
+// Some variants are constructed in later commits.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DataForm {
+    /// All values are literals, executed as an unprepared statement:
+    /// `... WHERE a = 1 AND b = 1`.
+    ConcreteUnprepared,
+    /// All values are literals, executed as a prepared statement.
+    ConcretePrepared,
+    /// Partition and clustering keys are bind markers: `... WHERE a = ? AND b = ?`.
+    RegularPrepared,
+    /// Partition key is a literal, clustering key is a bind marker:
+    /// `... WHERE a = 1 AND b = ?`.
+    ConcretePreparedMixed,
+}
+
+impl DataForm {
+    fn is_prepared(self) -> bool {
+        !matches!(self, DataForm::ConcreteUnprepared)
+    }
+    fn pk_is_marker(self) -> bool {
+        matches!(self, DataForm::RegularPrepared)
+    }
+    fn ck_is_marker(self) -> bool {
+        matches!(
+            self,
+            DataForm::RegularPrepared | DataForm::ConcretePreparedMixed
+        )
+    }
+    fn value_is_marker(self) -> bool {
+        matches!(
+            self,
+            DataForm::RegularPrepared | DataForm::ConcretePreparedMixed
+        )
+    }
+    /// Whether the CQL text is independent of the concrete key, so a single
+    /// prepared statement can be reused for every key. This holds only when both
+    /// key components are bind markers (no literal key is embedded in the text).
+    fn text_is_key_independent(self) -> bool {
+        self.pk_is_marker() && self.ck_is_marker()
+    }
+}
+
+/// Fully describes a single query variant tested as a subtest.
+#[derive(Clone, Copy, Debug)]
+struct QueryDescriptor {
+    op: Op,
+    ks_presence: KsPresence,
+    data_form: DataForm,
+}
+
+impl QueryDescriptor {
+    /// Whether the driver can compute the token (and thus route in a tablet-aware
+    /// way) for this query. Only prepared statements that bind the full partition
+    /// key as markers are token-aware.
+    fn is_token_aware(self) -> bool {
+        self.data_form.is_prepared() && self.data_form.pk_is_marker()
+    }
+}
+
+const TEXT_VALUE: &str = "abc";
+
+/// Renders an `int` position in the query text: a bind marker (`?`) or a
+/// literal, depending on `is_marker`.
+fn render_int(is_marker: bool, value: i32) -> String {
+    if is_marker {
+        "?".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+/// Renders a `text` position in the query text: a bind marker (`?`) or a quoted
+/// literal, depending on `is_marker`.
+fn render_text(is_marker: bool, value: &str) -> String {
+    if is_marker {
+        "?".to_string()
+    } else {
+        format!("'{value}'")
+    }
+}
+
+/// Builds the row of values to bind for a given key, as a single boxed
+/// `SerializeRow` (one allocation, unlike a `Vec<Box<dyn SerializeValue>>`).
 ///
-/// Then we'll never receive tablet info.
-///
-/// The subtest first sends, to each possible target, one insert request per tablet.
-/// It expects to get tablet feedback for each tablet.
-/// After that we know we have all the info. Then it refreshes the metadata (to make
-/// sure tablet info survives tablet maintenance) and sends the same insert request
-/// per tablet using DefaultPolicy, expecting to not get any feedbacks.
-async fn subtest_default_policy_is_tablet_aware(
-    session: &Session,
+/// The bound values must appear in the same order as the corresponding bind
+/// markers in the text produced by [`build_cql`]. Which columns are markers is
+/// fully determined by the data form, so we can enumerate the concrete tuples:
+/// `SELECT`/`DELETE` bind `(pk?, ck?)`, `UPDATE` binds `(value?, pk?, ck?)` and
+/// `INSERT` binds `(pk?, ck?, value?)`, keeping only the marked positions.
+fn build_values(descriptor: QueryDescriptor, a: i32, b: i32) -> Box<dyn SerializeRow> {
+    match (descriptor.data_form, descriptor.op.verb()) {
+        // No markers: every value is a literal (or the statement is unprepared).
+        (DataForm::ConcreteUnprepared | DataForm::ConcretePrepared, _) => Box::new(()),
+        // Fully bound partition and clustering key.
+        (DataForm::RegularPrepared, Verb::Select | Verb::Delete) => Box::new((a, b)),
+        (DataForm::RegularPrepared, Verb::Update) => Box::new((TEXT_VALUE, a, b)),
+        (DataForm::RegularPrepared, Verb::Insert) => Box::new((a, b, TEXT_VALUE)),
+        // Literal partition key, bound clustering key (and value).
+        (DataForm::ConcretePreparedMixed, Verb::Select | Verb::Delete) => Box::new((b,)),
+        (DataForm::ConcretePreparedMixed, Verb::Update) => Box::new((TEXT_VALUE, b)),
+        (DataForm::ConcretePreparedMixed, Verb::Insert) => Box::new((b, TEXT_VALUE)),
+    }
+}
+
+/// Builds the CQL text and the row of bound values for a given key, according to
+/// the descriptor.
+fn build_cql(
+    descriptor: QueryDescriptor,
     ks: &str,
+    a: i32,
+    b: i32,
+) -> (String, Box<dyn SerializeRow>) {
+    let table = match descriptor.ks_presence {
+        KsPresence::WithKs => format!("{ks}.t"),
+        KsPresence::WithoutKs => "t".to_string(),
+    };
+    let df = descriptor.data_form;
+
+    let text = match descriptor.op.verb() {
+        Verb::Select => {
+            let pk = render_int(df.pk_is_marker(), a);
+            let ck = render_int(df.ck_is_marker(), b);
+            format!("SELECT a, b, c FROM {table} WHERE a = {pk} AND b = {ck}")
+        }
+        Verb::Delete => {
+            let pk = render_int(df.pk_is_marker(), a);
+            let ck = render_int(df.ck_is_marker(), b);
+            format!("DELETE FROM {table} WHERE a = {pk} AND b = {ck}")
+        }
+        Verb::Update => {
+            let val = render_text(df.value_is_marker(), TEXT_VALUE);
+            let pk = render_int(df.pk_is_marker(), a);
+            let ck = render_int(df.ck_is_marker(), b);
+            let cond = match descriptor.op.condition() {
+                LwtCondition::IfValueNotNull => " IF c != null",
+                LwtCondition::IfExists => " IF EXISTS",
+                _ => "",
+            };
+            format!("UPDATE {table} SET c = {val} WHERE a = {pk} AND b = {ck}{cond}")
+        }
+        Verb::Insert => {
+            let pk = render_int(df.pk_is_marker(), a);
+            let ck = render_int(df.ck_is_marker(), b);
+            let val = render_text(df.value_is_marker(), TEXT_VALUE);
+            let cond = match descriptor.op.condition() {
+                LwtCondition::IfNotExists => " IF NOT EXISTS",
+                _ => "",
+            };
+            format!("INSERT INTO {table} (a, b, c) VALUES ({pk}, {ck}, {val}){cond}")
+        }
+    };
+
+    (text, build_values(descriptor, a, b))
+}
+
+/// Number of times each query is executed per tablet key when checking routing.
+const VERIFY_QUERY_COUNT: usize = 30;
+
+/// A prepared statement paired with the values to bind for one key.
+type PreparedForKey = (PreparedStatement, Box<dyn SerializeRow>);
+
+/// Pairs a single prepared statement with each of `keys`, cloning the statement
+/// for every key (`PreparedStatement` is cheap to clone). Used when the same
+/// statement is reused for every key.
+fn prepared_for_keys<K: SerializeRow + 'static>(
     prepared: &PreparedStatement,
+    keys: impl IntoIterator<Item = K>,
+) -> Vec<PreparedForKey> {
+    keys.into_iter()
+        .map(|key| (prepared.clone(), Box::new(key) as Box<dyn SerializeRow>))
+        .collect()
+}
+
+/// Whether a phase is expected to produce tablet feedback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FeedbackExpectation {
+    /// The driver already knows the tablets, so it routes straight to a replica
+    /// and the server sends no feedback. This is the correct behavior.
+    Zero,
+}
+
+/// Runs each key's prepared statement [`VERIFY_QUERY_COUNT`] times and checks the
+/// resulting tablet-routing behavior. Assumes the driver already has the relevant
+/// tablet info populated locally (see [`learn_tablet_info`]).
+///
+/// Every execution reports the node+shard that served it via its result's
+/// `QueryResult::request_coordinator`, so we can attribute each response to a
+/// key without isolating the shared feedback channels. This lets all keys (and
+/// repetitions) run concurrently.
+///
+/// When `require_single_coordinator` is set (token-aware LWTs, which are pinned
+/// to a single replica to avoid Paxos contention), every execution for a given
+/// key must hit exactly one node+shard.
+async fn verify_feedback_for_keys(
+    session: &Session,
+    per_key: &[PreparedForKey],
+    expected: FeedbackExpectation,
+    require_single_coordinator: bool,
     feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
-) {
+) -> Result<(), String> {
     drain_feedbacks(feedback_rxs);
 
-    // Test attempt can fail because of tablet migrations.
-    // Let's try a few times if there are migrations.
+    // Run every key (and repetition) concurrently, collecting the coordinator
+    // (node host id + shard) of each execution, grouped by key.
+    let coordinators_per_key: Vec<Vec<(Uuid, Option<Shard>)>> =
+        try_join_all(per_key.iter().map(|(prepared, values)| async move {
+            try_join_all((0..VERIFY_QUERY_COUNT).map(|_| async move {
+                let result = session
+                    .execute_unpaged(prepared, values)
+                    .await
+                    .map_err(|e| format!("execution failed: {e}"))?;
+                let coordinator = result.request_coordinator();
+                Ok::<_, String>((coordinator.node().host_id, coordinator.shard()))
+            }))
+            .await
+        }))
+        .await?;
+
+    if require_single_coordinator {
+        for coordinators in &coordinators_per_key {
+            let distinct = coordinators.iter().unique().count();
+            if distinct != 1 {
+                return Err(format!(
+                    "Expected all queries for a key to hit a single replica+shard, \
+                     got {distinct} distinct coordinators"
+                ));
+            }
+        }
+    }
+
+    let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
+    let ok = match expected {
+        FeedbackExpectation::Zero => feedbacks == 0,
+    };
+    if !ok {
+        return Err(format!(
+            "Expected {expected:?} tablet feedback in verify phase, received {feedbacks}"
+        ));
+    }
+    Ok(())
+}
+
+/// Runs `attempt` (which reads the given tablets, learns their info, and
+/// verifies routing), retrying while tablet migrations invalidate the driver's
+/// cache mid-run.
+///
+/// Tablet info for `base_table` is read before each attempt and passed in. On
+/// failure we re-read it: if the tablets are unchanged the failure is real and
+/// we panic; if they changed a migration raced the test and we retry.
+async fn with_migration_retry<F>(session: &Session, ks: &str, base_table: &str, mut attempt: F)
+where
+    F: AsyncFnMut(&[Tablet]) -> Result<(), String>,
+{
     let mut last_error = None;
     for _ in 0..5 {
-        let tablets = get_tablets(session, ks, "t").await;
-        let value_per_tablet = calculate_key_per_tablet(&tablets, prepared);
-        match run_test_default_policy_is_tablet_aware_attempt(
-            session,
-            prepared,
-            &value_per_tablet,
-            feedback_rxs,
-        )
-        .await
-        {
+        let tablets = get_tablets(session, ks, base_table).await;
+        match attempt(&tablets).await {
             Ok(()) => return,
             Err(e) => {
-                let new_tablets = get_tablets(session, ks, "t").await;
+                let new_tablets = get_tablets(session, ks, base_table).await;
                 if tablets == new_tablets {
                     // We failed, but there was no migration.
                     panic!("Test attempt failed despite no migration. Error: {e}");
                 }
                 last_error = Some(e);
-                // There was a migration, let's try again
+                // There was a migration, let's try again.
             }
         }
     }
@@ -348,41 +609,200 @@ async fn subtest_default_policy_is_tablet_aware(
     );
 }
 
-/// Subtest verifying that Scylla never sends tablet info when receiving an unprepared
-/// query - as it would make no sense to send it (driver can't do token awareness
-/// for unprepared queries).
+/// Prepares the statement(s) needed to run `descriptor` for every key, pairing
+/// each key with its prepared statement and bound values.
 ///
-/// The subtest sends a query to each shard of every node and verifies that no
-/// tablet info was sent in response.
-async fn subtest_unprepared_query_gets_no_feedback(
+/// When the CQL text does not depend on the key (all key components are bind
+/// markers) a single statement is prepared and cloned for each key
+/// (`PreparedStatement` is intentionally cheap to clone). Otherwise the text
+/// embeds a literal key, so one statement is prepared per key -- and those
+/// preparations are done concurrently.
+async fn prepare_statements_per_key(
     session: &Session,
+    descriptor: QueryDescriptor,
     ks: &str,
-    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
-) {
-    drain_feedbacks(feedback_rxs);
+    keys: &[(i32, i32)],
+) -> Result<Vec<PreparedForKey>, String> {
+    let set_manual_lwt = descriptor.op.is_manual_lwt();
 
-    // I expect Scylla to not send feedback for unprepared queries,
-    // as such queries cannot be token-aware anyway
-    execute_unprepared_statement_everywhere(
-        session,
-        session.get_cluster_state().as_ref(),
-        &Statement::new(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')")),
-        &(),
-    )
-    .await
-    .unwrap();
-
-    let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-    assert_eq!(feedbacks, 0);
+    if descriptor.data_form.text_is_key_independent() {
+        // The text is the same for every key, so prepare it once and reuse it.
+        let (text, _) = build_cql(descriptor, ks, keys[0].0, keys[0].1);
+        let mut prepared = session
+            .prepare(text)
+            .await
+            .map_err(|e| format!("prepare failed: {e}"))?;
+        if set_manual_lwt {
+            prepared.set_consistency(Consistency::Serial);
+        }
+        Ok(keys
+            .iter()
+            .map(|&(a, b)| {
+                let (_, values) = build_cql(descriptor, ks, a, b);
+                (prepared.clone(), values)
+            })
+            .collect())
+    } else {
+        // Each key produces a different text, so prepare them concurrently.
+        try_join_all(keys.iter().map(|&(a, b)| async move {
+            let (text, values) = build_cql(descriptor, ks, a, b);
+            let mut prepared = session
+                .prepare(text)
+                .await
+                .map_err(|e| format!("prepare failed: {e}"))?;
+            if set_manual_lwt {
+                prepared.set_consistency(Consistency::Serial);
+            }
+            Ok::<_, String>((prepared, values))
+        }))
+        .await
+    }
 }
 
-/// A single integration test that exercises the driver's tablet awareness across
-/// many scenarios. All scenarios are run as subtests sharing a single keyspace and
-/// table, because creating keyspaces/tables is expensive.
-#[tokio::test]
-async fn test_tablets() {
+/// Runs a single query variant (subtest) for every tablet key and checks the
+/// expected tablet-routing behavior.
+///
+/// This assumes the driver already has all tablet info populated locally (see
+/// [`learn_tablet_info`]).
+async fn verify_case(
+    session: &Session,
+    descriptor: QueryDescriptor,
+    ks: &str,
+    keys: &[(i32, i32)],
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
+) -> Result<(), String> {
+    if !descriptor.data_form.is_prepared() {
+        drain_feedbacks(feedback_rxs);
+        // Unprepared queries: the server never sends tablet feedback for them,
+        // regardless of routing (the driver could not use it anyway). We send to
+        // every shard of every node and assert that none produced feedback. The
+        // per-key executions are independent, so we run them concurrently.
+        try_join_all(keys.iter().map(|&(a, b)| async move {
+            let (text, values) = build_cql(descriptor, ks, a, b);
+            let mut statement = Statement::new(text);
+            if descriptor.op.is_manual_lwt() {
+                statement.set_consistency(Consistency::Serial);
+            }
+            execute_unprepared_statement_everywhere(
+                session,
+                session.get_cluster_state().as_ref(),
+                &statement,
+                &*values,
+            )
+            .await
+            .map_err(|e| format!("unprepared execution failed: {e}"))
+        }))
+        .await?;
+        let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
+        if feedbacks != 0 {
+            return Err(format!(
+                "Expected 0 feedbacks for unprepared query, received {feedbacks}"
+            ));
+        }
+        return Ok(());
+    }
+
+    let per_key = prepare_statements_per_key(session, descriptor, ks, keys).await?;
+
+    // The driver's own notion of token-awareness must match our expectation. All
+    // per-key statements share the same shape, so checking the first is enough.
+    let is_token_aware = per_key[0].0.is_token_aware();
+    if is_token_aware != descriptor.is_token_aware() {
+        return Err(format!(
+            "Expected is_token_aware()={}, got {is_token_aware} for {descriptor:?}",
+            descriptor.is_token_aware(),
+        ));
+    }
+
+    // Token-aware queries already have full tablet info, so they route straight
+    // to a replica and get no feedback. Non-token-aware prepared queries can't be
+    // routed, but the server doesn't bother teaching the driver (the feedback
+    // would be useless), so they too get no feedback -- just like unprepared ones.
+    //
+    // Token-aware LWTs additionally use the LWT optimization: every query for a
+    // given key is pinned to a single replica+shard to avoid Paxos contention.
+    let require_single_coordinator = descriptor.is_token_aware() && descriptor.op.is_lwt();
+    verify_feedback_for_keys(
+        session,
+        &per_key,
+        FeedbackExpectation::Zero,
+        require_single_coordinator,
+        feedback_rxs,
+    )
+    .await
+    .map_err(|e| format!("{descriptor:?}: {e}"))
+}
+
+/// Runs the whole set of query-variant subtests against a freshly populated
+/// driver tablet cache. Tablet migrations can invalidate the cache mid-run, so
+/// [`with_migration_retry`] re-checks whether a migration happened on failure
+/// and, if so, retries the whole attempt.
+async fn run_tablet_cases(
+    session: &Session,
+    ks: &str,
+    populate_prepared: &PreparedStatement,
+    cases: &[QueryDescriptor],
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
+) {
+    with_migration_retry(session, ks, "t", async |tablets| {
+        let value_per_tablet = calculate_key_per_tablet(tablets, populate_prepared, |i| (i, 1));
+
+        let per_key = prepared_for_keys(populate_prepared, value_per_tablet.iter().copied());
+        learn_tablet_info(session, &per_key, feedback_rxs).await?;
+
+        // Refresh the whole metadata to make sure that the tablet info the
+        // driver learned above survives a metadata refresh (which happens
+        // periodically and during tablet maintenance). If the refresh dropped
+        // the tablet mapping, the token-aware cases below would start
+        // receiving feedback again.
+        session
+            .refresh_metadata()
+            .await
+            .map_err(|e| format!("refresh_metadata failed: {e}"))?;
+
+        for case in cases {
+            verify_case(session, *case, ks, &value_per_tablet, feedback_rxs)
+                .await
+                .map_err(|e| format!("case {case:?} failed: {e}"))?;
+        }
+        Ok(())
+    })
+    .await;
+}
+
+/// Installs a response rule on every proxy node that forwards each `Result`
+/// response frame (except event registrations) into a per-node channel, and
+/// returns the receiving ends. The subtests inspect these to count how many
+/// responses carried tablet-routing feedback.
+fn install_feedback_channels(
+    running_proxy: &mut RunningProxy,
+) -> Vec<UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>> {
+    let (feedback_txs, feedback_rxs): (Vec<_>, Vec<_>) = (0..3)
+        .map(|_| mpsc::unbounded_channel::<(ResponseFrame, Option<TargetShard>)>())
+        .unzip();
+    for (i, tx) in feedback_txs.into_iter().enumerate() {
+        running_proxy.running_nodes[i].change_response_rules(Some(vec![ResponseRule(
+            Condition::ResponseOpcode(ResponseOpcode::Result)
+                .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
+            ResponseReaction::noop().with_feedback_when_performed(tx),
+        )]));
+    }
+    feedback_rxs
+}
+
+/// Shared harness for the tablet subtests.
+///
+/// Spins up a 3-node proxied cluster, builds a session, skips the test if the
+/// server doesn't support tablets, installs the feedback channels, and finally
+/// runs `test_body` with the session and the feedback receivers. The proxy
+/// bookkeeping (including tolerating the expected disconnect at shutdown) is
+/// handled here so each subtest can focus on its own schema and assertions.
+async fn with_tablet_session<F, Fut>(test_body: F)
+where
+    F: FnOnce(Session, Vec<UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>>) -> Fut,
+    Fut: Future<Output = ()>,
+{
     setup_tracing();
-    const TABLET_COUNT: usize = 16;
 
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
@@ -399,38 +819,9 @@ async fn test_tablets() {
                 return running_proxy;
             }
 
-            let ks = unique_keyspace_name();
+            let feedback_rxs = install_feedback_channels(&mut running_proxy);
 
-            /* Prepare schema */
-            prepare_schema(&session, &ks, "t", TABLET_COUNT).await;
-
-            let prepared_insert = session
-                .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, 'abc')"))
-                .await
-                .unwrap();
-
-            let (feedback_txs, mut feedback_rxs): (Vec<_>, Vec<_>) = (0..3)
-                .map(|_| mpsc::unbounded_channel::<(ResponseFrame, Option<TargetShard>)>())
-                .unzip();
-            for (i, tx) in feedback_txs.iter().cloned().enumerate() {
-                running_proxy.running_nodes[i].change_response_rules(Some(vec![ResponseRule(
-                    Condition::ResponseOpcode(ResponseOpcode::Result)
-                        .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
-                    ResponseReaction::noop().with_feedback_when_performed(tx),
-                )]));
-            }
-
-            subtest_default_policy_is_tablet_aware(
-                &session,
-                &ks,
-                &prepared_insert,
-                &mut feedback_rxs,
-            )
-            .await;
-
-            subtest_unprepared_query_gets_no_feedback(&session, &ks, &mut feedback_rxs).await;
-
-            session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+            test_body(session, feedback_rxs).await;
 
             running_proxy
         },
@@ -441,6 +832,49 @@ async fn test_tablets() {
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
     }
+}
+
+/// Exercises the driver's tablet awareness for a base table across many query
+/// variants (the full [`QueryDescriptor`] matrix), all sharing a single keyspace
+/// and table because creating keyspaces/tables is expensive.
+#[tokio::test]
+async fn test_tablets() {
+    const TABLET_COUNT: usize = 16;
+
+    with_tablet_session(|session, mut feedback_rxs| async move {
+        let ks = unique_keyspace_name();
+
+        /* Prepare schema */
+        prepare_schema(&session, &ks, "t", TABLET_COUNT).await;
+
+        // Token-aware INSERT used to populate the driver's tablet cache and to
+        // compute a representative key per tablet.
+        let prepared_insert = session
+            .prepare(format!("INSERT INTO {ks}.t (a, b, c) VALUES (?, ?, 'abc')"))
+            .await
+            .unwrap();
+
+        let cases = vec![
+            // Default policy is tablet-aware: token-aware INSERT gets no
+            // feedback once the driver has all tablet info.
+            QueryDescriptor {
+                op: Op::Insert,
+                ks_presence: KsPresence::WithKs,
+                data_form: DataForm::RegularPrepared,
+            },
+            // Scylla never sends tablet feedback for unprepared queries.
+            QueryDescriptor {
+                op: Op::Insert,
+                ks_presence: KsPresence::WithKs,
+                data_form: DataForm::ConcreteUnprepared,
+            },
+        ];
+
+        run_tablet_cases(&session, &ks, &prepared_insert, &cases, &mut feedback_rxs).await;
+
+        session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+    })
+    .await;
 }
 
 /// Verifies that LWT optimization (sending LWT queries to the replicas in a fixed order)
@@ -492,7 +926,7 @@ async fn test_lwt_optimization_works_with_tablets() {
                 .await
                 .unwrap();
 
-            let value_lists = calculate_key_per_tablet(&tablets, &prepared_insert);
+            let value_lists = calculate_key_per_tablet(&tablets, &prepared_insert, |i| (i, 1));
 
             let (feedback_txs, mut feedback_rxs): (Vec<_>, Vec<_>) = (0..3)
                 .map(|_| mpsc::unbounded_channel::<(ResponseFrame, Option<TargetShard>)>())
