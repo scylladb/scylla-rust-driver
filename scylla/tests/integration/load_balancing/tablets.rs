@@ -392,8 +392,6 @@ enum KsPresence {
 }
 
 /// How the partition key, clustering key and value are expressed in the query.
-// Some variants are constructed in later commits.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DataForm {
     /// All values are literals, executed as an unprepared statement:
@@ -953,6 +951,24 @@ async fn test_tablets() {
                 op: Op::Insert,
                 ks_presence: KsPresence::WithKs,
                 data_form: DataForm::ConcreteUnprepared,
+            },
+            // A prepared statement whose values are all literals is not
+            // token-aware (no partition-key marker), so the driver cannot
+            // route it. The server does not send tablet feedback for such
+            // queries either (it would be useless), just like for unprepared
+            // ones, so no feedback is expected.
+            QueryDescriptor {
+                op: Op::Select,
+                ks_presence: KsPresence::WithKs,
+                data_form: DataForm::ConcretePrepared,
+            },
+            // Likewise when only the clustering key is a marker but the
+            // partition key is a literal: still not token-aware, still no
+            // feedback.
+            QueryDescriptor {
+                op: Op::Select,
+                ks_presence: KsPresence::WithKs,
+                data_form: DataForm::ConcretePreparedMixed,
             },
             // The keyspace does not have to be spelled out in the query; an
             // unqualified table name (resolved via the session keyspace) is
