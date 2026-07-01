@@ -385,8 +385,6 @@ impl Op {
 }
 
 /// Whether the keyspace is spelled out in the query (`ks.t`) or not (`t`).
-// `WithoutKs` is constructed in a later commit.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum KsPresence {
     WithKs,
@@ -914,6 +912,10 @@ async fn test_tablets() {
         /* Prepare schema */
         prepare_schema(&session, &ks, "t", TABLET_COUNT).await;
 
+        // Enter the keyspace so that unqualified `t` (KsPresence::WithoutKs)
+        // resolves to the test table.
+        session.use_keyspace(&ks, false).await.unwrap();
+
         // Token-aware INSERT used to populate the driver's tablet cache and to
         // compute a representative key per tablet.
         let prepared_insert = session
@@ -950,6 +952,19 @@ async fn test_tablets() {
             QueryDescriptor {
                 op: Op::Insert,
                 ks_presence: KsPresence::WithKs,
+                data_form: DataForm::ConcreteUnprepared,
+            },
+            // The keyspace does not have to be spelled out in the query; an
+            // unqualified table name (resolved via the session keyspace) is
+            // routed the same way.
+            QueryDescriptor {
+                op: Op::Select,
+                ks_presence: KsPresence::WithoutKs,
+                data_form: DataForm::RegularPrepared,
+            },
+            QueryDescriptor {
+                op: Op::Insert,
+                ks_presence: KsPresence::WithoutKs,
                 data_form: DataForm::ConcreteUnprepared,
             },
         ];
