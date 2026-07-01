@@ -15,6 +15,7 @@ use scylla::cluster::Node;
 use scylla::errors::{DbError, RequestAttemptError, WriteType};
 use scylla::policies::retry::{DefaultRetrySession, RetryDecision, RetryPolicy, RetrySession};
 use scylla::routing::Shard;
+use scylla::routing::partitioner::PartitionerName;
 use scylla::serialize::row::SerializeRow;
 use scylla::statement::Consistency;
 use scylla::statement::prepared::PreparedStatement;
@@ -207,6 +208,24 @@ fn calculate_key_per_tablet<K: SerializeRow>(
     assert!(present_tablets.iter().all(|x| *x));
 
     keys
+}
+
+// Builds a `cdc$stream_id` blob (the partition key of a CDC log table) landing
+// in each tablet. The CDC partitioner uses the first 8 bytes of the blob,
+// interpreted as a big-endian i64, directly as the token, so a blob whose
+// leading 8 bytes encode a token inside a tablet's range routes to that tablet.
+// Real stream ids are 16 bytes, so we pad to that length.
+fn cdc_stream_id_key_per_tablet(tablets: &[Tablet]) -> Vec<Vec<u8>> {
+    tablets
+        .iter()
+        .map(|tablet| {
+            // `last_token` is the inclusive upper bound of the tablet's range,
+            // so it belongs to this tablet.
+            let mut blob = vec![0u8; 16];
+            blob[..8].copy_from_slice(&tablet.last_token.to_be_bytes());
+            blob
+        })
+        .collect()
 }
 
 fn frame_has_tablet_feedback(frame: ResponseFrame) -> bool {
@@ -925,6 +944,91 @@ async fn verify_materialized_view_tablet_bug(
     session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
 }
 
+/// Exercises tablet routing for a CDC log table (`<table>_scylla_cdc_log`).
+///
+/// Unlike materialized views, CDC log tables are ordinary entries in
+/// `system_schema.tables`, so they live in the keyspace's `tables` map and
+/// their cached tablet info survives metadata refreshes. Their partition key is
+/// the single `blob` column `cdc$stream_id`, routed with the CDC partitioner.
+///
+/// This subtest learns the log table's tablet info, refreshes the metadata, and
+/// asserts that token-aware queries against the log table then receive no
+/// tablet feedback -- i.e. routing works correctly, just like for a base table.
+async fn verify_cdc_log_tablet_routing(
+    session: &Session,
+    feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
+) {
+    let ks = unique_keyspace_name();
+    session
+        .ddl(format!(
+            "CREATE KEYSPACE {ks}
+            WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 2}}
+            AND tablets = {{'enabled': true}}"
+        ))
+        .await
+        .unwrap();
+    session
+        .ddl(format!(
+            "CREATE TABLE {ks}.t (a int, b int, c text, primary key (a, b))
+            WITH cdc = {{'enabled': true}}"
+        ))
+        .await
+        .unwrap();
+
+    let cdc_select = session
+        .prepare(format!(
+            "SELECT * FROM {ks}.t_scylla_cdc_log WHERE \"cdc$stream_id\" = ?"
+        ))
+        .await
+        .unwrap();
+    assert!(cdc_select.is_token_aware());
+    assert_eq!(cdc_select.get_partitioner_name(), &PartitionerName::CDC);
+
+    with_migration_retry(session, &ks, "t", async |tablets| {
+        // CDC log tables are co-located with their base table: they share the
+        // base table's tablets, and a log entry's `cdc$stream_id` is built so
+        // that its CDC-partitioner token matches the base write's token. The log
+        // table therefore has no tablet rows of its own in `system.tablets`, so
+        // we derive the tablet ranges from the base table and build a stream id
+        // whose token lands in each one.
+        //
+        // The base table has many tablets; sampling a handful keeps the subtest
+        // fast while still exercising several distinct tablets.
+        const CDC_SAMPLED_TABLETS: usize = 8;
+        let sampled = &tablets[..CDC_SAMPLED_TABLETS.min(tablets.len())];
+        let per_key = prepared_for_keys(
+            &cdc_select,
+            cdc_stream_id_key_per_tablet(sampled)
+                .into_iter()
+                .map(|key| (key,)),
+        );
+
+        learn_tablet_info(session, &per_key, feedback_rxs).await?;
+
+        // The cached tablet info must survive a metadata refresh (CDC log
+        // tables are regular tables, so unlike views they are not dropped by
+        // the tablet-cache maintenance step).
+        session
+            .refresh_metadata()
+            .await
+            .map_err(|e| format!("refresh_metadata failed: {e}"))?;
+
+        // Token-aware queries should now route straight to a replica without
+        // any feedback.
+        verify_feedback_for_keys(
+            session,
+            &per_key,
+            FeedbackExpectation::Zero,
+            false,
+            feedback_rxs,
+        )
+        .await
+    })
+    .await;
+
+    session.ddl(format!("DROP KEYSPACE {ks}")).await.unwrap();
+}
+
 /// Installs a response rule on every proxy node that forwards each `Result`
 /// response frame (except event registrations) into a per-node channel, and
 /// returns the receiving ends. The subtests inspect these to count how many
@@ -1138,6 +1242,26 @@ async fn test_tablets_materialized_view() {
         }
 
         verify_materialized_view_tablet_bug(&session, &mut feedback_rxs).await;
+    })
+    .await;
+}
+
+/// Exercises tablet routing for a CDC log table. Runs in its own keyspace, since
+/// enabling CDC is a per-keyspace/table property (see
+/// [`verify_cdc_log_tablet_routing`] for details).
+#[tokio::test]
+async fn test_tablets_cdc_log() {
+    with_tablet_session(|session, mut feedback_rxs| async move {
+        // Gated on the server supporting CDC on tablet tables.
+        if !supports_feature(&session, "CDC_WITH_TABLETS").await {
+            tracing::warn!(
+                "Skipping CDC subtest because this Scylla version doesn't support \
+                 CDC on tablet tables"
+            );
+            return;
+        }
+
+        verify_cdc_log_tablet_routing(&session, &mut feedback_rxs).await;
     })
     .await;
 }
