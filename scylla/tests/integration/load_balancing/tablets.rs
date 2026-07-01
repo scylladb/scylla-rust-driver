@@ -929,6 +929,23 @@ async fn test_tablets() {
                 ks_presence: KsPresence::WithKs,
                 data_form: DataForm::RegularPrepared,
             },
+            // The same token-aware, no-feedback expectation holds for every
+            // plain (non-LWT) CQL operation.
+            QueryDescriptor {
+                op: Op::Select,
+                ks_presence: KsPresence::WithKs,
+                data_form: DataForm::RegularPrepared,
+            },
+            QueryDescriptor {
+                op: Op::Update,
+                ks_presence: KsPresence::WithKs,
+                data_form: DataForm::RegularPrepared,
+            },
+            QueryDescriptor {
+                op: Op::Delete,
+                ks_presence: KsPresence::WithKs,
+                data_form: DataForm::RegularPrepared,
+            },
             // Scylla never sends tablet feedback for unprepared queries.
             QueryDescriptor {
                 op: Op::Insert,
