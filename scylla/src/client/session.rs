@@ -1016,11 +1016,7 @@ impl Session {
                 execution_profile,
                 |connection: Arc<Connection>,
                  consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = batch
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
+                 _execution_profile: &ExecutionProfileInner| {
                     async move {
                         connection
                             .batch_with_consistency(
@@ -1296,15 +1292,19 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
+        let consistency = statement
+            .config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+
+        let serial_consistency = statement
+            .config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+
         let routing_info = RoutingInfo {
-            consistency: statement
-                .config
-                .consistency
-                .unwrap_or(execution_profile.consistency),
-            serial_consistency: statement
-                .config
-                .serial_consistency
-                .unwrap_or(execution_profile.serial_consistency),
+            consistency,
+            serial_consistency,
             token: None,
             table: None,
             is_confirmed_lwt: false,
@@ -1323,11 +1323,7 @@ impl Session {
                 execution_profile,
                 |connection: Arc<Connection>,
                  consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = statement
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
+                 _execution_profile: &ExecutionProfileInner| {
                     // Needed to avoid moving query and values into async move block
                     let values_ref = &values;
                     let paging_state_ref = &paging_state;
@@ -1696,17 +1692,21 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
+        let consistency = prepared
+            .config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+
+        let serial_consistency = prepared
+            .config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+
         let table_spec = prepared.get_table_spec();
 
         let routing_info = RoutingInfo {
-            consistency: prepared
-                .config
-                .consistency
-                .unwrap_or(execution_profile.consistency),
-            serial_consistency: prepared
-                .config
-                .serial_consistency
-                .unwrap_or(execution_profile.serial_consistency),
+            consistency,
+            serial_consistency,
             token,
             table: table_spec,
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
@@ -1737,11 +1737,7 @@ impl Session {
                 execution_profile,
                 |connection: Arc<Connection>,
                  consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = prepared
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
+                 _execution_profile: &ExecutionProfileInner| {
                     async move {
                         connection
                             .execute_raw_with_consistency(
