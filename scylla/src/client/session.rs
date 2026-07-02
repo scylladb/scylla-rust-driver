@@ -1014,20 +1014,11 @@ impl Session {
                 routing_info,
                 &batch.config,
                 execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 _execution_profile: &ExecutionProfileInner| {
-                    async move {
-                        connection
-                            .batch_with_consistency(
-                                batch,
-                                values_ref,
-                                consistency,
-                                serial_consistency,
-                            )
-                            .await
-                            .and_then(QueryResponse::into_non_error_query_response)
-                    }
+                |connection: Arc<Connection>, consistency: Consistency| async move {
+                    connection
+                        .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
+                        .await
+                        .and_then(QueryResponse::into_non_error_query_response)
                 },
                 &span,
             )
@@ -1321,9 +1312,7 @@ impl Session {
                 routing_info,
                 &statement.config,
                 execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 _execution_profile: &ExecutionProfileInner| {
+                |connection: Arc<Connection>, consistency: Consistency| {
                     // Needed to avoid moving query and values into async move block
                     let values_ref = &values;
                     let paging_state_ref = &paging_state;
@@ -1735,22 +1724,18 @@ impl Session {
                 routing_info,
                 &prepared.config,
                 execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 _execution_profile: &ExecutionProfileInner| {
-                    async move {
-                        connection
-                            .execute_raw_with_consistency(
-                                prepared,
-                                serialized_values,
-                                consistency,
-                                serial_consistency,
-                                page_size,
-                                paging_state_ref.clone(),
-                            )
-                            .await
-                            .and_then(QueryResponse::into_non_error_query_response)
-                    }
+                |connection: Arc<Connection>, consistency: Consistency| async move {
+                    connection
+                        .execute_raw_with_consistency(
+                            prepared,
+                            serialized_values,
+                            consistency,
+                            serial_consistency,
+                            page_size,
+                            paging_state_ref.clone(),
+                        )
+                        .await
+                        .and_then(QueryResponse::into_non_error_query_response)
                 },
                 &span,
             )
@@ -2051,7 +2036,7 @@ impl Session {
         routing_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         execution_profile: Arc<ExecutionProfileInner>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
+        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where
@@ -2232,7 +2217,7 @@ impl Session {
     async fn run_request_speculative_fiber<'a, QueryFut>(
         &'a self,
         request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
+        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
     ) -> Option<Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>>
@@ -2277,7 +2262,7 @@ impl Session {
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connect_address);
                 let request_result: Result<NonErrorQueryResponse, RequestAttemptError> =
-                    run_request_once(connection, current_consistency, execution_profile)
+                    run_request_once(connection, current_consistency)
                         .instrument(span.clone())
                         .await;
 
