@@ -2076,15 +2076,15 @@ impl Session {
             .as_deref()
             .unwrap_or(execution_profile.load_balancing_policy.as_ref());
 
+        let retry_policy = statement_config
+            .retry_policy
+            .as_deref()
+            .unwrap_or(&*execution_profile.retry_policy);
+
         let runner = async {
             let cluster_state = self.cluster.get_state();
             let request_plan =
                 load_balancing::Plan::new(load_balancer, &routing_info, &cluster_state);
-
-            let retry_policy = statement_config
-                .retry_policy
-                .as_deref()
-                .unwrap_or(&*execution_profile.retry_policy);
 
             let speculative_policy = execution_profile.speculative_execution_policy.as_ref();
 
