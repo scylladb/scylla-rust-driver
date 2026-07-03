@@ -2199,14 +2199,16 @@ impl Session {
             }
         }
 
+        let result = result.map_err(RequestError::into_execution_error)?;
+
         // Automatically handle meaningful responses.
-        if let Ok((RunRequestResult::Completed(ref response), ref coordinator)) = result {
+        if let (RunRequestResult::Completed(ref response), ref coordinator) = result {
             self.handle_set_keyspace_response(response).await?;
             self.handle_auto_await_schema_agreement(response, coordinator.node().host_id)
                 .await?;
         }
 
-        result.map_err(RequestError::into_execution_error)
+        Ok(result)
     }
 
     /// Executes the closure `run_request_once`, provided the load balancing plan and some information
