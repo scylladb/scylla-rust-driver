@@ -52,7 +52,7 @@ pub struct ClusterState {
 
 /// Enables printing [ClusterState] struct in a neat way, skipping the clutter involved by
 /// [ClusterState::ring] being large and [Self::keyspaces] debug print being very verbose by default.
-pub(crate) struct ClusterStateNeatDebug<'a>(pub(crate) &'a Arc<ClusterState>);
+pub(crate) struct ClusterStateNeatDebug<'a>(pub(crate) &'a ClusterState);
 impl std::fmt::Debug for ClusterStateNeatDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cluster_state = &self.0;
@@ -72,6 +72,12 @@ impl std::fmt::Debug for ClusterStateNeatDebug<'_> {
             .field("ring", &ring_printer)
             .field("keyspaces", &cluster_state.keyspaces.keys())
             .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for ClusterState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&ClusterStateNeatDebug(self), f)
     }
 }
 
