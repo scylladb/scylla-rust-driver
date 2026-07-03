@@ -2319,9 +2319,7 @@ impl Session {
                 let request_info = RequestInfo {
                     error: &request_error,
                     is_idempotent: context.is_idempotent,
-                    consistency: context
-                        .consistency_set_on_statement
-                        .unwrap_or(execution_profile.consistency),
+                    consistency: current_consistency,
                 };
 
                 let retry_decision = context.retry_session.decide_should_retry(request_info);
