@@ -8,7 +8,7 @@
 //! - [SessionBuilder](session_builder::SessionBuilder) - just a convenient builder for a `Session`.
 //! - [CachingSession](caching_session::CachingSession) - a wrapper over a [Session](session::Session)
 //!   that keeps and manages a cache of prepared statements, so that a user can be free of such considerations.
-//! - [SelfIdentity] - configuresd driver and application self-identifying information,
+//! - [SelfIdentity] - configures driver and application self-identifying information,
 //!   to be sent in STARTUP message.
 //! - [ExecutionProfile](execution_profile::ExecutionProfile) - a profile that groups various configuration
 //!   options relevant when executing a request against the DB.
