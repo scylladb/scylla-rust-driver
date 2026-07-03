@@ -44,6 +44,29 @@ pub struct RoutingInfo<'a> {
     pub is_confirmed_lwt: bool,
 }
 
+impl<'a> RoutingInfo<'a> {
+    /// Creates a new `RoutingInfo` instance with the specified parameters.
+    ///
+    /// This constructor should be used only by the Python RS Driver to construct
+    /// routing metadata, enabling built-in driver components—such as the
+    /// default load balancing policy to be exposed to Python.
+    pub fn new(
+        consistency: types::Consistency,
+        serial_consistency: Option<types::SerialConsistency>,
+        token: Option<Token>,
+        table: Option<&'a TableSpec<'a>>,
+        is_confirmed_lwt: bool,
+    ) -> Self {
+        Self {
+            consistency,
+            serial_consistency,
+            token,
+            table,
+            is_confirmed_lwt,
+        }
+    }
+}
+
 /// The fallback list of nodes in the request plan.
 ///
 /// It is computed on-demand, only if querying the most preferred node fails
