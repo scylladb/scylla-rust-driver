@@ -26,11 +26,11 @@ use crate::observability::metrics::Metrics;
 use crate::observability::tracing::TracingInfo;
 use crate::policies::address_translator::AddressTranslator;
 use crate::policies::host_filter::HostFilter;
-use crate::policies::load_balancing::{self, RoutingInfo};
+use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::reconnect::ExponentialReconnectPolicy;
 #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
 use crate::policies::reconnect::ReconnectPolicy;
-use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
+use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy};
 use crate::policies::speculative_execution;
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
@@ -2082,6 +2082,11 @@ impl Session {
             .unwrap_or(&*execution_profile.retry_policy);
 
         let exec_params = RequestExecutionParams {
+            is_idempotent: statement_config.is_idempotent,
+            consistency_set_on_statement: statement_config.consistency,
+            default_consistency: execution_profile.consistency,
+            retry_policy,
+            load_balancing_policy: load_balancer,
             metrics: &self.metrics,
         };
 
@@ -2124,13 +2129,8 @@ impl Session {
                         exec_params.run_request_speculative_fiber(
                             &shared_request_plan,
                             &run_request_once,
-                            &execution_profile,
                             ExecuteRequestContext {
-                                is_idempotent: statement_config.is_idempotent,
-                                consistency_set_on_statement: statement_config.consistency,
-                                retry_session: retry_policy.new_session(),
                                 history_data,
-                                load_balancing_policy: load_balancer,
                                 routing_info: &routing_info,
                                 request_span,
                             },
@@ -2158,13 +2158,8 @@ impl Session {
                         .run_request_speculative_fiber(
                             request_plan,
                             &run_request_once,
-                            &execution_profile,
                             ExecuteRequestContext {
-                                is_idempotent: statement_config.is_idempotent,
-                                consistency_set_on_statement: statement_config.consistency,
-                                retry_session: retry_policy.new_session(),
                                 history_data,
-                                load_balancing_policy: load_balancer,
                                 routing_info: &routing_info,
                                 request_span,
                             },
@@ -2221,6 +2216,19 @@ impl Session {
 /// The two-level fallback between per-statement config and the execution
 /// profile is resolved *before* constructing this struct.
 pub(crate) struct RequestExecutionParams<'a> {
+    /// Whether the request is idempotent (gates speculative execution and is
+    /// passed to the retry policy).
+    pub(crate) is_idempotent: bool,
+    /// Consistency explicitly set on the statement, if any. When `None`,
+    /// [`Self::default_consistency`] is used.
+    pub(crate) consistency_set_on_statement: Option<Consistency>,
+    /// Consistency to use when the statement does not set one explicitly
+    /// (i.e. the execution profile's consistency).
+    pub(crate) default_consistency: Consistency,
+    /// Retry policy used to start a fresh retry session per fiber.
+    pub(crate) retry_policy: &'a dyn RetryPolicy,
+    /// Load balancing policy used to order targets for the execution.
+    pub(crate) load_balancing_policy: &'a dyn LoadBalancingPolicy,
     /// Metrics sink.
     pub(crate) metrics: &'a Arc<Metrics>,
 }
@@ -2236,16 +2244,16 @@ impl<'a> RequestExecutionParams<'a> {
         &self,
         request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
-        execution_profile: &ExecutionProfileInner,
-        mut context: ExecuteRequestContext<'a>,
+        context: ExecuteRequestContext<'a>,
     ) -> Option<Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>>
     where
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
+        let mut retry_session = self.retry_policy.new_session();
         let mut last_error: Option<RequestError> = None;
-        let mut current_consistency: Consistency = context
+        let mut current_consistency: Consistency = self
             .consistency_set_on_statement
-            .unwrap_or(execution_profile.consistency);
+            .unwrap_or(self.default_consistency);
 
         'nodes_in_plan: for (node, shard) in request_plan {
             let span = trace_span!("Executing request", node = %node.address, shard = %shard);
@@ -2290,7 +2298,7 @@ impl<'a> RequestExecutionParams<'a> {
                         trace!(parent: &span, "Request succeeded");
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
-                        context.load_balancing_policy.on_request_success(
+                        self.load_balancing_policy.on_request_success(
                             context.routing_info,
                             elapsed,
                             node,
@@ -2304,7 +2312,7 @@ impl<'a> RequestExecutionParams<'a> {
                             "Request failed"
                         );
                         self.metrics.inc_failed_nonpaged_queries();
-                        context.load_balancing_policy.on_request_failure(
+                        self.load_balancing_policy.on_request_failure(
                             context.routing_info,
                             elapsed,
                             node,
@@ -2317,11 +2325,11 @@ impl<'a> RequestExecutionParams<'a> {
                 // Use retry policy to decide what to do next
                 let request_info = RequestInfo {
                     error: &request_error,
-                    is_idempotent: context.is_idempotent,
+                    is_idempotent: self.is_idempotent,
                     consistency: current_consistency,
                 };
 
-                let retry_decision = context.retry_session.decide_should_retry(request_info);
+                let retry_decision = retry_session.decide_should_retry(request_info);
                 trace!(
                     parent: &span,
                     retry_decision = ?retry_decision
@@ -2664,11 +2672,7 @@ impl Session {
 }
 
 struct ExecuteRequestContext<'a> {
-    is_idempotent: bool,
-    consistency_set_on_statement: Option<Consistency>,
-    retry_session: Box<dyn RetrySession>,
     history_data: Option<HistoryData<'a>>,
-    load_balancing_policy: &'a dyn load_balancing::LoadBalancingPolicy,
     routing_info: &'a load_balancing::RoutingInfo<'a>,
     request_span: &'a RequestSpan,
 }
