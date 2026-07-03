@@ -2081,6 +2081,10 @@ impl Session {
             .as_deref()
             .unwrap_or(&*execution_profile.retry_policy);
 
+        let exec_params = RequestExecutionParams {
+            metrics: &self.metrics,
+        };
+
         let runner = async {
             let cluster_state = self.cluster.get_state();
             let request_plan =
@@ -2117,7 +2121,7 @@ impl Session {
                             request_span.inc_speculative_executions();
                         }
 
-                        self.run_request_speculative_fiber(
+                        exec_params.run_request_speculative_fiber(
                             &shared_request_plan,
                             &run_request_once,
                             &execution_profile,
@@ -2150,22 +2154,23 @@ impl Session {
                                 request_id: *request_id,
                                 speculative_id: None,
                             });
-                    self.run_request_speculative_fiber(
-                        request_plan,
-                        &run_request_once,
-                        &execution_profile,
-                        ExecuteRequestContext {
-                            is_idempotent: statement_config.is_idempotent,
-                            consistency_set_on_statement: statement_config.consistency,
-                            retry_session: retry_policy.new_session(),
-                            history_data,
-                            load_balancing_policy: load_balancer,
-                            routing_info: &routing_info,
-                            request_span,
-                        },
-                    )
-                    .await
-                    .unwrap_or(Err(RequestError::EmptyPlan))
+                    exec_params
+                        .run_request_speculative_fiber(
+                            request_plan,
+                            &run_request_once,
+                            &execution_profile,
+                            ExecuteRequestContext {
+                                is_idempotent: statement_config.is_idempotent,
+                                consistency_set_on_statement: statement_config.consistency,
+                                retry_session: retry_policy.new_session(),
+                                history_data,
+                                load_balancing_policy: load_balancer,
+                                routing_info: &routing_info,
+                                request_span,
+                            },
+                        )
+                        .await
+                        .unwrap_or(Err(RequestError::EmptyPlan))
                 }
             }
         };
@@ -2208,14 +2213,27 @@ impl Session {
 
         Ok(result)
     }
+}
 
-    /// Executes the closure `run_request_once`, provided the load balancing plan and some information
-    /// about the request, including retry session.
-    /// If request fails, retry session is used to perform retries.
+/// All resolved per-request configuration needed to execute a request,
+/// independent of any `Session`.
+///
+/// The two-level fallback between per-statement config and the execution
+/// profile is resolved *before* constructing this struct.
+pub(crate) struct RequestExecutionParams<'a> {
+    /// Metrics sink.
+    pub(crate) metrics: &'a Arc<Metrics>,
+}
+
+impl<'a> RequestExecutionParams<'a> {
+    /// A single execution fiber.
     ///
-    /// Returns None, if provided plan is empty.
-    async fn run_request_speculative_fiber<'a, QueryFut>(
-        &'a self,
+    /// Iterates the execution plan, picking a connection for each target and each attempt,
+    /// running `run_request_once` and consulting the retry policy on failure.
+    ///
+    /// Returns `None` only if the plan was empty.
+    async fn run_request_speculative_fiber<QueryFut>(
+        &self,
         request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
@@ -2335,7 +2353,9 @@ impl Session {
 
         last_error.map(Result::Err)
     }
+}
 
+impl Session {
     /// Awaits schema agreement among all reachable nodes.
     ///
     /// Issues an agreement check each `Session::schema_agreement_interval`.
