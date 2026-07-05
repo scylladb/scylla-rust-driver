@@ -2075,6 +2075,10 @@ impl Session {
             .as_deref()
             .unwrap_or(&*execution_profile.retry_policy);
 
+        let request_timeout = statement_config
+            .request_timeout
+            .or(execution_profile.request_timeout);
+
         let exec_params = RequestExecutionParams {
             is_idempotent: statement_config.is_idempotent,
             consistency_set_on_statement: statement_config.consistency,
@@ -2169,10 +2173,7 @@ impl Session {
             }
         };
 
-        let effective_timeout = statement_config
-            .request_timeout
-            .or(execution_profile.request_timeout);
-        let result = match effective_timeout {
+        let result = match request_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner).await.unwrap_or_else(
                 |_: tokio::time::error::Elapsed| {
                     self.metrics.inc_request_timeouts();
