@@ -2065,12 +2065,6 @@ impl Session {
     where
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
-        let history_listener_and_id: Option<(&'a dyn HistoryListener, history::RequestId)> =
-            statement_config
-                .history_listener
-                .as_ref()
-                .map(|hl| (&**hl, hl.log_request_start()));
-
         let load_balancer = statement_config
             .load_balancing_policy
             .as_deref()
@@ -2089,6 +2083,12 @@ impl Session {
             load_balancing_policy: load_balancer,
             metrics: &self.metrics,
         };
+
+        let history_listener_and_id: Option<(&'a dyn HistoryListener, history::RequestId)> =
+            statement_config
+                .history_listener
+                .as_ref()
+                .map(|hl| (&**hl, hl.log_request_start()));
 
         let runner = async {
             let cluster_state = self.cluster.get_state();
