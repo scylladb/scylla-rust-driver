@@ -125,6 +125,26 @@ impl ExecuteRequestContext<'_> {
 }
 
 impl<'a> RequestExecutionParams<'a> {
+    fn inc_total_queries(&self) {
+        self.metrics.inc_total_nonpaged_queries();
+    }
+
+    fn inc_failed_queries(&self) {
+        self.metrics.inc_failed_nonpaged_queries();
+    }
+
+    fn inc_retries_num(&self) {
+        self.metrics.inc_retries_num();
+    }
+
+    fn inc_request_timeouts(&self) {
+        self.metrics.inc_request_timeouts();
+    }
+
+    fn log_query_latency(&self, latency_ms: u64) {
+        let _ = self.metrics.log_query_latency(latency_ms);
+    }
+
     /// Executes a request without handling side effects and without
     /// needing a `Session`.
     ///
@@ -223,7 +243,7 @@ impl<'a> RequestExecutionParams<'a> {
         let result = match self.request_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner).await.unwrap_or_else(
                 |_: tokio::time::error::Elapsed| {
-                    self.metrics.inc_request_timeouts();
+                    self.inc_request_timeouts();
 
                     let timeout_error = RequestError::RequestTimeout(timeout);
                     trace!(
@@ -289,7 +309,7 @@ impl<'a> RequestExecutionParams<'a> {
                 };
                 context.request_span.record_shard_id(&connection);
 
-                self.metrics.inc_total_nonpaged_queries();
+                self.inc_total_queries();
                 let request_start = std::time::Instant::now();
 
                 let connect_address = connection.get_connect_address();
@@ -311,7 +331,7 @@ impl<'a> RequestExecutionParams<'a> {
                 let request_error: RequestAttemptError = match request_result {
                     Ok(response) => {
                         trace!(parent: &span, "Request succeeded");
-                        let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
+                        self.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
                         self.load_balancing_policy.on_request_success(
                             context.routing_info,
@@ -326,7 +346,7 @@ impl<'a> RequestExecutionParams<'a> {
                             last_error = %e,
                             "Request failed"
                         );
-                        self.metrics.inc_failed_nonpaged_queries();
+                        self.inc_failed_queries();
                         self.load_balancing_policy.on_request_failure(
                             context.routing_info,
                             elapsed,
@@ -356,12 +376,12 @@ impl<'a> RequestExecutionParams<'a> {
 
                 match retry_decision {
                     RetryDecision::RetrySameTarget(new_cl) => {
-                        self.metrics.inc_retries_num();
+                        self.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
                     RetryDecision::RetryNextTarget(new_cl) => {
-                        self.metrics.inc_retries_num();
+                        self.inc_retries_num();
                         current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;
                     }
