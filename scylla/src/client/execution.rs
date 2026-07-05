@@ -22,21 +22,17 @@ pub(crate) enum RunRequestResult<ResT> {
     Completed(ResT),
 }
 
-// If a speculative execution policy is used to run request, request_plan has to be shared
-// between different async functions. This struct helps to wrap request_plan in mutex so it
-// can be shared safely.
-struct SharedPlan<'a, I>
-where
-    I: Iterator<Item = (NodeRef<'a>, Shard)>,
-{
+/// Wraps a request plan in a mutex so that it can be shared between speculative
+/// fibers running concurrently.
+struct SharedPlan<I> {
     iter: std::sync::Mutex<I>,
 }
 
-impl<'a, I> Iterator for &SharedPlan<'a, I>
+impl<Target, I> Iterator for &SharedPlan<I>
 where
-    I: Iterator<Item = (NodeRef<'a>, Shard)>,
+    I: Iterator<Item = Target>,
 {
-    type Item = (NodeRef<'a>, Shard);
+    type Item = Target;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.lock().unwrap().next()
