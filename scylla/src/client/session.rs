@@ -31,7 +31,7 @@ use crate::policies::reconnect::ExponentialReconnectPolicy;
 #[cfg(all(scylla_unstable, feature = "unstable-reconnect-policy"))]
 use crate::policies::reconnect::ReconnectPolicy;
 use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy};
-use crate::policies::speculative_execution;
+use crate::policies::speculative_execution::{self, SpeculativeExecutionPolicy};
 use crate::policies::timestamp_generator::TimestampGenerator;
 use crate::response::query_result::{MaybeFirstRowError, QueryResult, RowsError};
 use crate::response::{
@@ -2086,6 +2086,7 @@ impl Session {
             retry_policy,
             load_balancing_policy: load_balancer,
             metrics: &self.metrics,
+            speculative_policy: execution_profile.speculative_execution_policy.as_deref(),
             request_timeout,
             history_listener: statement_config.history_listener.as_deref(),
         };
@@ -2099,9 +2100,7 @@ impl Session {
                 .map(|hl| (hl, hl.log_request_start()));
 
         let runner = async {
-            let speculative_policy = execution_profile.speculative_execution_policy.as_deref();
-
-            match speculative_policy {
+            match exec_params.speculative_policy {
                 Some(speculative) if statement_config.is_idempotent => {
                     let shared_request_plan = SharedPlan {
                         iter: std::sync::Mutex::new(request_plan),
@@ -2232,6 +2231,8 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) load_balancing_policy: &'a dyn LoadBalancingPolicy,
     /// Metrics sink.
     pub(crate) metrics: &'a Arc<Metrics>,
+    /// Speculative execution policy, if any.
+    pub(crate) speculative_policy: Option<&'a dyn SpeculativeExecutionPolicy>,
     /// Client-side request timeout, if any.
     pub(crate) request_timeout: Option<Duration>,
     /// History listener, if any.
