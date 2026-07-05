@@ -2020,7 +2020,30 @@ impl Session {
 
         Ok(Some(tracing_info))
     }
+}
 
+// If a speculative execution policy is used to run request, request_plan has to be shared
+// between different async functions. This struct helps to wrap request_plan in mutex so it
+// can be shared safely.
+struct SharedPlan<'a, I>
+where
+    I: Iterator<Item = (NodeRef<'a>, Shard)>,
+{
+    iter: std::sync::Mutex<I>,
+}
+
+impl<'a, I> Iterator for &SharedPlan<'a, I>
+where
+    I: Iterator<Item = (NodeRef<'a>, Shard)>,
+{
+    type Item = (NodeRef<'a>, Shard);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.lock().unwrap().next()
+    }
+}
+
+impl Session {
     /// This method allows to easily run a request using load balancing, retry policy etc.
     /// Requires some information about the request and a closure.
     /// The closure is used to execute the request once on a chosen connection.
@@ -2057,27 +2080,6 @@ impl Session {
             let cluster_state = self.cluster.get_state();
             let request_plan =
                 load_balancing::Plan::new(load_balancer, &routing_info, &cluster_state);
-
-            // If a speculative execution policy is used to run request, request_plan has to be shared
-            // between different async functions. This struct helps to wrap request_plan in mutex so it
-            // can be shared safely.
-            struct SharedPlan<'a, I>
-            where
-                I: Iterator<Item = (NodeRef<'a>, Shard)>,
-            {
-                iter: std::sync::Mutex<I>,
-            }
-
-            impl<'a, I> Iterator for &SharedPlan<'a, I>
-            where
-                I: Iterator<Item = (NodeRef<'a>, Shard)>,
-            {
-                type Item = (NodeRef<'a>, Shard);
-
-                fn next(&mut self) -> Option<Self::Item> {
-                    self.iter.lock().unwrap().next()
-                }
-            }
 
             let retry_policy = statement_config
                 .retry_policy
