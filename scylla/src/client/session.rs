@@ -2084,6 +2084,9 @@ impl Session {
             metrics: &self.metrics,
         };
 
+        let cluster_state = self.cluster.get_state();
+        let request_plan = load_balancing::Plan::new(load_balancer, &routing_info, &cluster_state);
+
         let history_listener_and_id: Option<(&'a dyn HistoryListener, history::RequestId)> =
             statement_config
                 .history_listener
@@ -2091,10 +2094,6 @@ impl Session {
                 .map(|hl| (&**hl, hl.log_request_start()));
 
         let runner = async {
-            let cluster_state = self.cluster.get_state();
-            let request_plan =
-                load_balancing::Plan::new(load_balancer, &routing_info, &cluster_state);
-
             let speculative_policy = execution_profile.speculative_execution_policy.as_deref();
 
             match speculative_policy {
