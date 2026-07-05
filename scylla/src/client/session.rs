@@ -2086,16 +2086,17 @@ impl Session {
             retry_policy,
             load_balancing_policy: load_balancer,
             metrics: &self.metrics,
+            request_timeout,
+            history_listener: statement_config.history_listener.as_deref(),
         };
 
         let cluster_state = self.cluster.get_state();
         let request_plan = load_balancing::Plan::new(load_balancer, &routing_info, &cluster_state);
 
-        let history_listener_and_id: Option<(&'a dyn HistoryListener, history::RequestId)> =
-            statement_config
+        let history_listener_and_id: Option<(&'_ dyn HistoryListener, history::RequestId)> =
+            exec_params
                 .history_listener
-                .as_ref()
-                .map(|hl| (&**hl, hl.log_request_start()));
+                .map(|hl| (hl, hl.log_request_start()));
 
         let runner = async {
             let speculative_policy = execution_profile.speculative_execution_policy.as_deref();
@@ -2173,7 +2174,7 @@ impl Session {
             }
         };
 
-        let result = match request_timeout {
+        let result = match exec_params.request_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner).await.unwrap_or_else(
                 |_: tokio::time::error::Elapsed| {
                     self.metrics.inc_request_timeouts();
@@ -2231,6 +2232,10 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) load_balancing_policy: &'a dyn LoadBalancingPolicy,
     /// Metrics sink.
     pub(crate) metrics: &'a Arc<Metrics>,
+    /// Client-side request timeout, if any.
+    pub(crate) request_timeout: Option<Duration>,
+    /// History listener, if any.
+    pub(crate) history_listener: Option<&'a dyn HistoryListener>,
 }
 
 impl<'a> RequestExecutionParams<'a> {
