@@ -29,7 +29,6 @@ pub(crate) enum RunRequestResult<ResT> {
 #[derive(Clone, Debug)]
 pub(crate) enum RequestPaging {
     Unpaged,
-    #[expect(dead_code)] // Used in the next commit.
     Manual,
     #[expect(dead_code)] // Used in the next commit.
     Automatic,
