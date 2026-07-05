@@ -1,6 +1,7 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to execute CQL requests.
 
+use super::execution::RequestPaging;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::pager::{PreparedPagerConfig, QueryPager};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
@@ -2061,6 +2062,7 @@ impl Session {
             speculative_policy: execution_profile.speculative_execution_policy.as_deref(),
             request_timeout,
             history_listener: statement_config.history_listener.as_deref(),
+            request_kind: RequestPaging::Unpaged,
         };
 
         let cluster_state = self.cluster.get_state();
