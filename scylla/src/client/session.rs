@@ -2094,14 +2094,53 @@ impl Session {
         let cluster_state = self.cluster.get_state();
         let request_plan = load_balancing::Plan::new(load_balancer, &routing_info, &cluster_state);
 
-        let history_listener_and_id: Option<(&'_ dyn HistoryListener, history::RequestId)> =
-            exec_params
-                .history_listener
-                .map(|hl| (hl, hl.log_request_start()));
+        let result = exec_params
+            .run_request_no_side_effects(
+                &routing_info,
+                request_plan,
+                run_request_once,
+                request_span,
+            )
+            .await
+            .map_err(RequestError::into_execution_error)?;
+
+        // Automatically handle meaningful responses.
+        if let (RunRequestResult::Completed(ref response), ref coordinator) = result {
+            self.handle_set_keyspace_response(response).await?;
+            self.handle_auto_await_schema_agreement(response, coordinator.node().host_id)
+                .await?;
+        }
+
+        Ok(result)
+    }
+}
+
+impl<'a> RequestExecutionParams<'a> {
+    /// Executes a request without handling side effects and without
+    /// needing a `Session`.
+    ///
+    /// Applies the client-side timeout and, for idempotent requests with a
+    /// speculative execution policy, runs potentially multiple
+    /// [`run_request_speculative_fiber`] fibers; otherwise runs a single fiber.
+    ///
+    /// `request_plan` is an iterator of targets. `run_request_once`
+    /// performs a single attempt against a chosen connection and consistency.
+    pub(crate) async fn run_request_no_side_effects<QueryFut>(
+        &'a self,
+        routing_info: &'a RoutingInfo<'a>,
+        request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
+        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
+        request_span: &'a RequestSpan,
+    ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>
+    where
+        QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
+    {
+        let history_listener_and_id: Option<(&dyn HistoryListener, history::RequestId)> =
+            self.history_listener.map(|hl| (hl, hl.log_request_start()));
 
         let runner = async {
-            match exec_params.speculative_policy {
-                Some(speculative) if statement_config.is_idempotent => {
+            match self.speculative_policy {
+                Some(speculative) if self.is_idempotent => {
                     let shared_request_plan = SharedPlan {
                         iter: std::sync::Mutex::new(request_plan),
                     };
@@ -2129,12 +2168,12 @@ impl Session {
                             request_span.inc_speculative_executions();
                         }
 
-                        exec_params.run_request_speculative_fiber(
+                        self.run_request_speculative_fiber(
                             &shared_request_plan,
                             &run_request_once,
                             ExecuteRequestContext {
                                 history_data,
-                                routing_info: &routing_info,
+                                routing_info,
                                 request_span,
                             },
                         )
@@ -2142,7 +2181,7 @@ impl Session {
 
                     let context = speculative_execution::Context {
                         #[cfg(feature = "metrics")]
-                        metrics: Arc::clone(&self.metrics),
+                        metrics: Arc::clone(self.metrics),
                     };
 
                     speculative_execution::execute(speculative, &context, request_runner_generator)
@@ -2157,23 +2196,22 @@ impl Session {
                                 request_id: *request_id,
                                 speculative_id: None,
                             });
-                    exec_params
-                        .run_request_speculative_fiber(
-                            request_plan,
-                            &run_request_once,
-                            ExecuteRequestContext {
-                                history_data,
-                                routing_info: &routing_info,
-                                request_span,
-                            },
-                        )
-                        .await
-                        .unwrap_or(Err(RequestError::EmptyPlan))
+                    self.run_request_speculative_fiber(
+                        request_plan,
+                        &run_request_once,
+                        ExecuteRequestContext {
+                            history_data,
+                            routing_info,
+                            request_span,
+                        },
+                    )
+                    .await
+                    .unwrap_or(Err(RequestError::EmptyPlan))
                 }
             }
         };
 
-        let result = match exec_params.request_timeout {
+        let result = match self.request_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner).await.unwrap_or_else(
                 |_: tokio::time::error::Elapsed| {
                     self.metrics.inc_request_timeouts();
@@ -2197,16 +2235,7 @@ impl Session {
             }
         }
 
-        let result = result.map_err(RequestError::into_execution_error)?;
-
-        // Automatically handle meaningful responses.
-        if let (RunRequestResult::Completed(ref response), ref coordinator) = result {
-            self.handle_set_keyspace_response(response).await?;
-            self.handle_auto_await_schema_agreement(response, coordinator.node().host_id)
-                .await?;
-        }
-
-        Ok(result)
+        result
     }
 }
 
