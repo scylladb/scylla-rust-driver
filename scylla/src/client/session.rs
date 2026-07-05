@@ -2086,7 +2086,7 @@ impl Session {
             let request_plan =
                 load_balancing::Plan::new(load_balancer, &routing_info, &cluster_state);
 
-            let speculative_policy = execution_profile.speculative_execution_policy.as_ref();
+            let speculative_policy = execution_profile.speculative_execution_policy.as_deref();
 
             match speculative_policy {
                 Some(speculative) if statement_config.is_idempotent => {
@@ -2138,12 +2138,8 @@ impl Session {
                         metrics: Arc::clone(&self.metrics),
                     };
 
-                    speculative_execution::execute(
-                        speculative.as_ref(),
-                        &context,
-                        request_runner_generator,
-                    )
-                    .await
+                    speculative_execution::execute(speculative, &context, request_runner_generator)
+                        .await
                 }
                 _ => {
                     let history_data: Option<HistoryData> =
