@@ -17,6 +17,7 @@ use crate::policies::speculative_execution::{self, SpeculativeExecutionPolicy};
 use crate::response::{Coordinator, NonErrorQueryResponse};
 use crate::{cluster::NodeRef, routing::Shard};
 
+/// Result of running a request, before side effects are handled.
 pub(crate) enum RunRequestResult<ResT> {
     IgnoredWriteError,
     Completed(ResT),
@@ -68,12 +69,14 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) history_listener: Option<&'a dyn HistoryListener>,
 }
 
+/// History data threaded through a single fiber.
 struct HistoryData<'a> {
     listener: &'a dyn HistoryListener,
     request_id: history::RequestId,
     speculative_id: Option<history::SpeculativeId>,
 }
 
+/// Per-fiber execution context.
 struct ExecuteRequestContext<'a> {
     history_data: Option<HistoryData<'a>>,
     routing_info: &'a load_balancing::RoutingInfo<'a>,
