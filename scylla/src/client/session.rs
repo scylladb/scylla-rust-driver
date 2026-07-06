@@ -1485,7 +1485,7 @@ impl Session {
             statement,
             execution_profile,
             self.cluster.get_state(),
-            self.metrics.as_ref().clone(),
+            Arc::clone(&self.metrics),
             Arc::clone(&self.node_location_preference),
         )
         .await
@@ -1809,7 +1809,7 @@ impl Session {
                 values,
                 execution_profile,
                 cluster_state: self.cluster.get_state(),
-                metrics: self.metrics.as_ref().clone(),
+                metrics: Arc::clone(&self.metrics),
                 location_preference: Arc::clone(&self.node_location_preference),
             },
         )

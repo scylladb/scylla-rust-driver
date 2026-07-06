@@ -164,7 +164,7 @@ struct PagerWorker {
     timeouter: Option<PageQueryTimeouter>,
     is_idempotent: bool,
     consistency: Consistency,
-    metrics: Metrics,
+    metrics: Arc<Metrics>,
 
     paging_state: PagingState,
 
@@ -431,7 +431,7 @@ impl PagerWorker {
             'same_node_retries: loop {
                 trace!(parent: &per_target_span, "Execution started");
                 let fetch_result = self
-                    .fetch_one_page(&connection, current_consistency, &request_span, &page_query)
+                    .fetch_one_page(&connection, current_consistency, request_span, &page_query)
                     .instrument(request_span.span().clone())
                     .await;
                 let query_result = match fetch_result {
@@ -973,7 +973,7 @@ pub(crate) struct PreparedPagerConfig {
     pub(crate) values: SerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_state: Arc<ClusterState>,
-    pub(crate) metrics: Metrics,
+    pub(crate) metrics: Arc<Metrics>,
     pub(crate) location_preference: Arc<NodeLocationPreference>,
 }
 
@@ -1116,7 +1116,7 @@ If you are using this API, you are probably doing something wrong."
         statement: Statement,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_state: Arc<ClusterState>,
-        metrics: Metrics,
+        metrics: Arc<Metrics>,
         node_location_preference: Arc<NodeLocationPreference>,
     ) -> Result<Self, PagerExecutionError> {
         let consistency = statement
