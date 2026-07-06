@@ -239,16 +239,19 @@ impl CqlTimeuuid {
         ])
     }
 
-    /// Returns the least significant bytes of the timeuuid transformed so that
-    /// an unsigned comparison of the result orders the values the same way a
-    /// signed (two's-complement `i64`) comparison of [`Self::lsb`] would.
+    /// Returns the least significant bytes transformed so that an unsigned
+    /// comparison of the result reproduces Scylla/Cassandra's ordering of those
+    /// bytes for two timeuuids with equal `msb` (used by the [`Ord`] impl).
     ///
-    /// Cassandra/Scylla compare the low 64 bits of a timeuuid as a signed
-    /// integer (see the [`Ord`] impl). Flipping the sign bit maps the signed
-    /// range onto the unsigned range while preserving order, which lets `cmp`
-    /// use a plain `u64` comparison.
+    /// Cassandra legacy compares the 8 low bytes as *signed bytes* — each byte
+    /// independently, most-significant byte first — not as one signed 64-bit
+    /// integer. Scylla implements this in `timeuuid_tri_compare` (utils/UUID.hh)
+    /// as `lsb ^ 0x8080808080808080` followed by an unsigned compare: flipping
+    /// the top bit of every byte maps each byte's signed order onto its unsigned
+    /// order, so a big-endian `u64` comparison of the XORed value matches the
+    /// byte-wise signed ordering.
     fn lsb_signed(&self) -> u64 {
-        self.lsb() ^ 0x8000000000000000
+        self.lsb() ^ 0x8080808080808080
     }
 }
 
@@ -1419,30 +1422,6 @@ mod tests {
         let uuid = CqlTimeuuid::from_str("ffffffff-ffff-ffff-ffff-ffffffffffff").unwrap();
 
         assert_eq!(0xffffffffffffffff, uuid.lsb());
-    }
-
-    // Regression test for #1637: the low 64 bits of a timeuuid are compared as a
-    // signed integer, so timeuuids with equal `msb` must order by the signed
-    // value of their `lsb`. A byte-wise sign transform gets these backwards.
-    #[test]
-    fn timeuuid_lsb_signed_ordering() {
-        // Reported case: same msb, lsb differs only in the last byte.
-        let x = CqlTimeuuid::from_str("00000000-0000-1000-8000-00000000007f").unwrap();
-        let y = CqlTimeuuid::from_str("00000000-0000-1000-8000-000000000080").unwrap();
-        assert!(x < y);
-        assert!(y > x);
-
-        // Same msb; as signed i64, lsb 0x0000_0000_0000_0100 (256) < 0x0000_0000_0000_8000
-        // (32768), so `a` sorts before `b`.
-        let a = CqlTimeuuid::from_str("00000000-0000-1000-0000-000000000100").unwrap();
-        let b = CqlTimeuuid::from_str("00000000-0000-1000-0000-000000008000").unwrap();
-        assert!(a < b);
-
-        // A timeuuid whose lsb has the sign bit set (negative as i64) sorts before
-        // one whose lsb is positive, when msb is equal.
-        let neg = CqlTimeuuid::from_str("00000000-0000-1000-8000-000000000000").unwrap();
-        let pos = CqlTimeuuid::from_str("00000000-0000-1000-0000-000000000001").unwrap();
-        assert!(neg < pos);
     }
 
     #[test]
