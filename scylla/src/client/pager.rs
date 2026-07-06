@@ -35,7 +35,7 @@ use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::{self, HistoryListener};
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
-use crate::policies::retry::{RequestInfo, RetryDecision, RetrySession};
+use crate::policies::retry::{RequestInfo, RetryDecision, RetryPolicy};
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
 use crate::routing::{NodeLocationPreference, Shard, Token};
@@ -160,7 +160,7 @@ enum ShouldFetchMorePages {
 // QueryPager receives them through a channel
 struct PagerWorker {
     load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
-    retry_session: Box<dyn RetrySession>,
+    retry_policy: Arc<dyn RetryPolicy>,
     timeouter: Option<PageQueryTimeouter>,
     is_idempotent: bool,
     consistency: Consistency,
@@ -200,10 +200,11 @@ impl PagerWorker {
     {
         let mut last_error: RequestError = RequestError::EmptyPlan;
         let load_balancer = Arc::clone(&self.load_balancing_policy);
+        let mut retry_session = self.retry_policy.new_session();
 
         // Iterates over pages until exhaustion or non-retriable error.
         'paging: loop {
-            self.retry_session.reset();
+            retry_session.reset();
             let query_plan =
                 load_balancing::Plan::new(load_balancer.as_ref(), &routing_info, &cluster_state);
             let mut current_consistency: Consistency = self.consistency;
@@ -337,7 +338,7 @@ impl PagerWorker {
                         consistency: current_consistency,
                     };
 
-                    let retry_decision = self.retry_session.decide_should_retry(request_info);
+                    let retry_decision = retry_session.decide_should_retry(request_info);
                     trace!(
                         parent: &per_target_span,
                         retry_decision = ?retry_decision
@@ -392,6 +393,7 @@ impl PagerWorker {
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
+        let mut retry_session = self.retry_policy.new_session();
         let load_balancer = Arc::clone(&self.load_balancing_policy);
         let query_plan =
             load_balancing::Plan::new(load_balancer.as_ref(), routing_info, cluster_state);
@@ -482,7 +484,7 @@ impl PagerWorker {
                     consistency: current_consistency,
                 };
 
-                let retry_decision = self.retry_session.decide_should_retry(request_info);
+                let retry_decision = retry_session.decide_should_retry(request_info);
                 trace!(
                     parent: &per_target_span,
                     retry_decision = ?retry_decision
@@ -1135,11 +1137,11 @@ If you are using this API, you are probably doing something wrong."
                 .unwrap_or(&execution_profile.load_balancing_policy),
         );
 
-        let retry_session = statement
-            .get_retry_policy()
-            .map(|rp| &**rp)
-            .unwrap_or(&*execution_profile.retry_policy)
-            .new_session();
+        let retry_policy = Arc::clone(
+            statement
+                .get_retry_policy()
+                .unwrap_or(&execution_profile.retry_policy),
+        );
 
         let parent_span = tracing::Span::current();
 
@@ -1168,7 +1170,7 @@ If you are using this API, you are probably doing something wrong."
 
         let mut worker = PagerWorker {
             load_balancing_policy,
-            retry_session,
+            retry_policy,
             timeouter,
             is_idempotent: statement.config.is_idempotent,
             consistency,
@@ -1285,12 +1287,12 @@ If you are using this API, you are probably doing something wrong."
                 .unwrap_or(&config.execution_profile.load_balancing_policy),
         );
 
-        let retry_session = config
-            .prepared
-            .get_retry_policy()
-            .map(|rp| &**rp)
-            .unwrap_or(&*config.execution_profile.retry_policy)
-            .new_session();
+        let retry_policy = Arc::clone(
+            config
+                .prepared
+                .get_retry_policy()
+                .unwrap_or(&config.execution_profile.retry_policy),
+        );
 
         type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
 
@@ -1372,7 +1374,7 @@ If you are using this API, you are probably doing something wrong."
 
         let mut worker = PagerWorker {
             load_balancing_policy,
-            retry_session,
+            retry_policy,
             timeouter,
             is_idempotent: config.prepared.config.is_idempotent,
             consistency,
