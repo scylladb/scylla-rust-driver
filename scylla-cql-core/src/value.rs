@@ -239,6 +239,17 @@ impl CqlTimeuuid {
         ])
     }
 
+    /// Returns the least significant bytes transformed so that an unsigned
+    /// comparison of the result reproduces Scylla/Cassandra's ordering of those
+    /// bytes for two timeuuids with equal `msb` (used by the [`Ord`] impl).
+    ///
+    /// Cassandra legacy compares the 8 low bytes as *signed bytes* — each byte
+    /// independently, most-significant byte first — not as one signed 64-bit
+    /// integer. Scylla implements this in `timeuuid_tri_compare` (utils/UUID.hh)
+    /// as `lsb ^ 0x8080808080808080` followed by an unsigned compare: flipping
+    /// the top bit of every byte maps each byte's signed order onto its unsigned
+    /// order, so a big-endian `u64` comparison of the XORed value matches the
+    /// byte-wise signed ordering.
     fn lsb_signed(&self) -> u64 {
         self.lsb() ^ 0x8080808080808080
     }

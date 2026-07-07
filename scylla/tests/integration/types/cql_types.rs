@@ -1314,8 +1314,16 @@ async fn test_timeuuid_ordering() {
 
     // Timeuuid values, sorted in the same order as Scylla/Cassandra sorts them.
     let sorted_timeuuid_vals: Vec<CqlTimeuuid> = vec![
-        CqlTimeuuid::from_str("00000000-0000-1000-8080-808080808080").unwrap(),
-        CqlTimeuuid::from_str("00000000-0000-1000-ffff-ffffffffffff").unwrap(),
+        // These three share the same msb, so the byte-wise signed comparison of
+        // the low 64 bits decides their order (Cassandra legacy `^ 0x8080...`,
+        // see CqlTimeuuid::lsb_signed). The first two differ only in the low
+        // byte and sort `...080` before `...07f`; comparing the low bits as a
+        // single 64-bit signed integer (`^ 0x8000...`) would order them the
+        // other way, so this pair guards against that mistake. The values that
+        // used to be here sorted the same under either transform, so they never
+        // caught it.
+        CqlTimeuuid::from_str("00000000-0000-1000-8000-000000000080").unwrap(),
+        CqlTimeuuid::from_str("00000000-0000-1000-8000-00000000007f").unwrap(),
         CqlTimeuuid::from_str("00000000-0000-1000-0000-000000000000").unwrap(),
         CqlTimeuuid::from_str("fed35080-0efb-11ee-a1ca-00006490e9a4").unwrap(),
         CqlTimeuuid::from_str("00000257-0efc-11ee-9547-00006490e9a6").unwrap(),
