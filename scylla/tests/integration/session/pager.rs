@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -11,7 +11,12 @@ use assert_matches::assert_matches;
 use futures::{StreamExt as _, TryStreamExt as _};
 use scylla::{
     client::execution_profile::ExecutionProfile,
-    policies::retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession},
+    cluster::{ClusterState, NodeRef},
+    policies::{
+        load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo},
+        retry::{RequestInfo, RetryDecision, RetryPolicy, RetrySession},
+    },
+    routing::Shard,
     statement::Statement,
     value::Row,
 };
@@ -27,8 +32,8 @@ use scylla_proxy::{
 use tracing::info;
 
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, scylla_supports_tablets, setup_tracing,
-    test_with_3_node_cluster, unique_keyspace_name,
+    PerformDDL as _, create_new_session_builder, fetch_negotiated_features,
+    scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
 };
 
 /// Basic pager functionality test
@@ -702,6 +707,179 @@ async fn test_pager_retry_receives_current_consistency() {
     }
 }
 
+/// Regression test: consistency must be reset to the original query value at
+/// the start of each new page, even if a retry during a previous page
+/// downgraded it.
+///
+/// The bug: `current_consistency` not reset before starting the first query attempt
+/// for each page, so a downgrade performed during page N's retry
+/// sequence persisted into page N+1's first attempt.
+///
+/// This test observes the consistency of each Execute frame **on the wire**
+/// using proxy feedback channels, rather than inspecting what the retry policy
+/// receives. This keeps the two concerns separate:
+/// - `test_pager_retry_receives_current_consistency` verifies that the pager
+///   correctly reports `current_consistency` (not `query_consistency`) to the
+///   retry policy within a single page's retry loop.
+/// - This test verifies that `current_consistency` is reset to `query_consistency`
+///   at the start of each new page.
+///
+/// Execute sequence (all on the same node via coordinator stability):
+///
+/// | Execute # | Rule      | Consistency | Event                                       |
+/// |-----------|-----------|-------------|---------------------------------------------|
+/// | 1         | noop      | All         | Page 1 → success                            |
+/// | 2         | forge+cap | All         | Page 2, att.1 → error → downgrade All → One |
+/// | 3         | noop+cap  | One         | Page 2, att.2 → success                     |
+/// | 4         | forge+cap | All         | Page 3, att.1 → error → stop                |
+///
+/// The key assertion: Execute #4 uses `All`, not `One` — proving the reset.
+#[tokio::test]
+async fn test_pager_consistency_reset_between_pages() {
+    setup_tracing();
+
+    // The retry policy only needs to downgrade on the first failure (page 2,
+    // attempt 1) and give up on the second (page 3, attempt 1).
+    #[derive(Debug)]
+    struct DowngradeOnceThenStopPolicy;
+
+    impl RetryPolicy for DowngradeOnceThenStopPolicy {
+        fn new_session(&self) -> Box<dyn RetrySession> {
+            Box::new(DowngradeOnceThenStopSession { retried: false })
+        }
+    }
+
+    struct DowngradeOnceThenStopSession {
+        retried: bool,
+    }
+
+    impl RetrySession for DowngradeOnceThenStopSession {
+        fn decide_should_retry(&mut self, _: RequestInfo) -> RetryDecision {
+            if !self.retried {
+                self.retried = true;
+                RetryDecision::RetrySameTarget(Some(Consistency::One))
+            } else {
+                RetryDecision::DontRetry
+            }
+        }
+
+        fn reset(&mut self) {
+            self.retried = false;
+        }
+    }
+
+    let profile = ExecutionProfile::builder()
+        .consistency(Consistency::All)
+        .retry_policy(Arc::new(DowngradeOnceThenStopPolicy))
+        .build();
+
+    let features = fetch_negotiated_features(None).await;
+
+    let execute_not_control = Condition::RequestOpcode(RequestOpcode::Execute)
+        .and(Condition::not(Condition::ConnectionRegisteredAnyEvent));
+
+    // Feedback channels: the proxy sends each matched frame here so we can
+    // inspect its wire consistency after the test completes.
+    let (forged_tx, mut forged_rx) = mpsc::unbounded_channel();
+    let (passed_tx, mut passed_rx) = mpsc::unbounded_channel();
+
+    let res = test_with_3_node_cluster(
+        scylla_proxy::ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .default_execution_profile_handle(profile.into_handle())
+                .build()
+                .await
+                .unwrap();
+
+            // system_schema.tables has many built-in tables on both ScyllaDB
+            // and Cassandra, giving us at least 5 pages regardless of
+            // cluster size or backend.
+            let mut prepared = session
+                .prepare("SELECT keyspace_name FROM system_schema.tables LIMIT 5")
+                .await
+                .unwrap();
+            prepared.set_page_size(1);
+            prepared.set_is_idempotent(true);
+
+            // Rule 1: pass page 1 through silently (no feedback needed).
+            // Rule 2: forge server_error for every CL=All attempt; capture frame.
+            // Rule 3: pass everything else (CL=One retries) through; capture frame.
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_request_rules(Some(vec![
+                    RequestRule(
+                        execute_not_control
+                            .clone()
+                            .and(Condition::TrueForLimitedTimes(1)),
+                        RequestReaction::noop(),
+                    ),
+                    RequestRule(
+                        execute_not_control
+                            .clone()
+                            .and(Condition::RequestConsistency(Consistency::All, features)),
+                        RequestReaction::forge()
+                            .server_error()
+                            .with_feedback_when_performed(forged_tx.clone()),
+                    ),
+                    RequestRule(
+                        execute_not_control.clone(),
+                        RequestReaction::noop().with_feedback_when_performed(passed_tx.clone()),
+                    ),
+                ]));
+            });
+
+            let pager = session.execute_iter(prepared, ()).await.unwrap();
+            let mut stream = pager.rows_stream::<Row>().unwrap();
+            while stream.next().await.transpose().is_ok_and(|r| r.is_some()) {}
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+
+    // Helper: extract the wire consistency from a captured frame.
+    let cl = |frame: scylla_proxy::RequestFrame| {
+        frame
+            .deserialize(&features)
+            .unwrap()
+            .get_consistency()
+            .unwrap()
+    };
+
+    // Execute 2 (page 2, attempt 1): must have been sent at All.
+    let (page2_att1, _) = forged_rx.recv().await.expect("page 2 att.1 frame missing");
+    assert_eq!(
+        cl(page2_att1),
+        Consistency::All,
+        "page 2 att.1 must use All"
+    );
+
+    // Execute 3 (page 2, attempt 2): downgraded to One by the retry policy.
+    let (page2_att2, _) = passed_rx.recv().await.expect("page 2 att.2 frame missing");
+    assert_eq!(
+        cl(page2_att2),
+        Consistency::One,
+        "page 2 att.2 must use One"
+    );
+
+    // Execute 4 (page 3, attempt 1): must be reset to All, not leaked One.
+    let (page3_att1, _) = forged_rx.recv().await.expect("page 3 att.1 frame missing");
+    assert_eq!(
+        cl(page3_att1),
+        Consistency::All,
+        "page 3 att.1 must use All (reset to query_consistency), not One \
+         (leaked from page 2 downgrade)"
+    );
+}
+
 /// Regression test: `execute_iter` and `query_iter` must not return a spurious
 /// `PartitionKeyError` for token-unaware queries.
 ///
@@ -813,5 +991,395 @@ async fn test_token_unaware_pager() {
             .rows_stream::<Row>()
             .unwrap();
         assert_pager_succeeds(stream, label).await;
+    }
+}
+
+// ---------- Shared infrastructure for pager plan tests ----------
+
+/// Retry policy that always retries on the next target in the query plan.
+#[derive(Debug)]
+struct AlwaysRetryNextTargetPolicy;
+
+impl RetryPolicy for AlwaysRetryNextTargetPolicy {
+    fn new_session(&self) -> Box<dyn RetrySession> {
+        Box::new(AlwaysRetryNextTargetSession)
+    }
+}
+
+struct AlwaysRetryNextTargetSession;
+
+impl RetrySession for AlwaysRetryNextTargetSession {
+    fn decide_should_retry(&mut self, _: RequestInfo) -> RetryDecision {
+        RetryDecision::RetryNextTarget(None)
+    }
+    fn reset(&mut self) {}
+}
+
+/// Load balancing policy that always returns nodes in get_nodes_info() order.
+#[derive(Debug)]
+struct FixedOrderLBP;
+
+impl LoadBalancingPolicy for FixedOrderLBP {
+    fn pick<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        cluster: &'a ClusterState,
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
+        cluster.get_nodes_info().first().map(|node| (node, Some(0)))
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        cluster: &'a ClusterState,
+    ) -> FallbackPlan<'a> {
+        Box::new(cluster.get_nodes_info().iter().map(|node| (node, Some(0))))
+    }
+
+    fn name(&self) -> String {
+        "FixedOrderLBP".to_owned()
+    }
+}
+
+/// Load balancing policy that rotates which node is picked first on each call.
+/// This is used to prove that coordinator stability overrides LBP preference.
+#[derive(Debug)]
+struct RotatingLBP {
+    counter: AtomicUsize,
+}
+
+impl LoadBalancingPolicy for RotatingLBP {
+    fn pick<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        cluster: &'a ClusterState,
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
+        let nodes = cluster.get_nodes_info();
+        let idx = self.counter.fetch_add(1, Ordering::Relaxed) % nodes.len();
+        Some((&nodes[idx], Some(0)))
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _query: &'a RoutingInfo,
+        cluster: &'a ClusterState,
+    ) -> FallbackPlan<'a> {
+        Box::new(cluster.get_nodes_info().iter().map(|node| (node, Some(0))))
+    }
+
+    fn name(&self) -> String {
+        "RotatingLBP".to_owned()
+    }
+}
+
+// ---------- Tests ----------
+
+/// Tests that per-page query plan creation prevents plan exhaustion across pages.
+///
+/// Each node allows the 1st request, errors on the 2nd, then recovers (3rd+ succeed).
+/// With the old single-plan approach, after each node errors once, the plan is exhausted
+/// and the query fails. With per-page plans, recovered nodes are retried on subsequent pages.
+#[tokio::test]
+async fn test_pager_per_page_plan_prevents_exhaustion() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        scylla_proxy::ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .build()
+                .await
+                .unwrap();
+
+            // Set up proxy rules: per node, 1st request ok, 2nd request error, 3rd+ ok.
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_request_rules(Some(vec![
+                    // 1st Execute request: pass through.
+                    RequestRule(
+                        Condition::RequestOpcode(RequestOpcode::Execute)
+                            .and(Condition::not(Condition::ConnectionRegisteredAnyEvent))
+                            .and(Condition::TrueForLimitedTimes(1)),
+                        RequestReaction::noop(),
+                    ),
+                    // 2nd Execute request: return Overloaded error.
+                    RequestRule(
+                        Condition::RequestOpcode(RequestOpcode::Execute)
+                            .and(Condition::not(Condition::ConnectionRegisteredAnyEvent))
+                            .and(Condition::TrueForLimitedTimes(1)),
+                        RequestReaction::forge_with_error(example_db_errors::overloaded()),
+                    ),
+                    // 3rd+ Execute requests: pass through (node recovered).
+                    RequestRule(
+                        Condition::RequestOpcode(RequestOpcode::Execute)
+                            .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
+                        RequestReaction::noop(),
+                    ),
+                ]));
+            });
+
+            let profile = ExecutionProfile::builder()
+                .load_balancing_policy(Arc::new(FixedOrderLBP))
+                .retry_policy(Arc::new(AlwaysRetryNextTargetPolicy))
+                .build()
+                .into_handle();
+
+            // system_schema.tables has many built-in tables on both ScyllaDB
+            // and Cassandra, giving us at least 5 pages regardless of
+            // cluster size or backend.
+            let mut prepared = session
+                .prepare("SELECT keyspace_name FROM system_schema.tables LIMIT 5")
+                .await
+                .unwrap();
+            prepared.set_page_size(1);
+            prepared.set_is_idempotent(true);
+            prepared.set_execution_profile_handle(Some(profile));
+
+            // With the old single-plan approach, this would fail at page 4
+            // because the plan [A, B, C] gets exhausted after each node errors once.
+            // With per-page plans, recovered nodes are retried successfully.
+            let row_stream = session
+                .execute_iter(prepared, ())
+                .await
+                .unwrap()
+                .rows_stream::<(String,)>()
+                .unwrap();
+
+            let count = row_stream.map(|row| row.unwrap()).count().await;
+            assert_eq!(count, 5, "All 5 rows must be consumed successfully");
+            info!("test_pager_per_page_plan_prevents_exhaustion passed.");
+
+            running_proxy.turn_off_rules();
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
+
+/// Tests coordinator stability: once a node successfully serves a page, it is
+/// tried first for subsequent pages, regardless of what the LBP would prefer.
+///
+/// Uses a rotating LBP that picks a different node each time. Without coordinator
+/// stability, each page would go to a different node. With coordinator stability,
+/// all pages after the first go to the same node that served the first page.
+#[tokio::test]
+async fn test_pager_coordinator_stability() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        scylla_proxy::ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .build()
+                .await
+                .unwrap();
+
+            // All nodes always succeed (no proxy rules needed beyond noop).
+            // Proxy rules are off by default (pass through), which is what we want.
+            running_proxy.turn_off_rules();
+
+            let profile = ExecutionProfile::builder()
+                .load_balancing_policy(Arc::new(RotatingLBP {
+                    counter: AtomicUsize::new(0),
+                }))
+                .build()
+                .into_handle();
+
+            let mut prepared = session
+                .prepare("SELECT keyspace_name FROM system_schema.tables LIMIT 5")
+                .await
+                .unwrap();
+            prepared.set_page_size(1);
+            prepared.set_is_idempotent(true);
+            prepared.set_execution_profile_handle(Some(profile));
+
+            let mut row_stream = session
+                .execute_iter(prepared, ())
+                .await
+                .unwrap()
+                .rows_stream::<(String,)>()
+                .unwrap();
+
+            // Consume all rows.
+            while let Some(row) = row_stream.next().await {
+                row.unwrap();
+            }
+
+            // Verify coordinator stability: all pages must have been served by
+            // the same node, despite the rotating LBP preferring different nodes.
+            let coordinators: Vec<_> = row_stream
+                .request_coordinators()
+                .map(|c| c.node().host_id)
+                .collect();
+            assert!(
+                coordinators.len() >= 2,
+                "Expected at least 2 pages, got {}",
+                coordinators.len()
+            );
+            let first = coordinators[0];
+            assert!(
+                coordinators.iter().all(|&id| id == first),
+                "Coordinator stability violated: expected all pages to be served by \
+                 the same node {:?}, but got {:?}",
+                first,
+                coordinators
+            );
+            info!("test_pager_coordinator_stability passed.");
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+}
+
+/// Tests that coordinator stability correctly switches to a new node when the
+/// current coordinator starts erroring, and then remains stable on the new one.
+///
+/// Each node allows exactly 3 successful requests, then errors forever.
+/// Expected coordinator pattern (with page_size=1, 7 rows = 7 pages):
+///
+/// - Page 1: node A, req 1 → ok (A: 1/3 used)
+/// - Page 2: node A (coordinator stability), req 2 → ok (A: 2/3 used)
+/// - Page 3: node A (coordinator stability), req 3 → ok (A: 3/3 used)
+/// - Page 4: node A (coordinator stability), req 4 → error (A exhausted)
+///   → RetryNextTarget → node B, req 1 → ok (B: 1/3 used)
+/// - Page 5: node B (coordinator stability), req 2 → ok (B: 2/3 used)
+/// - Page 6: node B (coordinator stability), req 3 → ok (B: 3/3 used)
+/// - Page 7: node B (coordinator stability), req 4 → error (B exhausted)
+///   → RetryNextTarget → node C, req 1 → ok (C: 1/3 used)
+///
+/// Coordinator pattern: [A, A, A, B, B, B, C] — stable within each tenure,
+/// switches are one-directional.
+#[tokio::test]
+async fn test_pager_coordinator_switches_on_error() {
+    setup_tracing();
+
+    let res = test_with_3_node_cluster(
+        scylla_proxy::ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .build()
+                .await
+                .unwrap();
+
+            const N_ROWS: usize = 7;
+
+            // Each node allows 3 Execute requests, then errors forever.
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_request_rules(Some(vec![
+                    RequestRule(
+                        Condition::RequestOpcode(RequestOpcode::Execute)
+                            .and(Condition::not(Condition::ConnectionRegisteredAnyEvent))
+                            .and(Condition::TrueForLimitedTimes(3)),
+                        RequestReaction::noop(),
+                    ),
+                    RequestRule(
+                        Condition::RequestOpcode(RequestOpcode::Execute)
+                            .and(Condition::not(Condition::ConnectionRegisteredAnyEvent)),
+                        RequestReaction::forge_with_error(example_db_errors::overloaded()),
+                    ),
+                ]));
+            });
+
+            let profile = ExecutionProfile::builder()
+                .load_balancing_policy(Arc::new(FixedOrderLBP))
+                .retry_policy(Arc::new(AlwaysRetryNextTargetPolicy))
+                .build()
+                .into_handle();
+
+            // system_schema.tables has many built-in tables on both ScyllaDB
+            // and Cassandra, giving us at least 7 pages regardless of
+            // cluster size or backend.
+            let mut prepared = session
+                .prepare("SELECT keyspace_name FROM system_schema.tables LIMIT 7")
+                .await
+                .unwrap();
+            prepared.set_page_size(1);
+            prepared.set_is_idempotent(true);
+            prepared.set_execution_profile_handle(Some(profile));
+
+            let mut row_stream = session
+                .execute_iter(prepared, ())
+                .await
+                .unwrap()
+                .rows_stream::<(String,)>()
+                .unwrap();
+
+            let mut count = 0;
+            while let Some(row) = row_stream.next().await {
+                row.unwrap();
+                count += 1;
+            }
+            assert_eq!(
+                count, N_ROWS,
+                "All {} rows must be consumed successfully",
+                N_ROWS
+            );
+
+            // Verify the coordinator pattern: stable within each "tenure",
+            // switches are one-directional (exhausted nodes never recover).
+            let coordinators: Vec<_> = row_stream
+                .request_coordinators()
+                .map(|c| c.node().host_id)
+                .collect();
+
+            // At least 2 distinct coordinators (proving a switch happened).
+            let distinct: std::collections::HashSet<_> = coordinators.iter().collect();
+            assert!(
+                distinct.len() >= 2,
+                "Expected at least 2 distinct coordinators (switch must happen), \
+                 but got {:?}",
+                coordinators
+            );
+
+            // Verify one-directional switches: once we leave a coordinator, we
+            // never go back (since exhausted nodes don't recover in this test).
+            let mut seen_coordinators = Vec::new();
+            for &coord in &coordinators {
+                if seen_coordinators.last() != Some(&coord) {
+                    assert!(
+                        !seen_coordinators.contains(&coord),
+                        "Coordinator {:?} re-appeared after being abandoned. \
+                         Pattern: {:?}",
+                        coord,
+                        coordinators
+                    );
+                    seen_coordinators.push(coord);
+                }
+            }
+
+            info!(
+                "test_pager_coordinator_switches_on_error passed. \
+                 Coordinator pattern: {:?}",
+                coordinators
+            );
+
+            running_proxy.turn_off_rules();
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
     }
 }
