@@ -26,7 +26,7 @@ use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
 use super::metadata::reader::MetadataReader;
-use super::state::{ClusterState, ClusterStateNeatDebug};
+use super::state::ClusterState;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All state can be accessed by cloning Arc<ClusterState> in the `state` field
@@ -48,7 +48,7 @@ impl std::fmt::Debug for ClusterNeatDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cluster = self.0;
         f.debug_struct("Cluster")
-            .field("data", &ClusterStateNeatDebug(&cluster.state.load()))
+            .field("data", &cluster.state.load())
             .finish_non_exhaustive()
     }
 }
