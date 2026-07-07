@@ -387,7 +387,7 @@ impl PagerWorker {
         span_creator: SpanCreator,
         routing_info: &RoutingInfo<'_>,
         page_query: QueryFunc,
-    ) -> Result<(FirstReceivedPage, ShouldFetchMorePages), NextPageError>
+    ) -> Result<(FirstReceivedPage, ShouldFetchMorePages), RequestError>
     where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
@@ -484,7 +484,7 @@ impl PagerWorker {
                             "Request timed out"
                         );
                         // This means that we failed all attempts - in this case, due to a timeout.
-                        return Err(NextPageError::RequestFailure(request_error));
+                        return Err(request_error);
                     }
                 };
 
@@ -538,7 +538,7 @@ impl PagerWorker {
         }
 
         self.log_request_error(&last_error);
-        Err(NextPageError::RequestFailure(last_error))
+        Err(last_error)
     }
 
     async fn fetch_one_page<QueryFunc, QueryFut>(
@@ -1207,7 +1207,8 @@ If you are using this API, you are probably doing something wrong."
 
             worker
                 .query_first_page(&cluster_state, span_creator, &routing_info, page_query)
-                .await?
+                .await
+                .map_err(NextPageError::RequestFailure)?
         };
 
         /* PROCESS FIRST PAGE */
@@ -1410,7 +1411,8 @@ If you are using this API, you are probably doing something wrong."
                 &routing_info,
                 page_query,
             )
-            .await?;
+            .await
+            .map_err(NextPageError::RequestFailure)?;
 
         // Required to end the borrow of `partition_key`, so `config` can be moved into the worker task.
         std::mem::drop(partition_key);
