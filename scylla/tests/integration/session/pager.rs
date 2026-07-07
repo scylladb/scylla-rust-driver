@@ -32,7 +32,7 @@ use scylla_proxy::{
 use tracing::info;
 
 use crate::utils::{
-    PerformDDL as _, create_new_session_builder, fetch_negotiated_features,
+    CapturingRetryPolicy, PerformDDL as _, create_new_session_builder, fetch_negotiated_features,
     scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
 };
 
@@ -558,45 +558,6 @@ async fn test_pager_timeouts() {
 #[tokio::test]
 async fn test_pager_retry_receives_current_consistency() {
     setup_tracing();
-
-    /// On the first call: downgrade CL from `All` to `Two`.
-    /// On the second call: send the observed consistency and stop.
-    /// Resets `call_count` between pages (via `reset()`).
-    #[derive(Debug)]
-    struct CapturingRetryPolicy(mpsc::UnboundedSender<Consistency>);
-
-    impl RetryPolicy for CapturingRetryPolicy {
-        fn new_session(&self) -> Box<dyn RetrySession> {
-            Box::new(CapturingRetrySession {
-                tx: self.0.clone(),
-                call_count: 0,
-            })
-        }
-    }
-
-    struct CapturingRetrySession {
-        tx: mpsc::UnboundedSender<Consistency>,
-        call_count: u32,
-    }
-
-    impl RetrySession for CapturingRetrySession {
-        fn decide_should_retry(&mut self, request_info: RequestInfo) -> RetryDecision {
-            self.call_count += 1;
-            match self.call_count {
-                // First failure: simulate a consistency downgrade (All → Two).
-                1 => RetryDecision::RetrySameTarget(Some(Consistency::Two)),
-                // Second failure: record what consistency was reported.
-                _ => {
-                    let _ = self.tx.send(request_info.consistency);
-                    RetryDecision::DontRetry
-                }
-            }
-        }
-
-        fn reset(&mut self) {
-            self.call_count = 0;
-        }
-    }
 
     let execute_not_control = Condition::RequestOpcode(RequestOpcode::Execute)
         .and(Condition::not(Condition::ConnectionRegisteredAnyEvent));
