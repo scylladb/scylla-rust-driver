@@ -10,6 +10,7 @@ use scylla::cluster::NodeRef;
 use scylla::cluster::metadata::ColumnType;
 use scylla::deserialize::value::DeserializeValue;
 use scylla::errors::{DbError, ExecutionError, RequestAttemptError};
+use scylla::frame::types::Consistency;
 use scylla::policies::host_filter::AllowListHostFilter;
 use scylla::policies::load_balancing::{
     FallbackPlan, LoadBalancingPolicy, NodeIdentifier, RoutingInfo, SingleTargetLoadBalancingPolicy,
@@ -601,4 +602,50 @@ pub(crate) async fn fetch_negotiated_features(server: Option<String>) -> Protoco
     running_proxy.finish().await.unwrap();
 
     ProtocolFeatures::parse_from_supported(&supported)
+}
+
+/// A retry policy that captures the consistency seen on the second failure.
+///
+/// On the first `decide_should_retry` call it returns
+/// `RetrySameTarget(Some(Consistency::Two))`, simulating a consistency
+/// downgrade to `Two`.  On every subsequent call it sends
+/// `request_info.consistency` to the channel and returns `DontRetry`.
+///
+/// This is used by regression tests for the bug where the session/pager
+/// passed the original query consistency instead of `current_consistency`
+/// to `RequestInfo`.
+#[derive(Debug)]
+pub(crate) struct CapturingRetryPolicy(pub(crate) mpsc::UnboundedSender<Consistency>);
+
+impl RetryPolicy for CapturingRetryPolicy {
+    fn new_session(&self) -> Box<dyn RetrySession> {
+        Box::new(CapturingRetrySession {
+            tx: self.0.clone(),
+            call_count: 0,
+        })
+    }
+}
+
+pub(crate) struct CapturingRetrySession {
+    tx: mpsc::UnboundedSender<Consistency>,
+    call_count: u32,
+}
+
+impl RetrySession for CapturingRetrySession {
+    fn decide_should_retry(&mut self, request_info: RequestInfo) -> RetryDecision {
+        self.call_count += 1;
+        match self.call_count {
+            // First failure: simulate a consistency downgrade (All → Two).
+            1 => RetryDecision::RetrySameTarget(Some(Consistency::Two)),
+            // Second failure: record what consistency was reported.
+            _ => {
+                let _ = self.tx.send(request_info.consistency);
+                RetryDecision::DontRetry
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.call_count = 0;
+    }
 }

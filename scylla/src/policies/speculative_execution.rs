@@ -15,7 +15,6 @@ use tracing::{Instrument, trace_span};
 use crate::errors::{RequestAttemptError, RequestError};
 #[cfg(feature = "metrics")]
 use crate::observability::metrics::Metrics;
-use crate::response::Coordinator;
 
 /// [`Context`] is passed as an argument to [`SpeculativeExecutionPolicy`] methods.
 #[non_exhaustive]
@@ -157,13 +156,13 @@ fn can_be_ignored<ResT>(result: &Result<ResT, RequestError>) -> bool {
 
 const EMPTY_PLAN_ERROR: RequestError = RequestError::EmptyPlan;
 
-pub(crate) async fn execute<QueryFut, ResT>(
+pub(crate) async fn execute<QueryFut, T>(
     policy: &dyn SpeculativeExecutionPolicy,
     context: &Context,
     mut query_runner_generator: impl FnMut(bool) -> QueryFut,
-) -> Result<(ResT, Coordinator), RequestError>
+) -> Result<T, RequestError>
 where
-    QueryFut: Future<Output = Option<Result<(ResT, Coordinator), RequestError>>>,
+    QueryFut: Future<Output = Option<Result<T, RequestError>>>,
 {
     let mut retries_remaining = policy.max_retry_count(context);
     let retry_interval = policy.retry_interval(context);

@@ -995,7 +995,7 @@ impl Session {
                 None
             };
 
-        let statement_info = RoutingInfo {
+        let routing_info = RoutingInfo {
             consistency,
             serial_consistency,
             token: first_value_token,
@@ -1011,27 +1011,14 @@ impl Session {
             Coordinator,
         ) = self
             .run_request(
-                statement_info,
+                routing_info,
                 &batch.config,
                 execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = batch
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
-                    async move {
-                        connection
-                            .batch_with_consistency(
-                                batch,
-                                values_ref,
-                                consistency,
-                                serial_consistency,
-                            )
-                            .await
-                            .and_then(QueryResponse::into_non_error_query_response)
-                    }
+                |connection: Arc<Connection>, consistency: Consistency| async move {
+                    connection
+                        .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
+                        .await
+                        .and_then(QueryResponse::into_non_error_query_response)
                 },
                 &span,
             )
@@ -1296,15 +1283,19 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let statement_info = RoutingInfo {
-            consistency: statement
-                .config
-                .consistency
-                .unwrap_or(execution_profile.consistency),
-            serial_consistency: statement
-                .config
-                .serial_consistency
-                .unwrap_or(execution_profile.serial_consistency),
+        let consistency = statement
+            .config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+
+        let serial_consistency = statement
+            .config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+
+        let routing_info = RoutingInfo {
+            consistency,
+            serial_consistency,
             token: None,
             table: None,
             is_confirmed_lwt: false,
@@ -1318,16 +1309,10 @@ impl Session {
             Coordinator,
         ) = self
             .run_request(
-                statement_info,
+                routing_info,
                 &statement.config,
                 execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = statement
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
+                |connection: Arc<Connection>, consistency: Consistency| {
                     // Needed to avoid moving query and values into async move block
                     let values_ref = &values;
                     let paging_state_ref = &paging_state;
@@ -1696,17 +1681,21 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
+        let consistency = prepared
+            .config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+
+        let serial_consistency = prepared
+            .config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+
         let table_spec = prepared.get_table_spec();
 
-        let statement_info = RoutingInfo {
-            consistency: prepared
-                .config
-                .consistency
-                .unwrap_or(execution_profile.consistency),
-            serial_consistency: prepared
-                .config
-                .serial_consistency
-                .unwrap_or(execution_profile.serial_consistency),
+        let routing_info = RoutingInfo {
+            consistency,
+            serial_consistency,
             token,
             table: table_spec,
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
@@ -1720,7 +1709,7 @@ impl Session {
         );
 
         if !span.span().is_disabled()
-            && let (Some(table_spec), Some(token)) = (statement_info.table, token)
+            && let (Some(table_spec), Some(token)) = (routing_info.table, token)
         {
             let cluster_state = self.get_cluster_state();
             let replicas = cluster_state.get_token_endpoints_iter(table_spec, token);
@@ -1732,29 +1721,21 @@ impl Session {
             Coordinator,
         ) = self
             .run_request(
-                statement_info,
+                routing_info,
                 &prepared.config,
                 execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = prepared
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
-                    async move {
-                        connection
-                            .execute_raw_with_consistency(
-                                prepared,
-                                serialized_values,
-                                consistency,
-                                serial_consistency,
-                                page_size,
-                                paging_state_ref.clone(),
-                            )
-                            .await
-                            .and_then(QueryResponse::into_non_error_query_response)
-                    }
+                |connection: Arc<Connection>, consistency: Consistency| async move {
+                    connection
+                        .execute_raw_with_consistency(
+                            prepared,
+                            serialized_values,
+                            consistency,
+                            serial_consistency,
+                            page_size,
+                            paging_state_ref.clone(),
+                        )
+                        .await
+                        .and_then(QueryResponse::into_non_error_query_response)
                 },
                 &span,
             )
@@ -2052,10 +2033,10 @@ impl Session {
     // maybe once async closures get stabilized this can be fixed
     async fn run_request<'a, QueryFut>(
         &'a self,
-        statement_info: RoutingInfo<'a>,
+        routing_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         execution_profile: Arc<ExecutionProfileInner>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
+        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where
@@ -2075,7 +2056,7 @@ impl Session {
         let runner = async {
             let cluster_state = self.cluster.get_state();
             let request_plan =
-                load_balancing::Plan::new(load_balancer, &statement_info, &cluster_state);
+                load_balancing::Plan::new(load_balancer, &routing_info, &cluster_state);
 
             // If a speculative execution policy is used to run request, request_plan has to be shared
             // between different async functions. This struct helps to wrap request_plan in mutex so it
@@ -2144,7 +2125,7 @@ impl Session {
                                 retry_session: retry_policy.new_session(),
                                 history_data,
                                 load_balancing_policy: load_balancer,
-                                query_info: &statement_info,
+                                routing_info: &routing_info,
                                 request_span,
                             },
                         )
@@ -2181,7 +2162,7 @@ impl Session {
                             retry_session: retry_policy.new_session(),
                             history_data,
                             load_balancing_policy: load_balancer,
-                            query_info: &statement_info,
+                            routing_info: &routing_info,
                             request_span,
                         },
                     )
@@ -2236,7 +2217,7 @@ impl Session {
     async fn run_request_speculative_fiber<'a, QueryFut>(
         &'a self,
         request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
+        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteRequestContext<'a>,
     ) -> Option<Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), RequestError>>
@@ -2281,7 +2262,7 @@ impl Session {
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connect_address);
                 let request_result: Result<NonErrorQueryResponse, RequestAttemptError> =
-                    run_request_once(connection, current_consistency, execution_profile)
+                    run_request_once(connection, current_consistency)
                         .instrument(span.clone())
                         .await;
 
@@ -2292,7 +2273,7 @@ impl Session {
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
                         context.load_balancing_policy.on_request_success(
-                            context.query_info,
+                            context.routing_info,
                             elapsed,
                             node,
                         );
@@ -2306,7 +2287,7 @@ impl Session {
                         );
                         self.metrics.inc_failed_nonpaged_queries();
                         context.load_balancing_policy.on_request_failure(
-                            context.query_info,
+                            context.routing_info,
                             elapsed,
                             node,
                             &e,
@@ -2319,9 +2300,7 @@ impl Session {
                 let request_info = RequestInfo {
                     error: &request_error,
                     is_idempotent: context.is_idempotent,
-                    consistency: context
-                        .consistency_set_on_statement
-                        .unwrap_or(execution_profile.consistency),
+                    consistency: current_consistency,
                 };
 
                 let retry_decision = context.retry_session.decide_should_retry(request_info);
@@ -2670,7 +2649,7 @@ struct ExecuteRequestContext<'a> {
     retry_session: Box<dyn RetrySession>,
     history_data: Option<HistoryData<'a>>,
     load_balancing_policy: &'a dyn load_balancing::LoadBalancingPolicy,
-    query_info: &'a load_balancing::RoutingInfo<'a>,
+    routing_info: &'a load_balancing::RoutingInfo<'a>,
     request_span: &'a RequestSpan,
 }
 

@@ -1,6 +1,6 @@
 use crate::utils::{
-    PerformDDL, fetch_negotiated_features, setup_tracing, test_with_3_node_cluster,
-    unique_keyspace_name,
+    CapturingRetryPolicy, PerformDDL, fetch_negotiated_features, setup_tracing,
+    test_with_3_node_cluster, unique_keyspace_name,
 };
 use assert_matches::assert_matches;
 use scylla::client::execution_profile::ExecutionProfile;
@@ -348,6 +348,132 @@ async fn downgrading_consistency_policy_downgrades_on_unavailable() {
         Ok(()) => (),
         Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
         Err(err) => panic!("{}", err),
+    }
+}
+
+/// Regression test for the bug where `Session::run_request_speculative_fiber`
+/// passed the original query consistency instead of `current_consistency` to
+/// `RequestInfo` in the retry loop.
+///
+/// A custom retry policy:
+/// 1. On the first failure: returns `RetrySameTarget(Some(Consistency::Two))`
+///    (simulating a downgrade from `All`).
+/// 2. On the second failure: sends the observed `RequestInfo::consistency`
+///    to a channel and returns `DontRetry`.
+///
+/// Both `query_unpaged` (unprepared) and `execute_unpaged` (prepared) paths
+/// are exercised, since both go through the same retry loop.
+///
+/// Before the fix, `current_consistency` was not passed to `RequestInfo`;
+/// the original query consistency (`All`) was used instead. After the fix
+/// the downgraded value (`Two`) is correctly forwarded.
+#[tokio::test]
+async fn test_session_retry_receives_current_consistency() {
+    setup_tracing();
+
+    let execute_not_control = Condition::RequestOpcode(RequestOpcode::Execute)
+        .and(Condition::not(Condition::ConnectionRegisteredAnyEvent));
+    let query_not_control = Condition::RequestOpcode(RequestOpcode::Query)
+        .and(Condition::not(Condition::ConnectionRegisteredAnyEvent));
+
+    // Case 1: unprepared query via `query_unpaged`.
+    let (tx1, mut rx1) = mpsc::unbounded_channel::<Consistency>();
+    let profile1 = ExecutionProfile::builder()
+        .consistency(Consistency::All)
+        .retry_policy(Arc::new(CapturingRetryPolicy(tx1)))
+        .build();
+
+    // Case 2: prepared statement via `execute_unpaged`.
+    let (tx2, mut rx2) = mpsc::unbounded_channel::<Consistency>();
+    let profile2 = ExecutionProfile::builder()
+        .consistency(Consistency::All)
+        .retry_policy(Arc::new(CapturingRetryPolicy(tx2)))
+        .build();
+
+    let res = test_with_3_node_cluster(
+        ShardAwareness::QueryNode,
+        |proxy_uris, translation_map, mut running_proxy| async move {
+            let session: Session = SessionBuilder::new()
+                .known_node(proxy_uris[0].as_str())
+                .address_translator(Arc::new(translation_map))
+                .build()
+                .await
+                .unwrap();
+
+            // No DDL needed: both queries target system tables that always
+            // exist.
+
+            // --- Case 1: unprepared query ---
+            // Forge server errors on all Query requests whose body contains
+            // "system_schema.tables" (i.e. our specific statement, not
+            // driver-internal queries).
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_request_rules(Some(vec![RequestRule(
+                    query_not_control
+                        .clone()
+                        .and(Condition::BodyContainsCaseSensitive(Box::new(
+                            *b"system_schema.tables",
+                        ))),
+                    RequestReaction::forge().server_error(),
+                )]));
+            });
+            let mut stmt =
+                Statement::from("SELECT keyspace_name FROM system_schema.tables LIMIT 7");
+            stmt.set_is_idempotent(true);
+            stmt.set_execution_profile_handle(Some(profile1.into_handle()));
+            let _ = session.query_unpaged(stmt, ()).await;
+
+            running_proxy
+                .running_nodes
+                .iter_mut()
+                .for_each(|node| node.change_request_rules(None));
+
+            // --- Case 2: prepared statement ---
+            // Forge server errors on all Execute requests (Execute opcode is
+            // only used for prepared statements, so no further filtering is
+            // needed).
+            running_proxy.running_nodes.iter_mut().for_each(|node| {
+                node.change_request_rules(Some(vec![RequestRule(
+                    execute_not_control.clone(),
+                    RequestReaction::forge().server_error(),
+                )]));
+            });
+            let mut prepared = session
+                .prepare("SELECT keyspace_name FROM system_schema.tables LIMIT 7")
+                .await
+                .unwrap();
+            prepared.set_is_idempotent(true);
+            prepared.set_execution_profile_handle(Some(profile2.into_handle()));
+            let _ = session.execute_unpaged(&prepared, ()).await;
+
+            running_proxy
+                .running_nodes
+                .iter_mut()
+                .for_each(|node| node.change_request_rules(None));
+
+            running_proxy
+        },
+    )
+    .await;
+
+    match res {
+        Ok(()) => (),
+        Err(ProxyError::Worker(WorkerError::DriverDisconnected(_))) => (),
+        Err(err) => panic!("{}", err),
+    }
+
+    // Both retry sessions must have observed Consistency::Two (the downgraded
+    // CL), not Consistency::All (the original query CL).
+    for (label, rx) in [("query_unpaged", &mut rx1), ("execute_unpaged", &mut rx2)] {
+        let observed = rx.recv().await.unwrap_or_else(|| {
+            panic!("[{label}] retry policy did not send an observed consistency")
+        });
+        assert_eq!(
+            observed,
+            Consistency::Two,
+            "[{label}] session must pass the downgraded consistency (Two) to \
+             RequestInfo, not the original query consistency (All)"
+        );
     }
 }
 
