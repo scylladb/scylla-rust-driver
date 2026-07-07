@@ -92,14 +92,8 @@ impl ExecuteRequestContext<'_> {
     }
 
     fn log_attempt_success(&self, attempt_id_opt: &Option<history::AttemptId>) {
-        let attempt_id: &history::AttemptId = match attempt_id_opt {
-            Some(id) => id,
-            None => return,
-        };
-
-        let history_data: &HistoryData = match &self.history_data {
-            Some(data) => data,
-            None => return,
+        let (Some(history_data), Some(attempt_id)) = (&self.history_data, attempt_id_opt) else {
+            return;
         };
 
         history_data.listener.log_attempt_success(*attempt_id);
@@ -111,14 +105,8 @@ impl ExecuteRequestContext<'_> {
         error: &RequestAttemptError,
         retry_decision: &RetryDecision,
     ) {
-        let attempt_id: &history::AttemptId = match attempt_id_opt {
-            Some(id) => id,
-            None => return,
-        };
-
-        let history_data: &HistoryData = match &self.history_data {
-            Some(data) => data,
-            None => return,
+        let (Some(history_data), Some(attempt_id)) = (&self.history_data, attempt_id_opt) else {
+            return;
         };
 
         history_data
