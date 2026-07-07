@@ -269,6 +269,15 @@ async fn run_test_default_policy_is_tablet_aware_attempt(
 ) -> Result<(), String> {
     populate_internal_driver_tablet_info(session, prepared, value_per_tablet, feedback_rxs).await?;
 
+    // Refresh the whole metadata to make sure that the tablet info the driver
+    // learned above survives a metadata refresh (which happens periodically and
+    // during tablet maintenance). If the refresh dropped the tablet mapping,
+    // the verification below would start receiving feedback again.
+    session
+        .refresh_metadata()
+        .await
+        .map_err(|e| format!("refresh_metadata failed: {e}"))?;
+
     // Now we must have info about all the tablets. It should not be
     // possible to receive any feedback if DefaultPolicy is properly
     // tablet-aware.
