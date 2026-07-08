@@ -2,7 +2,10 @@
 
 use bytes::Bytes;
 
+use crate::deserialize::value::DeserializeValue;
+use crate::deserialize::{DeserializationError, TypeCheckError};
 use crate::frame::frame_errors::LowLevelDeserializationError;
+use crate::frame::response::result::ColumnType;
 use crate::frame::types;
 
 /// A borrowed reference to a part of the frame.
@@ -189,6 +192,23 @@ impl<'frame> FrameSlice<'frame> {
             frame_subslice: cql_bytes,
             original_frame: self.original_frame,
         }))
+    }
+}
+
+// What is the purpose of implementing DeserializeValue for Option<FrameSlice<'_>>?
+//
+// Sometimes users might be interested in operating on Option<FrameSlice<'_>> directly.
+// Implementing DeserializeValue for it allows us to simplify our interface.
+impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for Option<FrameSlice<'frame>> {
+    fn type_check(_typ: &ColumnType) -> Result<(), TypeCheckError> {
+        Ok(())
+    }
+
+    fn deserialize(
+        _typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        Ok(v)
     }
 }
 

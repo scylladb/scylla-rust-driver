@@ -449,9 +449,7 @@ impl DeserializedMetadataAndRawRows {
         TypedRowIterator::new(raw)
     }
 
-    /// Allows to retrieve raw rows, without the need for deserialization
-    /// Intended to be used only in nodejs-rs driver only.
-    #[cfg(all(scylla_unstable, feature = "unstable-nodejs-rs"))]
+    /// Allows to retrieve raw rows, without the need for deserialization.
     pub fn raw_rows(&self) -> &Bytes {
         &self.raw_rows
     }

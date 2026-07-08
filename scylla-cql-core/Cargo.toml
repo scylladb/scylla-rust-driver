@@ -50,6 +50,10 @@ full-serialization = [
     "bigdecimal-04",
 ]
 
+### UNSTABLE FEATURES ###
+# Enables features for use in Python-RS Driver.
+unstable-python-rs = []
+
 
 [dependencies]
 # Important: We use precise version of scylla-macros. This enables

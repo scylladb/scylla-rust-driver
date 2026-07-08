@@ -127,6 +127,14 @@ impl QueryResult {
         }
     }
 
+    /// Returns the deserialized metadata and raw rows.
+    /// Public only when the `unstable-python-rs` feature is enabled.
+    #[cfg(all(scylla_unstable, feature = "unstable-python-rs"))]
+    pub fn deserialized_metadata_and_rows(&self) -> Option<&DeserializedMetadataAndRawRows> {
+        self.deserialized_metadata_and_rows.as_ref()
+    }
+
+    #[cfg(not(all(scylla_unstable, feature = "unstable-python-rs")))]
     pub(crate) fn deserialized_metadata_and_rows(&self) -> Option<&DeserializedMetadataAndRawRows> {
         self.deserialized_metadata_and_rows.as_ref()
     }
