@@ -230,12 +230,12 @@ pub struct Metrics {
 struct MetricsInner {
     /// Number of errors that occurred in queries executed without `QueryPager`.
     errors_num: AtomicU64,
-    /// Number of queries executed without `QueryPager`.
-    queries_num: AtomicU64,
+    /// Number of requests executed without `QueryPager`.
+    requests_num: AtomicU64,
     /// Number of errors that occurred in queries executed with `QueryPager`.
     errors_iter_num: AtomicU64,
-    /// Number of queries executed with `QueryPager`.
-    queries_iter_num: AtomicU64,
+    /// Number of requests executed with `QueryPager`.
+    requests_iter_num: AtomicU64,
     /// Number of times a retry policy has decided to retry a query.
     retries_num: AtomicU64,
     /// Histogram that collects latencies of queries executed by the driver.
@@ -265,9 +265,9 @@ impl Metrics {
         Self {
             inner: Arc::new(MetricsInner {
                 errors_num: AtomicU64::new(0),
-                queries_num: AtomicU64::new(0),
+                requests_num: AtomicU64::new(0),
                 errors_iter_num: AtomicU64::new(0),
-                queries_iter_num: AtomicU64::new(0),
+                requests_iter_num: AtomicU64::new(0),
                 retries_num: AtomicU64::new(0),
                 histogram: Arc::new(AtomicHistogram::new(grouping_power, max_value_power).unwrap()),
                 meter: Arc::new(RequestRateMeter::new()),
@@ -285,7 +285,7 @@ impl Metrics {
 
     /// Increments counter for nonpaged queries.
     pub(crate) fn inc_total_nonpaged_queries(&self) {
-        self.inner.queries_num.fetch_add(1, ORDER_TYPE);
+        self.inner.requests_num.fetch_add(1, ORDER_TYPE);
         self.inner.meter.mark();
     }
 
@@ -297,7 +297,7 @@ impl Metrics {
     /// Increments counter for page queries in paged queries.
     /// If query_iter would return 4 pages then this counter should be incremented 4 times.
     pub(crate) fn inc_total_paged_queries(&self) {
-        self.inner.queries_iter_num.fetch_add(1, ORDER_TYPE);
+        self.inner.requests_iter_num.fetch_add(1, ORDER_TYPE);
         self.inner.meter.mark();
     }
 
@@ -412,7 +412,7 @@ impl Metrics {
 
     /// Returns counter for nonpaged queries
     pub fn get_queries_num(&self) -> u64 {
-        self.inner.queries_num.load(ORDER_TYPE)
+        self.inner.requests_num.load(ORDER_TYPE)
     }
 
     /// Returns counter for errors occurred in paged queries
@@ -422,7 +422,7 @@ impl Metrics {
 
     /// Returns counter for pages requested in paged queries
     pub fn get_queries_iter_num(&self) -> u64 {
-        self.inner.queries_iter_num.load(ORDER_TYPE)
+        self.inner.requests_iter_num.load(ORDER_TYPE)
     }
 
     /// Returns counter measuring how many times a retry policy has decided to retry a query
@@ -574,9 +574,9 @@ impl std::fmt::Debug for Metrics {
         let h = self.inner.histogram.load();
         f.debug_struct("Metrics")
             .field("errors_num", &self.inner.errors_num)
-            .field("queries_num", &self.inner.queries_num)
+            .field("requests_num", &self.inner.requests_num)
             .field("errors_iter_num", &self.inner.errors_iter_num)
-            .field("queries_iter_num", &self.inner.queries_iter_num)
+            .field("requests_iter_num", &self.inner.requests_iter_num)
             .field("retries_num", &self.inner.retries_num)
             .field("histogram", &h)
             .field("meter", &self.inner.meter)
