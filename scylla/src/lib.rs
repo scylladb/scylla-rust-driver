@@ -240,7 +240,7 @@ pub mod deserialize {
     pub mod value {
         pub use scylla_cql_core::deserialize::value::{
             BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
-            BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator,
+            BuiltinTypeCheckErrorKind, DeserializeValue, FrameSliceWithMetadata, ListlikeIterator,
             MapDeserializationErrorKind, MapIterator, MapTypeCheckErrorKind,
             SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind,
             TupleDeserializationErrorKind, TupleTypeCheckErrorKind, UdtIterator,

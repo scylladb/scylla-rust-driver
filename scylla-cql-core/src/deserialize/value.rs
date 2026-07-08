@@ -1592,6 +1592,39 @@ where
     }
 }
 
+/// A type that pairs a frame slice with its column metadata during deserialization.
+/// This is useful when you need both the raw serialized data and the type information
+/// to properly interpret or further deserialize the value.
+pub struct FrameSliceWithMetadata<'frame, 'metadata> {
+    pub frame_slice: Option<FrameSlice<'frame>>,
+    pub column_type: &'metadata ColumnType<'metadata>,
+}
+
+/// What is the purpose of implementing DeserializeValue for FrameSliceWithMetadata<'_, '_>?
+///
+/// Sometimes users might be interested in getting both the raw frame slice and the column
+/// metadata together during deserialization. This allows deferred or custom deserialization
+/// where the user needs access to the type information alongside the serialized bytes.
+/// Implementing DeserializeValue for FrameSliceWithMetadata<'_, '_> allows us to
+/// simplify our interface and provide this capability directly.
+impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata>
+    for FrameSliceWithMetadata<'frame, 'metadata>
+{
+    fn type_check(_typ: &ColumnType) -> Result<(), TypeCheckError> {
+        Ok(())
+    }
+
+    fn deserialize(
+        typ: &'metadata ColumnType<'metadata>,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        Ok(FrameSliceWithMetadata {
+            frame_slice: v,
+            column_type: typ,
+        })
+    }
+}
+
 // tuples
 
 // Implements tuple deserialization.
