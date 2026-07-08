@@ -581,21 +581,10 @@ fn prepared_for_keys<K: SerializeRow + 'static>(
         .collect()
 }
 
-/// Whether a phase is expected to produce tablet feedback.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FeedbackExpectation {
-    /// The driver already knows the tablets, so it routes straight to a replica
-    /// and the server sends no feedback. This is the correct behavior.
-    Zero,
-    /// The driver mis-routes and the server keeps re-teaching it via feedback.
-    /// Currently only used to pin the materialized-view bug (see
-    /// [`verify_materialized_view_tablet_bug`]).
-    NonZero,
-}
-
-/// Runs each key's prepared statement [`VERIFY_QUERY_COUNT`] times and checks the
-/// resulting tablet-routing behavior. Assumes the driver already has the relevant
-/// tablet info populated locally (see [`learn_tablet_info`]).
+/// Runs each key's prepared statement [`VERIFY_QUERY_COUNT`] times and asserts
+/// the driver routes straight to a replica -- i.e. the server sends no tablet
+/// feedback. Assumes the driver already has the relevant tablet info populated
+/// locally (see [`learn_tablet_info`]).
 ///
 /// Every execution reports the node+shard that served it via its result's
 /// `QueryResult::request_coordinator`, so we can attribute each response to a
@@ -608,7 +597,6 @@ enum FeedbackExpectation {
 async fn verify_feedback_for_keys(
     session: &Session,
     per_key: &[PreparedForKey],
-    expected: FeedbackExpectation,
     require_single_coordinator: bool,
     feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
 ) -> Result<(), String> {
@@ -643,13 +631,9 @@ async fn verify_feedback_for_keys(
     }
 
     let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
-    let ok = match expected {
-        FeedbackExpectation::Zero => feedbacks == 0,
-        FeedbackExpectation::NonZero => feedbacks > 0,
-    };
-    if !ok {
+    if feedbacks != 0 {
         return Err(format!(
-            "Expected {expected:?} tablet feedback in verify phase, received {feedbacks}"
+            "Expected no tablet feedback in verify phase, received {feedbacks}"
         ));
     }
     Ok(())
@@ -801,15 +785,9 @@ async fn verify_case(
     // Token-aware LWTs additionally use the LWT optimization: every query for a
     // given key is pinned to a single replica+shard to avoid Paxos contention.
     let require_single_coordinator = descriptor.is_token_aware() && descriptor.op.is_lwt();
-    verify_feedback_for_keys(
-        session,
-        &per_key,
-        FeedbackExpectation::Zero,
-        require_single_coordinator,
-        feedback_rxs,
-    )
-    .await
-    .map_err(|e| format!("{descriptor:?}: {e}"))
+    verify_feedback_for_keys(session, &per_key, require_single_coordinator, feedback_rxs)
+        .await
+        .map_err(|e| format!("{descriptor:?}: {e}"))
 }
 
 /// Runs the whole set of query-variant subtests against a freshly populated
@@ -849,24 +827,19 @@ async fn run_tablet_cases(
     .await;
 }
 
-/// Exercises tablet routing for a materialized view, asserting the driver's
-/// *current, buggy* behavior.
+/// Exercises tablet routing for a materialized view.
 ///
 /// The tablet cache is keyed by table name, and the maintenance step that runs
-/// on every metadata refresh drops any cached tablet whose table is not in the
-/// keyspace's `tables` map. Materialized views live in a separate `views` map,
-/// so their tablet info is wiped on every refresh, after which the driver falls
-/// back to (non-tablet) vnode routing and the server has to keep re-teaching it
-/// via tablet feedback.
+/// on every metadata refresh drops any cached tablet whose table is not known
+/// to the keyspace. Materialized views live in a separate `views` map (distinct
+/// from the `tables` map), so the maintenance step must consult both -- which it
+/// does, so a view's tablet info survives metadata refreshes just like a base
+/// table's.
 ///
 /// This subtest learns the view's tablet info, forces a metadata refresh, and
-/// then asserts that token-aware queries against the view *still* receive tablet
-/// feedback -- unlike the base-table cases, which receive none.
-///
-/// TODO: once the driver maintains tablet info for materialized views across
-/// metadata refreshes, this subtest should assert ZERO feedback after the
-/// refresh, exactly like the base-table cases.
-async fn verify_materialized_view_tablet_bug(
+/// then asserts that token-aware queries against the view route straight to a
+/// replica and receive no tablet feedback, exactly like the base-table cases.
+async fn verify_materialized_view_tablet_routing(
     session: &Session,
     feedback_rxs: &mut [UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>],
 ) {
@@ -902,13 +875,13 @@ async fn verify_materialized_view_tablet_bug(
         .await
         .unwrap();
     // The driver computes the token from the view's partition key, so the query
-    // is token-aware even though the routing itself is currently broken.
+    // is token-aware.
     assert!(mv_select.is_token_aware());
 
     with_migration_retry(session, &ks, "mv", async |tablets| {
         // The view has many tablets; sampling a handful of them (each with a
-        // distinct partition-key value) is enough to observe the mis-routing,
-        // and keeps the subtest fast.
+        // distinct partition-key value) is enough to exercise the routing, and
+        // keeps the subtest fast.
         const MV_SAMPLED_TABLETS: usize = 8;
         let mv_keys: Vec<(i32,)> = calculate_key_per_tablet(tablets, &mv_select, |i| (i,))
             .into_iter()
@@ -918,26 +891,17 @@ async fn verify_materialized_view_tablet_bug(
 
         learn_tablet_info(session, &per_key, feedback_rxs).await?;
 
-        // Refreshing the metadata wipes the view's tablet info (the bug).
+        // The cached tablet info must survive a metadata refresh: the tablet
+        // maintenance step consults the keyspace's `views` map as well as its
+        // `tables` map, so the view's tablets are not dropped.
         session
             .refresh_metadata()
             .await
             .map_err(|e| format!("refresh_metadata failed: {e}"))?;
 
-        // With correct behavior the driver would now route straight to each
-        // tablet's replica and receive no feedback. Because the view's tablet
-        // info was dropped, the driver mis-routes and the server teaches it again.
-        //
-        // TODO: change to `FeedbackExpectation::Zero` once materialized-view
-        // tablet routing survives metadata refreshes.
-        verify_feedback_for_keys(
-            session,
-            &per_key,
-            FeedbackExpectation::NonZero,
-            false,
-            feedback_rxs,
-        )
-        .await
+        // Token-aware queries against the view should now route straight to a
+        // replica without any feedback, exactly like a base table.
+        verify_feedback_for_keys(session, &per_key, false, feedback_rxs).await
     })
     .await;
 
@@ -1015,14 +979,7 @@ async fn verify_cdc_log_tablet_routing(
 
         // Token-aware queries should now route straight to a replica without
         // any feedback.
-        verify_feedback_for_keys(
-            session,
-            &per_key,
-            FeedbackExpectation::Zero,
-            false,
-            feedback_rxs,
-        )
-        .await
+        verify_feedback_for_keys(session, &per_key, false, feedback_rxs).await
     })
     .await;
 
@@ -1225,10 +1182,9 @@ async fn test_tablets() {
     .await;
 }
 
-/// Exercises tablet routing for a materialized view, asserting the driver's
-/// *current, buggy* behavior. Runs in its own keyspace (see
-/// [`verify_materialized_view_tablet_bug`] for the details of the bug and why
-/// the keyspace must use RF=1).
+/// Exercises tablet routing for a materialized view. Runs in its own keyspace
+/// (see [`verify_materialized_view_tablet_routing`] for the details and why the
+/// keyspace must use RF=1).
 #[tokio::test]
 async fn test_tablets_materialized_view() {
     with_tablet_session(|session, mut feedback_rxs| async move {
@@ -1241,7 +1197,7 @@ async fn test_tablets_materialized_view() {
             return;
         }
 
-        verify_materialized_view_tablet_bug(&session, &mut feedback_rxs).await;
+        verify_materialized_view_tablet_routing(&session, &mut feedback_rxs).await;
     })
     .await;
 }
