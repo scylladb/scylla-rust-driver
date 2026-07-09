@@ -3,6 +3,8 @@ mod cluster_reachability;
 mod db_errors;
 mod history;
 mod internal_requests;
+#[cfg(feature = "metrics")]
+mod metrics;
 mod new_session;
 mod pager;
 mod retries;

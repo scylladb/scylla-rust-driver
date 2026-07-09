@@ -23,6 +23,17 @@ pub(crate) enum RunRequestResult<ResT> {
     Completed(ResT),
 }
 
+/// Specifies the mechanism used for query paging.
+///
+/// Currently, only for the purpose of bumping the right metrics counters.
+#[derive(Clone, Debug)]
+pub(crate) enum RequestPaging {
+    Unpaged,
+    Manual,
+    #[expect(dead_code)] // Used in the next commit.
+    Automatic,
+}
+
 /// Wraps a request plan in a mutex so that it can be shared between speculative
 /// fibers running concurrently.
 struct SharedPlan<I> {
@@ -67,6 +78,8 @@ pub(crate) struct RequestExecutionParams<'a> {
     pub(crate) request_timeout: Option<Duration>,
     /// History listener, if any.
     pub(crate) history_listener: Option<&'a dyn HistoryListener>,
+    /// Paged vs non-paged, for metrics.
+    pub(crate) request_kind: RequestPaging,
 }
 
 /// History data threaded through a single fiber.
@@ -117,11 +130,19 @@ impl ExecuteRequestContext<'_> {
 
 impl<'a> RequestExecutionParams<'a> {
     fn inc_total_queries(&self) {
-        self.metrics.inc_total_nonpaged_queries();
+        match self.request_kind {
+            RequestPaging::Unpaged => self.metrics.inc_total_nonpaged_queries(),
+            RequestPaging::Manual => self.metrics.inc_total_manually_paged_queries(),
+            RequestPaging::Automatic => self.metrics.inc_total_automatically_paged_queries(),
+        }
     }
 
     fn inc_failed_queries(&self) {
-        self.metrics.inc_failed_nonpaged_queries();
+        match self.request_kind {
+            RequestPaging::Unpaged => self.metrics.inc_failed_nonpaged_queries(),
+            RequestPaging::Manual => self.metrics.inc_failed_manually_paged_queries(),
+            RequestPaging::Automatic => self.metrics.inc_failed_automatically_paged_queries(),
+        }
     }
 
     fn inc_retries_num(&self) {

@@ -24,10 +24,16 @@ impl Metrics {
     pub(crate) fn inc_total_nonpaged_queries(&self) {}
 
     #[inline(always)]
-    pub(crate) fn inc_failed_paged_queries(&self) {}
+    pub(crate) fn inc_failed_manually_paged_queries(&self) {}
 
     #[inline(always)]
-    pub(crate) fn inc_total_paged_queries(&self) {}
+    pub(crate) fn inc_total_manually_paged_queries(&self) {}
+
+    #[inline(always)]
+    pub(crate) fn inc_failed_automatically_paged_queries(&self) {}
+
+    #[inline(always)]
+    pub(crate) fn inc_total_automatically_paged_queries(&self) {}
 
     #[inline(always)]
     pub(crate) fn inc_retries_num(&self) {}

@@ -1,6 +1,7 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to execute CQL requests.
 
+use super::execution::RequestPaging;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::pager::{PreparedPagerConfig, QueryPager};
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
@@ -769,7 +770,13 @@ impl Session {
     ) -> Result<QueryResult, ExecutionError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let (result, paging_state) = self
-            .execute(prepared, &serialized_values, None, PagingState::start())
+            .execute(
+                prepared,
+                &serialized_values,
+                None,
+                PagingState::start(),
+                RequestPaging::Unpaged,
+            )
             .await?;
         if !paging_state.finished() {
             error!(
@@ -846,8 +853,14 @@ impl Session {
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let page_size = prepared.get_validated_page_size();
-        self.execute(prepared, &serialized_values, Some(page_size), paging_state)
-            .await
+        self.execute(
+            prepared,
+            &serialized_values,
+            Some(page_size),
+            paging_state,
+            RequestPaging::Manual,
+        )
+        .await
     }
 
     /// Execute a prepared statement with paging.\
@@ -1007,6 +1020,8 @@ impl Session {
                 routing_info,
                 &batch.config,
                 execution_profile,
+                // Batch statements are always unpaged, because they can't contain SELECTs.
+                RequestPaging::Unpaged,
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
@@ -1225,7 +1240,13 @@ impl Session {
         values: impl SerializeRow,
     ) -> Result<QueryResult, ExecutionError> {
         let (result, paging_state_response) = self
-            .query(statement, values, None, PagingState::start())
+            .query(
+                statement,
+                values,
+                None,
+                PagingState::start(),
+                RequestPaging::Unpaged,
+            )
             .await?;
         if !paging_state_response.finished() {
             error!(
@@ -1249,6 +1270,7 @@ impl Session {
             values,
             Some(statement.get_validated_page_size()),
             paging_state,
+            RequestPaging::Manual,
         )
         .await
     }
@@ -1270,6 +1292,7 @@ impl Session {
         values: impl SerializeRow,
         page_size: Option<PageSize>,
         paging_state: PagingState,
+        request_paging: RequestPaging,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         let execution_profile = statement
             .get_execution_profile_handle()
@@ -1305,6 +1328,7 @@ impl Session {
                 routing_info,
                 &statement.config,
                 execution_profile,
+                request_paging,
                 |connection: Arc<Connection>, consistency: Consistency| {
                     // Needed to avoid moving query and values into async move block
                     let values_ref = &values;
@@ -1658,6 +1682,7 @@ impl Session {
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
         paging_state: PagingState,
+        request_paging: RequestPaging,
     ) -> Result<(QueryResult, PagingStateResponse), ExecutionError> {
         let paging_state_ref = &paging_state;
 
@@ -1717,6 +1742,7 @@ impl Session {
                 routing_info,
                 &prepared.config,
                 execution_profile,
+                request_paging,
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .execute_raw_with_consistency(
@@ -2031,6 +2057,7 @@ impl Session {
         routing_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         execution_profile: Arc<ExecutionProfileInner>,
+        request_kind: RequestPaging,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
@@ -2061,6 +2088,7 @@ impl Session {
             speculative_policy: execution_profile.speculative_execution_policy.as_deref(),
             request_timeout,
             history_listener: statement_config.history_listener.as_deref(),
+            request_kind,
         };
 
         let cluster_state = self.cluster.get_state();

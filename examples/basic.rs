@@ -90,10 +90,22 @@ async fn main() -> Result<()> {
     }
 
     let metrics = session.get_metrics();
-    println!("Queries requested: {}", metrics.get_queries_num());
-    println!("Iter queries requested: {}", metrics.get_queries_iter_num());
-    println!("Errors occurred: {}", metrics.get_errors_num());
-    println!("Iter errors occurred: {}", metrics.get_errors_iter_num());
+    println!(
+        "Unpaged queries requested: {}",
+        metrics.get_requests_unpaged_num()
+    );
+    println!(
+        "Automatically paged queries requested: {}",
+        metrics.get_requests_automatically_paged_num()
+    );
+    println!(
+        "Errors occurred in unpaged requests: {}",
+        metrics.get_errors_unpaged_num()
+    );
+    println!(
+        "Errors occurred in automatically paged requests: {}",
+        metrics.get_errors_automatically_paged_num()
+    );
     println!("Average latency: {}", metrics.get_latency_avg_ms()?);
     println!(
         "99.9 latency percentile: {}",

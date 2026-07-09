@@ -552,7 +552,7 @@ impl PagerWorker {
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
     {
-        self.metrics.inc_total_paged_queries();
+        self.metrics.inc_total_automatically_paged_queries();
         let query_start = std::time::Instant::now();
 
         let connect_address = connection.get_connect_address();
@@ -635,7 +635,7 @@ impl PagerWorker {
                 ))
             }
             Err(err) => {
-                self.metrics.inc_failed_paged_queries();
+                self.metrics.inc_failed_automatically_paged_queries();
                 self.load_balancing_policy
                     .on_request_failure(routing_info, elapsed, node, &err);
                 Err(err)
@@ -700,7 +700,7 @@ impl PagerWorker {
                 ))
             }
             Ok(response) => {
-                self.metrics.inc_failed_paged_queries();
+                self.metrics.inc_failed_automatically_paged_queries();
                 let err =
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
                 self.load_balancing_policy
@@ -770,7 +770,7 @@ impl PagerWorker {
             // This catches all other kinds of responses that are not rows.
             // As this is not the first page, this is certainly an error.
             Ok(response) => {
-                self.metrics.inc_failed_paged_queries();
+                self.metrics.inc_failed_automatically_paged_queries();
                 let err =
                     RequestAttemptError::UnexpectedResponse(response.response.to_response_kind());
                 self.load_balancing_policy
@@ -778,7 +778,7 @@ impl PagerWorker {
                 Err(err)
             }
             Err(err) => {
-                self.metrics.inc_failed_paged_queries();
+                self.metrics.inc_failed_automatically_paged_queries();
                 self.load_balancing_policy
                     .on_request_failure(routing_info, elapsed, node, &err);
                 Err(err)
