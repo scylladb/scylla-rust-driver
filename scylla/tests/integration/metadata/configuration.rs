@@ -66,7 +66,7 @@ async fn test_custom_metadata_timeouts() {
         assert!(
             !contains_subslice(&frame.body, clause.as_bytes()),
             "slice {:?} does contain subslice {:?}",
-            &frame.body,
+            frame.body,
             clause,
         );
     }
@@ -76,7 +76,7 @@ async fn test_custom_metadata_timeouts() {
         assert!(
             contains_subslice(&frame.body, expected.as_bytes()),
             "slice {:?} does not contain subslice {:?}",
-            &frame.body,
+            frame.body,
             expected,
         );
     }

@@ -108,7 +108,7 @@ async fn assert_queries_reach_all_nodes(
     futures::future::join_all(tasks).await;
 
     let (per_node, _total) = drain_feedback(rxs);
-    for (&node_id, _rx) in rxs.iter() {
+    for &node_id in rxs.keys() {
         let count = *per_node.get(&node_id).unwrap_or(&0);
         assert!(
             count >= 1,
@@ -468,7 +468,7 @@ async fn wait_for_any_feedback(
 ) {
     let result = tokio::time::timeout(timeout, async {
         loop {
-            for (_node_id, rx) in receivers.iter_mut() {
+            for rx in receivers.values_mut() {
                 match rx.try_recv() {
                     Ok(_feedback) => return,
                     Err(mpsc::error::TryRecvError::Empty) => {}
