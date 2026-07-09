@@ -9,8 +9,11 @@ use crate::utils::{
 use futures::TryStreamExt;
 use futures::future::try_join_all;
 use itertools::Itertools;
+use scylla::client::execution_profile::ExecutionProfile;
 use scylla::client::session::Session;
 use scylla::cluster::Node;
+use scylla::errors::{DbError, RequestAttemptError, WriteType};
+use scylla::policies::retry::{DefaultRetrySession, RetryDecision, RetryPolicy, RetrySession};
 use scylla::routing::Shard;
 use scylla::serialize::row::SerializeRow;
 use scylla::statement::Consistency;
@@ -27,6 +30,64 @@ use std::future::Future;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tracing::info;
 use uuid::Uuid;
+
+/// RetryPolicy that works around Scylla LWT bug: https://scylladb.atlassian.net/browse/SCYLLADB-3194
+/// The symptom of the bug is the request failing with error message like below:
+///
+/// thread 'load_balancing::tablets::test_tablets' (3651327) panicked at scylla/tests/integration/load_balancing/tablets.rs:602:21:
+/// Test attempt failed despite no migration. Error: case QueryDescriptor { op: LwtUpdateIf, ks_presence: WithKs, data_form: RegularPrepared } failed: QueryDescriptor { op: LwtUpdateIf, ks_presence: WithKs, data_form: RegularPrepared }: execution failed: Database returned an error: A non-timeout error during a write request (consistency: LocalSerial, received: 1, required: 2, numfailures: 1, write_type: Cas, Error message: Failed to prepare ballot 2766fdcc-7b7f-11f1-abb6-46f4f195de97 for test_rust_675cf549299940bba12bd8786ceaad6d.t. Replica errors: host_id 826bb99e-6317-448c-a2f1-02b41fefbb1b -> seastar::rpc::remote_verb_error (stale topology exception, caller version 1470, callee fence version 1476);
+#[derive(Debug)]
+struct LwtBallotBugRetryPolicy;
+struct LwtBallotBugRetryPolicySession {
+    retries_left: usize,
+    inner: DefaultRetrySession,
+}
+
+impl RetryPolicy for LwtBallotBugRetryPolicy {
+    fn new_session(&self) -> Box<dyn RetrySession> {
+        Box::new(LwtBallotBugRetryPolicySession {
+            retries_left: 20,
+            inner: DefaultRetrySession::new(),
+        })
+    }
+}
+impl RetrySession for LwtBallotBugRetryPolicySession {
+    fn decide_should_retry(
+        &mut self,
+        request_info: scylla::policies::retry::RequestInfo,
+    ) -> scylla::policies::retry::RetryDecision {
+        if let RequestAttemptError::DbError(
+            DbError::WriteFailure {
+                write_type: WriteType::Cas,
+                consistency: Consistency::LocalSerial,
+                ..
+            },
+            message,
+        ) = request_info.error
+            && message.contains("Failed to prepare ballot")
+        {
+            if self.retries_left > 0 {
+                self.retries_left -= 1;
+            } else {
+                // Panic explicitly so that we know that retry policy worked, but
+                // error kept happening.
+                panic!(
+                    "LWT ballot error happened 20 times in a row! e: {}",
+                    request_info.error
+                );
+            }
+
+            return RetryDecision::RetrySameTarget(None);
+        }
+
+        self.inner.decide_should_retry(request_info)
+    }
+
+    fn reset(&mut self) {
+        self.retries_left = 20;
+        self.inner.reset();
+    }
+}
 
 #[derive(scylla::DeserializeRow)]
 struct SelectedTablet {
@@ -810,6 +871,12 @@ where
             let session = scylla::client::session_builder::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
+                .default_execution_profile_handle(
+                    ExecutionProfile::builder()
+                        .retry_policy(Arc::new(LwtBallotBugRetryPolicy))
+                        .build()
+                        .into_handle(),
+                )
                 .build()
                 .await
                 .unwrap();
