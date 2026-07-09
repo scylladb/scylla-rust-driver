@@ -278,30 +278,48 @@ impl Metrics {
         }
     }
 
-    /// Increments counter for errors that occurred in nonpaged queries.
+    /// Increments counter for errors that occurred in nonpaged execution
+    /// (`Session::{query,execute}_unpaged()` and `Session::batch()`).
     pub(crate) fn inc_failed_nonpaged_queries(&self) {
         self.inner.errors_num.fetch_add(1, ORDER_TYPE);
     }
 
-    /// Increments counter for nonpaged queries.
+    /// Increments counter for nonpaged request execution
+    /// (`Session::{query,execute}_unpaged()` and `Session::batch()`).
     pub(crate) fn inc_total_nonpaged_queries(&self) {
         self.inner.requests_num.fetch_add(1, ORDER_TYPE);
         self.inner.meter.mark();
     }
 
-    /// Increments counter for errors that occurred in paged queries.
-    pub(crate) fn inc_failed_paged_queries(&self) {
+    /// Increments counter for errors that occurred in manually paged execution
+    /// (`Session::{query,execute}_single_page()`).
+    pub(crate) fn inc_failed_manually_paged_queries(&self) {
+        self.inner.errors_num.fetch_add(1, ORDER_TYPE);
+    }
+
+    /// Increments counter for page queries in manually paged execution
+    /// (`Session::{query,execute}_single_page()`).
+    pub(crate) fn inc_total_manually_paged_queries(&self) {
+        self.inner.requests_num.fetch_add(1, ORDER_TYPE);
+        self.inner.meter.mark();
+    }
+
+    /// Increments counter for errors that occurred in automatically paged execution
+    /// (`Session::{query,execute}_iter()`).
+    pub(crate) fn inc_failed_automatically_paged_queries(&self) {
         self.inner.errors_iter_num.fetch_add(1, ORDER_TYPE);
     }
 
-    /// Increments counter for page queries in paged queries.
-    /// If query_iter would return 4 pages then this counter should be incremented 4 times.
-    pub(crate) fn inc_total_paged_queries(&self) {
+    /// Increments counter for page queries in automatically paged execution
+    /// (`Session::{query,execute}_iter()`).
+    /// If `query_iter` would return 4 pages, then this counter should be incremented 4 times.
+    pub(crate) fn inc_total_automatically_paged_queries(&self) {
         self.inner.requests_iter_num.fetch_add(1, ORDER_TYPE);
         self.inner.meter.mark();
     }
 
-    /// Increments counter measuring how many times a retry policy has decided to retry a query
+    /// Increments counter measuring how many times a retry policy has decided
+    /// to retry a request.
     pub(crate) fn inc_retries_num(&self) {
         self.inner.retries_num.fetch_add(1, ORDER_TYPE);
     }
@@ -405,22 +423,22 @@ impl Metrics {
         })
     }
 
-    /// Returns counter for errors occurred in nonpaged queries
+    /// Returns count of errors occurred in **non** `*_iter()` queries (**non** `QueryPager` APIs).
     pub fn get_errors_num(&self) -> u64 {
         self.inner.errors_num.load(ORDER_TYPE)
     }
 
-    /// Returns counter for nonpaged queries
+    /// Returns count of **non** `*_iter()` queries (**non** `QueryPager` APIs).
     pub fn get_queries_num(&self) -> u64 {
         self.inner.requests_num.load(ORDER_TYPE)
     }
 
-    /// Returns counter for errors occurred in paged queries
+    /// Returns counter for errors occurred in `*_iter()` queries (`QueryPager` APIs).
     pub fn get_errors_iter_num(&self) -> u64 {
         self.inner.errors_iter_num.load(ORDER_TYPE)
     }
 
-    /// Returns counter for pages requested in paged queries
+    /// Returns count of `*_iter()` queries (`QueryPager` APIs).
     pub fn get_queries_iter_num(&self) -> u64 {
         self.inner.requests_iter_num.load(ORDER_TYPE)
     }

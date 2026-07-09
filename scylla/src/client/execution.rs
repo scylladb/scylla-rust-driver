@@ -133,18 +133,16 @@ impl<'a> RequestExecutionParams<'a> {
     fn inc_total_queries(&self) {
         match self.request_kind {
             RequestPaging::Unpaged => self.metrics.inc_total_nonpaged_queries(),
-            // FIXME: Metrics naming is misleading. Will be fixed in a future commit.
-            RequestPaging::Manual => self.metrics.inc_total_nonpaged_queries(),
-            RequestPaging::Automatic => self.metrics.inc_total_paged_queries(),
+            RequestPaging::Manual => self.metrics.inc_total_manually_paged_queries(),
+            RequestPaging::Automatic => self.metrics.inc_total_automatically_paged_queries(),
         }
     }
 
     fn inc_failed_queries(&self) {
         match self.request_kind {
             RequestPaging::Unpaged => self.metrics.inc_failed_nonpaged_queries(),
-            // FIXME: Metrics naming is misleading. Will be fixed in a future commit.
-            RequestPaging::Manual => self.metrics.inc_failed_nonpaged_queries(),
-            RequestPaging::Automatic => self.metrics.inc_failed_paged_queries(),
+            RequestPaging::Manual => self.metrics.inc_failed_manually_paged_queries(),
+            RequestPaging::Automatic => self.metrics.inc_failed_automatically_paged_queries(),
         }
     }
 
