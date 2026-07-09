@@ -1816,6 +1816,27 @@ impl Session {
         .await
     }
 
+    /// This is essentially the same as `execute_iter_nongeneric`, but it is *public*
+    /// and only available when the `unstable-csharp-rs` feature is enabled.
+    /// Rationale: I don't know a way to make a function conditionally public,
+    /// based on a compile-time flag, so I added a new wrapper function
+    /// that is conditionally compiled and is public.
+    ///
+    /// This function is intended to be used by the C#-RS Driver's internals
+    /// and it's potentially a footgun: if a user passes `SerializedValues`
+    /// that don't match the prepared statement, the driver will misbehave
+    /// (potentially leading to data corruption).
+    /// Therefore, this function must not be exposed to end users of the Rust driver.
+    #[cfg(all(scylla_unstable, feature = "unstable-csharp-rs"))]
+    #[inline]
+    pub async fn execute_iter_preserialized(
+        &self,
+        prepared: PreparedStatement,
+        values: SerializedValues,
+    ) -> Result<QueryPager, PagerExecutionError> {
+        self.execute_iter_nongeneric(prepared, values).await
+    }
+
     /// Prepares all statements within the batch and returns a new batch where every
     /// statement is prepared.
     ///
@@ -2427,4 +2448,18 @@ impl Session {
 enum SchemaNodeResult {
     Success(Uuid),
     BrokenConnection(BrokenConnectionError),
+}
+
+/// Additional API for interop-based code.
+#[cfg(all(scylla_unstable, feature = "unstable-csharp-rs"))]
+impl Session {
+    /// Needed to bridge C#'s counterpart of `await_schema_agreement`
+    /// which requires a specified host to participate in agreement checking.
+    pub async fn await_schema_agreement_with_required_node_external(
+        &self,
+        required_node: Option<Uuid>,
+    ) -> Result<Uuid, SchemaAgreementError> {
+        self.await_schema_agreement_with_required_node(required_node)
+            .await
+    }
 }
