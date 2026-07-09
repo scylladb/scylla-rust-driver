@@ -153,7 +153,7 @@ use timeouter::PageQueryTimeouter;
 
 enum ShouldFetchMorePages {
     NoMorePages,
-    MorePages { first_page_coordinator: Coordinator },
+    MorePages { successful_coordinator: Coordinator },
 }
 
 // PagerWorker works in the background to fetch pages
@@ -612,7 +612,7 @@ impl PagerWorker {
 
                 let should_fetch_more_pages = match paging_state_response {
                     PagingStateResponse::HasMorePages { .. } => ShouldFetchMorePages::MorePages {
-                        first_page_coordinator: coordinator.clone(),
+                        successful_coordinator: coordinator.clone(),
                     },
                     PagingStateResponse::NoMorePages => ShouldFetchMorePages::NoMorePages,
                 };
@@ -1208,7 +1208,7 @@ If you are using this API, you are probably doing something wrong."
                 std::mem::drop(sender);
             }
             ShouldFetchMorePages::MorePages {
-                first_page_coordinator,
+                successful_coordinator: first_page_coordinator,
             } => {
                 /* REMAINING PAGES */
                 let worker_task = async move {
@@ -1412,7 +1412,7 @@ If you are using this API, you are probably doing something wrong."
                 std::mem::drop(sender);
             }
             ShouldFetchMorePages::MorePages {
-                first_page_coordinator,
+                successful_coordinator: first_page_coordinator,
             } => {
                 /* REMAINING PAGES */
                 let worker_task = async move {
