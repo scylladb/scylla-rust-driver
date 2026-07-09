@@ -228,14 +228,18 @@ pub struct Metrics {
 
 /// Storage for all metric counters and histograms.
 struct MetricsInner {
-    /// Number of errors that occurred in queries executed without `QueryPager`.
-    errors_num: AtomicU64,
-    /// Number of requests executed without `QueryPager`.
-    requests_num: AtomicU64,
-    /// Number of errors that occurred in queries executed with `QueryPager`.
-    errors_iter_num: AtomicU64,
-    /// Number of requests executed with `QueryPager`.
-    requests_iter_num: AtomicU64,
+    /// Number of errors that occurred in unpaged requests.
+    errors_unpaged: AtomicU64,
+    /// Number of executed unpaged requests.
+    requests_unpaged: AtomicU64,
+    /// Number of errors that occurred in manually paged requests.
+    errors_single_page: AtomicU64,
+    /// Number of executed manually paged requests.
+    requests_single_page: AtomicU64,
+    /// Number of errors that occurred in automatically paged requests.
+    errors_iter: AtomicU64,
+    /// Number of executed automatically paged requests.
+    requests_iter: AtomicU64,
     /// Number of times a retry policy has decided to retry a query.
     retries_num: AtomicU64,
     /// Histogram that collects latencies of queries executed by the driver.
@@ -264,10 +268,12 @@ impl Metrics {
 
         Self {
             inner: Arc::new(MetricsInner {
-                errors_num: AtomicU64::new(0),
-                requests_num: AtomicU64::new(0),
-                errors_iter_num: AtomicU64::new(0),
-                requests_iter_num: AtomicU64::new(0),
+                errors_unpaged: AtomicU64::new(0),
+                requests_unpaged: AtomicU64::new(0),
+                errors_single_page: AtomicU64::new(0),
+                requests_single_page: AtomicU64::new(0),
+                errors_iter: AtomicU64::new(0),
+                requests_iter: AtomicU64::new(0),
                 retries_num: AtomicU64::new(0),
                 histogram: Arc::new(AtomicHistogram::new(grouping_power, max_value_power).unwrap()),
                 meter: Arc::new(RequestRateMeter::new()),
@@ -281,40 +287,40 @@ impl Metrics {
     /// Increments counter for errors that occurred in nonpaged execution
     /// (`Session::{query,execute}_unpaged()` and `Session::batch()`).
     pub(crate) fn inc_failed_nonpaged_queries(&self) {
-        self.inner.errors_num.fetch_add(1, ORDER_TYPE);
+        self.inner.errors_unpaged.fetch_add(1, ORDER_TYPE);
     }
 
     /// Increments counter for nonpaged request execution
     /// (`Session::{query,execute}_unpaged()` and `Session::batch()`).
     pub(crate) fn inc_total_nonpaged_queries(&self) {
-        self.inner.requests_num.fetch_add(1, ORDER_TYPE);
+        self.inner.requests_unpaged.fetch_add(1, ORDER_TYPE);
         self.inner.meter.mark();
     }
 
     /// Increments counter for errors that occurred in manually paged execution
     /// (`Session::{query,execute}_single_page()`).
     pub(crate) fn inc_failed_manually_paged_queries(&self) {
-        self.inner.errors_num.fetch_add(1, ORDER_TYPE);
+        self.inner.errors_single_page.fetch_add(1, ORDER_TYPE);
     }
 
     /// Increments counter for page queries in manually paged execution
     /// (`Session::{query,execute}_single_page()`).
     pub(crate) fn inc_total_manually_paged_queries(&self) {
-        self.inner.requests_num.fetch_add(1, ORDER_TYPE);
+        self.inner.requests_single_page.fetch_add(1, ORDER_TYPE);
         self.inner.meter.mark();
     }
 
     /// Increments counter for errors that occurred in automatically paged execution
     /// (`Session::{query,execute}_iter()`).
     pub(crate) fn inc_failed_automatically_paged_queries(&self) {
-        self.inner.errors_iter_num.fetch_add(1, ORDER_TYPE);
+        self.inner.errors_iter.fetch_add(1, ORDER_TYPE);
     }
 
     /// Increments counter for page queries in automatically paged execution
     /// (`Session::{query,execute}_iter()`).
     /// If `query_iter` would return 4 pages, then this counter should be incremented 4 times.
     pub(crate) fn inc_total_automatically_paged_queries(&self) {
-        self.inner.requests_iter_num.fetch_add(1, ORDER_TYPE);
+        self.inner.requests_iter.fetch_add(1, ORDER_TYPE);
         self.inner.meter.mark();
     }
 
@@ -425,22 +431,23 @@ impl Metrics {
 
     /// Returns count of errors occurred in **non** `*_iter()` queries (**non** `QueryPager` APIs).
     pub fn get_errors_num(&self) -> u64 {
-        self.inner.errors_num.load(ORDER_TYPE)
+        self.inner.errors_unpaged.load(ORDER_TYPE) + self.inner.errors_single_page.load(ORDER_TYPE)
     }
 
     /// Returns count of **non** `*_iter()` queries (**non** `QueryPager` APIs).
     pub fn get_queries_num(&self) -> u64 {
-        self.inner.requests_num.load(ORDER_TYPE)
+        self.inner.requests_unpaged.load(ORDER_TYPE)
+            + self.inner.requests_single_page.load(ORDER_TYPE)
     }
 
     /// Returns counter for errors occurred in `*_iter()` queries (`QueryPager` APIs).
     pub fn get_errors_iter_num(&self) -> u64 {
-        self.inner.errors_iter_num.load(ORDER_TYPE)
+        self.inner.errors_iter.load(ORDER_TYPE)
     }
 
     /// Returns count of `*_iter()` queries (`QueryPager` APIs).
     pub fn get_queries_iter_num(&self) -> u64 {
-        self.inner.requests_iter_num.load(ORDER_TYPE)
+        self.inner.requests_iter.load(ORDER_TYPE)
     }
 
     /// Returns counter measuring how many times a retry policy has decided to retry a query
@@ -591,10 +598,12 @@ impl std::fmt::Debug for Metrics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let h = self.inner.histogram.load();
         f.debug_struct("Metrics")
-            .field("errors_num", &self.inner.errors_num)
-            .field("requests_num", &self.inner.requests_num)
-            .field("errors_iter_num", &self.inner.errors_iter_num)
-            .field("requests_iter_num", &self.inner.requests_iter_num)
+            .field("errors_unpaged", &self.inner.errors_unpaged)
+            .field("requests_unpaged", &self.inner.requests_unpaged)
+            .field("errors_single_page", &self.inner.errors_single_page)
+            .field("requests_single_page", &self.inner.requests_single_page)
+            .field("errors_iter", &self.inner.errors_iter)
+            .field("requests_iter", &self.inner.requests_iter)
             .field("retries_num", &self.inner.retries_num)
             .field("histogram", &h)
             .field("meter", &self.inner.meter)
