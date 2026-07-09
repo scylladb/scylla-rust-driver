@@ -429,25 +429,73 @@ impl Metrics {
         })
     }
 
+    /// Returns count of errors occurred in unpaged execution.
+    pub fn get_errors_unpaged_num(&self) -> u64 {
+        self.inner.errors_unpaged.load(ORDER_TYPE)
+    }
+
+    /// Returns count of errors occurred in manually paged execution.
+    pub fn get_errors_manually_paged_num(&self) -> u64 {
+        self.inner.errors_single_page.load(ORDER_TYPE)
+    }
+
+    #[deprecated(
+        since = "1.8.0",
+        note = "Method's naming is confusing. Call `get_errors_unpaged_num()`
+        and `get_errors_manually_paged_num()` and add their results together instead."
+    )]
     /// Returns count of errors occurred in **non** `*_iter()` queries (**non** `QueryPager` APIs).
     pub fn get_errors_num(&self) -> u64 {
-        self.inner.errors_unpaged.load(ORDER_TYPE) + self.inner.errors_single_page.load(ORDER_TYPE)
+        self.get_errors_unpaged_num() + self.get_errors_manually_paged_num()
     }
 
+    /// Returns count of unpaged requests.
+    pub fn get_requests_unpaged_num(&self) -> u64 {
+        self.inner.requests_unpaged.load(ORDER_TYPE)
+    }
+
+    /// Returns count of manually paged requests.
+    pub fn get_requests_manually_paged_num(&self) -> u64 {
+        self.inner.requests_single_page.load(ORDER_TYPE)
+    }
+
+    #[deprecated(
+        since = "1.8.0",
+        note = "Method's naming is confusing. Call `get_requests_unpaged_num()`
+        and `get_requests_manually_paged_num()` and add their results together instead."
+    )]
     /// Returns count of **non** `*_iter()` queries (**non** `QueryPager` APIs).
     pub fn get_queries_num(&self) -> u64 {
-        self.inner.requests_unpaged.load(ORDER_TYPE)
-            + self.inner.requests_single_page.load(ORDER_TYPE)
+        self.get_requests_unpaged_num() + self.get_requests_manually_paged_num()
     }
 
+    /// Returns count of errors occurred in automatically paged requests
+    /// (`QueryPager` APIs, `*_iter()` execution).
+    pub fn get_errors_automatically_paged_num(&self) -> u64 {
+        self.inner.errors_iter.load(ORDER_TYPE)
+    }
+
+    #[deprecated(
+        since = "1.8.0",
+        note = "Method's naming is confusing. Use `get_errors_automatically_paged_num()` instead."
+    )]
     /// Returns counter for errors occurred in `*_iter()` queries (`QueryPager` APIs).
     pub fn get_errors_iter_num(&self) -> u64 {
         self.inner.errors_iter.load(ORDER_TYPE)
     }
 
+    /// Returns count of automatically paged requests (`QueryPager` APIs, `*_iter()` execution).
+    pub fn get_requests_automatically_paged_num(&self) -> u64 {
+        self.inner.requests_iter.load(ORDER_TYPE)
+    }
+
+    #[deprecated(
+        since = "1.8.0",
+        note = "Method's naming is confusing. Use `get_requests_automatically_paged_num()` instead."
+    )]
     /// Returns count of `*_iter()` queries (`QueryPager` APIs).
     pub fn get_queries_iter_num(&self) -> u64 {
-        self.inner.requests_iter.load(ORDER_TYPE)
+        self.get_requests_automatically_paged_num()
     }
 
     /// Returns counter measuring how many times a retry policy has decided to retry a query
