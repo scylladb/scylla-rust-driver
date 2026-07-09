@@ -428,10 +428,7 @@ pub(crate) async fn execute_prepared_statement_everywhere(
         let mut stmt = statement.clone();
         let values_ref = &values;
         let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
-        let execution_profile = ExecutionProfile::builder()
-            .load_balancing_policy(policy)
-            .build();
-        stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
+        stmt.set_load_balancing_policy(Some(policy));
 
         session.execute_unpaged(&stmt, values_ref).await
     })
@@ -446,11 +443,9 @@ pub(crate) async fn execute_unprepared_statement_everywhere(
 ) -> Result<Vec<QueryResult>, ExecutionError> {
     for_each_target_execute(cluster, |node, shard| async move {
         let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), shard);
-        let execution_profile = ExecutionProfile::builder()
-            .load_balancing_policy(policy)
-            .build();
+
         let mut statement = statement.clone();
-        statement.set_execution_profile_handle(Some(execution_profile.into_handle()));
+        statement.set_load_balancing_policy(Some(policy));
 
         session.query_unpaged(statement, values).await
     })
@@ -471,11 +466,8 @@ pub(crate) async fn execute_unprepared_statement_on_every_node(
 ) -> Result<Vec<QueryResult>, ExecutionError> {
     for_each_node_execute(cluster, |node| async move {
         let policy = SingleTargetLoadBalancingPolicy::new(NodeIdentifier::Node(node), None);
-        let execution_profile = ExecutionProfile::builder()
-            .load_balancing_policy(policy)
-            .build();
         let mut statement = statement.clone();
-        statement.set_execution_profile_handle(Some(execution_profile.into_handle()));
+        statement.set_load_balancing_policy(Some(policy));
 
         session.query_unpaged(statement, values).await
     })
