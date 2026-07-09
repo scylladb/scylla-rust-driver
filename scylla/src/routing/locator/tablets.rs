@@ -313,7 +313,7 @@ impl Tablet {
         if any_updated {
             // Now that we know we have some nodes to update we need to go over
             // per-dc nodes and update them too.
-            for (_, dc_nodes) in self.replicas.per_dc.iter_mut() {
+            for dc_nodes in self.replicas.per_dc.values_mut() {
                 for (node, _) in dc_nodes.iter_mut() {
                     if let Some(new_node) = recreated_nodes.get(&node.host_id) {
                         *node = Arc::clone(new_node);
