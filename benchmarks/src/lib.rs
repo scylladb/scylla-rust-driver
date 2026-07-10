@@ -3,6 +3,7 @@
 //! The scenarios cover:
 //! - unpaged `SELECT` via [`Session::execute_unpaged`],
 //! - `INSERT` via [`Session::execute_unpaged`],
+//! - `BATCH` of a configurable number of statements via [`Session::batch`],
 //! - auto-paged `SELECT` via [`Session::execute_iter`],
 //!
 //! The actual measurement (separating connection setup from the measured
@@ -16,6 +17,7 @@ use anyhow::Result;
 use futures::StreamExt as _;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::statement::batch::{Batch, BatchType};
 use scylla::statement::prepared::PreparedStatement;
 
 /// Default contact point, matching the address used by the repository's
@@ -77,6 +79,8 @@ pub struct BenchContext {
     prepared_insert: PreparedStatement,
     prepared_select: PreparedStatement,
     prepared_select_all: PreparedStatement,
+    batch: Batch,
+    batch_values: Vec<(i32, i32)>,
 }
 
 impl BenchContext {
@@ -92,7 +96,7 @@ impl BenchContext {
             .enable_all()
             .build()?;
 
-        let (session, prepared_insert, prepared_select, prepared_select_all) =
+        let (session, prepared_insert, prepared_select, prepared_select_all, batch, batch_values) =
             runtime.block_on(async {
                 // Use the driver defaults, in particular one connection per shard.
                 let builder = SessionBuilder::new().known_node(node);
@@ -140,6 +144,14 @@ impl BenchContext {
                     .await?;
                 prepared_select_all.set_page_size(config.page_size);
 
+                // Build the batch once so that the measured loop only executes it.
+                let mut batch = Batch::new(BatchType::Unlogged);
+                let mut batch_values = Vec::with_capacity(config.batch_size);
+                for i in 0..config.batch_size {
+                    batch.append_statement(prepared_insert.clone());
+                    batch_values.push((i as i32, (2 * i) as i32));
+                }
+
                 // Pre-populate rows for the auto-paged SELECT scenario.
                 for i in 0..config.paged_rows as i32 {
                     session.execute_unpaged(&prepared_insert, (0i32, i)).await?;
@@ -177,6 +189,8 @@ impl BenchContext {
                     prepared_insert,
                     prepared_select,
                     prepared_select_all,
+                    batch,
+                    batch_values,
                 ))
             })?;
 
@@ -186,6 +200,8 @@ impl BenchContext {
             prepared_insert,
             prepared_select,
             prepared_select_all,
+            batch,
+            batch_values,
         })
     }
 
@@ -210,6 +226,21 @@ impl BenchContext {
                 let result = self
                     .session
                     .execute_unpaged(&self.prepared_select, (i, 2 * i))
+                    .await
+                    .unwrap();
+                black_box(result);
+            }
+        })
+    }
+
+    /// Runs `n` `BATCH`es, each containing [`ScenarioConfig::batch_size`]
+    /// prepared `INSERT`s, via [`Session::batch`].
+    pub fn run_batches(&self, n: usize) {
+        self.runtime.block_on(async {
+            for _ in 0..n as i32 {
+                let result = self
+                    .session
+                    .batch(&self.batch, &self.batch_values)
                     .await
                     .unwrap();
                 black_box(result);
