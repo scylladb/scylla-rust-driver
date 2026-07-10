@@ -1,0 +1,116 @@
+# Runs the driver benchmarks (instructions, allocations and peak memory) for a
+# pull request and compares them against its base, reporting the result in the
+# job summary and, when there is an important regression, adding the
+# `affects-performance` label to the pull request.
+name: Benchmarks
+
+on:
+  pull_request_target:
+    branches:
+    - '**'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  PR_BASE: ${{ github.event.pull_request.base.sha }}
+  PR_HEAD: ${{ github.event.pull_request.head.sha }}
+  PR_ID: ${{ github.event.number }}
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_target'
+    # Disable all permissions. Like in semver_checks.yml, this job runs
+    # untrusted PR code (build scripts, proc-macros and the benchmark code
+    # itself, all under Valgrind), so it must not have access to any token that
+    # could be abused. Adding the label is done by a separate, privileged job
+    # that does not execute any PR code.
+    permissions: {}
+    timeout-minutes: 60
+    concurrency:
+      group: benchmark-${{ github.event.number }}
+      cancel-in-progress: true
+    outputs:
+      has_regressions: ${{ steps.compare.outputs.has_regressions }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        fetch-depth: "2"
+        ref: "refs/pull/${{ env.PR_ID }}/merge"
+    # Check if there was another push before this job started. If there was,
+    # the wrong commit would be checked out.
+    - name: Sanity check
+      run: |
+        [[ "$(git rev-parse 'HEAD^2')" == "$PR_HEAD" ]]
+    - name: Fetch PR base
+      run: git fetch origin "$PR_BASE"
+
+    - name: Setup rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1.16.0
+    - name: Install Valgrind
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y valgrind
+    - name: Install cargo-binstall
+      uses: taiki-e/install-action@cf525cb33f51aca27cd6fa02034117ab963ff9f1 # v2.75.22
+      with:
+        tool: cargo-binstall
+    - name: Setup 3-node ScyllaDB cluster
+      run: |
+        sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
+        make up
+    - name: Save merge SHA
+      run: |
+        MERGE_SHA="$(git rev-parse HEAD)"
+        echo "MERGE_SHA=$MERGE_SHA" >> "$GITHUB_ENV"
+        # Remember the merge commit (the PR code we want to measure), then measure
+    # the base first to establish the baseline.
+    - name: Benchmark the base
+      run: |
+        git checkout "$PR_BASE"
+        version=$(cargo metadata --format-version=1 |\
+          jq -r '.packages[] | select(.name == "gungraun").version'
+        )
+        cargo binstall --no-confirm gungraun-runner --version "$version"
+        cargo bench -p benchmarks --bench requests -- --save-baseline=base
+
+    - name: Benchmark the pull request
+      run: |
+        git checkout "$MERGE_SHA"
+        version=$(cargo metadata --format-version=1 |\
+          jq -r '.packages[] | select(.name == "gungraun").version'
+        )
+        cargo binstall --no-confirm gungraun-runner --version "$version"
+        cargo bench -p benchmarks --bench requests -- \
+          --baseline=base --output-format=json > results.jsonl
+
+    - name: Compare and report
+      id: compare
+      run: |
+        python3 scripts/compare-benchmarks.py results.jsonl \
+          --summary summary.md
+        cat summary.md >> "$GITHUB_STEP_SUMMARY"
+
+  benchmark-label:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_target'
+    needs: benchmark
+    permissions:
+      pull-requests: write
+    timeout-minutes: 3
+    steps:
+    - name: Add the affects-performance label
+      if: needs.benchmark.outputs.has_regressions == 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh pr edit "$PR_ID" --repo "$GITHUB_REPOSITORY" \
+          --add-label "affects-performance"
+    - name: Remove the affects-performance label
+      if: needs.benchmark.outputs.has_regressions == 'false'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh pr edit "$PR_ID" --repo "$GITHUB_REPOSITORY" \
+          --remove-label "affects-performance"
