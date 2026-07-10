@@ -39,6 +39,24 @@ fn setup_default(n: usize) -> State {
     )
 }
 
+/// Setup for the `batch` scenario, parameterised by `batch_size` and `n`. The
+/// batch is built in `setup` (whose cost the harness excludes from the
+/// measurement) so that only its execution is measured. gungraun passes each
+/// tuple in `args` as the two arguments of this function.
+fn setup_batch(batch_size: usize, n: usize) -> State {
+    (
+        BenchContext::new(
+            &node_address(),
+            ScenarioConfig {
+                batch_size,
+                ..ScenarioConfig::default()
+            },
+        )
+        .unwrap(),
+        n,
+    )
+}
+
 // Dropping the state (closing the session, shutting down the runtime) is done in
 // teardown so that it is not attributed to the benchmark.
 fn teardown<T>(state: T) {
@@ -60,6 +78,17 @@ fn unpaged_select(state: State) -> State {
 }
 
 #[library_benchmark]
+#[benches::sizes(
+    args = [(64, 100)],
+    setup = setup_batch,
+    teardown = teardown,
+)]
+fn batch(state: State) -> State {
+    state.0.run_batches(black_box(state.1));
+    state
+}
+
+#[library_benchmark]
 #[benches::counts(args = [100], setup = setup_default, teardown = teardown)]
 fn paged_select(state: State) -> State {
     state.0.run_paged_selects(black_box(state.1));
@@ -68,7 +97,7 @@ fn paged_select(state: State) -> State {
 
 library_benchmark_group!(
     name = requests;
-    benchmarks = insert, unpaged_select, paged_select
+    benchmarks = insert, unpaged_select, paged_select, batch
 );
 
 main!(

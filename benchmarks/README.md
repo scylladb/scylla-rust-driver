@@ -18,6 +18,7 @@ The `requests` benchmark (`benches/requests.rs`) covers:
 | ---------------- | ------------------------------------------------------------------- |
 | `insert`         | `INSERT`s via `Session::execute_unpaged` on a prepared statement.   |
 | `unpaged_select` | Unpaged `SELECT`s via `Session::execute_unpaged`.                   |
+| `batch`          | Unlogged `BATCH`es of 64 prepared statements.               |
 | `paged_select`   | Auto-paged `SELECT`s via `Session::execute_iter`, draining pages.   |
 
 Connecting, schema creation, statement preparation and data population happen in
