@@ -38,6 +38,25 @@ the request loop is measured.
   three-node docker-compose cluster (`make up`); override the contact points
   with `SCYLLA_URI`, `SCYLLA_URI2` and `SCYLLA_URI3` if needed.
 
+## Running
+
+From the repository root:
+
+```bash
+# Save the current results as the "base" baseline (e.g. on the base branch):
+make bench-baseline
+
+# ... make your changes, then compare against the saved baseline:
+make bench
+```
+
+Both targets ensure the cluster is up first. Under the hood they run:
+
+```bash
+cargo bench -p benchmarks --bench requests -- --save-baseline=base
+cargo bench -p benchmarks --bench requests -- --baseline=base
+```
+
 ## Finding what to optimize
 
 Each run writes a DHAT output file per scenario (e.g.
