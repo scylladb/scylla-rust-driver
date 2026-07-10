@@ -1,0 +1,22 @@
+[package]
+edition = "2024"
+name = "benchmarks"
+publish = false
+version = "0.0.0"
+rust-version = "1.88"
+
+[dependencies]
+scylla = { path = "../scylla" }
+anyhow = "1.0.33"
+futures = "0.3.6"
+tokio = { version = "1.34", features = ["rt", "macros"] }
+
+# The `gungraun` version must be kept in sync with the
+# `gungraun-runner` version installed in the benchmarks CI workflow,
+# hence the exact `=` requirement.
+[dev-dependencies]
+gungraun = "=0.19.4"
+
+[[bench]]
+name = "requests"
+harness = false
