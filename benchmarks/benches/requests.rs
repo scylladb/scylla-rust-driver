@@ -59,9 +59,16 @@ fn unpaged_select(state: State) -> State {
     state
 }
 
+#[library_benchmark]
+#[benches::counts(args = [100], setup = setup_default, teardown = teardown)]
+fn paged_select(state: State) -> State {
+    state.0.run_paged_selects(black_box(state.1));
+    state
+}
+
 library_benchmark_group!(
     name = requests;
-    benchmarks = insert, unpaged_select
+    benchmarks = insert, unpaged_select, paged_select
 );
 
 main!(
