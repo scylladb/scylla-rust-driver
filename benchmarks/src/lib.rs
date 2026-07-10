@@ -3,6 +3,7 @@
 //! The scenarios cover:
 //! - unpaged `SELECT` via [`Session::execute_unpaged`],
 //! - `INSERT` via [`Session::execute_unpaged`],
+//! - auto-paged `SELECT` via [`Session::execute_iter`],
 //!
 //! The actual measurement (separating connection setup from the measured
 //! request loop) is handled by the benchmark harness; this crate only provides
@@ -75,6 +76,7 @@ pub struct BenchContext {
     session: Session,
     prepared_insert: PreparedStatement,
     prepared_select: PreparedStatement,
+    prepared_select_all: PreparedStatement,
 }
 
 impl BenchContext {
@@ -90,7 +92,7 @@ impl BenchContext {
             .enable_all()
             .build()?;
 
-        let (session, prepared_insert, prepared_select) =
+        let (session, prepared_insert, prepared_select, prepared_select_all) =
             runtime.block_on(async {
                 // Use the driver defaults, in particular one connection per shard.
                 let builder = SessionBuilder::new().known_node(node);
@@ -133,6 +135,16 @@ impl BenchContext {
                     ))
                     .await?;
 
+                let mut prepared_select_all = session
+                    .prepare(format!("SELECT a, b, c FROM {KEYSPACE}.{TABLE}"))
+                    .await?;
+                prepared_select_all.set_page_size(config.page_size);
+
+                // Pre-populate rows for the auto-paged SELECT scenario.
+                for i in 0..config.paged_rows as i32 {
+                    session.execute_unpaged(&prepared_insert, (0i32, i)).await?;
+                }
+
                 // Warm up tablet routing before the measured loop runs.
                 //
                 // ScyllaDB tables use tablets, and when the driver routes a
@@ -164,6 +176,7 @@ impl BenchContext {
                     session,
                     prepared_insert,
                     prepared_select,
+                    prepared_select_all,
                 ))
             })?;
 
@@ -172,6 +185,7 @@ impl BenchContext {
             session,
             prepared_insert,
             prepared_select,
+            prepared_select_all,
         })
     }
 
@@ -199,6 +213,25 @@ impl BenchContext {
                     .await
                     .unwrap();
                 black_box(result);
+            }
+        })
+    }
+
+    /// Runs `n` auto-paged `SELECT`s via [`Session::execute_iter`], draining
+    /// every page of every result.
+    pub fn run_paged_selects(&self, n: usize) {
+        self.runtime.block_on(async {
+            for _ in 0..n as i32 {
+                let mut stream = self
+                    .session
+                    .execute_iter(self.prepared_select_all.clone(), &[])
+                    .await
+                    .unwrap()
+                    .rows_stream::<(i32, i32, String)>()
+                    .unwrap();
+                while let Some(row) = stream.next().await {
+                    black_box(row.unwrap());
+                }
             }
         })
     }
