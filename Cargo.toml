@@ -29,3 +29,6 @@ trait_method_marked_deprecated = { level = "warn" }
 type_associated_const_marked_deprecated = { level = "warn" }
 type_marked_deprecated = { level = "warn" }
 type_method_marked_deprecated = { level = "warn" }
+
+[profile.bench]
+debug = true
