@@ -113,9 +113,18 @@ enum ShouldFetchMorePages {
     MorePages { successful_coordinator: Coordinator },
 }
 
-// PagerWorker works in the background to fetch pages
-// QueryPager receives them through a channel
-struct PagerWorker {
+/// Drives paged execution by repeatedly invoking the unified request-execution
+/// core ([`run_request_no_side_effects`]) - once per page.
+///
+/// Each page is one logical request: it goes through the full load balancing,
+/// retry, speculative-execution, history and metrics machinery, exactly like a
+/// non-paged request. The only paging-specific logic that remains here is:
+/// - injecting the current [`PagingState`] into each attempt,
+/// - "coordinator stability" (preferring the node/connection that served the
+///   previous page for the next one),
+/// - turning each successful page into a [`NextReceivedPage`] sent over the
+///   channel, and stopping once the server reports no more pages.
+struct PagingExecutor {
     load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
     retry_policy: Arc<dyn RetryPolicy>,
     speculative_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
@@ -127,7 +136,7 @@ struct PagerWorker {
     paging_state: PagingState,
 }
 
-impl PagerWorker {
+impl PagingExecutor {
     /// Fetches remaining pages (pages 2+) in a background task.
     /// Sends each page through the mpsc channel.
     ///
@@ -443,19 +452,22 @@ impl PagerWorker {
     }
 }
 
-/// A massively simplified version of the PagerWorker. It does not have
-/// any complicated logic related to retries, it just fetches pages from
-/// a single connection.
+/// Drives paged execution over a single fixed connection, used by
+/// [`Connection::execute_iter`](crate::network::Connection::execute_iter).
 ///
-/// NOTE: This worker only supports executing SELECT statements.
-/// More specifically, it expects that each response is of Rows kind.
-/// Other kinds of responses will result in an error.
-struct SingleConnectionPagerWorker<Fetcher> {
+/// Unlike [`PagingExecutor`], it has no load balancing, retries, speculative
+/// execution, metrics or history: it simply fetches each page on the given
+/// connection, applying the client-side timeout.
+///
+/// NOTE: This executor only supports executing SELECT statements. More
+/// specifically, it expects that each response is of Rows kind. Other kinds
+/// of responses will result in an error.
+struct SingleConnectionPagingExecutor<Fetcher> {
     fetcher: Fetcher,
     timeout: Option<Duration>,
 }
 
-impl<Fetcher> SingleConnectionPagerWorker<Fetcher>
+impl<Fetcher> SingleConnectionPagingExecutor<Fetcher>
 where
     Fetcher: AsyncFn(PagingState) -> Result<QueryResponse, RequestAttemptError> + Send + Sync,
 {
@@ -757,7 +769,7 @@ If you are using this API, you are probably doing something wrong."
             }
         };
 
-        let mut worker = PagerWorker {
+        let mut executor = PagingExecutor {
             load_balancing_policy,
             retry_policy,
             speculative_policy,
@@ -781,7 +793,7 @@ If you are using this API, you are probably doing something wrong."
 
             let request_span = create_span(&statement.contents);
 
-            worker
+            executor
                 .query_first_page(&cluster_state, &request_span, &routing_info, page_query)
                 .await
                 .map_err(NextPageError::RequestFailure)?
@@ -826,7 +838,7 @@ If you are using this API, you are probably doing something wrong."
 
                     let span_creator = move || create_span(&statement_ref.contents);
 
-                    worker
+                    executor
                         .query_remaining_pages(
                             cluster_state,
                             sender,
@@ -963,7 +975,7 @@ If you are using this API, you are probably doing something wrong."
             replicas.as_ref(),
         );
 
-        let mut worker = PagerWorker {
+        let mut executor = PagingExecutor {
             load_balancing_policy,
             retry_policy,
             speculative_policy,
@@ -980,7 +992,7 @@ If you are using this API, you are probably doing something wrong."
                 .map(Arc::clone),
         };
 
-        let (first_page, should_fetch_more_pages) = worker
+        let (first_page, should_fetch_more_pages) = executor
             .query_first_page(
                 &config.cluster_state,
                 &request_span,
@@ -1058,7 +1070,7 @@ If you are using this API, you are probably doing something wrong."
                         )
                     };
 
-                    worker
+                    executor
                         .query_remaining_pages(
                             config.cluster_state,
                             sender,
@@ -1091,7 +1103,7 @@ If you are using this API, you are probably doing something wrong."
                 .request_timeout
         });
 
-        let mut worker = SingleConnectionPagerWorker {
+        let mut executor = SingleConnectionPagingExecutor {
             fetcher: async move |paging_state: PagingState| {
                 connection
                     .execute_raw_with_consistency(
@@ -1107,7 +1119,7 @@ If you are using this API, you are probably doing something wrong."
             timeout,
         };
 
-        let (first_page, paging_state_response) = worker
+        let (first_page, paging_state_response) = executor
             .query_one_page(PagingState::start())
             .await
             .map_err(|RequestTimeoutError(timeout)| {
@@ -1126,7 +1138,7 @@ If you are using this API, you are probably doing something wrong."
             }
             PagingStateResponse::HasMorePages { state } => {
                 /* REMAINING PAGES */
-                let worker_task = async move { worker.work(state, sender).await };
+                let worker_task = async move { executor.work(state, sender).await };
                 let _worker_handle = tokio::task::spawn(worker_task);
             }
         }
