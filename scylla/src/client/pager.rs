@@ -9,41 +9,41 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use crate::client::execution::{RequestExecutionParams, RequestPaging, RunRequestResult};
-use crate::deserialize::result::RawRowLendingIterator;
-use crate::deserialize::row::{ColumnIterator, DeserializeRow};
-use crate::deserialize::{DeserializationError, TypeCheckError};
-use crate::frame::frame_errors::ResultMetadataAndRowsCountParseError;
-use crate::frame::request::query::{PagingState, PagingStateResponse};
-use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
-use crate::frame::response::result::{DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace};
-use crate::frame::types::{Consistency, SerialConsistency};
-use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
-use crate::serialize::row::SerializedValues;
 use futures::Stream;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
+use tracing::{Instrument, warn};
+use uuid::Uuid;
 
+use crate::client::execution::{RequestExecutionParams, RequestPaging, RunRequestResult};
 use crate::client::execution_profile::ExecutionProfileInner;
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
 use crate::deserialize::DeserializeOwnedRow;
+use crate::deserialize::result::RawRowLendingIterator;
+use crate::deserialize::row::{ColumnIterator, DeserializeRow};
+use crate::deserialize::{DeserializationError, TypeCheckError};
 use crate::errors::{PagerExecutionError, RequestAttemptError, RequestError};
+use crate::frame::frame_errors::ResultMetadataAndRowsCountParseError;
+use crate::frame::request::query::{PagingState, PagingStateResponse};
+use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
 use crate::frame::response::result;
+use crate::frame::response::result::{DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace};
+use crate::frame::types::{Consistency, SerialConsistency};
 use crate::network::Connection;
 use crate::observability::driver_tracing::RequestSpan;
 use crate::observability::history::HistoryListener;
 use crate::observability::metrics::Metrics;
 use crate::policies::load_balancing::{self, LoadBalancingPolicy, RoutingInfo};
 use crate::policies::retry::RetryPolicy;
+use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
 use crate::response::query_result::ColumnSpecs;
 use crate::response::{Coordinator, NonErrorQueryResponse, QueryResponse};
 use crate::routing::{NodeLocationPreference, Shard, Token};
+use crate::serialize::row::SerializedValues;
 use crate::statement::prepared::{PartitionKey, PartitionKeyError, PreparedStatement};
 use crate::statement::unprepared::Statement;
-use tracing::{Instrument, warn};
-use uuid::Uuid;
 
 // Like std::task::ready!, but handles the whole stack of Poll<Option<Result<>>>.
 // If it matches Poll::Ready(Some(Ok(_))), then it returns the innermost value,
