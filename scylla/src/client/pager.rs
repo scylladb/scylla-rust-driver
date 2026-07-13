@@ -18,6 +18,7 @@ use crate::frame::request::query::{PagingState, PagingStateResponse};
 use crate::frame::response::NonErrorResponseWithDeserializedMetadataV2 as NonErrorResponseWithDeserializedMetadata;
 use crate::frame::response::result::{DeserializedMetadataAndRawRows, SchemaChange, SetKeyspace};
 use crate::frame::types::{Consistency, SerialConsistency};
+use crate::policies::speculative_execution::SpeculativeExecutionPolicy;
 use crate::serialize::row::SerializedValues;
 use futures::Stream;
 use std::result::Result;
@@ -117,6 +118,7 @@ enum ShouldFetchMorePages {
 struct PagerWorker {
     load_balancing_policy: Arc<dyn LoadBalancingPolicy>,
     retry_policy: Arc<dyn RetryPolicy>,
+    speculative_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
     request_timeout: Option<Duration>,
     is_idempotent: bool,
     consistency: Consistency,
@@ -263,7 +265,7 @@ impl PagerWorker {
             retry_policy: self.retry_policy.as_ref(),
             load_balancing_policy: self.load_balancing_policy.as_ref(),
             metrics: &self.metrics,
-            speculative_policy: None,
+            speculative_policy: self.speculative_policy.as_deref(),
             request_timeout: self.request_timeout,
             history_listener: self.history_listener.as_deref(),
             request_kind: RequestPaging::Automatic,
@@ -727,6 +729,11 @@ If you are using this API, you are probably doing something wrong."
                 .unwrap_or(&execution_profile.retry_policy),
         );
 
+        let speculative_policy = execution_profile
+            .speculative_execution_policy
+            .as_ref()
+            .map(Arc::clone);
+
         fn create_span(statement_contents: &str) -> RequestSpan {
             let span = RequestSpan::new_query(statement_contents);
             span.record_request_size(0);
@@ -753,6 +760,7 @@ If you are using this API, you are probably doing something wrong."
         let mut worker = PagerWorker {
             load_balancing_policy,
             retry_policy,
+            speculative_policy,
             request_timeout,
             is_idempotent: statement.config.is_idempotent,
             consistency,
@@ -872,6 +880,12 @@ If you are using this API, you are probably doing something wrong."
                 .unwrap_or(&config.execution_profile.retry_policy),
         );
 
+        let speculative_policy = config
+            .execution_profile
+            .speculative_execution_policy
+            .as_ref()
+            .map(Arc::clone);
+
         type Replicas = smallvec::SmallVec<[(Arc<Node>, Shard); 8]>;
 
         fn create_span(
@@ -952,6 +966,7 @@ If you are using this API, you are probably doing something wrong."
         let mut worker = PagerWorker {
             load_balancing_policy,
             retry_policy,
+            speculative_policy,
             request_timeout,
             is_idempotent: config.prepared.config.is_idempotent,
             consistency,
