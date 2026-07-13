@@ -53,74 +53,6 @@ impl std::fmt::Debug for ClusterNeatDebug<'_> {
     }
 }
 
-/// Used to track node status changes, i.e. whether a node is reachable or not.
-///
-/// Mainly used to deduplicate [ConnectivityChangeEvent]s received from `PoolRefiller`
-/// before notifying [HostListener] about node status changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NodeConnectivityStatus {
-    Connected,
-    Unreachable,
-}
-
-// Works in the background to keep the cluster updated
-struct ClusterWorker {
-    // Cluster state to keep updated:
-    cluster_state: Arc<ArcSwap<ClusterState>>,
-
-    /// Node status map.
-    ///
-    /// Maps host_id to connectivity status.
-    /// Used to track node status in order to deduplicate HostListener events.
-    node_status: HashMap<Uuid, NodeConnectivityStatus>,
-
-    // Cluster connections
-    metadata_reader: MetadataReader,
-    pool_config: PoolConfig,
-
-    // To listen for refresh requests
-    refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
-
-    // Channel used to receive use keyspace requests
-    use_keyspace_channel: tokio::sync::mpsc::Receiver<UseKeyspaceRequest>,
-
-    // Channel used to receive signals that node is no longer reachable or became reachable.
-    connectivity_events_receiver: tokio::sync::mpsc::UnboundedReceiver<ConnectivityChangeEvent>,
-    // Sender part of that channel to pass to `PoolRefiller`s.
-    connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
-
-    // Channel used to receive info about new tablets from custom payload in responses
-    // sent by server.
-    tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
-
-    // Keyspace send in "USE <keyspace name>" when opening each connection
-    used_keyspace: Option<VerifiedKeyspaceName>,
-
-    // The host filter determines towards which nodes we should open
-    // connections
-    host_filter: Option<Arc<dyn HostFilter>>,
-
-    // The host listener allows to listen for topology and node status changes.
-    host_listener: Option<Arc<dyn HostListener>>,
-
-    // This value determines how frequently the cluster
-    // worker will refresh the cluster metadata
-    cluster_metadata_refresh_interval: Duration,
-
-    metrics: Metrics,
-}
-
-#[derive(Debug)]
-struct RefreshRequest {
-    response_chan: tokio::sync::oneshot::Sender<Result<(), MetadataError>>,
-}
-
-#[derive(Debug)]
-struct UseKeyspaceRequest {
-    keyspace_name: VerifiedKeyspaceName,
-    response_chan: tokio::sync::oneshot::Sender<Result<(), UseKeyspaceError>>,
-}
-
 impl Cluster {
     #[expect(clippy::too_many_arguments)]
     pub(crate) async fn new(
@@ -274,6 +206,74 @@ impl Cluster {
 
         response_receiver.await.unwrap() // ClusterWorker always responds
     }
+}
+
+/// Used to track node status changes, i.e. whether a node is reachable or not.
+///
+/// Mainly used to deduplicate [ConnectivityChangeEvent]s received from `PoolRefiller`
+/// before notifying [HostListener] about node status changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeConnectivityStatus {
+    Connected,
+    Unreachable,
+}
+
+// Works in the background to keep the cluster updated
+struct ClusterWorker {
+    // Cluster state to keep updated:
+    cluster_state: Arc<ArcSwap<ClusterState>>,
+
+    /// Node status map.
+    ///
+    /// Maps host_id to connectivity status.
+    /// Used to track node status in order to deduplicate HostListener events.
+    node_status: HashMap<Uuid, NodeConnectivityStatus>,
+
+    // Cluster connections
+    metadata_reader: MetadataReader,
+    pool_config: PoolConfig,
+
+    // To listen for refresh requests
+    refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
+
+    // Channel used to receive use keyspace requests
+    use_keyspace_channel: tokio::sync::mpsc::Receiver<UseKeyspaceRequest>,
+
+    // Channel used to receive signals that node is no longer reachable or became reachable.
+    connectivity_events_receiver: tokio::sync::mpsc::UnboundedReceiver<ConnectivityChangeEvent>,
+    // Sender part of that channel to pass to `PoolRefiller`s.
+    connectivity_events_sender: tokio::sync::mpsc::UnboundedSender<ConnectivityChangeEvent>,
+
+    // Channel used to receive info about new tablets from custom payload in responses
+    // sent by server.
+    tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
+
+    // Keyspace send in "USE <keyspace name>" when opening each connection
+    used_keyspace: Option<VerifiedKeyspaceName>,
+
+    // The host filter determines towards which nodes we should open
+    // connections
+    host_filter: Option<Arc<dyn HostFilter>>,
+
+    // The host listener allows to listen for topology and node status changes.
+    host_listener: Option<Arc<dyn HostListener>>,
+
+    // This value determines how frequently the cluster
+    // worker will refresh the cluster metadata
+    cluster_metadata_refresh_interval: Duration,
+
+    metrics: Metrics,
+}
+
+#[derive(Debug)]
+struct RefreshRequest {
+    response_chan: tokio::sync::oneshot::Sender<Result<(), MetadataError>>,
+}
+
+#[derive(Debug)]
+struct UseKeyspaceRequest {
+    keyspace_name: VerifiedKeyspaceName,
+    response_chan: tokio::sync::oneshot::Sender<Result<(), UseKeyspaceError>>,
 }
 
 impl ClusterWorker {
