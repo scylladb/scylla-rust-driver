@@ -221,6 +221,46 @@ impl AttemptTarget for NodeAttemptTarget<'_> {
     }
 }
 
+/// A target that always uses one specific connection. Used by the control
+/// connection, which has no [`Node`](crate::cluster::Node) and no load
+/// balancing.
+pub(crate) struct SingleConnectionTarget {
+    connection: Arc<Connection>,
+}
+
+impl SingleConnectionTarget {
+    pub(crate) fn new(connection: Arc<Connection>) -> Self {
+        Self { connection }
+    }
+}
+
+impl AttemptTarget for SingleConnectionTarget {
+    type Coordinator = ();
+
+    async fn get_connection(&self) -> Result<Arc<Connection>, ConnectionPoolError> {
+        Ok(Arc::clone(&self.connection))
+    }
+
+    fn coordinator(&self, _connection: &Arc<Connection>) {}
+
+    fn on_attempt_success(
+        &self,
+        _load_balancing_policy: &dyn LoadBalancingPolicy,
+        _routing_info: &RoutingInfo<'_>,
+        _elapsed: Duration,
+    ) {
+    }
+
+    fn on_attempt_failure(
+        &self,
+        _load_balancing_policy: &dyn LoadBalancingPolicy,
+        _routing_info: &RoutingInfo<'_>,
+        _elapsed: Duration,
+        _error: &RequestAttemptError,
+    ) {
+    }
+}
+
 /// Outcome of [`run_request_no_side_effects`]/[`run_request_speculative_fiber`].
 pub(crate) struct RequestExecutionOutcome<C> {
     /// The successful (or ignored-write) result.
