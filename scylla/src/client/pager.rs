@@ -453,16 +453,8 @@ impl PagerWorker {
                 };
 
                 let request_error: RequestAttemptError = match query_result {
-                    Ok(Ok((first_page, paging_state_response))) => {
+                    Ok(Ok((first_page, should_fetch_more_pages))) => {
                         trace!(parent: &per_target_span, "Request succeeded");
-                        let should_fetch_more_pages = match paging_state_response {
-                            PagingStateResponse::HasMorePages { .. } => {
-                                ShouldFetchMorePages::MorePages {
-                                    first_page_coordinator: coordinator,
-                                }
-                            }
-                            PagingStateResponse::NoMorePages => ShouldFetchMorePages::NoMorePages,
-                        };
                         return Ok((first_page, should_fetch_more_pages));
                     }
                     Ok(Err(error)) => {
@@ -593,7 +585,7 @@ impl PagerWorker {
         request_span: &RequestSpan,
         elapsed: Duration,
         query_response: Result<NonErrorQueryResponse, RequestAttemptError>,
-    ) -> Result<(FirstReceivedPage, PagingStateResponse), RequestAttemptError> {
+    ) -> Result<(FirstReceivedPage, ShouldFetchMorePages), RequestAttemptError> {
         let mut log_success = || {
             let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
             self.log_attempt_success();
@@ -623,13 +615,19 @@ impl PagerWorker {
                 // Query succeeded, reset retry policy for future retries
                 self.retry_session.reset();
 
+                let should_fetch_more_pages = match paging_state_response {
+                    PagingStateResponse::HasMorePages { .. } => ShouldFetchMorePages::MorePages {
+                        first_page_coordinator: coordinator.clone(),
+                    },
+                    PagingStateResponse::NoMorePages => ShouldFetchMorePages::NoMorePages,
+                };
                 Ok((
                     FirstReceivedPage {
                         content: FirstPageContent::Rows { rows },
                         tracing_id,
                         request_coordinator: coordinator,
                     },
-                    paging_state_response,
+                    should_fetch_more_pages,
                 ))
             }
             Err(err) => {
@@ -654,7 +652,7 @@ impl PagerWorker {
                         tracing_id,
                         request_coordinator: coordinator,
                     },
-                    PagingStateResponse::NoMorePages,
+                    ShouldFetchMorePages::NoMorePages,
                 ))
             }
             Ok(NonErrorQueryResponse {
@@ -673,7 +671,7 @@ impl PagerWorker {
                         tracing_id,
                         request_coordinator: coordinator,
                     },
-                    PagingStateResponse::NoMorePages,
+                    ShouldFetchMorePages::NoMorePages,
                 ))
             }
             Ok(NonErrorQueryResponse {
@@ -694,7 +692,7 @@ impl PagerWorker {
                         tracing_id,
                         request_coordinator: coordinator,
                     },
-                    PagingStateResponse::NoMorePages,
+                    ShouldFetchMorePages::NoMorePages,
                 ))
             }
             Ok(response) => {
