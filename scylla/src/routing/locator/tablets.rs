@@ -48,10 +48,19 @@ pub(crate) struct RawTablet {
     tablet_version: Option<u64>,
 }
 
-type RawTabletPayload<'frame, 'metadata> =
+type RawTabletPayloadV1<'frame, 'metadata> =
     (i64, i64, ListlikeIterator<'frame, 'metadata, (Uuid, i32)>);
 
-static RAW_TABLETS_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
+/// TABLETS_ROUTING_V2 payload is the V1 tuple with an extra trailing `bigint`
+/// carrying the tablet version (its bits are reinterpreted as `u64`).
+type RawTabletPayloadV2<'frame, 'metadata> = (
+    i64,
+    i64,
+    ListlikeIterator<'frame, 'metadata, (Uuid, i32)>,
+    i64,
+);
+
+static RAW_TABLETS_V1_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
     ColumnType::Tuple(vec![
         ColumnType::Native(NativeType::BigInt),
         ColumnType::Native(NativeType::BigInt),
@@ -65,7 +74,23 @@ static RAW_TABLETS_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
     ])
 });
 
+static RAW_TABLETS_V2_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
+    ColumnType::Tuple(vec![
+        ColumnType::Native(NativeType::BigInt),
+        ColumnType::Native(NativeType::BigInt),
+        ColumnType::Collection {
+            frozen: false,
+            typ: CollectionType::List(Box::new(ColumnType::Tuple(vec![
+                ColumnType::Native(NativeType::Uuid),
+                ColumnType::Native(NativeType::Int),
+            ]))),
+        },
+        ColumnType::Native(NativeType::BigInt),
+    ])
+});
+
 const CUSTOM_PAYLOAD_TABLETS_V1_KEY: &str = "tablets-routing-v1";
+const CUSTOM_PAYLOAD_TABLETS_V2_KEY: &str = "tablets-routing-v2";
 
 /// Chooses a tablet-version "block" byte to send with an `EXECUTE` on a
 /// TABLETS_ROUTING_V2 connection.
@@ -93,34 +118,63 @@ impl RawTablet {
     pub(crate) fn from_custom_payload(
         payload: &HashMap<String, Bytes>,
     ) -> Option<Result<RawTablet, TabletParsingError>> {
-        let payload = payload.get(CUSTOM_PAYLOAD_TABLETS_V1_KEY)?;
+        // A V2 connection receives the V2 key, a V1 connection the V1 key. The keys are
+        // mutually exclusive and self-describing (V2 carries an extra `bigint` version),
+        // so prefer V2 and fall back to V1.
+        if let Some(payload) = payload.get(CUSTOM_PAYLOAD_TABLETS_V2_KEY) {
+            Some(Self::parse_v2(payload))
+        } else {
+            let payload = payload.get(CUSTOM_PAYLOAD_TABLETS_V1_KEY)?;
+            Some(Self::parse_v1(payload))
+        }
+    }
 
-        if let Err(err) =
-            <RawTabletPayload as DeserializeValue<'_, '_>>::type_check(RAW_TABLETS_CQL_TYPE.deref())
-        {
-            return Some(Err(err.into()));
-        };
-
-        let (first_token, last_token, replicas): RawTabletPayload =
-            match <RawTabletPayload as DeserializeValue<'_, '_>>::deserialize(
-                RAW_TABLETS_CQL_TYPE.deref(),
+    fn parse_v1(payload: &Bytes) -> Result<RawTablet, TabletParsingError> {
+        <RawTabletPayloadV1 as DeserializeValue<'_, '_>>::type_check(
+            RAW_TABLETS_V1_CQL_TYPE.deref(),
+        )?;
+        let (first_token, last_token, replicas): RawTabletPayloadV1 =
+            <RawTabletPayloadV1 as DeserializeValue<'_, '_>>::deserialize(
+                RAW_TABLETS_V1_CQL_TYPE.deref(),
                 Some(FrameSlice::new(payload)),
-            ) {
-                Ok(tuple) => tuple,
-                Err(err) => return Some(Err(err.into())),
-            };
+            )?;
+        Self::build(first_token, last_token, replicas, None)
+    }
 
+    fn parse_v2(payload: &Bytes) -> Result<RawTablet, TabletParsingError> {
+        <RawTabletPayloadV2 as DeserializeValue<'_, '_>>::type_check(
+            RAW_TABLETS_V2_CQL_TYPE.deref(),
+        )?;
+        let (first_token, last_token, replicas, tablet_version): RawTabletPayloadV2 =
+            <RawTabletPayloadV2 as DeserializeValue<'_, '_>>::deserialize(
+                RAW_TABLETS_V2_CQL_TYPE.deref(),
+                Some(FrameSlice::new(payload)),
+            )?;
+        // The server encodes the tablet version as a signed `bigint`; reinterpret its bits
+        // as `u64`. The value is an opaque 64-bit hash of the tablet's ordered replica list
+        // (not a numeric counter), so only its bit pattern is meaningful.
+        Self::build(
+            first_token,
+            last_token,
+            replicas,
+            Some(tablet_version as u64),
+        )
+    }
+
+    fn build(
+        first_token: i64,
+        last_token: i64,
+        replicas: ListlikeIterator<'_, '_, (Uuid, i32)>,
+        tablet_version: Option<u64>,
+    ) -> Result<RawTablet, TabletParsingError> {
         // Important invariant. That way we guarantee that:
         // - Token range is not empty.
         // - Token range doesn't cross the i64::MAX/i64::MIN boundary.
         if last_token <= first_token {
-            return Some(Err(TabletParsingError::WrongTokenRange(
-                first_token,
-                last_token,
-            )));
+            return Err(TabletParsingError::WrongTokenRange(first_token, last_token));
         }
 
-        let replicas = match replicas
+        let replicas = replicas
             .map(|res| {
                 res.map_err(TabletParsingError::from)
                     .and_then(|(uuid, shard_num)| match shard_num.try_into() {
@@ -128,13 +182,9 @@ impl RawTablet {
                         Err(_) => Err(TabletParsingError::ShardNum(shard_num)),
                     })
             })
-            .collect::<Result<Vec<(Uuid, Shard)>, TabletParsingError>>()
-        {
-            Ok(r) => r,
-            Err(err) => return Some(Err(err)),
-        };
+            .collect::<Result<Vec<(Uuid, Shard)>, TabletParsingError>>()?;
 
-        Some(Ok(RawTablet {
+        Ok(RawTablet {
             // +1 because ScyllaDB sends left-open range, so received
             // number is the last token not belonging to this tablet.
             // This won't overflow because we checked that first token
@@ -143,8 +193,8 @@ impl RawTablet {
             first_token: Token::new(first_token + 1),
             last_token: Token::new(last_token),
             replicas: RawTabletReplicas { replicas },
-            tablet_version: None,
-        }))
+            tablet_version,
+        })
     }
 }
 
@@ -721,8 +771,9 @@ mod tests {
     use crate::cluster::Node;
     use crate::routing::Token;
     use crate::routing::locator::tablets::{
-        CUSTOM_PAYLOAD_TABLETS_V1_KEY, RAW_TABLETS_CQL_TYPE, RawTablet, RawTabletReplicas,
-        TabletParsingError, choose_tablet_version_block,
+        CUSTOM_PAYLOAD_TABLETS_V1_KEY, CUSTOM_PAYLOAD_TABLETS_V2_KEY, RAW_TABLETS_V1_CQL_TYPE,
+        RAW_TABLETS_V2_CQL_TYPE, RawTablet, RawTabletReplicas, TabletParsingError,
+        choose_tablet_version_block,
     };
     use crate::test_utils::setup_tracing;
     use crate::value::CqlValue;
@@ -792,7 +843,7 @@ mod tests {
             Some(CqlValue::BigInt(last_token)),
             Some(CqlValue::List(vec![])),
         ]);
-        SerializeValue::serialize(&value, &RAW_TABLETS_CQL_TYPE, CellWriter::new(&mut data))
+        SerializeValue::serialize(&value, &RAW_TABLETS_V1_CQL_TYPE, CellWriter::new(&mut data))
             .unwrap();
         // Skip the 4-byte length prefix added by SerializeValue::serialize,
         // because ScyllaDB sends the value without it.
@@ -853,7 +904,7 @@ mod tests {
             ])),
         ]);
 
-        SerializeValue::serialize(&value, &RAW_TABLETS_CQL_TYPE, CellWriter::new(&mut data))
+        SerializeValue::serialize(&value, &RAW_TABLETS_V1_CQL_TYPE, CellWriter::new(&mut data))
             .unwrap();
         tracing::debug!("{:?}", data);
 
@@ -919,6 +970,54 @@ mod tests {
                 "index did not vary across draws for version {version:#018x}"
             );
         }
+    }
+
+    #[test]
+    fn test_raw_tablet_deser_v2_correct() {
+        // TABLETS_ROUTING_V2 payload: the V1 tuple plus a trailing bigint tablet version.
+        let mut data = vec![];
+
+        const FIRST_TOKEN: i64 = 1234;
+        const LAST_TOKEN: i64 = 5678;
+        const TABLET_VERSION: u64 = 0x0123_4567_89AB_CDEF;
+
+        let value = CqlValue::Tuple(vec![
+            Some(CqlValue::BigInt(FIRST_TOKEN)),
+            Some(CqlValue::BigInt(LAST_TOKEN)),
+            Some(CqlValue::List(vec![CqlValue::Tuple(vec![
+                Some(CqlValue::Uuid(Uuid::from_u64_pair(1, 2))),
+                Some(CqlValue::Int(15)),
+            ])])),
+            Some(CqlValue::BigInt(TABLET_VERSION as i64)),
+        ]);
+
+        SerializeValue::serialize(&value, &RAW_TABLETS_V2_CQL_TYPE, CellWriter::new(&mut data))
+            .unwrap();
+
+        let custom_payload = HashMap::from([(
+            CUSTOM_PAYLOAD_TABLETS_V2_KEY.to_string(),
+            // Skip the 4-byte length prefix, matching what ScyllaDB sends on the wire.
+            Bytes::copy_from_slice(&data[4..]),
+        )]);
+
+        let tablet = RawTablet::from_custom_payload(&custom_payload)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            tablet,
+            RawTablet {
+                // Note: +1 because ScyllaDB sends left-open range, so received
+                //       number is the last token not belonging to this tablet.
+                //       See the deserialization logic above.
+                first_token: Token::new(FIRST_TOKEN + 1),
+                last_token: Token::new(LAST_TOKEN),
+                replicas: RawTabletReplicas {
+                    replicas: vec![(Uuid::from_u64_pair(1, 2), 15)],
+                },
+                tablet_version: Some(TABLET_VERSION),
+            }
+        );
     }
 
     #[test]
