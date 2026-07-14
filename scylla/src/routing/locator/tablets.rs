@@ -143,9 +143,6 @@ impl TabletVersion {
     /// TABLETS_ROUTING_V2 connection: the cached version's block when known (see
     /// [`choose_block`](TabletVersion::choose_block)), or a random probe byte on a cache miss
     /// (see [`random_block`](TabletVersion::random_block)).
-    // Only exercised by tests until the commit that computes the block once per request
-    // wires it into the driver.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn block_for(version: Option<Self>) -> u8 {
         match version {
             Some(version) => version.choose_block(),
@@ -519,8 +516,6 @@ impl TableTablets {
     ///
     /// `None` means either no tablet is cached for the token, or the cached tablet was
     /// learned via TABLETS_ROUTING_V1 (which carries no version).
-    // Wired up by the commit that computes the block once per request.
-    #[expect(dead_code)]
     pub(crate) fn tablet_version_for_token(&self, token: Token) -> Option<TabletVersion> {
         self.tablet_for_token(token)
             .and_then(|tablet| tablet.tablet_version)

@@ -10,6 +10,7 @@ use crate::authentication::AuthenticatorProvider;
 use crate::client::client_routes::ClientRoutesConfig;
 use crate::client::execution::{
     NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
+    choose_tablet_block_hint,
 };
 use crate::cluster::control_connection::MetadataRequestTimeouts;
 use crate::cluster::metadata::{
@@ -1314,7 +1315,8 @@ impl Session {
             .run_request(
                 routing_info,
                 exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| async move {
+                // A BATCH frame carries no tablet-version block, so the hint is unused here.
+                |connection: Arc<Connection>, consistency: Consistency, _: u8| async move {
                     connection
                         .batch_with_consistency(batch, values_ref, consistency, serial_consistency)
                         .await
@@ -1631,7 +1633,8 @@ impl Session {
             .run_request(
                 routing_info,
                 exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| {
+                // A QUERY frame carries no tablet-version block, so the hint is unused here.
+                |connection: Arc<Connection>, consistency: Consistency, _: u8| {
                     // Needed to avoid moving query and values into async move block
                     let values_ref = &values;
                     let paging_state_ref = &paging_state;
@@ -2063,7 +2066,9 @@ impl Session {
             .run_request(
                 routing_info,
                 exec_params,
-                |connection: Arc<Connection>, consistency: Consistency| async move {
+                |connection: Arc<Connection>,
+                 consistency: Consistency,
+                 tablet_block_hint: u8| async move {
                     connection
                         .execute_raw_with_consistency(
                             prepared,
@@ -2072,7 +2077,7 @@ impl Session {
                             serial_consistency,
                             page_size,
                             paging_state_ref.clone(),
-                            0,
+                            tablet_block_hint,
                         )
                         .await
                         .and_then(QueryResponse::into_non_error_query_response)
@@ -2390,7 +2395,7 @@ impl Session {
         &'a self,
         routing_info: RoutingInfo<'a>,
         exec_params: RequestExecutionParams<'a>,
-        run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
+        run_request_once: impl Fn(Arc<Connection>, Consistency, u8) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<(RunRequestResult<NonErrorQueryResponse>, Coordinator), ExecutionError>
     where
@@ -2404,6 +2409,9 @@ impl Session {
         )
         .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
+        let tablet_block_hint =
+            choose_tablet_block_hint(&cluster_state, routing_info.table, routing_info.token);
+
         let RequestExecutionOutcome {
             result,
             coordinator,
@@ -2411,7 +2419,9 @@ impl Session {
             .run_request_no_side_effects(
                 &routing_info,
                 request_plan,
-                run_request_once,
+                |connection: Arc<Connection>, consistency: Consistency| {
+                    run_request_once(connection, consistency, tablet_block_hint)
+                },
                 request_span,
             )
             .await
