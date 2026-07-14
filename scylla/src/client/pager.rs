@@ -203,6 +203,7 @@ impl PagerWorker {
 
         // Iterates over pages until exhaustion or non-retriable error.
         'paging: loop {
+            self.retry_session.reset();
             let query_plan =
                 load_balancing::Plan::new(load_balancer.as_ref(), &routing_info, &cluster_state);
             let mut current_consistency: Consistency = self.consistency;
@@ -360,7 +361,6 @@ impl PagerWorker {
                         RetryDecision::DontRetry => break 'nodes_in_plan,
                         RetryDecision::IgnoreWriteError => {
                             self.log_request_success();
-                            self.retry_session.reset();
 
                             warn!("Ignoring error during fetching pages; stopping fetching.");
                             return;
@@ -506,7 +506,6 @@ impl PagerWorker {
                     RetryDecision::DontRetry => break 'nodes_in_plan,
                     RetryDecision::IgnoreWriteError => {
                         self.log_request_success();
-                        self.retry_session.reset();
 
                         warn!("Ignoring error during fetching pages; stopping fetching.");
                         return Ok((
@@ -608,9 +607,6 @@ impl PagerWorker {
                     // Log the next page fetch in advance.
                     self.log_request_start();
                 }
-
-                // Query succeeded, reset retry policy for future retries
-                self.retry_session.reset();
 
                 let should_fetch_more_pages = match paging_state_response {
                     PagingStateResponse::HasMorePages { .. } => ShouldFetchMorePages::MorePages {
@@ -754,8 +750,6 @@ impl PagerWorker {
                     }
                 }
 
-                // Query succeeded, reset retry policy for future retries
-                self.retry_session.reset();
                 self.log_request_start();
 
                 Ok(ControlFlow::Continue(()))
