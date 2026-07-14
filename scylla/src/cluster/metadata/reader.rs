@@ -362,10 +362,38 @@ impl MetadataReader {
     }
 
     async fn handle_unaccepted_host_in_control_connection(&mut self, metadata: &Metadata) {
+        let endpoint = self.control_connection_state.endpoint();
+        // Assuming here that known_peers are up-to-date
+        if self.is_cc_endpoint_rejected(endpoint, metadata) && !self.known_peers.is_empty() {
+            let control_connection_endpoint = self
+                .known_peers
+                .choose(&mut rng())
+                .expect("known_peers is empty - should be impossible")
+                .clone();
+
+            self.control_connection_state = Self::make_control_connection_state(
+                control_connection_endpoint,
+                self.control_connection_config.clone(),
+                self.request_serverside_timeout,
+                Arc::clone(&self.cc_cache),
+                self.client_routes_subscriber.as_ref().map(Arc::clone),
+            )
+            .await;
+        }
+    }
+
+    /// Returns true if the control connection endpoint is on a node rejected
+    /// by the host filter, meaning the caller should re-establish the CC on
+    /// an accepted node.
+    fn is_cc_endpoint_rejected(
+        &self,
+        endpoint: &UntranslatedEndpoint,
+        metadata: &Metadata,
+    ) -> bool {
         let control_connection_peer = metadata
             .peers
             .iter()
-            .find(|peer| matches!(self.control_connection_state.endpoint(), UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if *address == peer.address));
+            .find(|peer| matches!(endpoint, UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if *address == peer.address));
         if let Some(peer) = control_connection_peer
             && !self.host_filter.as_ref().is_none_or(|f| f.accept(peer))
         {
@@ -377,32 +405,16 @@ impl MetadataReader {
                     .map(|peer| peer.address)
                     .safe_format(", ")
                 ),
-                control_connection_address = ?self.control_connection_state.endpoint().address(),
+                control_connection_address = ?endpoint.address(),
                 "The node that the control connection is established to \
                 is not accepted by the host filter. Please verify that \
                 the nodes in your initial peers list are accepted by the \
                 host filter. The driver will try to re-establish the \
                 control connection to a different node."
             );
-
-            // Assuming here that known_peers are up-to-date
-            if !self.known_peers.is_empty() {
-                let control_connection_endpoint = self
-                    .known_peers
-                    .choose(&mut rng())
-                    .expect("known_peers is empty - should be impossible")
-                    .clone();
-
-                self.control_connection_state = Self::make_control_connection_state(
-                    control_connection_endpoint,
-                    self.control_connection_config.clone(),
-                    self.request_serverside_timeout,
-                    Arc::clone(&self.cc_cache),
-                    self.client_routes_subscriber.as_ref().map(Arc::clone),
-                )
-                .await;
-            }
+            return true;
         }
+        false
     }
 
     /// Opens a control connection to `endpoint`, wrapping the outcome in a
