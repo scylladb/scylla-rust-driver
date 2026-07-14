@@ -381,17 +381,16 @@ impl PagerWorker {
 
     /// Fetches the first page on the caller task (no spawning).
     /// Returns the first page and whether more pages should be fetched.
-    async fn query_first_page<QueryFunc, QueryFut, SpanCreator>(
+    async fn query_first_page<QueryFunc, QueryFut>(
         &mut self,
         cluster_state: &ClusterState,
-        span_creator: SpanCreator,
+        request_span: &RequestSpan,
         routing_info: &RoutingInfo<'_>,
         page_query: QueryFunc,
     ) -> Result<(FirstReceivedPage, ShouldFetchMorePages), RequestError>
     where
         QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
         QueryFut: Future<Output = Result<QueryResponse, RequestAttemptError>>,
-        SpanCreator: Fn() -> RequestSpan,
     {
         let load_balancer = Arc::clone(&self.load_balancing_policy);
         let query_plan =
@@ -431,8 +430,6 @@ impl PagerWorker {
             // Retries on the same node as long as RetrySession decides so.
             'same_node_retries: loop {
                 trace!(parent: &per_target_span, "Execution started");
-                let request_span = span_creator();
-
                 let fetch_result = self
                     .fetch_one_page(&connection, current_consistency, &request_span, &page_query)
                     .instrument(request_span.span().clone())
@@ -444,7 +441,7 @@ impl PagerWorker {
                             routing_info,
                             node,
                             coordinator.clone(),
-                            &request_span,
+                            request_span,
                             elapsed,
                             result,
                         );
@@ -1199,10 +1196,10 @@ If you are using this API, you are probably doing something wrong."
                 node_location_preference: &node_location_preference,
             };
 
-            let span_creator = || create_span(&statement.contents);
+            let request_span = create_span(&statement.contents);
 
             worker
-                .query_first_page(&cluster_state, span_creator, &routing_info, page_query)
+                .query_first_page(&cluster_state, &request_span, &routing_info, page_query)
                 .await
                 .map_err(NextPageError::RequestFailure)?
         };
@@ -1372,14 +1369,12 @@ If you are using this API, you are probably doing something wrong."
                     .collect()
             });
 
-        let span_creator = || {
-            create_span(
-                &partition_key,
-                token,
-                serialized_values_size,
-                replicas.as_ref(),
-            )
-        };
+        let request_span = create_span(
+            &partition_key,
+            token,
+            serialized_values_size,
+            replicas.as_ref(),
+        );
 
         let mut worker = PagerWorker {
             load_balancing_policy,
@@ -1403,7 +1398,7 @@ If you are using this API, you are probably doing something wrong."
         let (first_page, should_fetch_more_pages) = worker
             .query_first_page(
                 &config.cluster_state,
-                &span_creator,
+                &request_span,
                 &routing_info,
                 page_query,
             )
