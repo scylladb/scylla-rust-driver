@@ -1906,6 +1906,7 @@ impl Connection {
             || features.shard_aware_port.is_some()
             || proto_features.rate_limit_error.is_some()
             || proto_features.tablets_v1_supported
+            || proto_features.tablets_v2_supported
             || proto_features.scylla_metadata_id_supported
     }
 
