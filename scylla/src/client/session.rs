@@ -7,7 +7,9 @@ use super::pager::QueryPager;
 use super::{Compression, PoolSize, SelfIdentity, WriteCoalescingDelay};
 use crate::authentication::AuthenticatorProvider;
 use crate::client::client_routes::ClientRoutesConfig;
-use crate::client::execution::{RequestExecutionOutcome, RequestExecutionParams, RunRequestResult};
+use crate::client::execution::{
+    NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RunRequestResult,
+};
 use crate::cluster::metadata::{SchemaMetadataFetchLevel, SchemaMetadataFetchMode};
 use crate::cluster::node::KnownNode;
 use crate::cluster::{Cluster, ClusterNeatDebug, ClusterState};
@@ -2119,7 +2121,8 @@ impl Session {
             exec_params.load_balancing_policy,
             &routing_info,
             &cluster_state,
-        );
+        )
+        .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
         let RequestExecutionOutcome {
             result,

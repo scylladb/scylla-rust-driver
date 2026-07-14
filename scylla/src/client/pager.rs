@@ -17,7 +17,8 @@ use tracing::{Instrument, warn};
 use uuid::Uuid;
 
 use crate::client::execution::{
-    RequestExecutionOutcome, RequestExecutionParams, RequestPaging, RunRequestResult,
+    NodeAttemptTarget, RequestExecutionOutcome, RequestExecutionParams, RequestPaging,
+    RunRequestResult,
 };
 use crate::client::session::Session;
 use crate::cluster::{ClusterState, Node};
@@ -359,7 +360,8 @@ impl PagingExecutor {
                             .shard()
                             .is_none_or(|last_shard| last_shard == shard))
                 })
-            }));
+            }))
+            .map(|(node, shard)| NodeAttemptTarget::new(node, shard));
 
         exec_params
             .run_request_no_side_effects(routing_info, plan, run_request_once, page_span)

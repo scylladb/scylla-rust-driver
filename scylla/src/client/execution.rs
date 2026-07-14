@@ -10,6 +10,7 @@ use tracing::trace_span;
 
 use crate::client::execution_profile::ExecutionProfileInner;
 use crate::cluster::NodeRef;
+use crate::errors::ConnectionPoolError;
 use crate::errors::RequestAttemptError;
 use crate::errors::RequestError;
 use crate::frame::types::{Consistency, SerialConsistency};
@@ -134,6 +135,92 @@ impl<'a> RequestExecutionParams<'a> {
     }
 }
 
+/// Abstracts a single target that a request attempt can be sent to.
+///
+/// A request plan is an iterator of `AttemptTarget`s. There are two
+/// implementations:
+/// - [`NodeAttemptTarget`] - a `(node, shard)` pair produced by a load
+///   balancing plan. It produces a real [`Coordinator`] and forwards
+///   success/failure feedback to the load balancing policy.
+/// - [`SingleConnectionTarget`] - a single fixed connection (used by the
+///   control connection, which intentionally has no [`Node`](crate::cluster::Node)).
+///   It produces no coordinator (`()`) and has no load balancing feedback.
+pub(crate) trait AttemptTarget {
+    /// Coordinator descriptor reported back to the caller.
+    type Coordinator;
+
+    /// Acquires a connection to send the attempt on.
+    ///
+    /// On `Err`, the fiber skips this target and proceeds to the next one in
+    /// the plan (without counting it as a failed request in metrics).
+    async fn get_connection(&self) -> Result<Arc<Connection>, ConnectionPoolError>;
+
+    /// Builds the coordinator descriptor once a connection has been chosen.
+    fn coordinator(&self, connection: &Arc<Connection>) -> Self::Coordinator;
+
+    /// Load balancing feedback after a successful attempt. No-op for targets
+    /// that are not driven by load balancing.
+    fn on_attempt_success(
+        &self,
+        load_balancing_policy: &dyn LoadBalancingPolicy,
+        routing_info: &RoutingInfo<'_>,
+        elapsed: Duration,
+    );
+
+    /// Load balancing feedback after a failed attempt. No-op for targets that
+    /// are not driven by load balancing.
+    fn on_attempt_failure(
+        &self,
+        load_balancing_policy: &dyn LoadBalancingPolicy,
+        routing_info: &RoutingInfo<'_>,
+        elapsed: Duration,
+        error: &RequestAttemptError,
+    );
+}
+
+/// A load-balancing-driven target: a `(node, shard)` pair.
+pub(crate) struct NodeAttemptTarget<'a> {
+    node: NodeRef<'a>,
+    shard: Shard,
+}
+
+impl<'a> NodeAttemptTarget<'a> {
+    pub(crate) fn new(node: NodeRef<'a>, shard: Shard) -> Self {
+        Self { node, shard }
+    }
+}
+
+impl AttemptTarget for NodeAttemptTarget<'_> {
+    type Coordinator = Coordinator;
+
+    async fn get_connection(&self) -> Result<Arc<Connection>, ConnectionPoolError> {
+        self.node.connection_for_shard(self.shard).await
+    }
+
+    fn coordinator(&self, connection: &Arc<Connection>) -> Coordinator {
+        Coordinator::new(self.node, connection)
+    }
+
+    fn on_attempt_success(
+        &self,
+        load_balancing_policy: &dyn LoadBalancingPolicy,
+        routing_info: &RoutingInfo<'_>,
+        elapsed: Duration,
+    ) {
+        load_balancing_policy.on_request_success(routing_info, elapsed, self.node);
+    }
+
+    fn on_attempt_failure(
+        &self,
+        load_balancing_policy: &dyn LoadBalancingPolicy,
+        routing_info: &RoutingInfo<'_>,
+        elapsed: Duration,
+        error: &RequestAttemptError,
+    ) {
+        load_balancing_policy.on_request_failure(routing_info, elapsed, self.node, error);
+    }
+}
+
 /// Outcome of [`run_request_no_side_effects`]/[`run_request_speculative_fiber`].
 pub(crate) struct RequestExecutionOutcome<C> {
     /// The successful (or ignored-write) result.
@@ -238,14 +325,15 @@ impl<'a> RequestExecutionParams<'a> {
     ///
     /// `request_plan` is an iterator of targets. `run_request_once`
     /// performs a single attempt against a chosen connection and consistency.
-    pub(crate) async fn run_request_no_side_effects<QueryFut>(
-        &'a self,
+    pub(crate) async fn run_request_no_side_effects<Target, QueryFut>(
+        &self,
         routing_info: &'a RoutingInfo<'a>,
-        request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
+        request_plan: impl Iterator<Item = Target>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         request_span: &'a RequestSpan,
-    ) -> Result<RequestExecutionOutcome<Coordinator>, RequestError>
+    ) -> Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>
     where
+        Target: AttemptTarget,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         let history_listener_and_id: Option<(&dyn HistoryListener, history::RequestId)> =
@@ -351,23 +439,24 @@ impl<'a> RequestExecutionParams<'a> {
     /// running `run_request_once` and consulting the retry policy on failure.
     ///
     /// Returns `None` only if the plan was empty.
-    async fn run_request_speculative_fiber<QueryFut>(
+    async fn run_request_speculative_fiber<Target, QueryFut>(
         &self,
-        request_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
+        request_plan: impl Iterator<Item = Target>,
         run_request_once: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
         mut context: ExecuteRequestContext<'a>,
-    ) -> Option<Result<RequestExecutionOutcome<Coordinator>, RequestError>>
+    ) -> Option<Result<RequestExecutionOutcome<Target::Coordinator>, RequestError>>
     where
+        Target: AttemptTarget,
         QueryFut: Future<Output = Result<NonErrorQueryResponse, RequestAttemptError>>,
     {
         let mut last_error: Option<RequestError> = None;
         let mut current_consistency: Consistency = self.consistency;
 
-        'targets_in_plan: for (node, shard) in request_plan {
-            let span = trace_span!("Executing request on chosen target", node = %node.address, shard = %shard);
+        'targets_in_plan: for target in request_plan {
+            let span = trace_span!("Executing request on chosen target");
             'same_target_retries: loop {
                 trace!(parent: &span, "Execution attempt started");
-                let connection = match node.connection_for_shard(shard).await {
+                let connection = match target.get_connection().await {
                     Ok(connection) => connection,
                     Err(e) => {
                         trace!(
@@ -391,7 +480,8 @@ impl<'a> RequestExecutionParams<'a> {
                     connection = %connect_address,
                     "Sending"
                 );
-                let coordinator = Coordinator::new(node, &connection);
+
+                let coordinator = target.coordinator(&connection);
 
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connect_address);
@@ -407,10 +497,10 @@ impl<'a> RequestExecutionParams<'a> {
                         trace!(parent: &span, "Request succeeded");
                         self.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
-                        self.load_balancing_policy.on_request_success(
+                        target.on_attempt_success(
+                            self.load_balancing_policy,
                             context.routing_info,
                             elapsed,
-                            node,
                         );
                         return Some(Ok(RequestExecutionOutcome {
                             result: RunRequestResult::Completed(response),
@@ -424,10 +514,10 @@ impl<'a> RequestExecutionParams<'a> {
                             "Request failed"
                         );
                         self.inc_failed_queries();
-                        self.load_balancing_policy.on_request_failure(
+                        target.on_attempt_failure(
+                            self.load_balancing_policy,
                             context.routing_info,
                             elapsed,
-                            node,
                             &e,
                         );
                         e
