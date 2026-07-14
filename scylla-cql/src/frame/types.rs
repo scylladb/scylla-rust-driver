@@ -67,6 +67,22 @@ pub fn read_long(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
     Ok(v)
 }
 
+/// Reads a single byte from the buffer, advancing it past that byte.
+/// Fails if the buffer is empty.
+pub fn read_byte(buf: &mut &[u8]) -> Result<u8, std::io::Error> {
+    let v = buf.read_u8()?;
+    Ok(v)
+}
+
+#[test]
+fn type_byte() {
+    for val in [0u8, 1, 0xAB, u8::MAX] {
+        let buf = [val];
+        assert_eq!(read_byte(&mut &buf[..]).unwrap(), val);
+    }
+    assert!(read_byte(&mut &[][..]).is_err());
+}
+
 pub fn write_long(v: i64, buf: &mut impl BufMut) {
     buf.put_i64(v);
 }

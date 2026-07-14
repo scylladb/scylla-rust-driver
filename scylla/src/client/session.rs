@@ -1660,6 +1660,9 @@ impl Session {
                                     serial_consistency,
                                     page_size,
                                     paging_state_ref.clone(),
+                                    // An unprepared statement is not routed by token, so there
+                                    // is no tablet version to probe.
+                                    0,
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
@@ -2069,6 +2072,7 @@ impl Session {
                             serial_consistency,
                             page_size,
                             paging_state_ref.clone(),
+                            0,
                         )
                         .await
                         .and_then(QueryResponse::into_non_error_query_response)
