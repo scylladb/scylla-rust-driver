@@ -440,16 +440,14 @@ impl PagerWorker {
                 let query_result = match fetch_result {
                     Err(e) => Err(e),
                     Ok((elapsed, result)) => {
-                        let result = self
-                            .process_first_page(
-                                routing_info,
-                                node,
-                                coordinator.clone(),
-                                &request_span,
-                                elapsed,
-                                result,
-                            )
-                            .await;
+                        let result = self.process_first_page(
+                            routing_info,
+                            node,
+                            coordinator.clone(),
+                            &request_span,
+                            elapsed,
+                            result,
+                        );
                         Ok(result)
                     }
                 };
@@ -587,7 +585,7 @@ impl PagerWorker {
         Ok((elapsed, query_response))
     }
 
-    async fn process_first_page(
+    fn process_first_page(
         &mut self,
         routing_info: &RoutingInfo<'_>,
         node: NodeRef<'_>,
