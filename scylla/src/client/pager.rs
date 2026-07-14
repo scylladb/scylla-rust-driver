@@ -185,7 +185,7 @@ impl PagerWorker {
     /// The last successful coordinator is preferred for the next page
     /// (coordinator stability), but all other nodes remain available
     /// for retry.
-    async fn work<QueryFunc, QueryFut, SpanCreator>(
+    async fn query_remaining_pages<QueryFunc, QueryFut, SpanCreator>(
         mut self,
         cluster_state: Arc<ClusterState>,
         sender: mpsc::Sender<ResultNextPage>,
@@ -1247,7 +1247,7 @@ If you are using this API, you are probably doing something wrong."
                     let span_creator = move || create_span(&statement_ref.contents);
 
                     worker
-                        .work(
+                        .query_remaining_pages(
                             cluster_state,
                             sender,
                             page_query,
@@ -1479,7 +1479,7 @@ If you are using this API, you are probably doing something wrong."
                     };
 
                     worker
-                        .work(
+                        .query_remaining_pages(
                             config.cluster_state,
                             sender,
                             page_query,
