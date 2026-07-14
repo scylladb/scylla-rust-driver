@@ -423,6 +423,48 @@ where
     try_join_all(tasks).await
 }
 
+/// Runs `attempt`, retrying while concurrent tablet migrations invalidate what it observed.
+///
+/// Tablet migrations run in the background and can move a tablet's replicas -- or, for a
+/// strongly-consistent table, its Raft leader -- while a test is measuring routing, which makes
+/// an otherwise correct driver look wrong. `snapshot` captures the server-side tablet state
+/// before and after each attempt: if the attempt failed but the snapshot is unchanged, the
+/// failure is real and we panic; if it changed, a migration raced the test, so we retry.
+///
+/// The snapshot type is left to the caller, since different tests care about different amounts
+/// of detail. Any value that compares equal iff "nothing relevant moved" works.
+pub(crate) async fn with_migration_retry<Snapshot, TakeSnapshot, Attempt>(
+    mut snapshot: TakeSnapshot,
+    mut attempt: Attempt,
+) where
+    Snapshot: PartialEq,
+    TakeSnapshot: AsyncFnMut() -> Snapshot,
+    Attempt: AsyncFnMut(&Snapshot) -> Result<(), String>,
+{
+    const MAX_ATTEMPTS: usize = 5;
+
+    let mut last_error = None;
+    for _ in 0..MAX_ATTEMPTS {
+        let before = snapshot().await;
+        match attempt(&before).await {
+            Ok(()) => return,
+            Err(error) => {
+                if snapshot().await == before {
+                    // We failed, but there was no migration.
+                    panic!("Test attempt failed despite no migration. Error: {error}");
+                }
+                // There was a migration, let's try again.
+                last_error = Some(error);
+            }
+        }
+    }
+    panic!(
+        "There was a tablet migration during each of the {MAX_ATTEMPTS} attempts! \
+         Last error: {}",
+        last_error.unwrap()
+    );
+}
+
 pub(crate) async fn execute_prepared_statement_everywhere(
     session: &Session,
     cluster: &ClusterState,

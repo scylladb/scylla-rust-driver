@@ -643,33 +643,17 @@ async fn verify_feedback_for_keys(
 /// verifies routing), retrying while tablet migrations invalidate the driver's
 /// cache mid-run.
 ///
-/// Tablet info for `base_table` is read before each attempt and passed in. On
-/// failure we re-read it: if the tablets are unchanged the failure is real and
-/// we panic; if they changed a migration raced the test and we retry.
+/// Thin wrapper over [`crate::utils::with_migration_retry`] that snapshots this
+/// module's resolved tablet view of `base_table` and hands it to each attempt.
 async fn with_migration_retry<F>(session: &Session, ks: &str, base_table: &str, mut attempt: F)
 where
     F: AsyncFnMut(&[Tablet]) -> Result<(), String>,
 {
-    let mut last_error = None;
-    for _ in 0..5 {
-        let tablets = get_tablets(session, ks, base_table).await;
-        match attempt(&tablets).await {
-            Ok(()) => return,
-            Err(e) => {
-                let new_tablets = get_tablets(session, ks, base_table).await;
-                if tablets == new_tablets {
-                    // We failed, but there was no migration.
-                    panic!("Test attempt failed despite no migration. Error: {e}");
-                }
-                last_error = Some(e);
-                // There was a migration, let's try again.
-            }
-        }
-    }
-    panic!(
-        "There was a tablet migration during each attempt! Last error: {}",
-        last_error.unwrap()
-    );
+    crate::utils::with_migration_retry(
+        async || get_tablets(session, ks, base_table).await,
+        async |tablets: &Vec<Tablet>| attempt(tablets).await,
+    )
+    .await
 }
 
 /// Prepares the statement(s) needed to run `descriptor` for every key, pairing
