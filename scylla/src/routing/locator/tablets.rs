@@ -114,6 +114,16 @@ pub(crate) fn random_tablet_version_block() -> u8 {
     rand::rng().random::<u8>()
 }
 
+/// Encodes the tablet-version block byte to attach to an `EXECUTE` on a TABLETS_ROUTING_V2
+/// connection: the cached `version` when known (see [`choose_tablet_version_block`]), or a
+/// random probe byte on a cache miss (see [`random_tablet_version_block`]).
+pub(crate) fn tablet_version_block_for(version: Option<u64>) -> u8 {
+    match version {
+        Some(version) => choose_tablet_version_block(version),
+        None => random_tablet_version_block(),
+    }
+}
+
 impl RawTablet {
     pub(crate) fn from_custom_payload(
         payload: &HashMap<String, Bytes>,

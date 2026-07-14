@@ -38,6 +38,7 @@ use crate::response::{
 };
 use crate::routing::NodeLocationPreference;
 use crate::routing::ShardAwarePortRange;
+use crate::routing::locator::tablets::tablet_version_block_for;
 use crate::routing::partitioner::PartitionerName;
 use crate::serialize::batch::BatchValues;
 use crate::serialize::row::{SerializeRow, SerializedValues};
@@ -1742,13 +1743,25 @@ impl Session {
             serialized_values.buffer_size(),
         );
 
+        let cluster_state = self.get_cluster_state();
         if !span.span().is_disabled()
             && let (Some(table_spec), Some(token)) = (routing_info.table, token)
         {
-            let cluster_state = self.get_cluster_state();
             let replicas = cluster_state.get_token_endpoints_iter(table_spec, token);
             span.record_replicas(replicas)
         }
+
+        // Choose the tablet-version block once per request (it does not depend on the
+        // connection, and is chosen once rather than per attempt): the block is a randomly
+        // chosen probe of the cached tablet version, used by the server for staleness
+        // detection, and there is no benefit to re-rolling it on retries. `None` means there
+        // is no single-partition token to route by; otherwise it is a probe byte derived from
+        // the cached version (random when no version is cached yet). The connection appends it
+        // only on a TABLETS_ROUTING_V2 connection, so we compute it unconditionally here.
+        let tablet_block_hint = table_spec
+            .zip(token)
+            .map(|(table_spec, token)| cluster_state.tablet_version_for_token(table_spec, token))
+            .map(tablet_version_block_for);
 
         let (run_request_result, coordinator): (
             RunRequestResult<NonErrorQueryResponse>,
@@ -1766,7 +1779,7 @@ impl Session {
                             serial_consistency,
                             page_size,
                             paging_state_ref.clone(),
-                            None,
+                            tablet_block_hint,
                         )
                         .await
                         .and_then(QueryResponse::into_non_error_query_response)

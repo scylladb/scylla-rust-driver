@@ -388,6 +388,22 @@ impl ClusterState {
         replica_set.into_iter()
     }
 
+    /// Returns the cached tablet version for the tablet owning `token` in `table_spec`, if
+    /// known via the TABLETS_ROUTING_V2 protocol extension.
+    ///
+    /// `None` means either no tablet is cached for the token, or the cached tablet was
+    /// learned via TABLETS_ROUTING_V1 (which carries no version).
+    pub(crate) fn tablet_version_for_token(
+        &self,
+        table_spec: &TableSpec,
+        token: Token,
+    ) -> Option<u64> {
+        self.locator
+            .tablets
+            .tablets_for_table(table_spec)
+            .and_then(|tablets| tablets.tablet_version_for_token(token))
+    }
+
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
     ///
     /// `partition_key` argument contains the values of all partition key
