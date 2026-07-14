@@ -890,6 +890,7 @@ If you are using this API, you are probably doing something wrong."
                     serial_consistency,
                     Some(page_size),
                     paging_state,
+                    None,
                 )
                 .await
         };
@@ -971,6 +972,7 @@ If you are using this API, you are probably doing something wrong."
                                     serial_consistency,
                                     Some(page_size),
                                     paging_state,
+                                    None,
                                 )
                                 .await
                         };
@@ -1020,6 +1022,7 @@ If you are using this API, you are probably doing something wrong."
                         serial_consistency,
                         Some(page_size),
                         paging_state,
+                        None,
                     )
                     .await
             },

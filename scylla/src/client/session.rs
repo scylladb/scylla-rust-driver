@@ -1352,6 +1352,7 @@ impl Session {
                                     serial_consistency,
                                     page_size,
                                     paging_state_ref.clone(),
+                                    None,
                                 )
                                 .await
                                 .and_then(QueryResponse::into_non_error_query_response)
@@ -1765,6 +1766,7 @@ impl Session {
                             serial_consistency,
                             page_size,
                             paging_state_ref.clone(),
+                            None,
                         )
                         .await
                         .and_then(QueryResponse::into_non_error_query_response)
