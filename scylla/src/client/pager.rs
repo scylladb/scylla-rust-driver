@@ -289,38 +289,48 @@ impl PagerWorker {
                             // This means that we failed all attempts - in this case, due to a timeout.
                             break 'nodes_in_plan;
                         }
-                        Ok((elapsed, result)) => {
-                            self.process_next_page(
-                                &routing_info,
-                                node,
-                                coordinator.clone(),
-                                &request_span,
-                                &sender,
-                                elapsed,
-                                result,
-                            )
-                            .await
-                        }
+                        Ok((elapsed, result)) => self.process_next_page(
+                            &routing_info,
+                            node,
+                            coordinator.clone(),
+                            &request_span,
+                            elapsed,
+                            result,
+                        ),
                     };
 
                     let request_error: RequestAttemptError = match query_result {
-                        Ok(ControlFlow::Break(())) => {
-                            // Successfully queried the last remaining page.
-                            trace!(parent: &per_target_span, "Request succeeded");
-                            return;
-                        }
-                        Ok(ControlFlow::Continue(())) => {
-                            // Successfully queried one page, and there are more to fetch.
-                            // Reset the timeout_instant for the next page fetch.
-                            self.timeouter.as_mut().map(PageQueryTimeouter::reset);
+                        Ok((page, paging_state)) => {
+                            // Send next page to QueryPager
+                            let res = sender.send(Ok(page)).await;
+                            if res.is_err() {
+                                // channel was closed, QueryPager was dropped - should shutdown
+                                return;
+                            }
 
-                            // Prioritize the successful coordinator for the next page fetch.
+                            match paging_state {
+                                PagingStateResponse::NoMorePages => {
+                                    // Successfully queried the last remaining page.
+                                    trace!(parent: &per_target_span, "Request succeeded");
+                                    return;
+                                }
+                                PagingStateResponse::HasMorePages { state } => {
+                                    // Successfully queried one page, and there are more to fetch.
+                                    self.paging_state = state;
 
-                            std::mem::drop(query_plan);
-                            last_successful_page_coordinator = coordinator;
+                                    // Reset the timeout_instant for the next page fetch.
+                                    self.timeouter.as_mut().map(PageQueryTimeouter::reset);
 
-                            // Continue with a fresh plan for the next page.
-                            continue 'paging;
+                                    // Prioritize the successful coordinator for the next page fetch.
+
+                                    std::mem::drop(query_plan);
+                                    last_successful_page_coordinator = coordinator;
+
+                                    self.log_request_start();
+                                    // Continue with a fresh plan for the next page.
+                                    continue 'paging;
+                                }
+                            }
                         }
                         Err(error) => {
                             trace!(
@@ -702,16 +712,15 @@ impl PagerWorker {
     }
 
     #[expect(clippy::too_many_arguments)]
-    async fn process_next_page(
+    fn process_next_page(
         &mut self,
         routing_info: &RoutingInfo<'_>,
         node: NodeRef<'_>,
         coordinator: Coordinator,
         request_span: &RequestSpan,
-        sender: &mpsc::Sender<ResultNextPage>,
         elapsed: Duration,
         query_response: Result<NonErrorQueryResponse, RequestAttemptError>,
-    ) -> Result<ControlFlow<(), ()>, RequestAttemptError> {
+    ) -> Result<(NextReceivedPage, PagingStateResponse), RequestAttemptError> {
         match query_response {
             Ok(NonErrorQueryResponse {
                 response:
@@ -735,26 +744,7 @@ impl PagerWorker {
                     request_coordinator: Some(coordinator),
                 };
 
-                // Send next page to QueryPager
-                let res = sender.send(Ok(received_page)).await;
-                if res.is_err() {
-                    // channel was closed, QueryPager was dropped - should shutdown
-                    return Ok(ControlFlow::Break(()));
-                }
-
-                match paging_state_response.into_paging_control_flow() {
-                    ControlFlow::Continue(paging_state) => {
-                        self.paging_state = paging_state;
-                    }
-                    ControlFlow::Break(()) => {
-                        // Reached the last query, shutdown
-                        return Ok(ControlFlow::Break(()));
-                    }
-                }
-
-                self.log_request_start();
-
-                Ok(ControlFlow::Continue(()))
+                Ok((received_page, paging_state_response))
             }
             // This catches all other kinds of responses that are not rows.
             // As this is not the first page, this is certainly an error.
