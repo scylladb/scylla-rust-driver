@@ -1,3 +1,5 @@
+#![doc = include_str!("tablets.md")]
+
 use crate::cluster::metadata::Keyspace;
 use crate::deserialize::value::{DeserializeValue, ListlikeIterator};
 use crate::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
