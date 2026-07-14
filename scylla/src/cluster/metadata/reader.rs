@@ -288,21 +288,16 @@ impl MetadataReader {
     }
 
     async fn fetch_metadata(&mut self, initial: bool) -> Result<Metadata, MetadataError> {
-        let working_connection = match &self.control_connection_state {
-            ControlConnectionState::Working(working_connection) => working_connection,
+        let (endpoint, res) = match &self.control_connection_state {
+            ControlConnectionState::Working(working_connection) => {
+                let endpoint = working_connection.endpoint().clone();
+                let res = self.query_metadata_on_cc(working_connection).await;
+                (endpoint, res)
+            }
             ControlConnectionState::Broken { last_error: e, .. } => {
                 return Err(e.clone());
             }
         };
-        let endpoint = working_connection.endpoint().clone();
-
-        let res = working_connection
-            .query_metadata(
-                endpoint.address().port(),
-                &self.keyspaces_to_fetch,
-                self.fetch_schema,
-            )
-            .await;
 
         // If metadata fetch failed, we consider the connection broken.
         if let Err(err) = &res {
@@ -324,6 +319,23 @@ impl MetadataReader {
         }
 
         res
+    }
+
+    /// Queries metadata on the given control connection.
+    ///
+    /// This is a thin wrapper over [`ControlConnection::query_metadata`] that fills in
+    /// the reader's configuration (keyspaces to fetch, whether to fetch schema). It does
+    /// **not** update `known_peers` nor touch the control connection state.
+    async fn query_metadata_on_cc(
+        &self,
+        cc: &ControlConnection,
+    ) -> Result<Metadata, MetadataError> {
+        cc.query_metadata(
+            cc.endpoint().address().port(),
+            &self.keyspaces_to_fetch,
+            self.fetch_schema,
+        )
+        .await
     }
 
     fn update_known_peers(&mut self, metadata: &Metadata) {
