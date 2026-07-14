@@ -362,29 +362,8 @@ impl MetadataReader {
     }
 
     async fn handle_unaccepted_host_in_control_connection(&mut self, metadata: &Metadata) {
-        let control_connection_peer = metadata
-            .peers
-            .iter()
-            .find(|peer| matches!(self.control_connection_state.endpoint(), UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if *address == peer.address));
-        if let Some(peer) = control_connection_peer
-            && !self.host_filter.as_ref().is_none_or(|f| f.accept(peer))
-        {
-            warn!(
-                filtered_node_ips = tracing::field::display(metadata
-                    .peers
-                    .iter()
-                    .filter(|peer| self.host_filter.as_ref().is_none_or(|p| p.accept(peer)))
-                    .map(|peer| peer.address)
-                    .safe_format(", ")
-                ),
-                control_connection_address = ?self.control_connection_state.endpoint().address(),
-                "The node that the control connection is established to \
-                is not accepted by the host filter. Please verify that \
-                the nodes in your initial peers list are accepted by the \
-                host filter. The driver will try to re-establish the \
-                control connection to a different node."
-            );
-
+        let endpoint = self.control_connection_state.endpoint().clone();
+        if self.is_cc_endpoint_rejected(&endpoint, metadata) {
             // Assuming here that known_peers are up-to-date
             if !self.known_peers.is_empty() {
                 let control_connection_endpoint = self
@@ -403,6 +382,41 @@ impl MetadataReader {
                 .await;
             }
         }
+    }
+
+    /// Returns true if the control connection endpoint is on a node rejected
+    /// by the host filter, meaning the caller should re-establish the CC on
+    /// an accepted node.
+    fn is_cc_endpoint_rejected(
+        &self,
+        endpoint: &UntranslatedEndpoint,
+        metadata: &Metadata,
+    ) -> bool {
+        let control_connection_peer = metadata
+            .peers
+            .iter()
+            .find(|peer| matches!(endpoint, UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if *address == peer.address));
+        if let Some(peer) = control_connection_peer
+            && !self.host_filter.as_ref().is_none_or(|f| f.accept(peer))
+        {
+            warn!(
+                filtered_node_ips = tracing::field::display(metadata
+                    .peers
+                    .iter()
+                    .filter(|peer| self.host_filter.as_ref().is_none_or(|p| p.accept(peer)))
+                    .map(|peer| peer.address)
+                    .safe_format(", ")
+                ),
+                control_connection_address = ?endpoint.address(),
+                "The node that the control connection is established to \
+                is not accepted by the host filter. Please verify that \
+                the nodes in your initial peers list are accepted by the \
+                host filter. The driver will try to re-establish the \
+                control connection to a different node."
+            );
+            return true;
+        }
+        false
     }
 
     /// Opens a control connection to `endpoint`, wrapping the outcome in a
