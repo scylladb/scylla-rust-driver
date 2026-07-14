@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::cluster::Node;
 use crate::routing::{Shard, Token};
 use crate::utils::safe_format::IteratorSafeFormatExt;
+use rand::Rng as _;
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
@@ -41,6 +42,10 @@ pub(crate) struct RawTablet {
     /// Last token belonging to the tablet, inclusive
     last_token: Token,
     replicas: RawTabletReplicas,
+    /// Tablet version, present only when the tablet was learned via the
+    /// TABLETS_ROUTING_V2 extension. Used to keep the driver's routing cache fresh -
+    /// see [`TabletVersion`].
+    tablet_version: Option<TabletVersion>,
 }
 
 type RawTabletPayload<'frame, 'metadata> =
@@ -61,6 +66,77 @@ static RAW_TABLETS_CQL_TYPE: LazyLock<ColumnType<'static>> = LazyLock::new(|| {
 });
 
 const CUSTOM_PAYLOAD_TABLETS_V1_KEY: &str = "tablets-routing-v1";
+
+/// An opaque tablet version learned via the `TABLETS_ROUTING_V2` protocol extension.
+///
+/// It is a 64-bit hash of the tablet's ordered replica list -- not a numeric counter -- so only
+/// its bit pattern is ever meaningful, never its value as an integer. It is therefore stored as
+/// the raw big-endian bytes the server sent (a CQL `bigint`), which makes that explicit and
+/// keeps the type free of sign-changing casts.
+///
+/// The driver uses it to keep its tablet-routing cache fresh: a "block" byte sampled from the
+/// version is sent with every `EXECUTE`, and the server replies with fresh routing information
+/// whenever the sampled nibble disagrees with its own version. See
+/// [`block_for`](TabletVersion::block_for).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct TabletVersion([u8; 8]);
+
+impl TabletVersion {
+    /// Builds a version from the signed `bigint` the server sends in a TABLETS_ROUTING_V2
+    /// payload. Only the bit pattern matters, so the sign carries no meaning.
+    // Only exercised by tests until the commit that parses the TABLETS_ROUTING_V2 payload
+    // wires it into the driver.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn from_server_value(raw: i64) -> Self {
+        Self(raw.to_be_bytes())
+    }
+
+    /// Chooses a tablet-version "block" byte to send with an `EXECUTE` on a
+    /// TABLETS_ROUTING_V2 connection.
+    ///
+    /// The byte encodes `(index << 4) | nibble`, where `index` (high nibble) selects one of the
+    /// 16 nibbles of the version and `nibble` (low nibble) is the value of that nibble. The
+    /// server compares this against its own tablet version and only returns fresh routing
+    /// information in the response custom payload when they differ. The index is randomized so
+    /// that, over successive requests, the driver eventually probes every nibble and detects
+    /// any version change.
+    fn choose_block(self) -> u8 {
+        let index: u8 = rand::rng().random::<u8>() & 0x0F; // 0..=15
+        // Bytes are big-endian, so nibble `index` (counted from the least significant one)
+        // lives in byte `7 - index / 2`: its low half for an even index, its high half for an
+        // odd one.
+        let byte = self.0[7 - (index / 2) as usize];
+        let nibble = if index.is_multiple_of(2) {
+            byte & 0xF
+        } else {
+            byte >> 4
+        };
+        (index << 4) | nibble
+    }
+
+    /// Returns a random tablet-version block byte, used when the driver has nothing to probe:
+    /// either no tablet version is cached for the target token, or the request has no single
+    /// partition to route by (in which case the server ignores the byte). A random block
+    /// maximizes the chance of a mismatch, which prompts the server to return fresh routing
+    /// information.
+    pub(crate) fn random_block() -> u8 {
+        rand::rng().random::<u8>()
+    }
+
+    /// Returns the tablet-version block byte to attach to an `EXECUTE` on a
+    /// TABLETS_ROUTING_V2 connection: the cached version's block when known (see
+    /// [`choose_block`](TabletVersion::choose_block)), or a random probe byte on a cache miss
+    /// (see [`random_block`](TabletVersion::random_block)).
+    // Only exercised by tests until the commit that computes the block once per request
+    // wires it into the driver.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn block_for(version: Option<Self>) -> u8 {
+        match version {
+            Some(version) => version.choose_block(),
+            None => Self::random_block(),
+        }
+    }
+}
 
 impl RawTablet {
     pub(crate) fn from_custom_payload(
@@ -116,6 +192,7 @@ impl RawTablet {
             first_token: Token::new(first_token + 1),
             last_token: Token::new(last_token),
             replicas: RawTabletReplicas { replicas },
+            tablet_version: None,
         }))
     }
 }
@@ -237,6 +314,9 @@ pub(crate) struct Tablet {
     /// Last token belonging to the tablet, inclusive
     last_token: Token,
     replicas: TabletReplicas,
+    /// Tablet version, present only when the tablet was learned via the
+    /// TABLETS_ROUTING_V2 extension.
+    tablet_version: Option<TabletVersion>,
     /// If any of the replicas failed to resolve to a Node,
     /// then this field will contain the original list of replicas.
     failed: Option<RawTabletReplicas>,
@@ -260,6 +340,7 @@ impl Tablet {
                 first_token: raw_tablet.first_token,
                 last_token: raw_tablet.last_token,
                 replicas,
+                tablet_version: raw_tablet.tablet_version,
                 failed: None,
             }),
             Err((replicas, failed_replicas)) => Err((
@@ -267,6 +348,7 @@ impl Tablet {
                     first_token: raw_tablet.first_token,
                     last_token: raw_tablet.last_token,
                     replicas,
+                    tablet_version: raw_tablet.tablet_version,
                     failed: Some(raw_tablet.replicas),
                 },
                 failed_replicas,
@@ -329,6 +411,7 @@ impl Tablet {
             first_token: Token::new(token),
             last_token: Token::new(token),
             replicas: TabletReplicas::new_for_test(replicas),
+            tablet_version: None,
             failed: failed.map(|vec| RawTabletReplicas {
                 replicas: vec.into_iter().map(|id| (id, 0)).collect::<Vec<_>>(),
             }),
@@ -392,6 +475,17 @@ impl TableTablets {
                 .map(|x| x.as_slice())
                 .unwrap_or(&[])
         })
+    }
+
+    /// Returns the tablet version for the tablet owning `token`, if known.
+    ///
+    /// `None` means either no tablet is cached for the token, or the cached tablet was
+    /// learned via TABLETS_ROUTING_V1 (which carries no version).
+    // Wired up by the commit that computes the block once per request.
+    #[expect(dead_code)]
+    pub(crate) fn tablet_version_for_token(&self, token: Token) -> Option<TabletVersion> {
+        self.tablet_for_token(token)
+            .and_then(|tablet| tablet.tablet_version)
     }
 
     /// This method:
@@ -679,7 +773,7 @@ mod tests {
     use crate::routing::Token;
     use crate::routing::locator::tablets::{
         CUSTOM_PAYLOAD_TABLETS_V1_KEY, RAW_TABLETS_CQL_TYPE, RawTablet, RawTabletReplicas,
-        TabletParsingError,
+        TabletParsingError, TabletVersion,
     };
     use crate::test_utils::setup_tracing;
     use crate::value::CqlValue;
@@ -836,8 +930,57 @@ mod tests {
                         (Uuid::from_u64_pair(1, 2), 15),
                         (Uuid::from_u64_pair(3, 4), 19)
                     ]
-                }
+                },
+                tablet_version: None,
             }
+        );
+    }
+
+    #[test]
+    fn test_choose_tablet_version_block_encoding() {
+        // The block byte encodes `(index << 4) | nibble`, where `index` (high nibble)
+        // selects one of the 16 nibbles of the version and `nibble` (low nibble) is that
+        // nibble's value. This must match ScyllaDB's `compare_tablet_version_block`.
+        let versions = [
+            0x0000_0000_0000_0000u64,
+            0x0123_4567_89AB_CDEFu64,
+            0xFFFF_FFFF_FFFF_FFFFu64,
+            0xDEAD_BEEF_CAFE_BABEu64,
+        ];
+        for version in versions {
+            let tablet_version = TabletVersion::from_server_value(version as i64);
+            let mut seen_indices = HashSet::new();
+            for _ in 0..1000 {
+                let block = tablet_version.choose_block();
+                let index = block >> 4;
+                let nibble = block & 0x0F;
+                // This invariant holds for every possible RNG outcome, so the assertion
+                // is deterministic regardless of which index happened to be drawn.
+                let expected_nibble = ((version >> (index * 4)) & 0xF) as u8;
+                assert_eq!(
+                    nibble, expected_nibble,
+                    "version={version:#018x} index={index} block={block:#04x}"
+                );
+                seen_indices.insert(index);
+            }
+            // Liveness: confirm the index is actually randomized. With 1000 draws over 16
+            // possible indices, seeing only one is impossible in practice
+            // (probability < 16 * (1/16)^999).
+            assert!(
+                seen_indices.len() >= 2,
+                "index did not vary across draws for version {version:#018x}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_tablet_version_block_for_cache_miss_is_random() {
+        // With no cached version there is nothing to probe, so the block is drawn at random -
+        // over the whole byte, not just the nibble, since the index is meaningless too.
+        let blocks: HashSet<u8> = (0..1000).map(|_| TabletVersion::block_for(None)).collect();
+        assert!(
+            blocks.len() >= 2,
+            "block did not vary across draws on a cache miss"
         );
     }
 
@@ -958,6 +1101,7 @@ mod tests {
                 first_token: Token::new(*first),
                 last_token: Token::new(*last),
                 replicas: Default::default(),
+                tablet_version: None,
                 failed: None,
             });
         }
